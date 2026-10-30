@@ -885,3 +885,67 @@ def test_create_session_429_refusal_does_not_blame_the_request(monkeypatch, capl
     assert "HTTP 429 | rate_limited" in joined
     assert "problem with the request" not in joined
     assert "unreachable" not in joined
+
+
+def _outer_context() -> dict[str, Any]:
+    return {
+        "function_name": "demo-function",
+        "search_space": {"model": ["gpt-4o"]},
+        "optimization_goal": "maximize",
+        "local_record_metadata": None,
+        "intends_cloud_egress": True,
+    }
+
+
+def _refusal_exc(status: int, body: str) -> CloudServiceError:
+    exc = CloudServiceError(f"Session creation failed: HTTP {status}")
+    exc.session_creation_failure = SessionCreationFailureDetail.from_http_response(
+        status, body
+    )
+    return exc
+
+
+def test_outer_cloud_fallback_4xx_is_not_logged_as_unreachable(caplog):
+    """The outer (escaped-exception) site carries the #2806 wording too."""
+    from traigent.cloud.session_operations import _outer_cloud_fallback
+
+    ops = SessionOperations(FakeClient())
+    with caplog.at_level(logging.WARNING, logger="traigent.cloud.session_operations"):
+        _outer_cloud_fallback(
+            ops,
+            _outer_context(),
+            _refusal_exc(
+                413, '{"error": "customer text", "error_code": "PAYLOAD_TOO_LARGE"}'
+            ),
+        )
+    joined = "\n".join(r.getMessage() for r in caplog.records)
+    assert "refused by the backend" in joined, joined
+    assert "HTTP 413 | payload_too_large" in joined
+    assert "unreachable" not in joined
+    assert "degrading to LOCAL" not in joined
+    assert "customer text" not in joined
+
+
+def test_outer_cloud_fallback_5xx_keeps_unreachable_wording(caplog):
+    from traigent.cloud.session_operations import _outer_cloud_fallback
+
+    ops = SessionOperations(FakeClient())
+    exc = CloudServiceError("Session creation failed: HTTP 503")
+    exc.session_creation_failure = SessionCreationFailureDetail(status_code=503)
+    with caplog.at_level(logging.WARNING, logger="traigent.cloud.session_operations"):
+        _outer_cloud_fallback(ops, _outer_context(), exc)
+    assert any("degrading to LOCAL" in r.getMessage() for r in caplog.records)
+
+
+def test_auth_fallback_result_4xx_is_not_logged_as_unreachable(caplog):
+    ops = SessionOperations(FakeClient())
+    exc = AuthenticationError("could not validate")
+    failure = SessionCreationFailureDetail.from_http_response(
+        413, '{"error_code": "PAYLOAD_TOO_LARGE"}'
+    )
+    with caplog.at_level(logging.WARNING, logger="traigent.cloud.session_operations"):
+        ops._auth_fallback_result(exc, "fb-1", "d", failure, "demo-function", True)
+    joined = "\n".join(r.getMessage() for r in caplog.records)
+    assert "refused by the backend" in joined, joined
+    assert "unreachable" not in joined
+    assert "degrading to LOCAL" not in joined

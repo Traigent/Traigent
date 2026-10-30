@@ -92,6 +92,47 @@ class JWTValidationResult:
             self.security_metadata = {}
 
 
+def _validate_production_configuration(self: Any) -> None:
+    if not self.jwks_url:
+        raise JWTSecurityError("JWKS URL required for production mode JWT validation")
+    if not self.issuer:
+        raise JWTSecurityError("Issuer required for production mode JWT validation")
+    if not self.audience:
+        raise JWTSecurityError("Audience required for production mode JWT validation")
+
+
+def _validate_staging_configuration(self: Any) -> None:
+    # Staging is production-equivalent for trust decisions.  It may add
+    # diagnostics, but it must never accept a token without the same
+    # trust anchors and claim configuration as production.
+    if not self.jwks_url:
+        raise JWTSecurityError("JWKS URL required for staging mode JWT validation")
+    if not self.issuer:
+        raise JWTSecurityError("Issuer required for staging mode JWT validation")
+    if not self.audience:
+        raise JWTSecurityError("Audience required for staging mode JWT validation")
+
+
+def _validate_signing_key_strength(
+    min_key_sizes: dict[str, int], signing_key: Any
+) -> None:
+    if hasattr(signing_key.key, "key_size"):
+        algorithm = signing_key.algorithm_name
+        min_size = min_key_sizes.get(algorithm)
+        if min_size is not None:
+            actual_size = signing_key.key.key_size
+            if actual_size < min_size:
+                raise JWTSecurityError(
+                    f"Key size {actual_size} bits below minimum {min_size} bits for {algorithm}"
+                )
+        else:
+            # Unknown algorithm - log warning but allow PyJWT to validate
+            logger.warning(
+                f"Unknown algorithm '{algorithm}' - key size validation skipped, "
+                f"relying on PyJWT built-in validation"
+            )
+
+
 class SecureJWTValidator:
     """Production-hardened JWT token validator with enhanced security.
 
@@ -184,34 +225,9 @@ class SecureJWTValidator:
         """Validate security configuration."""
         # Check if running in production without proper configuration
         if self.validation_mode == ValidationMode.PRODUCTION:
-            if not self.jwks_url:
-                raise JWTSecurityError(
-                    "JWKS URL required for production mode JWT validation"
-                )
-            if not self.issuer:
-                raise JWTSecurityError(
-                    "Issuer required for production mode JWT validation"
-                )
-            if not self.audience:
-                raise JWTSecurityError(
-                    "Audience required for production mode JWT validation"
-                )
+            _validate_production_configuration(self)
         elif self.validation_mode == ValidationMode.STAGING:
-            # Staging is production-equivalent for trust decisions.  It may add
-            # diagnostics, but it must never accept a token without the same
-            # trust anchors and claim configuration as production.
-            if not self.jwks_url:
-                raise JWTSecurityError(
-                    "JWKS URL required for staging mode JWT validation"
-                )
-            if not self.issuer:
-                raise JWTSecurityError(
-                    "Issuer required for staging mode JWT validation"
-                )
-            if not self.audience:
-                raise JWTSecurityError(
-                    "Audience required for staging mode JWT validation"
-                )
+            _validate_staging_configuration(self)
         elif self.validation_mode == ValidationMode.DEVELOPMENT:
             # Development may relax issuer/audience requirements, but still
             # requires a configured asymmetric verification key (or JWKS URL)
@@ -320,21 +336,7 @@ class SecureJWTValidator:
             signing_key = jwks_client.get_signing_key_from_jwt(token)
 
             # Verify key strength (algorithm-aware)
-            if hasattr(signing_key.key, "key_size"):
-                algorithm = signing_key.algorithm_name
-                min_size = self.MIN_KEY_SIZES.get(algorithm)
-                if min_size is not None:
-                    actual_size = signing_key.key.key_size
-                    if actual_size < min_size:
-                        raise JWTSecurityError(
-                            f"Key size {actual_size} bits below minimum {min_size} bits for {algorithm}"
-                        )
-                else:
-                    # Unknown algorithm - log warning but allow PyJWT to validate
-                    logger.warning(
-                        f"Unknown algorithm '{algorithm}' - key size validation skipped, "
-                        f"relying on PyJWT built-in validation"
-                    )
+            _validate_signing_key_strength(self.MIN_KEY_SIZES, signing_key)
 
             # Comprehensive token validation
             payload = jwt.decode(

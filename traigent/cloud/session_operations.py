@@ -242,6 +242,508 @@ async def _with_loop_local_session[T](client: Any, coro: Coroutine[Any, Any, T])
                 logger.debug("Loop-local session close failed: %s", exc)
 
 
+def _must_fail_loud(exc: Exception, governed: bool, intends_cloud_egress: bool) -> bool:
+    # A DEFINITIVELY rejected credential (invalid / revoked / expired /
+    # unauthorized — a key WAS configured; the no-key path returns
+    # NO_API_KEY before any HTTP) is a user-actionable error on a run
+    # that INTENDS cloud egress: silently degrading such a managed run
+    # to a local/anonymous one would change execution semantics (managed
+    # Bayesian -> local search), drop the backend/billing/governance
+    # record, and present the degraded run as success — so fail closed.
+    # On a LOCAL-routed run the same rejected key is irrelevant (zero
+    # cloud egress), so do NOT fail loud. A *transient* failure to
+    # reach/validate the backend is never a rejection and still degrades
+    # gracefully (see _is_definitive_auth_rejection).
+    if isinstance(exc, AuthenticationError):
+        return governed or (intends_cloud_egress and _is_definitive_auth_rejection(exc))
+    return governed or isinstance(
+        exc,
+        (
+            CloudEgressBlockedError,
+            SessionContractError,
+            SessionQuotaRefusedError,
+            SessionBackendRefusedError,
+        ),
+    )
+
+
+def _session_preflight(
+    self: "SessionOperations", context: dict[str, Any]
+) -> SessionCreationResult | None:
+    function_name = context["function_name"]
+    search_space = context["search_space"]
+    optimization_goal = context["optimization_goal"]
+    local_record_metadata = context["local_record_metadata"]
+    governed = context["governed"]
+    # Preflight: check if API key exists before attempting any HTTP call
+    has_key = self.client.auth_manager.has_api_key()
+    if not has_key:
+        if governed:
+            # ADJUDICATED (review round 3): no API key is an explicit
+            # local-only configuration, not a cloud failure — strict
+            # enforcement runs fully locally and no backend record
+            # exists that could launder strict mode. Stay local, but
+            # make the governance/no-cloud mismatch VISIBLE.
+            logger.warning(
+                "Governed session '%s' declared promotion_policy/"
+                "tvl_governance but no API key is configured — "
+                "running local-only (strict enforcement stays local; "
+                "no backend session or certified record is created)",
+                function_name,
+            )
+        logger.debug("No API key configured — skipping backend session creation")
+        fallback_id = self._create_local_fallback_session(
+            function_name,
+            search_space,
+            optimization_goal,
+            local_record_metadata,
+        )
+        return SessionCreationResult.fallback(
+            session_id=fallback_id,
+            reason=SessionCreationFailureReason.NO_API_KEY,
+            detail="No API key configured",
+        )
+
+    return None
+
+
+def _session_max_trials(self: "SessionOperations", context: dict[str, Any]) -> int:
+    metadata = context["metadata"]
+    max_trials_from_metadata = metadata.get("max_trials") if metadata else None
+    if max_trials_from_metadata is None:
+        logger.debug("max_trials not found in metadata, using default 10")
+        max_trials_from_metadata = 10
+    else:
+        try:
+            self._validate_positive_int(
+                int(max_trials_from_metadata), "metadata.max_trials"
+            )
+            max_trials_from_metadata = int(max_trials_from_metadata)
+        except (ValueError, ValidationException) as exc:
+            raise ValidationException(
+                f"metadata.max_trials must be a positive integer: {exc}"
+            ) from exc
+        logger.info(f"Using max_trials from metadata: {max_trials_from_metadata}")
+
+    return max_trials_from_metadata
+
+
+def _session_request(
+    context: dict[str, Any], max_trials_from_metadata: int
+) -> SessionCreationRequest:
+    function_name = context["function_name"]
+    search_space = context["search_space"]
+    optimization_goal = context["optimization_goal"]
+    metadata = context["metadata"]
+    normalized_smart_pruning = context["normalized_smart_pruning"]
+    objectives = context["objectives"]
+    default_config = context["default_config"]
+    promotion_policy = context["promotion_policy"]
+    tvl_governance = context["tvl_governance"]
+    warm_start_from = context["warm_start_from"]
+    artifact_fingerprints = context["artifact_fingerprints"]
+    fingerprint_meta = context["fingerprint_meta"]
+    evaluator_id = context["evaluator_id"]
+    evaluator_definition_id = context["evaluator_definition_id"]
+    cost_limit = context["cost_limit"]
+    optimization_strategy = context["optimization_strategy"]
+    agent_key = context["agent_key"]
+    run_title = context["run_title"]
+    run_description = context["run_description"]
+    task_type = context["task_type"]
+    dataset_id = context["dataset_id"]
+    evaluator_id_source = context["evaluator_id_source"]
+    content_identity = context["content_identity"]
+    content_less = context["content_less"]
+    evaluator_code_digest = context["evaluator_code_digest"]
+    snapshot_g1_required = context["snapshot_g1_required"]
+    snapshot_g1_deadline_days = context["snapshot_g1_deadline_days"]
+    # Server-side cost cap (defense-in-depth alongside the client-side
+    # CostEnforcer): only arm it when the user actually set a positive
+    # cost_limit — an unset/zero/negative limit must stay uncapped on
+    # the wire exactly as it is uncapped locally.
+    budget = (
+        {"max_cost_usd": float(cost_limit)}
+        if cost_limit is not None and float(cost_limit) > 0
+        else None
+    )
+
+    session_request = SessionCreationRequest(
+        function_name=function_name,
+        agent_key=agent_key,
+        run_title=run_title,
+        run_description=run_description,
+        configuration_space=search_space,
+        # Typed contract: objectives are METRIC names/objects. The
+        # legacy [optimization_goal] placeholder survives only as the
+        # fallback when the caller supplied none (legacy shape keeps
+        # reading objectives[0] as its optimization_goal).
+        objectives=list(objectives) if objectives else [optimization_goal],
+        default_config=dict(default_config) if default_config else None,
+        warm_start_from=warm_start_from or None,
+        smart_pruning=normalized_smart_pruning,
+        dataset_metadata={
+            "size": metadata.get("dataset_size", 0) if metadata else 0,
+            # Carry the dataset label (content is not submitted) so the
+            # portal "Dataset" column is populated instead of blank.
+            "name": metadata.get("evaluation_set") if metadata else None,
+            "privacy_mode": True,
+        },
+        max_trials=max_trials_from_metadata,
+        budget=budget,
+        promotion_policy=promotion_policy,
+        tvl_governance=tvl_governance,
+        optimization_strategy=(
+            dict(optimization_strategy) if optimization_strategy else None
+        ),
+        user_id=None,  # Privacy preserving
+        billing_tier="privacy",
+        metadata=metadata or {},
+        artifact_fingerprints=artifact_fingerprints,
+        fingerprint_meta=fingerprint_meta,
+        evaluator_id=evaluator_id,
+        evaluator_definition_id=evaluator_definition_id,
+        evaluator_id_source=evaluator_id_source,
+        content_identity=content_identity,
+        task_type=task_type,
+        dataset_id=dataset_id,
+        content_less=content_less,
+        evaluator_code_digest=evaluator_code_digest,
+        snapshot_g1_required=snapshot_g1_required is True,
+        snapshot_g1_deadline_days=snapshot_g1_deadline_days,
+    )
+
+    return session_request
+
+
+def _register_active_session(
+    self,
+    context,
+    session_id,
+    experiment_id,
+    experiment_run_id,
+    owning_context,
+    create_warm_start_transfer,
+    max_trials_from_metadata,
+):
+    function_name = context["function_name"]
+    search_space = context["search_space"]
+    optimization_goal = context["optimization_goal"]
+    metadata = context["metadata"]
+    with self.client._active_sessions_lock:
+        if len(self.client._active_sessions) >= self.client._max_active_sessions:
+            oldest_session_id = None
+            oldest_time = datetime.max.replace(tzinfo=UTC)
+
+            for sid, sess in list(self.client._active_sessions.items()):
+                if (
+                    sess.status
+                    in [
+                        OptimizationSessionStatus.COMPLETED,
+                        OptimizationSessionStatus.FAILED,
+                    ]
+                    and sess.created_at < oldest_time
+                ):
+                    oldest_time = sess.created_at
+                    oldest_session_id = sid
+
+            if oldest_session_id is None and self.client._active_sessions:
+                oldest_session_id = min(
+                    self.client._active_sessions.keys(),
+                    key=lambda s: self.client._active_sessions[s].created_at,
+                )
+
+            if oldest_session_id:
+                del self.client._active_sessions[oldest_session_id]
+                logger.debug(
+                    "Removed session %s to stay within active session limit",
+                    oldest_session_id,
+                )
+
+        self.client._active_sessions[session_id] = OptimizationSession(
+            session_id=session_id,
+            function_name=function_name,
+            configuration_space=search_space,
+            objectives=[optimization_goal],
+            max_trials=max_trials_from_metadata,
+            status=OptimizationSessionStatus.ACTIVE,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            metadata={
+                "mode": "session_api",
+                "experiment_id": experiment_id,
+                "experiment_run_id": experiment_run_id,
+                **owning_context,
+                **(metadata or {}),
+                # After **(metadata or {}) so the backend's CREATE
+                # response block always wins over any inbound
+                # request metadata of the same name (#1683 Bug B).
+                **(
+                    {"warm_start_transfer": dict(create_warm_start_transfer)}
+                    if create_warm_start_transfer is not None
+                    else {}
+                ),
+            },
+        )
+
+
+def _complete_session_creation(
+    self: "SessionOperations",
+    context: dict[str, Any],
+    session_api_result: Any,
+    max_trials_from_metadata: int,
+) -> SessionCreationResult:
+    function_name = context["function_name"]
+    search_space = context["search_space"]
+    optimization_goal = context["optimization_goal"]
+    local_record_metadata = context["local_record_metadata"]
+    session_id, experiment_id, experiment_run_id = session_api_result
+    project_id = getattr(session_api_result, "project_id", None)
+    tenant_id = getattr(session_api_result, "tenant_id", None)
+    bound_agent_id = getattr(session_api_result, "agent_id", None)
+    if not isinstance(bound_agent_id, str) or not bound_agent_id.strip():
+        bound_agent_id = None
+    bound_agent_ref = getattr(session_api_result, "agent_ref", None)
+    if not isinstance(bound_agent_ref, str) or not bound_agent_ref:
+        bound_agent_ref = None
+    session_content_less = getattr(session_api_result, "content_less", False) is True
+    # #1683 Bug B: the backend sends the warm-start decision block
+    # in the CREATE response (it is not resent at finalize).
+    # Retain it verbatim so finalize can surface it in result
+    # metadata instead of reporting cold-start defaults.
+    create_warm_start_transfer = getattr(
+        session_api_result, "warm_start_transfer", None
+    )
+    if not isinstance(create_warm_start_transfer, dict):
+        create_warm_start_transfer = None
+    owning_context = {
+        key: normalized
+        for key, value in (
+            ("project_id", project_id),
+            ("tenant_id", tenant_id),
+        )
+        if value is not None and (normalized := str(value).strip())
+    }
+
+    self.client.session_bridge.create_session_mapping(
+        session_id=session_id,
+        experiment_id=experiment_id,
+        experiment_run_id=experiment_run_id,
+        function_name=function_name,
+        configuration_space=search_space,
+        objectives=[optimization_goal],
+    )
+
+    self.client._register_security_session(
+        session_id,
+        None,
+        {
+            "function_name": function_name,
+            "objectives": [optimization_goal],
+            "experiment_id": experiment_id,
+            "experiment_run_id": experiment_run_id,
+            **owning_context,
+        },
+    )
+
+    _register_active_session(
+        self,
+        context,
+        session_id,
+        experiment_id,
+        experiment_run_id,
+        owning_context,
+        create_warm_start_transfer,
+        max_trials_from_metadata,
+    )
+
+    logger.debug(
+        "Created backend tracking: session=%s, experiment=%s, run=%s",
+        session_id,
+        experiment_id,
+        experiment_run_id,
+    )
+
+    # #1279: also mirror the connected session into local_storage
+    # keyed to the backend session_id, so _persist_trial_locally has
+    # a durable local record on connected runs too. Without this the
+    # only record of a completed (paid-for) trial is the breaker-gated
+    # remote submit; if that fails mid-run the trial is lost silently.
+    self._persist_connected_session_locally(
+        session_id=session_id,
+        function_name=function_name,
+        search_space=search_space,
+        optimization_goal=optimization_goal,
+        metadata=local_record_metadata,
+    )
+    return SessionCreationResult.connected(
+        session_id=session_id,
+        project_id=owning_context.get("project_id"),
+        tenant_id=owning_context.get("tenant_id"),
+        agent_id=bound_agent_id,
+        agent_ref=bound_agent_ref,
+        content_less=session_content_less,
+    )
+
+
+async def _create_session_async(
+    self: "SessionOperations", context: dict[str, Any]
+) -> SessionCreationResult:
+    function_name = context["function_name"]
+    search_space = context["search_space"]
+    optimization_goal = context["optimization_goal"]
+    local_record_metadata = context["local_record_metadata"]
+    governed = context["governed"]
+    intends_cloud_egress = context["intends_cloud_egress"]
+    preflight = _session_preflight(self, context)
+    if preflight is not None:
+        return preflight
+    max_trials_from_metadata = _session_max_trials(self, context)
+    session_request = _session_request(context, max_trials_from_metadata)
+
+    try:
+        logger.info("Creating session via Traigent session endpoints")
+        self._raise_if_backend_egress_disabled("create session")
+        session_api_result = await self.client._create_traigent_session_via_api(
+            session_request
+        )
+        return _complete_session_creation(
+            self, context, session_api_result, max_trials_from_metadata
+        )
+
+    except ValidationException:
+        raise  # User input errors must propagate
+
+    except AuthenticationError as e:
+        await self._reset_client_session("create_session auth_failure")
+        if _must_fail_loud(e, governed, intends_cloud_egress):
+            raise
+        failure_response = _get_session_creation_failure_detail(e)
+        fallback_id = self._create_local_fallback_session(
+            function_name,
+            search_space,
+            optimization_goal,
+            local_record_metadata,
+        )
+        detail = (
+            failure_response.one_line_summary() if failure_response else str(e)[:200]
+        )
+        return self._auth_fallback_result(
+            e,
+            fallback_id,
+            detail,
+            failure_response,
+            function_name,
+            intends_cloud_egress,
+        )
+
+    except (CloudServiceError, OSError) as e:
+        await self._reset_client_session("create_session fallback")
+        self._raise_if_quota_refusal(e)
+        self._raise_if_closed_refusal(e)
+        if _must_fail_loud(e, governed, intends_cloud_egress):
+            raise
+        # A configured key intended a managed/cloud run, but the backend
+        # was unreachable. We degrade to LOCAL execution for resilience —
+        # but this is a DOWNGRADE (managed search/tracking is lost), so
+        # surface it at WARNING and flag degraded=True on the result so a
+        # caller never mistakes the local run for a managed one.
+        failure_response = _get_session_creation_failure_detail(e)
+        _log_session_create_failure(function_name, e, failure_response)
+        fallback_id = self._create_local_fallback_session(
+            function_name,
+            search_space,
+            optimization_goal,
+            local_record_metadata,
+        )
+        detail = (
+            failure_response.one_line_summary()
+            if failure_response
+            else str(e).split("\n", 1)[0][:200]
+        )
+        return SessionCreationResult.fallback(
+            session_id=fallback_id,
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail=detail,
+            failure_response=failure_response,
+            typed_legacy_session_create_400=bool(
+                getattr(e, "typed_legacy_session_create_400", False)
+            ),
+            degraded=True,
+        )
+
+
+def _outer_auth_fallback(
+    self: "SessionOperations", context: dict[str, Any], exc: Exception
+) -> SessionCreationResult:
+    function_name = context["function_name"]
+    search_space = context["search_space"]
+    optimization_goal = context["optimization_goal"]
+    local_record_metadata = context["local_record_metadata"]
+    intends_cloud_egress = context["intends_cloud_egress"]
+    # Issue #1373 "outer create_session swallow": an auth failure that
+    # ESCAPES _create_session_async (e.g. the has_api_key preflight or
+    # the async-runner machinery). A DEFINITIVE rejection on a cloud-
+    # intended run fails loud above. Reaching here is a non-definitive
+    # auth failure OR a LOCAL-routed run — both handled by the shared
+    # helper (cloud-intent: degrade+flag; local: continue untracked).
+    # The two auth sites are mutually exclusive per failure.
+    failure_response = _get_session_creation_failure_detail(exc)
+    fallback_id = self._create_local_fallback_session(
+        function_name, search_space, optimization_goal, local_record_metadata
+    )
+    detail = failure_response.one_line_summary() if failure_response else str(exc)[:200]
+    return self._auth_fallback_result(
+        exc,
+        fallback_id,
+        detail,
+        failure_response,
+        function_name,
+        intends_cloud_egress,
+    )
+
+
+def _outer_cloud_fallback(
+    self: "SessionOperations", context: dict[str, Any], exc: Exception
+) -> SessionCreationResult:
+    function_name = context["function_name"]
+    search_space = context["search_space"]
+    optimization_goal = context["optimization_goal"]
+    local_record_metadata = context["local_record_metadata"]
+    # Backend unreachable on the outer path — same downgrade semantics as
+    # the inner sibling: WARN + flag degraded so the local run is never
+    # mistaken for a managed one.
+    failure_response = _get_session_creation_failure_detail(exc)
+    _log_session_create_failure(function_name, exc, failure_response)
+    fallback_id = self._create_local_fallback_session(
+        function_name, search_space, optimization_goal, local_record_metadata
+    )
+    detail = (
+        failure_response.one_line_summary()
+        if failure_response
+        else str(exc).split("\n", 1)[0][:200]
+    )
+    return SessionCreationResult.fallback(
+        session_id=fallback_id,
+        reason=SessionCreationFailureReason.SESSION_FAILED,
+        detail=detail,
+        failure_response=failure_response,
+        degraded=True,
+    )
+
+
+def _raise_if_must_fail_loud(
+    exc: Exception, governed: bool, intends_cloud_egress: bool
+) -> None:
+    if _must_fail_loud(exc, governed, intends_cloud_egress):
+        raise
+
+
+def _validate_session_metadata(metadata: dict[str, Any] | None) -> None:
+    if metadata is not None and not isinstance(metadata, dict):
+        raise ValidationException("metadata must be a dictionary if provided")
+
+
 class SessionOperations:
     """Handles session management operations."""
 
@@ -620,8 +1122,7 @@ class SessionOperations:
         self._validate_non_empty_string(function_name, "function_name")
         self._validate_mapping(search_space, "search_space")
         self._validate_non_empty_string(optimization_goal, "optimization_goal")
-        if metadata is not None and not isinstance(metadata, dict):
-            raise ValidationException("metadata must be a dictionary if provided")
+        _validate_session_metadata(metadata)
         normalized_smart_pruning = normalize_smart_pruning_options(smart_pruning)
         # Local records (no-key/offline fallback and connected mirrors) persist
         # the declared dataset identity the live create would send, so a later
@@ -653,32 +1154,6 @@ class SessionOperations:
         # direct callers that do not declare intent. (#1421 regression.)
         intends_cloud_egress = bool(getattr(self.client, "cloud_egress_intent", True))
 
-        def _must_fail_loud(exc: Exception) -> bool:
-            # A DEFINITIVELY rejected credential (invalid / revoked / expired /
-            # unauthorized — a key WAS configured; the no-key path returns
-            # NO_API_KEY before any HTTP) is a user-actionable error on a run
-            # that INTENDS cloud egress: silently degrading such a managed run
-            # to a local/anonymous one would change execution semantics (managed
-            # Bayesian -> local search), drop the backend/billing/governance
-            # record, and present the degraded run as success — so fail closed.
-            # On a LOCAL-routed run the same rejected key is irrelevant (zero
-            # cloud egress), so do NOT fail loud. A *transient* failure to
-            # reach/validate the backend is never a rejection and still degrades
-            # gracefully (see _is_definitive_auth_rejection).
-            if isinstance(exc, AuthenticationError):
-                return governed or (
-                    intends_cloud_egress and _is_definitive_auth_rejection(exc)
-                )
-            return governed or isinstance(
-                exc,
-                (
-                    CloudEgressBlockedError,
-                    SessionContractError,
-                    SessionQuotaRefusedError,
-                    SessionBackendRefusedError,
-                ),
-            )
-
         if is_backend_offline():
             logger.debug(
                 "Offline mode enabled — skipping backend session creation for %s",
@@ -693,323 +1168,38 @@ class SessionOperations:
                 detail="Offline mode enabled",
             )
 
-        async def _create_session_async() -> SessionCreationResult:
-            # Preflight: check if API key exists before attempting any HTTP call
-            has_key = self.client.auth_manager.has_api_key()
-            if not has_key:
-                if governed:
-                    # ADJUDICATED (review round 3): no API key is an explicit
-                    # local-only configuration, not a cloud failure — strict
-                    # enforcement runs fully locally and no backend record
-                    # exists that could launder strict mode. Stay local, but
-                    # make the governance/no-cloud mismatch VISIBLE.
-                    logger.warning(
-                        "Governed session '%s' declared promotion_policy/"
-                        "tvl_governance but no API key is configured — "
-                        "running local-only (strict enforcement stays local; "
-                        "no backend session or certified record is created)",
-                        function_name,
-                    )
-                logger.debug(
-                    "No API key configured — skipping backend session creation"
-                )
-                fallback_id = self._create_local_fallback_session(
-                    function_name,
-                    search_space,
-                    optimization_goal,
-                    local_record_metadata,
-                )
-                return SessionCreationResult.fallback(
-                    session_id=fallback_id,
-                    reason=SessionCreationFailureReason.NO_API_KEY,
-                    detail="No API key configured",
-                )
-
-            max_trials_from_metadata = metadata.get("max_trials") if metadata else None
-            if max_trials_from_metadata is None:
-                logger.debug("max_trials not found in metadata, using default 10")
-                max_trials_from_metadata = 10
-            else:
-                try:
-                    self._validate_positive_int(
-                        int(max_trials_from_metadata), "metadata.max_trials"
-                    )
-                    max_trials_from_metadata = int(max_trials_from_metadata)
-                except (ValueError, ValidationException) as exc:
-                    raise ValidationException(
-                        f"metadata.max_trials must be a positive integer: {exc}"
-                    ) from exc
-                logger.info(
-                    f"Using max_trials from metadata: {max_trials_from_metadata}"
-                )
-
-            # Server-side cost cap (defense-in-depth alongside the client-side
-            # CostEnforcer): only arm it when the user actually set a positive
-            # cost_limit — an unset/zero/negative limit must stay uncapped on
-            # the wire exactly as it is uncapped locally.
-            budget = (
-                {"max_cost_usd": float(cost_limit)}
-                if cost_limit is not None and float(cost_limit) > 0
-                else None
-            )
-
-            session_request = SessionCreationRequest(
-                function_name=function_name,
-                agent_key=agent_key,
-                run_title=run_title,
-                run_description=run_description,
-                configuration_space=search_space,
-                # Typed contract: objectives are METRIC names/objects. The
-                # legacy [optimization_goal] placeholder survives only as the
-                # fallback when the caller supplied none (legacy shape keeps
-                # reading objectives[0] as its optimization_goal).
-                objectives=list(objectives) if objectives else [optimization_goal],
-                default_config=dict(default_config) if default_config else None,
-                warm_start_from=warm_start_from or None,
-                smart_pruning=normalized_smart_pruning,
-                dataset_metadata={
-                    "size": metadata.get("dataset_size", 0) if metadata else 0,
-                    # Carry the dataset label (content is not submitted) so the
-                    # portal "Dataset" column is populated instead of blank.
-                    "name": metadata.get("evaluation_set") if metadata else None,
-                    "privacy_mode": True,
-                },
-                max_trials=max_trials_from_metadata,
-                budget=budget,
-                promotion_policy=promotion_policy,
-                tvl_governance=tvl_governance,
-                optimization_strategy=(
-                    dict(optimization_strategy) if optimization_strategy else None
-                ),
-                user_id=None,  # Privacy preserving
-                billing_tier="privacy",
-                metadata=metadata or {},
-                artifact_fingerprints=artifact_fingerprints,
-                fingerprint_meta=fingerprint_meta,
-                evaluator_id=evaluator_id,
-                evaluator_definition_id=evaluator_definition_id,
-                evaluator_id_source=evaluator_id_source,
-                content_identity=content_identity,
-                task_type=task_type,
-                dataset_id=dataset_id,
-                content_less=content_less,
-                evaluator_code_digest=evaluator_code_digest,
-                snapshot_g1_required=snapshot_g1_required is True,
-                snapshot_g1_deadline_days=snapshot_g1_deadline_days,
-            )
-
-            try:
-                logger.info("Creating session via Traigent session endpoints")
-                self._raise_if_backend_egress_disabled("create session")
-                session_api_result = await self.client._create_traigent_session_via_api(
-                    session_request
-                )
-                session_id, experiment_id, experiment_run_id = session_api_result
-                project_id = getattr(session_api_result, "project_id", None)
-                tenant_id = getattr(session_api_result, "tenant_id", None)
-                bound_agent_id = getattr(session_api_result, "agent_id", None)
-                if not isinstance(bound_agent_id, str) or not bound_agent_id.strip():
-                    bound_agent_id = None
-                bound_agent_ref = getattr(session_api_result, "agent_ref", None)
-                if not isinstance(bound_agent_ref, str) or not bound_agent_ref:
-                    bound_agent_ref = None
-                session_content_less = (
-                    getattr(session_api_result, "content_less", False) is True
-                )
-                # #1683 Bug B: the backend sends the warm-start decision block
-                # in the CREATE response (it is not resent at finalize).
-                # Retain it verbatim so finalize can surface it in result
-                # metadata instead of reporting cold-start defaults.
-                create_warm_start_transfer = getattr(
-                    session_api_result, "warm_start_transfer", None
-                )
-                if not isinstance(create_warm_start_transfer, dict):
-                    create_warm_start_transfer = None
-                owning_context = {
-                    key: normalized
-                    for key, value in (
-                        ("project_id", project_id),
-                        ("tenant_id", tenant_id),
-                    )
-                    if value is not None and (normalized := str(value).strip())
-                }
-
-                self.client.session_bridge.create_session_mapping(
-                    session_id=session_id,
-                    experiment_id=experiment_id,
-                    experiment_run_id=experiment_run_id,
-                    function_name=function_name,
-                    configuration_space=search_space,
-                    objectives=[optimization_goal],
-                )
-
-                self.client._register_security_session(
-                    session_id,
-                    None,
-                    {
-                        "function_name": function_name,
-                        "objectives": [optimization_goal],
-                        "experiment_id": experiment_id,
-                        "experiment_run_id": experiment_run_id,
-                        **owning_context,
-                    },
-                )
-
-                with self.client._active_sessions_lock:
-                    if (
-                        len(self.client._active_sessions)
-                        >= self.client._max_active_sessions
-                    ):
-                        oldest_session_id = None
-                        oldest_time = datetime.max.replace(tzinfo=UTC)
-
-                        for sid, sess in list(self.client._active_sessions.items()):
-                            if (
-                                sess.status
-                                in [
-                                    OptimizationSessionStatus.COMPLETED,
-                                    OptimizationSessionStatus.FAILED,
-                                ]
-                                and sess.created_at < oldest_time
-                            ):
-                                oldest_time = sess.created_at
-                                oldest_session_id = sid
-
-                        if oldest_session_id is None and self.client._active_sessions:
-                            oldest_session_id = min(
-                                self.client._active_sessions.keys(),
-                                key=lambda s: (
-                                    self.client._active_sessions[s].created_at
-                                ),
-                            )
-
-                        if oldest_session_id:
-                            del self.client._active_sessions[oldest_session_id]
-                            logger.debug(
-                                "Removed session %s to stay within active session limit",
-                                oldest_session_id,
-                            )
-
-                    self.client._active_sessions[session_id] = OptimizationSession(
-                        session_id=session_id,
-                        function_name=function_name,
-                        configuration_space=search_space,
-                        objectives=[optimization_goal],
-                        max_trials=max_trials_from_metadata,
-                        status=OptimizationSessionStatus.ACTIVE,
-                        created_at=datetime.now(UTC),
-                        updated_at=datetime.now(UTC),
-                        metadata={
-                            "mode": "session_api",
-                            "experiment_id": experiment_id,
-                            "experiment_run_id": experiment_run_id,
-                            **owning_context,
-                            **(metadata or {}),
-                            # After **(metadata or {}) so the backend's CREATE
-                            # response block always wins over any inbound
-                            # request metadata of the same name (#1683 Bug B).
-                            **(
-                                {
-                                    "warm_start_transfer": dict(
-                                        create_warm_start_transfer
-                                    )
-                                }
-                                if create_warm_start_transfer is not None
-                                else {}
-                            ),
-                        },
-                    )
-
-                logger.debug(
-                    "Created backend tracking: session=%s, experiment=%s, run=%s",
-                    session_id,
-                    experiment_id,
-                    experiment_run_id,
-                )
-
-                # #1279: also mirror the connected session into local_storage
-                # keyed to the backend session_id, so _persist_trial_locally has
-                # a durable local record on connected runs too. Without this the
-                # only record of a completed (paid-for) trial is the breaker-gated
-                # remote submit; if that fails mid-run the trial is lost silently.
-                self._persist_connected_session_locally(
-                    session_id=session_id,
-                    function_name=function_name,
-                    search_space=search_space,
-                    optimization_goal=optimization_goal,
-                    metadata=local_record_metadata,
-                )
-                return SessionCreationResult.connected(
-                    session_id=session_id,
-                    project_id=owning_context.get("project_id"),
-                    tenant_id=owning_context.get("tenant_id"),
-                    agent_id=bound_agent_id,
-                    agent_ref=bound_agent_ref,
-                    content_less=session_content_less,
-                )
-
-            except ValidationException:
-                raise  # User input errors must propagate
-
-            except AuthenticationError as e:
-                await self._reset_client_session("create_session auth_failure")
-                if _must_fail_loud(e):
-                    raise
-                failure_response = _get_session_creation_failure_detail(e)
-                fallback_id = self._create_local_fallback_session(
-                    function_name,
-                    search_space,
-                    optimization_goal,
-                    local_record_metadata,
-                )
-                detail = (
-                    failure_response.one_line_summary()
-                    if failure_response
-                    else str(e)[:200]
-                )
-                return self._auth_fallback_result(
-                    e,
-                    fallback_id,
-                    detail,
-                    failure_response,
-                    function_name,
-                    intends_cloud_egress,
-                )
-
-            except (CloudServiceError, OSError) as e:
-                await self._reset_client_session("create_session fallback")
-                self._raise_if_quota_refusal(e)
-                self._raise_if_closed_refusal(e)
-                if _must_fail_loud(e):
-                    raise
-                # A configured key intended a managed/cloud run, but the backend
-                # was unreachable. We degrade to LOCAL execution for resilience —
-                # but this is a DOWNGRADE (managed search/tracking is lost), so
-                # surface it at WARNING and flag degraded=True on the result so a
-                # caller never mistakes the local run for a managed one.
-                failure_response = _get_session_creation_failure_detail(e)
-                _log_session_create_failure(function_name, e, failure_response)
-                fallback_id = self._create_local_fallback_session(
-                    function_name,
-                    search_space,
-                    optimization_goal,
-                    local_record_metadata,
-                )
-                detail = (
-                    failure_response.one_line_summary()
-                    if failure_response
-                    else str(e).split("\n", 1)[0][:200]
-                )
-                return SessionCreationResult.fallback(
-                    session_id=fallback_id,
-                    reason=SessionCreationFailureReason.SESSION_FAILED,
-                    detail=detail,
-                    failure_response=failure_response,
-                    typed_legacy_session_create_400=bool(
-                        getattr(e, "typed_legacy_session_create_400", False)
-                    ),
-                    degraded=True,
-                )
+        context = {
+            "agent_key": agent_key,
+            "artifact_fingerprints": artifact_fingerprints,
+            "content_identity": content_identity,
+            "content_less": content_less,
+            "cost_limit": cost_limit,
+            "dataset_id": dataset_id,
+            "default_config": default_config,
+            "evaluator_code_digest": evaluator_code_digest,
+            "evaluator_definition_id": evaluator_definition_id,
+            "evaluator_id": evaluator_id,
+            "evaluator_id_source": evaluator_id_source,
+            "fingerprint_meta": fingerprint_meta,
+            "function_name": function_name,
+            "governed": governed,
+            "intends_cloud_egress": intends_cloud_egress,
+            "local_record_metadata": local_record_metadata,
+            "metadata": metadata,
+            "normalized_smart_pruning": normalized_smart_pruning,
+            "objectives": objectives,
+            "optimization_goal": optimization_goal,
+            "optimization_strategy": optimization_strategy,
+            "promotion_policy": promotion_policy,
+            "run_description": run_description,
+            "run_title": run_title,
+            "search_space": search_space,
+            "snapshot_g1_deadline_days": snapshot_g1_deadline_days,
+            "snapshot_g1_required": snapshot_g1_required,
+            "task_type": task_type,
+            "tvl_governance": tvl_governance,
+            "warm_start_from": warm_start_from,
+        }
 
         # Run async method in sync context
         try:
@@ -1022,7 +1212,7 @@ class SessionOperations:
                     try:
                         return new_loop.run_until_complete(
                             _with_loop_local_session(
-                                self.client, _create_session_async()
+                                self.client, _create_session_async(self, context)
                             )
                         )
                     finally:
@@ -1031,75 +1221,33 @@ class SessionOperations:
                 executor = _get_session_executor()
                 future = executor.submit(_run_in_new_loop)
                 return future.result(timeout=60)
-
             except RuntimeError:
                 return asyncio.run(
-                    _with_loop_local_session(self.client, _create_session_async())
+                    _with_loop_local_session(
+                        self.client, _create_session_async(self, context)
+                    )
                 )
 
         except ValidationException:
             raise  # User input errors must propagate
 
         except AuthenticationError as exc:
-            if _must_fail_loud(exc):
-                raise
-            # Issue #1373 "outer create_session swallow": an auth failure that
-            # ESCAPES _create_session_async (e.g. the has_api_key preflight or
-            # the async-runner machinery). A DEFINITIVE rejection on a cloud-
-            # intended run fails loud above. Reaching here is a non-definitive
-            # auth failure OR a LOCAL-routed run — both handled by the shared
-            # helper (cloud-intent: degrade+flag; local: continue untracked).
-            # The two auth sites are mutually exclusive per failure.
-            failure_response = _get_session_creation_failure_detail(exc)
-            fallback_id = self._create_local_fallback_session(
-                function_name, search_space, optimization_goal, local_record_metadata
-            )
-            detail = (
-                failure_response.one_line_summary()
-                if failure_response
-                else str(exc)[:200]
-            )
-            return self._auth_fallback_result(
-                exc,
-                fallback_id,
-                detail,
-                failure_response,
-                function_name,
-                intends_cloud_egress,
-            )
+            _raise_if_must_fail_loud(exc, governed, intends_cloud_egress)
+            return _outer_auth_fallback(self, context, exc)
 
         except (CloudServiceError, OSError) as exc:
             self._raise_if_quota_refusal(exc)
             self._raise_if_closed_refusal(exc)
-            if _must_fail_loud(exc):
+            if _must_fail_loud(exc, governed, intends_cloud_egress):
                 raise
-            # Backend unreachable on the outer path — same downgrade semantics as
-            # the inner sibling: WARN + flag degraded so the local run is never
-            # mistaken for a managed one.
-            failure_response = _get_session_creation_failure_detail(exc)
-            _log_session_create_failure(function_name, exc, failure_response)
-            fallback_id = self._create_local_fallback_session(
-                function_name, search_space, optimization_goal, local_record_metadata
-            )
-            detail = (
-                failure_response.one_line_summary()
-                if failure_response
-                else str(exc).split("\n", 1)[0][:200]
-            )
-            return SessionCreationResult.fallback(
-                session_id=fallback_id,
-                reason=SessionCreationFailureReason.SESSION_FAILED,
-                detail=detail,
-                failure_response=failure_response,
-                degraded=True,
-            )
+            return _outer_cloud_fallback(self, context, exc)
 
         except Exception as exc:
             # Last-resort fallback for unexpected errors (e.g. from
             # session_bridge or event loop machinery).  Ensures SDK
             # never crashes during session creation — except for
             # governed/contract failures, which must stay loud.
-            if _must_fail_loud(exc):
+            if _must_fail_loud(exc, governed, intends_cloud_egress):
                 raise
             # An unexpected error that degrades a managed run to local is still a
             # downgrade — surface at WARNING and flag degraded (was debug-only).

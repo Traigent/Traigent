@@ -183,18 +183,22 @@ def _normalize_json_primitive(value: Any, path: tuple[Any, ...] = ()) -> Any:
     raise SummaryValidationError(_pointer(path)) from None
 
 
+def _validate_timestamp(item: str, item_path: tuple[Any, ...]) -> None:
+    try:
+        parsed = datetime.fromisoformat(item)
+    except ValueError:
+        raise SummaryValidationError(_pointer(item_path)) from None
+    if parsed.tzinfo is not UTC or parsed.utcoffset() is None:
+        raise SummaryValidationError(_pointer(item_path)) from None
+
+
 def _validate_timestamps(payload: dict[str, Any]) -> None:
     def visit(value: Any, path: tuple[Any, ...] = ()) -> None:
         if type(value) is dict:
             for key, item in value.items():
                 item_path = path + (key,)
                 if key in _TIMESTAMP_FIELDS and type(item) is str:
-                    try:
-                        parsed = datetime.fromisoformat(item)
-                    except ValueError:
-                        raise SummaryValidationError(_pointer(item_path)) from None
-                    if parsed.tzinfo is not UTC or parsed.utcoffset() is None:
-                        raise SummaryValidationError(_pointer(item_path)) from None
+                    _validate_timestamp(item, item_path)
                 visit(item, item_path)
         elif type(value) is list:
             for index, item in enumerate(value):
@@ -273,6 +277,48 @@ class CustomerSideMinter:
         )
 
 
+def _check_summary_shape(node: Any, path: tuple[Any, ...] = ()) -> None:
+    node_type = type(node)
+    if node_type is dict:
+        for key, value in node.items():
+            if type(key) is not str:
+                raise SummaryValidationError(_pointer(path + (_UNKNOWN,))) from None
+            _check_summary_shape(value, path + (key,))
+    elif node_type is list:
+        for index, value in enumerate(node):
+            _check_summary_shape(value, path + (index,))
+    elif node_type not in {str, int, float, bool, type(None), OpaqueToken}:
+        raise SummaryValidationError(_pointer(path)) from None
+
+
+def _check_summary_tokens(
+    node: Any,
+    minter: CustomerSideMinter,
+    token_fields: set[str],
+    path: tuple[Any, ...] = (),
+) -> None:
+    if type(node) is dict:
+        for key, value in node.items():
+            if key in token_fields:
+                if not minter.owns(value):
+                    raise SummaryValidationError(_pointer(path + (key,)))
+            else:
+                _check_summary_tokens(value, minter, token_fields, path + (key,))
+    elif type(node) is list:
+        for index, value in enumerate(node):
+            _check_summary_tokens(value, minter, token_fields, path + (index,))
+
+
+def _wire_summary(node: Any) -> Any:
+    if type(node) is OpaqueToken:
+        return node.value
+    if type(node) is dict:
+        return {key: _wire_summary(value) for key, value in node.items()}
+    if type(node) is list:
+        return [_wire_summary(value) for value in node]
+    return node
+
+
 def serialize_summary(
     payload: Mapping[str, Any],
     *,
@@ -298,42 +344,6 @@ def serialize_summary(
             raise ValueError("code location requires verified code facts")
         result.update(serialize_locator(code_fact))
 
-    def check_shape(node: Any, path: tuple[Any, ...] = ()) -> None:
-        node_type = type(node)
-        if node_type is dict:
-            for key, value in node.items():
-                if type(key) is not str:
-                    raise SummaryValidationError(_pointer(path + (_UNKNOWN,))) from None
-                check_shape(value, path + (key,))
-        elif node_type is list:
-            for index, value in enumerate(node):
-                check_shape(value, path + (index,))
-        elif node_type not in {str, int, float, bool, type(None), OpaqueToken}:
-            raise SummaryValidationError(_pointer(path)) from None
-
-    check_shape(result)
-
-    def visit(node: Any, path: tuple[Any, ...] = ()) -> None:
-        if type(node) is dict:
-            for key, value in node.items():
-                if key in token_fields:
-                    if not minter.owns(value):
-                        raise SummaryValidationError(_pointer(path + (key,)))
-                else:
-                    visit(value, path + (key,))
-        elif type(node) is list:
-            for index, value in enumerate(node):
-                visit(value, path + (index,))
-
-    visit(result)
-
-    def wire(node: Any) -> Any:
-        if type(node) is OpaqueToken:
-            return node.value
-        if type(node) is dict:
-            return {key: wire(value) for key, value in node.items()}
-        if type(node) is list:
-            return [wire(value) for value in node]
-        return node
-
-    return validate_summary(_normalize_json_primitive(wire(result)))
+    _check_summary_shape(result)
+    _check_summary_tokens(result, minter, token_fields)
+    return validate_summary(_normalize_json_primitive(_wire_summary(result)))
