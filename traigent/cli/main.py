@@ -233,7 +233,7 @@ def _save_result_announcing_replace(
 
 
 _MAX_ERROR_CHARS = 500
-_CONTROL_CHARS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
 
 
 def _safe_error_text(error: object, limit: int | None = _MAX_ERROR_CHARS) -> str:

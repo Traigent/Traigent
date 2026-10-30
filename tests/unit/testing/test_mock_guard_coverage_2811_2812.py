@@ -8,6 +8,7 @@ any connection is attempted.
 from __future__ import annotations
 
 import logging
+import re
 import socket
 from collections.abc import Iterator
 
@@ -24,6 +25,11 @@ from traigent.utils.mock_transport_guard import (
 
 FAKE_AWS_KEY_ID = "AKIA" + "MOCKMOCKMOCKMOCK"  # pragma: allowlist secret
 FAKE_AWS_SECRET = "mock-secret"  # pragma: allowlist secret
+
+
+def _names_host(text: str, host: str) -> bool:
+    """True when ``host`` appears as a whole hostname token in ``text``."""
+    return host in re.findall(r"[a-z0-9.-]+", text.lower())
 
 
 def _fake_aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,7 +153,7 @@ def test_block_logs_one_warning_per_host_naming_mock_mode_2812(
     blocked = [r for r in caplog.records if "mock mode blocked" in r.getMessage()]
     assert len(blocked) == 2
     text = " ".join(r.getMessage() for r in blocked)
-    assert "api.openai.com" in text and "api.groq.com" in text
+    assert _names_host(text, "api.openai.com") and _names_host(text, "api.groq.com")
     assert "embeddings" in text.lower() and "not mocked" in text
     assert guard.mock_blocked_calls() == {"api.openai.com": 3, "api.groq.com": 1}
 
@@ -165,7 +171,8 @@ def test_vendor_wrapped_connection_error_is_still_explained_2812(
             )
     assert str(excinfo.value) == "Connection error."
     assert any(
-        "mock mode blocked" in r.getMessage() and "api.openai.com" in r.getMessage()
+        "mock mode blocked" in r.getMessage()
+        and _names_host(r.getMessage(), "api.openai.com")
         for r in caplog.records
     )
 
@@ -192,7 +199,7 @@ async def test_all_trials_failed_summary_names_mock_mode_2812() -> None:
     assert "MOCK_TRANSPORT_BLOCKED" in result.warning_codes
     assert "ALL_TRIALS_FAILED" in result.warning_codes
     text = " ".join(result.warnings)
-    assert "Mock mode blocked" in text and "api.openai.com" in text
+    assert "Mock mode blocked" in text and _names_host(text, "api.openai.com")
     assert "not a network outage" in text
 
 
