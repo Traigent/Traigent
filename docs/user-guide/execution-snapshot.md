@@ -74,7 +74,7 @@ requires `boto3>=1.35.2`, the first release whose `PutObject` accepts
 | `S3Store(bucket, prefix)` | `traigent[snapshot-s3]` | `s3://<bucket>/<prefix>` | `If-None-Match: *` |
 | `GCSStore(bucket, prefix)` | `traigent[snapshot-gcs]` | `gs://<bucket>/<prefix>` | `if_generation_match=0` |
 | `AzureBlobStore(container_client, prefix)` or `AzureBlobStore.from_account(account_url, container, credential, prefix)` | `traigent[snapshot-azure]` | `azblob://<account host>/<container>/<prefix>` | `upload_blob(overwrite=False)` |
-| `GitHubStore(repo, branch, prefix)` | none (uses `requests`) | `github://<owner>/<repo>@<branch>/<prefix>` | Contents API `PUT` without `sha` |
+| `GitHubStore(repo, branch, prefix)` | none (uses `requests`) | `github+v2://<owner>/<repo>@<branch>[/<prefix>]` (a `/` in the branch is `%2F`, e.g. `github+v2://acme/agents@feature%2Ffix/snapshots`) | Contents API `PUT` without `sha` |
 
 Every backend refuses to overwrite: if the object already exists with the same
 bytes the write is a no-op, with different bytes it raises `CONFLICT`. Locators
