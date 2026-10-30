@@ -645,7 +645,6 @@ def validate_metric_function_bindability(
         _OUTPUT_METRIC_PARAM_NAMES,
         resolve_metric_call_binding,
     )
-    from traigent.utils.exceptions import ValidationError
 
     synthetic_example = EvaluationExample(input_data={}, expected_output=None)
     usage_probe: dict[str, Any] = {}
@@ -679,63 +678,111 @@ def validate_metric_function_bindability(
                 metric_func, None, synthetic_example, {}, usage_probe, 0
             )
         except (TypeError, ValueError) as exc:
-            message = (
-                f"metric/scoring function '{metric_name}' signature could not "
-                f"be introspected ({type(exc).__name__}: {exc}). Fix its "
-                "signature before running -- this check runs before any LLM "
-                "call."
-            )
-            if is_objective:
-                raise ValidationError(message) from exc
-            logger.warning(
-                "%s Continuing: it is not an optimization objective.", message
-            )
+            _report_unintrospectable_metric(metric_name, exc, is_objective)
             continue
 
         if binding.bind_ok:
             stray = _positional_fill_stray(
                 metric_func, binding, usage_probe, recognized_set
             )
-            if stray is None:
-                continue
-            kind = "an objective metric" if is_objective else "an auxiliary metric"
-            message = (
-                f"metric/scoring function #{ordinal} of {len(effective_metric_functions)} "
-                f"({kind}) has positional parameter {stray} that the runtime "
-                "would fill with the per-example LLM usage dict, not a value you "
-                "control. Give it a default, accept **kwargs, or name parameters "
-                f"from the recognized set: {', '.join(recognized_names)}."
-            )
-            if is_objective:
-                raise ValidationError(message)
-            logger.warning(
-                "%s Continuing: it is not an optimization objective.", message
-            )
+            if stray is not None:
+                _report_usage_stray_metric(
+                    ordinal=ordinal,
+                    total=len(effective_metric_functions),
+                    stray=stray,
+                    is_objective=is_objective,
+                    recognized_names=recognized_names,
+                )
             continue
 
-        # `unmatched_parameters` is every bindable name when nothing bound, so
-        # it includes recognized ones like `output`. Reporting those tells the
-        # user to fix a parameter that is already fine; show only the names the
-        # runtime cannot supply.
-        unbindable = [
-            p for p in binding.unmatched_parameters if p not in recognized_set
-        ]
-        unmatched = ", ".join(unbindable or binding.unmatched_parameters) or "(unknown)"
-        message = (
-            f"metric/scoring function '{metric_name}' has required "
-            f"parameter(s) that cannot be bound: {unmatched}. Accept "
-            "(output, expected) positionally, use **kwargs, or name "
-            f"parameters from the recognized set: {', '.join(recognized_names)}. "
-            "This check runs before any LLM call, so a signature mismatch "
-            "fails fast instead of costing a full run."
+        _report_unbindable_metric(
+            metric_name, binding, recognized_set, recognized_names, is_objective
         )
-        if is_objective:
-            raise ValidationError(message)
-        logger.warning(
-            "%s Continuing: it is not an optimization objective, so it degrades "
-            "to 0.0 with a metric_errors record as it does today.",
-            message,
-        )
+
+
+def _raise_or_warn_metric_issue(
+    message: str,
+    is_objective: bool,
+    warning_tail: str,
+    cause: BaseException | None = None,
+) -> None:
+    """Raise ``ValidationError`` for an objective metric, else log a warning."""
+    from traigent.utils.exceptions import ValidationError
+
+    if is_objective:
+        if cause is not None:
+            raise ValidationError(message) from cause
+        raise ValidationError(message)
+    logger.warning("%s %s", message, warning_tail)
+
+
+def _report_unintrospectable_metric(
+    metric_name: str, exc: BaseException, is_objective: bool
+) -> None:
+    message = (
+        f"metric/scoring function '{metric_name}' signature could not "
+        f"be introspected ({type(exc).__name__}: {exc}). Fix its "
+        "signature before running -- this check runs before any LLM "
+        "call."
+    )
+    _raise_or_warn_metric_issue(
+        message,
+        is_objective,
+        "Continuing: it is not an optimization objective.",
+        cause=exc,
+    )
+
+
+def _report_usage_stray_metric(
+    *,
+    ordinal: int,
+    total: int,
+    stray: int,
+    is_objective: bool,
+    recognized_names: Sequence[str],
+) -> None:
+    kind = "an objective metric" if is_objective else "an auxiliary metric"
+    message = (
+        f"metric/scoring function #{ordinal} of {total} "
+        f"({kind}) has positional parameter {stray} that the runtime "
+        "would fill with the per-example LLM usage dict, not a value you "
+        "control. Give it a default, accept **kwargs, or name parameters "
+        f"from the recognized set: {', '.join(recognized_names)}."
+    )
+    _raise_or_warn_metric_issue(
+        message,
+        is_objective,
+        "Continuing: it is not an optimization objective.",
+    )
+
+
+def _report_unbindable_metric(
+    metric_name: str,
+    binding: Any,
+    recognized_set: set[str],
+    recognized_names: Sequence[str],
+    is_objective: bool,
+) -> None:
+    # `unmatched_parameters` is every bindable name when nothing bound, so
+    # it includes recognized ones like `output`. Reporting those tells the
+    # user to fix a parameter that is already fine; show only the names the
+    # runtime cannot supply.
+    unbindable = [p for p in binding.unmatched_parameters if p not in recognized_set]
+    unmatched = ", ".join(unbindable or binding.unmatched_parameters) or "(unknown)"
+    message = (
+        f"metric/scoring function '{metric_name}' has required "
+        f"parameter(s) that cannot be bound: {unmatched}. Accept "
+        "(output, expected) positionally, use **kwargs, or name "
+        f"parameters from the recognized set: {', '.join(recognized_names)}. "
+        "This check runs before any LLM call, so a signature mismatch "
+        "fails fast instead of costing a full run."
+    )
+    _raise_or_warn_metric_issue(
+        message,
+        is_objective,
+        "Continuing: it is not an optimization objective, so it degrades "
+        "to 0.0 with a metric_errors record as it does today.",
+    )
 
 
 def resolve_effective_workers(
