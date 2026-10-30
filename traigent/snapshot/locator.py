@@ -2,10 +2,15 @@
 
 The closed set of locator forms the backends emit (``repr(store)``):
 ``s3://bucket[/prefix]``, ``gs://bucket[/prefix]``,
-``azblob://host[:port]/container[/prefix]``, ``github://owner/repo@branch[/prefix]``
-and ``file://<path>`` (a plain path is also accepted). A GitHub branch containing
-"/" is written with "/" as ``%2F`` (``github://o/r@feature%2Ffix/prefix``); no other
-percent-escape is accepted in a branch. Credentials are never part of a locator:
+``azblob://host[:port]/container[/prefix]``,
+``github+v2://owner/repo@branch[/prefix]`` and ``file://<path>`` (a plain path is
+also accepted). GitHub grammar: the branch is percent-encoded with no raw "/" (a
+"/" in the branch is ``%2F``; no other escape is accepted), followed by an optional
+"/" and the prefix. The unversioned ``github://owner/repo@branch`` is accepted only
+without a prefix; with a prefix it cannot be told apart from an old locator whose
+branch held a raw "/" (``@feature/fix/snaps``), so it is refused with
+``SNAPSHOT_LOCATOR_AMBIGUOUS_BRANCH`` and the user re-issues it as ``github+v2://``
+with "/" in the branch written ``%2F``. Credentials are never part of a locator:
 userinfo, a query or a fragment is refused for every scheme before any credential
 lookup; each backend finds them through the vendor's standard chain or
 environment (boto3, google-auth ADC, azure-identity, ``GITHUB_TOKEN``).
@@ -19,7 +24,7 @@ from urllib.parse import unquote, urlsplit
 
 __all__ = ["LocatorErrorCode", "SnapshotLocatorError", "open_store_from_locator"]
 
-_SCHEMES = ("s3", "gs", "azblob", "github", "file")
+_SCHEMES = ("s3", "gs", "azblob", "github", "github+v2", "file")
 _EXTRA_HINT = {
     "s3": "pip install 'traigent[snapshot-s3]'",
     "gs": "pip install 'traigent[snapshot-gcs]'",
@@ -32,6 +37,7 @@ class LocatorErrorCode:
     MALFORMED = "SNAPSHOT_LOCATOR_MALFORMED"
     MISSING_EXTRA = "SNAPSHOT_LOCATOR_MISSING_EXTRA"
     CREDENTIALS_IN_LOCATOR = "SNAPSHOT_LOCATOR_CREDENTIALS_NOT_ALLOWED"
+    AMBIGUOUS_BRANCH = "SNAPSHOT_LOCATOR_AMBIGUOUS_BRANCH"
     STORE_UNAVAILABLE = "SNAPSHOT_LOCATOR_STORE_UNAVAILABLE"
 
 
@@ -53,9 +59,9 @@ def _refuse_credential_syntax(scheme: str, rest: str, has_scheme: bool) -> None:
     """Locators are credential-free: no userinfo, query or fragment, any scheme."""
     if "?" in rest or "#" in rest:
         raise SnapshotLocatorError(LocatorErrorCode.CREDENTIALS_IN_LOCATOR) from None
-    if has_scheme and scheme != "github" and "@" in rest.partition("/")[0]:
+    if has_scheme and not scheme.startswith("github") and "@" in rest.partition("/")[0]:
         raise SnapshotLocatorError(LocatorErrorCode.CREDENTIALS_IN_LOCATOR) from None
-    if scheme == "github" and ":" in rest.partition("/")[0]:
+    if scheme.startswith("github") and ":" in rest.partition("/")[0]:
         raise SnapshotLocatorError(LocatorErrorCode.CREDENTIALS_IN_LOCATOR) from None
 
 
@@ -113,8 +119,13 @@ def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False)
                 prefix,
                 allow_insecure_local=allow_insecure_local,
             )
-        # github://owner/repo@branch[/prefix]
+        # github+v2://owner/repo@branch[/prefix]; github://owner/repo@branch only
         owner_repo_branch, prefix = _split_path_github(rest)
+        if scheme == "github" and prefix:
+            raise SnapshotLocatorError(
+                LocatorErrorCode.AMBIGUOUS_BRANCH,
+                "use github+v2:// and write '/' in the branch as %2F",
+            ) from None
         repo, _, branch = owner_repo_branch.rpartition("@")
         branch = branch.replace("%2F", "/").replace("%2f", "/")
         if not repo or not branch or "%" in branch:

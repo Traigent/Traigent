@@ -62,9 +62,9 @@ def test_azure(recorders: None) -> None:
 
 
 def test_github() -> None:
-    store = open_store_from_locator("github://owner/repo@main/snaps")
+    store = open_store_from_locator("github+v2://owner/repo@main/snaps")
     assert isinstance(store, GitHubStore)
-    assert store.locator() == "github://owner/repo@main/snaps"
+    assert store.locator() == "github+v2://owner/repo@main/snaps"
 
 
 def test_local_path_and_file_scheme(tmp_path: Path) -> None:
@@ -148,15 +148,32 @@ def test_github_emitter_factory_round_trip(branch: str, prefix: str) -> None:
     assert reopened._branch == branch and reopened._prefix == prefix
 
 
-def test_github_unencoded_slash_means_prefix() -> None:
-    store = open_store_from_locator("github://owner/repo@feature/fix/snaps")
-    assert store._branch == "feature" and store._prefix == "fix/snaps"
+@pytest.mark.parametrize(
+    "legacy",
+    ["github://owner/repo@feature/fix/snaps", "github://owner/repo@main/snaps"],
+)
+def test_github_unversioned_prefixed_locator_refused(legacy: str) -> None:
+    with pytest.raises(SnapshotLocatorError) as info:
+        open_store_from_locator(legacy)
+    assert info.value.code == LocatorErrorCode.AMBIGUOUS_BRANCH
+    assert "fix" not in str(info.value) and "snaps" not in str(info.value)
+    assert "%2F" in str(info.value)
+
+
+def test_github_unversioned_without_prefix_accepted() -> None:
+    store = open_store_from_locator("github://owner/repo@main")
+    assert store._branch == "main" and store._prefix == ""
+
+
+def test_github_v2_raw_slash_is_branch_then_prefix() -> None:
+    store = open_store_from_locator("github+v2://owner/repo@feature%2Ffix/snaps")
+    assert store._branch == "feature/fix" and store._prefix == "snaps"
 
 
 @pytest.mark.parametrize("bad", ["main%2e", "ma%41in", "a%252Fb", "main%"])
 def test_github_other_percent_escapes_refused(bad: str) -> None:
     with pytest.raises(SnapshotLocatorError) as info:
-        open_store_from_locator(f"github://owner/repo@{bad}/p")
+        open_store_from_locator(f"github+v2://owner/repo@{bad}/p")
     assert info.value.code == LocatorErrorCode.MALFORMED
 
 
@@ -221,3 +238,17 @@ def test_file_locator_traversal_and_symlink_contained(tmp_path: Path) -> None:
             store.read(key)
         assert "leak" not in str(info.value)
     assert store.read("missing") is None
+
+
+def test_azure_extra_provides_default_credential() -> None:
+    """The advertised snapshot-azure extra carries what the factory imports."""
+    pytest.importorskip("azure.identity")
+    real = locator_module._azure_credential()
+    assert type(real).__name__ == "DefaultAzureCredential"
+    import tomllib
+
+    root = Path(__file__).resolve().parents[3]
+    extras = tomllib.loads((root / "pyproject.toml").read_text())["project"][
+        "optional-dependencies"
+    ]["snapshot-azure"]
+    assert any(e.startswith("azure-identity") for e in extras)

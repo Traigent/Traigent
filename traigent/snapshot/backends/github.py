@@ -71,7 +71,7 @@ class _WaitBudget:
 
 
 class GitHubStore:
-    """Snapshot objects under ``github://<owner>/<repo>@<branch>/<prefix>``.
+    """Snapshot objects under ``github+v2://<owner>/<repo>@<branch>/<prefix>``.
 
     The branch must already exist (an empty repository or missing branch is
     ``NOT_FOUND``). The repository must be private unless ``allow_public=True``
@@ -153,7 +153,7 @@ class GitHubStore:
 
     def locator(self) -> str:
         # "/" inside a branch is %2F so the locator parses unambiguously.
-        base = f"github://{self._repo}@{self._branch.replace('/', '%2F')}"
+        base = f"github+v2://{self._repo}@{self._branch.replace('/', '%2F')}"
         return f"{base}/{self._prefix}" if self._prefix else base
 
     def _path(self, key: str) -> str:

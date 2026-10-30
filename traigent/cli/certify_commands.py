@@ -1326,7 +1326,7 @@ def enroll_command(key_path: Path, pins_path: Path | None) -> None:
     default=None,
     help=(
         "Snapshot store locator: s3://bucket[/prefix], gs://bucket[/prefix], "
-        "azblob://host/container[/prefix], github://owner/repo@branch[/prefix] "
+        "azblob://host/container[/prefix], github+v2://owner/repo@branch[/prefix] "
         "or a local path. Credentials come from the vendor's standard "
         "environment, never from this command. Use exactly one of --store or "
         "--store-dir."

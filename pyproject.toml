@@ -288,6 +288,7 @@ snapshot-gcs = [
 # Execution-snapshot store on Azure Blob Storage (traigent.snapshot.backends.AzureBlobStore).
 snapshot-azure = [
     "azure-storage-blob>=12.20.0",
+    "azure-identity>=1.16.0",  # DefaultAzureCredential: azblob:// locators authenticate through it
 ]
 
 # Recommended bundle for end users — everything needed to run optimizations
