@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from traigent.api.types import ExampleResult, TrialResult, TrialStatus
+from traigent.utils.trial_costs import COST_FLOOR_WIRE_KEY
 from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
 )
@@ -167,9 +168,8 @@ async def test_budget_submission_does_not_backfill_zero_for_uncaptured_wrapper_r
     ensure_cost_metric_for_budgeted_completed_submission(
         client=client, session_id="s1", metrics=metrics, status="COMPLETED"
     )
-    assert (
-        metrics["cost"] == 0.0 and metrics["cost_unmeasured"] == 1.0
-    )  # lower bound + flag
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
+    assert metrics[COST_FLOOR_WIRE_KEY] == 0.0 and metrics["cost_unmeasured"] == 1.0
 
     manager = BackendSessionManager.__new__(BackendSessionManager)
     manager._session_cost_budget_armed = {"s1"}
@@ -186,9 +186,8 @@ async def test_budget_submission_does_not_backfill_zero_for_uncaptured_wrapper_r
     manager._ensure_budget_cost_metric(
         session_id="s1", trial_result=trial, metrics_payload=payload, metadata={}
     )
-    assert (
-        payload["cost"] == 0.0 and payload["cost_unmeasured"] == 1.0
-    )  # lower bound + flag
+    assert payload["cost"] == payload[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
+    assert payload[COST_FLOOR_WIRE_KEY] == 0.0 and payload["cost_unmeasured"] == 1.0
 
 
 def test_orchestrator_cost_extraction_ignores_floor_and_flagged_trials() -> None:

@@ -10,7 +10,7 @@ import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from threading import RLock
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 
@@ -78,7 +78,7 @@ class RandomSamplerPlan:
         )
 
 
-class RandomSampler(Generic[T]):
+class RandomSampler[T]:
     """Sample elements uniformly at random until a limit is reached.
 
     Notes
@@ -267,11 +267,12 @@ class RandomSampler(Generic[T]):
                     fingerprint=fingerprint,
                 )
 
-            pool = (
-                list(self._initial_index_pool)
-                if from_start and self._initial_index_pool is not None
-                else (list(self._index_pool) if self._index_pool is not None else None)
-            )
+            if from_start and self._initial_index_pool is not None:
+                pool = list(self._initial_index_pool)
+            elif self._index_pool is not None:
+                pool = list(self._index_pool)
+            else:
+                pool = None
             samples_drawn = 0 if from_start else self._samples_drawn
             rng_state = self._initial_rng_state if from_start else self._rng.getstate()
             remaining = self._remaining_capacity(pool, samples_drawn)
@@ -428,27 +429,26 @@ class RandomSampler(Generic[T]):
                 raise ValueError("Plan contains duplicate indices while replace=False.")
 
         if strict:
-            if plan.population_size != self._population_size:
-                raise ValueError(
-                    "Plan population size does not match sampler population."
-                )
-            if (
-                plan.sample_limit is not None
-                and self._sample_limit is not None
-                and plan.sample_limit > self._sample_limit
-            ):
-                raise ValueError(
-                    "Plan sample_limit exceeds sampler sample_limit configuration."
-                )
-            if plan.fingerprint:
-                fingerprint = self._ensure_fingerprint()
-                if fingerprint != plan.fingerprint:
-                    raise ValueError(
-                        "Plan fingerprint does not match sampler population."
-                    )
+            RandomSampler._validate_strict_plan(self, plan)
 
         for idx in plan.indices:
             if not 0 <= idx < self._population_size:
                 raise ValueError(
                     f"Plan index {idx} out of range for population size {self._population_size}"
                 )
+
+    def _validate_strict_plan(self, plan: RandomSamplerPlan) -> None:
+        if plan.population_size != self._population_size:
+            raise ValueError("Plan population size does not match sampler population.")
+        if (
+            plan.sample_limit is not None
+            and self._sample_limit is not None
+            and plan.sample_limit > self._sample_limit
+        ):
+            raise ValueError(
+                "Plan sample_limit exceeds sampler sample_limit configuration."
+            )
+        if plan.fingerprint:
+            fingerprint = self._ensure_fingerprint()
+            if fingerprint != plan.fingerprint:
+                raise ValueError("Plan fingerprint does not match sampler population.")

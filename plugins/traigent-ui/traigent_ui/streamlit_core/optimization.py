@@ -8,9 +8,9 @@ the main run_optimization function and related utilities.
 
 import asyncio
 import os
-from datetime import datetime, timezone
-from typing import Any
 from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 import streamlit as st
 
@@ -103,7 +103,7 @@ async def run_optimization(
             )
 
         # Real Traigent optimization
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
 
         if progress_callback:
             progress_callback(0.1, f"REAL MODE: Loading problem '{problem_name}'...")
@@ -284,7 +284,7 @@ async def run_optimization(
                     ),
                     timeout=90.0,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Fallback to simulation to keep the UI responsive.
                 if progress_callback:
                     progress_callback(
@@ -370,7 +370,7 @@ async def run_optimization(
             progress_callback(1.0, "Optimization complete!")
 
         # Extract results and format for UI
-        duration = (datetime.now(timezone.utc) - start_time).total_seconds() / 60.0
+        duration = (datetime.now(UTC) - start_time).total_seconds() / 60.0
 
         # Extract best trial information for UI display
         best_config = (
@@ -582,7 +582,7 @@ async def _run_simulation(
         "success": True,
         "problem": problem_name,
         "strategy": strategy,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "duration_minutes": 2.0,  # Mock duration
         "configurations_tested": configurations_tested,
         "performance": {

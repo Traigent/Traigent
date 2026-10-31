@@ -15,10 +15,18 @@ from collections.abc import Callable
 from typing import Any, cast
 from urllib.parse import urlparse
 
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import (
+    BackendConfig,
+    EndpointNotConfiguredError,
+)
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+_SELF = "'self'"
+_SELF_DATA_HTTPS = "'self' data: https:"
+_NONE = "'none'"
 
 
 class SecurityHeadersMiddleware:
@@ -48,17 +56,17 @@ class SecurityHeadersMiddleware:
 
         # Default CSP directives (restrictive)
         self.csp_directives = csp_directives or {
-            "default-src": "'self'",
-            "script-src": "'self'",
-            "style-src": "'self'",
-            "img-src": "'self' data: https:",
+            "default-src": _SELF,
+            "script-src": _SELF,
+            "style-src": _SELF,
+            "img-src": _SELF_DATA_HTTPS,
             "font-src": "'self' data:",
-            "connect-src": "'self'",
-            "media-src": "'self'",
-            "object-src": "'none'",
-            "frame-ancestors": "'none'",
-            "base-uri": "'self'",
-            "form-action": "'self'",
+            "connect-src": _SELF,
+            "media-src": _SELF,
+            "object-src": _NONE,
+            "frame-ancestors": _NONE,
+            "base-uri": _SELF,
+            "form-action": _SELF,
             "upgrade-insecure-requests": "",
         }
 
@@ -268,7 +276,11 @@ def create_fastapi_security_headers(app: Any) -> None:
 def _default_backend_origin() -> str:
     """Return the origin for the configured Traigent backend."""
 
-    backend_url = BackendConfig.get_backend_url().rstrip("/")
+    try:
+        backend_url = BackendConfig.get_backend_url().rstrip("/")
+    except EndpointNotConfiguredError:
+        # Strict-endpoint mode with no endpoint: allow no backend origin.
+        return ""
     parsed = urlparse(backend_url)
     if parsed.scheme and parsed.netloc:
         return f"{parsed.scheme}://{parsed.netloc}"
@@ -278,36 +290,36 @@ def _default_backend_origin() -> str:
 # Example configurations for common scenarios
 
 STRICT_CSP = {
-    "default-src": "'none'",
-    "script-src": "'self'",
-    "style-src": "'self'",
-    "img-src": "'self'",
-    "font-src": "'self'",
-    "connect-src": "'self'",
-    "media-src": "'none'",
-    "object-src": "'none'",
-    "frame-ancestors": "'none'",
-    "base-uri": "'self'",
-    "form-action": "'self'",
+    "default-src": _NONE,
+    "script-src": _SELF,
+    "style-src": _SELF,
+    "img-src": _SELF,
+    "font-src": _SELF,
+    "connect-src": _SELF,
+    "media-src": _NONE,
+    "object-src": _NONE,
+    "frame-ancestors": _NONE,
+    "base-uri": _SELF,
+    "form-action": _SELF,
     "upgrade-insecure-requests": "",
 }
 
 API_CSP = {
-    "default-src": "'none'",
-    "frame-ancestors": "'none'",
-    "base-uri": "'self'",
+    "default-src": _NONE,
+    "frame-ancestors": _NONE,
+    "base-uri": _SELF,
 }
 
 RELAXED_CSP = {
-    "default-src": "'self'",
+    "default-src": _SELF,
     "script-src": "'self' 'unsafe-inline' https://cdn.jsdelivr.net",
     "style-src": "'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-    "img-src": "'self' data: https:",
-    "font-src": "'self' data: https:",
+    "img-src": _SELF_DATA_HTTPS,
+    "font-src": _SELF_DATA_HTTPS,
     "connect-src": f"'self' {_default_backend_origin()}",
-    "media-src": "'self'",
-    "object-src": "'none'",
-    "frame-ancestors": "'self'",
-    "base-uri": "'self'",
-    "form-action": "'self'",
+    "media-src": _SELF,
+    "object-src": _NONE,
+    "frame-ancestors": _SELF,
+    "base-uri": _SELF,
+    "form-action": _SELF,
 }

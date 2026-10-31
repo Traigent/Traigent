@@ -694,7 +694,7 @@ class RegressionDetector:
         is_regression = self._is_significant_regression(metric_name, change_ratio)
 
         if is_regression:
-            severity = self._calculate_regression_severity(metric_name, change_ratio)
+            severity = self._calculate_regression_severity(change_ratio)
 
             return AnomalyEvent(
                 anomaly_id=f"metric_regression_{metric_name}_{int(_utc_now().timestamp())}",
@@ -751,9 +751,7 @@ class RegressionDetector:
             # Unknown metric - consider both directions
             return abs(change_ratio) > self.sensitivity
 
-    def _calculate_regression_severity(
-        self, metric_name: str, change_ratio: float
-    ) -> AlertSeverity:
+    def _calculate_regression_severity(self, change_ratio: float) -> AlertSeverity:
         """Calculate severity of regression."""
 
         abs_change = abs(change_ratio)
@@ -875,7 +873,7 @@ class AlertManager:
             try:
                 callback(anomaly)
             except Exception as e:
-                logger.error(f"Notification callback failed: {e}")
+                logger.exception(f"Notification callback failed: {e}")
 
         logger.info(
             f"Alert processed: {anomaly.anomaly_type.value} for {anomaly.metric_name}"

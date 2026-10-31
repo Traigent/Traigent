@@ -13,7 +13,7 @@ import asyncio
 import os
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from traigent.api.types import TrialResult
 from traigent.api.types import TrialStatus as SDKTrialStatus
@@ -25,9 +25,9 @@ from traigent.utils.logging import get_logger
 if TYPE_CHECKING:
     from traigent.cloud.models import TrialStatus
 
-    TrialStatusLike: TypeAlias = SDKTrialStatus | TrialStatus
+    type TrialStatusLike = SDKTrialStatus | TrialStatus
 else:
-    TrialStatusLike: TypeAlias = Any
+    type TrialStatusLike = Any
 
 # Cloud models - required at runtime for this optimizer
 try:
@@ -203,6 +203,7 @@ class InteractiveOptimizer(BaseOptimizer):
         *,
         dataset: Any = None,
         dataset_id: str | None = None,
+        evaluator_code_digest: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize interactive optimizer.
@@ -266,6 +267,7 @@ class InteractiveOptimizer(BaseOptimizer):
         self.fingerprint_meta = fingerprint_meta
         self.dataset_id = dataset_id
         self.evaluator_definition_id = evaluator_definition_id
+        self.evaluator_code_digest = evaluator_code_digest
         self.task_type = task_type
         self.optimizer_ready_timeout = _resolve_optimizer_ready_timeout(
             optimizer_ready_timeout
@@ -316,6 +318,7 @@ class InteractiveOptimizer(BaseOptimizer):
                 fingerprint_meta=self.fingerprint_meta,
                 dataset_id=self.dataset_id,
                 evaluator_definition_id=self.evaluator_definition_id,
+                evaluator_code_digest=self.evaluator_code_digest,
                 task_type=self.task_type,
             )
 
@@ -353,12 +356,12 @@ class InteractiveOptimizer(BaseOptimizer):
 
             if isinstance(e, SessionQuotaRefusedError):
                 # Typed, content-free refusal: status + closed code only (#2550).
-                logger.error(
+                logger.exception(
                     "Failed to initialize session: plan quota refused "
                     f"(status={e.status_code}, error_code={e.error_code})"
                 )
                 raise
-            logger.error(f"Failed to initialize session: {e}")
+            logger.exception(f"Failed to initialize session: {e}")
             raise OptimizationError(f"Session initialization failed: {e}") from None
 
     async def get_next_suggestion(
@@ -396,7 +399,7 @@ class InteractiveOptimizer(BaseOptimizer):
                 self.remote_service.get_next_trial(request),
             )
         except Exception as e:
-            logger.error(f"Failed to get next suggestion: {e}")
+            logger.exception(f"Failed to get next suggestion: {e}")
             raise OptimizationError(f"Failed to get suggestion: {e}") from e
 
         # Update local session status
@@ -541,7 +544,7 @@ class InteractiveOptimizer(BaseOptimizer):
             )
 
         except Exception as e:
-            logger.error(f"Failed to report results: {e}")
+            logger.exception(f"Failed to report results: {e}")
             raise OptimizationError(f"Failed to report results: {e}") from None
 
     async def get_optimization_status(self) -> dict[str, Any]:
@@ -620,7 +623,7 @@ class InteractiveOptimizer(BaseOptimizer):
             return response
 
         except Exception as e:
-            logger.error(f"Failed to finalize session: {e}")
+            logger.exception(f"Failed to finalize session: {e}")
             raise OptimizationError(f"Failed to finalize: {e}") from None
 
     # BaseOptimizer interface methods (for compatibility)

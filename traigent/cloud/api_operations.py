@@ -6,10 +6,8 @@ including session creation, status updates, and configuration run management.
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
-import base64
-import binascii
-import re
 import time
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
@@ -35,6 +33,7 @@ from traigent.cloud.models import (
     TrialResultSubmission,
     session_content_identity_to_wire,
     session_dataset_identity_to_wire,
+    session_g1_required_to_wire,
     session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
@@ -45,7 +44,11 @@ from traigent.cloud.smart_pruning import (
     normalize_intermediate_report_payload,
     normalize_smart_pruning_options,
 )
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import (
+    BackendConfig,
+    EndpointNotConfiguredError,
+    endpoint_missing_message,
+)
 from traigent.config.types import _warn_deprecated_once
 from traigent.core.session_types import (
     SessionCreationFailureDetail,
@@ -53,7 +56,7 @@ from traigent.core.session_types import (
     safe_http_error_summary,
 )
 from traigent.labels.transport_gate import gate_session
-from traigent.security.redaction import redact_embedded_credentials
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
@@ -62,6 +65,7 @@ from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import validate_numeric_metric
+from traigent.utils.wire_text import filter_wire_metadata
 
 # Optional aiohttp dependency handling
 try:
@@ -284,142 +288,30 @@ def _typed_configuration_space(space: Any) -> Any:
         return space
     normalized: dict[str, Any] = {}
     for name, entry in space.items():
-        if isinstance(entry, (list, tuple)):
-            normalized[name] = {"type": "categorical", "choices": list(entry)}
-        elif isinstance(entry, dict):
-            if "type" not in entry and ("low" in entry or "high" in entry):
-                low, high = entry.get("low"), entry.get("high")
-                inferred = (
-                    "int"
-                    if isinstance(low, int)
-                    and not isinstance(low, bool)
-                    and isinstance(high, int)
-                    and not isinstance(high, bool)
-                    else "float"
-                )
-                normalized[name] = {**entry, "type": inferred}
-            else:
-                normalized[name] = entry
-        elif isinstance(entry, (bool, int, float, str)):
-            # scalar/fixed value -> single-choice categorical (must be wrapped,
-            # not passed raw to the backend, or cloud session-create 400s)
-            normalized[name] = {"type": "categorical", "choices": [entry]}
-        else:
-            normalized[name] = entry
+        normalized[name] = _typed_configuration_entry(entry)
     return normalized
 
 
-# Upper bound on the text the scrubbers ever see. Error text is truncated to
-# 1000 chars on output anyway; bounding the input keeps every pattern below
-# cheap on hostile or runaway messages.
-_MAX_SCRUB_INPUT_CHARS = 4096
-
-_SECRET_WORDS = (
-    r"(?:password|passwd|passphrase|pwd|pw|secret|token|credentials?|"
-    r"api[_-]?key|access[_-]?key|private[_-]?key)"
-)
-# ``api_key_value=...`` is still a secret; ``max_tokens=100`` is not.
-_KEY_SUFFIX = r"(?:[_-](?:value|val|str|string|hash|key|text|data|id))?"
-# Quoted values may contain escaped quotes and may be unterminated (the text
-# can be cut mid-value); both forms are consumed to the end.
-_QUOTED_VALUE = r"\"(?:\\[\s\S]?|[^\"\\])*(?:\"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)"
-# Key (optionally prefixed, e.g. ``db_password``) followed by ``=`` or ``:``.
-# The lookbehind makes a match start only at the beginning of a name, so the
-# greedy prefix is not retried from every offset (no quadratic backtracking).
-_SECRET_KV_RE = re.compile(
-    rf"(?P<key>(?<![\w.-])[\w.-]*{_SECRET_WORDS}{_KEY_SUFFIX}[\"']?\s*[=:]\s*)"
-    rf"(?:{_QUOTED_VALUE}|\S+)",
-    re.IGNORECASE,
-)
-# A quoted value (JSON/dict style) is consumed to its closing quote; an unquoted
-# header consumes the rest of the line so multi-part schemes (``Digest a="b",
-# c="d"``, ``Negotiate <token>``) never leave a parameter behind.
-_AUTH_HEADER_RE = re.compile(
-    r"(?P<key>\bAuthorization[\"']?\s*[=:]\s*)"
-    r"(?:\"(?:\\[\s\S]?|[^\"\\])*(?:\"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^\r\n]+)",
-    re.IGNORECASE,
-)
-_COOKIE_HEADER_RE = re.compile(
-    r"(?P<key>\b(?:Set-)?Cookie[\"']?\s*:\s*[\"']?)[^\r\n]+", re.IGNORECASE
-)
-_BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{4,}", re.IGNORECASE)
-# Whole userinfo (``user:pass@`` or ``token@``): the user name can be a secret too.
-# Standalone ``Basic <base64>`` (needs a capital/digit/symbol so lowercase prose
-# such as "Basic authentication" is untouched).
-_BASIC_RE = re.compile(
-    r"\bBasic\s+(?=[A-Za-z0-9+/]*(?-i:[A-Z0-9+/=]))[A-Za-z0-9+/]{8,}={0,2}",
-    re.IGNORECASE,
-)
-# Case-insensitive companion: a lowercase-only credential (``basic ajppajppajpp``)
-# has no capital/digit/symbol, so it is redacted only when the token is valid
-# base64 that decodes to ``user:pass`` (contains ``:``). Prose such as
-# "basic usage of the API" does not decode to a colon-bearing string and stays.
-_BASIC_B64_RE = re.compile(r"\bBasic\s+(?P<tok>[A-Za-z0-9+/]{8,}={0,2})", re.IGNORECASE)
-
-
-def _basic_b64_replace(match: "re.Match[str]") -> str:
-    token = match.group("tok")
-    stripped = token.rstrip("=")
-    # Try the token as written (padded), then trimmed to a whole number of
-    # 4-char groups: a token cut by the input cap has an invalid length.
-    for candidate in (
-        stripped + "=" * (-len(stripped) % 4),
-        stripped[: len(stripped) // 4 * 4],
-    ):
-        try:
-            decoded = base64.b64decode(candidate, validate=True)
-        except (binascii.Error, ValueError):  # silent-ok: not base64, try next
-            continue
-        if b":" in decoded:
-            return "Basic [REDACTED]"
-    return match.group(0)
-
-
-# A ``Basic <token>`` that runs to the very end of input cut by the cap is a
-# truncated credential whatever it decodes to or how few characters survive
-# (a bare trailing ``Basic `` is redacted too).
-_BASIC_CUT_TAIL_RE = re.compile(r"\bBasic\s+[A-Za-z0-9+/]*={0,2}\Z", re.IGNORECASE)
-_URL_USERINFO_RE = re.compile(r"(?<=://)[^/\s@?#]+(?=@)")
-_URL_CUT_AUTHORITY_RE = re.compile(r"(?<=://)[^/\s@?#]+\Z")
-# Windows forbids these characters in a file name; a user name may hold up to
-# two spaces ("John Smith") when a path separator follows.
-_WIN_NAME = r"[^\s\\/\"':*?<>|]+"
-_WINDOWS_USER_PATH_RE = re.compile(
-    r"\b[A-Za-z]:[\\/]+Users[\\/]+"
-    rf"(?:{_WIN_NAME}(?: {_WIN_NAME})*(?=[\\/])|{_WIN_NAME})"
-    r"(?:[\\/]+[^\s\"']*)?",
-    re.IGNORECASE,
-)
-
-
-def _scrub_error_text(text: str) -> str:
-    """Mask credentials and user-identifying paths in error text.
-
-    Default-deny for credential-shaped key/value pairs, ``Authorization`` /
-    ``Bearer`` / ``Cookie`` values and URL userinfo; credential shapes from the
-    shared redaction helper (AWS, GitHub, JWT, PEM, ...) are masked too. PII
-    heuristics (SSN/card/email) are deliberately not applied: they would eat
-    numeric error codes and ids.
-    """
-    truncated = len(text) > _MAX_SCRUB_INPUT_CHARS
-    text = text[:_MAX_SCRUB_INPUT_CHARS]
-    text = _URL_USERINFO_RE.sub("[REDACTED]", text)
-    if truncated:
-        # The cap may have cut through ``scheme://user:pass@host``; the ``@``
-        # is gone, so redact an unterminated authority at the very end.
-        text = _URL_CUT_AUTHORITY_RE.sub("[REDACTED]", text)
-    text = _AUTH_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
-    text = _COOKIE_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
-    text = _BASIC_RE.sub("Basic [REDACTED]", text)
-    text = _BASIC_B64_RE.sub(_basic_b64_replace, text)
-    if truncated:
-        text = _BASIC_CUT_TAIL_RE.sub("Basic [REDACTED]", text)
-    text = _BEARER_RE.sub("Bearer [REDACTED]", text)
-    text = _SECRET_KV_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
-    text = redact_embedded_credentials(text)
-    text = _WINDOWS_USER_PATH_RE.sub("[PATH]", text)
-    text = re.sub(r"/home/[\w/.@+-]+", "[PATH]", text)
-    return re.sub(r"/Users/[\w/.@+-]+", "[PATH]", text)
+def _typed_configuration_entry(entry: Any) -> Any:
+    if isinstance(entry, (list, tuple)):
+        return {"type": "categorical", "choices": list(entry)}
+    if isinstance(entry, dict):
+        if "type" not in entry and ("low" in entry or "high" in entry):
+            low, high = entry.get("low"), entry.get("high")
+            inferred = (
+                "int"
+                if isinstance(low, int)
+                and not isinstance(low, bool)
+                and isinstance(high, int)
+                and not isinstance(high, bool)
+                else "float"
+            )
+            return {**entry, "type": inferred}
+        return entry
+    if isinstance(entry, (bool, int, float, str)):
+        # Scalar/fixed values use a single-choice categorical on the wire.
+        return {"type": "categorical", "choices": [entry]}
+    return entry
 
 
 class ApiOperations:
@@ -538,25 +430,22 @@ class ApiOperations:
         return map_status_to_wire(status, endpoint=endpoint)
 
     def sanitize_error_message(self, error_message: str | None) -> str | None:
-        """Sanitize error message for transmission.
+        """Reduce an error message to a closed code for transmission.
 
         Args:
-            error_message: Raw error message
+            error_message: Raw error message (never transmitted)
 
         Returns:
-            Sanitized error message or None
+            A member of ``WIRE_ERROR_CODES`` or None
         """
         if not error_message:
             return None
 
-        sanitized = _scrub_error_text(error_message)
+        # Closed code only (#2241): the text may quote a prompt or a model
+        # reply, and scrubbing is best effort, so none of it is sent.
+        from traigent.utils.wire_text import error_code_for_wire
 
-        # Truncate if too long
-        max_length = 1000
-        if len(sanitized) > max_length:
-            sanitized = sanitized[:max_length] + "... [truncated]"
-
-        return sanitized
+        return error_code_for_wire(error_message)
 
     async def create_traigent_session_via_api(
         self, session_request: SessionCreationRequest
@@ -591,12 +480,16 @@ class ApiOperations:
 
         try:
             max_trials_value = self._resolve_max_trials(session_request)
-            session_payload = self._build_session_payload(
-                session_request, max_trials_value
-            )
             connector = self._build_connector()
+            # Resolve the outgoing headers once. The cache scope is derived from
+            # exactly these headers, and the request is sent with them.
             headers = await self.client.auth_manager.augment_headers(
                 {"Content-Type": _JSON_CONTENT_TYPE}
+            )
+            session_payload = self._build_session_payload(
+                session_request,
+                max_trials_value,
+                principal=self._principal_for_headers(headers),
             )
             try:
                 result = await self._post_session_creation(
@@ -608,53 +501,15 @@ class ApiOperations:
                 await self._send_content_less_labels(session_request, result)
                 return result
             except CloudServiceError as typed_exc:
-                # auto-contract fallback: a failed TYPED create may retry the
-                # legacy shape ONCE — and only for NON-governed sessions
-                # (governed sessions must fail loudly; the legacy contract
-                # cannot carry strict mode and silently degrading would
-                # launder it — RFC 0001 P7).
-                if (
-                    self._session_contract() != "auto"
-                    or self._is_governed_request(session_request)
-                    or "capabilities" in session_payload
-                ):
-                    # A content-less create never falls back to the legacy shape.
-                    raise
-                # A quota/limit refusal is a definitive answer from a reachable
-                # backend: the legacy contract would be refused the same way, so
-                # do not retry it (#2550).
-                typed_failure = getattr(typed_exc, "session_creation_failure", None)
-                if getattr(typed_failure, "is_quota_refusal", False):
-                    raise
-                logger.warning(
-                    "Typed session create failed; retrying once with the "
-                    "legacy contract (non-governed session, "
-                    "TRAIGENT_SESSION_CONTRACT=auto)"
-                )
-                _warn_deprecated_once(
-                    "session_contract:auto_legacy_retry",
-                    "Auto retry from typed session contract to legacy session "
-                    f"contract is deprecated. {_LEGACY_SESSION_CONTRACT_DEPRECATION}",
-                    stacklevel=3,
-                )
-                legacy_payload = self._build_legacy_session_payload(
+                return await ApiOperations._retry_legacy_session_creation(
+                    self,
                     session_request,
+                    session_payload,
                     max_trials_value,
+                    headers,
+                    connector,
+                    typed_exc,
                 )
-                try:
-                    return await self._post_session_creation(
-                        legacy_payload, headers, connector
-                    )
-                except CloudServiceError as legacy_exc:
-                    typed_detail = getattr(typed_exc, "session_creation_failure", None)
-                    legacy_detail = getattr(
-                        legacy_exc, "session_creation_failure", None
-                    )
-                    typed_status = getattr(typed_detail, "status_code", None)
-                    legacy_status = getattr(legacy_detail, "status_code", None)
-                    if typed_status == 400 and legacy_status == 400:
-                        cast(Any, legacy_exc).typed_legacy_session_create_400 = True
-                    raise
         except SessionContractError:
             # Review round 3: contract failures must reach the caller AS
             # THEMSELVES — the generic wrap below would demote them to a
@@ -677,6 +532,8 @@ class ApiOperations:
             # caller can tell it from a connectivity failure (#2550).
             if getattr(
                 getattr(e, "session_creation_failure", None), "is_quota_refusal", False
+            ) or getattr(
+                getattr(e, "session_creation_failure", None), "is_closed_refusal", False
             ):
                 raise
             self._handle_generic_session_exception(e)
@@ -687,6 +544,61 @@ class ApiOperations:
         except Exception as e:
             self._handle_generic_session_exception(e)
         raise CloudServiceError("Unexpected session creation failure")
+
+    async def _retry_legacy_session_creation(
+        self,
+        session_request: SessionCreationRequest,
+        session_payload: dict[str, Any],
+        max_trials_value: int,
+        headers: Any,
+        connector: Any,
+        typed_exc: CloudServiceError,
+    ) -> TraigentSessionApiResult:
+        # auto-contract fallback: a failed TYPED create may retry the
+        # legacy shape ONCE — and only for NON-governed sessions
+        # (governed sessions must fail loudly; the legacy contract
+        # cannot carry strict mode and silently degrading would
+        # launder it — RFC 0001 P7).
+        if (
+            self._session_contract() != "auto"
+            or self._is_governed_request(session_request)
+            or "capabilities" in session_payload
+        ):
+            # A content-less create never falls back to the legacy shape.
+            raise
+        # A quota/limit refusal is a definitive answer from a reachable
+        # backend: the legacy contract would be refused the same way, so
+        # do not retry it (#2550).
+        typed_failure = getattr(typed_exc, "session_creation_failure", None)
+        if getattr(typed_failure, "is_quota_refusal", False) or getattr(
+            typed_failure, "is_closed_refusal", False
+        ):
+            raise
+        logger.warning(
+            "Typed session create failed; retrying once with the "
+            "legacy contract (non-governed session, "
+            "TRAIGENT_SESSION_CONTRACT=auto)"
+        )
+        _warn_deprecated_once(
+            "session_contract:auto_legacy_retry",
+            "Auto retry from typed session contract to legacy session "
+            f"contract is deprecated. {_LEGACY_SESSION_CONTRACT_DEPRECATION}",
+            stacklevel=4,
+        )
+        legacy_payload = self._build_legacy_session_payload(
+            session_request,
+            max_trials_value,
+        )
+        try:
+            return await self._post_session_creation(legacy_payload, headers, connector)
+        except CloudServiceError as legacy_exc:
+            typed_detail = getattr(typed_exc, "session_creation_failure", None)
+            legacy_detail = getattr(legacy_exc, "session_creation_failure", None)
+            typed_status = getattr(typed_detail, "status_code", None)
+            legacy_status = getattr(legacy_detail, "status_code", None)
+            if typed_status == 400 and legacy_status == 400:
+                cast(Any, legacy_exc).typed_legacy_session_create_400 = True
+            raise
 
     def _resolve_max_trials(self, session_request: SessionCreationRequest) -> int:
         """Resolve max trials with logging when falling back to default."""
@@ -726,7 +638,11 @@ class ApiOperations:
         return bool(session_request.promotion_policy or session_request.tvl_governance)
 
     def _build_session_payload(
-        self, session_request: SessionCreationRequest, max_trials: int
+        self,
+        session_request: SessionCreationRequest,
+        max_trials: int,
+        *,
+        principal: str | None = None,
     ) -> dict[str, Any]:
         """Build the payload sent to the cloud session creation endpoint.
 
@@ -746,7 +662,7 @@ class ApiOperations:
                     "TRAIGENT_SESSION_CONTRACT=legacy cannot carry them."
                 )
             return self._build_content_less_session_payload(
-                session_request, max_trials, content_less_options
+                session_request, max_trials, content_less_options, principal
             )
         if contract == "legacy":
             if optimization_strategy:
@@ -776,11 +692,13 @@ class ApiOperations:
         session_request: SessionCreationRequest,
         max_trials: int,
         options: Any,
+        principal: str | None = None,
     ) -> dict[str, Any]:
         """The typed payload rewritten to the content-less identity shape (group 1).
 
         Legacy identity fields are removed and capabilities / environment / refs added.
-        The cache context for the response is parked on ``self`` for
+        ``principal`` is the cache scope of the outgoing request (None: no cache read
+        or write). The cache context for the response is parked on ``self`` for
         ``_post_session_creation`` (consumed once, then cleared).
         """
         payload = self._build_typed_session_payload(session_request, max_trials)
@@ -788,7 +706,6 @@ class ApiOperations:
             session_request, payload.get("metadata") or {}
         )
         cache = content_less_session.RefCache()
-        principal = self._content_less_principal()
         cached = cache.lookup(principal, local_keys)
         used_cache = content_less_session.apply_to_payload(
             payload, options=options, cached_refs=cached
@@ -796,7 +713,7 @@ class ApiOperations:
         self._content_less_ctx: (
             tuple[
                 content_less_session.RefCache,
-                str,
+                str | None,
                 dict[str, str | None],
                 dict[str, str],
             ]
@@ -812,19 +729,18 @@ class ApiOperations:
         )
         return [api_base] if isinstance(api_base, str) else []
 
-    def _content_less_principal(self) -> str:
-        """Digest of (backend URL, credential preview): scopes the local ref cache."""
+    def _principal_for_headers(self, headers: dict[str, str]) -> str | None:
+        """Cache scope of the exact outgoing headers; None skips the cache (fail closed)."""
         try:
             url = (
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
-            preview = self.client.auth_manager.auth.get_api_key_preview()
-        except Exception:  # noqa: BLE001 - scope only; an unknown scope finds no refs
-            url, preview = None, None
-        return content_less_session.RefCache.principal(
-            url if isinstance(url, str) else None,
-            preview if isinstance(preview, str) else None,
+        except (AttributeError, ValueError):  # silent-ok: cache skipped, logged
+            logger.debug("content-less cache skipped: backend URL unavailable")
+            return None
+        return content_less_session.principal_for_headers(
+            url if isinstance(url, str) else None, headers.items()
         )
 
     @staticmethod
@@ -882,6 +798,7 @@ class ApiOperations:
         # direct serializer so the two session-create paths cannot drift.
         payload.update(session_narrative_to_wire(session_request))
         payload.update(session_task_type_to_wire(session_request))
+        payload.update(session_g1_required_to_wire(session_request))
         # Declared dataset identity: the backend validates dataset_id /
         # dataset_id_source ONLY on this typed path (_validate_identity_fields
         # in traigent_session_routes.py is gated `if typed`), so this is
@@ -921,6 +838,7 @@ class ApiOperations:
         if "evaluator_id" in identity_v2:
             payload.pop("evaluator_definition_id", None)
         payload.update(identity_v2)
+        payload["metadata"] = filter_wire_metadata(payload["metadata"])
         return payload
 
     def _build_legacy_session_payload(
@@ -969,8 +887,10 @@ class ApiOperations:
         wire_smart_pruning = normalize_smart_pruning_options(smart_pruning)
         if wire_smart_pruning:
             payload["smart_pruning"] = wire_smart_pruning
+        payload.update(session_g1_required_to_wire(session_request))
         self._attach_evaluator_identity(payload, session_request)
         self._attach_artifact_fingerprint_payload(payload, session_request)
+        payload["metadata"] = filter_wire_metadata(payload["metadata"])
         return payload
 
     @staticmethod
@@ -1018,6 +938,9 @@ class ApiOperations:
         """Send the session creation request and handle responses."""
 
         self._raise_if_backend_egress_disabled("create session")
+        # optimization_only: rebuild the final body from the closed contract before any
+        # bytes leave (no-op, same object, when the mode is off).
+        declared_metrics = oo_egress.declared_from_session_payload(payload)
         content_less_ctx: tuple[Any, ...] | None = None
         if "capabilities" in payload:
             content_less_ctx = getattr(self, "_content_less_ctx", None)
@@ -1028,6 +951,7 @@ class ApiOperations:
                 trust_env=True,
             ),
             origins=self._gate_origins(),
+            optimization_only=oo_egress.explicit_of(self.client),
             strict=content_less_ctx is not None,
         ) as session:
             api_base = (
@@ -1036,6 +960,13 @@ class ApiOperations:
             )
             url = f"{api_base}/sessions"
             timeout = cast(Any, aiohttp).ClientTimeout(total=30)
+            # Final policy check + projection immediately before the send, with the
+            # headers already resolved (no await between this and the transport call).
+            payload = oo_egress.project_for_send(
+                oo_egress.PHASE_SESSION_CREATE_AUTO,
+                payload,
+                explicit=oo_egress.policy_of(self.client, headers, url),
+            )
 
             async with session.post(
                 url,
@@ -1045,10 +976,13 @@ class ApiOperations:
             ) as response:
                 if response.status == 201:
                     if content_less_ctx is not None:
-                        return await self._parse_session_response(
+                        parsed = await self._parse_session_response(
                             response, content_less_ctx=content_less_ctx
                         )
-                    return await self._parse_session_response(response)
+                    else:
+                        parsed = await self._parse_session_response(response)
+                    self._remember_session_objectives(parsed, declared_metrics)
+                    return parsed
 
                 if content_less_ctx is not None and response.status == 404:
                     # A cached reference was refused (foreign / unknown): forget the scope.
@@ -1059,6 +993,14 @@ class ApiOperations:
                 self._handle_session_error(response.status, error_msg)
 
         raise CloudServiceError("Unexpected session creation failure")
+
+    @staticmethod
+    def _remember_session_objectives(result: Any, declared: list[str]) -> None:
+        """Record the session's declared metrics for later results projection."""
+        try:
+            oo_egress.register_session_objectives(result[0], declared)
+        except (TypeError, IndexError, KeyError):  # silent-ok: nothing to record
+            return
 
     async def _parse_session_response(
         self, response: Any, content_less_ctx: Any = None
@@ -1155,8 +1097,15 @@ class ApiOperations:
                 ),
             )
 
+        # no header await here: a refresh failure must not fail a created session, and
+        # mode off must cost nothing; the scope comes from the configured credential
+        policy = oo_egress.policy_of(self.client, None, f"{api_base}/sessions")
         await send_session_labels(
-            content_less_session.label_texts(session_request), refs, api_base, _headers
+            content_less_session.label_texts(session_request),
+            refs,
+            api_base,
+            _headers,
+            policy=policy,
         )
 
     @staticmethod
@@ -1192,7 +1141,6 @@ class ApiOperations:
         if not AIOHTTP_AVAILABLE:
             logger.debug("aiohttp not available, skipping intermediate report")
             return {"prune": False, "prune_reason": None}
-
         try:
             headers = await self.client.auth_manager.augment_headers(
                 {"Content-Type": _JSON_CONTENT_TYPE}
@@ -1203,6 +1151,7 @@ class ApiOperations:
                     trust_env=True,
                 ),
                 origins=self._gate_origins(),
+                optimization_only=oo_egress.explicit_of(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1210,6 +1159,15 @@ class ApiOperations:
                 )
                 url = f"{api_base}/sessions/{session_id}/intermediate-report"
                 timeout = cast(Any, aiohttp).ClientTimeout(total=10)
+                try:
+                    wire_payload = oo_egress.project_for_send(
+                        oo_egress.PHASE_INTERMEDIATE_REPORT,
+                        wire_payload,
+                        explicit=oo_egress.policy_of(self.client, headers, url),
+                    )
+                except oo_egress.MetadataContractViolation:
+                    logger.debug("optimization_only: intermediate report not sent")
+                    return {"prune": False, "prune_reason": None}
                 async with session.post(
                     url,
                     json=wire_payload,
@@ -1343,6 +1301,7 @@ class ApiOperations:
                     trust_env=True,
                 ),
                 origins=self._gate_origins(),
+                optimization_only=oo_egress.explicit_of(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1353,6 +1312,11 @@ class ApiOperations:
                 sanitized_error_message = self.sanitize_error_message(error_message)
                 if sanitized_error_message:
                     status_data["error_message"] = sanitized_error_message
+                status_data = oo_egress.project_for_send(
+                    oo_egress.PHASE_CONFIGURATION_RUN,
+                    status_data,
+                    explicit=oo_egress.policy_of(self.client, headers, url),
+                )
 
                 async with session.put(
                     url,
@@ -1373,6 +1337,9 @@ class ApiOperations:
                         )
                         return False
 
+        except EndpointNotConfiguredError:
+            # Strict self-hosted mode: fail closed, never degrade silently.
+            raise
         except Exception as e:
             logger.debug(f"Error updating config run status: {e}")
             return False
@@ -1394,7 +1361,7 @@ class ApiOperations:
             True if successful, False otherwise
         """
         self._raise_if_backend_egress_disabled("update configuration run measures")
-        if not AIOHTTP_AVAILABLE or not metrics:
+        if ApiOperations._measures_unavailable(metrics):
             return False
 
         try:
@@ -1403,164 +1370,211 @@ class ApiOperations:
             mapped_metrics = {}
 
             # Standard Traigent measure mappings with strict validation
-            if "accuracy" in metrics and metrics["accuracy"] is not None:
-                try:
-                    mapped_metrics["accuracy"] = validate_numeric_metric(
-                        metrics["accuracy"],
-                        field_name="accuracy",
-                        trial_id=config_run_id,
-                    )
-                except MetricExtractionError as e:
-                    logger.error(
-                        f"Invalid 'accuracy' metric for config run {config_run_id}: {e.message}",
-                        extra={
-                            "hint": "Ensure your evaluation function returns numeric values for 'accuracy'. "
-                            "Check that the value is not None, NaN, or Inf.",
-                            "config_run_id": config_run_id,
-                            "field": "accuracy",
-                            "value": metrics["accuracy"],
-                        },
-                    )
-                    return False
-
-            if "score" in metrics and metrics["score"] is not None:
-                try:
-                    mapped_metrics["score"] = validate_numeric_metric(
-                        metrics["score"],
-                        field_name="score",
-                        trial_id=config_run_id,
-                    )
-                except MetricExtractionError as e:
-                    logger.error(
-                        f"Invalid 'score' metric for config run {config_run_id}: {e.message}",
-                        extra={
-                            "hint": "Ensure your evaluation function returns numeric values for 'score'. "
-                            "Check that the value is not None, NaN, or Inf.",
-                            "config_run_id": config_run_id,
-                            "field": "score",
-                            "value": metrics["score"],
-                        },
-                    )
-                    return False
-            elif (
-                "accuracy" in metrics and metrics["accuracy"] is not None
-            ):  # Use accuracy as score if no explicit score
-                mapped_metrics["score"] = mapped_metrics["accuracy"]
-
-            # Include other standard measures if present
-            for key in [
-                "faithfulness",
-                "relevance",
-                "latency",
-                "cost",
-                "context_precision",
-                "context_recall",
-            ]:
-                if key in metrics and metrics[key] is not None:
+            match ApiOperations._measure_present(metrics, "accuracy"):
+                case True:
                     try:
-                        mapped_metrics[key] = validate_numeric_metric(
-                            metrics[key],
-                            field_name=key,
+                        mapped_metrics["accuracy"] = validate_numeric_metric(
+                            metrics["accuracy"],
+                            field_name="accuracy",
                             trial_id=config_run_id,
                         )
                     except MetricExtractionError as e:
-                        logger.error(
-                            f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
+                        logger.exception(
+                            f"Invalid 'accuracy' metric for config run {config_run_id}: {e.message}",
                             extra={
-                                "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
+                                "hint": "Ensure your evaluation function returns numeric values for 'accuracy'. "
                                 "Check that the value is not None, NaN, or Inf.",
                                 "config_run_id": config_run_id,
-                                "field": key,
-                                "value": metrics[key],
+                                "field": "accuracy",
+                                "value": metrics["accuracy"],
                             },
                         )
                         return False
 
-            # Include any other metrics as-is, ensuring they are numeric
-            for key, value in metrics.items():
-                if key not in mapped_metrics and value is not None:
+            match ApiOperations._score_measure_kind(metrics):
+                case "score":
                     try:
-                        mapped_metrics[key] = validate_numeric_metric(
-                            value,
-                            field_name=key,
+                        mapped_metrics["score"] = validate_numeric_metric(
+                            metrics["score"],
+                            field_name="score",
                             trial_id=config_run_id,
                         )
                     except MetricExtractionError as e:
-                        logger.error(
-                            f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
+                        logger.exception(
+                            f"Invalid 'score' metric for config run {config_run_id}: {e.message}",
                             extra={
-                                "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
-                                "Check that the value is not None, NaN, or Inf. "
-                                "Custom metrics must be numeric types (int, float).",
+                                "hint": "Ensure your evaluation function returns numeric values for 'score'. "
+                                "Check that the value is not None, NaN, or Inf.",
                                 "config_run_id": config_run_id,
-                                "field": key,
-                                "value": value,
+                                "field": "score",
+                                "value": metrics["score"],
                             },
                         )
                         return False
+                case "accuracy":
+                    mapped_metrics["score"] = mapped_metrics["accuracy"]
 
-            # Build measures data in schema-compliant array format
-            # Per configuration_run_schema.json, measures must be array of MeasureResult objects
-            # Type: dict[str, list[dict[str, float]] | None]
-            measures_data: dict[str, list[dict[str, float]] | None]
-            if mapped_metrics:
-                measure_result = dict(mapped_metrics)
-                measures_data = {"measures": [measure_result]}
-            else:
-                # Omit measures if empty (per schema - use null or omit when no results)
-                measures_data = {"measures": None}
+            # Include other standard measures if present
+            for key in ApiOperations._standard_measure_keys(metrics):
+                try:
+                    mapped_metrics[key] = validate_numeric_metric(
+                        metrics[key],
+                        field_name=key,
+                        trial_id=config_run_id,
+                    )
+                except MetricExtractionError as e:
+                    logger.exception(
+                        f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
+                        extra={
+                            "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
+                            "Check that the value is not None, NaN, or Inf.",
+                            "config_run_id": config_run_id,
+                            "field": key,
+                            "value": metrics[key],
+                        },
+                    )
+                    return False
 
-            # execution_time is not transmitted via the measures endpoint.
-            # It is already included in the trial result payload submitted by
-            # submit_trial_result_via_session (result_data["execution_time"]).
-            if execution_time is not None:
-                logger.debug(
-                    "execution_time=%s recorded in trial result payload; "
-                    "not duplicated in measures update.",
-                    execution_time,
-                )
+            # Include any other metrics as-is, ensuring they are numeric
+            for key, value in ApiOperations._other_measures(metrics, mapped_metrics):
+                try:
+                    mapped_metrics[key] = validate_numeric_metric(
+                        value,
+                        field_name=key,
+                        trial_id=config_run_id,
+                    )
+                except MetricExtractionError as e:
+                    logger.exception(
+                        f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
+                        extra={
+                            "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
+                            "Check that the value is not None, NaN, or Inf. "
+                            "Custom metrics must be numeric types (int, float).",
+                            "config_run_id": config_run_id,
+                            "field": key,
+                            "value": value,
+                        },
+                    )
+                    return False
 
-            connector = self._build_connector()
-
-            # Prepare headers with API key
-            headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": _JSON_CONTENT_TYPE}
+            return await ApiOperations._send_config_run_measures(
+                self, config_run_id, mapped_metrics, execution_time
             )
 
-            async with gate_session(
-                cast(Any, aiohttp).ClientSession(
-                    connector=connector,
-                    trust_env=True,
-                ),
-                origins=self._gate_origins(),
-            ) as session:
-                api_base = (
-                    self.client.backend_config.api_base_url
-                    or BackendConfig.get_backend_api_url()
-                )
-                url = f"{api_base}/configuration-runs/{config_run_id}/measures"
-
-                async with session.put(
-                    url,
-                    json=measures_data,
-                    headers=headers,
-                    timeout=cast(Any, aiohttp).ClientTimeout(total=10),
-                ) as response:
-                    if response.status == 200:
-                        logger.debug(
-                            f"Updated configuration run {config_run_id} with {len(mapped_metrics)} measures"
-                        )
-                        return True
-                    else:
-                        error_msg = await response.text()
-                        logger.debug(
-                            f"Failed to update config run measures: {safe_http_error_summary(response.status, error_msg)}"
-                        )
-                        return False
-
+        except EndpointNotConfiguredError:
+            # Strict self-hosted mode: fail closed, never degrade silently.
+            raise
         except Exception as e:
             logger.debug(f"Error updating config run measures: {e}")
             return False
+
+    @staticmethod
+    def _measures_unavailable(metrics: dict[str, float]) -> bool:
+        return not AIOHTTP_AVAILABLE or not metrics
+
+    @staticmethod
+    def _measure_present(metrics: dict[str, float], key: str) -> bool:
+        return key in metrics and metrics[key] is not None
+
+    @staticmethod
+    def _score_measure_kind(metrics: dict[str, float]) -> str:
+        if "score" in metrics and metrics["score"] is not None:
+            return "score"
+        if "accuracy" in metrics and metrics["accuracy"] is not None:
+            return "accuracy"
+        return "none"
+
+    @staticmethod
+    def _standard_measure_keys(metrics: dict[str, float]) -> Iterator[str]:
+        for key in [
+            "faithfulness",
+            "relevance",
+            "latency",
+            "cost",
+            "context_precision",
+            "context_recall",
+        ]:
+            if key in metrics and metrics[key] is not None:
+                yield key
+
+    @staticmethod
+    def _other_measures(
+        metrics: dict[str, float], mapped_metrics: dict[str, float]
+    ) -> Iterator[tuple[str, float]]:
+        for key, value in metrics.items():
+            if key not in mapped_metrics and value is not None:
+                yield key, value
+
+    async def _send_config_run_measures(
+        self,
+        config_run_id: str,
+        mapped_metrics: dict[str, float],
+        execution_time: float | None,
+    ) -> bool:
+        # Build measures data in schema-compliant array format
+        # Per configuration_run_schema.json, measures must be array of MeasureResult objects
+        # Type: dict[str, list[dict[str, float]] | None]
+        measures_data: dict[str, list[dict[str, float]] | None]
+        if mapped_metrics:
+            measure_result = dict(mapped_metrics)
+            measures_data = {"measures": [measure_result]}
+        else:
+            # Omit measures if empty (per schema - use null or omit when no results)
+            measures_data = {"measures": None}
+
+        # execution_time is not transmitted via the measures endpoint.
+        # It is already included in the trial result payload submitted by
+        # submit_trial_result_via_session (result_data["execution_time"]).
+        if execution_time is not None:
+            logger.debug(
+                "execution_time=%s recorded in trial result payload; "
+                "not duplicated in measures update.",
+                execution_time,
+            )
+
+        connector = self._build_connector()
+
+        # Prepare headers with API key
+        headers = await self.client.auth_manager.augment_headers(
+            {"Content-Type": _JSON_CONTENT_TYPE}
+        )
+
+        async with gate_session(
+            cast(Any, aiohttp).ClientSession(
+                connector=connector,
+                trust_env=True,
+            ),
+            origins=self._gate_origins(),
+            optimization_only=oo_egress.explicit_of(self.client),
+        ) as session:
+            api_base = (
+                self.client.backend_config.api_base_url
+                or BackendConfig.get_backend_api_url()
+            )
+            url = f"{api_base}/configuration-runs/{config_run_id}/measures"
+            measures_data = oo_egress.project_for_send(
+                oo_egress.PHASE_CONFIGURATION_RUN,
+                measures_data,
+                explicit=oo_egress.policy_of(self.client, headers, url),
+            )
+
+            async with session.put(
+                url,
+                json=measures_data,
+                headers=headers,
+                timeout=cast(Any, aiohttp).ClientTimeout(total=10),
+            ) as response:
+                if response.status == 200:
+                    logger.debug(
+                        f"Updated configuration run {config_run_id} with {len(mapped_metrics)} measures"
+                    )
+                    return True
+                else:
+                    error_msg = await response.text()
+                    logger.debug(
+                        f"Failed to update config run measures: {safe_http_error_summary(response.status, error_msg)}"
+                    )
+                    return False
 
     async def update_experiment_run_status_on_completion(
         self, experiment_run_id: str, status: str
@@ -1608,16 +1622,22 @@ class ApiOperations:
                     trust_env=True,
                 ),
                 origins=self._gate_origins(),
+                optimization_only=oo_egress.explicit_of(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
                 )
                 url = f"{api_base}/experiment-runs/runs/{experiment_run_id}"
+                run_status_body = oo_egress.project_for_send(
+                    oo_egress.PHASE_CONFIGURATION_RUN,
+                    {"status": backend_status},
+                    explicit=oo_egress.policy_of(self.client, headers, url),
+                )
 
                 async with session.put(
                     url,
-                    json={"status": backend_status},
+                    json=run_status_body,
                     headers=headers,
                     timeout=cast(Any, aiohttp).ClientTimeout(total=10),
                 ) as response:
@@ -1631,6 +1651,8 @@ class ApiOperations:
                             f"Failed to update experiment run status: "
                             f"{safe_http_error_summary(response.status, error_text)}"
                         )
+        except EndpointNotConfiguredError:
+            logger.warning(endpoint_missing_message("experiment run status update"))
         except Exception as e:
             logger.warning(f"Error updating experiment run status: {e}")
 

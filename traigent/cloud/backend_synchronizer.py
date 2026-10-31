@@ -304,7 +304,7 @@ class BackendSynchronizer:
             except Exception as e:
                 with self._stats_lock:
                     self._stats["failed_syncs"] += 1
-                logger.error(f"Failed to sync trials for session {session_id}: {e}")
+                logger.exception(f"Failed to sync trials for session {session_id}: {e}")
 
                 return SyncResult(
                     success=False,
@@ -435,23 +435,13 @@ class BackendSynchronizer:
                 logger.info("Background sync cancelled")
                 raise
             except Exception as e:
-                logger.error(f"Background sync error: {e}")
+                logger.exception(f"Background sync error: {e}")
                 # Continue loop despite errors
 
-    async def _process_sync_queue(self) -> None:
-        """Process queued sync operations."""
-        drained_items: list[dict[str, Any]] = []
-        while True:
-            try:
-                item = self._sync_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            else:
-                drained_items.append(item)
-
-        if not drained_items:
-            return
-
+    @staticmethod
+    def _select_sync_queue_sessions(
+        drained_items: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
         def should_replace(candidate: dict[str, Any], current: dict[str, Any]) -> bool:
             cand_priority = candidate.get("priority", 0)
             curr_priority = current.get("priority", 0)
@@ -481,17 +471,13 @@ class BackendSynchronizer:
                     "Unsupported sync queue item type '%s'; skipping", item_type
                 )
 
-        for _ in drained_items:
-            self._sync_queue.task_done()
+        return session_items
 
-        if not session_items:
-            return
-
-        ordered_items = sorted(
-            session_items.values(),
-            key=lambda data: (data.get("priority", 0), data.get("queued_at", 0.0)),
-        )
-
+    def _start_queued_session_syncs(
+        self, ordered_items: list[dict[str, Any]]
+    ) -> tuple[
+        list[dict[str, Any]], list[asyncio.Task[Any]], list[str], list[dict[str, Any]]
+    ]:
         requeue_items: list[dict[str, Any]] = []
         tasks: list[asyncio.Task[Any]] = []
         task_sessions: list[str] = []
@@ -544,21 +530,45 @@ class BackendSynchronizer:
             task_sessions.append(session_id)
             task_payloads.append(payload)  # S4 fix: Track payload for potential requeue
 
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            # S4 fix: Include payload in zip to preserve data for requeue
-            for session_id, result, payload in zip(
-                task_sessions, results, task_payloads, strict=False
-            ):
-                self._sync_tasks.pop(session_id, None)
+        return requeue_items, tasks, task_sessions, task_payloads
 
-                if isinstance(result, Exception):
-                    logger.error(
-                        "Queued session sync for %s failed with error: %s",
+    def _handle_queued_sync_results(
+        self,
+        task_sessions: list[str],
+        results: list[Any],
+        task_payloads: list[dict[str, Any]],
+        requeue_items: list[dict[str, Any]],
+    ) -> None:
+        # S4 fix: Include payload in zip to preserve data for requeue
+        for session_id, result, payload in zip(
+            task_sessions, results, task_payloads, strict=False
+        ):
+            self._sync_tasks.pop(session_id, None)
+
+            if isinstance(result, Exception):
+                logger.error(
+                    "Queued session sync for %s failed with error: %s",
+                    session_id,
+                    result,
+                )
+                # S4 fix: Include session_data to prevent data loss on retry
+                requeue_items.append(
+                    {
+                        "type": "session",
+                        "session_id": session_id,
+                        "priority": 0,
+                        "queued_at": time.time(),
+                        "session_data": payload,
+                    }
+                )
+            elif isinstance(result, SyncResult):
+                if not result.success:
+                    logger.warning(
+                        "Queued session sync for %s did not succeed: %s",
                         session_id,
-                        result,
+                        result.error_message,
                     )
-                    # S4 fix: Include session_data to prevent data loss on retry
+                    # Use tracked payload instead of potentially stale snapshot
                     requeue_items.append(
                         {
                             "type": "session",
@@ -568,23 +578,43 @@ class BackendSynchronizer:
                             "session_data": payload,
                         }
                     )
-                elif isinstance(result, SyncResult):
-                    if not result.success:
-                        logger.warning(
-                            "Queued session sync for %s did not succeed: %s",
-                            session_id,
-                            result.error_message,
-                        )
-                        # Use tracked payload instead of potentially stale snapshot
-                        requeue_items.append(
-                            {
-                                "type": "session",
-                                "session_id": session_id,
-                                "priority": 0,
-                                "queued_at": time.time(),
-                                "session_data": payload,
-                            }
-                        )
+
+    async def _process_sync_queue(self) -> None:
+        """Process queued sync operations."""
+        drained_items: list[dict[str, Any]] = []
+        while True:
+            try:
+                item = self._sync_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            else:
+                drained_items.append(item)
+
+        if not drained_items:
+            return
+
+        session_items = BackendSynchronizer._select_sync_queue_sessions(drained_items)
+
+        for _ in drained_items:
+            self._sync_queue.task_done()
+
+        if not session_items:
+            return
+
+        ordered_items = sorted(
+            session_items.values(),
+            key=lambda data: (data.get("priority", 0), data.get("queued_at", 0.0)),
+        )
+
+        requeue_items, tasks, task_sessions, task_payloads = (
+            BackendSynchronizer._start_queued_session_syncs(self, ordered_items)
+        )
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            BackendSynchronizer._handle_queued_sync_results(
+                self, task_sessions, results, task_payloads, requeue_items
+            )
 
         for item in requeue_items:
             item.setdefault("queued_at", time.time())

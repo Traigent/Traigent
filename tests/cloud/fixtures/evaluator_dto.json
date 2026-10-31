@@ -20,7 +20,7 @@
   },
   "sampling_rate": 1.0,
   "target_filters": {
-    "environment": "production"
+    "environment": ["production"]
   },
   "is_active": true
 }

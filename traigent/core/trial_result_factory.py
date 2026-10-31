@@ -8,7 +8,7 @@ import copy
 import logging
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 from traigent.api.types import (
     ComparabilityInfo,
@@ -28,10 +28,10 @@ from traigent.utils.outcome_signals import build_example_signals
 
 logger = get_logger(__name__)
 
-_TrialResultT = TypeVar("_TrialResultT")
 
-
-def _stamp_trial_rows(trial_result: _TrialResultT, raw_results: Any) -> _TrialResultT:
+def _stamp_trial_rows[TrialResultT](
+    trial_result: TrialResultT, raw_results: Any
+) -> TrialResultT:
     """Keep each raw result's true dataset row on the TrialResult (local only).
 
     Read from the raw ``ExampleResult`` objects (stamped by the built-in
@@ -348,6 +348,18 @@ def _build_success_trial_metadata(
         except (TypeError, ValueError):
             pass
 
+    _add_success_metadata_details(trial_metadata, eval_result)
+
+    provider_summary = _provider_failure_summary(eval_result, examples_attempted)
+    if provider_summary is not None:
+        trial_metadata["provider_failure_summary"] = provider_summary
+
+    return trial_metadata
+
+
+def _add_success_metadata_details(
+    trial_metadata: dict[str, Any], eval_result: Any
+) -> None:
     # Per-model cost breakdown for multi-model/multi-step agents (Traigent#1598).
     # Only added when at least one example reported a per-call breakdown via
     # __traigent_meta__["calls"] -- absence means "not reported", not "zero".
@@ -371,12 +383,6 @@ def _build_success_trial_metadata(
             value = summary_stats.get(key)
             if isinstance(value, int) and not isinstance(value, bool):
                 trial_metadata[key] = value
-
-    provider_summary = _provider_failure_summary(eval_result, examples_attempted)
-    if provider_summary is not None:
-        trial_metadata["provider_failure_summary"] = provider_summary
-
-    return trial_metadata
 
 
 def _provider_failure_summary(
@@ -786,23 +792,7 @@ def build_pruned_result(
         missing_example_ids=[],
     ).to_dict()
 
-    # Include partial example_results from the pruned trial
-    # These are captured by the evaluator before raising TrialPrunedError
-    if prune_error.example_results:
-        metadata["example_results"] = _redact_example_results_with_signals(
-            list(prune_error.example_results)
-        )
-        logger.info(
-            "📊 Captured %d partial example results for pruned trial %s",
-            len(prune_error.example_results),
-            trial_id,
-        )
-    elif str(prune_error).startswith(_CONSTRAINT_REJECTION_PREFIX):
-        # The user's own constraints= excluded this config: an intended
-        # exclusion that never carries example results, not a failure.
-        logger.info("Trial %s skipped by constraint", trial_id)
-    else:
-        _warn_pruned_without_example_results(trial_id, prune_error.step)
+    _add_pruned_example_results(metadata, trial_id, prune_error)
 
     metrics: dict[str, float] = {}
     if progress_state:
@@ -862,6 +852,28 @@ def build_pruned_result(
         ),
         list(prune_error.example_results or []),
     )
+
+
+def _add_pruned_example_results(
+    metadata: dict[str, Any], trial_id: str, prune_error: TrialPrunedError
+) -> None:
+    # Include partial example_results from the pruned trial
+    # These are captured by the evaluator before raising TrialPrunedError
+    if prune_error.example_results:
+        metadata["example_results"] = _redact_example_results_with_signals(
+            list(prune_error.example_results)
+        )
+        logger.info(
+            "📊 Captured %d partial example results for pruned trial %s",
+            len(prune_error.example_results),
+            trial_id,
+        )
+    elif str(prune_error).startswith(_CONSTRAINT_REJECTION_PREFIX):
+        # The user's own constraints= excluded this config: an intended
+        # exclusion that never carries example results, not a failure.
+        logger.info("Trial %s skipped by constraint", trial_id)
+    else:
+        _warn_pruned_without_example_results(trial_id, prune_error.step)
 
 
 def build_failed_result(

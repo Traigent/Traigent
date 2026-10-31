@@ -9,8 +9,10 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from traigent.cloud.url_security import (
+    CloudUrlUnreachableError,
     _unwrap_embedded_ipv4,
     _validation_needs_dns_resolution,
+    validate_always_blocked_cloud_url,
     validate_cloud_base_url,
     validate_cloud_base_url_async,
 )
@@ -126,6 +128,24 @@ def test_validate_cloud_base_url_fails_closed_on_dns_failure() -> None:
     ):
         with pytest.raises(ValueError, match="could not be resolved"):
             validate_cloud_base_url("https://unresolvable.example")
+
+
+def test_always_blocked_validator_fails_closed_on_dns_failure_in_production() -> None:
+    # Unresolvable name: the always-blocked set cannot be checked, so refuse.
+    with (
+        patch.dict("os.environ", {"ENVIRONMENT": "production"}, clear=True),
+        patch("socket.getaddrinfo", side_effect=socket.gaierror),
+    ):
+        with pytest.raises(CloudUrlUnreachableError, match="could not be resolved"):
+            validate_always_blocked_cloud_url("https://unresolvable.example")
+
+
+def test_always_blocked_validator_tolerates_dns_failure_in_development() -> None:
+    with (
+        patch.dict("os.environ", {"TRAIGENT_ENV": "development"}, clear=True),
+        patch("socket.getaddrinfo", side_effect=socket.gaierror),
+    ):
+        validate_always_blocked_cloud_url("https://unresolvable.example")
 
 
 @pytest.mark.asyncio
@@ -577,3 +597,276 @@ def test_declared_strict_environment_error_names_the_declared_value() -> None:
     message = str(excinfo.value)
     assert "ENVIRONMENT=staging" in message
     assert "production was assumed" not in message
+
+
+# --- Explicit self-hosted opt-in: TRAIGENT_ALLOW_PRIVATE_BACKEND ---------------
+
+_SELF_HOSTED = "https://traigent.internal.example:8443"
+_PRIVATE_OPT_IN_ENV = {
+    "TRAIGENT_BACKEND_URL": _SELF_HOSTED,
+    "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1",
+}
+
+
+def test_private_backend_opt_in_off_refuses_private_backend() -> None:
+    env = {"TRAIGENT_BACKEND_URL": "https://10.20.30.40:8443"}
+    with patch.dict("os.environ", env, clear=True):
+        with pytest.raises(ValueError, match="private or loopback") as excinfo:
+            validate_cloud_base_url("https://10.20.30.40:8443")
+    assert "TRAIGENT_ALLOW_PRIVATE_BACKEND" in str(excinfo.value)
+    # The error names the variable but does not echo the URL's host or IP.
+    assert "10.20.30.40" not in str(excinfo.value)
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "True"])
+def test_private_backend_opt_in_allows_literal_private_ip_on_pinned_host(
+    value: str,
+) -> None:
+    env = {
+        "TRAIGENT_BACKEND_URL": "https://10.20.30.40:8443",
+        "TRAIGENT_ALLOW_PRIVATE_BACKEND": value,
+    }
+    with patch.dict("os.environ", env, clear=True):
+        assert (
+            validate_cloud_base_url("https://10.20.30.40:8443/")
+            == "https://10.20.30.40:8443"
+        )
+
+
+def test_private_backend_opt_in_allows_loopback_on_pinned_host() -> None:
+    env = {
+        "TRAIGENT_BACKEND_URL": "https://127.0.0.1:8443",
+        "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1",
+    }
+    with patch.dict("os.environ", env, clear=True):
+        assert (
+            validate_cloud_base_url("https://127.0.0.1:8443")
+            == "https://127.0.0.1:8443"
+        )
+
+
+def test_private_backend_opt_in_allows_hostname_resolving_to_private_ip() -> None:
+    mock_getaddrinfo = Mock(return_value=_addr_info("10.0.0.5"))
+    with patch.dict("os.environ", _PRIVATE_OPT_IN_ENV, clear=True):
+        with patch("traigent.cloud.url_security.socket.getaddrinfo", mock_getaddrinfo):
+            assert validate_cloud_base_url(_SELF_HOSTED) == _SELF_HOSTED
+    mock_getaddrinfo.assert_called_once()
+
+
+def test_private_backend_opt_in_refuses_different_host() -> None:
+    with patch.dict("os.environ", _PRIVATE_OPT_IN_ENV, clear=True):
+        with pytest.raises(ValueError, match="private or loopback"):
+            validate_cloud_base_url("https://10.99.99.99:8443")
+
+
+def test_private_backend_opt_in_refuses_different_hostname_resolving_private() -> None:
+    with patch.dict("os.environ", _PRIVATE_OPT_IN_ENV, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.0.0.5")):
+            with pytest.raises(ValueError, match="private or loopback"):
+                validate_cloud_base_url("https://other.internal.example:8443")
+
+
+def test_private_backend_opt_in_refuses_same_host_on_different_port() -> None:
+    with patch.dict("os.environ", _PRIVATE_OPT_IN_ENV, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.0.0.5")):
+            with pytest.raises(ValueError, match="private or loopback"):
+                validate_cloud_base_url("https://traigent.internal.example:9443")
+
+
+def test_private_backend_opt_in_refuses_plaintext_http_on_pinned_host() -> None:
+    env = {
+        "TRAIGENT_BACKEND_URL": "http://10.20.30.40:8000",
+        "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1",
+    }
+    with patch.dict("os.environ", env, clear=True):
+        with pytest.raises(ValueError, match="must use https"):
+            validate_cloud_base_url("http://10.20.30.40:8000")
+
+
+@pytest.mark.parametrize(
+    "backend_url",
+    [
+        "https://169.254.169.254",
+        "https://100.100.100.200",
+        "https://[fd00:ec2::254]",
+        "https://169.254.10.20",
+        "https://[fe80::1]",
+    ],
+)
+def test_private_backend_opt_in_still_refuses_metadata_and_link_local(
+    backend_url: str,
+) -> None:
+    env = {
+        "TRAIGENT_BACKEND_URL": backend_url,
+        "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1",
+    }
+    with patch.dict("os.environ", env, clear=True):
+        with pytest.raises(ValueError, match="metadata service|link-local"):
+            validate_cloud_base_url(backend_url)
+
+
+def test_private_backend_opt_in_still_refuses_hostname_resolving_to_metadata() -> None:
+    env = {
+        "TRAIGENT_BACKEND_URL": "https://backend.internal.example",
+        "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1",
+    }
+    with patch.dict("os.environ", env, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("169.254.169.254")):
+            with pytest.raises(ValueError, match="metadata service|link-local"):
+                validate_cloud_base_url("https://backend.internal.example")
+
+
+def test_private_backend_opt_in_does_nothing_when_backend_url_unset() -> None:
+    env = {"TRAIGENT_ALLOW_PRIVATE_BACKEND": "1"}
+    with patch.dict("os.environ", env, clear=True):
+        with pytest.raises(ValueError, match="private or loopback"):
+            validate_cloud_base_url("https://10.20.30.40:8443")
+
+
+def test_private_backend_opt_in_does_not_fall_back_to_api_url() -> None:
+    env = {
+        "TRAIGENT_API_URL": "https://10.20.30.40:8443",
+        "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1",
+    }
+    with patch.dict("os.environ", env, clear=True):
+        with pytest.raises(ValueError, match="private or loopback"):
+            validate_cloud_base_url("https://10.20.30.40:8443")
+
+
+@pytest.mark.parametrize("value", ["", "0", "yes", "on", " 1", "1 ", "enabled"])
+def test_private_backend_opt_in_non_canonical_values_are_off(value: str) -> None:
+    # Same host as TRAIGENT_BACKEND_URL, so only the flag value can disable the
+    # opt-in. The candidate resolves to a private IP to reach the private check.
+    env = {
+        "TRAIGENT_BACKEND_URL": _SELF_HOSTED,
+        "TRAIGENT_ALLOW_PRIVATE_BACKEND": value,
+    }
+    with patch.dict("os.environ", env, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.20.30.40")):
+            with pytest.raises(ValueError, match="private or loopback"):
+                validate_cloud_base_url(_SELF_HOSTED)
+
+
+def test_private_backend_opt_in_dns_failure_on_pinned_host_still_refused() -> None:
+    with patch.dict("os.environ", _PRIVATE_OPT_IN_ENV, clear=True):
+        with patch("socket.getaddrinfo", side_effect=socket.gaierror):
+            with pytest.raises(CloudUrlUnreachableError):
+                validate_cloud_base_url(_SELF_HOSTED)
+
+
+def test_development_environment_unchanged_by_private_backend_opt_in() -> None:
+    # Development already allows private hosts; the opt-in must not alter that,
+    # and development without the opt-in still allows a different private host.
+    with patch.dict("os.environ", {"ENVIRONMENT": "development"}, clear=True):
+        assert (
+            validate_cloud_base_url("https://10.99.99.99:8443")
+            == "https://10.99.99.99:8443"
+        )
+    with patch.dict(
+        "os.environ",
+        {"ENVIRONMENT": "development", **_PRIVATE_OPT_IN_ENV},
+        clear=True,
+    ):
+        assert (
+            validate_cloud_base_url("https://10.99.99.99:8443")
+            == "https://10.99.99.99:8443"
+        )
+
+
+# --- Loopback-name shortcut and explicit port 0 under the opt-in ---------------
+
+
+def test_private_backend_opt_in_loopback_name_resolving_to_metadata_refused() -> None:
+    url = "https://localhost.localdomain"
+    env = {"TRAIGENT_BACKEND_URL": url, "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1"}
+    with patch.dict("os.environ", env, clear=True):
+        with patch(
+            "socket.getaddrinfo", return_value=_addr_info("169.254.169.254")
+        ) as dns:
+            with pytest.raises(ValueError, match="metadata service|link-local"):
+                validate_cloud_base_url(url)
+    # The name is resolved under the opt-in; the loopback shortcut does not apply.
+    dns.assert_called()
+
+
+def test_private_backend_opt_in_loopback_name_dns_failure_refused() -> None:
+    url = "https://localhost.localdomain"
+    env = {"TRAIGENT_BACKEND_URL": url, "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1"}
+    with patch.dict("os.environ", env, clear=True):
+        with patch("socket.getaddrinfo", side_effect=socket.gaierror):
+            with pytest.raises(CloudUrlUnreachableError):
+                validate_cloud_base_url(url)
+
+
+def test_private_backend_opt_in_loopback_name_resolving_to_loopback_admitted() -> None:
+    url = "https://localhost.localdomain"
+    env = {"TRAIGENT_BACKEND_URL": url, "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1"}
+    with patch.dict("os.environ", env, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("127.0.0.1")):
+            assert validate_cloud_base_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    ["https://10.20.30.40:0", "https://10.20.30.40:0/", "https://10.20.30.40:70000"],
+)
+def test_candidate_explicit_port_zero_or_out_of_range_is_invalid(
+    candidate: str,
+) -> None:
+    env = {
+        "TRAIGENT_BACKEND_URL": "https://10.20.30.40:443",
+        "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1",
+    }
+    with patch.dict("os.environ", env, clear=True):
+        with pytest.raises(ValueError, match="invalid port"):
+            validate_cloud_base_url(candidate)
+
+
+def test_configured_explicit_port_zero_refuses_candidate_under_opt_in() -> None:
+    env = {
+        "TRAIGENT_BACKEND_URL": "https://10.20.30.40:0",
+        "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1",
+    }
+    with patch.dict("os.environ", env, clear=True):
+        with pytest.raises(ValueError, match="invalid port"):
+            validate_cloud_base_url("https://10.20.30.40:443")
+
+
+def test_port_zero_never_equals_default_port() -> None:
+    env = {
+        "TRAIGENT_BACKEND_URL": "https://10.20.30.40:443",
+        "TRAIGENT_ALLOW_PRIVATE_BACKEND": "1",
+    }
+    with patch.dict("os.environ", env, clear=True):
+        with pytest.raises(ValueError, match="invalid port"):
+            validate_cloud_base_url("https://10.20.30.40:0")
+        # Explicit :443 and no port remain the same origin.
+        assert validate_cloud_base_url("https://10.20.30.40") == "https://10.20.30.40"
+
+
+def test_private_backend_opt_in_refused_when_transport_gate_is_off() -> None:
+    # sol r2: the redirect refusal lives in the transport gate, so the opt-in must not
+    # admit the private origin while the gate is off.
+    env = {**_PRIVATE_OPT_IN_ENV, "TRAIGENT_TRANSPORT_GATE": "off"}
+    with patch.dict("os.environ", env, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.20.30.40")):
+            with pytest.raises(ValueError) as excinfo:
+                validate_cloud_base_url(_SELF_HOSTED)
+    message = str(excinfo.value)
+    assert "TRAIGENT_ALLOW_PRIVATE_BACKEND requires the transport gate" in message
+    assert "unset TRAIGENT_TRANSPORT_GATE=off" in message
+    assert "10.20.30.40" not in message
+
+
+def test_private_backend_opt_in_accepted_when_transport_gate_is_on() -> None:
+    env = {**_PRIVATE_OPT_IN_ENV, "TRAIGENT_TRANSPORT_GATE": "refuse"}
+    with patch.dict("os.environ", env, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("10.20.30.40")):
+            assert validate_cloud_base_url(_SELF_HOSTED) == _SELF_HOSTED
+
+
+def test_gate_off_does_not_change_public_url_validation() -> None:
+    env = {**_PRIVATE_OPT_IN_ENV, "TRAIGENT_TRANSPORT_GATE": "off"}
+    with patch.dict("os.environ", env, clear=True):
+        with patch("socket.getaddrinfo", return_value=_addr_info("93.184.216.34")):
+            assert validate_cloud_base_url(_SELF_HOSTED) == _SELF_HOSTED

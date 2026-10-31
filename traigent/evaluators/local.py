@@ -8,7 +8,7 @@ import copy
 import inspect
 import math
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -32,10 +32,12 @@ from traigent.evaluators.metrics_tracker import (
     COST_SOURCE_MIXED,
     COST_SOURCE_SELF_REPORTED,
     EMPTY_OUTPUT_RATE_WARNING_THRESHOLD,
+    CostMetrics,
     ExampleMetrics,
     MetricsCalculator,
     MetricsTracker,
     ResponseHandlerFactory,
+    TokenMetrics,
     compute_empty_output_rate,
     compute_truncated_output_rate,
     enforce_unknown_cost_invariant,
@@ -85,6 +87,34 @@ _EXPECTED_METRIC_PARAM_NAMES = {
     "target",
 }
 _LLM_METRIC_PARAM_NAMES = {"llm_metrics", "metrics"}
+
+
+def _result_row(example_results: list[Any] | None, index: int) -> Any:
+    """``example_results[index]`` when it exists and is not None, else None."""
+    if example_results and index < len(example_results):
+        return example_results[index]
+    return None
+
+
+def _first_nonempty_str(values: Iterable[Any]) -> str | None:
+    """First non-empty string in ``values`` (lazily evaluated), else None."""
+    for value in values:
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+@dataclass
+class _JudgeSpend:
+    """Totals of LLM spend made inside metric functions / judges for one row."""
+
+    input_cost: float = 0.0
+    output_cost: float = 0.0
+    total_cost: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    tokens: int = 0
+    judge_unmeasured: bool = False
 
 
 @dataclass(frozen=True)
@@ -550,6 +580,22 @@ if TYPE_CHECKING:
     from traigent.core.sample_budget import SampleBudgetLease
 
 
+def _log_zero_cost_override(
+    aggregated_metrics: dict[str, float],
+    comprehensive_metrics: dict[str, Any],
+) -> None:
+    """Log when a (near) zero aggregated cost is replaced by a non-zero one."""
+    aggregated_cost = float(aggregated_metrics.get("cost", 0.0) or 0.0)
+    comprehensive_cost = float(comprehensive_metrics["cost"])
+    if math.isclose(aggregated_cost, 0.0, abs_tol=1e-9) and not math.isclose(
+        comprehensive_cost, 0.0, abs_tol=1e-9
+    ):
+        logger.info(
+            f"🔍 LOCAL EVALUATOR: Overriding cost metric: "
+            f"{aggregated_cost} -> {comprehensive_cost}"
+        )
+
+
 class LocalEvaluator(BaseEvaluator):
     """Local evaluation strategy.
 
@@ -616,6 +662,8 @@ class LocalEvaluator(BaseEvaluator):
         # evaluator instance is shared across a run's trials, so a flag here
         # emits the notice once per run rather than once per example/trial.
         self._dual_scorer_notice_logged = False
+        # One-shot guard for the skipped built-in accuracy notice.
+        self._builtin_accuracy_skipped_logged = False
         # One-shot guard for the high-empty-output-rate run warning (issue
         # #1851). Same rationale as the dual-scorer flag: the evaluator instance
         # is shared across the run's trials, so this emits ONE warning per run
@@ -739,25 +787,27 @@ class LocalEvaluator(BaseEvaluator):
         """
         # 1. Check if output is a dict with a model field
         if isinstance(output, dict):
-            for key in ("model", "model_name", "model_id"):
-                val = output.get(key)
-                if isinstance(val, str) and val:
-                    return val
+            found = _first_nonempty_str(
+                output.get(key) for key in ("model", "model_name", "model_id")
+            )
+            if found is not None:
+                return found
 
         # 2. Check output object attributes (e.g. OpenAI ChatCompletion)
-        for attr in ("model", "model_name"):
-            val = getattr(output, attr, None)
-            if isinstance(val, str) and val:
-                return val
+        found = _first_nonempty_str(
+            getattr(output, attr, None) for attr in ("model", "model_name")
+        )
+        if found is not None:
+            return found
 
         # 3. Check captured LangChain response (llm_output.model_name)
         if index < len(captured_responses):
             resp = captured_responses[index]
             llm_output = getattr(resp, "llm_output", None)
             if isinstance(llm_output, dict):
-                val = llm_output.get("model_name") or llm_output.get("model")
-                if isinstance(val, str) and val:
-                    return val
+                return _first_nonempty_str(
+                    [llm_output.get("model_name") or llm_output.get("model")]
+                )
 
         return None
 
@@ -1000,6 +1050,8 @@ class LocalEvaluator(BaseEvaluator):
         example_id: str,
         example_index: int,
         config: dict[str, Any],
+        *,
+        failure_mode: str = "returned_none",
     ) -> EvaluationError:
         """Build the fail-closed error for an objective metric returning None.
 
@@ -1012,8 +1064,9 @@ class LocalEvaluator(BaseEvaluator):
         legacy ``0.0``/skip behaviour.
         """
         return EvaluationError(
-            f"Objective metric '{metric_name}' returned None for example "
-            f"{example_id}. Refusing to substitute a fabricated 0.0 score for "
+            f"Objective metric '{metric_name}' returned "
+            f"{'None' if failure_mode == 'returned_none' else 'a non-finite value'}"
+            f" for example {example_id}. Refusing to substitute a fabricated 0.0 score for "
             "an optimization objective.",
             config=config,
             details={
@@ -1024,9 +1077,49 @@ class LocalEvaluator(BaseEvaluator):
                 # Mirror the exception-path record shape (error_type) so
                 # downstream consumers parse both failure modes uniformly.
                 "error_type": "NoneReturn",
-                "failure_mode": "returned_none",
+                "failure_mode": failure_mode,
             },
         )
+
+    def _invalidate_supplied_accuracy(
+        self,
+        example_metric: Any,
+        metric_name: str,
+        example_id: str,
+        example_index: int,
+        config: dict[str, Any],
+        metric_errors: list[dict[str, Any]] | None,
+        failure_mode: str,
+    ) -> None:
+        """A supplied accuracy that is None or non-finite owns the row.
+
+        An objective fails closed exactly as an objective ``None`` return does.
+        Otherwise the reason is recorded like ``returned_none`` and the row's
+        built-in exact-match value is cleared, so the row is unmeasured rather
+        than silently scored by exact match.
+        """
+        if metric_name in self.metrics:
+            raise self._objective_returned_none_error(
+                metric_name,
+                example_id,
+                example_index,
+                config,
+                failure_mode=failure_mode,
+            )
+        if metric_errors is not None:
+            metric_errors.append(
+                {
+                    "metric_name": metric_name,
+                    "example_id": example_id,
+                    "example_index": example_index,
+                    "error_type": "NoneReturn",
+                    "failure_mode": failure_mode,
+                    "is_objective": False,
+                }
+            )
+        example_metric.custom_metrics.pop("accuracy", None)
+        example_metric.accuracy_builtin = False
+        example_metric.accuracy_supplied = False
 
     def _handle_metric_function_exception(
         self,
@@ -1139,22 +1232,7 @@ class LocalEvaluator(BaseEvaluator):
             (a mapping-returning function never populates ``custom_metrics``
             under its own name).
         """
-        cost_known = example_metric.cost_measured
-        llm_payload = {
-            "total_tokens": example_metric.tokens.total_tokens,
-            "prompt_tokens": example_metric.tokens.input_tokens,
-            "completion_tokens": example_metric.tokens.output_tokens,
-            # Unknown cost is None for a metric function, never a placeholder
-            # or partial figure that reads as spend (#2444).
-            "total_cost": example_metric.cost.total_cost if cost_known else None,
-            "input_cost": example_metric.cost.input_cost if cost_known else None,
-            "output_cost": example_metric.cost.output_cost if cost_known else None,
-            "response_time_ms": example_metric.response.response_time_ms,
-            "cost_unmeasured": 0.0 if cost_known else 1.0,
-            "cost_lower_bound": self._example_cost_floor(example_metric)
-            if not cost_known
-            else example_metric.cost.total_cost,
-        }
+        llm_payload = self._build_metric_llm_payload(example_metric)
 
         example_id = (
             example_obj.metadata.get("example_id", f"example_{example_index}")
@@ -1189,83 +1267,192 @@ class LocalEvaluator(BaseEvaluator):
             # dropped, pinning and corrupting the search. Non-objective
             # metrics keep the legacy ``0.0``/skip behaviour.
             if isinstance(value, Mapping):
-                sub_items = list(value.items())
-                _sub_index = -1
-                try:
-                    for _sub_index, (result_name, result_value) in enumerate(sub_items):
-                        # A mapping sub-value can itself be awaitable (e.g.
-                        # ``{"quality": async_score(...)}``); resolve it the same way
-                        # as a top-level async metric so it never reaches float() as
-                        # a raw coroutine (and its exceptions get the objective /
-                        # degradation-record handling, keyed by the sub-metric name).
-                        result_value = await self._resolve_metric_function_value(
-                            result_value,
-                            str(result_name),
-                            example_obj,
-                            config,
-                            example_index,
-                            metric_errors=metric_errors,
-                        )
-                        if result_value is None:
-                            if str(result_name) in self.metrics:
-                                raise self._objective_returned_none_error(
-                                    str(result_name),
-                                    example_id,
-                                    example_index,
-                                    config,
-                                )
-                            if metric_errors is not None:
-                                metric_errors.append(
-                                    {
-                                        "metric_name": str(result_name),
-                                        "example_id": example_id,
-                                        "example_index": example_index,
-                                        "error_type": "NoneReturn",
-                                        "failure_mode": "returned_none",
-                                        "is_objective": False,
-                                    }
-                                )
-                            continue
-                        key = str(result_name)
-                        example_metric.custom_metrics[key] = float(result_value)
-                        produced_keys.append(key)
-                except BaseException:
-                    # An objective sub-value that raised (or returned None,
-                    # which raises the guard above) aborts this loop early.
-                    # LATER sub-values that are still-unresolved coroutines
-                    # would otherwise never be awaited or closed by anything
-                    # else, leaking an unawaited-coroutine warning (and
-                    # skipping the coroutine's own cleanup). Close them before
-                    # propagating.
-                    for _, pending_value in sub_items[_sub_index + 1 :]:
-                        if inspect.iscoroutine(pending_value):
-                            pending_value.close()
-                    raise
+                await self._apply_mapping_metric_results(
+                    value,
+                    example_metric,
+                    example_obj,
+                    config,
+                    example_index,
+                    example_id,
+                    metric_errors,
+                    produced_keys,
+                )
                 continue
             if value is None:
-                if metric_name in self.metrics:
-                    raise self._objective_returned_none_error(
-                        metric_name,
+                self._handle_none_metric_value(
+                    example_metric,
+                    metric_name,
+                    example_id,
+                    example_index,
+                    config,
+                    metric_errors,
+                )
+                if metric_name == "accuracy":
+                    # No accuracy was supplied for this row: unmeasured, not a
+                    # fabricated zero. Other metrics keep their legacy 0.0.
+                    continue
+                example_metric.custom_metrics[metric_name] = 0.0
+            elif not self._store_numeric_metric(
+                example_metric,
+                metric_name,
+                value,
+                example_id,
+                example_index,
+                config,
+                metric_errors,
+            ):
+                continue
+            produced_keys.append(metric_name)
+        return produced_keys
+
+    def _build_metric_llm_payload(
+        self, example_metric: ExampleMetrics
+    ) -> dict[str, Any]:
+        cost_known = example_metric.cost_measured
+        return {
+            "total_tokens": example_metric.tokens.total_tokens,
+            "prompt_tokens": example_metric.tokens.input_tokens,
+            "completion_tokens": example_metric.tokens.output_tokens,
+            # Unknown cost is None for a metric function, never a placeholder
+            # or partial figure that reads as spend (#2444).
+            "total_cost": example_metric.cost.total_cost if cost_known else None,
+            "input_cost": example_metric.cost.input_cost if cost_known else None,
+            "output_cost": example_metric.cost.output_cost if cost_known else None,
+            "response_time_ms": example_metric.response.response_time_ms,
+            "cost_unmeasured": 0.0 if cost_known else 1.0,
+            "cost_lower_bound": self._example_cost_floor(example_metric)
+            if not cost_known
+            else example_metric.cost.total_cost,
+        }
+
+    def _handle_none_metric_value(
+        self,
+        example_metric: ExampleMetrics,
+        key: str,
+        example_id: Any,
+        example_index: int,
+        config: dict[str, Any],
+        metric_errors: list[dict[str, Any]] | None,
+    ) -> None:
+        if key == "accuracy":
+            self._invalidate_supplied_accuracy(
+                example_metric,
+                "accuracy",
+                example_id,
+                example_index,
+                config,
+                metric_errors,
+                "returned_none",
+            )
+            return
+        if key in self.metrics:
+            raise self._objective_returned_none_error(
+                key,
+                example_id,
+                example_index,
+                config,
+            )
+        if metric_errors is not None:
+            metric_errors.append(
+                {
+                    "metric_name": key,
+                    "example_id": example_id,
+                    "example_index": example_index,
+                    "error_type": "NoneReturn",
+                    "failure_mode": "returned_none",
+                    "is_objective": False,
+                }
+            )
+
+    def _store_numeric_metric(
+        self,
+        example_metric: ExampleMetrics,
+        key: str,
+        value: Any,
+        example_id: Any,
+        example_index: int,
+        config: dict[str, Any],
+        metric_errors: list[dict[str, Any]] | None,
+    ) -> bool:
+        """Store a finite numeric metric; False when a supplied accuracy was invalid."""
+        numeric = float(value)
+        if key == "accuracy" and not math.isfinite(numeric):
+            self._invalidate_supplied_accuracy(
+                example_metric,
+                key,
+                example_id,
+                example_index,
+                config,
+                metric_errors,
+                "non_finite_return",
+            )
+            return False
+        example_metric.custom_metrics[key] = numeric
+        if key == "accuracy":
+            example_metric.accuracy_supplied = True
+        return True
+
+    async def _apply_mapping_metric_results(
+        self,
+        value: Mapping[Any, Any],
+        example_metric: ExampleMetrics,
+        example_obj: Any,
+        config: dict[str, Any],
+        example_index: int,
+        example_id: Any,
+        metric_errors: list[dict[str, Any]] | None,
+        produced_keys: list[str],
+    ) -> None:
+        sub_items = list(value.items())
+        _sub_index = -1
+        try:
+            for _sub_index, (result_name, result_value) in enumerate(sub_items):
+                # A mapping sub-value can itself be awaitable (e.g.
+                # ``{"quality": async_score(...)}``); resolve it the same way
+                # as a top-level async metric so it never reaches float() as
+                # a raw coroutine (and its exceptions get the objective /
+                # degradation-record handling, keyed by the sub-metric name).
+                result_value = await self._resolve_metric_function_value(
+                    result_value,
+                    str(result_name),
+                    example_obj,
+                    config,
+                    example_index,
+                    metric_errors=metric_errors,
+                )
+                key = str(result_name)
+                if result_value is None:
+                    self._handle_none_metric_value(
+                        example_metric,
+                        key,
                         example_id,
                         example_index,
                         config,
+                        metric_errors,
                     )
-                if metric_errors is not None:
-                    metric_errors.append(
-                        {
-                            "metric_name": metric_name,
-                            "example_id": example_id,
-                            "example_index": example_index,
-                            "error_type": "NoneReturn",
-                            "failure_mode": "returned_none",
-                            "is_objective": False,
-                        }
-                    )
-                example_metric.custom_metrics[metric_name] = 0.0
-            else:
-                example_metric.custom_metrics[metric_name] = float(value)
-            produced_keys.append(metric_name)
-        return produced_keys
+                    continue
+                if self._store_numeric_metric(
+                    example_metric,
+                    key,
+                    result_value,
+                    example_id,
+                    example_index,
+                    config,
+                    metric_errors,
+                ):
+                    produced_keys.append(key)
+        except BaseException:
+            # An objective sub-value that raised (or returned None,
+            # which raises the guard above) aborts this loop early.
+            # LATER sub-values that are still-unresolved coroutines
+            # would otherwise never be awaited or closed by anything
+            # else, leaking an unawaited-coroutine warning (and
+            # skipping the coroutine's own cleanup). Close them before
+            # propagating.
+            for _, pending_value in sub_items[_sub_index + 1 :]:
+                if inspect.iscoroutine(pending_value):
+                    pending_value.close()
+            raise
 
     def _build_metric_keyword_arguments(
         self,
@@ -1343,6 +1530,24 @@ class LocalEvaluator(BaseEvaluator):
                 metric_errors=metric_errors,
             )
 
+    @staticmethod
+    def _merge_detailed_progress_metrics(
+        payload_metrics: dict[str, Any],
+        example_metric: ExampleMetrics,
+        example_result: Any,
+    ) -> None:
+        for key, value in example_result.metrics.items():
+            if key in {"cost", "total_cost"} and key in payload_metrics:
+                continue
+            if not example_metric.cost_measured and key in {
+                "input_cost",
+                "output_cost",
+                "total_cost",
+                "cost",
+            }:
+                continue
+            payload_metrics.setdefault(key, value)
+
     def _build_local_progress_payload(
         self,
         example_metric: ExampleMetrics,
@@ -1378,17 +1583,9 @@ class LocalEvaluator(BaseEvaluator):
             payload_metrics.setdefault("cost", float(total_cost_value))
 
         if self.detailed and example_result is not None:
-            for key, value in example_result.metrics.items():
-                if key in {"cost", "total_cost"} and key in payload_metrics:
-                    continue
-                if not example_metric.cost_measured and key in {
-                    "input_cost",
-                    "output_cost",
-                    "total_cost",
-                    "cost",
-                }:
-                    continue
-                payload_metrics.setdefault(key, value)
+            self._merge_detailed_progress_metrics(
+                payload_metrics, example_metric, example_result
+            )
 
         if not example_metric.cost_measured:
             enforce_unknown_cost_invariant(
@@ -1732,6 +1929,89 @@ class LocalEvaluator(BaseEvaluator):
         out.call_breakdown = [b for c in calls for b in c.call_breakdown]
         return out
 
+    def _resolve_returned_call(
+        self, output: Any, index: int, captures: _CaptureOwnership
+    ) -> tuple[Any, int | None, bool]:
+        if isinstance(output, dict) and output.get("raw_response") is not None:
+            returned: Any = output["raw_response"]
+        elif self._looks_like_usage_response(output):
+            returned = output
+        else:
+            returned = None
+        returned_pos = captures.find(
+            returned if returned is not None else output, index
+        )
+        # Already accounted elsewhere (another owner's capture, a consumed
+        # entry, or a returned object priced for an earlier example): this
+        # example made no new call with it, so it is never charged again.
+        already_accounted = (
+            returned is not None
+            and returned_pos is None
+            and (
+                id(returned) in captures.captured_ids
+                or id(returned) in captures.returned_seen
+            )
+        )
+        if already_accounted:
+            returned = None
+        return returned, returned_pos, already_accounted
+
+    def _price_owned_calls(
+        self,
+        owned: list[int],
+        captures: _CaptureOwnership,
+        configured_model: str | None,
+        sole_call: bool,
+        prompt_kwargs: dict[str, Any],
+        calls: list[ExampleMetrics],
+        resolved_models: list[str | None],
+    ) -> None:
+        for position in owned:
+            captures.taken.add(position)
+            resolved_models.append(
+                self._resolve_call_model(
+                    captures.responses[position],
+                    captures.requested[position],
+                    configured_model,
+                    sole_call,
+                )
+            )
+            calls.append(
+                self._price_one_call(
+                    captures.responses[position],
+                    agent_model=configured_model,
+                    is_agent_call=sole_call,
+                    requested_model=captures.requested[position],
+                    **prompt_kwargs,
+                )
+            )
+
+    def _combine_with_uncaptured_response(
+        self,
+        uncaptured: Any,
+        calls: list[ExampleMetrics],
+        configured_model: str | None,
+    ) -> ExampleMetrics:
+        # A returned response whose relationship to this example's captured
+        # calls cannot be established (the same call, or another one): its
+        # usage is never ignored and never added blindly.  The row is
+        # unknown, with the largest spend both readings agree on.
+        returned_call = self._price_one_call(
+            uncaptured,
+            agent_model=configured_model,
+            is_agent_call=False,
+            response_captured=False,
+            **{},
+        )
+        combined = self._combine_call_metrics(calls)
+        floor = max(
+            sum(self._call_cost_floor(c) for c in calls),
+            self._call_cost_floor(returned_call),
+        )
+        combined.cost.unmeasured = True
+        combined.cost.known_cost = floor
+        return combined
+
     def _extract_owned_call_metrics(
         self,
         output: Any,
@@ -1752,33 +2032,14 @@ class LocalEvaluator(BaseEvaluator):
         calls still count, each at its own model.  Consumption is recorded per
         call so nothing is dropped or counted twice.
         """
-        if isinstance(output, dict) and output.get("raw_response") is not None:
-            returned: Any = output["raw_response"]
-        elif self._looks_like_usage_response(output):
-            returned = output
-        else:
-            returned = None
+        returned, returned_pos, already_accounted = self._resolve_returned_call(
+            output, index, captures
+        )
         prompt_kwargs = {
             "original_prompt": original_prompt,
             "prompt_length": prompt_length,
             "response_length": response_length,
         }
-        returned_pos = captures.find(
-            returned if returned is not None else output, index
-        )
-        # Already accounted elsewhere (another owner's capture, a consumed
-        # entry, or a returned object priced for an earlier example): this
-        # example made no new call with it, so it is never charged again.
-        already_accounted = (
-            returned is not None
-            and returned_pos is None
-            and (
-                id(returned) in captures.captured_ids
-                or id(returned) in captures.returned_seen
-            )
-        )
-        if already_accounted:
-            returned = None
         owned = [p for p in captures.owned_untaken(index) if p != returned_pos]
         uncaptured = returned if returned_pos is None else None
         primary: Any = None
@@ -1811,45 +2072,19 @@ class LocalEvaluator(BaseEvaluator):
                     **prompt_kwargs,
                 )
             )
-        for position in owned:
-            captures.taken.add(position)
-            resolved_models.append(
-                self._resolve_call_model(
-                    captures.responses[position],
-                    captures.requested[position],
-                    configured_model,
-                    sole_call,
-                )
-            )
-            calls.append(
-                self._price_one_call(
-                    captures.responses[position],
-                    agent_model=configured_model,
-                    is_agent_call=sole_call,
-                    requested_model=captures.requested[position],
-                    **prompt_kwargs,
-                )
-            )
+        self._price_owned_calls(
+            owned,
+            captures,
+            configured_model,
+            sole_call,
+            prompt_kwargs,
+            calls,
+            resolved_models,
+        )
         if uncaptured is not None and owned:
-            # A returned response whose relationship to this example's captured
-            # calls cannot be established (the same call, or another one): its
-            # usage is never ignored and never added blindly.  The row is
-            # unknown, with the largest spend both readings agree on.
-            returned_call = self._price_one_call(
-                uncaptured,
-                agent_model=configured_model,
-                is_agent_call=False,
-                response_captured=False,
-                **{},
+            return self._combine_with_uncaptured_response(
+                uncaptured, calls, configured_model
             )
-            combined = self._combine_call_metrics(calls)
-            floor = max(
-                sum(self._call_cost_floor(c) for c in calls),
-                self._call_cost_floor(returned_call),
-            )
-            combined.cost.unmeasured = True
-            combined.cost.known_cost = floor
-            return combined
         captures.reconcile_model[index] = (
             resolved_models[0] if len(calls) == 1 and uncaptured is None else None
         )
@@ -1872,6 +2107,27 @@ class LocalEvaluator(BaseEvaluator):
                 response_captured=False,
             )
         return self._combine_call_metrics(calls)
+
+    @staticmethod
+    def _undo_preview_cost_evidence(example_result: Any) -> None:
+        preview = getattr(example_result, "_sdk_preview_cost_evidence", None)
+        if preview is None:
+            return
+        before, after = preview
+        missing = object()
+        for key in before.keys() | after.keys():
+            previous = before.get(key, missing)
+            written = after.get(key, missing)
+            if (
+                previous == written
+                or example_result.metrics.get(key, missing) != written
+            ):
+                continue
+            if key in before:
+                example_result.metrics[key] = previous
+            else:
+                example_result.metrics.pop(key, None)
+        del example_result._sdk_preview_cost_evidence
 
     def _update_example_metric_from_result(
         self,
@@ -1900,23 +2156,7 @@ class LocalEvaluator(BaseEvaluator):
             # Final dataset-order ownership can differ from completion-order
             # previews. Undo only preview changes still present on this row;
             # preserve authoritative evidence supplied before or after them.
-            preview = getattr(example_result, "_sdk_preview_cost_evidence", None)
-            if preview is not None:
-                before, after = preview
-                missing = object()
-                for key in before.keys() | after.keys():
-                    previous = before.get(key, missing)
-                    written = after.get(key, missing)
-                    if (
-                        previous == written
-                        or example_result.metrics.get(key, missing) != written
-                    ):
-                        continue
-                    if key in before:
-                        example_result.metrics[key] = previous
-                    else:
-                        example_result.metrics.pop(key, None)
-                del example_result._sdk_preview_cost_evidence
+            self._undo_preview_cost_evidence(example_result)
             example_metric.custom_metrics.update(example_result.metrics)
             if example_result.metrics.get("cost_unmeasured"):
                 # The evaluator's floor may overlap captured spend: their
@@ -1977,7 +2217,7 @@ class LocalEvaluator(BaseEvaluator):
                     logger.warning(f"Negative {key} clamped: {val} → 0")
                 setattr(metrics.tokens, attr, max(0, val))
             except Exception as e:
-                logger.error(f"Failed to inject {key}: {e}", extra={"usage": usage})
+                logger.exception(f"Failed to inject {key}: {e}", extra={"usage": usage})
 
         # Recompute total_tokens if any token counts were injected
         if "input_tokens" in usage or "output_tokens" in usage:
@@ -1986,7 +2226,7 @@ class LocalEvaluator(BaseEvaluator):
                     metrics.tokens.input_tokens + metrics.tokens.output_tokens
                 )
             except Exception as e:
-                logger.error(f"Failed to compute total_tokens: {e}")
+                logger.exception(f"Failed to compute total_tokens: {e}")
 
         # Inject response_time_ms if provided
         if "response_time_ms" not in usage:
@@ -1999,7 +2239,7 @@ class LocalEvaluator(BaseEvaluator):
                 )
             metrics.response.response_time_ms = max(0.0, float(response_time))
         except Exception as e:
-            logger.error(f"Failed to inject response_time_ms: {e}")
+            logger.exception(f"Failed to inject response_time_ms: {e}")
 
     @staticmethod
     def _inject_cache_usage_from_meta(
@@ -2085,7 +2325,7 @@ class LocalEvaluator(BaseEvaluator):
                     }
                 )
             except Exception as e:
-                logger.error(
+                logger.exception(
                     f"Failed to inject call breakdown entry: {e}", extra={"call": call}
                 )
 
@@ -2196,7 +2436,7 @@ class LocalEvaluator(BaseEvaluator):
 
                 _reconcile_reported_cost_with_tokens(metrics, model_name)
         except Exception as e:
-            logger.error(f"Failed to inject total_cost: {e}")
+            logger.exception(f"Failed to inject total_cost: {e}")
 
         # Recompute derived metrics
         try:
@@ -2205,7 +2445,7 @@ class LocalEvaluator(BaseEvaluator):
             else:
                 MetricsCalculator.calculate_tokens_per_second(metrics)
         except Exception as e:
-            logger.error(f"Failed to recompute tokens_per_second: {e}")
+            logger.exception(f"Failed to recompute tokens_per_second: {e}")
 
         logger.debug(
             f"Injected cost=${metrics.cost.total_cost:.4f}, "
@@ -2213,6 +2453,181 @@ class LocalEvaluator(BaseEvaluator):
         )
 
         return meta
+
+    def _example_metric_from_resumed(
+        self,
+        example_result: Any,
+        dataset: Dataset,
+        index: int,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+    ) -> ExampleMetrics:
+        """Rebuild an example's metrics from a stored prior result (#2541).
+
+        Nothing is re-executed, re-scored or re-judged: tokens, cost, latency and
+        scores come from the stored row. A stored row with no known cost stays
+        unknown (never a measured zero).
+        """
+        stored = dict(example_result.metrics or {})
+        metric = ExampleMetrics()
+        metric.tokens = TokenMetrics(
+            input_tokens=int(stored.get("input_tokens") or 0),
+            output_tokens=int(stored.get("output_tokens") or 0),
+        )
+        metric.response.response_time_ms = max(
+            0.0, float(example_result.execution_time or 0.0) * 1000
+        )
+        known = stored.get("total_cost")
+        if stored.get("cost_unmeasured") or not isinstance(known, (int, float)):
+            metric.cost.unmeasured = True
+            metric.cost.known_cost = float(stored.get("cost_lower_bound") or 0.0)
+        else:
+            metric.cost = CostMetrics(
+                input_cost=float(stored.get("input_cost") or 0.0),
+                output_cost=float(stored.get("output_cost") or 0.0),
+            )
+            metric.cost.total_cost = float(known)
+            metric.cost.cost_explicit = True
+        metric.success = True
+        expected = (
+            dataset.examples[index].expected_output
+            if index < len(dataset.examples)
+            else None
+        )
+        metric.accuracy_eligible = not _is_empty_expected_output(expected)
+        metric.custom_metrics.update(stored)
+        # Accuracy provenance comes only from the stored row: a stored
+        # measurement is reused as-is; a successful row with gold but no stored
+        # accuracy stays unmeasured (no builtin provenance, so never 1.0).
+        stored_accuracy = stored.get("accuracy")
+        if isinstance(stored_accuracy, bool) or not (
+            isinstance(stored_accuracy, (int, float)) and math.isfinite(stored_accuracy)
+        ):
+            metric.custom_metrics.pop("accuracy", None)
+            # Explicit provenance: this row was never scored for accuracy, so
+            # every accuracy aggregate leaves it out (it is not a miss).
+            metric.accuracy_unavailable = True
+        if progress_callback:
+            progress_callback(
+                index,
+                self._build_local_progress_payload(
+                    metric, example_result, example_result.actual_output
+                ),
+            )
+        return metric
+
+    def _reconcile_model_name(
+        self,
+        output: Any,
+        index: int,
+        config: dict[str, Any],
+        all_captured_responses: list[Any],
+        captures: _CaptureOwnership | None,
+    ) -> str | None:
+        if captures is not None:
+            # Reconcile reported cost only against the model that actually
+            # priced this example's single call (response model first); a
+            # multi-call row has no single model, so it is never repriced as one
+            # configured model (#2444).
+            return captures.reconcile_model.get(index)
+        model_name: str | None = config.get("model") or config.get("model_name")
+        if not model_name:
+            model_name = self._infer_model_name_from_output(
+                output,
+                *self._model_inference_pool(index, all_captured_responses, captures),
+            )
+        return model_name
+
+    def _apply_builtin_accuracy(
+        self,
+        example_metric: ExampleMetrics,
+        output: Any,
+        expected_output: Any,
+    ) -> None:
+        # Compare the output as-is: the comparator unwraps a real response
+        # wrapper itself and leaves a structured answer intact (#2523).
+        if "accuracy" not in self.metrics:
+            # Exact-match accuracy is not a configured metric, so it is not
+            # computed or uploaded (it would read as a fake 0.0 whenever the
+            # function output is not meant to equal the expected value). The
+            # row carries no built-in provenance, so it is unmeasured; an
+            # accuracy the user supplies explicitly still counts.
+            self._log_builtin_accuracy_skipped_once()
+            return
+        # Built-in exact match is declared: a failed eligible attempt is a
+        # miss in the tracker summary, as in the aggregate.
+        example_metric.accuracy_builtin = True
+        # Only a row with gold has a built-in value (a blank expected
+        # output is no gold).
+        accuracy_value = (
+            self._calculate_example_accuracy(output, expected_output)
+            if example_metric.accuracy_eligible
+            else None
+        )
+        if (
+            accuracy_value is None
+            and example_metric.accuracy_eligible
+            and example_metric.success
+        ):
+            # A new row with gold whose successful call produced no output
+            # is a miss, not unmeasured (one per-row contract).
+            accuracy_value = 0.0
+        if accuracy_value is not None:
+            example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
+
+    async def _apply_row_metric_functions(
+        self,
+        example_metric: ExampleMetrics,
+        output: Any,
+        example_obj: Any,
+        config: dict[str, Any],
+        index: int,
+        example_results: list[Any] | None,
+        metric_errors: list[dict[str, Any]] | None,
+        captures: _CaptureOwnership | None,
+    ) -> None:
+        produced_metric_keys = await self._apply_custom_metric_functions(
+            example_metric,
+            output,
+            example_obj,
+            config,
+            index,
+            metric_errors=metric_errors,
+            captures=captures,
+        )
+
+        # Fold LLM spend made *inside* a metric function / judge (e.g. an
+        # LLM-as-judge calling litellm.completion) into this example's
+        # cost/tokens. Without this, judge calls are captured by the same
+        # interceptor the agent call uses but are never read: this
+        # example's cost was already settled above by
+        # `_extract_llm_metrics_for_output`, before metric functions ran
+        # (Traigent#2297). Left uncorrected, `total_cost` and the
+        # permit-based cost enforcement in `core/cost_enforcement.py`
+        # never see judge spend.
+        detailed_row = _result_row(example_results, index) if self.detailed else None
+        self._fold_metric_function_llm_cost(
+            example_metric, example_result=detailed_row, captures=captures
+        )
+
+        # Transfer custom metrics to example_results if in detailed mode.
+        # Iterate the keys actually produced (which include mapping
+        # sub-keys and exclude any function name a mapping-returning
+        # function never populated) rather than the function names -- the
+        # latter KeyErrors for mapping-returning metric functions.
+        if detailed_row is not None:
+            # A metric function is authoritative for the key(s) it
+            # produces and overrides a built-in computed value of the same
+            # name -- this is the contract the custom ``scoring_function``
+            # path relies on (it defines the objective, e.g. ``accuracy``).
+            # Mapping sub-keys inherit the same override semantics as
+            # scalar metric-function values, for consistency.
+            target_metrics = detailed_row.metrics
+            for metric_key in produced_metric_keys:
+                if metric_key not in example_metric.custom_metrics:
+                    # Withdrawn by the judge fold: the example's cost is
+                    # unknown, so a cost key is not transferred (#2517).
+                    continue
+                target_metrics[metric_key] = example_metric.custom_metrics[metric_key]
 
     async def _process_single_output(
         self,
@@ -2254,14 +2669,17 @@ class LocalEvaluator(BaseEvaluator):
         # spurious ``{"x": 1.0}``. We therefore unpack HERE only when the
         # carrier is absent (the genuinely non-detailed lane, where ``outputs``
         # still holds the raw tuple). Any non-matching shape is left untouched.
-        carrier = None
-        if (
-            example_results
-            and index < len(example_results)
-            and example_results[index] is not None
-            and getattr(example_results[index], "user_metrics", None) is not None
+        row = _result_row(example_results, index)
+        if row is not None and (row.metadata or {}).get(
+            "resumed_example_from_prior_run"
         ):
-            carrier = example_results[index]
+            return self._example_metric_from_resumed(
+                row, dataset, index, progress_callback
+            )
+
+        carrier = None
+        if row is not None and getattr(row, "user_metrics", None) is not None:
+            carrier = row
 
         if carrier is not None:
             user_metrics = carrier.user_metrics
@@ -2273,21 +2691,9 @@ class LocalEvaluator(BaseEvaluator):
             output, index, config, dataset, all_captured_responses, captures
         )
 
-        if captures is not None:
-            # Reconcile reported cost only against the model that actually
-            # priced this example's single call (response model first); a
-            # multi-call row has no single model, so it is never repriced as one
-            # configured model (#2444).
-            model_name = captures.reconcile_model.get(index)
-        else:
-            model_name = config.get("model") or config.get("model_name")
-            if not model_name:
-                model_name = self._infer_model_name_from_output(
-                    output,
-                    *self._model_inference_pool(
-                        index, all_captured_responses, captures
-                    ),
-                )
+        model_name = self._reconcile_model_name(
+            output, index, config, all_captured_responses, captures
+        )
 
         # META-EXTRACTION-POINT: Extract and inject __traigent_meta__ if present.
         # This happens after extract_llm_metrics so honest reported costs can
@@ -2314,15 +2720,7 @@ class LocalEvaluator(BaseEvaluator):
         example_metric.accuracy_eligible = not _is_empty_expected_output(
             expected_output
         )
-        # Compare the output as-is: the comparator unwraps a real response
-        # wrapper itself and leaves a structured answer intact (#2523).
-        accuracy_value = self._calculate_example_accuracy(output, expected_output)
-        if accuracy_value is not None:
-            example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
-        elif example_metric.accuracy_eligible:
-            # Gold exists but nothing could be compared: unmeasured, never the
-            # tracker's success-implies-1.0 fallback (#2495).
-            example_metric.accuracy_unavailable = True
+        self._apply_builtin_accuracy(example_metric, output, expected_output)
 
         # Merge per-example user metrics into custom_metrics, never overriding
         # an evaluator-computed key (e.g. accuracy stays the computed value).
@@ -2341,89 +2739,164 @@ class LocalEvaluator(BaseEvaluator):
 
         # Apply custom metric functions
         if self.metric_functions and index < len(dataset.examples):
-            example_obj = dataset.examples[index]
-            produced_metric_keys = await self._apply_custom_metric_functions(
+            await self._apply_row_metric_functions(
                 example_metric,
                 output,
-                example_obj,
+                dataset.examples[index],
                 config,
                 index,
-                metric_errors=metric_errors,
-                captures=captures,
+                example_results,
+                metric_errors,
+                captures,
             )
-
-            # Fold LLM spend made *inside* a metric function / judge (e.g. an
-            # LLM-as-judge calling litellm.completion) into this example's
-            # cost/tokens. Without this, judge calls are captured by the same
-            # interceptor the agent call uses but are never read: this
-            # example's cost was already settled above by
-            # `_extract_llm_metrics_for_output`, before metric functions ran
-            # (Traigent#2297). Left uncorrected, `total_cost` and the
-            # permit-based cost enforcement in `core/cost_enforcement.py`
-            # never see judge spend.
-            target_result = (
-                example_results[index]
-                if (
-                    self.detailed
-                    and example_results
-                    and index < len(example_results)
-                    and example_results[index] is not None
-                )
-                else None
-            )
-            self._fold_metric_function_llm_cost(
-                example_metric, example_result=target_result, captures=captures
-            )
-
-            # Transfer custom metrics to example_results if in detailed mode.
-            # Iterate the keys actually produced (which include mapping
-            # sub-keys and exclude any function name a mapping-returning
-            # function never populated) rather than the function names -- the
-            # latter KeyErrors for mapping-returning metric functions.
-            if (
-                self.detailed
-                and example_results
-                and index < len(example_results)
-                and example_results[index] is not None
-            ):
-                # A metric function is authoritative for the key(s) it
-                # produces and overrides a built-in computed value of the same
-                # name -- this is the contract the custom ``scoring_function``
-                # path relies on (it defines the objective, e.g. ``accuracy``).
-                # Mapping sub-keys inherit the same override semantics as
-                # scalar metric-function values, for consistency.
-                target_metrics = example_results[index].metrics
-                for metric_key in produced_metric_keys:
-                    if metric_key not in example_metric.custom_metrics:
-                        # Withdrawn by the judge fold: the example's cost is
-                        # unknown, so a cost key is not transferred (#2517).
-                        continue
-                    target_metrics[metric_key] = example_metric.custom_metrics[
-                        metric_key
-                    ]
 
         # Emit boundary for this row: an unknown-cost row leaves with no numeric
         # cost in any channel (row metrics, custom metrics), only flag + floor.
-        self._enforce_row_cost_invariant(
-            example_metric,
-            example_results[index]
-            if example_results and index < len(example_results)
-            else None,
-        )
+        self._enforce_row_cost_invariant(example_metric, row)
 
         # Send progress callback
         if progress_callback:
-            example_result_for_progress = (
-                example_results[index]
-                if example_results and index < len(example_results)
-                else None
-            )
+            example_result_for_progress = row
             payload = self._build_local_progress_payload(
                 example_metric, example_result_for_progress, output
             )
             progress_callback(index, payload)
 
         return example_metric
+
+    def _price_judge_calls(
+        self,
+        example_metric: ExampleMetrics,
+        drained: list[Any],
+        drained_owners: list[Any],
+        drained_requested: list[Any],
+        captures: _CaptureOwnership | None,
+    ) -> _JudgeSpend:
+        spend = _JudgeSpend()
+        for response, owner, requested in zip(
+            drained, drained_owners, drained_requested, strict=True
+        ):
+            if owner is not None:
+                # Made by an example's own evaluation (e.g. a worker that outlived
+                # its timeout), not by this judge: never charge it here. It stays
+                # unknown spend with its exact priceable floor, reported once at
+                # trial level (#2444).
+                if captures is not None:
+                    captures.add_late(response, requested)
+                continue
+            metrics = self._price_one_call(
+                response,
+                agent_model=None,
+                is_agent_call=False,
+                requested_model=requested,
+            )
+            # A judge call with unknown cost (no usage, or no identifiable
+            # model/price) is an unknown spend, not a free one: it makes this
+            # example's cost unmeasured (#2517).
+            spend.judge_unmeasured = spend.judge_unmeasured or not (
+                metrics.measured
+                and not metrics.cost.unmeasured
+                and not metrics.cost.unpriced
+                and (
+                    metrics.tokens.total_tokens
+                    or metrics.cost.total_cost
+                    or metrics.cost.cost_explicit
+                )
+            )
+            spend.input_cost += metrics.cost.input_cost
+            spend.output_cost += metrics.cost.output_cost
+            spend.total_cost += metrics.cost.total_cost
+            spend.input_tokens += metrics.tokens.input_tokens
+            spend.output_tokens += metrics.tokens.output_tokens
+            spend.tokens += metrics.tokens.total_tokens
+            # Forward-compat with #2308: an unpriced judge call must not be
+            # silently reported as verified-free once folded into this
+            # example's totals.
+            example_metric.cost.unpriced = (
+                example_metric.cost.unpriced or metrics.cost.unpriced
+            )
+        return spend
+
+    def _apply_judge_spend(
+        self,
+        example_metric: ExampleMetrics,
+        example_result: Any,
+        spend: _JudgeSpend,
+    ) -> None:
+        # Only now -- past the abandon-guard -- is this row genuinely measured.
+        # A captured judge/evaluator response is a real measurement even when
+        # the agent's own call never produced output (e.g. every example errors
+        # before the agent responds, so `_extract_llm_metrics_for_output` set
+        # `measured=False`). The judge still ran and its spend is real, so this
+        # example must not be excluded from measured-only aggregation
+        # (`MetricsTracker.aggregate_metrics`/`format_for_backend`) the way a
+        # genuinely never-measured example is (Traigent#2297 review).
+        #
+        # This assignment MUST stay below the guard. Above it, a captured judge
+        # response that priced to zero cost AND zero tokens flipped a genuinely
+        # unmeasured row to `measured=True` carrying all-zero cost/token
+        # metrics, which then re-entered the measured-only MEAN denominators at
+        # `metrics_tracker.py`'s `measured_metrics` filter and dragged every
+        # mean down -- precisely the defect `ExampleMetrics.measured`'s own
+        # docblock warns about.
+        example_metric.measured = True
+
+        agent_cost_unmeasured = example_metric.cost.unmeasured
+        if agent_cost_unmeasured:
+            # The agent's own cost is unknown, so the judge's spend is a known
+            # floor, not part of a total: adding it to ``total_cost`` would
+            # present a partial total as complete, and dropping it would hide
+            # real spend. Aggregation reports it as ``cost_lower_bound``.
+            example_metric.cost.known_cost += spend.total_cost
+        else:
+            example_metric.cost.input_cost += spend.input_cost
+            example_metric.cost.output_cost += spend.output_cost
+            example_metric.cost.total_cost += spend.total_cost
+        example_metric.tokens.input_tokens += spend.input_tokens
+        example_metric.tokens.output_tokens += spend.output_tokens
+        example_metric.tokens.total_tokens += spend.tokens
+
+        # Keep the standard cost/token custom_metrics (written earlier in
+        # `_process_single_output`, before metric functions ran) consistent
+        # with the now-updated totals, and surface the judge's own share.
+        # This name remains on the user channel. A pre-existing user value
+        # wins; otherwise record SDK provenance for row/aggregate withdrawal.
+        if "evaluation_cost" not in example_metric.custom_metrics:
+            example_metric.custom_metrics["evaluation_cost"] = spend.total_cost
+            example_metric.sdk_evaluation_cost = True
+        example_metric.custom_metrics["input_tokens"] = (
+            example_metric.tokens.input_tokens
+        )
+        example_metric.custom_metrics["output_tokens"] = (
+            example_metric.tokens.output_tokens
+        )
+        example_metric.custom_metrics["total_tokens"] = (
+            example_metric.tokens.total_tokens
+        )
+        if example_result is not None:
+            example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
+            example_result.metrics["output_tokens"] = (
+                example_metric.tokens.output_tokens
+            )
+            example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
+            if example_metric.sdk_evaluation_cost:
+                example_result.metrics["evaluation_cost"] = spend.total_cost
+
+        # One notion of "known cost" on every channel: a measured row shows its
+        # refreshed numeric cost; an unknown row (unmeasured OR unpriced) has
+        # every numeric cost withdrawn and carries the flag and exact floor.
+        if example_metric.cost_measured:
+            example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
+            example_metric.custom_metrics["output_cost"] = (
+                example_metric.cost.output_cost
+            )
+            example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
+            if example_result is not None:
+                example_result.metrics["input_cost"] = example_metric.cost.input_cost
+                example_result.metrics["output_cost"] = example_metric.cost.output_cost
+                example_result.metrics["total_cost"] = example_metric.cost.total_cost
+        else:
+            self._withdraw_numeric_cost(example_metric, example_result)
 
     def _fold_metric_function_llm_cost(
         self,
@@ -2498,141 +2971,22 @@ class LocalEvaluator(BaseEvaluator):
         if drained_requested is None or len(drained_requested) != len(drained):
             drained_requested = [None] * len(drained)
 
-        eval_input_cost = 0.0
-        eval_output_cost = 0.0
-        eval_total_cost = 0.0
-        eval_input_tokens = 0
-        eval_output_tokens = 0
-        eval_tokens = 0
-        judge_unmeasured = False
-        for response, owner, requested in zip(
-            drained, drained_owners, drained_requested, strict=True
-        ):
-            if owner is not None:
-                # Made by an example's own evaluation (e.g. a worker that outlived
-                # its timeout), not by this judge: never charge it here. It stays
-                # unknown spend with its exact priceable floor, reported once at
-                # trial level (#2444).
-                if captures is not None:
-                    captures.add_late(response, requested)
-                continue
-            metrics = self._price_one_call(
-                response,
-                agent_model=None,
-                is_agent_call=False,
-                requested_model=requested,
-            )
-            # A judge call with unknown cost (no usage, or no identifiable
-            # model/price) is an unknown spend, not a free one: it makes this
-            # example's cost unmeasured (#2517).
-            judge_unmeasured = judge_unmeasured or not (
-                metrics.measured
-                and not metrics.cost.unmeasured
-                and not metrics.cost.unpriced
-                and (
-                    metrics.tokens.total_tokens
-                    or metrics.cost.total_cost
-                    or metrics.cost.cost_explicit
-                )
-            )
-            eval_input_cost += metrics.cost.input_cost
-            eval_output_cost += metrics.cost.output_cost
-            eval_total_cost += metrics.cost.total_cost
-            eval_input_tokens += metrics.tokens.input_tokens
-            eval_output_tokens += metrics.tokens.output_tokens
-            eval_tokens += metrics.tokens.total_tokens
-            # Forward-compat with #2308: an unpriced judge call must not be
-            # silently reported as verified-free once folded into this
-            # example's totals.
-            example_metric.cost.unpriced = (
-                example_metric.cost.unpriced or metrics.cost.unpriced
-            )
+        spend = self._price_judge_calls(
+            example_metric, drained, drained_owners, drained_requested, captures
+        )
 
-        if judge_unmeasured:
+        if spend.judge_unmeasured:
             # Independent of the agent's own measured state: an unknown judge
             # spend makes the example's cost unknown whatever else was seen.
             self._mark_example_cost_unmeasured_by_judge(example_metric, example_result)
 
-        if not eval_total_cost and eval_tokens == 0:
+        if not spend.total_cost and spend.tokens == 0:
             # Nothing priced and nothing tokenized: there is no judge spend to
             # attribute, so ABANDON the fold and leave every field of
             # ``example_metric`` exactly as it was.
             return
 
-        # Only now -- past the abandon-guard -- is this row genuinely measured.
-        # A captured judge/evaluator response is a real measurement even when
-        # the agent's own call never produced output (e.g. every example errors
-        # before the agent responds, so `_extract_llm_metrics_for_output` set
-        # `measured=False`). The judge still ran and its spend is real, so this
-        # example must not be excluded from measured-only aggregation
-        # (`MetricsTracker.aggregate_metrics`/`format_for_backend`) the way a
-        # genuinely never-measured example is (Traigent#2297 review).
-        #
-        # This assignment MUST stay below the guard. Above it, a captured judge
-        # response that priced to zero cost AND zero tokens flipped a genuinely
-        # unmeasured row to `measured=True` carrying all-zero cost/token
-        # metrics, which then re-entered the measured-only MEAN denominators at
-        # `metrics_tracker.py`'s `measured_metrics` filter and dragged every
-        # mean down -- precisely the defect `ExampleMetrics.measured`'s own
-        # docblock warns about.
-        example_metric.measured = True
-
-        agent_cost_unmeasured = example_metric.cost.unmeasured
-        if agent_cost_unmeasured:
-            # The agent's own cost is unknown, so the judge's spend is a known
-            # floor, not part of a total: adding it to ``total_cost`` would
-            # present a partial total as complete, and dropping it would hide
-            # real spend. Aggregation reports it as ``cost_lower_bound``.
-            example_metric.cost.known_cost += eval_total_cost
-        else:
-            example_metric.cost.input_cost += eval_input_cost
-            example_metric.cost.output_cost += eval_output_cost
-            example_metric.cost.total_cost += eval_total_cost
-        example_metric.tokens.input_tokens += eval_input_tokens
-        example_metric.tokens.output_tokens += eval_output_tokens
-        example_metric.tokens.total_tokens += eval_tokens
-
-        # Keep the standard cost/token custom_metrics (written earlier in
-        # `_process_single_output`, before metric functions ran) consistent
-        # with the now-updated totals, and surface the judge's own share.
-        # This name remains on the user channel. A pre-existing user value
-        # wins; otherwise record SDK provenance for row/aggregate withdrawal.
-        if "evaluation_cost" not in example_metric.custom_metrics:
-            example_metric.custom_metrics["evaluation_cost"] = eval_total_cost
-            example_metric.sdk_evaluation_cost = True
-        example_metric.custom_metrics["input_tokens"] = (
-            example_metric.tokens.input_tokens
-        )
-        example_metric.custom_metrics["output_tokens"] = (
-            example_metric.tokens.output_tokens
-        )
-        example_metric.custom_metrics["total_tokens"] = (
-            example_metric.tokens.total_tokens
-        )
-        if example_result is not None:
-            example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
-            example_result.metrics["output_tokens"] = (
-                example_metric.tokens.output_tokens
-            )
-            example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
-            if example_metric.sdk_evaluation_cost:
-                example_result.metrics["evaluation_cost"] = eval_total_cost
-
-        # One notion of "known cost" on every channel: a measured row shows its
-        # refreshed numeric cost; an unknown row (unmeasured OR unpriced) has
-        # every numeric cost withdrawn and carries the flag and exact floor.
-        if example_metric.cost_measured:
-            example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
-            example_metric.custom_metrics["output_cost"] = (
-                example_metric.cost.output_cost
-            )
-            example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
-            if example_result is not None:
-                example_result.metrics["input_cost"] = example_metric.cost.input_cost
-                example_result.metrics["output_cost"] = example_metric.cost.output_cost
-                example_result.metrics["total_cost"] = example_metric.cost.total_cost
-        else:
-            self._withdraw_numeric_cost(example_metric, example_result)
+        self._apply_judge_spend(example_metric, example_result, spend)
 
     @classmethod
     def _withdraw_numeric_cost(
@@ -2677,6 +3031,42 @@ class LocalEvaluator(BaseEvaluator):
             example_metric.cost.known_cost += example_metric.cost.total_cost
             example_metric.cost.unmeasured = True
         LocalEvaluator._withdraw_numeric_cost(example_metric, example_result)
+
+    @staticmethod
+    def _apply_row_accuracy_to_aggregate(
+        aggregated_metrics: dict[str, Any],
+        metrics_tracker: Any,
+    ) -> None:
+        """Set the trial accuracy (and score alias) from the per-row values.
+
+        The single per-row accuracy contract lives in
+        ``MetricsTracker._accuracy_values_for_formatters``; the trial
+        aggregate, ``format_for_backend`` and ``format_as_summary_stats`` all
+        read it, so they share one population and one mean. The trial accuracy
+        is absent when no row has a value.
+        """
+        values = metrics_tracker._accuracy_values_for_formatters()
+        previous = aggregated_metrics.get("accuracy")
+        if values:
+            value = sum(values) / len(values)
+            aggregated_metrics["accuracy"] = value
+            if aggregated_metrics.get("score") in (None, previous):
+                aggregated_metrics["score"] = value
+            return
+        aggregated_metrics.pop("accuracy", None)
+        if aggregated_metrics.get("score") == previous:
+            aggregated_metrics.pop("score", None)
+
+    def _log_builtin_accuracy_skipped_once(self) -> None:
+        """Emit one informational notice per evaluator when accuracy is skipped."""
+        if self._builtin_accuracy_skipped_logged:
+            return
+        self._builtin_accuracy_skipped_logged = True
+        logger.info(
+            "Built-in exact-match accuracy is not computed or uploaded because "
+            "'accuracy' is not one of the configured metrics. Add 'accuracy' "
+            "to the objectives to measure it."
+        )
 
     def _log_dual_scorer_notice_once(self) -> None:
         """Emit a single run-level notice when both scorers appear (issue #1845).
@@ -2822,6 +3212,60 @@ class LocalEvaluator(BaseEvaluator):
             return correct / total, total
         return None, total
 
+    def _log_cost_override(
+        self,
+        aggregated_metrics: dict[str, float],
+        comprehensive_metrics: dict[str, Any],
+    ) -> None:
+        """Log when a zero aggregated cost is overridden by the comprehensive one."""
+        logger.debug(
+            f"LOCAL EVALUATOR DEBUG: comprehensive_metrics['cost'] = "
+            f"{comprehensive_metrics.get('cost', 'MISSING')}"
+        )
+
+        # If cost is in objectives but was computed as 0, use comprehensive value
+        if "cost" in self.metrics and comprehensive_metrics.get("cost") is not None:
+            logger.debug(
+                f"LOCAL EVALUATOR DEBUG: aggregated cost="
+                f"{aggregated_metrics.get('cost', 'MISSING')}, "
+                f"comprehensive cost={comprehensive_metrics['cost']}"
+            )
+            _log_zero_cost_override(aggregated_metrics, comprehensive_metrics)
+
+    @staticmethod
+    def _is_score_alias_of_accuracy(
+        key: str,
+        aggregated_metrics: dict[str, float],
+        preserve_authoritative_accuracy: bool,
+    ) -> bool:
+        """True when ``score`` is absent but a built-in accuracy is authoritative."""
+        if (
+            key == "score"
+            and preserve_authoritative_accuracy
+            and "accuracy" in aggregated_metrics
+            and key not in aggregated_metrics
+        ):
+            return True
+        return False
+
+    @staticmethod
+    def _keeps_authoritative_value(
+        key: str,
+        aggregated_metrics: dict[str, float],
+        preserve_authoritative_accuracy: bool,
+    ) -> bool:
+        """True when an existing accuracy/score aggregate must not be replaced."""
+        if (
+            key in {"accuracy", "score"}
+            and key in aggregated_metrics
+            and (
+                preserve_authoritative_accuracy
+                or aggregated_metrics[key] not in (None, 0.0)
+            )
+        ):
+            return True
+        return False
+
     def _merge_comprehensive_metrics(
         self,
         aggregated_metrics: dict[str, float],
@@ -2835,36 +3279,13 @@ class LocalEvaluator(BaseEvaluator):
             aggregated_metrics: Target metrics dict (modified in place)
             comprehensive_metrics: Source comprehensive metrics
         """
-        logger.debug(
-            f"LOCAL EVALUATOR DEBUG: comprehensive_metrics['cost'] = "
-            f"{comprehensive_metrics.get('cost', 'MISSING')}"
-        )
-
-        # If cost is in objectives but was computed as 0, use comprehensive value
-        if "cost" in self.metrics and comprehensive_metrics.get("cost") is not None:
-            logger.debug(
-                f"LOCAL EVALUATOR DEBUG: aggregated cost="
-                f"{aggregated_metrics.get('cost', 'MISSING')}, "
-                f"comprehensive cost={comprehensive_metrics['cost']}"
-            )
-            aggregated_cost = float(aggregated_metrics.get("cost", 0.0) or 0.0)
-            comprehensive_cost = float(comprehensive_metrics["cost"])
-            if math.isclose(aggregated_cost, 0.0, abs_tol=1e-9) and not math.isclose(
-                comprehensive_cost, 0.0, abs_tol=1e-9
-            ):
-                logger.info(
-                    f"🔍 LOCAL EVALUATOR: Overriding cost metric: "
-                    f"{aggregated_cost} -> {comprehensive_cost}"
-                )
+        self._log_cost_override(aggregated_metrics, comprehensive_metrics)
 
         for key, value in comprehensive_metrics.items():
             if value is None:
                 continue
-            if (
-                key == "score"
-                and preserve_authoritative_accuracy
-                and "accuracy" in aggregated_metrics
-                and key not in aggregated_metrics
+            if self._is_score_alias_of_accuracy(
+                key, aggregated_metrics, preserve_authoritative_accuracy
             ):
                 # A built-in accuracy can be a real 0.0 while its sibling
                 # score key is absent (for example every expected output is
@@ -2873,13 +3294,8 @@ class LocalEvaluator(BaseEvaluator):
                 # unrelated fallback score.
                 aggregated_metrics[key] = aggregated_metrics["accuracy"]
                 continue
-            if (
-                key in {"accuracy", "score"}
-                and key in aggregated_metrics
-                and (
-                    preserve_authoritative_accuracy
-                    or aggregated_metrics[key] not in (None, 0.0)
-                )
+            if self._keeps_authoritative_value(
+                key, aggregated_metrics, preserve_authoritative_accuracy
             ):
                 # ``compute_metrics`` / ``_compute_accuracy_aggregated`` is
                 # authoritative for these objectives. In particular, 0.0 is
@@ -2912,6 +3328,31 @@ class LocalEvaluator(BaseEvaluator):
         fraction = index - lower_idx
         return float(lower_val + (upper_val - lower_val) * fraction)
 
+    @staticmethod
+    def _collect_custom_metric_values(
+        metric_name: str, example_results: list[Any]
+    ) -> tuple[list[float], bool]:
+        values: list[float] = []
+        # A mapping-returning metric function populates its SUB-keys, never
+        # its own name, so ``metric_name`` may be absent from every result.
+        # Track whether it was seen so we don't fabricate a bogus aggregate
+        # ``0.0`` for a function name that produced no such key.
+        saw_metric_name = False
+        for result in example_results:
+            if result is None:
+                continue
+            if metric_name not in result.metrics:
+                continue
+            saw_metric_name = True
+            raw_value = result.metrics[metric_name]
+            if raw_value is None:
+                continue
+            try:
+                values.append(float(raw_value))
+            except (TypeError, ValueError):
+                continue
+        return values, saw_metric_name
+
     def _compute_aggregated_custom_metrics(
         self,
         example_results: list[Any],
@@ -2927,25 +3368,9 @@ class LocalEvaluator(BaseEvaluator):
         aggregated: dict[str, float] = {}
 
         for metric_name in self.metric_functions:
-            values: list[float] = []
-            # A mapping-returning metric function populates its SUB-keys, never
-            # its own name, so ``metric_name`` may be absent from every result.
-            # Track whether it was seen so we don't fabricate a bogus aggregate
-            # ``0.0`` for a function name that produced no such key.
-            saw_metric_name = False
-            for result in example_results:
-                if result is None:
-                    continue
-                if metric_name not in result.metrics:
-                    continue
-                saw_metric_name = True
-                raw_value = result.metrics[metric_name]
-                if raw_value is None:
-                    continue
-                try:
-                    values.append(float(raw_value))
-                except (TypeError, ValueError):
-                    continue
+            values, saw_metric_name = self._collect_custom_metric_values(
+                metric_name, example_results
+            )
 
             if values:
                 if "p95" in metric_name.lower():
@@ -2996,6 +3421,217 @@ class LocalEvaluator(BaseEvaluator):
                     )
                 finally:
                     _progress_capture_history.reset(history_token)
+
+    @staticmethod
+    def _log_budget_exhaustion(
+        budget_exhausted: bool, consumed_examples: int, dataset: Dataset
+    ) -> None:
+        if budget_exhausted:
+            logger.info(
+                "Sample budget exhausted after %s examples (dataset size=%s)",
+                consumed_examples,
+                len(dataset.examples),
+            )
+
+    @staticmethod
+    def _attach_summary_stats(
+        result: EvaluationResult,
+        summary_stats: dict[str, Any],
+        budget_exhausted: bool,
+        total_count: int,
+        metrics_tracker: MetricsTracker,
+    ) -> None:
+        summary_stats.setdefault("metadata", {})
+        summary_stats["metadata"]["sample_budget_exhausted"] = budget_exhausted
+        summary_stats["metadata"]["examples_consumed"] = total_count
+        # Per-trial cost provenance (#2505): a named source, or "mixed".
+        summary_stats["metadata"]["cost_source"] = metrics_tracker.cost_source_label()
+        result.summary_stats = summary_stats
+
+    def _record_exact_match_diagnostic(
+        self,
+        aggregated_metrics: dict[str, Any],
+        outputs: list[Any],
+        dataset: Dataset,
+        errors: list[str | None],
+    ) -> None:
+        accuracy_value, _ = self._compute_accuracy_aggregated(outputs, dataset, errors)
+        if accuracy_value is not None:
+            # Keep the default exact-match value as a labelled diagnostic;
+            # the custom aggregate below owns "accuracy" and "score" (set
+            # to the objective value).
+            aggregated_metrics["exact_match_default"] = accuracy_value
+            self._log_dual_scorer_notice_once()
+
+    def _build_summary_stats(
+        self, metrics_tracker: MetricsTracker
+    ) -> dict[str, Any] | None:
+        if not self.execution_mode_enum:
+            return None
+        summary_stats = metrics_tracker.format_as_summary_stats()
+        if isinstance(summary_stats.get("metrics"), dict):
+            enforce_unknown_cost_invariant(
+                summary_stats["metrics"],
+                nullify=True,
+                sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+            )
+        logger.debug(f"Generated summary_stats for {self.execution_mode} mode")
+        return summary_stats
+
+    @staticmethod
+    def _collect_expected_outputs(
+        dataset: Dataset, consumed_examples: int
+    ) -> list[Any]:
+        if not consumed_examples:
+            return []
+        capped = min(consumed_examples, len(dataset.examples))
+        return [dataset.examples[i].expected_output for i in range(capped)]
+
+    def _compute_detailed_example_metrics(self, example_results: list[Any]) -> None:
+        for _i, ex_result in enumerate(example_results):
+            if (
+                ex_result is not None
+                and ex_result.success
+                and ex_result.error_message is None
+                and not (ex_result.metadata or {}).get("resumed_example_from_prior_run")
+            ):
+                # Compute metrics for this specific example (reused rows keep
+                # their stored scores, custom accuracy included, #2541)
+                example_metrics = self._compute_example_metrics(
+                    ex_result.actual_output, ex_result.expected_output
+                )
+                # Update the ExampleResult with computed metrics
+                ex_result.metrics.update(example_metrics)
+
+    def _compute_base_aggregates(
+        self,
+        outputs: list[Any],
+        expected_outputs: list[Any],
+        errors: list[str | None],
+        dataset: Dataset,
+        example_results: list[Any],
+        metrics_tracker: MetricsTracker,
+        metric_errors: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if not self.metric_functions:
+            return self.compute_metrics(
+                outputs,
+                expected_outputs,
+                errors,
+                dataset=dataset,
+                example_results=example_results,
+                example_metrics=metrics_tracker.example_metrics,
+                metric_errors=metric_errors,
+            )
+        # Filter to registry/RAGAS metrics, but exclude those already provided
+        # by custom metric_functions (e.g., skip built-in accuracy if
+        # scoring_function provides it - avoids redundant computation).
+        # Note: scoring_function maps to "accuracy" key only; cost/latency
+        # built-ins remain unless explicitly overridden via metric_functions.
+        custom_metric_keys = set(self.metric_functions.keys())
+        base_metric_names = [
+            name
+            for name in self.metrics
+            if (name in self._metric_registry or name in self._ragas_metric_names)
+            and name not in custom_metric_keys
+        ]
+        if not base_metric_names:
+            return {}
+        return self.compute_metrics(
+            outputs,
+            expected_outputs,
+            errors,
+            dataset=dataset,
+            example_results=example_results,
+            example_metrics=metrics_tracker.example_metrics,
+            metrics_override=base_metric_names,
+            metric_errors=metric_errors,
+        )
+
+    def _account_unattributed_spend(
+        self,
+        metrics_tracker: MetricsTracker,
+        captures: _CaptureOwnership | None,
+    ) -> None:
+        if seal_captured_responses():
+            metrics_tracker.unattributed_spend = True
+            for metric in metrics_tracker.example_metrics:
+                if not metric.measured:
+                    metric.cost.unmeasured = True
+        if captures is None:
+            return
+        captures.absorb_late(drain_captured_responses())
+        # Spend no example row consumed (a call with no owner, or an
+        # example that produced no row): its cost cannot be attributed, so
+        # the trial total becomes unmeasured and the exact priced part is
+        # kept as the known-spend floor -- never dropped, never guessed.
+        leftover = captures.leftover()
+        if leftover:
+            # Each leftover is priced by its OWN response model; the agent
+            # model is never assumed for a call not established as the
+            # agent's.  A call that cannot be priced adds nothing to the
+            # floor (its cost is unknown, and the trial is unmeasured).
+            floor = 0.0
+            for r, requested in leftover:
+                priced = self._price_one_call(
+                    r,
+                    agent_model=None,
+                    is_agent_call=False,
+                    requested_model=requested,
+                )
+                floor += self._call_cost_floor(priced)
+            metrics_tracker.unattributed_spend = True
+            metrics_tracker.unattributed_known_cost = floor
+
+    def _count_successes(
+        self, example_results: list[Any] | None, errors: list[str | None]
+    ) -> tuple[int, int]:
+        if self.detailed and example_results:
+            success_count = sum(
+                1 for ex_result in example_results if ex_result and ex_result.success
+            )
+            return success_count, len(example_results)
+        return sum(1 for error in errors if error is None), len(errors)
+
+    def _fold_late_spend_into_result(
+        self,
+        result: EvaluationResult,
+        comprehensive_metrics: dict[str, Any],
+        metrics_tracker: MetricsTracker,
+    ) -> None:
+        floor = float(
+            comprehensive_metrics.get("cost_lower_bound")
+            or comprehensive_metrics.get("cost")
+            or 0.0
+        )
+        while late := finish_captured_responses():
+            for response, requested in late:
+                floor += self._call_cost_floor(
+                    self._price_one_call(
+                        response,
+                        agent_model=None,
+                        is_agent_call=False,
+                        requested_model=requested,
+                    )
+                )
+                # Commit each priced contribution before the next call can
+                # raise: the finally-block budget debit reads this result.
+                enforce_unknown_cost_invariant(
+                    result.aggregated_metrics,
+                    unknown=True,
+                    floor=floor,
+                    sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+                )
+                if result.summary_stats and isinstance(
+                    result.summary_stats.get("metrics"), dict
+                ):
+                    enforce_unknown_cost_invariant(
+                        result.summary_stats["metrics"],
+                        unknown=True,
+                        floor=floor,
+                        nullify=True,
+                        sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
+                    )
 
     async def _evaluate_within_capture_scope(
         self,
@@ -3072,31 +3708,14 @@ class LocalEvaluator(BaseEvaluator):
         )
 
         # Collect expected outputs
-        if consumed_examples:
-            capped = min(consumed_examples, len(dataset.examples))
-            expected_outputs = [
-                dataset.examples[i].expected_output for i in range(capped)
-            ]
-        else:
-            expected_outputs = []
+        expected_outputs = self._collect_expected_outputs(dataset, consumed_examples)
 
         duration = time.time() - start_time
         metrics_tracker.end_tracking()
 
         # If detailed mode, compute individual example metrics first
         if self.detailed and example_results:
-            for _i, ex_result in enumerate(example_results):
-                if (
-                    ex_result is not None
-                    and ex_result.success
-                    and ex_result.error_message is None
-                ):
-                    # Compute metrics for this specific example
-                    example_metrics = self._compute_example_metrics(
-                        ex_result.actual_output, ex_result.expected_output
-                    )
-                    # Update the ExampleResult with computed metrics
-                    ex_result.metrics.update(example_metrics)
+            self._compute_detailed_example_metrics(example_results)
 
         # Get all captured LangChain responses before clearing
         # One atomic take of responses + owners + requested models (a late call
@@ -3140,42 +3759,15 @@ class LocalEvaluator(BaseEvaluator):
             metrics_tracker.add_example_metrics(example_metric)
 
         # Compute aggregated metrics (include built-ins even with custom functions)
-        if self.metric_functions:
-            # Filter to registry/RAGAS metrics, but exclude those already provided
-            # by custom metric_functions (e.g., skip built-in accuracy if
-            # scoring_function provides it - avoids redundant computation).
-            # Note: scoring_function maps to "accuracy" key only; cost/latency
-            # built-ins remain unless explicitly overridden via metric_functions.
-            custom_metric_keys = set(self.metric_functions.keys())
-            base_metric_names = [
-                name
-                for name in self.metrics
-                if (name in self._metric_registry or name in self._ragas_metric_names)
-                and name not in custom_metric_keys
-            ]
-            if base_metric_names:
-                aggregated_metrics = self.compute_metrics(
-                    outputs,
-                    expected_outputs,
-                    errors,
-                    dataset=dataset,
-                    example_results=example_results,
-                    example_metrics=metrics_tracker.example_metrics,
-                    metrics_override=base_metric_names,
-                    metric_errors=metric_errors,
-                )
-            else:
-                aggregated_metrics = {}
-        else:
-            aggregated_metrics = self.compute_metrics(
-                outputs,
-                expected_outputs,
-                errors,
-                dataset=dataset,
-                example_results=example_results,
-                example_metrics=metrics_tracker.example_metrics,
-                metric_errors=metric_errors,
-            )
+        aggregated_metrics = self._compute_base_aggregates(
+            outputs,
+            expected_outputs,
+            errors,
+            dataset,
+            example_results,
+            metrics_tracker,
+            metric_errors,
+        )
 
         # A custom scoring_function / metric_function OWNS the "accuracy"
         # objective when "accuracy" is both an objective and a custom metric
@@ -3185,67 +3777,37 @@ class LocalEvaluator(BaseEvaluator):
         accuracy_is_custom_objective = (
             "accuracy" in self.metrics and "accuracy" in self.metric_functions
         )
-        accuracy_is_user_metric = "accuracy" in self.metric_functions
 
-        if "accuracy" in self.metrics:
-            accuracy_value, _ = self._compute_accuracy_aggregated(
-                outputs, dataset, errors
+        if accuracy_is_custom_objective:
+            self._record_exact_match_diagnostic(
+                aggregated_metrics, outputs, dataset, errors
             )
-            if accuracy_value is not None:
-                if accuracy_is_custom_objective:
-                    # Keep the default exact-match value as a labelled
-                    # diagnostic; the custom aggregate below owns "accuracy"
-                    # and "score" (set to the objective value).
-                    aggregated_metrics["exact_match_default"] = accuracy_value
-                    self._log_dual_scorer_notice_once()
-                else:
-                    # No custom scorer: the default exact-match IS the objective,
-                    # so it is correctly both "accuracy" and "score".
-                    aggregated_metrics["accuracy"] = accuracy_value
-                    aggregated_metrics.setdefault("score", accuracy_value)
 
         # Aggregate custom metric functions using helper
         if self.metric_functions:
             custom_aggregated = self._compute_aggregated_custom_metrics(example_results)
+            # Accuracy has exactly one producer: the shared per-row helper.
+            custom_aggregated.pop("accuracy", None)
             aggregated_metrics.update(custom_aggregated)
-            # metrics["score"] is the optimization signal. When a custom scorer
-            # owns the objective, that signal is the objective value (the custom
-            # scorer mean == metrics["accuracy"]), NOT the default exact-match
-            # scorer (which now lives under "exact_match_default"). Issue #1845.
-            if accuracy_is_custom_objective and "accuracy" in aggregated_metrics:
-                aggregated_metrics["score"] = aggregated_metrics["accuracy"]
+
+        # One per-row contract (see MetricsTracker.
+        # _accuracy_values_for_formatters): the trial accuracy is the mean of
+        # the rows that have a value, the same population and mean the tracker
+        # formatters report. Nothing writes accuracy after this point.
+        self._apply_row_accuracy_to_aggregate(aggregated_metrics, metrics_tracker)
+
+        # metrics["score"] is the optimization signal. When a custom scorer
+        # owns the objective, that signal is the objective value (the custom
+        # scorer mean == metrics["accuracy"]), NOT the default exact-match
+        # scorer (which now lives under "exact_match_default"). Issue #1845.
+        # (accuracy_is_custom_objective implies metric_functions is non-empty.)
+        if accuracy_is_custom_objective and "accuracy" in aggregated_metrics:
+            aggregated_metrics["score"] = aggregated_metrics["accuracy"]
 
         # Seal normal accounting before draining. Late captures have a separate
         # buffer folded at the final handoff below. Workers still live here
         # leave eventual spend unknown even without a response yet (#2444).
-        if seal_captured_responses():
-            metrics_tracker.unattributed_spend = True
-            for metric in metrics_tracker.example_metrics:
-                if not metric.measured:
-                    metric.cost.unmeasured = True
-        if captures is not None:
-            captures.absorb_late(drain_captured_responses())
-            # Spend no example row consumed (a call with no owner, or an
-            # example that produced no row): its cost cannot be attributed, so
-            # the trial total becomes unmeasured and the exact priced part is
-            # kept as the known-spend floor -- never dropped, never guessed.
-            leftover = captures.leftover()
-            if leftover:
-                # Each leftover is priced by its OWN response model; the agent
-                # model is never assumed for a call not established as the
-                # agent's.  A call that cannot be priced adds nothing to the
-                # floor (its cost is unknown, and the trial is unmeasured).
-                floor = 0.0
-                for r, requested in leftover:
-                    priced = self._price_one_call(
-                        r,
-                        agent_model=None,
-                        is_agent_call=False,
-                        requested_model=requested,
-                    )
-                    floor += self._call_cost_floor(priced)
-                metrics_tracker.unattributed_spend = True
-                metrics_tracker.unattributed_known_cost = floor
+        self._account_unattributed_spend(metrics_tracker, captures)
 
         # Add comprehensive metrics from tracker using helper. Thread the
         # evaluator's runtime-only computable names (registry + RAGAS) so a
@@ -3253,7 +3815,6 @@ class LocalEvaluator(BaseEvaluator):
         # tracker's user-metric aggregation pass.
         comprehensive_metrics = metrics_tracker.format_for_backend(
             extra_reserved=self._evaluator_computable_metric_names(),
-            user_supplied_accuracy=accuracy_is_user_metric,
         )
         self._merge_comprehensive_metrics(
             aggregated_metrics,
@@ -3310,40 +3871,17 @@ class LocalEvaluator(BaseEvaluator):
         )
 
         # Generate summary_stats (needed for insights)
-        summary_stats = None
-        if self.execution_mode_enum:
-            summary_stats = metrics_tracker.format_as_summary_stats(
-                user_supplied_accuracy=accuracy_is_user_metric
-            )
-            if isinstance(summary_stats.get("metrics"), dict):
-                enforce_unknown_cost_invariant(
-                    summary_stats["metrics"],
-                    nullify=True,
-                    sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
-                )
-            logger.debug(f"Generated summary_stats for {self.execution_mode} mode")
+        summary_stats = self._build_summary_stats(metrics_tracker)
 
         # Calculate success statistics
-        if self.detailed and example_results:
-            success_count = sum(
-                1 for ex_result in example_results if ex_result and ex_result.success
-            )
-            total_count = len(example_results)
-        else:
-            success_count = sum(1 for error in errors if error is None)
-            total_count = len(errors)
+        success_count, total_count = self._count_successes(example_results, errors)
 
         # Log results
         logger.info(
             f"{'Detailed ' if self.detailed else ''}evaluation completed: {success_count}/{total_count} successful, "
             f"duration: {duration:.2f}s, metrics: {aggregated_metrics}"
         )
-        if budget_exhausted:
-            logger.info(
-                "Sample budget exhausted after %s examples (dataset size=%s)",
-                consumed_examples,
-                len(dataset.examples),
-            )
+        self._log_budget_exhaustion(budget_exhausted, consumed_examples, dataset)
 
         # Per-trial, per-model cost breakdown for multi-model/multi-step agents
         # (Traigent#1598) -- aggregated from every example's
@@ -3370,14 +3908,9 @@ class LocalEvaluator(BaseEvaluator):
 
         # Attach summary_stats if generated
         if summary_stats:
-            summary_stats.setdefault("metadata", {})
-            summary_stats["metadata"]["sample_budget_exhausted"] = budget_exhausted
-            summary_stats["metadata"]["examples_consumed"] = total_count
-            # Per-trial cost provenance (#2505): a named source, or "mixed".
-            summary_stats["metadata"]["cost_source"] = (
-                metrics_tracker.cost_source_label()
+            self._attach_summary_stats(
+                result, summary_stats, budget_exhausted, total_count, metrics_tracker
             )
-            result.summary_stats = summary_stats
 
         result.sample_budget_exhausted = budget_exhausted
         result.examples_consumed = consumed_examples
@@ -3387,39 +3920,9 @@ class LocalEvaluator(BaseEvaluator):
         # timed-out worker cannot update the returned result; the trial remains
         # unmeasured, never a claim that its remaining work costs $0.
         try:
-            floor = float(
-                comprehensive_metrics.get("cost_lower_bound")
-                or comprehensive_metrics.get("cost")
-                or 0.0
+            self._fold_late_spend_into_result(
+                result, comprehensive_metrics, metrics_tracker
             )
-            while late := finish_captured_responses():
-                for response, requested in late:
-                    floor += self._call_cost_floor(
-                        self._price_one_call(
-                            response,
-                            agent_model=None,
-                            is_agent_call=False,
-                            requested_model=requested,
-                        )
-                    )
-                    # Commit each priced contribution before the next call can
-                    # raise: the finally-block budget debit reads this result.
-                    enforce_unknown_cost_invariant(
-                        result.aggregated_metrics,
-                        unknown=True,
-                        floor=floor,
-                        sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
-                    )
-                    if result.summary_stats and isinstance(
-                        result.summary_stats.get("metrics"), dict
-                    ):
-                        enforce_unknown_cost_invariant(
-                            result.summary_stats["metrics"],
-                            unknown=True,
-                            floor=floor,
-                            nullify=True,
-                            sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
-                        )
         finally:
             # Debit once and close the lease even if strict late pricing raises.
             self._finalize_execution_budget_evaluation(
@@ -3470,7 +3973,9 @@ class LocalEvaluator(BaseEvaluator):
         # ``random.uniform()`` plus output-string heuristics, which would
         # silently replace real evaluation results with fake scores
         # whenever the env var was set in a production environment.
-        if "accuracy" in self.metrics:
+        if "accuracy" in self.metrics and not _is_empty_expected_output(
+            expected_output
+        ):
             metrics["accuracy"] = self._compute_real_accuracy(
                 actual_output, expected_output
             )

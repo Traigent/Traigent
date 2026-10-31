@@ -25,7 +25,7 @@ from traigent.utils.validation import CoreValidators, validate_or_raise
 
 from .backend_bridges import SessionExperimentMapping
 from .backend_client import BackendClientConfig, get_backend_client
-from .client import CloudRemoteExecutionUnavailableError, CloudServiceError
+from .client import CloudServiceError
 from .dataset_converter import converter
 from .models import (
     OptimizationRequest,
@@ -168,7 +168,7 @@ class IntegrationManager:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"Failed to initialize integration manager: {e}")
+            logger.exception(f"Failed to initialize integration manager: {e}")
             return False
 
     async def __aenter__(self) -> IntegrationManager:
@@ -215,7 +215,7 @@ class IntegrationManager:
                     optimization_request, integration_id
                 )
             elif mode == IntegrationMode.LOCAL:
-                result = await self._start_local_integration(
+                result = self._start_local_integration(
                     optimization_request, integration_id
                 )
             elif mode == IntegrationMode.STANDARD:
@@ -247,13 +247,13 @@ class IntegrationManager:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"Failed to start optimization integration: {e}")
+            logger.exception(f"Failed to start optimization integration: {e}")
             with self._state_lock:
                 self._integration_stats["failed_integrations"] += 1
 
             return IntegrationResult(success=False, error_message=str(e))
 
-    async def _start_local_integration(
+    def _start_local_integration(
         self, optimization_request: OptimizationRequest, integration_id: str
     ) -> IntegrationResult:
         """Start local integration with client-side orchestration.
@@ -286,14 +286,8 @@ class IntegrationManager:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"Local integration failed: {e}")
+            logger.exception(f"Local integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
-
-    async def _start_edge_analytics_integration(
-        self, optimization_request: OptimizationRequest, integration_id: str
-    ) -> IntegrationResult:
-        """Deprecated alias for :meth:`_start_local_integration`."""
-        return await self._start_local_integration(optimization_request, integration_id)
 
     async def _start_privacy_integration(
         self, optimization_request: OptimizationRequest, integration_id: str
@@ -395,7 +389,7 @@ class IntegrationManager:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"Privacy-first integration failed: {e}")
+            logger.exception(f"Privacy-first integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
 
     async def _start_cloud_integration(
@@ -465,7 +459,7 @@ class IntegrationManager:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"Cloud remote integration failed: {e}")
+            logger.exception(f"Cloud remote integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
 
     async def _start_standard_integration(
@@ -525,7 +519,7 @@ class IntegrationManager:
                 CoreValidators.validate_string_non_empty(session_id, "session_id")
             )
         except ValidationException as exc:
-            logger.error(f"Invalid session_id provided: {exc}")
+            logger.exception(f"Invalid session_id provided: {exc}")
             return None
 
         try:
@@ -563,12 +557,12 @@ class IntegrationManager:
 
         except asyncio.CancelledError:
             raise
-        except (CloudRemoteExecutionUnavailableError, CloudServiceError):
+        except CloudServiceError:
             # Typed cloud failures are public signals. Do not collapse them into
             # None, which means "no suggestion / optimization complete" here.
             raise
         except Exception as e:
-            logger.error(f"Failed to get next trial for session {session_id}: {e}")
+            logger.exception(f"Failed to get next trial for session {session_id}: {e}")
             return None
 
     async def submit_trial_results(
@@ -604,7 +598,7 @@ class IntegrationManager:
                 CoreValidators.validate_string_non_empty(trial_id, "trial_id")
             )
         except ValidationException as exc:
-            logger.error(f"Invalid identifier provided: {exc}")
+            logger.exception(f"Invalid identifier provided: {exc}")
             return False
 
         try:
@@ -646,7 +640,7 @@ class IntegrationManager:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"Failed to submit trial results: {e}")
+            logger.exception(f"Failed to submit trial results: {e}")
             return False
 
     # Session Management
@@ -671,7 +665,7 @@ class IntegrationManager:
                 CoreValidators.validate_string_non_empty(session_id, "session_id")
             )
         except ValidationException as exc:
-            logger.error(f"Invalid session_id provided: {exc}")
+            logger.exception(f"Invalid session_id provided: {exc}")
             return False
 
         try:
@@ -695,7 +689,7 @@ class IntegrationManager:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"Failed to finalize session {session_id}: {e}")
+            logger.exception(f"Failed to finalize session {session_id}: {e}")
             return False
 
     async def cancel_session(self, session_id: str) -> bool:
@@ -715,7 +709,7 @@ class IntegrationManager:
                 CoreValidators.validate_string_non_empty(session_id, "session_id")
             )
         except ValidationException as exc:
-            logger.error(f"Invalid session_id provided: {exc}")
+            logger.exception(f"Invalid session_id provided: {exc}")
             return False
 
         try:
@@ -756,7 +750,7 @@ class IntegrationManager:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"Failed to cancel session {session_id}: {e}")
+            logger.exception(f"Failed to cancel session {session_id}: {e}")
             return False
 
     # Utility Methods
@@ -867,7 +861,7 @@ class IntegrationManager:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"Error during integration manager cleanup: {e}")
+            logger.exception(f"Error during integration manager cleanup: {e}")
 
 
 # Global integration manager instance

@@ -55,6 +55,7 @@ def answer_question(question: str) -> str:
 - **[Optimization Routing](guides/execution-modes.md)** - Default smart optimization, local search, portal sync, and no-egress runs
 - **[Evaluation](guides/evaluation.md)** - Evaluation best practices and troubleshooting
 - **[Parallel Configuration](guides/parallel-configuration.md)** - Concurrency settings and tuning
+- **[Native Crashes](guides/native-crashes.md)** - What survives a segfault in a native extension and how to recover
 - **[Secrets Management](guides/secrets_management.md)** - Securely manage API keys
 
 ### 🔧 [API Reference](api-reference/)

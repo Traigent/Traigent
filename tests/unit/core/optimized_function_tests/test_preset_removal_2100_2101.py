@@ -241,16 +241,17 @@ class TestConstructorDoor:
     def test_constructor_still_accepts_unrelated_kwargs(self) -> None:
         """The guard must not turn the open ``**kwargs`` door into a wall.
 
-        Two things that legitimately flow into ``_decorator_runtime_overrides``
-        keep working, and a non-preset ``strategy=`` value keeps whatever
-        behaviour it already had rather than being swept into the refusal.
+        Unrelated keywords that legitimately flow into
+        ``_decorator_runtime_overrides`` keep working. The removed ``strategy=``
+        alias is refused by name, even for a non-preset value (#1370 item 9).
         """
-        function = self._construct(
-            strategy="grid", experiment_name="unrelated", max_trials=3
-        )
+        function = self._construct(experiment_name="unrelated", max_trials=3)
 
         assert function.max_trials == 3
-        assert function._decorator_runtime_overrides["strategy"] == "grid"
+        assert "strategy" not in function._decorator_runtime_overrides
+
+        with pytest.raises(TypeError, match="strategy parameter was removed"):
+            self._construct(strategy="grid", max_trials=3)
 
     def test_constructor_refusal_is_not_a_generic_unknown_kwarg_error(self) -> None:
         """``strategy_params=None`` is indistinguishable from not passing it."""

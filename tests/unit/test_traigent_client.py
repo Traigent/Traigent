@@ -465,7 +465,7 @@ class TestOptimizeValidation:
         assert result["execution_mode"] == "local"
         assert result["status"] == "completed"
         assert result["completed_trials"] == 1
-        assert result["best_configuration"]["configuration"]["model"] == "gpt-3.5-turbo"
+        assert result["best_configuration"]["configuration"]["model"] == "gpt-5.6-terra"
 
     @pytest.mark.asyncio
     async def test_optimize_edge_analytics_missing_agent_builder(self) -> None:

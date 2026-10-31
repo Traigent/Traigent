@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from traigent.identity.content_identity import ContentIdentityError
 from traigent.identity.keys import ContentIdentityKeys
 from traigent.utils.logging import get_logger
 
@@ -49,7 +48,7 @@ def fetch_content_identity_keys(client: Any) -> ContentIdentityKeys | None:
         return None
     try:
         keys = ContentIdentityKeys.from_grant(grant)
-    except (ContentIdentityError, TypeError, ValueError) as exc:
+    except (TypeError, ValueError) as exc:
         # ContentIdentityError messages name fields, never values; still log
         # only the type so no future message can carry key material.
         logger.warning(

@@ -78,9 +78,11 @@ nav:
           - Choosing an Optimization Model: user-guide/choosing_optimization_model.md
           - Evaluation Guide: user-guide/evaluation_guide.md
           - Token and Cost Capture: user-guide/cost_capture.md
+          - Storing the Execution Snapshot: user-guide/execution-snapshot.md
           - Injection Modes: user-guide/injection_modes.md
           - Interactive Optimization: user-guide/interactive_optimization.md
           - Tuned Variables: user-guide/tuned_variables.md
+          - Comparing Fixed Configurations: user-guide/compare_configs.md
       - Operations:
           - Azure OpenAI: operations/azure_openai.md
           - Amazon Bedrock: operations/bedrock.md

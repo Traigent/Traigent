@@ -26,7 +26,6 @@ with the session's recorded declaration. It is not execution evidence.
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import os
 import re
@@ -169,7 +168,7 @@ def _decode_opening(value: Any) -> bytes:
     if ok:
         try:
             raw = base64.b64decode(value, validate=True)
-        except (binascii.Error, ValueError):
+        except ValueError:
             ok = False
     # Raised OUTSIDE the except block so no decoder exception stays as __context__.
     if not ok or len(raw) != _OPENING_BYTES:
@@ -381,13 +380,9 @@ def finalize_process_record(
     created (or an existing one for this session reused) and flushed to disk
     before anything is sent.
     """
-    if link_commitments or bundle_path is not None:
-        # A bundle is written for either flag; refuse off POSIX before any work.
-        require_posix_platform()
-    if not _SESSION_ID_RE.fullmatch(build_session_row_id):
-        raise CommitmentLinkageClientError("BAD_SESSION_ID")
-    if "openings" in request_payload:
-        raise CommitmentLinkageClientError("REQUEST_HAS_OPENINGS")
+    _validate_finalize_request(
+        build_session_row_id, request_payload, link_commitments, bundle_path
+    )
     if bundle_path is None:
         if link_commitments:
             raise CommitmentLinkageClientError("BUNDLE_REQUIRED")
@@ -407,11 +402,7 @@ def finalize_process_record(
                 raise
             # Lost the creation race: fall through and reuse the winner's bundle.
     if bundle is None:
-        bundle = CommitmentBundle.load(path)
-        if bundle.build_session_row_id != build_session_row_id:
-            raise CommitmentLinkageClientError("BUNDLE_SESSION_MISMATCH")
-        if link_commitments and set(bundle.openings) != set(OPENING_ROLES):
-            raise CommitmentLinkageClientError("BUNDLE_CORRUPT")
+        bundle = _load_finalize_bundle(path, build_session_row_id, link_commitments)
     if fp_digests:
         bundle.set_fp_digests(fp_digests)
 
@@ -434,6 +425,32 @@ def finalize_process_record(
     )
 
 
+def _validate_finalize_request(
+    build_session_row_id: str,
+    request_payload: Mapping[str, Any],
+    link_commitments: bool,
+    bundle_path: str | os.PathLike[str] | None,
+) -> None:
+    if link_commitments or bundle_path is not None:
+        # A bundle is written for either flag; refuse off POSIX before any work.
+        require_posix_platform()
+    if not _SESSION_ID_RE.fullmatch(build_session_row_id):
+        raise CommitmentLinkageClientError("BAD_SESSION_ID")
+    if "openings" in request_payload:
+        raise CommitmentLinkageClientError("REQUEST_HAS_OPENINGS")
+
+
+def _load_finalize_bundle(
+    path: Path, build_session_row_id: str, link_commitments: bool
+) -> CommitmentBundle:
+    bundle = CommitmentBundle.load(path)
+    if bundle.build_session_row_id != build_session_row_id:
+        raise CommitmentLinkageClientError("BUNDLE_SESSION_MISMATCH")
+    if link_commitments and set(bundle.openings) != set(OPENING_ROLES):
+        raise CommitmentLinkageClientError("BUNDLE_CORRUPT")
+    return bundle
+
+
 def _send(
     client: ProcessRecordTransport,
     build_session_row_id: str,
@@ -444,9 +461,27 @@ def _send(
 ) -> dict[str, Any]:
     if link and bundle is not None:
         payload["openings"] = {role: _b64(o) for role, o in bundle.openings.items()}
-    # Failures are translated to closed codes OUTSIDE the except blocks so no
-    # original exception (which could embed the request body) stays attached
-    # as ``__context__``.
+    failure, body = _finalize_with_closed_failure(client, build_session_row_id, payload)
+    if failure == "DUPLICATE_ISSUANCE" and link:
+        # A row already exists: an earlier attempt may have committed. GET it,
+        # never re-mint; the bundle's openings are the ones that attempt used.
+        body, failure = _get(client, build_session_row_id)
+    if failure is not None:
+        raise CommitmentLinkageClientError(failure)
+    return _record_result(body, bundle, link=link)
+
+
+def _finalize_with_closed_failure(
+    client: ProcessRecordTransport,
+    build_session_row_id: str,
+    payload: dict[str, Any],
+) -> tuple[str | None, dict[str, Any]]:
+    """Send the finalize request; return ``(closed failure code or None, body)``.
+
+    Failures are translated to closed codes OUTSIDE the except blocks so no
+    original exception (which could embed the request body) stays attached
+    as ``__context__``.
+    """
     failure: str | None = None
     body: dict[str, Any] = {}
     try:
@@ -457,13 +492,13 @@ def _send(
         failure = "TRANSPORT_ERROR"
     finally:
         payload.pop("openings", None)
-    if failure == "DUPLICATE_ISSUANCE" and link:
-        # A row already exists: an earlier attempt may have committed. GET it,
-        # never re-mint; the bundle's openings are the ones that attempt used.
-        body, failure = _get(client, build_session_row_id)
-    if failure is not None:
-        raise CommitmentLinkageClientError(failure)
+    return failure, body
 
+
+def _record_result(
+    body: dict[str, Any], bundle: CommitmentBundle | None, *, link: bool
+) -> dict[str, Any]:
+    """Validate a successful response body and record it on the bundle."""
     record = body.get("data") if isinstance(body, dict) else None
     linkage = body.get("commitment_linkage") if isinstance(body, dict) else None
     if not isinstance(record, dict):

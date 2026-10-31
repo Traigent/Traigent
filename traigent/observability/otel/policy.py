@@ -34,6 +34,8 @@ from traigent.security.redaction import (
     redact_sensitive_text,
 )
 
+ERROR_TYPE = "error.type"
+
 _SCALARS = (str, bool, int, float)
 
 
@@ -82,51 +84,65 @@ def coerce_clean(value: Any, spec: C.AttrSpec) -> Any | None:
     return coerced
 
 
+def _within_bounds(number: Any, spec: C.AttrSpec) -> bool:
+    if spec.lo is not None and number < spec.lo:
+        return False
+    return not (spec.hi is not None and number > spec.hi)
+
+
+def _coerce_text(value: Any, spec: C.AttrSpec) -> str | None:
+    if not isinstance(value, str) or _has_control(value):
+        return None
+    if len(value) > spec.max_len or not value:
+        return None
+    if spec.kind == "enum" and (spec.choices is None or value not in spec.choices):
+        return None
+    return value
+
+
+def _coerce_int(value: Any, spec: C.AttrSpec) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if _within_bounds(value, spec) else None
+
+
+def _coerce_float(value: Any, spec: C.AttrSpec) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number):
+        return None
+    return number if _within_bounds(number, spec) else None
+
+
+def _coerce_str_seq(value: Any, spec: C.AttrSpec) -> tuple[str, ...] | None:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        return None
+    if len(value) > spec.max_items:
+        return None
+    out = []
+    for item in value:
+        if not isinstance(item, str) or _has_control(item):
+            return None
+        if not item or len(item) > spec.max_len:
+            return None
+        out.append(item)
+    return tuple(out)
+
+
 def coerce_value(value: Any, spec: C.AttrSpec) -> Any | None:
     """Return ``value`` if it satisfies ``spec`` exactly, else ``None`` (drop)."""
     kind = spec.kind
     if kind in ("str", "enum"):
-        if not isinstance(value, str) or _has_control(value):
-            return None
-        if len(value) > spec.max_len or not value:
-            return None
-        if kind == "enum" and (spec.choices is None or value not in spec.choices):
-            return None
-        return value
+        return _coerce_text(value, spec)
     if kind == "int":
-        if isinstance(value, bool) or not isinstance(value, int):
-            return None
-        if spec.lo is not None and value < spec.lo:
-            return None
-        if spec.hi is not None and value > spec.hi:
-            return None
-        return value
+        return _coerce_int(value, spec)
     if kind == "float":
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return None
-        number = float(value)
-        if not math.isfinite(number):
-            return None
-        if spec.lo is not None and number < spec.lo:
-            return None
-        if spec.hi is not None and number > spec.hi:
-            return None
-        return number
+        return _coerce_float(value, spec)
     if kind == "bool":
         return value if isinstance(value, bool) else None
     if kind == "str_seq":
-        if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-            return None
-        if len(value) > spec.max_items:
-            return None
-        out = []
-        for item in value:
-            if not isinstance(item, str) or _has_control(item):
-                return None
-            if not item or len(item) > spec.max_len:
-                return None
-            out.append(item)
-        return tuple(out)
+        return _coerce_str_seq(value, spec)
     return None
 
 
@@ -213,37 +229,44 @@ class ContentPolicy:
         out: dict[str, Any] = {}
         dropped = 0
         for key, value in (attrs or {}).items():
-            if not isinstance(key, str):
+            if not self._admit_attr(out, key, value, mode):
                 dropped += 1
-                continue
-            spec = C.ATTRIBUTE_ALLOWLIST.get(key)
-            if spec is not None:
-                coerced = coerce_clean(value, spec)
-                if coerced is None:
-                    dropped += 1
-                else:
-                    out[key] = coerced
-                continue
-            is_content = key in C.CONTENT_ATTRIBUTE_KEYS or (
-                key.startswith(C.CONTENT_METADATA_PREFIX) and C.is_safe_key(key)
-            )
-            if mode == "redacted" and is_content:
-                out[key] = C.REDACTED_PLACEHOLDER
-                continue
-            if (
-                mode == "record"
-                and C.is_safe_key(key)
-                and not is_credential_key_name(key)
-            ):
-                recorded = _record_value(value)
-                if recorded is not None:
-                    out[key] = recorded
-                    continue
-            dropped += 1
         return out, dropped
 
+    @staticmethod
+    def _admit_attr(out: dict[str, Any], key: Any, value: Any, mode: str) -> bool:
+        """Copy one attribute into ``out`` when policy allows; True when kept."""
+        if not isinstance(key, str):
+            return False
+        spec = C.ATTRIBUTE_ALLOWLIST.get(key)
+        if spec is not None:
+            coerced = coerce_clean(value, spec)
+            if coerced is None:
+                return False
+            out[key] = coerced
+            return True
+        is_content = key in C.CONTENT_ATTRIBUTE_KEYS or (
+            key.startswith(C.CONTENT_METADATA_PREFIX) and C.is_safe_key(key)
+        )
+        if mode == "redacted" and is_content:
+            out[key] = C.REDACTED_PLACEHOLDER
+            return True
+        if mode == "record" and C.is_safe_key(key):
+            return ContentPolicy._admit_recorded_attr(out, key, value)
+        return False
+
+    @staticmethod
+    def _admit_recorded_attr(out: dict[str, Any], key: str, value: Any) -> bool:
+        if is_credential_key_name(key):
+            return False
+        recorded = _record_value(value)
+        if recorded is None:
+            return False
+        out[key] = recorded
+        return True
+
     # -- resource / scope -----------------------------------------------
-    def _resource(self, resource: Resource | None, mode: str) -> Resource:
+    def _resource(self, resource: Resource | None) -> Resource:
         kept: dict[str, Any] = {}
         for key, value in (resource.attributes if resource else {}).items():
             spec = C.RESOURCE_ALLOWLIST.get(key)
@@ -280,14 +303,21 @@ class ContentPolicy:
     ) -> str:
         if mode == "record" and isinstance(raw, str) and raw:
             return _record_text(raw, C.MAX_RECORD_NAME_LEN)
-        if isinstance(raw, str):
-            # No scope is exempt: ``observe(name)`` shares the SDK's own scope
-            # but its name is user-supplied, so it is not a content-free channel.
-            if self.allowed_span_names is not None:
-                if raw in self.allowed_span_names:
-                    return raw
-            elif C.is_safe_token(raw):
-                return raw
+        if isinstance(raw, str) and self._is_permitted_literal_name(raw):
+            return raw
+        return self._derive_name(attrs)
+
+    def _is_permitted_literal_name(self, raw: str) -> bool:
+        """Whether a user-supplied name may leave as-is (allowlist, else token)."""
+        # No scope is exempt: ``observe(name)`` shares the SDK's own scope
+        # but its name is user-supplied, so it is not a content-free channel.
+        if self.allowed_span_names is not None:
+            return raw in self.allowed_span_names
+        return C.is_safe_token(raw)
+
+    @staticmethod
+    def _derive_name(attrs: Mapping[str, Any]) -> str:
+        """Content-free fallback name built from allowlisted attributes."""
         op = attrs.get("gen_ai.operation.name")
         model = attrs.get("gen_ai.request.model")
         if isinstance(op, str):
@@ -310,32 +340,43 @@ class ContentPolicy:
         dropped = 0
         for event in events or ():
             if mode == "record":
-                attrs, d = self._attrs(event.attributes, mode)
-                name = (
-                    _record_text(event.name, C.MAX_RECORD_NAME_LEN)
-                    if isinstance(event.name, str) and event.name
-                    else "event"
-                )
-                out.append(Event(name, attrs, event.timestamp))
+                recorded, d = self._record_event(event, mode)
+                out.append(recorded)
                 dropped += d
                 continue
             allowed = C.ALLOWED_EVENTS.get(event.name)
             if allowed is None:
                 dropped += 1
                 continue
-            attrs = {}
-            for key in allowed:
-                raw = (event.attributes or {}).get(key)
-                if (
-                    isinstance(raw, str)
-                    and raw
-                    and len(raw) <= 128
-                    and not _has_control(raw)
-                    and not looks_sensitive(raw)
-                ):
-                    attrs[key] = raw
+            attrs = self._safe_event_attrs(event, allowed)
             out.append(Event(event.name, attrs, event.timestamp))
         return tuple(out), dropped
+
+    def _record_event(self, event: Event, mode: str) -> tuple[Event, int]:
+        """Record-mode event: scrubbed name and attributes, plus dropped count."""
+        attrs, d = self._attrs(event.attributes, mode)
+        name = (
+            _record_text(event.name, C.MAX_RECORD_NAME_LEN)
+            if isinstance(event.name, str) and event.name
+            else "event"
+        )
+        return Event(name, attrs, event.timestamp), d
+
+    @staticmethod
+    def _safe_event_attrs(event: Event, allowed: Collection[str]) -> dict[str, Any]:
+        """Keep only allowlisted, short, control-free, non-credential strings."""
+        attrs: dict[str, Any] = {}
+        for key in allowed:
+            raw = (event.attributes or {}).get(key)
+            if (
+                isinstance(raw, str)
+                and raw
+                and len(raw) <= 128
+                and not _has_control(raw)
+                and not looks_sensitive(raw)
+            ):
+                attrs[key] = raw
+        return attrs
 
     def _links(self, links: Sequence[Link], mode: str) -> tuple[tuple[Link, ...], int]:
         out: list[Link] = []
@@ -359,7 +400,7 @@ class ContentPolicy:
                     StatusCode.ERROR,
                     _record_text(text, C.MAX_RECORD_STATUS_LEN) if text else None,
                 )
-            etype = attrs.get("error.type")
+            etype = attrs.get(ERROR_TYPE)
             return Status(StatusCode.ERROR, etype if isinstance(etype, str) else None)
         return Status(status.status_code)
 
@@ -371,11 +412,11 @@ class ContentPolicy:
         attrs.pop(C.CONTENT_MODE_ATTRIBUTE, None)  # only re-added if it tightens
         # error.type falls back to the exception event's type for status text
         events, ev_dropped = self._events(span.events, mode)
-        if "error.type" not in attrs:
+        if ERROR_TYPE not in attrs:
             for event in events:
                 etype = (event.attributes or {}).get("exception.type")
                 if isinstance(etype, str) and event.name == "exception":
-                    attrs.setdefault("error.type", etype)
+                    attrs.setdefault(ERROR_TYPE, etype)
                     break
         links, link_dropped = self._links(span.links, mode)
         dropped += ev_dropped + link_dropped
@@ -392,7 +433,7 @@ class ContentPolicy:
             name=name,
             context=_strip_trace_state(span.context),
             parent=_strip_trace_state(span.parent),
-            resource=self._resource(span.resource, mode),
+            resource=self._resource(span.resource),
             attributes=attrs,
             events=events,
             links=links,

@@ -13,7 +13,7 @@ import keyword
 import logging
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from traigent.utils.exceptions import TraigentError
 
@@ -59,6 +59,20 @@ def _is_allowed_plugin_module_path(module_path: str) -> bool:
         module_path == prefix or module_path.startswith(f"{prefix}.")
         for prefix in _ALLOWED_PLUGIN_MODULE_PREFIXES
     )
+
+
+def _update_class_mappings(
+    registry: "PluginRegistry", plugin: "IntegrationPlugin", name: str
+) -> None:
+    """Point each of the plugin's target classes at it, higher priority winning."""
+    for class_name in plugin.get_target_classes():
+        if class_name not in registry._class_to_plugin:
+            registry._class_to_plugin[class_name] = name
+        else:
+            # Check priority
+            existing_plugin = registry._plugins[registry._class_to_plugin[class_name]]
+            if plugin.metadata.priority.value > existing_plugin.metadata.priority.value:
+                registry._class_to_plugin[class_name] = name
 
 
 class PluginRegistry:
@@ -160,17 +174,7 @@ class PluginRegistry:
         self._plugins[name] = plugin
 
         # Update class mappings
-        for class_name in plugin.get_target_classes():
-            if class_name not in self._class_to_plugin:
-                self._class_to_plugin[class_name] = name
-            else:
-                # Check priority
-                existing_plugin = self._plugins[self._class_to_plugin[class_name]]
-                if (
-                    plugin.metadata.priority.value
-                    > existing_plugin.metadata.priority.value
-                ):
-                    self._class_to_plugin[class_name] = name
+        _update_class_mappings(self, plugin, name)
 
         # Update package mappings
         for package in plugin.metadata.supported_packages:
@@ -428,6 +432,28 @@ class PluginRegistry:
             return None
         return resolved
 
+    def _register_discovered_plugins(
+        self,
+        module: Any,
+        plugin_type: type["IntegrationPlugin"],
+        trusted_directory: Path,
+        loaded: list[str],
+    ) -> None:
+        # Find IntegrationPlugin subclasses
+        for name, obj in inspect.getmembers(module):
+            if (
+                inspect.isclass(obj)
+                and issubclass(obj, plugin_type)
+                and obj != plugin_type
+            ):
+                # Check for config file
+                config_path = self._safe_config_path(trusted_directory, name)
+
+                plugin = obj(config_path=config_path)
+                self.register(plugin)
+                loaded.append(plugin.metadata.name)
+                logger.info(f"Discovered plugin: {plugin.metadata.name}")
+
     def discover_plugins_in_directory(self, directory: Path) -> list[str]:
         """Discover and load plugins from a directory.
 
@@ -465,22 +491,13 @@ class PluginRegistry:
                     # Import IntegrationPlugin at runtime to avoid circular import
                     from traigent.integrations.base_plugin import IntegrationPlugin
 
-                    # Find IntegrationPlugin subclasses
-                    for name, obj in inspect.getmembers(module):
-                        if (
-                            inspect.isclass(obj)
-                            and issubclass(obj, IntegrationPlugin)
-                            and obj != IntegrationPlugin
-                        ):
-                            # Check for config file
-                            config_path = self._safe_config_path(
-                                trusted_directory, name
-                            )
-
-                            plugin = obj(config_path=config_path)
-                            self.register(plugin)
-                            loaded.append(plugin.metadata.name)
-                            logger.info(f"Discovered plugin: {plugin.metadata.name}")
+                    PluginRegistry._register_discovered_plugins(
+                        self,
+                        module,
+                        cast(Any, IntegrationPlugin),
+                        trusted_directory,
+                        loaded,
+                    )
 
                 except Exception as e:
                     logger.error(f"Failed to load plugin from {py_file}: {e}")

@@ -22,7 +22,7 @@ from traigent.cloud.session_budgets import (
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.integrations.observability import workflow_traces as wt
 from traigent.observability import add_agent_span
-from traigent.utils.trial_costs import known_spend_lower_bound
+from traigent.utils.trial_costs import COST_FLOOR_WIRE_KEY, known_spend_lower_bound
 
 _SPAN_REQUIRED = {
     "span_id",
@@ -67,7 +67,8 @@ def test_b1_custom_evaluation_keeps_reported_floor_with_flag() -> None:
     client = SimpleNamespace(_cost_budget_armed_sessions={"s1"})
     metrics = dict(aggregated)
     ensure(client=client, session_id="s1", metrics=metrics, status="COMPLETED")
-    assert metrics["cost"] == pytest.approx(0.40)
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
+    assert metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(0.40)
     assert metrics["cost_unmeasured"] == 1.0
 
 
@@ -84,7 +85,8 @@ def test_b2_flagged_zero_cost_is_lifted_to_the_reported_floor() -> None:
     client = SimpleNamespace(_cost_budget_armed_sessions={"s1"})
     metrics = {"cost": 0, "cost_lower_bound": 0.4, "cost_unmeasured": 1}
     ensure(client=client, session_id="s1", metrics=metrics, status="COMPLETED")
-    assert metrics["cost"] == pytest.approx(0.4)
+    assert metrics["cost"] == metrics[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
+    assert metrics[COST_FLOOR_WIRE_KEY] == pytest.approx(0.4)
     assert metrics["cost_unmeasured"] == 1
 
 
@@ -98,7 +100,8 @@ def test_b2_session_manager_lifts_flagged_zero_too() -> None:
     manager._ensure_budget_cost_metric(
         session_id="s1", trial_result=trial, metrics_payload=payload, metadata={}
     )
-    assert payload["cost"] == pytest.approx(0.4)
+    assert payload["cost"] == payload[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
+    assert payload[COST_FLOOR_WIRE_KEY] == pytest.approx(0.4)
     assert payload["cost_unmeasured"] == 1.0
 
 
@@ -116,15 +119,54 @@ def test_b2_measured_zero_is_untouched() -> None:
 
 
 # --- B3/B4: span payload satisfies the schema contract -----------------------
-def _assert_schema_shape(payload: dict[str, Any]) -> None:
-    schema_file = next(
-        iter(Path(__file__).resolve().parents[3].glob("**/workflow_trace_schema.json")),
-        None,
+def _installed_trace_schema() -> Path | None:
+    """The one intended schema: the copy shipped in the installed schema package.
+
+    Never glob the repo tree: stray or vendored copies elsewhere are not the
+    contract and their relative refs need not resolve.
+    """
+    try:
+        import traigent_schema
+    except ImportError:  # pragma: no cover - schema package not installed
+        return None
+    candidate = (
+        Path(traigent_schema.__file__).resolve().parent
+        / "schemas"
+        / "execution"
+        / "workflow_trace_schema.json"
     )
-    if schema_file is not None:  # pragma: no cover - only when vendored
-        jsonschema = pytest.importorskip("jsonschema")
-        span_schema = json.loads(schema_file.read_text())["definitions"]["SpanPayload"]
-        jsonschema.validate(payload, span_schema)
+    return candidate if candidate.is_file() else None
+
+
+def _validate_against_schema(payload: dict[str, Any], schema_file: Path) -> None:
+    jsonschema = pytest.importorskip("jsonschema")
+    referencing = pytest.importorskip("referencing")
+    from referencing.jsonschema import DRAFT7
+
+    root = schema_file.parent.resolve()
+
+    def retrieve(uri: str) -> Any:
+        # Relative refs such as ../status_schema.json resolve against the
+        # schema's own directory, and may not escape the schema package.
+        target = (root / uri).resolve()
+        target.relative_to(root.parent)
+        return referencing.Resource.from_contents(
+            json.loads(target.read_text()), default_specification=DRAFT7
+        )
+
+    registry = referencing.Registry(retrieve=retrieve)
+    document = json.loads(schema_file.read_text())
+    span_schema = {
+        **document["definitions"]["SpanPayload"],
+        "definitions": document["definitions"],
+    }
+    jsonschema.Draft7Validator(span_schema, registry=registry).validate(payload)
+
+
+def _assert_schema_shape(payload: dict[str, Any]) -> None:
+    schema_file = _installed_trace_schema()
+    if schema_file is not None:
+        _validate_against_schema(payload, schema_file)
     assert _SPAN_REQUIRED <= set(payload), _SPAN_REQUIRED - set(payload)
     assert set(payload) <= _SPAN_ALLOWED, set(payload) - _SPAN_ALLOWED
     assert isinstance(payload["cost_usd"], (int, float))

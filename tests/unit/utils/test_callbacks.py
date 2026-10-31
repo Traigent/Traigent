@@ -13,7 +13,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -2027,6 +2027,29 @@ class TestCallbackManagerTimeoutAndIsolation:
         assert any(
             "PanicCallback.on_trial_start failed" in r.message for r in caplog.records
         )
+
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_shutdown_interrupt_while_waiting_on_callback_propagates(
+        self, mock_callback: MagicMock, interrupt: type[BaseException]
+    ) -> None:
+        """Ctrl-C / sys.exit while blocked on the callback future must not be swallowed."""
+        manager = CallbackManager(callbacks=[mock_callback], timeout=5.0)
+        fake_future = MagicMock()
+        fake_future.result.side_effect = interrupt()
+        with patch.object(manager, "_submit_callback", return_value=fake_future):
+            with pytest.raises(interrupt):
+                manager.on_trial_start(0, {"model": "gpt-4"})
+        assert manager.callback_failures == []
+
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_callback_interrupt_without_timeout_propagates(
+        self, mock_callback: MagicMock, interrupt: type[BaseException]
+    ) -> None:
+        mock_callback.on_trial_start.side_effect = interrupt()
+        manager = CallbackManager(callbacks=[mock_callback], timeout=0)
+        with pytest.raises(interrupt):
+            manager.on_trial_start(0, {"model": "gpt-4"})
+        assert manager.callback_failures == []
 
     def test_baseexception_after_timeout_is_recorded(
         self, mock_callback: MagicMock, caplog: pytest.LogCaptureFixture

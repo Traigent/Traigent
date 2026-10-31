@@ -4,7 +4,6 @@
 -r requirements.txt
 
 # Analytics and intelligence features
-numpy>=1.21.0; python_version < '3.12'
-numpy>=2.5.3; python_version >= '3.12'
+numpy>=2.5.3  # AIKIDO-2026-775417
 pandas>=1.3.0
 matplotlib>=3.5.0

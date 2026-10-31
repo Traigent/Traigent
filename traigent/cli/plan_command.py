@@ -15,7 +15,15 @@ from rich.console import Console
 from rich.table import Table
 
 from traigent.analytics.optimization_plan import OptimizationPlanClient
-from traigent.config.backend_config import DEFAULT_LOCAL_URL, BackendConfig
+from traigent.config.backend_config import (
+    DEFAULT_LOCAL_URL,
+    BackendConfig,
+    EndpointNotConfiguredError,
+    _endpoint_required_error,
+    is_strict_endpoint_mode,
+)
+
+_STYLE_BOLD_MAGENTA = "bold magenta"
 
 console = Console(width=120)
 
@@ -33,6 +41,9 @@ def _resolve_backend_url(explicit: str | None) -> tuple[str, bool]:
     if explicit:
         return explicit, True
     configured = BackendConfig.get_configured_backend_url()
+    if not configured and is_strict_endpoint_mode():
+        # Strict (self-hosted) mode: no implicit localhost fallback either.
+        raise _endpoint_required_error()
     return (configured or DEFAULT_LOCAL_URL), False
 
 
@@ -124,7 +135,10 @@ def plan(
     api_key: str | None,
 ) -> None:
     """Show a backend-provided pre-run optimization plan."""
-    resolved_backend_url, backend_url_explicit = _resolve_backend_url(backend_url)
+    try:
+        resolved_backend_url, backend_url_explicit = _resolve_backend_url(backend_url)
+    except EndpointNotConfiguredError as exc:
+        raise click.ClickException(str(exc)) from exc
     resolved_api_key = _resolve_api_key(api_key)
 
     if not output_json and not backend_url_explicit:
@@ -211,7 +225,7 @@ def _print_objectives_table(objectives: list[dict[str, Any]]) -> None:
     if not objectives:
         return
 
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     table.add_column("Objective", style="cyan", no_wrap=True)
     table.add_column("Weight", justify="right", no_wrap=True)
     table.add_column("Orientation", no_wrap=True)
@@ -229,7 +243,7 @@ def _print_models_table(models: list[str]) -> None:
     if not models:
         return
 
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     table.add_column("Models", style="cyan")
     for model in models:
         table.add_row(str(model))
@@ -241,7 +255,7 @@ def _print_knobs_table(knobs: list[dict[str, Any]]) -> None:
     if not knobs:
         return
 
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     table.add_column("Knob", style="cyan", no_wrap=True)
     table.add_column("Values", overflow="fold")
     for knob in knobs:
@@ -256,7 +270,7 @@ def _print_steps_table(steps: list[dict[str, Any]]) -> None:
         console.print("\n[yellow]No steps were returned by the backend.[/yellow]")
         return
 
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_STYLE_BOLD_MAGENTA)
     table.add_column("Step", style="cyan", no_wrap=True)
     table.add_column("Label", overflow="fold")
     table.add_column("Command", overflow="fold")

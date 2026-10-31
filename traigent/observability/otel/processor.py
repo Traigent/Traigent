@@ -36,6 +36,7 @@ from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 
 from traigent.observability.otel.exporter import ExportOutcome, TraigentOTLPExporter
 from traigent.observability.otel.lineage import stamp_span
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.logging import get_logger
 
@@ -164,15 +165,15 @@ class TraigentSpanProcessor(SpanProcessor):
         if self._shutdown:
             return
         started_offline = self._offline_overflow
-        ctx0 = span.context
-        if ctx0 is not None:
-            key = (ctx0.trace_id, ctx0.span_id)
-            if key in self._started_offline:
-                self._started_offline.discard(key)
-                started_offline = True
+        if self._forget_offline_start(span.context):
+            started_offline = True
         # _offline_overflow is never auto-cleared: an empty tracked set does
         # not prove the untracked offline spans have ended.
-        if started_offline or is_backend_offline():
+        if (
+            started_offline
+            or is_backend_offline()
+            or oo_egress.is_active(scope=getattr(self, "oo_scope", None))
+        ):
             # Offline (offline=True run or the offline env vars) is checked at
             # record time, not only at init: a pipeline initialised online must
             # not queue spans recorded while offline. Dropped, never queued.
@@ -182,25 +183,37 @@ class TraigentSpanProcessor(SpanProcessor):
         if ctx is None or not ctx.trace_flags.sampled:
             self._bump("sampled_out")
             return
-        dropped = False
+        if self._enqueue(span):
+            self._notify_drop("queue_full", 1)
+
+    def _forget_offline_start(self, ctx: Any) -> bool:
+        """True when the span was tracked as started offline (and forget it)."""
+        if ctx is None:
+            return False
+        key = (ctx.trace_id, ctx.span_id)
+        if key not in self._started_offline:
+            return False
+        self._started_offline.discard(key)
+        return True
+
+    def _enqueue(self, span: ReadableSpan) -> bool:
+        """Queue ``span`` under the lock; True when the queue was full."""
         with self._cond:
             if len(self._queue) >= self._max_queue:
                 self._stats["dropped_queue_full"] += 1
-                dropped = True
-            else:
-                if not self._queue:
-                    self._first_queued_at = self._clock()
-                self._queue.append(span)
-                self._queued_bytes += _estimate_bytes(span)
-                self._stats["queued"] += 1
-                self._ensure_worker_locked()
-                if (
-                    len(self._queue) >= self._max_batch
-                    or self._queued_bytes >= self._max_bytes
-                ):
-                    self._cond.notify_all()
-        if dropped:
-            self._notify_drop("queue_full", 1)
+                return True
+            if not self._queue:
+                self._first_queued_at = self._clock()
+            self._queue.append(span)
+            self._queued_bytes += _estimate_bytes(span)
+            self._stats["queued"] += 1
+            self._ensure_worker_locked()
+            if (
+                len(self._queue) >= self._max_batch
+                or self._queued_bytes >= self._max_bytes
+            ):
+                self._cond.notify_all()
+            return False
 
     def shutdown(self) -> None:
         if self._shutdown:
@@ -273,28 +286,33 @@ class TraigentSpanProcessor(SpanProcessor):
             and now - self._first_queued_at >= self._delay
         )
 
+    def _take_batch(self) -> list[ReadableSpan]:
+        batch: list[ReadableSpan] = []
+        size = 0
+        while self._queue and len(batch) < self._max_batch:
+            item = self._queue.popleft()
+            batch.append(item)
+            size += _estimate_bytes(item)
+            if size >= self._max_bytes:
+                break
+        self._queued_bytes = sum(_estimate_bytes(s) for s in self._queue)
+        self._first_queued_at = self._clock() if self._queue else None
+        return batch
+
+    def _wait_for_batch(self) -> None:
+        while not self._shutdown and not self._should_export(self._clock()):
+            wait = self._delay
+            if self._first_queued_at is not None:
+                wait = max(0.01, self._delay - (self._clock() - self._first_queued_at))
+            self._cond.wait(min(wait, self._delay))
+
     def _run(self) -> None:
         while True:
             with self._cond:
-                while not self._shutdown and not self._should_export(self._clock()):
-                    wait = self._delay
-                    if self._first_queued_at is not None:
-                        wait = max(
-                            0.01, self._delay - (self._clock() - self._first_queued_at)
-                        )
-                    self._cond.wait(min(wait, self._delay))
+                TraigentSpanProcessor._wait_for_batch(self)
                 if self._shutdown and not self._queue:
                     return
-                batch: list[ReadableSpan] = []
-                size = 0
-                while self._queue and len(batch) < self._max_batch:
-                    item = self._queue.popleft()
-                    batch.append(item)
-                    size += _estimate_bytes(item)
-                    if size >= self._max_bytes:
-                        break
-                self._queued_bytes = sum(_estimate_bytes(s) for s in self._queue)
-                self._first_queued_at = self._clock() if self._queue else None
+                batch = TraigentSpanProcessor._take_batch(self)
                 self._in_flight = True
             outcome = ExportOutcome()
             try:

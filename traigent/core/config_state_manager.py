@@ -9,10 +9,10 @@ OptimizedFunction to reduce class complexity.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
-import copy
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -159,12 +159,16 @@ def _redact_example_content_for_disk_save(result_dict: dict[str, Any]) -> None:
         example_results = metadata.get("example_results")
         if not isinstance(example_results, list):
             continue
-        for example in example_results:
-            if not isinstance(example, dict):
-                continue
-            for field_name in _EXAMPLE_RESULT_CONTENT_FIELDS:
-                if field_name in example:
-                    example[field_name] = None
+        _redact_examples(example_results)
+
+
+def _redact_examples(example_results: list[Any]) -> None:
+    for example in example_results:
+        if not isinstance(example, dict):
+            continue
+        for field_name in _EXAMPLE_RESULT_CONTENT_FIELDS:
+            if field_name in example:
+                example[field_name] = None
 
 
 def _integrity_error(message: str) -> CloudBestConfigIntegrityError:
@@ -197,6 +201,9 @@ def _publish_boundary_failure(exc: BaseException) -> ConfigurationError:
         diag.Category.PUBLISH_FAILED,
         exc,
     )
+
+
+_FAILED_TO_SAVE_OPTIMIZATION_RESULTS = "Failed to save optimization results"
 
 
 class ConfigStateManager:
@@ -966,62 +973,78 @@ class ConfigStateManager:
             provenance=thaw_config(snapshot.provenance),
         )
 
+    def _resolve_agent_head_best_config(self) -> BestConfigSnapshot:
+        """The exact version the agent head pins (``agent_head`` source; no fallback).
+
+        The agent comes from ``TRAIGENT_AGENT_REF``.  The read returns the head's
+        pinned version and generation together; the spec is validated for schema and
+        environment but not bound to this function's id (the head is the agent's).
+        """
+        import os
+
+        from traigent.runtime.head_loader import config_values, load_pinned_config
+        from traigent.runtime.hosted import ReactiveClient, TokenMap
+
+        agent_ref = os.environ.get("TRAIGENT_AGENT_REF", "")
+        pinned = load_pinned_config(ReactiveClient(agent_ref, TokenMap()))
+        snapshot = snapshot_from_spec(
+            pinned.spec,
+            configuration_space=self.configuration_space,
+            expected_environment=self.best_config_environment,
+            source=BestConfigSource.AGENT_HEAD.value,
+        )
+        merged = {**self.default_config, **thaw_config(snapshot.config)}
+        config_values(pinned)  # fail closed on a spec without knob values
+        return BestConfigSnapshot.from_config(
+            merged,
+            config_id=snapshot.config_id,
+            source=BestConfigSource.AGENT_HEAD.value,
+            spec_hash=snapshot.spec_hash,
+            loaded_at=snapshot.loaded_at,
+            provenance={
+                **thaw_config(snapshot.provenance),
+                "head_generation": pinned.generation,
+                "head_version": pinned.version,
+            },
+        )
+
     def _resolve_mode_snapshot(self) -> BestConfigSnapshot | None:
         for source in source_order_for_mode(self.best_config_source):
             try:
-                if source is BestConfigSource.REPO:
-                    snapshot = resolve_repo_best_config(
-                        config_id=self.config_id,
-                        repo_root=Path.cwd(),
-                        configuration_space=self.configuration_space,
-                        expected_function_ref=function_ref_for(self.func),
-                        expected_environment=self.best_config_environment,
-                        strict=self.best_config_strict,
-                    )
-                elif source is BestConfigSource.CLOUD_CACHE:
-                    snapshot = resolve_cloud_cache_best_config(
-                        config_id=self.config_id,
-                        cache_dir=self.best_config_cache_dir,
-                        configuration_space=self.configuration_space,
-                        ttl_seconds=self.best_config_cache_ttl_seconds,
-                        stale_ok_ttl_seconds=self.best_config_stale_ok_ttl_seconds,
-                        strict=self.best_config_strict,
-                        expected_function_ref=function_ref_for(self.func),
-                        expected_environment=self.best_config_environment,
-                    )
-                elif source is BestConfigSource.CLOUD_FETCH:
-                    snapshot = self._resolve_cloud_fetch_best_config()
-                else:
-                    snapshot = None
+                snapshot = ConfigStateManager._resolve_snapshot_source(self, source)
             except Exception as exc:
-                if isinstance(exc, SafetySensitiveBestConfigError):
-                    raise
-                mode_value = (
-                    self.best_config_source.value
-                    if isinstance(self.best_config_source, BestConfigSourceMode)
-                    else str(self.best_config_source)
+                failure_kind = ConfigStateManager._snapshot_failure_kind(
+                    self, source, exc
                 )
-                if source is BestConfigSource.CLOUD_FETCH and (
-                    mode_value == BestConfigSourceMode.CLOUD.value
-                    or self.best_config_strict
-                ):
-                    if isinstance(exc, CloudPublishUnavailable):
+                match failure_kind:
+                    case "safety":
                         raise
-                    if isinstance(exc, CloudBestConfigIntegrityError):
+                    case "unavailable":
+                        raise
+                    case "strict":
+                        raise
+                    case "integrity":
                         raise self._unavailable(
                             CloudPublishUnavailableReason.INTEGRITY_FAILED,
                             "Cloud best-config integrity check failed",
                             diag.Category.FETCH_INTEGRITY_FAILED,
                             exc,
                         ) from None
-                    raise self._unavailable(
-                        CloudPublishUnavailableReason.REQUEST_FAILED,
-                        "Cloud best-config fetch failed",
-                        diag.Category.FETCH_FAILED,
-                        exc,
-                    ) from None
-                if self.best_config_strict:
-                    raise
+                    case "fetch":
+                        raise self._unavailable(
+                            CloudPublishUnavailableReason.REQUEST_FAILED,
+                            "Cloud best-config fetch failed",
+                            diag.Category.FETCH_FAILED,
+                            exc,
+                        ) from None
+                    case "head":
+                        # Pure mode: the pinned version or nothing, never a fallback.
+                        raise self._unavailable(
+                            CloudPublishUnavailableReason.REQUEST_FAILED,
+                            "Agent head config read failed",
+                            diag.Category.FETCH_FAILED,
+                            exc,
+                        ) from None
                 if isinstance(exc, CloudBestConfigIntegrityError):
                     diag.log(
                         logger,
@@ -1052,6 +1075,57 @@ class ConfigStateManager:
                     provenance=thaw_config(snapshot.provenance),
                 )
         return None
+
+    def _resolve_snapshot_source(
+        self, source: BestConfigSource
+    ) -> BestConfigSnapshot | None:
+        if source is BestConfigSource.REPO:
+            return resolve_repo_best_config(
+                config_id=self.config_id,
+                repo_root=Path.cwd(),
+                configuration_space=self.configuration_space,
+                expected_function_ref=function_ref_for(self.func),
+                expected_environment=self.best_config_environment,
+                strict=self.best_config_strict,
+            )
+        if source is BestConfigSource.CLOUD_CACHE:
+            return resolve_cloud_cache_best_config(
+                config_id=self.config_id,
+                cache_dir=self.best_config_cache_dir,
+                configuration_space=self.configuration_space,
+                ttl_seconds=self.best_config_cache_ttl_seconds,
+                stale_ok_ttl_seconds=self.best_config_stale_ok_ttl_seconds,
+                strict=self.best_config_strict,
+                expected_function_ref=function_ref_for(self.func),
+                expected_environment=self.best_config_environment,
+            )
+        if source is BestConfigSource.CLOUD_FETCH:
+            return self._resolve_cloud_fetch_best_config()
+        if source is BestConfigSource.AGENT_HEAD:
+            return self._resolve_agent_head_best_config()
+        return None
+
+    def _snapshot_failure_kind(self, source: BestConfigSource, exc: Exception) -> str:
+        if isinstance(exc, SafetySensitiveBestConfigError):
+            return "safety"
+        mode_value = (
+            self.best_config_source.value
+            if isinstance(self.best_config_source, BestConfigSourceMode)
+            else str(self.best_config_source)
+        )
+        if source is BestConfigSource.CLOUD_FETCH and (
+            mode_value == BestConfigSourceMode.CLOUD.value or self.best_config_strict
+        ):
+            if isinstance(exc, CloudPublishUnavailable):
+                return "unavailable"
+            if isinstance(exc, CloudBestConfigIntegrityError):
+                return "integrity"
+            return "fetch"
+        if source is BestConfigSource.AGENT_HEAD:
+            return "head"
+        if self.best_config_strict:
+            return "strict"
+        return "ignore"
 
     # -- State mutation methods --------------------------------------------
 
@@ -1183,7 +1257,7 @@ class ConfigStateManager:
 
     @diag.boundary(
         diag.Category.RESULT_INVALID,
-        "Failed to save optimization results",
+        _FAILED_TO_SAVE_OPTIMIZATION_RESULTS,
     )
     def save_optimization_results(self, path: str) -> None:
         """Save optimization results to file.
@@ -1241,7 +1315,7 @@ class ConfigStateManager:
         _redact_example_content_for_disk_save(result_dict)
 
         try:
-            with diag.fs_guard("Failed to save optimization results"):
+            with diag.fs_guard(_FAILED_TO_SAVE_OPTIMIZATION_RESULTS):
                 output_path = Path(path).expanduser()
                 base_dir = (
                     output_path.parent
@@ -1257,7 +1331,7 @@ class ConfigStateManager:
             # a value's own __str__ can raise ConfigurationError(<customer text>):
             # only a refusal built by this SDK passes unchanged
             raise diag.refusal(
-                "Failed to save optimization results",
+                _FAILED_TO_SAVE_OPTIMIZATION_RESULTS,
                 category=diag.Category.FILESYSTEM_FAILED,
                 cause=exc,
             ) from None
@@ -1265,7 +1339,7 @@ class ConfigStateManager:
             # PathTraversalError / secure_path's ValueError quote the path, and a
             # value's own __str__ can raise customer text: fixed refusal, type only
             raise diag.refusal(
-                "Failed to save optimization results",
+                _FAILED_TO_SAVE_OPTIMIZATION_RESULTS,
                 category=diag.Category.FILESYSTEM_FAILED,
                 cause=exc,
             ) from None
@@ -1455,20 +1529,30 @@ class ConfigStateManager:
                 reverse=True,
             )
 
-            for run_dir in run_dirs:
-                for config_file in [
-                    run_dir / "artifacts" / "best_config_v2.json",
-                    run_dir / "artifacts" / "best_config.json",
-                ]:
-                    if not config_file.exists():
-                        continue
-                    verdict = self._dev_log_candidate(config_file)
-                    if verdict == "match":
-                        return str(config_file)
-                    if verdict == "function" and fallback is None:
-                        fallback = str(config_file)
+            match, fallback = ConfigStateManager._find_in_run_dirs(
+                self, run_dirs, fallback
+            )
+            if match is not None:
+                return match
 
         return fallback
+
+    def _find_in_run_dirs(
+        self, run_dirs: list[Path], fallback: str | None
+    ) -> tuple[str | None, str | None]:
+        for run_dir in run_dirs:
+            for config_file in [
+                run_dir / "artifacts" / "best_config_v2.json",
+                run_dir / "artifacts" / "best_config.json",
+            ]:
+                if not config_file.exists():
+                    continue
+                verdict = self._dev_log_candidate(config_file)
+                if verdict == "match":
+                    return str(config_file), fallback
+                if verdict == "function" and fallback is None:
+                    fallback = str(config_file)
+        return None, fallback
 
     def _dev_log_candidate(self, config_file: Path) -> str | None:
         """Classify a dev-log artifact: ``match``, ``function`` (only) or ``None``."""

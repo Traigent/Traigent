@@ -181,6 +181,10 @@ def stamp_span(span: Span, *, metadata_mode: str = "metadata") -> None:
         span.set_attribute(C.ATTR_PROMPT_VERSION, caller.prompt_version)
     if metadata_mode == "metadata":
         return  # content: never placed on the span in metadata mode
+    _stamp_content(span, caller, metadata_mode)
+
+
+def _stamp_content(span: Span, caller: _CallerAttributes, metadata_mode: str) -> None:
     if caller.tags:
         span.set_attribute(
             C.ATTR_TAGS,

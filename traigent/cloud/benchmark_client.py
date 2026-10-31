@@ -12,12 +12,15 @@ from typing import Any
 from urllib import error, request
 from urllib.parse import quote
 
-from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.cloud.url_security import (
+    open_no_redirect,
+    validate_cloud_base_url,
+)
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
-from traigent.core.session_types import safe_http_error_summary
 from traigent.config.project import read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
+from traigent.core.session_types import safe_http_error_summary
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import (
     AuthenticationError,
@@ -172,7 +175,7 @@ class BenchmarkClient:
             method="POST",
         )
         try:
-            with request.urlopen(  # nosec B310
+            with open_no_redirect(  # nosec B310
                 http_req, timeout=self.config.request_timeout
             ) as resp:
                 body = resp.read().decode("utf-8")

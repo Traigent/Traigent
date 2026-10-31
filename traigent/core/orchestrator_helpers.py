@@ -247,7 +247,7 @@ def effective_subset_indices(requested: Any, dataset_size: int) -> list[Any]:
     addresses row 1 -- and the caller falls back to the full dataset on the
     exception. Use :func:`operator.index` on the kept values for the rows.
     """
-    return [j for j in list(requested or []) if 0 <= j < dataset_size]
+    return [j for j in (requested or []) if 0 <= j < dataset_size]
 
 
 def subset_indices_of_dataset(dataset: Any) -> list[int] | None:
@@ -391,6 +391,75 @@ def pre_trial_validate_config(
     return True
 
 
+_EXAMPLE_COST_KEYS = ("total_cost", "cost", "example_cost")
+
+
+def _example_cost_value(example: Any) -> Any:
+    """First non-None cost reported in an example's metrics, else None."""
+    metrics = getattr(example, "metrics", {}) or {}
+    for key in _EXAMPLE_COST_KEYS:
+        if metrics.get(key) is not None:
+            return metrics[key]
+    return None
+
+
+def _total_cost_from_examples(
+    example_results: Any, trial_id: str, current_total: float | None
+) -> float | None:
+    """Sum per-example costs, or keep/clear ``current_total`` per the cost rules."""
+    total_cost_examples = 0.0
+    has_cost_samples = False
+    example_rows = []
+    example_ok = []
+    for example in example_results:
+        row_metrics = getattr(example, "metrics", None) or {}
+        if getattr(example, "cost_unmeasured", None) is True:
+            # A row object that disowns its own cost (HybridExampleResult)
+            # is unmeasured whatever its metrics dict happens to carry.
+            row_metrics = {**row_metrics, "cost_unmeasured": 1.0}
+        example_rows.append(row_metrics)
+        example_ok.append(bool(getattr(example, "success", True)))
+        cost_value = _example_cost_value(example)
+        if cost_value is None:
+            continue
+        try:
+            total_cost_examples += float(cost_value)
+            has_cost_samples = True
+        except (TypeError, ValueError):
+            logger.debug(
+                "Unable to parse example cost %s for trial %s",
+                cost_value,
+                trial_id,
+            )
+
+    # A successful row without a measured cost makes the sum a floor, not
+    # the trial's cost (shared classifier, #2517).
+    if not has_cost_samples:
+        return current_total
+    if trial_cost_unknown(example_rows, example_ok):
+        return None
+    return total_cost_examples
+
+
+def _aggregated_total_cost(eval_result: Any) -> Any:
+    """Total cost reported by the aggregated metrics, with the legacy ``cost`` fallback."""
+    agg_metrics = eval_result.aggregated_metrics or {}
+    total_cost = agg_metrics.get("total_cost")
+    if total_cost is None:
+        # Backward-compatible fallback for evaluators that still emit "cost".
+        total_cost = agg_metrics.get("cost")
+    return total_cost
+
+
+def _cap_examples_attempted(eval_result: Any, examples_attempted: Any) -> Any:
+    """Prefer the evaluator-reported example total over a larger or missing count."""
+    result_total = getattr(eval_result, "total_examples", None)
+    if isinstance(result_total, int) and result_total > 0:
+        if examples_attempted is None or examples_attempted > result_total:
+            examples_attempted = result_total
+    return examples_attempted
+
+
 def extract_cost_from_results(
     eval_result: Any,
     progress_state: dict[str, Any] | None,
@@ -421,49 +490,13 @@ def extract_cost_from_results(
         if examples_attempted is None:
             examples_attempted = len(eval_result.example_results)
 
-        total_cost_examples = 0.0
-        has_cost_samples = False
-        example_rows = []
-        example_ok = []
-        for example in eval_result.example_results:
-            row_metrics = getattr(example, "metrics", None) or {}
-            if getattr(example, "cost_unmeasured", None) is True:
-                # A row object that disowns its own cost (HybridExampleResult)
-                # is unmeasured whatever its metrics dict happens to carry.
-                row_metrics = {**row_metrics, "cost_unmeasured": 1.0}
-            example_rows.append(row_metrics)
-            example_ok.append(bool(getattr(example, "success", True)))
-            metrics = getattr(example, "metrics", {}) or {}
-            cost_value = None
-            for key in ("total_cost", "cost", "example_cost"):
-                if metrics.get(key) is not None:
-                    cost_value = metrics[key]
-                    break
-            if cost_value is not None:
-                try:
-                    total_cost_examples += float(cost_value)
-                    has_cost_samples = True
-                except (TypeError, ValueError):
-                    logger.debug(
-                        "Unable to parse example cost %s for trial %s",
-                        cost_value,
-                        trial_id,
-                    )
-
-        # A successful row without a measured cost makes the sum a floor, not
-        # the trial's cost (shared classifier, #2517).
-        if has_cost_samples and not trial_cost_unknown(example_rows, example_ok):
-            total_cost = total_cost_examples
-        elif has_cost_samples:
-            total_cost = None
+        total_cost = _total_cost_from_examples(
+            eval_result.example_results, trial_id, total_cost
+        )
 
     # Fallback to aggregated metrics
     if total_cost is None and hasattr(eval_result, "aggregated_metrics"):
-        agg_metrics = eval_result.aggregated_metrics or {}
-        total_cost = agg_metrics.get("total_cost")
-        if total_cost is None:
-            # Backward-compatible fallback for evaluators that still emit "cost".
-            total_cost = agg_metrics.get("cost")
+        total_cost = _aggregated_total_cost(eval_result)
 
     # A trial the evaluator flagged unmeasured has no cost, whatever the
     # progress state or a stray number says (#2517).
@@ -471,9 +504,6 @@ def extract_cost_from_results(
         total_cost = None
 
     # Prefer evaluator-reported totals when available to avoid double counting
-    result_total = getattr(eval_result, "total_examples", None)
-    if isinstance(result_total, int) and result_total > 0:
-        if examples_attempted is None or examples_attempted > result_total:
-            examples_attempted = result_total
+    examples_attempted = _cap_examples_attempted(eval_result, examples_attempted)
 
     return examples_attempted, total_cost

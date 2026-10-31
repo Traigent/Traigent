@@ -376,3 +376,25 @@ def test_mcp_offer_is_gated_on_the_register_subcommand(
     assert seen == [["/bin/traigent", "mcp", "register", "--help"]]
     offered = onboard_commands._mcp_registration_command("claude")
     assert offered[:3] == ["traigent", "mcp", "register"]
+
+
+@pytest.mark.parametrize(
+    ("version", "expected_status"),
+    [((3, 11, 9), "failed"), ((3, 12, 0), "passed"), ((3, 13, 1), "passed")],
+)
+def test_python_version_step_floor_is_3_12(
+    monkeypatch: pytest.MonkeyPatch,
+    version: tuple[int, int, int],
+    expected_status: str,
+) -> None:
+    from collections import namedtuple
+
+    version_info = namedtuple("version_info", "major minor micro")(*version)
+    monkeypatch.setattr(
+        onboard_commands, "sys", types.SimpleNamespace(version_info=version_info)
+    )
+
+    step = onboard_commands._python_version_step()
+
+    assert step["status"] == expected_status
+    assert "Python >=3.12" in step["description"]

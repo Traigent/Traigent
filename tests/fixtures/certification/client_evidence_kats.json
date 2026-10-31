@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "description": "Known-answer vectors for the G1 client-local evidence construction (sha256_secret_blinded_v1, jcs_v1). Normative text: traigent_schema/schemas/certification/certification_common_v0_schema.json; note: docs/certification/client-evidence-vectors.md. Float literals appear only in negative_cases, as JSON numbers with a fractional part.",
+  "slot_domain": "traigent.cert.v0.slot_commitment.v1",
+  "root_domain": "traigent.agent_certificate.client_evidence_manifest_root.v1",
+  "slot_cases": [
+    {
+      "name": "agent_revision-basic",
+      "artifact_kind": "agent_revision",
+      "blind_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "artifact_document": {
+        "entrypoint": "pkg.mod:agent",
+        "revision": {
+          "code_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "config_version": 3
+        }
+      },
+      "jcs_utf8": "{\"entrypoint\":\"pkg.mod:agent\",\"revision\":{\"code_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"config_version\":3}}",
+      "slot_commitment_digest": "sha256:92f57177de7bf0ffedb1a5baef3cc74c962109163ee945cb1355fed6cb3bf46c"
+    },
+    {
+      "name": "evaluation_dataset-basic",
+      "artifact_kind": "evaluation_dataset",
+      "blind_hex": "1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30",
+      "artifact_document": {
+        "dataset_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "example_count": 12,
+        "split": "holdout"
+      },
+      "jcs_utf8": "{\"dataset_digest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"example_count\":12,\"split\":\"holdout\"}",
+      "slot_commitment_digest": "sha256:83ecf09fd8ab5aa5cd085d4bf861ed76d174d33545d3cd4939ecf6b41fdf7063"
+    },
+    {
+      "name": "evaluator-basic",
+      "artifact_kind": "evaluator",
+      "blind_hex": "2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
+      "artifact_document": {
+        "evaluator_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "kind": "builtin",
+        "deterministic": true
+      },
+      "jcs_utf8": "{\"deterministic\":true,\"evaluator_digest\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"kind\":\"builtin\"}",
+      "slot_commitment_digest": "sha256:b43e19d5d458e6ba66bd5dd78e616968c87511cf248f204fea8b1adcbcd2879b"
+    },
+    {
+      "name": "build_process_evidence-basic",
+      "artifact_kind": "build_process_evidence",
+      "blind_hex": "3132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50",
+      "artifact_document": {
+        "snapshot_format": "tes1",
+        "manifest_digest": "sha256:a5b75ca554798d8391a57052d8c615dc0858e3c577b7f6adc33528e9ed0887d6"
+      },
+      "jcs_utf8": "{\"manifest_digest\":\"sha256:a5b75ca554798d8391a57052d8c615dc0858e3c577b7f6adc33528e9ed0887d6\",\"snapshot_format\":\"tes1\"}",
+      "slot_commitment_digest": "sha256:d01f94b7e43b9975d72271650ae21565089c0ba99b0b08a4adb26d5b31373ea3"
+    },
+    {
+      "name": "key-order-and-nesting",
+      "artifact_kind": "evaluator",
+      "blind_hex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+      "artifact_document": {
+        "z": [
+          1,
+          {
+            "b": null,
+            "a": false
+          }
+        ],
+        "a": -7,
+        "m": {}
+      },
+      "jcs_utf8": "{\"a\":-7,\"m\":{},\"z\":[1,{\"a\":false,\"b\":null}]}",
+      "slot_commitment_digest": "sha256:6075863588b2e58b4ec65790edac06e771b7ce826e9c3108737f01115c618f62"
+    },
+    {
+      "name": "utf16-key-order-astral",
+      "artifact_kind": "agent_revision",
+      "blind_hex": "8182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0",
+      "artifact_document": {
+        "😀": 1,
+        "￿": 2,
+        "a": 3
+      },
+      "jcs_utf8": "{\"a\":3,\"😀\":1,\"￿\":2}",
+      "slot_commitment_digest": "sha256:253bfb0a6b1429faf29a2fcdd2bcade4a234f9f571ef1bb1f1ad17c7ad13a603"
+    },
+    {
+      "name": "string-escapes",
+      "artifact_kind": "evaluation_dataset",
+      "blind_hex": "82838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1",
+      "artifact_document": {
+        "s": "quote\" back\\ nl\n tab\t ctl\u0001 del café  "
+      },
+      "jcs_utf8": "{\"s\":\"quote\\\" back\\\\ nl\\n tab\\t ctl\\u0001 del café  \"}",
+      "slot_commitment_digest": "sha256:d39d8224b5cb0bab4af5aad3811cc64b4e651086b7dc5697e8276c21cc4bc99a"
+    },
+    {
+      "name": "max-safe-integer",
+      "artifact_kind": "evaluator",
+      "blind_hex": "838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2",
+      "artifact_document": {
+        "n": 9007199254740991,
+        "neg": -9007199254740991,
+        "zero": 0
+      },
+      "jcs_utf8": "{\"n\":9007199254740991,\"neg\":-9007199254740991,\"zero\":0}",
+      "slot_commitment_digest": "sha256:26ece148877228e93d832f05d00b555b4a5fe6cfe2dc387895f05332e6acf01c"
+    },
+    {
+      "name": "empty-document",
+      "artifact_kind": "build_process_evidence",
+      "blind_hex": "8485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3",
+      "artifact_document": {},
+      "jcs_utf8": "{}",
+      "slot_commitment_digest": "sha256:8c9e16e17b419664a053dca157518cb23fc2f114c4f42e1101e1155c8f64cb18"
+    }
+  ],
+  "manifests": [
+    {
+      "name": "four-slot-full",
+      "slots": {
+        "agent_revision": {
+          "blind_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+          "artifact_document": {
+            "entrypoint": "pkg.mod:agent",
+            "revision": {
+              "code_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "config_version": 3
+            }
+          },
+          "slot_commitment_digest": "sha256:fb439ebc1883e47eb1e278de8bc947b5d033fde0feb552100072b693abec3459"
+        },
+        "evaluation_dataset": {
+          "blind_hex": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+          "artifact_document": {
+            "dataset_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "example_count": 12,
+            "split": "holdout"
+          },
+          "slot_commitment_digest": "sha256:24cae5a57debe2d460b44cd5fc001eaacd241f62248c665dca09f5cbf94a7f8a"
+        },
+        "evaluator": {
+          "blind_hex": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+          "artifact_document": {
+            "evaluator_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            "kind": "builtin",
+            "deterministic": true
+          },
+          "slot_commitment_digest": "sha256:ad61425aa8be02a7912c0997a65e670fe9f77e3f7cd9ae834eeed7f5b8296cb0"
+        },
+        "build_process_evidence": {
+          "blind_hex": "707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f",
+          "artifact_document": {
+            "snapshot_format": "tes1",
+            "manifest_digest": "sha256:a5b75ca554798d8391a57052d8c615dc0858e3c577b7f6adc33528e9ed0887d6"
+          },
+          "slot_commitment_digest": "sha256:d70633d7e997dcdfab486dbdc1a103edb203a037003f4e9ab39836a047d9fdff"
+        }
+      },
+      "manifest": {
+        "schema_version": "traigent.certificate_client_evidence_manifest.v0",
+        "agent_revision": {
+          "artifact_kind": "agent_revision",
+          "commitment_scheme": "sha256_secret_blinded_v1",
+          "slot_commitment_digest": "sha256:fb439ebc1883e47eb1e278de8bc947b5d033fde0feb552100072b693abec3459"
+        },
+        "evaluation_dataset": {
+          "artifact_kind": "evaluation_dataset",
+          "commitment_scheme": "sha256_secret_blinded_v1",
+          "slot_commitment_digest": "sha256:24cae5a57debe2d460b44cd5fc001eaacd241f62248c665dca09f5cbf94a7f8a"
+        },
+        "evaluator": {
+          "artifact_kind": "evaluator",
+          "commitment_scheme": "sha256_secret_blinded_v1",
+          "slot_commitment_digest": "sha256:ad61425aa8be02a7912c0997a65e670fe9f77e3f7cd9ae834eeed7f5b8296cb0"
+        },
+        "build_process_evidence": {
+          "artifact_kind": "build_process_evidence",
+          "commitment_scheme": "sha256_secret_blinded_v1",
+          "slot_commitment_digest": "sha256:d70633d7e997dcdfab486dbdc1a103edb203a037003f4e9ab39836a047d9fdff"
+        }
+      },
+      "manifest_jcs_utf8": "{\"agent_revision\":{\"artifact_kind\":\"agent_revision\",\"commitment_scheme\":\"sha256_secret_blinded_v1\",\"slot_commitment_digest\":\"sha256:fb439ebc1883e47eb1e278de8bc947b5d033fde0feb552100072b693abec3459\"},\"build_process_evidence\":{\"artifact_kind\":\"build_process_evidence\",\"commitment_scheme\":\"sha256_secret_blinded_v1\",\"slot_commitment_digest\":\"sha256:d70633d7e997dcdfab486dbdc1a103edb203a037003f4e9ab39836a047d9fdff\"},\"evaluation_dataset\":{\"artifact_kind\":\"evaluation_dataset\",\"commitment_scheme\":\"sha256_secret_blinded_v1\",\"slot_commitment_digest\":\"sha256:24cae5a57debe2d460b44cd5fc001eaacd241f62248c665dca09f5cbf94a7f8a\"},\"evaluator\":{\"artifact_kind\":\"evaluator\",\"commitment_scheme\":\"sha256_secret_blinded_v1\",\"slot_commitment_digest\":\"sha256:ad61425aa8be02a7912c0997a65e670fe9f77e3f7cd9ae834eeed7f5b8296cb0\"},\"schema_version\":\"traigent.certificate_client_evidence_manifest.v0\"}",
+      "manifest_root_digest": "sha256:d467c57a77774418b347894e91a6a8d23946b061b4eb29124a633cbcd915b71c"
+    }
+  ],
+  "build_process_evidence": {
+    "artifact_document": {
+      "snapshot_format": "tes1",
+      "manifest_digest": "sha256:a5b75ca554798d8391a57052d8c615dc0858e3c577b7f6adc33528e9ed0887d6"
+    },
+    "jcs_utf8": "{\"manifest_digest\":\"sha256:a5b75ca554798d8391a57052d8c615dc0858e3c577b7f6adc33528e9ed0887d6\",\"snapshot_format\":\"tes1\"}"
+  },
+  "negative_cases": [
+    {
+      "name": "float-top-level",
+      "artifact_kind": "evaluator",
+      "blind_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "artifact_document": {
+        "score": 0.5
+      }
+    },
+    {
+      "name": "float-nested",
+      "artifact_kind": "evaluation_dataset",
+      "blind_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "artifact_document": {
+        "a": [
+          {
+            "b": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "unsafe-integer",
+      "artifact_kind": "evaluator",
+      "blind_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "artifact_document": {
+        "n": 9007199254740992
+      }
+    },
+    {
+      "name": "blind-31-bytes",
+      "artifact_kind": "evaluator",
+      "blind_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "artifact_document": {
+        "a": 1
+      }
+    },
+    {
+      "name": "blind-33-bytes",
+      "artifact_kind": "evaluator",
+      "blind_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2000",
+      "artifact_document": {
+        "a": 1
+      }
+    },
+    {
+      "name": "blind-empty",
+      "artifact_kind": "evaluator",
+      "blind_hex": "",
+      "artifact_document": {
+        "a": 1
+      }
+    },
+    {
+      "name": "unknown-artifact-kind",
+      "artifact_kind": "dataset",
+      "blind_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "artifact_document": {
+        "a": 1
+      }
+    }
+  ]
+}

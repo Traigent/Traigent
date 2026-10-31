@@ -19,7 +19,7 @@ import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from opentelemetry import context as otel_context
 from opentelemetry import trace
@@ -35,16 +35,15 @@ from traigent.observability.config import (
     validate_content_mode_override,
 )
 from traigent.observability.otel import contract as C
-from traigent.observability.otel.policy import ContentPolicy
 from traigent.observability.otel.exporter import TraigentOTLPExporter
 from traigent.observability.otel.instrument import install
 from traigent.observability.otel.lineage import (
     _CallerAttributes,
     activate,
-    merged_attributes,
-    set_current,
 )
 from traigent.observability.otel.lineage import attributes as attributes  # re-export
+from traigent.observability.otel.lineage import merged_attributes, set_current
+from traigent.observability.otel.policy import ContentPolicy
 from traigent.observability.otel.processor import FlushOutcome, TraigentSpanProcessor
 from traigent.observability.otel.sampling import (
     parent_based_ratio_sampler,
@@ -52,6 +51,7 @@ from traigent.observability.otel.sampling import (
 )
 from traigent.observability.otel.transport import Transport, UrllibTransport
 from traigent.security.redaction import redact_sensitive_data
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, is_truthy
 from traigent.utils.logging import get_logger
 
@@ -178,6 +178,72 @@ def _resolve_rate(sample_rate: float | None) -> float:
         ) from None
 
 
+def _init_is_offline(api_key: str | None, endpoint: str | None) -> bool:
+    return cast(
+        bool,
+        (
+            is_backend_offline()
+            or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
+            or oo_egress.is_active(
+                oo_egress.policy_from_headers(
+                    endpoint or BackendConfig.get_backend_url(),
+                    {"X-API-Key": api_key}
+                    if api_key
+                    else {"X-API-Key": BackendConfig.get_api_key()},
+                )
+            )
+        ),
+    )
+
+
+def _init_provider(
+    rate: float, service_name: str | None, environment: str | None, release: str | None
+) -> TracerProvider:
+    attrs: dict[str, Any] = {}
+    if service_name:
+        attrs["service.name"] = service_name
+    if environment:
+        attrs["deployment.environment.name"] = environment
+    if release:
+        attrs["service.version"] = release
+    return TracerProvider(
+        sampler=parent_based_ratio_sampler(rate),
+        resource=Resource.create(attrs),
+        # Traigent flushes on exit itself (exit_flush); the provider's own
+        # atexit hook would make exit_flush=False ineffective.
+        shutdown_on_exit=False,
+    )
+
+
+def _init_instrument(
+    handle: ObservabilityHandle, instrument: Sequence[Any] | str | None
+) -> None:
+    if instrument:
+        names = (
+            ("openai", "anthropic", "langchain", "bedrock")
+            if instrument == "auto"
+            else instrument
+        )
+        specs = (names,) if isinstance(names, str) else tuple(names)
+        if instrument == "auto":
+            specs = tuple(_installed_auto_names())
+        try:
+            handle.instrument(*specs)
+        except Exception:
+            handle.shutdown()
+            raise
+
+
+def _init_api_key(api_key: str | None) -> str:
+    key = api_key if api_key is not None else BackendConfig.get_api_key()
+    if not key or not key.strip():
+        raise ValueError(
+            "api_key is required (argument or TRAIGENT_API_KEY); set "
+            "TRAIGENT_OFFLINE_MODE=true to run without exporting"
+        )
+    return key
+
+
 def init(
     *,
     api_key: str | None = None,
@@ -222,9 +288,8 @@ def init(
         # Validate eagerly so a bad allowlist fails even in offline mode.
         ContentPolicy(mode, allowed_span_names)
         rate = _resolve_rate(sample_rate)
-        offline = is_backend_offline() or is_truthy(
-            os.getenv("TRAIGENT_DISABLE_TELEMETRY")
-        )
+        # optimization_only workspaces refuse trace ingest: never build an exporter.
+        offline = _init_is_offline(api_key, endpoint)
         if tracer_provider is not None and not hasattr(
             tracer_provider, "add_span_processor"
         ):
@@ -235,31 +300,13 @@ def init(
 
         created = tracer_provider is None
         if created:
-            attrs: dict[str, Any] = {}
-            if service_name:
-                attrs["service.name"] = service_name
-            if environment:
-                attrs["deployment.environment.name"] = environment
-            if release:
-                attrs["service.version"] = release
-            provider = TracerProvider(
-                sampler=parent_based_ratio_sampler(rate),
-                resource=Resource.create(attrs),
-                # Traigent flushes on exit itself (exit_flush); the provider's own
-                # atexit hook would make exit_flush=False ineffective.
-                shutdown_on_exit=False,
-            )
+            provider = _init_provider(rate, service_name, environment, release)
         else:
             provider = tracer_provider
 
         processor = exporter = None
         if not offline:
-            key = api_key if api_key is not None else BackendConfig.get_api_key()
-            if not key or not key.strip():
-                raise ValueError(
-                    "api_key is required (argument or TRAIGENT_API_KEY); set "
-                    "TRAIGENT_OFFLINE_MODE=true to run without exporting"
-                )
+            key = _init_api_key(api_key)
             base = (endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}").rstrip(
                 "/"
             )
@@ -284,6 +331,11 @@ def init(
                 exit_flush_timeout_s=exit_flush_timeout_s,
                 on_drop=on_drop,
             )
+            # bind the exporter and processor to this credential so a closed
+            # ``403 optimization_only`` seen for it (by any SDK client) stops them
+            oo_scope = oo_egress.credential_scope(url, headers)
+            exporter.oo_scope = oo_scope
+            processor.oo_scope = oo_scope
             provider.add_span_processor(processor)
         if set_global:
             trace.set_tracer_provider(provider)
@@ -297,20 +349,7 @@ def init(
         )
         _handle = handle
         _last_handle = None
-    if instrument:
-        names = (
-            ("openai", "anthropic", "langchain", "bedrock")
-            if instrument == "auto"
-            else instrument
-        )
-        specs = (names,) if isinstance(names, str) else tuple(names)
-        if instrument == "auto":
-            specs = tuple(_installed_auto_names())
-        try:
-            handle.instrument(*specs)
-        except Exception:
-            handle.shutdown()
-            raise
+    _init_instrument(handle, instrument)
     return handle
 
 
@@ -505,6 +544,17 @@ class _Observe:
         return state, mode
 
     # -- span lifecycle ---------------------------------------------------
+    def _stamp_input(self, span: Span, mode: str, args: tuple, kwargs: dict) -> None:
+        if mode == "record":
+            if self._redact_input:
+                span.set_attribute(C.ATTR_INPUT, C.REDACTED_PLACEHOLDER)
+            elif args or kwargs:
+                span.set_attribute(
+                    C.ATTR_INPUT, _serialise({"args": args, "kwargs": kwargs})
+                )
+        elif mode == "redacted":
+            span.set_attribute(C.ATTR_INPUT, C.REDACTED_PLACEHOLDER)
+
     def _start(
         self,
         name: str,
@@ -523,15 +573,7 @@ class _Observe:
             span.set_attribute("gen_ai.tool.name", self._tool_name)
         if handle is not None and mode != handle.content_mode:
             span.set_attribute(C.CONTENT_MODE_ATTRIBUTE, mode)
-        if mode == "record":
-            if self._redact_input:
-                span.set_attribute(C.ATTR_INPUT, C.REDACTED_PLACEHOLDER)
-            elif args or kwargs:
-                span.set_attribute(
-                    C.ATTR_INPUT, _serialise({"args": args, "kwargs": kwargs})
-                )
-        elif mode == "redacted":
-            span.set_attribute(C.ATTR_INPUT, C.REDACTED_PLACEHOLDER)
+        _Observe._stamp_input(self, span, mode, args, kwargs)
         if self._metadata and mode != "metadata":
             for key, value in self._metadata.items():
                 if isinstance(value, (str, bool, int, float)):
@@ -621,154 +663,192 @@ class _Observe:
         return self.__exit__(exc_type, exc, tb)
 
     # -- decorator ----------------------------------------------------------
-    def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        name: str = self._name or str(getattr(func, "__name__", "observe"))
+    @staticmethod
+    def _step_scope(state: _CallerAttributes, span: Span) -> contextlib.ExitStack:
+        """Context for ONE resume of a stream: entered and left within it."""
+        stack = contextlib.ExitStack()
+        stack.enter_context(activate(state))
+        stack.enter_context(
+            use_span(
+                span,
+                end_on_exit=False,
+                record_exception=False,
+                set_status_on_exception=False,
+            )
+        )
+        return stack
+
+    @staticmethod
+    def _open_stream(
+        run: _Observe, name: str, args: tuple, kwargs: dict
+    ) -> tuple[contextvars.Context, str, Span]:
+        """Start the stream's span and its PRIVATE execution context.
+
+        Every resume, throw and close of the wrapped generator runs inside
+        this one context (``Context.run``), so scopes the generator opens
+        itself survive its yields, its cleanup sees the stream's mode,
+        identity and parent rather than the closing caller's, and nothing
+        leaks into the consumer between resumes.
+        """
+        ctx = contextvars.copy_context()
+
+        def begin() -> tuple[str, Span]:
+            state, mode = run._prepare()
+            span = run._start(name, args, kwargs, state, mode)
+            set_current(state)
+            otel_context.attach(trace.set_span_in_context(span))
+            return mode, span
+
+        mode, span = ctx.run(begin)
+        return ctx, mode, span
+
+    @staticmethod
+    async def _resume_agen(
+        ctx: contextvars.Context,
+        agen: Any,
+        value: Any,
+        error: BaseException | None,
+        run: _Observe,
+        span: Span,
+        mode: str,
+    ) -> tuple[bool, Any]:
+        try:
+            if error is not None:
+                return False, await _InContext(ctx, agen.athrow(error))
+            return False, await _InContext(ctx, agen.asend(value))
+        except StopAsyncIteration:
+            run._finish(span, mode)
+            return True, None
+
+    @staticmethod
+    def _resume_gen(
+        ctx: contextvars.Context,
+        gen: Any,
+        value: Any,
+        error: BaseException | None,
+        run: _Observe,
+        span: Span,
+        mode: str,
+    ) -> tuple[bool, Any]:
+        try:
+            if error is not None:
+                return False, ctx.run(gen.throw, error)
+            return False, ctx.run(gen.send, value)
+        except StopIteration as stop:
+            run._finish(span, mode, result=stop.value, has_result=True)
+            return True, stop.value
+
+    @staticmethod
+    def _finish_stream(
+        run: _Observe, span: Span | None, mode: str, error: BaseException | None = None
+    ) -> None:
+        if span is not None:
+            if error is None:
+                run._finish(span, mode)
+            else:
+                run._finish(span, mode, error=error)
+
+    def _wrap_agen(self, func: Callable[..., Any], name: str) -> Callable[..., Any]:
         run = self
 
-        def step_scope(state: _CallerAttributes, span: Span) -> contextlib.ExitStack:
-            """Context for ONE resume of a stream: entered and left within it."""
-            stack = contextlib.ExitStack()
-            stack.enter_context(activate(state))
-            stack.enter_context(
-                use_span(
-                    span,
-                    end_on_exit=False,
-                    record_exception=False,
-                    set_status_on_exception=False,
-                )
-            )
-            return stack
-
-        def open_stream(
-            args: tuple, kwargs: dict
-        ) -> tuple[contextvars.Context, str, Span]:
-            """Start the stream's span and its PRIVATE execution context.
-
-            Every resume, throw and close of the wrapped generator runs inside
-            this one context (``Context.run``), so scopes the generator opens
-            itself survive its yields, its cleanup sees the stream's mode,
-            identity and parent rather than the closing caller's, and nothing
-            leaks into the consumer between resumes.
-            """
-            ctx = contextvars.copy_context()
-
-            def begin() -> tuple[str, Span]:
-                state, mode = run._prepare()
-                span = run._start(name, args, kwargs, state, mode)
-                set_current(state)
-                otel_context.attach(trace.set_span_in_context(span))
-                return mode, span
-
-            mode, span = ctx.run(begin)
-            return ctx, mode, span
-
-        if inspect.isasyncgenfunction(func):
-
-            @functools.wraps(func)
-            async def agen_wrapper(*args: Any, **kwargs: Any):
-                ctx, mode, started = open_stream(args, kwargs)
-                span: Span | None = started
-                agen = func(*args, **kwargs)
-                to_send: Any = None
-                to_throw: BaseException | None = None
-                try:
-                    while True:
-                        try:
-                            if to_throw is not None:
-                                exc, to_throw = to_throw, None
-                                item = await _InContext(ctx, agen.athrow(exc))
-                            else:
-                                item = await _InContext(ctx, agen.asend(to_send))
-                        except StopAsyncIteration:
-                            run._finish(started, mode)
-                            span = None
-                            return
-                        try:
-                            to_send = yield item
-                        except GeneratorExit:
-                            await _InContext(ctx, agen.aclose())
-                            raise
-                        except BaseException as exc:  # thrown into the wrapper
-                            to_throw, to_send = exc, None
-                except GeneratorExit:
-                    raise
-                except BaseException as exc:
-                    if span is not None:
-                        run._finish(span, mode, error=exc)
+        @functools.wraps(func)
+        async def agen_wrapper(*args: Any, **kwargs: Any):
+            ctx, mode, started = _Observe._open_stream(run, name, args, kwargs)
+            span: Span | None = started
+            agen = func(*args, **kwargs)
+            to_send: Any = None
+            to_throw: BaseException | None = None
+            try:
+                while True:
+                    exc, to_throw = to_throw, None
+                    done, item = await _Observe._resume_agen(
+                        ctx, agen, to_send, exc, run, started, mode
+                    )
+                    if done:
                         span = None
-                    raise
-                finally:
-                    if span is not None:  # abandoned / closed early
-                        run._finish(span, mode)
+                        return
+                    try:
+                        to_send = yield item
+                    except GeneratorExit:
+                        await _InContext(ctx, agen.aclose())
+                        raise
+                    except BaseException as exc:  # thrown into the wrapper
+                        to_throw, to_send = exc, None
+            except GeneratorExit:
+                raise
+            except BaseException as exc:
+                _Observe._finish_stream(run, span, mode, exc)
+                span = None
+                raise
+            finally:
+                _Observe._finish_stream(run, span, mode)
 
-            return agen_wrapper
+        return agen_wrapper
 
-        if inspect.isgeneratorfunction(func):
+    def _wrap_gen(self, func: Callable[..., Any], name: str) -> Callable[..., Any]:
+        run = self
 
-            @functools.wraps(func)
-            def gen_wrapper(*args: Any, **kwargs: Any):
-                ctx, mode, started = open_stream(args, kwargs)
-                span: Span | None = started
-                gen = func(*args, **kwargs)
-                to_send: Any = None
-                to_throw: BaseException | None = None
-                try:
-                    while True:
-                        try:
-                            if to_throw is not None:
-                                exc, to_throw = to_throw, None
-                                item = ctx.run(gen.throw, exc)
-                            else:
-                                item = ctx.run(gen.send, to_send)
-                        except StopIteration as stop:
-                            run._finish(
-                                started, mode, result=stop.value, has_result=True
-                            )
-                            span = None
-                            return stop.value
-                        try:
-                            to_send = yield item
-                        except GeneratorExit:
-                            ctx.run(gen.close)
-                            raise
-                        except BaseException as exc:
-                            to_throw, to_send = exc, None
-                except GeneratorExit:
-                    raise
-                except BaseException as exc:
-                    if span is not None:
-                        run._finish(span, mode, error=exc)
+        @functools.wraps(func)
+        def gen_wrapper(*args: Any, **kwargs: Any):
+            ctx, mode, started = _Observe._open_stream(run, name, args, kwargs)
+            span: Span | None = started
+            gen = func(*args, **kwargs)
+            to_send: Any = None
+            to_throw: BaseException | None = None
+            try:
+                while True:
+                    exc, to_throw = to_throw, None
+                    done, item = _Observe._resume_gen(
+                        ctx, gen, to_send, exc, run, started, mode
+                    )
+                    if done:
                         span = None
-                    raise
-                finally:
-                    if span is not None:
-                        run._finish(span, mode)
+                        return item
+                    try:
+                        to_send = yield item
+                    except GeneratorExit:
+                        ctx.run(gen.close)
+                        raise
+                    except BaseException as exc:
+                        to_throw, to_send = exc, None
+            except GeneratorExit:
+                raise
+            except BaseException as exc:
+                _Observe._finish_stream(run, span, mode, exc)
+                span = None
+                raise
+            finally:
+                _Observe._finish_stream(run, span, mode)
 
-            return gen_wrapper
+        return gen_wrapper
 
-        if inspect.iscoroutinefunction(func):
+    def _wrap_async(self, func: Callable[..., Any], name: str) -> Callable[..., Any]:
+        run = self
 
-            @functools.wraps(func)
-            async def async_wrapper(*args: Any, **kwargs: Any):
-                state, mode = run._prepare()
-                span = run._start(name, args, kwargs, state, mode)
-                try:
-                    with step_scope(state, span):
-                        result = await func(*args, **kwargs)
-                except BaseException as exc:
-                    run._finish(span, mode, error=exc)
-                    raise
-                run._finish(span, mode, result=result, has_result=True)
-                return result
+        @functools.wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any):
+            state, mode = run._prepare()
+            span = run._start(name, args, kwargs, state, mode)
+            try:
+                with _Observe._step_scope(state, span):
+                    result = await func(*args, **kwargs)
+            except BaseException as exc:
+                run._finish(span, mode, error=exc)
+                raise
+            run._finish(span, mode, result=result, has_result=True)
+            return result
 
-            return async_wrapper
+        return async_wrapper
+
+    def _wrap_sync(self, func: Callable[..., Any], name: str) -> Callable[..., Any]:
+        run = self
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any):
             state, mode = run._prepare()
             span = run._start(name, args, kwargs, state, mode)
             try:
-                with step_scope(state, span):
+                with _Observe._step_scope(state, span):
                     result = func(*args, **kwargs)
             except BaseException as exc:
                 run._finish(span, mode, error=exc)
@@ -777,6 +857,16 @@ class _Observe:
             return result
 
         return wrapper
+
+    def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        name: str = self._name or str(getattr(func, "__name__", "observe"))
+        if inspect.isasyncgenfunction(func):
+            return _Observe._wrap_agen(self, func, name)
+        if inspect.isgeneratorfunction(func):
+            return _Observe._wrap_gen(self, func, name)
+        if inspect.iscoroutinefunction(func):
+            return _Observe._wrap_async(self, func, name)
+        return _Observe._wrap_sync(self, func, name)
 
 
 def observe(name: Any = None, **options: Any) -> Any:

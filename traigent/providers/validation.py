@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import re
 import threading
@@ -92,19 +93,21 @@ _LITELLM_PREFIX_PATTERN = re.compile(r"^([a-z][a-z0-9_]*)[:/](.+)$")
 # Known valid models per provider (as of Jan 2026)
 # Used to warn users about potentially invalid model names before API calls
 # Note: This list may not be exhaustive; unknown models get a warning, not an error
+# Cheapest current Claude id (same 5.5 family as model_discovery's
+# KNOWN_ANTHROPIC_MODELS); never a retired claude-3* id (#2651).
+_ANTHROPIC_PROBE_MODEL = "claude-haiku-5-5"
+
 _KNOWN_MODELS: dict[str, frozenset[str]] = {
     "openai": frozenset(
         {
             # Ids come from the bundled litellm price table; ids whose
             # deprecation_date has passed are dropped (#2651).
-            "gpt-3.5-turbo",
-            "gpt-4",
-            "gpt-4-turbo",
+            # gpt-3.5-turbo, gpt-4, gpt-4-turbo, gpt-4.1-nano and o3-mini
+            # retired 2026-10-23 and pruned (see config/retired_models.py).
             "gpt-4o",
             "gpt-4o-mini",
             "gpt-4.1",
             "gpt-4.1-mini",
-            "gpt-4.1-nano",
             "gpt-5",
             "gpt-5-mini",
             "gpt-5-nano",
@@ -121,7 +124,6 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
             "gpt-6-astra",
             "o3",
             # Retired o1-preview / o1-mini pruned (#1936/#1937).
-            "o3-mini",
         }
     ),
     "anthropic": frozenset(
@@ -321,7 +323,7 @@ def _is_insufficient_funds_error(exc: Exception) -> bool:
     return any(kw in msg for kw in _INSUFFICIENT_FUNDS_KEYWORDS)
 
 
-def _run_with_timeout(func: Callable[[], T], timeout: float, provider: str) -> T:
+def _run_with_timeout[T](func: Callable[[], T], timeout: float, provider: str) -> T:
     """Run a function with a timeout using ThreadPoolExecutor.
 
     Used for SDKs that don't support native timeout parameters (e.g., google-genai).
@@ -404,7 +406,8 @@ def _openrouter_funds(response: object) -> str:
     def _number(value: object) -> float | None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None
-        return float(value) if value == value else None  # NaN is not a number
+        number = float(value)
+        return None if math.isnan(number) else number  # NaN is not a number
 
     limit = _number(data.get("limit"))
     if limit is None:
@@ -666,7 +669,7 @@ class ProviderValidator:
 
             from traigent.labels.transport_gate import preflight_requests
 
-            preflight_requests("GET", _OPENROUTER_KEY_URL)
+            preflight_requests("GET", _OPENROUTER_KEY_URL, external=True)
             response = requests.get(
                 _OPENROUTER_KEY_URL,
                 headers={"Authorization": f"Bearer {key}"},
@@ -827,7 +830,7 @@ class ProviderValidator:
             client = Anthropic(api_key=key, timeout=self.timeout)
             # Use count_tokens - zero cost, validates auth
             client.messages.count_tokens(
-                model="claude-haiku-4-5-20251001",
+                model=_ANTHROPIC_PROBE_MODEL,
                 messages=[{"role": "user", "content": "ping"}],
             )
             self._cache_success("anthropic", key)
@@ -1315,7 +1318,12 @@ def print_provider_status(results: dict[str, ProviderStatus]) -> None:
     unknown_all: list[str] = []
 
     for provider, status in sorted(results.items()):
-        symbol = "[OK]" if status.valid else ("[SK]" if status.skipped else "[--]")
+        if status.valid:
+            symbol = "[OK]"
+        elif status.skipped:
+            symbol = "[SK]"
+        else:
+            symbol = "[--]"
         funds_note = ""
         if status.valid and status.funds in (_FUNDS_NOT_CHECKED, _FUNDS_UNKNOWN):
             funds_note = " (funds not checked)"

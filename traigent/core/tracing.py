@@ -141,7 +141,7 @@ except ImportError:
     import json
     import os
     import re
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
     from contextlib import contextmanager
     from typing import TYPE_CHECKING, Any
 
@@ -536,22 +536,13 @@ except ImportError:
         """
         if not config:
             return ""
-        priority_keys = ["model", "temperature", "temp", "max_tokens", "provider"]
-        parts = []
-        seen_keys: set[str] = set()
 
         def _safe_value(key: str, value: Any) -> str:
             if any(needle in key.lower() for needle in _SECRET_KEY_SUBSTRINGS):
                 return "***REDACTED***"
             return str(_scrub_pii_text(str(value)))
 
-        for key in priority_keys:
-            if key in config:
-                short_key = key[:5] if len(key) > 5 else key
-                if short_key == "tempe":
-                    short_key = "temp"
-                parts.append(f"{short_key}={_safe_value(key, config[key])}")
-                seen_keys.add(key)
+        parts, seen_keys = _priority_config_parts(config, _safe_value)
         for key, value in config.items():
             if key in seen_keys or key.startswith("_"):
                 continue
@@ -563,6 +554,21 @@ except ImportError:
         if len(result) > max_length:
             result = result[: max_length - 3] + "..."
         return result
+
+    def _priority_config_parts(
+        config: dict[str, Any], safe_value: Callable[[str, Any], str]
+    ) -> tuple[list[str], set[str]]:
+        priority_keys = ["model", "temperature", "temp", "max_tokens", "provider"]
+        parts: list[str] = []
+        seen_keys: set[str] = set()
+        for key in priority_keys:
+            if key in config:
+                short_key = key[:5] if len(key) > 5 else key
+                if short_key == "tempe":
+                    short_key = "temp"
+                parts.append(f"{short_key}={safe_value(key, config[key])}")
+                seen_keys.add(key)
+        return parts, seen_keys
 
     def _format_input_preview(input_data: Any, max_length: int = 35) -> str:
         """Format input data into a preview for span names.
@@ -577,14 +583,7 @@ except ImportError:
             if isinstance(input_data, str):
                 preview = input_data
             elif isinstance(input_data, dict):
-                for key in ["text", "input", "query", "prompt", "message", "content"]:
-                    if key in input_data:
-                        preview = str(input_data[key])
-                        break
-                else:
-                    preview = (
-                        str(next(iter(input_data.values()))) if input_data else "{}"
-                    )
+                preview = _dict_input_preview(input_data)
             else:
                 preview = str(input_data)
             preview = _scrub_pii_text(preview)
@@ -596,6 +595,15 @@ except ImportError:
             return preview
         except Exception:
             return ""
+
+    def _dict_input_preview(input_data: dict[str, Any]) -> str:
+        for key in ["text", "input", "query", "prompt", "message", "content"]:
+            if key in input_data:
+                preview = str(input_data[key])
+                break
+        else:
+            preview = str(next(iter(input_data.values()))) if input_data else "{}"
+        return preview
 
     @contextmanager
     def trial_span(
@@ -727,6 +735,24 @@ except ImportError:
                 _record_scrubbed_exception(span, exc)
                 raise
 
+    def _actual_output_attribute(actual_output: Any) -> Any:
+        """Scrubbed, serialised and truncated text for ``example.actual_output``."""
+        # Scrub PII/secrets before exporting. Raw model output ships
+        # unredacted otherwise (see local validation gap for
+        # traigent/core/tracing.py#issues/0).
+        scrubbed_actual = _scrub_for_export(actual_output)
+        try:
+            output_str = (
+                json.dumps(scrubbed_actual)
+                if not isinstance(scrubbed_actual, str)
+                else scrubbed_actual
+            )
+        except (TypeError, ValueError):
+            output_str = _scrub_pii_text(str(scrubbed_actual))
+        if len(output_str) > 500:
+            output_str = output_str[:500] + "..."
+        return output_str
+
     def record_example_result(
         span: Span | None,
         success: bool,
@@ -740,20 +766,7 @@ except ImportError:
             return
         span.set_attribute("example.success", success)
         if actual_output is not None:
-            # Scrub PII/secrets before exporting. Raw model output ships
-            # unredacted otherwise (see local validation gap for
-            # traigent/core/tracing.py#issues/0).
-            scrubbed_actual = _scrub_for_export(actual_output)
-            try:
-                output_str = (
-                    json.dumps(scrubbed_actual)
-                    if not isinstance(scrubbed_actual, str)
-                    else scrubbed_actual
-                )
-            except (TypeError, ValueError):
-                output_str = _scrub_pii_text(str(scrubbed_actual))
-            if len(output_str) > 500:
-                output_str = output_str[:500] + "..."
+            output_str = _actual_output_attribute(actual_output)
             span.set_attribute("example.actual_output", output_str)
         if metrics:
             for name, value in metrics.items():

@@ -40,6 +40,8 @@ from traigent.utils.secure_path import (
 from traigent.utils.validation import OptimizationValidator
 from traigent.visualization.plots import create_quick_plot
 
+_OUTPUT_FILE_LABEL = "Output file"
+
 console = Console()
 
 # Style constant for table headers
@@ -641,6 +643,58 @@ def _print_model_ids(provider: str, region: str | None, model_ids: list[str]) ->
     console.print(table)
 
 
+def _models_json_payload(
+    provider: str,
+    region: str | None,
+    model_id: str | None,
+    is_valid: bool | None,
+    verdict: str | None,
+    model_ids: list[str],
+) -> dict[str, Any]:
+    note: str | None
+    if provider == "bedrock":
+        note = (
+            "Bedrock validation lists regional foundation models only; it does "
+            "not invoke a model or prove account entitlement."
+        )
+    else:
+        note = _LIVE_NOTE if verdict == "snapshot-only" else None
+    return {
+        "provider": provider,
+        "region": region if provider == "bedrock" else None,
+        "model": model_id,
+        "valid": is_valid,
+        "verdict": verdict,
+        "models": model_ids,
+        "note": note,
+    }
+
+
+def _print_model_check_result(
+    provider: str, model_id: str, is_valid: bool | None, verdict: str | None
+) -> None:
+    if verdict == "not-live":
+        console.print(
+            f"\n[red]Model preflight failed:[/red] {model_id} is not in the "
+            f"live {provider} catalog (retired or unavailable "
+            "for this key)."
+        )
+    elif is_valid:
+        label = "live" if verdict == "live" else "snapshot-only"
+        console.print(f"\n[green]Model preflight passed ({label}):[/green] {model_id}")
+        if verdict == "snapshot-only":
+            console.print(f"[yellow]{_LIVE_NOTE}[/yellow]")
+    else:
+        console.print(
+            f"\n[red]Model preflight failed:[/red] {model_id} is not in "
+            f"the known {provider} model surface."
+        )
+        console.print(
+            "[yellow]Pick a model from the table above or update your "
+            "provider/model configuration before running optimization.[/yellow]"
+        )
+
+
 @cli.command(name="models")
 @click.option(
     "--provider",
@@ -704,47 +758,14 @@ def models(
         is_valid = verdict in {"live", "snapshot-only"}
 
     if output_json:
-        payload = {
-            "provider": normalized_provider,
-            "region": region if normalized_provider == "bedrock" else None,
-            "model": model_id,
-            "valid": is_valid,
-            "verdict": verdict,
-            "models": model_ids,
-            "note": (
-                "Bedrock validation lists regional foundation models only; it does "
-                "not invoke a model or prove account entitlement."
-                if normalized_provider == "bedrock"
-                else (_LIVE_NOTE if verdict == "snapshot-only" else None)
-            ),
-        }
+        payload = _models_json_payload(
+            normalized_provider, region, model_id, is_valid, verdict, model_ids
+        )
         click.echo(json.dumps(payload, indent=2))
     else:
         _print_model_ids(normalized_provider, region, model_ids)
         if model_id:
-            if verdict == "not-live":
-                console.print(
-                    f"\n[red]Model preflight failed:[/red] {model_id} is not in the "
-                    f"live {normalized_provider} catalog (retired or unavailable "
-                    "for this key)."
-                )
-            elif is_valid:
-                label = "live" if verdict == "live" else "snapshot-only"
-                console.print(
-                    f"\n[green]Model preflight passed ({label}):[/green] {model_id}"
-                )
-                if verdict == "snapshot-only":
-                    console.print(f"[yellow]{_LIVE_NOTE}[/yellow]")
-            else:
-                console.print(
-                    f"\n[red]Model preflight failed:[/red] {model_id} is not in "
-                    f"the known {normalized_provider} model surface."
-                )
-                console.print(
-                    "[yellow]Pick a model from the table above or update your "
-                    "provider/model configuration before running optimization.[/yellow]"
-                )
-
+            _print_model_check_result(normalized_provider, model_id, is_valid, verdict)
         if normalized_provider == "bedrock":
             console.print(
                 "\n[dim]Note: Bedrock preflight lists regional foundation models only; "
@@ -753,6 +774,34 @@ def models(
 
     if is_valid is False:
         raise click.exceptions.Exit(1)
+
+
+async def _run_optimizations(
+    optimizable_functions: list[tuple[str, Any]],
+    optimize_kwargs: dict[str, Any],
+    persistence: Any,
+    algorithm: str,
+    max_trials: int,
+    verbose: bool,
+) -> tuple[list[tuple[str, Any]], list[str]]:
+    import traceback
+
+    results: list[tuple[str, Any]] = []
+    failed_functions: list[str] = []
+    for func_name, func in optimizable_functions:
+        console.print(f"\n[bold blue]Optimizing: {func_name}[/bold blue]")
+        try:
+            result = await func.optimize(**optimize_kwargs)
+            _display_optimization_result(
+                func_name, result, persistence, algorithm, max_trials
+            )
+            results.append((func_name, result))
+        except Exception as e:
+            console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
+            if verbose:
+                console.print(traceback.format_exc())
+            failed_functions.append(func_name)
+    return results, failed_functions
 
 
 @cli.command()
@@ -855,25 +904,16 @@ def optimize(
         )
         persistence = PersistenceManager(str(output_dir_resolved))
 
-        async def run_optimizations() -> tuple[list[tuple[str, Any]], list[str]]:
-            results: list[tuple[str, Any]] = []
-            failed_functions: list[str] = []
-            for func_name, func in optimizable_functions:
-                console.print(f"\n[bold blue]Optimizing: {func_name}[/bold blue]")
-                try:
-                    result = await func.optimize(**optimize_kwargs)
-                    _display_optimization_result(
-                        func_name, result, persistence, algorithm, max_trials
-                    )
-                    results.append((func_name, result))
-                except Exception as e:
-                    console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
-                    if verbose:
-                        console.print(traceback.format_exc())
-                    failed_functions.append(func_name)
-            return results, failed_functions
-
-        results, failed_functions = asyncio.run(run_optimizations())
+        results, failed_functions = asyncio.run(
+            _run_optimizations(
+                optimizable_functions,
+                optimize_kwargs,
+                persistence,
+                algorithm,
+                max_trials,
+                verbose,
+            )
+        )
         _display_optimization_summary(results, output_dir_resolved)
         if failed_functions:
             console.print(
@@ -1094,7 +1134,7 @@ def report_example_map(
         )
         resolved_output = _resolve_user_cli_path(
             Path(output_path),
-            "Output file",
+            _OUTPUT_FILE_LABEL,
             for_write=True,
         )
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
@@ -1799,6 +1839,76 @@ def results_compare(result1: str, result2: str, storage_dir: str | None) -> None
         ) from e
 
 
+def _is_rerank_eligible(trial: Any, primary: str, recorded_mode: Any) -> bool:
+    from traigent.core.result_selection import _is_ranking_eligible
+
+    if recorded_mode not in ("legacy", "warn", "strict"):
+        return True
+    eligible, unknown, _codes = _is_ranking_eligible(trial, primary, recorded_mode)
+    return eligible or unknown
+
+
+def _score_trials_for_rerank(
+    result: Any, weight_dict: dict[str, float]
+) -> list[tuple[float, Any]]:
+    """Re-score trials using helper, applying the same ranking eligibility
+    as the terminal selector (partially covered trials are excluded;
+    trials without comparability data, e.g. old results, are kept)."""
+    result_objectives = getattr(result, "objectives", None) or []
+    primary = (
+        str(result_objectives[0])
+        if result_objectives
+        else max(weight_dict, key=lambda k: weight_dict[k])
+    )
+
+    # Use the eligibility mode the run recorded; a run without one is
+    # not filtered (the pre-existing behaviour).
+    metadata = getattr(result, "metadata", None) or {}
+    summary = metadata.get("session_summary") if isinstance(metadata, dict) else None
+    ranking = summary.get("ranking") if isinstance(summary, dict) else None
+    recorded_mode = (
+        ranking.get("comparability_mode") if isinstance(ranking, dict) else None
+    )
+
+    declared_orientations = _declared_result_orientations(result)
+    try:
+        return [
+            (score, trial)
+            for trial in result.trials
+            if _is_rerank_eligible(trial, primary, recorded_mode)
+            and (
+                score := _calculate_trial_score(
+                    trial, weight_dict, declared_orientations
+                )
+            )
+            is not None
+        ]
+    except ValueError as exc:
+        # Direction is never guessed for a custom metric: say how to fix it.
+        raise click.ClickException(
+            "Cannot re-rank: a weighted metric has no declared orientation "
+            "(maximize/minimize) in this run and no built-in default. "
+            "Re-run with explicit objective orientations."
+        ) from exc
+
+
+def _print_rerank_best(result: Any, best_trial: Any) -> None:
+    # Show new best config
+    console.print("\n[bold green]New Best Configuration:[/bold green]")
+    config_syntax = Syntax(
+        json.dumps(best_trial.config, indent=2), "json", theme="monokai"
+    )
+    console.print(config_syntax)
+
+    # Compare with original best
+    if result.best_config != best_trial.config:
+        console.print(
+            "\n[yellow]Note: This differs from the original best config.[/yellow]"
+        )
+        console.print("[dim]Original best config:[/dim]")
+        console.print(json.dumps(result.best_config, indent=2))
+
+
 @results.command("rerank")
 @click.argument("result_name")
 @click.option(
@@ -1847,57 +1957,7 @@ def results_rerank(
             console.print("[yellow]No trials found in this result[/yellow]")
             return
 
-        # Re-score trials using helper, applying the same ranking eligibility
-        # as the terminal selector (partially covered trials are excluded;
-        # trials without comparability data, e.g. old results, are kept).
-        from traigent.core.result_selection import _is_ranking_eligible
-
-        result_objectives = getattr(result, "objectives", None) or []
-        primary = (
-            str(result_objectives[0])
-            if result_objectives
-            else max(weight_dict, key=lambda k: weight_dict[k])
-        )
-
-        # Use the eligibility mode the run recorded; a run without one is
-        # not filtered (the pre-existing behaviour).
-        metadata = getattr(result, "metadata", None) or {}
-        summary = (
-            metadata.get("session_summary") if isinstance(metadata, dict) else None
-        )
-        ranking = summary.get("ranking") if isinstance(summary, dict) else None
-        recorded_mode = (
-            ranking.get("comparability_mode") if isinstance(ranking, dict) else None
-        )
-
-        def _rerank_eligible(trial: Any) -> bool:
-            if recorded_mode not in ("legacy", "warn", "strict"):
-                return True
-            eligible, unknown, _codes = _is_ranking_eligible(
-                trial, primary, recorded_mode
-            )
-            return eligible or unknown
-
-        declared_orientations = _declared_result_orientations(result)
-        try:
-            scored_trials = [
-                (score, trial)
-                for trial in result.trials
-                if _rerank_eligible(trial)
-                and (
-                    score := _calculate_trial_score(
-                        trial, weight_dict, declared_orientations
-                    )
-                )
-                is not None
-            ]
-        except ValueError as exc:
-            # Direction is never guessed for a custom metric: say how to fix it.
-            raise click.ClickException(
-                "Cannot re-rank: a weighted metric has no declared orientation "
-                "(maximize/minimize) in this run and no built-in default. "
-                "Re-run with explicit objective orientations."
-            ) from exc
+        scored_trials = _score_trials_for_rerank(result, weight_dict)
 
         if not scored_trials:
             console.print(
@@ -1913,21 +1973,7 @@ def results_rerank(
         console.print("\n[bold]Top 5 Configurations (re-ranked)[/bold]")
         console.print(_build_rerank_table(scored_trials))
 
-        # Show new best config
-        _, best_trial = scored_trials[0]
-        console.print("\n[bold green]New Best Configuration:[/bold green]")
-        config_syntax = Syntax(
-            json.dumps(best_trial.config, indent=2), "json", theme="monokai"
-        )
-        console.print(config_syntax)
-
-        # Compare with original best
-        if result.best_config != best_trial.config:
-            console.print(
-                "\n[yellow]Note: This differs from the original best config.[/yellow]"
-            )
-            console.print("[dim]Original best config:[/dim]")
-            console.print(json.dumps(result.best_config, indent=2))
+        _print_rerank_best(result, scored_trials[0][1])
 
     except click.ClickException:
         raise
@@ -2167,7 +2213,9 @@ def export(
         else:
             output_path = Path(output)
 
-        output_path = _resolve_user_cli_path(output_path, "Output file", for_write=True)
+        output_path = _resolve_user_cli_path(
+            output_path, _OUTPUT_FILE_LABEL, for_write=True
+        )
         if output_path.is_dir():
             raise click.ClickException(
                 f"Output file is a directory, not a file path: {output_path}"
@@ -2357,7 +2405,7 @@ def generate(template: str, output: str) -> None:
 
     output_path = _resolve_user_cli_path(
         Path(output),
-        "Output file",
+        _OUTPUT_FILE_LABEL,
         for_write=True,
     )
 
@@ -2740,6 +2788,28 @@ if __name__ == "__main__":
 '''
 
 
+async def _run_validations(
+    validator: Any, discovered_functions: list[Any]
+) -> tuple[list[Any], int, int]:
+    results: list[Any] = []
+    passed, failed = 0, 0
+    for func_info in discovered_functions:
+        console.print(f"\n[bold cyan]Validating: {func_info.name}[/bold cyan]")
+        try:
+            result = await validator.validate_optimization(func_info)
+            results.append(result)
+            if result.should_block:
+                console.print(f"[red]{result.get_summary()}[/red]")
+                failed += 1
+            else:
+                console.print(f"[green]{result.get_summary()}[/green]")
+                passed += 1
+        except Exception as e:
+            console.print(f"[red]❌ Error validating {func_info.name}: {e}[/red]")
+            failed += 1
+    return results, passed, failed
+
+
 @cli.command()
 @click.argument("module_path", type=str)
 @click.option("--functions", help="Comma-separated function names to check")
@@ -2844,28 +2914,9 @@ def check(
         )
         validator = OptimizationValidator(threshold_pct=threshold)
 
-        async def run_validations() -> tuple[list[Any], int, int]:
-            results: list[Any] = []
-            passed, failed = 0, 0
-            for func_info in discovered_functions:
-                console.print(f"\n[bold cyan]Validating: {func_info.name}[/bold cyan]")
-                try:
-                    result = await validator.validate_optimization(func_info)
-                    results.append(result)
-                    if result.should_block:
-                        console.print(f"[red]{result.get_summary()}[/red]")
-                        failed += 1
-                    else:
-                        console.print(f"[green]{result.get_summary()}[/green]")
-                        passed += 1
-                except Exception as e:
-                    console.print(
-                        f"[red]❌ Error validating {func_info.name}: {e}[/red]"
-                    )
-                    failed += 1
-            return results, passed, failed
-
-        results, passed_count, failed_count = asyncio.run(run_validations())
+        results, passed_count, failed_count = asyncio.run(
+            _run_validations(validator, discovered_functions)
+        )
         _print_check_summary(discovered_functions, passed_count, failed_count, results)
         _handle_check_exit(failed_count)
 
@@ -2902,6 +2953,10 @@ from traigent.cli.onboard_commands import first_prompt, onboard  # noqa: E402
 
 cli.add_command(onboard)
 cli.add_command(first_prompt)
+
+from traigent.cli.requirements_commands import requirements  # noqa: E402
+
+cli.add_command(requirements)
 
 from traigent.cli.doctor_command import doctor  # noqa: E402
 

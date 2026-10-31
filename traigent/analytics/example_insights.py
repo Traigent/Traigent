@@ -31,10 +31,10 @@ import asyncio
 import time
 from typing import Any, cast
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud.auth import _build_api_key_auth_headers
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import DEFAULT_LOCAL_URL
+from traigent.labels.transport_gate import gate_session
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -116,6 +116,7 @@ class ExampleInsightsClient:
                     base_url=self.backend_url,
                     headers=headers,
                     timeout=self.timeout,
+                    follow_redirects=False,
                 )
             )
 

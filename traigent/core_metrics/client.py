@@ -7,6 +7,7 @@ from typing import Any, cast
 from urllib import error, request
 from urllib.parse import quote, unquote, urlencode
 
+from traigent.cloud.url_security import open_no_redirect
 from traigent.core_metrics.config import CoreMetricsConfig
 from traigent.core_metrics.dtos import (
     CoreExperimentTrendDTO,
@@ -313,7 +314,7 @@ class CoreMetricsClient:
             method=method,
         )
         try:
-            with request.urlopen(  # nosec B310 - caller-configured backend endpoint
+            with open_no_redirect(  # nosec B310 - no-redirect opener, caller-configured endpoint
                 http_request, timeout=self.config.request_timeout
             ) as response:
                 status_code = getattr(response, "status", 200)
@@ -360,7 +361,7 @@ class CoreMetricsClient:
             method=method,
         )
         try:
-            with request.urlopen(  # nosec B310 - caller-configured backend endpoint
+            with open_no_redirect(  # nosec B310 - no-redirect opener, caller-configured endpoint
                 http_request, timeout=self.config.request_timeout
             ) as response:
                 status_code = getattr(response, "status", 200)

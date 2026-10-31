@@ -34,6 +34,53 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _parse_transform_source(func: Callable[..., Any]) -> ast.Module:
+    # Get function source
+    try:
+        source = inspect.getsource(func)
+    except (OSError, TypeError) as e:
+        raise ConfigurationError(
+            f"Cannot get source for function {func.__name__}: {e}"
+        ) from e
+
+    # Check source length to prevent excessive memory usage
+    if len(source) > 100000:  # 100KB limit
+        raise ConfigurationError(
+            f"Function {func.__name__} source too large for transformation"
+        )
+
+    # Remove any indentation (for methods and nested functions)
+    source = textwrap.dedent(source)
+
+    # Parse source to AST
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        raise ConfigurationError(
+            f"Cannot parse function {func.__name__}: {e}"
+        ) from None
+
+    return tree
+
+
+def _check_config_value(value: Any, depth: int = 0) -> None:
+    if depth > 10:
+        raise ConfigurationError("Config nesting too deep")
+
+    if isinstance(value, (list, tuple)):
+        if len(value) > 1000:
+            raise ConfigurationError(f"Config collection too large: {len(value)} items")
+        for item in value:
+            _check_config_value(item, depth + 1)
+    elif isinstance(value, dict):
+        if len(value) > 1000:
+            raise ConfigurationError(f"Config dict too large: {len(value)} items")
+        for v in value.values():
+            _check_config_value(v, depth + 1)
+    elif not isinstance(value, (str, int, float, bool, type(None))):
+        raise ConfigurationError(f"Unsafe config value type: {type(value)}")
+
+
 class ConfigurationProvider:
     """Abstract base class for configuration injection strategies."""
 
@@ -230,6 +277,33 @@ class ContextBasedProvider(ConfigurationProvider):
         return True
 
 
+def _select_parameter_config(
+    active: TraigentConfig | dict[str, Any] | None,
+    fallback: TraigentConfig,
+) -> TraigentConfig:
+    """Prefer an APPLIED configuration over the wrap-time snapshot.
+
+    During optimization the evaluator wraps every trial call in
+    ``ConfigurationContext(<per-trial config>)``; injecting the
+    wrap-time ``config_obj`` here would hand the function the SAME
+    default configuration on every trial — silently making
+    parameter-mode optimization results meaningless (#1109).
+
+    The discriminator is ``applied_config_context``: only a real
+    ``ConfigurationContext`` application sets it (the evaluator's
+    per-trial wrap, or an explicit user ``with ConfigurationContext``)
+    — a bare global ``set_config()`` does not, so direct calls keep
+    the wrap-time default.
+    """
+    if active is None:
+        return fallback
+    if isinstance(active, TraigentConfig):
+        return active
+    if isinstance(active, dict):
+        return TraigentConfig.from_dict(active)
+    return fallback
+
+
 class ParameterBasedProvider(ConfigurationProvider):
     """Provider that injects configuration as a function parameter.
 
@@ -283,35 +357,10 @@ class ParameterBasedProvider(ConfigurationProvider):
             except LookupError:
                 return None
 
-        def _parameter_config(
-            active: TraigentConfig | dict[str, Any] | None,
-        ) -> TraigentConfig:
-            """Prefer an APPLIED configuration over the wrap-time snapshot.
-
-            During optimization the evaluator wraps every trial call in
-            ``ConfigurationContext(<per-trial config>)``; injecting the
-            wrap-time ``config_obj`` here would hand the function the SAME
-            default configuration on every trial — silently making
-            parameter-mode optimization results meaningless (#1109).
-
-            The discriminator is ``applied_config_context``: only a real
-            ``ConfigurationContext`` application sets it (the evaluator's
-            per-trial wrap, or an explicit user ``with ConfigurationContext``)
-            — a bare global ``set_config()`` does not, so direct calls keep
-            the wrap-time default.
-            """
-            if active is None:
-                return config_obj
-            if isinstance(active, TraigentConfig):
-                return active
-            if isinstance(active, dict):
-                return TraigentConfig.from_dict(active)
-            return config_obj
-
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             active = _active_applied_config()
-            effective = _parameter_config(active)
+            effective = _select_parameter_config(active, config_obj)
             # Only inject configuration if not already provided
             if param_name not in kwargs:
                 kwargs[param_name] = effective
@@ -326,7 +375,7 @@ class ParameterBasedProvider(ConfigurationProvider):
             @wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 active = _active_applied_config()
-                effective = _parameter_config(active)
+                effective = _select_parameter_config(active, config_obj)
                 # Only inject configuration if not already provided
                 if param_name not in kwargs:
                     kwargs[param_name] = effective
@@ -360,6 +409,19 @@ class SeamlessNoInjectableTargetsError(ConfigurationError):
     """
 
 
+def _merge_context_config(
+    active_config: dict[str, Any],
+    current_config: TraigentConfig | dict[str, Any],
+) -> None:
+    """Fold the context configuration into ``active_config`` in place."""
+    if isinstance(current_config, TraigentConfig):
+        context_dict = current_config.to_dict()
+        if context_dict:
+            active_config.update(context_dict)
+    elif isinstance(current_config, dict) and current_config:
+        active_config.update(current_config)
+
+
 class SeamlessParameterProvider(ConfigurationProvider):
     """Safe provider that seamlessly injects parameters using AST transformation.
 
@@ -370,7 +432,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
     Example:
         >>> @traigent.optimize(
         ...     injection_mode="seamless",
-        ...     configuration_space={"model": ["gpt-3.5", "gpt-4"]}
+        ...     configuration_space={"model": ["gpt-3.5", "gpt-5.6-sol"]}
         ... )
         ... def my_function():
         ...     model = "gpt-3.5"  # Traigent will override this
@@ -439,12 +501,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
             raw_ctx = _config_context.get(None)
             if raw_ctx is not None:
                 current_config = get_config()
-                if isinstance(current_config, TraigentConfig):
-                    context_dict = current_config.to_dict()
-                    if context_dict:
-                        active_config.update(context_dict)
-                elif isinstance(current_config, dict) and current_config:
-                    active_config.update(current_config)
+                _merge_context_config(active_config, current_config)
 
             # If no config at all, just call original function
             if not active_config:
@@ -799,30 +856,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 f"Function {func.__name__} contains unsafe patterns"
             )
 
-        # Get function source
-        try:
-            source = inspect.getsource(func)
-        except (OSError, TypeError) as e:
-            raise ConfigurationError(
-                f"Cannot get source for function {func.__name__}: {e}"
-            ) from e
-
-        # Check source length to prevent excessive memory usage
-        if len(source) > 100000:  # 100KB limit
-            raise ConfigurationError(
-                f"Function {func.__name__} source too large for transformation"
-            )
-
-        # Remove any indentation (for methods and nested functions)
-        source = textwrap.dedent(source)
-
-        # Parse source to AST
-        try:
-            tree = ast.parse(source)
-        except SyntaxError as e:
-            raise ConfigurationError(
-                f"Cannot parse function {func.__name__}: {e}"
-            ) from None
+        tree = _parse_transform_source(func)
 
         # Validate config before transformation
         self._validate_config(config)
@@ -1143,29 +1177,8 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 raise ConfigurationError(f"Dangerous config key: {key}")
 
         # Recursively check values
-        def check_value(value, depth=0) -> None:
-            if depth > 10:
-                raise ConfigurationError("Config nesting too deep")
-
-            if isinstance(value, (list, tuple)):
-                if len(value) > 1000:
-                    raise ConfigurationError(
-                        f"Config collection too large: {len(value)} items"
-                    )
-                for item in value:
-                    check_value(item, depth + 1)
-            elif isinstance(value, dict):
-                if len(value) > 1000:
-                    raise ConfigurationError(
-                        f"Config dict too large: {len(value)} items"
-                    )
-                for v in value.values():
-                    check_value(v, depth + 1)
-            elif not isinstance(value, (str, int, float, bool, type(None))):
-                raise ConfigurationError(f"Unsafe config value type: {type(value)}")
-
         for value in config.values():
-            check_value(value)
+            _check_config_value(value)
 
     def extract_config(self, func: Callable[..., Any]) -> dict[str, Any] | None:
         """Extract current configuration from context.

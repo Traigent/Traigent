@@ -10,6 +10,10 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+_PERMISSION_DENIED = "Permission denied"
+
+_NO_MODULE_NAMED = "No module named"
+
 
 class TraigentError(Exception):
     """Base exception for Traigent errors with helpful messages."""
@@ -167,6 +171,11 @@ class OfflineModeError(TraigentError):
         )
 
 
+_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB = (
+    "https://github.com/Traigent/Traigent#troubleshooting"
+)
+
+
 class ErrorHandler:
     """Intelligent error handler that provides helpful fixes."""
 
@@ -183,8 +192,8 @@ class ErrorHandler:
 
     # Common error patterns and their solutions
     ERROR_PATTERNS = {
-        "No module named": {
-            "check": lambda e: "No module named" in str(e),
+        _NO_MODULE_NAMED: {
+            "check": lambda e: _NO_MODULE_NAMED in str(e),
             "handler": "handle_import_error",
         },
         "API key": {
@@ -199,8 +208,8 @@ class ErrorHandler:
             ),
             "handler": "handle_connection_error",
         },
-        "Permission denied": {
-            "check": lambda e: "Permission denied" in str(e),
+        _PERMISSION_DENIED: {
+            "check": lambda e: _PERMISSION_DENIED in str(e),
             "handler": "handle_permission_error",
         },
         "accuracy = 0.0": {
@@ -233,7 +242,7 @@ class ErrorHandler:
         error_str = str(error)
 
         # Extract module name from error
-        if "No module named" in error_str:
+        if _NO_MODULE_NAMED in error_str:
             parts = error_str.split("'")
             if len(parts) >= 2:
                 module_name = parts[1].split(".")[0]
@@ -263,7 +272,7 @@ class ErrorHandler:
             raise TraigentError(
                 message="API authentication failed",
                 fix="Check your API keys in .env file",
-                docs_link="https://github.com/Traigent/Traigent#troubleshooting",
+                docs_link=_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB,
             ) from error
 
     @classmethod
@@ -279,24 +288,24 @@ class ErrorHandler:
                 message="Cannot connect to Traigent backend",
                 fix="1. Start your Traigent backend service\n"
                 "   2. Or use offline mode: TRAIGENT_OFFLINE_MODE=true",
-                docs_link="https://github.com/Traigent/Traigent#troubleshooting",
+                docs_link=_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB,
             ) from error
         else:
             raise TraigentError(
                 message="Connection failed",
                 fix="Check your internet connection and firewall settings",
-                docs_link="https://github.com/Traigent/Traigent#troubleshooting",
+                docs_link=_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB,
             ) from error
 
     @classmethod
     def handle_permission_error(cls, error: Exception) -> None:
         """Handle permission errors."""
         raise TraigentError(
-            message="Permission denied",
+            message=_PERMISSION_DENIED,
             fix="1. Check file permissions\n"
             "   2. Run in virtual environment\n"
             "   3. Use --user flag: pip install --user",
-            docs_link="https://github.com/Traigent/Traigent#troubleshooting",
+            docs_link=_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB,
         ) from error
 
     @classmethod
@@ -320,7 +329,7 @@ class ErrorHandler:
             "   2. Verify all dependencies: python scripts/verify_installation.py\n"
             "   3. Try mock mode: TRAIGENT_MOCK_LLM=true\n"
             "   4. Report issue: https://github.com/Traigent/Traigent/issues",
-            docs_link="https://github.com/Traigent/Traigent#troubleshooting",
+            docs_link=_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB,
         ) from error
 
 

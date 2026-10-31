@@ -35,15 +35,7 @@ logger = get_logger(__name__)
 _SECURE_RANDOM = SystemRandom()
 
 
-def _session_objective_orientation(name: str, metadata: dict[str, Any] | None) -> str:
-    """Resolve a session objective from its persisted declaration."""
-    metadata = metadata or {}
-    schema = metadata.get("objective_schema")
-    definitions: Any = []
-    if isinstance(schema, dict):
-        definitions = schema.get("objectives", [])
-    else:
-        definitions = getattr(schema, "objectives", [])
+def _declared_objective_orientation(name: str, definitions: Any) -> tuple[bool, str]:
     for definition in definitions or []:
         definition_name = getattr(definition, "name", None)
         orientation = getattr(definition, "orientation", None)
@@ -56,7 +48,23 @@ def _session_objective_orientation(name: str, metadata: dict[str, Any] | None) -
                     f"Objective {name!r} is target-banded and cannot be ranked "
                     "by this scalar session comparator."
                 )
-            return validate_objective_orientation(name, str(orientation))
+            return True, validate_objective_orientation(name, str(orientation))
+
+    return False, ""
+
+
+def _session_objective_orientation(name: str, metadata: dict[str, Any] | None) -> str:
+    """Resolve a session objective from its persisted declaration."""
+    metadata = metadata or {}
+    schema = metadata.get("objective_schema")
+    definitions: Any = []
+    if isinstance(schema, dict):
+        definitions = schema.get("objectives", [])
+    else:
+        definitions = getattr(schema, "objectives", [])
+    matched, orientation = _declared_objective_orientation(name, definitions)
+    if matched:
+        return orientation
 
     persisted = metadata.get("objective_orientations")
     if isinstance(persisted, dict) and name in persisted:
@@ -236,7 +244,7 @@ class SessionState:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to update session status: {e}")
+            logger.exception(f"Failed to update session status: {e}")
             return False
 
     def update_best_results(
@@ -281,7 +289,7 @@ class SessionState:
             return False
 
         except Exception as e:
-            logger.error(f"Failed to update best results: {e}")
+            logger.exception(f"Failed to update best results: {e}")
             return False
 
     def increment_completed_trials(self) -> None:
@@ -695,12 +703,10 @@ class SessionManager:
         history = self._trial_history.get(session_id, [])
 
         # Generate configuration based on history
-        config = await self._suggest_configuration(session, history)
+        config = self._suggest_configuration(session, history)
 
         # Generate dataset subset indices
-        subset_indices = await self._suggest_subset_indices(
-            session, history, dataset_size
-        )
+        subset_indices = self._suggest_subset_indices(session, history, dataset_size)
 
         # Create trial suggestion
         trial_number = session.completed_trials + 1
@@ -712,7 +718,7 @@ class SessionManager:
             dataset_subset=subset_indices,
             exploration_type=self._determine_exploration_type(session, history),
             priority=1,
-            estimated_duration=self._estimate_duration(session, history),
+            estimated_duration=self._estimate_duration(history),
         )
 
         # Store pending trial
@@ -842,7 +848,7 @@ class SessionManager:
             "early_stopping": True,
         }
 
-    async def _suggest_configuration(
+    def _suggest_configuration(
         self, session: OptimizationSession, history: list[TrialResultSubmission]
     ) -> dict[str, Any]:
         """Suggest next configuration based on history.
@@ -868,7 +874,7 @@ class SessionManager:
 
         return config
 
-    async def _suggest_subset_indices(
+    def _suggest_subset_indices(
         self,
         session: OptimizationSession,
         history: list[TrialResultSubmission],
@@ -925,9 +931,7 @@ class SessionManager:
         else:
             return "exploitation"
 
-    def _estimate_duration(
-        self, session: OptimizationSession, history: list[TrialResultSubmission]
-    ) -> float | None:
+    def _estimate_duration(self, history: list[TrialResultSubmission]) -> float | None:
         """Estimate duration for next trial based on history."""
         if not history:
             return None

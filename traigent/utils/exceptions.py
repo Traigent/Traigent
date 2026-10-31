@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from traigent.core.exception_handler import VendorErrorCategory
@@ -214,6 +214,48 @@ class OptimizationError(TraigentError):
     sync_session_id: str | None = None
 
 
+class SnapshotBindingError(OptimizationError):
+    """A configured ``snapshot_store`` run could not produce its G1 client evidence.
+
+    Raised before any trial when the snapshot or the readiness check refuses
+    (``result`` is ``None``), or after the run when the terminal capture refuses
+    (``result`` then carries the finished run so paid work is not lost).
+    ``code`` is a closed token; the message never contains dataset, config, code
+    or evaluator content.
+
+    Attributes:
+        code: One of :attr:`CODES`.
+        result: The finished :class:`~traigent.api.types.OptimizationResult`
+            when the refusal came after the run, else ``None``.
+        evidence_path: Local evidence file written before the refusal, if any.
+    """
+
+    CODES: ClassVar[frozenset[str]] = frozenset(
+        {
+            "SNAPSHOT_INCOMPLETE",
+            "SNAPSHOT_CAPTURE_FAILED",
+            "SNAPSHOT_INPUT_DRIFT",
+            "NO_ELIGIBLE_WINNER",
+            "EVIDENCE_PERSIST_FAILED",
+            "READINESS_UNAVAILABLE",
+        }
+    )
+
+    def __init__(
+        self,
+        code: str,
+        *,
+        result: Any = None,
+        evidence_path: str | None = None,
+    ) -> None:
+        if code not in self.CODES:
+            raise ValueError("unknown snapshot binding error code")
+        self.code = code
+        self.result = result
+        self.evidence_path = evidence_path
+        super().__init__(f"Snapshot binding refused: {code}")
+
+
 class PluginError(TraigentError):
     """Error in plugin system."""
 
@@ -410,6 +452,9 @@ class VendorPauseError(TraigentError):
         super().__init__(message)
         self.original_error = original_error
         self.category = category
+        #: Trial id whose abandoned vendor attempts have unknown spend (set by
+        #: the trial lifecycle; the caller accounts it as unmeasured cost).
+        self.unmeasured_trial_id: str | None = None
 
 
 class NetworkError(RetryableError):

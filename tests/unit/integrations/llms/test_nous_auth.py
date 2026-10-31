@@ -707,3 +707,18 @@ def test_concurrent_callers_mint_exactly_once(monkeypatch):
 
     assert mints["n"] == 1  # the lock collapsed the stampede to a single mint
     assert results == ["shared-jwt"] * n_threads
+
+
+def test_first_use_logs_one_value_free_unverified_warning(monkeypatch, caplog):
+    """#2067: first use warns once that the auth flow is unverified, with no values."""
+    monkeypatch.setattr(nous_auth, "_unverified_warned", False)
+    monkeypatch.setenv("NOUS_API_KEY", "secret-static-key-value")
+    with caplog.at_level("WARNING", logger=nous_auth.logger.name):
+        get_nous_api_key()
+        get_nous_api_key()
+    records = [r for r in caplog.records if "UNVERIFIED" in r.getMessage()]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert "secret-static-key-value" not in message
+    assert "auth.json" in message  # names the schema, never a path or token
+    assert "/" not in message

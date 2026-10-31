@@ -188,6 +188,9 @@ async def test_finalize_session_uses_lock(monkeypatch):
 @pytest.mark.asyncio
 async def test_delete_session_cascade_calls_backend_delete():
     client = FakeClient()
+    client.auth_manager.auth.get_headers = AsyncMock(
+        return_value={"X-API-Key": "tg_fake"}
+    )
     client.backend_config.api_base_url = "https://backend.example/api/v1"
     client.session_bridge._session_mappings = {"session-1": object()}
 
@@ -208,6 +211,7 @@ async def test_delete_session_cascade_calls_backend_delete():
     http_session.delete.assert_called_once_with(
         "https://backend.example/api/v1/sessions/session-1",
         params={"cascade": "true"},
+        headers={"X-API-Key": "tg_fake"},
     )
     assert "session-1" not in client.session_bridge._session_mappings
 
@@ -215,6 +219,9 @@ async def test_delete_session_cascade_calls_backend_delete():
 @pytest.mark.asyncio
 async def test_delete_session_cascade_success_returns_true_without_local_mapping():
     client = FakeClient()
+    client.auth_manager.auth.get_headers = AsyncMock(
+        return_value={"X-API-Key": "tg_fake"}
+    )
     client.backend_config.api_base_url = "https://backend.example/api/v1"
     client.session_bridge._session_mappings = {}
     client.session_bridge.get_session_mapping = MagicMock(return_value=None)
@@ -236,6 +243,7 @@ async def test_delete_session_cascade_success_returns_true_without_local_mapping
     http_session.delete.assert_called_once_with(
         "https://backend.example/api/v1/sessions/session-1",
         params={"cascade": "true"},
+        headers={"X-API-Key": "tg_fake"},
     )
 
 
@@ -760,3 +768,40 @@ async def test_finalize_api_failure_log_carries_class_never_exception_text(
     assert result is None
     assert sentinel not in caplog.text
     assert "_TransportError" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_finalize_strict_mode_missing_endpoint_fails_closed(monkeypatch):
+    """Strict self-hosted mode: a missing endpoint raises, never degrades to None."""
+    from traigent.config.backend_config import EndpointNotConfiguredError
+
+    class _GateContext:
+        async def __aenter__(self):
+            return SimpleNamespace()
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+    def _no_endpoint():
+        raise EndpointNotConfiguredError("no endpoint configured")
+
+    monkeypatch.setattr(
+        "traigent.cloud.session_operations.aiohttp.ClientSession",
+        lambda **kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.session_operations.gate_session",
+        lambda session, origins=None: _GateContext(),
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.session_operations.BackendConfig.get_backend_api_url",
+        staticmethod(_no_endpoint),
+    )
+
+    client = FakeClient()
+    client.backend_config = SimpleNamespace(api_base_url=None)
+    client.auth_manager.augment_headers = AsyncMock(return_value={})
+    ops = SessionOperations(client)
+
+    with pytest.raises(EndpointNotConfiguredError):
+        await ops._finalize_session_via_api("session-1", "run-1")

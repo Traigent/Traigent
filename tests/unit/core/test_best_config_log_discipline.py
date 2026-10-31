@@ -74,9 +74,24 @@ _LEGACY_BACKEND = (
 ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
     (
         "backend_client.py",
+        "_refuse_redirect_response",
+        "raise",
+        "d514ae5865c6b9c0",  # pragma: allowlist secret
+    ): (
+        1,
+        (
+            "redirect refusal, TRAIG-76: the message is the operation literal passed by "
+            "the four credential-bearing callers (backend_client.py:2453, 2871, 2977, "
+            "3236) plus int(status_code) of the 3xx answer; no URL, "
+            "Location header, host or body is formatted (test_private_backend_redirects "
+            "asserts only the 'refused HTTP redirect' fragment)"
+        ),
+    ),
+    (
+        "backend_client.py",
         "BackendIntegratedClient.__aenter__",
         "log",
-        "430208ba8ae23af1",
+        "430208ba8ae23af1",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -94,7 +109,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._build_http_session",
         "log",
-        "b5132b1593040e79",
+        "b5132b1593040e79",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -103,7 +118,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._build_http_session",
         "raise",
-        "8f916c9046c70d0f",
+        "8f916c9046c70d0f",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -112,7 +127,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._check_rate_limit",
         "raise",
-        "e55509fda12dc933",
+        "e55509fda12dc933",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -125,7 +140,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._get_sync_auth_headers",
         "log",
-        "951944a31db78294",
+        "951944a31db78294",  # pragma: allowlist secret
     ): (
         1,
         _COUNT,
@@ -134,7 +149,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._get_sync_auth_headers",
         "raise",
-        "6be35cafdb5e84f5",
+        "6be35cafdb5e84f5",  # pragma: allowlist secret
     ): (
         1,
         _COUNT,
@@ -143,7 +158,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._normalize_interaction_policy_payload",
         "raise",
-        "116ff660cb9f2489",
+        "116ff660cb9f2489",  # pragma: allowlist secret
     ): (
         1,
         "missing-field names of the backend's fixed policy schema",
@@ -152,7 +167,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._normalize_interaction_policy_payload",
         "raise",
-        "f48ebc28560af6f9",
+        "f48ebc28560af6f9",  # pragma: allowlist secret
     ): (
         1,
         "missing-field names of the backend's fixed policy schema",
@@ -161,7 +176,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._protected_request",
         "raise",
-        "d9d06232d3947c89",
+        "d9d06232d3947c89",  # pragma: allowlist secret
     ): (
         1,
         _COUNT,
@@ -170,7 +185,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._register_security_session",
         "log",
-        "89a621867608b974",
+        "89a621867608b974",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -179,7 +194,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._reset_http_session",
         "log",
-        "840e8ecfd0d065b3",
+        "840e8ecfd0d065b3",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -188,7 +203,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._revoke_security_session",
         "log",
-        "54c3713d1a4dbc57",
+        "54c3713d1a4dbc57",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -197,7 +212,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._stale_head_error_from_response",
         "log",
-        "ee39547a44750122",
+        "ee39547a44750122",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -206,7 +221,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_agent_head_generation_sync",
         "raise",
-        "f7ce07afb6cace20",
+        "dcfa7ba99288b9d4",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -215,7 +230,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_best_config_sync",
         "raise",
-        "ff9d0491839e1ca2",
+        "6e05c0b1ccc04f75",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -224,7 +239,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.get_interaction_policy",
         "log",
-        "4c96e9ad1ff2de51",
+        "4c96e9ad1ff2de51",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -233,7 +248,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.get_interaction_policy",
         "raise",
-        "133fb1c23887193a",
+        "133fb1c23887193a",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -242,7 +257,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.publish_best_config_sync",
         "raise",
-        "2779b3ed27766a15",
+        "66eeefe89a47633b",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -251,7 +266,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.upload_example_features",
         "log",
-        "66762c532b1f6fea",
+        "66762c532b1f6fea",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -260,7 +275,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.upload_example_features",
         "log",
-        "684478ff85c030ae",
+        "684478ff85c030ae",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -269,7 +284,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.upload_example_features",
         "log",
-        "6b381c0da720f7a0",
+        "a00ec674afa6f7c5",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -278,7 +293,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.upload_example_features",
         "log",
-        "b61870d25225ca50",
+        "b61870d25225ca50",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -287,7 +302,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.upload_example_features",
         "log",
-        "bd71d7af37378c22",
+        "bd71d7af37378c22",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -296,7 +311,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.validate_session_token",
         "log",
-        "d9f6ca85645982d3",
+        "d9f6ca85645982d3",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -317,7 +332,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_raise_for_transient_backend_response",
         "raise",
-        "4213eec4251b9529",
+        "4213eec4251b9529",  # pragma: allowlist secret
     ): (
         1,
         "operation literal + safe_http_error_summary (status code and fixed summary only)",
@@ -335,7 +350,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_run_sync_backend_request_with_retry",
         "raise",
-        "9c8bd3bbaf3e6fe9",
+        "9c8bd3bbaf3e6fe9",  # pragma: allowlist secret
     ): (
         1,
         "operation literal + pre-sanitized transient text or exception type name",
@@ -344,7 +359,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_run_sync_backend_request_with_retry",
         "raise",
-        "f1072a0fa4f123e2",
+        "f1072a0fa4f123e2",  # pragma: allowlist secret
     ): (
         1,
         "operation literal + pre-sanitized transient text or exception type name",
@@ -371,7 +386,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._load_legacy_snapshot",
         "log",
-        "579848fd12e84dd6",
+        "579848fd12e84dd6",  # pragma: allowlist secret
     ): (
         1,
         _LABEL,
@@ -380,7 +395,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._load_legacy_snapshot",
         "log",
-        "fe4a1d3b383f26c4",
+        "fe4a1d3b383f26c4",  # pragma: allowlist secret
     ): (
         1,
         _LABEL,
@@ -389,7 +404,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._load_snapshot_from_file",
         "log",
-        "6c4b6d7db0b8d805",
+        "6c4b6d7db0b8d805",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -401,7 +416,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._load_snapshot_from_file",
         "log",
-        "d83a569ecbe94f7d",
+        "d83a569ecbe94f7d",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -413,7 +428,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._read_legacy_payload",
         "log",
-        "25567ea31b9886c8",
+        "25567ea31b9886c8",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -425,7 +440,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._read_legacy_payload",
         "log",
-        "28b6de4dbecb85f7",
+        "28b6de4dbecb85f7",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -437,7 +452,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._read_legacy_payload",
         "log",
-        "493a8d9ba51427b3",
+        "493a8d9ba51427b3",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -485,7 +500,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._read_spec_file",
         "raise",
-        "3cb2da6f2f658516",
+        "3cb2da6f2f658516",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -497,7 +512,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._refuse_legacy_file",
         "log",
-        "3a8d0fbcfb9a537e",
+        "3a8d0fbcfb9a537e",  # pragma: allowlist secret
     ): (
         1,
         "logs the already-built message: _LABEL text with a literal reason",
@@ -506,7 +521,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._refuse_legacy_file",
         "raise",
-        "2063f78cfc5547a0",
+        "2063f78cfc5547a0",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -518,7 +533,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._resolve_mode_snapshot",
         "log",
-        "3619248b5b4b60ab",
+        "3619248b5b4b60ab",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -530,7 +545,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._resolve_mode_snapshot",
         "log",
-        "596663837dba5a91",
+        "596663837dba5a91",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -542,7 +557,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager._verify_top_level_identity",
         "raise",
-        "25be7d9280bbf10f",
+        "25be7d9280bbf10f",  # pragma: allowlist secret
     ): (
         1,
         "key is one of the SDK's fixed top-level field names",
@@ -551,7 +566,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager.apply_best_config",
         "log",
-        "7221ddb91ed2b0a8",
+        "7221ddb91ed2b0a8",  # pragma: allowlist secret
     ): (
         1,
         _COUNT,
@@ -560,7 +575,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager.export_config",
         "log",
-        "d38a31596f58d8ce",
+        "d38a31596f58d8ce",  # pragma: allowlist secret
     ): (
         1,
         _COUNT,
@@ -569,7 +584,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager.maybe_auto_load_config",
         "log",
-        "66e853dcebdc2f1e",
+        "66e853dcebdc2f1e",  # pragma: allowlist secret
     ): (
         1,
         _COUNT,
@@ -587,7 +602,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "config_state_manager.py",
         "ConfigStateManager.set_config",
         "log",
-        "83bb83574354c0ca",
+        "83bb83574354c0ca",  # pragma: allowlist secret
     ): (
         1,
         _COUNT,
@@ -596,7 +611,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "local_storage.py",
         "LocalStorageManager._ensure_directories",
         "raise",
-        "aa530486fb476013",
+        "aa530486fb476013",  # pragma: allowlist secret
     ): (
         1,
         "fixed text plus the exception type name (the OS text quoting the path is dropped)",
@@ -605,7 +620,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "local_storage.py",
         "LocalStorageManager._save_session",
         "raise",
-        "d3e84162472e3028",
+        "d3e84162472e3028",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -617,7 +632,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "local_storage.py",
         "LocalStorageManager.cleanup_old_sessions",
         "log",
-        "315c770cd3a4fbe8",
+        "315c770cd3a4fbe8",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -629,7 +644,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "local_storage.py",
         "LocalStorageManager.delete_session",
         "log",
-        "d288f3d7657ce756",
+        "d288f3d7657ce756",  # pragma: allowlist secret
     ): (
         1,
         "fixed text plus the exception type name; no session id",
@@ -638,7 +653,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "local_storage.py",
         "LocalStorageManager.export_session",
         "log",
-        "e377e1a882507af6",
+        "e377e1a882507af6",  # pragma: allowlist secret
     ): (
         1,
         "fixed text plus the exception type name; no session id or format",
@@ -661,7 +676,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "local_storage.py",
         "LocalStorageManager.find_cached_result_across_sessions",
         "log",
-        "d05caf4650cdd57a",
+        "d05caf4650cdd57a",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -675,7 +690,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "local_storage.py",
         "LocalStorageManager.is_config_seen",
         "log",
-        "c824c6bcea372ad2",
+        "c824c6bcea372ad2",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -689,7 +704,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "local_storage.py",
         "LocalStorageManager.load_session",
         "log",
-        "1eefa7c4501b7dd4",
+        "1eefa7c4501b7dd4",  # pragma: allowlist secret
     ): (
         1,
         "fixed text plus the exception type name; no session id",
@@ -698,7 +713,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "local_storage.py",
         "LocalStorageManager.session_summaries",
         "log",
-        "29bd4fa0f611c3a0",
+        "29bd4fa0f611c3a0",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -726,7 +741,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "_decode_legacy",
         "raise",
-        "5d1bc6e25c5fa25d",
+        "5d1bc6e25c5fa25d",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -735,7 +750,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "_decode_status",
         "log",
-        "cadf9043f85d2cd8",
+        "cadf9043f85d2cd8",  # pragma: allowlist secret
     ): (
         1,
         _COUNT,
@@ -744,7 +759,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "_decode_versioned",
         "log",
-        "fd2ae3924719f974",
+        "fd2ae3924719f974",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -758,7 +773,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "_decode_versioned",
         "raise",
-        "f68f4e7109eb1156",
+        "f68f4e7109eb1156",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -776,7 +791,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "_read_field",
         "log",
-        "adea9fa45fc35ab8",
+        "adea9fa45fc35ab8",  # pragma: allowlist secret
     ): (
         1,
         "dataclass field name + type name (SDK-owned)",
@@ -785,7 +800,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "_read_field",
         "raise",
-        "453e6b7a9986b0c7",
+        "453e6b7a9986b0c7",  # pragma: allowlist secret
     ): (
         1,
         "dataclass field name + type name (SDK-owned); encode side, no artifact content",
@@ -794,7 +809,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "4afff28277651612",
+        "03305309df23d01e",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -803,7 +818,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "52448019bbf40e37",
+        "be5e54a169ff5eae",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -812,7 +827,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "8905b0fcf7fc8541",
+        "7b7cf48f08d53946",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -821,7 +836,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_result",
         "raise",
-        "cdf1bfd8c277e80a",
+        "1d2fff69b6781a6f",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -830,7 +845,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_trial_error",
         "log",
-        "f6855889ebbc9a3b",
+        "f6855889ebbc9a3b",  # pragma: allowlist secret
     ): (
         1,
         _COUNT,
@@ -839,7 +854,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "decode_trial_score",
         "log",
-        "2e0fce893c336eb6",
+        "2e0fce893c336eb6",  # pragma: allowlist secret
     ): (
         1,
         _COUNT,
@@ -848,7 +863,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "verify_envelope_version",
         "raise",
-        "7c6f7eedce6ff880",
+        "0ddc25781701bc32",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -857,7 +872,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "optimization_result_persistence.py",
         "verify_envelope_version",
         "raise",
-        "b2c5030f8ca7aa58",
+        "c88da898fa1ef202",  # pragma: allowlist secret
     ): (
         1,
         _DECODER,
@@ -866,7 +881,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "transport_gate.py",
         "TransportGateRefusal.__init__",
         "exc_class",
-        "2ce69a653d075128",
+        "2ce69a653d075128",  # pragma: allowlist secret
     ): (
         1,
         (
@@ -878,7 +893,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "transport_gate.py",
         "inspect_outgoing",
         "log",
-        "10d5f86293b5ddb7",
+        "10d5f86293b5ddb7",  # pragma: allowlist secret
     ): (
         1,
         (

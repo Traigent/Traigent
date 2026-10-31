@@ -182,7 +182,9 @@ class TestSessionCreationSmartPruning:
         assert req.smart_pruning == SMART_PRUNING
 
     def test_request_rejects_extra_smart_pruning_field(self):
-        with pytest.raises(ValueError, match="smart_pruning.*unexpected"):
+        with pytest.raises(
+            ValueError, match="smart_pruning does not match smart_pruning_schema"
+        ):
             SessionCreationRequest(
                 function_name="f",
                 smart_pruning={**SMART_PRUNING, "unexpected": "value"},
@@ -199,7 +201,9 @@ class TestSessionCreationSmartPruning:
         request = _typed_request(smart_pruning=SMART_PRUNING)
         request.smart_pruning = {**SMART_PRUNING, "unexpected": "value"}
 
-        with pytest.raises(ValueError, match="smart_pruning.*unexpected"):
+        with pytest.raises(
+            ValueError, match="smart_pruning does not match smart_pruning_schema"
+        ):
             ops._build_typed_session_payload(request, max_trials=5)
 
     def test_legacy_payload_includes_top_level_smart_pruning(self):
@@ -213,7 +217,9 @@ class TestSessionCreationSmartPruning:
         request = _typed_request(smart_pruning=SMART_PRUNING)
         request.smart_pruning = {**SMART_PRUNING, "unexpected": "value"}
 
-        with pytest.raises(ValueError, match="smart_pruning.*unexpected"):
+        with pytest.raises(
+            ValueError, match="smart_pruning does not match smart_pruning_schema"
+        ):
             ops._build_legacy_session_payload(request, max_trials=5)
 
     def test_cloud_client_serializer_includes_top_level_smart_pruning(self):
@@ -251,7 +257,9 @@ class TestSessionCreationSmartPruning:
         )
         request.smart_pruning = {**SMART_PRUNING, "unexpected": "value"}
 
-        with pytest.raises(ValueError, match="smart_pruning.*unexpected"):
+        with pytest.raises(
+            ValueError, match="smart_pruning does not match smart_pruning_schema"
+        ):
             TraigentCloudClient._serialize_session_request(fake_self, request)
 
 
@@ -314,7 +322,9 @@ class TestSessionOperationsWarmStartThreading:
     def test_smart_pruning_rejects_extra_field(self):
         ops, _client = self._make_ops()
 
-        with pytest.raises(ValueError, match="smart_pruning.*unexpected"):
+        with pytest.raises(
+            ValueError, match="smart_pruning does not match smart_pruning_schema"
+        ):
             ops.create_session(
                 "my_func",
                 {"model": ["a", "b"]},
@@ -379,6 +389,7 @@ class TestResultMetadataWarmStartProvenance:
             _warm_start_from=warm_start_from,
             _function_descriptor=None,
             traigent_config=None,
+            _vendor_attempt_totals=lambda: {},
         )
         return OptimizationOrchestrator._build_result_metadata(
             fake_self,
@@ -871,7 +882,10 @@ class TestResultMetadataMockProvenance:
         monkeypatch.setattr(orch_mod, "is_offline_requested", lambda _policy: False)
         monkeypatch.setattr(orch_mod, "is_mock_llm", lambda: mock_on)
         fake_self = SimpleNamespace(
-            _warm_start_from=None, _function_descriptor=None, traigent_config=None
+            _warm_start_from=None,
+            _function_descriptor=None,
+            traigent_config=None,
+            _vendor_attempt_totals=lambda: {},
         )
         return OptimizationOrchestrator._build_result_metadata(
             fake_self, session_summary=None, safeguards_telemetry={}

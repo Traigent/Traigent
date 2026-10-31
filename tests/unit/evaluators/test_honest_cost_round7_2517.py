@@ -30,6 +30,7 @@ from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
 )
 from traigent.cloud.trial_operations import TrialOperations
+from traigent.utils.trial_costs import COST_FLOOR_WIRE_KEY
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.cost_enforcement import (
     CostEnforcer,
@@ -66,7 +67,7 @@ def _post_mock() -> tuple[Mock, Mock]:
     return session, session_ctx
 
 
-async def _submit_through_public_path(
+async def _submit_body_through_public_path(
     metrics: dict[str, Any], *, armed: bool = True
 ) -> dict[str, Any]:
     """Run ``submit_trial_result_via_session`` and return the posted metrics."""
@@ -100,15 +101,19 @@ async def _submit_through_public_path(
             status="completed",
         )
     assert outcome is True
-    return dict(session.post.call_args.kwargs["json"]["metrics"])
+    return dict(session.post.call_args.kwargs["json"])
 
 
 @pytest.mark.asyncio
 async def test_public_submit_without_cost_or_flag_does_not_send_zero() -> None:
-    posted = await _submit_through_public_path({"accuracy": 1.0})
+    body = await _submit_body_through_public_path({"accuracy": 1.0})
+    posted = body["metrics"]
 
-    # lower bound (nothing reported) travels WITH the flag; the flag is the signal
-    assert posted["cost"] == 0.0, posted
+    # Armed session: the flag is the signal; the floor is top-level
+    # ``cost_floor_usd`` and (TEMPORARY bridge, #2688) also metrics.cost.
+    assert body[COST_FLOOR_WIRE_KEY] == 0.0, body
+    assert COST_FLOOR_WIRE_KEY not in posted
+    assert posted["cost"] == 0.0  # TEMPORARY bridge (#2688)
     assert posted["cost_unmeasured"] == 1.0
 
 
@@ -145,6 +150,7 @@ def test_budget_guard_uses_telemetry_cost_before_declaring_unmeasured() -> None:
 
     assert mutated is True
     assert metrics["cost"] == pytest.approx(0.4)
+    assert COST_FLOOR_WIRE_KEY not in metrics
     assert "cost_unmeasured" not in metrics
 
 
@@ -166,9 +172,8 @@ def test_backend_session_manager_flags_instead_of_backfilling_zero() -> None:
         session_id="s1", trial_result=trial, metrics_payload=payload, metadata={}
     )
 
-    assert (
-        payload["cost"] == 0.0 and payload["cost_unmeasured"] == 1.0
-    )  # lower bound + flag
+    assert payload["cost"] == payload[COST_FLOOR_WIRE_KEY]  # TEMPORARY bridge (#2688)
+    assert payload[COST_FLOOR_WIRE_KEY] == 0.0 and payload["cost_unmeasured"] == 1.0
     assert payload["cost_unmeasured"] == 1.0
 
 
@@ -441,3 +446,32 @@ def test_unknown_cost_without_required_tracking_still_degrades_under_mock_llm(
     enforcer.track_cost(None, permit=Permit(id=0, amount=0.0, active=True))
 
     assert enforcer.get_status().unknown_cost_mode is True
+
+
+async def _submit_through_public_path(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    body = await _submit_body_through_public_path(*args, **kwargs)
+    return dict(body["metrics"])
+
+
+@pytest.mark.asyncio
+async def test_unarmed_unmeasured_submit_has_top_level_floor_and_no_metrics_cost() -> (
+    None
+):
+    body = await _submit_body_through_public_path(
+        {"accuracy": 1.0, "cost_unmeasured": 1.0}, armed=False
+    )
+    assert "cost" not in body["metrics"]
+    assert body[COST_FLOOR_WIRE_KEY] == 0.0
+    assert body["metrics"]["cost_unmeasured"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_armed_unmeasured_submit_carries_bridge_flag_and_top_level_floor() -> (
+    None
+):
+    body = await _submit_body_through_public_path(
+        {"accuracy": 1.0, "cost_unmeasured": 1.0, "cost_lower_bound": 0.3}
+    )
+    assert body["metrics"]["cost"] == pytest.approx(0.3)
+    assert body["metrics"]["cost_unmeasured"] == 1.0
+    assert body[COST_FLOOR_WIRE_KEY] == pytest.approx(0.3)

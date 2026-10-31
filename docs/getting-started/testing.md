@@ -31,6 +31,46 @@ TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest tes
 TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true TRAIGENT_OFFLINE=1 pytest -k "test_optimization" -v
 ```
 
+## Failing a Provider Call on Purpose
+
+`traigent.testing.inject_vendor_failures` makes provider calls (made through
+Traigent's LiteLLM interceptor) fail with a retryable 429 or 503, so you can see
+how many attempts Traigent made and what they cost. It works in mock mode and
+real mode, and does nothing when not active. It is scoped to the current
+task/thread context, not the whole process. It is refused in production and
+(fail-closed) whenever the environment is unset or unknown: set
+`ENVIRONMENT=development` (or `test`) before using it.
+
+```python
+import os
+from traigent.testing import inject_vendor_failures
+
+os.environ["ENVIRONMENT"] = "development"
+os.environ["TRAIGENT_VENDOR_MAX_RETRIES"] = "1"
+os.environ["TRAIGENT_VENDOR_RETRY_BACKOFF"] = "0"
+
+# One failed attempt across the whole run, then everything succeeds.
+with inject_vendor_failures(1, kind="rate_limit", per_call=False):
+    result = await my_func.optimize(max_trials=2)
+
+print(result.metadata["vendor_call_attempts"])   # calls + 1
+print(result.metadata["vendor_call_retries"])    # 1
+# Per trial: trial.metadata["vendor_call_attempt_records"]
+```
+
+`per_call=True` (default) fails every call `count` times before it succeeds;
+`per_call=False` shares `count` failures across all attempts. A failed attempt
+records `usage=None, usage_known=False` (unknown, never zero); the successful
+attempt records the provider's token usage.
+
+A call that failed and was retried has no cost telemetry, so its trial is
+flagged `cost_unmeasured` (known spend is kept as a lower bound). With strict
+cost accounting (the default when `cost` is an objective or a cost limit is
+set) the run raises `CostTrackingRequiredError`; set
+`TRAIGENT_STRICT_COST_ACCOUNTING=false` to warn and continue with the trial
+marked unmeasured. Streaming calls record their outcome when the stream is
+consumed; a stream that fails mid-way is recorded as failed and not retried.
+
 ## Test Dependencies
 
 The `[test]` extra includes:
@@ -285,7 +325,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.12", "3.13"]
 
     steps:
     - uses: actions/checkout@v3

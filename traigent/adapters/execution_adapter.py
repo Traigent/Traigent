@@ -11,6 +11,8 @@ from typing import Any, cast
 from traigent.config.types import ExecutionMode
 from traigent.evaluators.base import _accuracy_matches_after_unwrap
 
+_UNKNOWN = "<unknown>"
+
 logger = logging.getLogger(__name__)
 
 
@@ -123,7 +125,7 @@ class LocalExecutionAdapter(ExecutionAdapter):
                         )
 
                 except Exception as e:
-                    logger.error(f"Failed to execute example {idx}: {str(e)}")
+                    logger.exception(f"Failed to execute example {idx}: {str(e)}")
                     results.append(
                         {
                             "success": False,
@@ -153,7 +155,7 @@ class LocalExecutionAdapter(ExecutionAdapter):
             }
 
         except Exception as e:
-            logger.error(f"Local execution failed: {str(e)}")
+            logger.exception(f"Local execution failed: {str(e)}")
             raise
 
     async def get_execution_mode(self) -> str:
@@ -240,8 +242,8 @@ class LocalExecutionAdapter(ExecutionAdapter):
                 "is configured for LocalExecutionAdapter; marking example "
                 "as failed. Provide a scoring_function for semantic scoring. "
                 "trial_id=%s example_index=%s",
-                trial_id or "<unknown>",
-                example_index if example_index is not None else "<unknown>",
+                trial_id or _UNKNOWN,
+                example_index if example_index is not None else _UNKNOWN,
             )
 
         else:
@@ -258,8 +260,8 @@ class LocalExecutionAdapter(ExecutionAdapter):
                 "example as failed and excluding it from accuracy. "
                 "trial_id=%s example_index=%s",
                 eval_type,
-                trial_id or "<unknown>",
-                example_index if example_index is not None else "<unknown>",
+                trial_id or _UNKNOWN,
+                example_index if example_index is not None else _UNKNOWN,
             )
 
         return result
@@ -271,30 +273,8 @@ class LocalExecutionAdapter(ExecutionAdapter):
         Supports dict with 'examples' key or Dataset from core evaluators.
         Raises ValueError with a clear message on schema errors.
         """
-        examples: list[dict[str, Any]] = []
         if isinstance(dataset, dict):
-            raw = dataset.get("examples")
-            if raw is None or not isinstance(raw, list):
-                raise ValueError(
-                    "dataset['examples'] must be a non-empty list"
-                ) from None
-            for idx, ex in enumerate(raw):
-                if not isinstance(ex, dict):
-                    raise ValueError(f"example at index {idx} must be a dict")
-                if "input" not in ex:
-                    raise ValueError(f"example at index {idx} missing 'input'")
-                meta = ex.get("metadata") or {}
-                if not isinstance(meta, dict):
-                    raise ValueError(f"example at index {idx} has non-dict 'metadata'")
-                examples.append(
-                    {
-                        "id": ex.get("id", idx),
-                        "input": ex["input"],
-                        "expected_output": ex.get("expected_output"),
-                        "metadata": meta,
-                    }
-                )
-            return examples
+            return self._normalize_dict_examples(dataset)
 
         # Lazy import Dataset to avoid hard dependency
         try:
@@ -303,21 +283,52 @@ class LocalExecutionAdapter(ExecutionAdapter):
             _Dataset = None  # type: ignore
 
         if _Dataset is not None and isinstance(dataset, _Dataset):
-            for idx, ex in enumerate(dataset.examples):
-                meta = ex.metadata or {}
-                if not isinstance(meta, dict):
-                    raise ValueError(f"example at index {idx} has non-dict metadata")
-                examples.append(
-                    {
-                        "id": meta.get("example_id", idx),
-                        "input": ex.input_data,
-                        "expected_output": ex.expected_output,
-                        "metadata": meta,
-                    }
-                )
-            return examples
+            return self._normalize_dataset_examples(dataset)
 
         raise TypeError("dataset must be a dict with 'examples' or a Dataset instance")
+
+    @staticmethod
+    def _normalize_dict_examples(dataset: dict[str, Any]) -> list[dict[str, Any]]:
+        """Validate and normalize the ``examples`` list of a dict dataset."""
+        raw = dataset.get("examples")
+        if raw is None or not isinstance(raw, list):
+            raise ValueError("dataset['examples'] must be a non-empty list") from None
+        examples: list[dict[str, Any]] = []
+        for idx, ex in enumerate(raw):
+            if not isinstance(ex, dict):
+                raise ValueError(f"example at index {idx} must be a dict")
+            if "input" not in ex:
+                raise ValueError(f"example at index {idx} missing 'input'")
+            meta = ex.get("metadata") or {}
+            if not isinstance(meta, dict):
+                raise ValueError(f"example at index {idx} has non-dict 'metadata'")
+            examples.append(
+                {
+                    "id": ex.get("id", idx),
+                    "input": ex["input"],
+                    "expected_output": ex.get("expected_output"),
+                    "metadata": meta,
+                }
+            )
+        return examples
+
+    @staticmethod
+    def _normalize_dataset_examples(dataset: Any) -> list[dict[str, Any]]:
+        """Normalize the examples of a ``Dataset`` instance."""
+        examples: list[dict[str, Any]] = []
+        for idx, ex in enumerate(dataset.examples):
+            meta = ex.metadata or {}
+            if not isinstance(meta, dict):
+                raise ValueError(f"example at index {idx} has non-dict metadata")
+            examples.append(
+                {
+                    "id": meta.get("example_id", idx),
+                    "input": ex.input_data,
+                    "expected_output": ex.expected_output,
+                    "metadata": meta,
+                }
+            )
+        return examples
 
     def _sanitize_agent_spec(self, agent_spec: dict[str, Any]) -> dict[str, Any]:
         """Redact potentially sensitive fields in agent_spec.
@@ -510,7 +521,7 @@ class HybridPlatformAdapter(ExecutionAdapter):
                 local_adapter.agent_builder = original_builder
 
         except Exception as e:
-            logger.error(f"Hybrid platform execution failed: {str(e)}")
+            logger.exception(f"Hybrid platform execution failed: {str(e)}")
             raise
 
     async def get_execution_mode(self) -> str:

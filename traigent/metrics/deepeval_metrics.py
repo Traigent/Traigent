@@ -107,6 +107,10 @@ def _restore_otel_tracer_provider(
         except Exception:
             restored = False
 
+    _log_tracer_provider_restoration(restored, restored_once_guard)
+
+
+def _log_tracer_provider_restoration(restored: bool, restored_once_guard: bool) -> None:
     if restored:
         logger.warning(
             "Restored host OpenTelemetry TracerProvider after deepeval import "
@@ -380,22 +384,12 @@ class DeepEvalScorer:
 
             # Extract context for RAG metrics.
             # Use key-presence check (not `or`) so explicit empty list is respected.
-            if context_key in metadata:
-                ctx = metadata[context_key]
-            elif isinstance(input_data, dict) and context_key in input_data:
-                ctx = input_data[context_key]
-            else:
-                ctx = None
+            ctx = _metric_context_value(context_key, metadata, input_data)
             ctx_list = _coerce_to_str_list(ctx)
             if ctx_list is not None:
                 tc_kwargs["context"] = ctx_list
 
-            if retrieval_context_key in metadata:
-                ret_ctx = metadata[retrieval_context_key]
-            elif isinstance(input_data, dict) and retrieval_context_key in input_data:
-                ret_ctx = input_data[retrieval_context_key]
-            else:
-                ret_ctx = None
+            ret_ctx = _metric_context_value(retrieval_context_key, metadata, input_data)
             ret_ctx_list = _coerce_to_str_list(ret_ctx)
             if ret_ctx_list is not None:
                 tc_kwargs["retrieval_context"] = ret_ctx_list
@@ -412,6 +406,14 @@ class DeepEvalScorer:
         metric_fn.__name__ = f"deepeval_{name}"
         metric_fn.__qualname__ = f"DeepEvalScorer.{name}"
         return metric_fn
+
+
+def _metric_context_value(key: str, metadata: dict[str, Any], input_data: Any) -> Any:
+    if key in metadata:
+        return metadata[key]
+    if isinstance(input_data, dict) and key in input_data:
+        return input_data[key]
+    return None
 
 
 __all__ = [

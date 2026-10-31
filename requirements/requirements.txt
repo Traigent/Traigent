@@ -12,12 +12,11 @@ requests>=2.33.0              # CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7
 PyJWT[crypto]>=2.15.1,<3.0.0  # DoS, SSRF via JWKClient, HS256 forgery, alg bypass, kid DoS
 jsonschema>=4.0.0
 cryptography>=50.0.0
-typing-extensions>=4.0.0; python_version<"3.11"
 claude-code-sdk>=0.0.14
 mcp>=1.30.0,<3.0.0
 backoff>=2.2.0
 litellm>=1.100.5,<2
-filelock>=4.0.9,<5           # AIKIDO-2026-181731, AIKIDO-2026-444439; transitive via litellm -> tokenizers -> huggingface-hub
+filelock>=4.2.1,<5           # CVE-2026-112940/112913/112907; transitive via litellm -> tokenizers -> huggingface-hub
 tenacity>=8.1.0
 rank-bm25
 psutil>=5.8.0

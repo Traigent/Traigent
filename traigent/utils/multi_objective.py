@@ -118,11 +118,10 @@ class ParetoPoint:
                     return False  # Other is better in this objective
                 elif diff > epsilon:  # obj_value significantly greater than other_value
                     better_in_at_least_one = True
-            else:  # minimize
-                if diff > epsilon:  # obj_value significantly greater than other_value
-                    return False  # Other is better in this objective
-                elif diff < -epsilon:  # obj_value significantly less than other_value
-                    better_in_at_least_one = True
+            elif diff > epsilon:  # obj_value significantly greater than other_value
+                return False  # Other is better in this objective
+            elif diff < -epsilon:  # obj_value significantly less than other_value
+                better_in_at_least_one = True
 
         return better_in_at_least_one
 
@@ -176,51 +175,52 @@ class ParetoFrontCalculator:
         points = []
         for trial in trials:
             if _is_completed_status(getattr(trial, "status", None)) and trial.metrics:
-                # Extract objective values
-                point_objectives = {}
-                cost_flagged = is_cost_unranked(trial.metrics)
-                for obj in objectives:
-                    if cost_flagged and obj in _COST_OBJECTIVE_NAMES:
-                        # Flagged unmeasured: a number next to the flag is a
-                        # floor or a stray zero, never a ranking value (#2517).
-                        continue
-                    if trial.metrics.get(obj) is not None:
-                        point_objectives[obj] = trial.metrics[obj]
-
-                # A trial missing any configured objective (an unmeasured cost
-                # is the common case) cannot be placed on the front: being
-                # incomparable would leave it undominated, so it would sit on
-                # the front on the strength of a measurement it does not have
-                # (Traigent#2446).
-                if point_objectives and len(point_objectives) == len(set(objectives)):
-                    points.append(
-                        ParetoPoint(
-                            config=trial.config,
-                            objectives=point_objectives,
-                            trial=trial,
-                        )
-                    )
+                point = self._trial_to_pareto_point(trial, objectives)
+                if point is not None:
+                    points.append(point)
 
         if not points:
             return []
 
         # Find non-dominated points
-        pareto_front = []
+        return [
+            point
+            for i, point in enumerate(points)
+            if not any(
+                i != j
+                and other_point.dominates(point, self.maximize, objectives=objectives)
+                for j, other_point in enumerate(points)
+            )
+        ]
 
-        for i, point in enumerate(points):
-            is_dominated = False
+    @staticmethod
+    def _trial_to_pareto_point(
+        trial: TrialResult, objectives: list[str]
+    ) -> ParetoPoint | None:
+        """Pareto point of a completed trial, or None when it cannot be ranked."""
+        # Extract objective values
+        point_objectives = {}
+        cost_flagged = is_cost_unranked(trial.metrics)
+        for obj in objectives:
+            if cost_flagged and obj in _COST_OBJECTIVE_NAMES:
+                # Flagged unmeasured: a number next to the flag is a
+                # floor or a stray zero, never a ranking value (#2517).
+                continue
+            if trial.metrics.get(obj) is not None:
+                point_objectives[obj] = trial.metrics[obj]
 
-            for j, other_point in enumerate(points):
-                if i != j and other_point.dominates(
-                    point, self.maximize, objectives=objectives
-                ):
-                    is_dominated = True
-                    break
-
-            if not is_dominated:
-                pareto_front.append(point)
-
-        return pareto_front
+        # A trial missing any configured objective (an unmeasured cost
+        # is the common case) cannot be placed on the front: being
+        # incomparable would leave it undominated, so it would sit on
+        # the front on the strength of a measurement it does not have
+        # (Traigent#2446).
+        if point_objectives and len(point_objectives) == len(set(objectives)):
+            return ParetoPoint(
+                config=trial.config,
+                objectives=point_objectives,
+                trial=trial,
+            )
+        return None
 
     def calculate_hypervolume(
         self,
@@ -444,20 +444,9 @@ class ParetoFrontCalculator:
                 (nadir, ideal) if maximize else (ideal, nadir)
             )
 
-        # Monte Carlo sampling
-        dominated_count = 0
-        for _ in range(self.num_samples):
-            # Generate random point in search space
-            sample_point = {
-                obj: self._rng.uniform(lower_bounds[obj], upper_bounds[obj])
-                for obj in objectives
-            }
-
-            # Check if any Pareto point dominates this sample
-            for pareto_point in pareto_front:
-                if self._point_dominates_sample(pareto_point, sample_point):
-                    dominated_count += 1
-                    break
+        dominated_count = ParetoFrontCalculator._count_dominated_samples(
+            self, pareto_front, objectives, lower_bounds, upper_bounds
+        )
 
         # Calculate volume of search space
         total_volume = 1.0
@@ -467,6 +456,25 @@ class ParetoFrontCalculator:
         # Approximate hypervolume
         hypervolume = (dominated_count / self.num_samples) * total_volume
         return hypervolume
+
+    def _count_dominated_samples(
+        self,
+        pareto_front: list[ParetoPoint],
+        objectives: list[str],
+        lower_bounds: dict[str, float],
+        upper_bounds: dict[str, float],
+    ) -> int:
+        dominated_count = 0
+        for _ in range(self.num_samples):
+            sample_point = {
+                obj: self._rng.uniform(lower_bounds[obj], upper_bounds[obj])
+                for obj in objectives
+            }
+            for pareto_point in pareto_front:
+                if self._point_dominates_sample(pareto_point, sample_point):
+                    dominated_count += 1
+                    break
+        return dominated_count
 
     def _point_dominates_sample(
         self, pareto_point: ParetoPoint, sample_point: dict[str, float]
@@ -480,9 +488,8 @@ class ParetoFrontCalculator:
                 if should_maximize:
                     if value < sample_value:
                         return False
-                else:
-                    if value > sample_value:
-                        return False
+                elif value > sample_value:
+                    return False
 
         return True
 
@@ -586,6 +593,99 @@ class MultiObjectiveMetrics:
         return total_distance / len(pareto_front) if pareto_front else float("inf")
 
 
+def _declare_schema_objective(
+    obj_def: Any,
+    objectives: dict[str, float],
+    declared_values: dict[str, float],
+    weights: dict[str, float],
+    minimize_objectives: list[str],
+) -> None:
+    """Fold one schema objective into the declared values, weights and minimize list."""
+    weights[obj_def.name] = obj_def.weight
+    if obj_def.name not in objectives:
+        return
+    value = objectives[obj_def.name]
+    if obj_def.orientation == "band":
+        band = obj_def.band
+        if band is None or band.low is None or band.high is None:
+            raise ValueError(
+                f"Banded objective {obj_def.name!r} requires a complete target band"
+            )
+        if band.low <= value <= band.high:
+            declared_values[obj_def.name] = 0.0
+        else:
+            declared_values[obj_def.name] = -float(
+                min(abs(value - band.low), abs(value - band.high))
+            )
+        return
+    declared_values[obj_def.name] = value
+    if obj_def.orientation == "minimize":
+        minimize_objectives.append(obj_def.name)
+
+
+def _resolve_schema_objectives(
+    objectives: dict[str, float], objective_schema: ObjectiveSchema
+) -> tuple[dict[str, float], dict[str, float], list[str]]:
+    """Return ``(objectives, weights, minimize_objectives)`` from a schema."""
+    declared_values: dict[str, float] = {}
+    weights: dict[str, float] = {}
+    minimize_objectives: list[str] = []
+
+    for obj_def in objective_schema.objectives:
+        _declare_schema_objective(
+            obj_def, objectives, declared_values, weights, minimize_objectives
+        )
+    return declared_values, weights, minimize_objectives
+
+
+def _weighted_totals(
+    objectives: dict[str, float],
+    weights: dict[str, float],
+    minimize_objectives: list[str],
+) -> tuple[float, float]:
+    """Accumulate ``(total_score, total_weight)`` over the non-None objectives."""
+    total_score = 0.0
+    total_weight = 0.0
+
+    for obj_name, obj_value in objectives.items():
+        # Skip None values
+        if obj_value is None:
+            continue
+
+        weight = weights.get(obj_name, 1.0)
+
+        # For minimization objectives, we invert the value by using (1 - obj_value)
+        # assuming objectives are normalized between 0 and 1, or use negative weight
+        if obj_name in minimize_objectives:
+            # Use negative objective value for minimization
+            total_score += weight * (-obj_value)
+        else:
+            # Normal maximization
+            total_score += weight * obj_value
+
+        total_weight += weight
+    return total_score, total_weight
+
+
+def _equal_weight_mean(
+    objectives: dict[str, float], minimize_objectives: list[str]
+) -> float:
+    """Mean over the non-None objectives with equal weights."""
+    valid_objectives = {k: v for k, v in objectives.items() if v is not None}
+    if not valid_objectives:
+        return 0.0
+
+    # Apply minimization logic for equal weights too
+    total_value = 0.0
+    for obj_name, obj_value in valid_objectives.items():
+        if obj_name in minimize_objectives:
+            total_value += -obj_value
+        else:
+            total_value += obj_value
+
+    return total_value / len(valid_objectives)
+
+
 def scalarize_objectives(
     objectives: dict[str, float],
     weights: dict[str, float],
@@ -610,32 +710,9 @@ def scalarize_objectives(
 
     # Use ObjectiveSchema if provided (overrides other params)
     if objective_schema is not None:
-        declared_values: dict[str, float] = {}
-        weights = {}
-        minimize_objectives = []
-
-        for obj_def in objective_schema.objectives:
-            weights[obj_def.name] = obj_def.weight
-            if obj_def.name not in objectives:
-                continue
-            value = objectives[obj_def.name]
-            if obj_def.orientation == "band":
-                band = obj_def.band
-                if band is None or band.low is None or band.high is None:
-                    raise ValueError(
-                        f"Banded objective {obj_def.name!r} requires a complete target band"
-                    )
-                if band.low <= value <= band.high:
-                    declared_values[obj_def.name] = 0.0
-                else:
-                    declared_values[obj_def.name] = -float(
-                        min(abs(value - band.low), abs(value - band.high))
-                    )
-                continue
-            declared_values[obj_def.name] = value
-            if obj_def.orientation == "minimize":
-                minimize_objectives.append(obj_def.name)
-        objectives = declared_values
+        objectives, weights, minimize_objectives = _resolve_schema_objectives(
+            objectives, objective_schema
+        )
 
     # No explicit list: resolve exact SDK-owned defaults. An explicitly empty
     # list remains the deliberate all-maximize declaration.
@@ -646,43 +723,13 @@ def scalarize_objectives(
             if resolve_objective_orientation(name) == "minimize"
         ]
 
-    total_score = 0.0
-    total_weight = 0.0
-
-    for obj_name, obj_value in objectives.items():
-        # Skip None values
-        if obj_value is None:
-            continue
-
-        weight = weights.get(obj_name, 1.0)
-
-        # For minimization objectives, we invert the value by using (1 - obj_value)
-        # assuming objectives are normalized between 0 and 1, or use negative weight
-        if obj_name in minimize_objectives:
-            # Use negative objective value for minimization
-            total_score += weight * (-obj_value)
-        else:
-            # Normal maximization
-            total_score += weight * obj_value
-
-        total_weight += weight
+    total_score, total_weight = _weighted_totals(
+        objectives, weights, minimize_objectives
+    )
 
     # Handle case where total weight is zero (use equal weights)
     if total_weight == 0:
-        # Use equal weights for all non-None objectives
-        valid_objectives = {k: v for k, v in objectives.items() if v is not None}
-        if not valid_objectives:
-            return 0.0
-
-        # Apply minimization logic for equal weights too
-        total_value = 0.0
-        for obj_name, obj_value in valid_objectives.items():
-            if obj_name in minimize_objectives:
-                total_value += -obj_value
-            else:
-                total_value += obj_value
-
-        return total_value / len(valid_objectives)
+        return _equal_weight_mean(objectives, minimize_objectives)
 
     return total_score / total_weight
 

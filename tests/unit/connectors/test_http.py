@@ -179,6 +179,39 @@ def test_http_kernel_timeout_is_bounded():
     assert [request[3] for request in transport.requests] == [2]
 
 
+def test_http_kernel_deadline_starts_before_header_preparation():
+    from collections.abc import Mapping
+
+    clock = Clock()
+
+    class SlowHeaders(Mapping):
+        def __getitem__(self, key):
+            return "v"
+
+        def __iter__(self):
+            return iter(["X-Custom"])
+
+        def __len__(self):
+            return 1
+
+        def items(self):
+            clock.now = 2.0
+            return super().items()
+
+    transport = Transport([HttpResponse(200, {}, b"")], [])
+    kernel = HttpKernel(
+        "https://safe.example",
+        ConnectionCredentials("x"),
+        _test_transport_factory=_test_transport_factory(transport),
+        deadline=1,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    with pytest.raises(DeadlineExceeded):
+        kernel.request("GET", "/", headers=SlowHeaders())
+    assert transport.requests == []
+
+
 def test_http_kernel_total_deadline_includes_fragmented_headers():
     httpx = pytest.importorskip("httpx")
 

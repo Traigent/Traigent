@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from random import SystemRandom
 from threading import RLock
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 from traigent.utils.exceptions import (
     AuthenticationError,
@@ -37,7 +37,6 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-T = TypeVar("T")
 _SECURE_RANDOM = SystemRandom()
 
 
@@ -208,7 +207,7 @@ class CircuitBreaker:
         self._lock = RLock()
         self._half_open_in_flight = False
 
-    def call(self, func: Callable[..., T], *args, **kwargs) -> T:
+    def call[T](self, func: Callable[..., T], *args, **kwargs) -> T:
         """Execute function with circuit breaker protection."""
         with self._lock:
             if self.state == CircuitBreakerState.OPEN:
@@ -309,12 +308,12 @@ class RetryHandler:
                 ignore_failure=config.circuit_breaker_ignore_failure,
             )
 
-    def execute(self, func: Callable[..., T], *args, **kwargs) -> T:
+    def execute[T](self, func: Callable[..., T], *args, **kwargs) -> T:
         """Execute function with retry logic."""
         return self.execute_with_result(func, *args, **kwargs).result  # type: ignore[return-value]
 
     def execute_with_result(
-        self, func: Callable[..., T], *args, **kwargs
+        self, func: Callable[..., Any], *args, **kwargs
     ) -> RetryResult:
         """Execute function with retry logic and return detailed result."""
         start_time = datetime.now(UTC)
@@ -376,7 +375,7 @@ class RetryHandler:
             end_time=datetime.now(UTC),
         )
 
-    async def execute_async(self, func: Callable[..., T], *args, **kwargs) -> T:
+    async def execute_async[T](self, func: Callable[..., T], *args, **kwargs) -> T:
         """Execute async function with retry logic."""
         result = await self.execute_async_with_result(func, *args, **kwargs)
         if result.success:
@@ -384,7 +383,7 @@ class RetryHandler:
         raise result.error or RetryError(f"All {result.attempts} retry attempts failed")
 
     async def execute_async_with_result(
-        self, func: Callable[..., T], *args, **kwargs
+        self, func: Callable[..., Any], *args, **kwargs
     ) -> RetryResult:
         """Execute async function with retry logic and return detailed result."""
         start_time = datetime.now(UTC)
@@ -506,7 +505,7 @@ def retry(
         retry_on_exception=set(exceptions) if exceptions else None,
     )
 
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+    def decorator[T](func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> T:
             handler = RetryHandler(config)
@@ -535,7 +534,7 @@ def retry_with_config(config: RetryConfig) -> Callable[..., Any]:
         Decorated function with retry logic
     """
 
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+    def decorator[T](func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> T:
             handler = RetryHandler(config)
@@ -600,24 +599,24 @@ def ErrorContext(operation: str, retryable: bool = True):
     try:
         yield
     except Exception as e:
-        logger.error(f"Error during {operation}: {e}")
+        logger.exception(f"Error during {operation}: {e}")
         if retryable and not isinstance(e, (RetryableError, NonRetryableError)):
             # Wrap in RetryableError to hint it should be retried
             raise RetryableError(f"Error during {operation}: {e}") from e
         raise
 
 
-def retry_http_request(func: Callable[..., T]) -> Callable[..., T]:
+def retry_http_request[T](func: Callable[..., T]) -> Callable[..., T]:
     """Decorator specifically for HTTP requests."""
     return cast(Callable[..., T], retry_with_config(HTTP_RETRY_CONFIG)(func))
 
 
-def retry_cloud_api(func: Callable[..., T]) -> Callable[..., T]:
+def retry_cloud_api[T](func: Callable[..., T]) -> Callable[..., T]:
     """Decorator specifically for cloud API calls."""
     return cast(Callable[..., T], retry_with_config(CLOUD_API_RETRY_CONFIG)(func))
 
 
-def retry_database_operation(func: Callable[..., T]) -> Callable[..., T]:
+def retry_database_operation[T](func: Callable[..., T]) -> Callable[..., T]:
     """Decorator specifically for database operations."""
     return cast(Callable[..., T], retry_with_config(DATABASE_RETRY_CONFIG)(func))
 
@@ -631,7 +630,7 @@ class RetryWithCircuitBreaker:
         retry_config.enable_circuit_breaker = True
         self.handler = RetryHandler(retry_config)
 
-    def __call__(self, func: Callable[..., T]) -> Callable[..., T]:
+    def __call__[T](self, func: Callable[..., T]) -> Callable[..., T]:
         """Decorator implementation."""
 
         @functools.wraps(func)

@@ -9,6 +9,7 @@ supporting privacy-preserving operations.
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
@@ -20,9 +21,11 @@ from random import SystemRandom
 from typing import Any, cast
 from urllib.parse import urlparse
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud.client import raise_if_cloud_egress_disabled
-from traigent.config.backend_config import DEFAULT_CLOUD_URL
+from traigent.cloud.url_security import validate_always_blocked_cloud_url
+from traigent.config.backend_config import BackendConfig, is_strict_endpoint_mode
+from traigent.labels.transport_gate import gate_session
+from traigent.utils import optimization_only_egress as oo_egress
 
 # Optional dependency for HTTP client
 try:
@@ -44,6 +47,8 @@ from traigent.security.redaction import is_credential_key_name
 from traigent.utils.exceptions import DatasetValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_write_text, sanitize_filename, validate_path
+
+_SESSION_NOT_INITIALIZED = "Session not initialized"
 
 logger = get_logger(__name__)
 
@@ -161,10 +166,52 @@ class DatasetConverter:
                 credentials, query parameters, or fragments.
             no_egress: Runtime policy flag that forbids backend transport.
         """
-        resolved_backend_url = backend_base_url or DEFAULT_CLOUD_URL
-        self.backend_base_url = self._validate_backend_base_url(resolved_backend_url)
+        # Strict-endpoint (self-hosted) mode has no vendor default: the module
+        # level ``converter`` is built at import time, so resolution is lazy
+        # and raises EndpointNotConfiguredError only when the URL is first used.
+        self._explicit_backend_base_url = (
+            self._validate_backend_base_url(backend_base_url)
+            if backend_base_url
+            else None
+        )
+        self._resolved_backend_base_url: str | None = None
+        # Provenance of the cached value: True when it is the vendor default
+        # (resolved outside strict mode), which must not outlive a switch into
+        # strict-endpoint mode.
+        self._resolved_from_vendor_default = False
         self.no_egress = bool(no_egress)
         self._session: aiohttp.ClientSession | None = None
+
+    @property
+    def backend_base_url(self) -> str:
+        """Backend base URL; vendor default only outside strict-endpoint mode."""
+        if self._explicit_backend_base_url:
+            return self._explicit_backend_base_url
+        strict = is_strict_endpoint_mode()
+        if self._resolved_backend_base_url is not None and (
+            strict and self._resolved_from_vendor_default
+        ):
+            # Cached before strict mode was enabled: drop the vendor default
+            # and re-resolve (configured endpoint, or EndpointNotConfiguredError).
+            self._resolved_backend_base_url = None
+        if self._resolved_backend_base_url is None:
+            # Strict-endpoint mode resolves the configured backend (raising
+            # EndpointNotConfiguredError when none is set); otherwise the
+            # vendor default is kept.
+            default_url = (
+                BackendConfig.get_cloud_backend_url()
+                if strict
+                else BackendConfig.get_default_cloud_url_or_raise()
+            )
+            self._resolved_backend_base_url = self._validate_backend_base_url(
+                default_url
+            )
+            self._resolved_from_vendor_default = not strict
+        return self._resolved_backend_base_url
+
+    @backend_base_url.setter
+    def backend_base_url(self, value: str) -> None:
+        self._explicit_backend_base_url = self._validate_backend_base_url(value)
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -225,8 +272,28 @@ class DatasetConverter:
             path=sanitized_path, query="", fragment="", params=""
         )
         candidate = normalized.geturl()
+        # Shared always-blocked rules: metadata/link-local destinations and plain
+        # HTTP outside development. Private ranges stay allowed here as before.
+        # Construction does no network I/O (this module is imported at SDK import
+        # time); the DNS step runs before each credential-bearing call instead.
+        validate_always_blocked_cloud_url(candidate, purpose="backend", resolve=False)
 
         return candidate.rstrip("/")
+
+    async def _egress_backend_base_url(self) -> str:
+        """Return the backend base URL after the DNS-resolving check (fail closed).
+
+        Called immediately before every credential-bearing request, after the egress
+        gate. Not cached: each call re-resolves, so an unresolvable or metadata-resolving
+        host is refused at the point of use. The blocking lookup runs in a worker
+        thread so it does not stall the event loop.
+        """
+        await asyncio.to_thread(
+            validate_always_blocked_cloud_url,
+            self.backend_base_url,
+            purpose="backend",
+        )
+        return self.backend_base_url
 
     def _raise_if_backend_egress_disabled(
         self, operation: str, *, no_egress: bool | None = None
@@ -498,6 +565,10 @@ class DatasetConverter:
             Conversion result. When ``strict`` is False and rows were dropped,
             the drops are reported in ``errors`` and counted in ``error_count``.
         """
+        oo_egress.refuse_if_active(
+            "dataset_upload",
+            explicit=oo_egress.policy_from_environment(self.backend_base_url),
+        )
         logger.info(f"Uploading SDK dataset to backend (privacy={privacy_mode})")
 
         conversion_errors: list[dict[str, Any]] = []
@@ -567,7 +638,7 @@ class DatasetConverter:
             )
 
         except Exception as e:
-            logger.error(f"Failed to upload dataset to backend: {e}")
+            logger.exception(f"Failed to upload dataset to backend: {e}")
             return ConversionResult(
                 success=False,
                 converted_count=0,
@@ -635,7 +706,7 @@ class DatasetConverter:
             return dataset
 
         except Exception as e:
-            logger.error(f"Failed to convert backend example set: {e}")
+            logger.exception(f"Failed to convert backend example set: {e}")
             raise
 
     def backend_examples_to_jsonl(
@@ -684,6 +755,31 @@ class DatasetConverter:
 
     # Privacy-Preserving Operations
 
+    @staticmethod
+    def _privacy_length_statistics(dataset: Dataset) -> dict[str, Any]:
+        # Length statistics
+        input_lengths = []
+        output_lengths = []
+        for example in dataset.examples:
+            input_lengths.append(len(str(example.input_data)))
+            if hasattr(example, "expected_output") and example.expected_output:
+                output_lengths.append(len(str(example.expected_output)))
+
+        return {
+            "avg_input_length": (
+                sum(input_lengths) / len(input_lengths) if input_lengths else 0
+            ),
+            "avg_output_length": (
+                sum(output_lengths) / len(output_lengths) if output_lengths else 0
+            ),
+            "input_length_range": (
+                [min(input_lengths), max(input_lengths)] if input_lengths else [0, 0]
+            ),
+            "output_length_range": (
+                [min(output_lengths), max(output_lengths)] if output_lengths else [0, 0]
+            ),
+        }
+
     def create_privacy_metadata(
         self, dataset: Dataset, include_sample: bool = True, sample_size: int = 3
     ) -> dict[str, Any]:
@@ -719,32 +815,9 @@ class DatasetConverter:
                 else "unknown"
             )
 
-            # Length statistics
-            input_lengths = []
-            output_lengths = []
-            for example in dataset.examples:
-                input_lengths.append(len(str(example.input_data)))
-                if hasattr(example, "expected_output") and example.expected_output:
-                    output_lengths.append(len(str(example.expected_output)))
-
-            metadata["statistics"] = {
-                "avg_input_length": (
-                    sum(input_lengths) / len(input_lengths) if input_lengths else 0
-                ),
-                "avg_output_length": (
-                    sum(output_lengths) / len(output_lengths) if output_lengths else 0
-                ),
-                "input_length_range": (
-                    [min(input_lengths), max(input_lengths)]
-                    if input_lengths
-                    else [0, 0]
-                ),
-                "output_length_range": (
-                    [min(output_lengths), max(output_lengths)]
-                    if output_lengths
-                    else [0, 0]
-                ),
-            }
+            metadata["statistics"] = DatasetConverter._privacy_length_statistics(
+                dataset
+            )
 
             # Include anonymized samples
             if include_sample:
@@ -965,10 +1038,14 @@ class DatasetConverter:
         self._raise_if_backend_egress_disabled(
             "create backend example set", no_egress=no_egress
         )
+        oo_egress.refuse_if_active(
+            "dataset_upload",
+            explicit=oo_egress.policy_from_environment(self.backend_base_url),
+        )
         if not self._session:
-            raise RuntimeError("Session not initialized") from None
+            raise RuntimeError(_SESSION_NOT_INITIALIZED) from None
 
-        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}"
+        url = f"{await self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}"
         payload = {
             "name": metadata.name,
             "type": metadata.type,
@@ -997,8 +1074,12 @@ class DatasetConverter:
         self._raise_if_backend_egress_disabled(
             "upload backend examples", no_egress=no_egress
         )
+        oo_egress.refuse_if_active(
+            "dataset_upload",
+            explicit=oo_egress.policy_from_environment(self.backend_base_url),
+        )
         if not self._session:
-            raise RuntimeError("Session not initialized")
+            raise RuntimeError(_SESSION_NOT_INITIALIZED)
 
         example_set_id = self._validate_example_set_id(example_set_id)
 
@@ -1021,7 +1102,7 @@ class DatasetConverter:
         csv_content = output.getvalue()
 
         # Upload via API
-        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}/{example_set_id}/upload"
+        url = f"{await self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}/upload"
 
         data = aiohttp.FormData()
         data.add_field(
@@ -1048,11 +1129,11 @@ class DatasetConverter:
             "fetch backend example set", no_egress=no_egress
         )
         if not self._session:
-            raise RuntimeError("Session not initialized")
+            raise RuntimeError(_SESSION_NOT_INITIALIZED)
 
         example_set_id = self._validate_example_set_id(example_set_id)
 
-        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}/{example_set_id}"
+        url = f"{await self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}"
 
         async with self._session.get(url) as response:
             if response.status == 200:
@@ -1071,17 +1152,17 @@ class DatasetConverter:
             "fetch backend examples", no_egress=no_egress
         )
         if not self._session:
-            raise RuntimeError("Session not initialized")
+            raise RuntimeError(_SESSION_NOT_INITIALIZED)
 
         example_set_id = self._validate_example_set_id(example_set_id)
 
-        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}/{example_set_id}/examples"
-
         # The endpoint is paginated; read every page so a set larger than one
-        # page is not silently truncated.
+        # page is not silently truncated. The egress check runs before each page's
+        # request, so a resolver answer that changes between pages is still refused.
         examples: list[dict[str, Any]] = []
         page = 1
         while True:
+            url = f"{await self._egress_backend_base_url()}{_EXAMPLE_SETS_PATH}/{example_set_id}/examples"
             params = {"page": page, "per_page": _EXAMPLES_PAGE_SIZE}
             async with self._session.get(url, params=params) as response:
                 if response.status != 200:

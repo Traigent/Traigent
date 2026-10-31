@@ -1,0 +1,245 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/tvl_reactive_notification_schema.json",
+  "title": "TvlReactiveNotification",
+  "description": "Read model of recorded notifications with their guard decisions (TRAIG-101 plan 5.6). Notifications are emitted only at Seal and are deterministic per (policy revision, rule, scope, occurrence index).",
+  "definitions": {
+    "GuardEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "list",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "monitor_episode_open",
+            "rule_attempt_open"
+          ]
+        },
+        "monitor": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "rule": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "list": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "only_while",
+            "unless"
+          ]
+        },
+        "value": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "TRUE",
+            "FALSE",
+            "UNDECIDED"
+          ],
+          "description": "Kleene value at the decision."
+        }
+      },
+      "description": "One guard evaluation (Kleene strong three-valued).",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "monitor_episode_open"
+            }
+          },
+          "required": [
+            "kind",
+            "monitor"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "rule"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "rule_attempt_open"
+            }
+          },
+          "required": [
+            "kind",
+            "rule"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "monitor"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "Notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "notification_ref",
+        "policy_revision_ref",
+        "response",
+        "rule",
+        "event",
+        "scope",
+        "occurrence_index",
+        "repeat_index",
+        "evaluation_instant",
+        "decision",
+        "guards",
+        "evidence_source",
+        "producers_missing",
+        "recorded_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "notification_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/NotificationRef"
+        },
+        "policy_revision_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/PolicyRevisionRef"
+        },
+        "response": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "rule": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "event": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "episode_opened",
+            "episode_continued",
+            "episode_resolved",
+            "episode_withdrawn",
+            "unknown_for",
+            "stale",
+            "live_again",
+            "optimize_no_candidate",
+            "optimize_failed",
+            "deploy_refused",
+            "deploy_failed"
+          ]
+        },
+        "scope": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "occurrence_index": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "Occurrence index of the scope; repeats count up."
+        },
+        "repeat_index": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "0 for the first delivery; n for the nth repeat."
+        },
+        "evaluation_instant": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Hours",
+          "description": "The sealed evaluation instant this decision belongs to (a repeat's true due instant)."
+        },
+        "decision": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "delivered",
+            "suppressed"
+          ],
+          "description": "Guard decision: suppressed iff an only_while guard is FALSE or an unless guard is TRUE."
+        },
+        "guards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/GuardEvaluation"
+          },
+          "maxItems": 32,
+          "description": "Every guard evaluated for this decision, in declaration order."
+        },
+        "evidence_source": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "backend_native",
+            "recorded_by_customer",
+            "mixed"
+          ],
+          "description": "Provenance shown as `recorded by customer` where applicable."
+        },
+        "producers_missing": {
+          "x-content-class": "closed_enum",
+          "type": "boolean",
+          "description": "Some producer was absent at seal; metadata only, never rewrites a guard."
+        },
+        "attempt_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptRef"
+        },
+        "recorded_at": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp",
+          "description": "When the row was recorded (delivery time; separate from evaluation_instant)."
+        }
+      },
+      "description": "A recorded notification with its guard decision. A notification is a row visible in the portal and API; there is no external delivery in this epic."
+    },
+    "NotificationPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "items",
+        "next_after"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Notification"
+          },
+          "maxItems": 100
+        },
+        "next_after": {
+          "x-content-class": "number",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "description": "A page of recorded notifications, ordered by evaluation instant then rule order; `next_after` is the ordinal to pass as `after`, null on the last page."
+    }
+  }
+}

@@ -25,8 +25,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
-from traigent.labels.transport_gate import preflight_requests
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.credential_resolver import CredentialResolver
@@ -35,9 +33,18 @@ from traigent.cloud.session_types import SessionCreationFailureDetail
 from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.cloud.user_agent import get_sdk_user_agent
+from traigent.labels.transport_gate import (
+    freeze_json_body,
+    gate_session,
+    observe_requests_response,
+    preflight_requests,
+)
 from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
-from traigent.utils.url_security import UnsafeUrlError
+
+_VALIDATE_TRANSPORT_ERROR_EVENT = "auth.api_key.validate_transport_error"
+
+APPLICATION_JSON = "application/json"
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +99,35 @@ def _headers_to_lower_dict(headers: Any | None) -> dict[str, str]:
     if not callable(items):
         return {}
     return {str(key).lower(): str(value).lower() for key, value in items()}
+
+
+def _latch_key_validation(url: str, headers: dict[str, str], data: Any) -> bool:
+    """Latch optimization_only for this credential when ``/keys/validate`` says so.
+
+    Runs before the validation result is returned, so the first content-bearing send
+    after authentication is already judged under the mode. Returns True when the
+    response asked for the mode. Never raises, and fails closed: if latching itself
+    fails, the error class is logged and a flagged response still returns True, so the
+    caller restricts this auth manager rather than letting content out.
+    """
+    flagged = (
+        isinstance(data, dict)
+        and data.get("valid") is True
+        and data.get("optimization_only") is True
+    )
+    try:
+        from traigent.utils import optimization_only_egress as oo_egress
+
+        return oo_egress.note_key_validation(
+            data, oo_egress.credential_scope(url, headers)
+        )
+    except Exception as exc:  # noqa: BLE001 - authentication must not break; fail closed
+        logger.error(
+            "optimization_only: key-validation latch failed (%s); "
+            "restricting this auth manager",
+            type(exc).__name__,
+        )
+        return flagged
 
 
 def _parse_validation_payload(data: Any | None, raw_body: str | None) -> dict[str, Any]:
@@ -357,12 +393,21 @@ class UnifiedAuthConfig:
 
     def __post_init__(self) -> None:
         """Set backend/cloud URLs from centralized config if not provided."""
-        from traigent.config.backend_config import BackendConfig
+        from traigent.config.backend_config import (
+            BackendConfig,
+            EndpointNotConfiguredError,
+        )
 
-        if self.backend_base_url is None:
-            self.backend_base_url = BackendConfig.get_cloud_backend_url()
-        if not self.cloud_base_url:
-            self.cloud_base_url = BackendConfig.get_cloud_backend_url()
+        # Strict-endpoint (self-hosted) mode with no endpoint: leave the URLs
+        # unset so local-only use constructs; every request path re-resolves
+        # (and raises) at the point a backend call is actually made.
+        try:
+            if self.backend_base_url is None:
+                self.backend_base_url = BackendConfig.get_cloud_backend_url()
+            if not self.cloud_base_url:
+                self.cloud_base_url = BackendConfig.get_cloud_backend_url()
+        except EndpointNotConfiguredError:
+            logger.debug("No backend endpoint configured; auth URLs left unset")
 
 
 @dataclass
@@ -570,6 +615,8 @@ class AuthManager:
 
         self.config = config or UnifiedAuthConfig()
         self.no_egress = bool(no_egress)
+        #: Sticky: set when /keys/validate answered optimization_only true; never cleared.
+        self._server_optimization_only = False
 
         # Authentication state
         self._credentials: AuthCredentials | None = None
@@ -597,9 +644,13 @@ class AuthManager:
 
         self._provided_credentials: AuthCredentials | None = None
         initial_api_key = api_key or os.getenv("TRAIGENT_API_KEY")
-        initial_source = (
-            "explicit" if api_key else ("environment" if initial_api_key else None)
-        )
+        initial_source: str | None
+        if api_key:
+            initial_source = "explicit"
+        elif initial_api_key:
+            initial_source = "environment"
+        else:
+            initial_source = None
 
         if initial_api_key:
             self._api_key_manager.set_token(initial_api_key, source=initial_source)
@@ -641,6 +692,12 @@ class AuthManager:
             cache_credentials=self._cache_credentials,
             auth_lock=self._auth_lock,
         )
+
+        # Latch-on-read: every getter of a stored credential latches it first (flagged only).
+        self._token_manager.read_guard = self._latch_emitted_credential
+        self._api_key_manager.read_guard = self._latch_emitted_credential
+        self._token_manager.guard_active = lambda: self._server_optimization_only
+        self._api_key_manager.guard_active = lambda: self._server_optimization_only
 
         self._last_auth_result: AuthResult | None = None
 
@@ -701,12 +758,88 @@ class AuthManager:
         self, credentials: AuthCredentials | None, status: AuthStatus
     ) -> None:
         """Helper for TokenManager callback to set credentials and status."""
+        # The ONLY place self._credentials is assigned a credential (a test enforces it), so
+        # a stored token is latched before any direct-header sender (observability) can use it.
+        # Latch first: if a flagged manager cannot latch, it raises and stores nothing.
+        if credentials is not None:
+            stored: dict[str, str] = {}
+            if credentials.jwt_token:
+                stored["Authorization"] = f"Bearer {credentials.jwt_token}"
+            if credentials.api_key:
+                stored["X-API-Key"] = credentials.api_key
+            if stored:
+                self._latch_emitted_credential(stored)
+            if credentials.refresh_token:
+                # a refresh token is a credential of its own scope
+                self._latch_emitted_credential(
+                    {"Authorization": f"Bearer {credentials.refresh_token}"}
+                )
         self._credentials = credentials
         self._auth_status = status
+
+    def _latch_emitted_credential(self, headers: dict[str, str]) -> None:
+        """Latch the scope of every credential this manager is about to emit or hand out.
+
+        Once ``/keys/validate`` has said ``optimization_only: true`` through this manager
+        (``_server_optimization_only``, never cleared) EVERY credential it emits belongs to
+        the client it authenticated, so each credential's scope is latched: the API key, a
+        login/exchange JWT, a refreshed JWT, whatever. Each header is latched on its own
+        (``credential_scope`` keys on a single credential, so a combined header set would
+        latch only the first). This is deliberately over-inclusive: a user-supplied JWT on a
+        flagged manager is restricted too. Unflagged managers pay one attribute check and
+        never raise. A flagged manager fails closed: if latching raises, the error class is
+        logged and ``OptimizationOnlyRefusal`` is raised so the credential is never handed
+        out unlatched. It is also the read guard of the token/API-key managers, so a
+        credential stored before the latch could be applied is latched when read.
+        """
+        if not self._server_optimization_only:
+            return
+        try:
+            from traigent.config.backend_config import BackendConfig
+            from traigent.utils import optimization_only_egress as oo_egress
+
+            base = self.config.backend_base_url or BackendConfig.get_cloud_backend_url()
+            for name, value in headers.items():
+                oo_egress.latch_on(oo_egress.credential_scope(base, {name: value}))
+        except Exception as exc:  # noqa: BLE001 - fail closed on a flagged manager
+            logger.error(
+                "optimization_only: could not latch an emitted credential (%s); "
+                "refusing to emit it",
+                type(exc).__name__,
+            )
+            from traigent.utils.optimization_only_egress import OptimizationOnlyRefusal
+
+            raise OptimizationOnlyRefusal("credential_latch") from None
 
     # ------------------------------------------------------------------
     # API key state delegators (backward compatibility)
     # ------------------------------------------------------------------
+
+    def configured_credential_headers(self) -> dict[str, str]:
+        """Header carrying the configured credential, with no network call or refresh.
+
+        Used only to name the credential (for scoping a server refusal); never sent.
+        On a flagged manager the credential is latched before it is returned.
+        """
+        headers = self._configured_credential_headers()
+        self._latch_emitted_credential(headers)
+        return headers
+
+    def _configured_credential_headers(self) -> dict[str, str]:
+        credentials = self._credentials
+        if credentials is not None and credentials.jwt_token:
+            return {"Authorization": f"Bearer {credentials.jwt_token}"}
+        token = self._api_key_token
+        # a cleared token has no value; an expired one is not the credential in use
+        if (
+            token is not None
+            and getattr(token, "_value", None)
+            and not token.is_expired
+        ):
+            return {"X-API-Key": token.get_value()}
+        if credentials is not None and credentials.api_key:
+            return {"X-API-Key": credentials.api_key}
+        return {}
 
     @property
     def _api_key_token(self) -> SecureToken | None:
@@ -799,8 +932,11 @@ class AuthManager:
         return bool(self._api_key_manager.has_key())
 
     def _get_api_key_for_internal_use(self) -> str | None:
-        """Delegate to APIKeyManager.get_key_for_internal_use."""
-        return cast(str | None, self._api_key_manager.get_key_for_internal_use())
+        """Delegate to APIKeyManager.get_key_for_internal_use (latched first if flagged)."""
+        key = cast(str | None, self._api_key_manager.get_key_for_internal_use())
+        if key:
+            self._latch_emitted_credential({"X-API-Key": key})
+        return key
 
     # Primary Authentication Interface
 
@@ -952,8 +1088,7 @@ class AuthManager:
     async def _handle_dict_success(self, result: AuthResult) -> None:
         """Apply state updates for successful dict-based authentication."""
 
-        self._credentials = result.credentials
-        self._auth_status = result.status
+        self._set_credentials_and_status(result.credentials, result.status)
         self._stats["successful_authentications"] += 1
         self._authenticated = True
 
@@ -992,8 +1127,7 @@ class AuthManager:
     ) -> None:
         """Update state after a successful authentication attempt."""
 
-        self._credentials = credentials
-        self._auth_status = result.status
+        self._set_credentials_and_status(credentials, result.status)
         self._stats["successful_authentications"] += 1
         self._authenticated = True
 
@@ -1078,7 +1212,7 @@ class AuthManager:
         """Add common headers to the request headers dict in-place."""
         headers["X-Client-Version"] = "0.1.0"
         headers["X-Integration-Mode"] = "unified"
-        headers.setdefault("Content-Type", "application/json")
+        headers.setdefault("Content-Type", APPLICATION_JSON)
 
         if target in ("cloud", "both"):
             headers["X-Traigent-Client"] = "sdk"
@@ -1102,27 +1236,7 @@ class AuthManager:
         Returns:
             Dictionary of authentication headers
         """
-        auth_state = self.is_authenticated()
-        if inspect.isawaitable(auth_state):
-            auth_state = await auth_state
-        if not bool(auth_state):
-            auth_result = await self.authenticate()
-            if not auth_result.success or self._credentials is None:
-                self._authenticated = False
-                # Fail closed: never emit headers built from an unverified or
-                # backend-rejected API key. Doing so would defeat backend
-                # validation by allowing the SDK to send the raw key anyway.
-                failure_detail = auth_result.session_creation_failure
-                if failure_detail is not None:
-                    raise _InvalidCredentialsWithSessionFailure(
-                        auth_result.error_message
-                        or "Authentication failed; refusing to emit auth headers.",
-                        failure_detail,
-                    )
-                raise InvalidCredentialsError(
-                    auth_result.error_message
-                    or "Authentication failed; refusing to emit auth headers."
-                )
+        await self._ensure_authenticated_for_headers()
 
         if not self._credentials:
             self._authenticated = False
@@ -1132,21 +1246,50 @@ class AuthManager:
 
         # Generate headers based on authentication mode
         mode = self._credentials.mode
-        if mode == AuthMode.API_KEY:
-            headers = self._get_api_key_headers()
-        elif mode == AuthMode.JWT_TOKEN:
-            headers = await self._get_jwt_headers()
-        elif mode == AuthMode.OAUTH2:
-            headers = self._get_oauth_headers()
-        elif mode == AuthMode.SERVICE_TO_SERVICE:
-            headers = self._get_service_headers(target)
-        elif mode == AuthMode.DEVELOPMENT:
-            headers = self._get_dev_headers()
-        else:
-            headers = {}
+        headers = await self._headers_for_mode(mode, target)
 
+        self._latch_emitted_credential(headers)
         self._add_common_headers(headers, target)
         return headers
+
+    async def _ensure_authenticated_for_headers(self) -> None:
+        """Authenticate when needed; fail closed when that does not succeed."""
+        auth_state = self.is_authenticated()
+        if inspect.isawaitable(auth_state):
+            auth_state = await auth_state
+        if bool(auth_state):
+            return
+        auth_result = await self.authenticate()
+        if not auth_result.success or self._credentials is None:
+            self._authenticated = False
+            # Fail closed: never emit headers built from an unverified or
+            # backend-rejected API key. Doing so would defeat backend
+            # validation by allowing the SDK to send the raw key anyway.
+            failure_detail = auth_result.session_creation_failure
+            if failure_detail is not None:
+                raise _InvalidCredentialsWithSessionFailure(
+                    auth_result.error_message
+                    or "Authentication failed; refusing to emit auth headers.",
+                    failure_detail,
+                )
+            raise InvalidCredentialsError(
+                auth_result.error_message
+                or "Authentication failed; refusing to emit auth headers."
+            )
+
+    async def _headers_for_mode(self, mode: AuthMode, target: str) -> dict[str, str]:
+        """Build the credential headers for one authentication mode."""
+        if mode == AuthMode.API_KEY:
+            return self._get_api_key_headers()
+        if mode == AuthMode.JWT_TOKEN:
+            return await self._get_jwt_headers()
+        if mode == AuthMode.OAUTH2:
+            return self._get_oauth_headers()
+        if mode == AuthMode.SERVICE_TO_SERVICE:
+            return self._get_service_headers(target)
+        if mode == AuthMode.DEVELOPMENT:
+            return self._get_dev_headers()
+        return {}
 
     async def get_headers(self, target: str = "both") -> dict[str, str]:
         """Compatibility wrapper that proxies to :meth:`get_auth_headers`."""
@@ -1629,9 +1772,7 @@ class AuthManager:
         from traigent.utils.env_config import is_backend_offline
 
         if cloud_backend_egress_disabled(self.no_egress):
-            if is_backend_offline():
-                return "backend offline mode enabled"
-            return "backend egress disabled"
+            return AuthManager._backend_egress_reason(is_backend_offline())
 
         try:
             backend_api_url = BackendConfig.build_api_base(
@@ -1651,8 +1792,8 @@ class AuthManager:
 
         validation_payload = {"api_key": api_key}
         headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
+            "Accept": APPLICATION_JSON,
+            "Content-Type": APPLICATION_JSON,
             "User-Agent": get_sdk_user_agent(),
             "X-API-Key": api_key,
         }
@@ -1672,7 +1813,7 @@ class AuthManager:
                 return "requests library not available for backend validation"
             except Exception as exc:  # pragma: no cover - defensive thread boundary
                 logger.debug(
-                    "auth.api_key.validate_transport_error",
+                    _VALIDATE_TRANSPORT_ERROR_EVENT,
                     extra={"error": str(exc)},
                 )
                 return f"transport error: {exc.__class__.__name__}"
@@ -1700,10 +1841,8 @@ class AuthManager:
                             data = await response.json(content_type=None)
                         except Exception:
                             return "backend returned non-JSON success body"
-                        return self._interpret_backend_key_validation_response(
-                            response.status,
-                            data,
-                            url=url,
+                        return AuthManager._key_validation_success(
+                            self, url, headers, data, response
                         )
                     try:
                         raw_body = await response.text()
@@ -1721,10 +1860,27 @@ class AuthManager:
         except Exception as exc:  # pragma: no cover - exercised via unit tests
             # Note: log the exception type/message but never the key.
             logger.debug(
-                "auth.api_key.validate_transport_error",
+                _VALIDATE_TRANSPORT_ERROR_EVENT,
                 extra={"error": str(exc)},
             )
             return f"transport error: {exc.__class__.__name__}"
+
+    @staticmethod
+    def _backend_egress_reason(offline: bool) -> str:
+        if offline:
+            return "backend offline mode enabled"
+        return "backend egress disabled"
+
+    def _key_validation_success(
+        self, url: str, headers: dict[str, str], data: Any, response: Any
+    ) -> str | None:
+        if _latch_key_validation(url, headers, data):
+            self._server_optimization_only = True
+        return self._interpret_backend_key_validation_response(
+            response.status,
+            data,
+            url=url,
+        )
 
     @staticmethod
     def _interpret_backend_key_validation_response(
@@ -1765,6 +1921,26 @@ class AuthManager:
             backend_url=url,
         )
 
+        category = AuthManager._backend_validation_category(
+            status, body_text, lower_headers
+        )
+
+        body_excerpt = _validation_body_excerpt(raw_body)
+        status_context = f"HTTP {status}"
+        if url:
+            status_context = f"{status_context} from POST {url}"
+        if body_excerpt:
+            status_context = f"{status_context}: {body_excerpt}"
+        reason = f"{category} ({status_context})"
+        return _BackendKeyValidationFailure(
+            reason,
+            session_creation_failure=detail,
+        )
+
+    @staticmethod
+    def _backend_validation_category(
+        status: int, body_text: str, lower_headers: dict[str, str]
+    ) -> str:
         edge_blocked = status == 403 and (
             "cf-ray" in lower_headers
             or "cf-mitigated" in lower_headers
@@ -1783,9 +1959,9 @@ class AuthManager:
         )
 
         if edge_blocked:
-            category = "edge blocked"
+            return "edge blocked"
         elif "expired" in body_text or "expiration" in body_text:
-            category = "expired API key"
+            return "expired API key"
         elif status == 403 or any(
             marker in body_text
             for marker in (
@@ -1795,7 +1971,7 @@ class AuthManager:
                 "scope",
             )
         ):
-            category = "insufficient scope"
+            return "insufficient scope"
         elif status == 401 or any(
             marker in body_text
             for marker in (
@@ -1806,23 +1982,11 @@ class AuthManager:
                 "authentication",
             )
         ):
-            category = "invalid API key"
+            return "invalid API key"
         elif status == 429:
-            category = "rate limited"
+            return "rate limited"
         else:
-            category = "backend validation failed"
-
-        body_excerpt = _validation_body_excerpt(raw_body)
-        status_context = f"HTTP {status}"
-        if url:
-            status_context = f"{status_context} from POST {url}"
-        if body_excerpt:
-            status_context = f"{status_context}: {body_excerpt}"
-        reason = f"{category} ({status_context})"
-        return _BackendKeyValidationFailure(
-            reason,
-            session_creation_failure=detail,
-        )
+            return "backend validation failed"
 
     def _validate_api_key_with_backend_sync(
         self,
@@ -1842,6 +2006,7 @@ class AuthManager:
             return "backend egress disabled"
 
         try:
+            validation_payload = freeze_json_body(validation_payload)
             preflight_requests("POST", url, json=validation_payload)
             response = requests.post(
                 url,
@@ -1850,11 +2015,12 @@ class AuthManager:
                 timeout=15,
                 allow_redirects=False,
             )
+            observe_requests_response(response)
         except requests.Timeout:
             return "backend validation timed out"
         except requests.RequestException as exc:
             logger.debug(
-                "auth.api_key.validate_transport_error",
+                _VALIDATE_TRANSPORT_ERROR_EVENT,
                 extra={"error": str(exc)},
             )
             return f"transport error: {exc.__class__.__name__}"
@@ -1870,6 +2036,8 @@ class AuthManager:
                 data = response.json()
             except Exception:
                 return "backend returned non-JSON success body"
+            if _latch_key_validation(url, headers, data):
+                self._server_optimization_only = True
             return self._interpret_backend_key_validation_response(
                 status,
                 data,
@@ -1951,11 +2119,14 @@ class AuthManager:
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for OAuth2 flow") from None
 
+        from traigent.config.backend_config import BackendConfig
+
         try:
             cloud_base_url = await validate_cloud_base_url_async(
-                self.config.cloud_base_url, purpose="OAuth2 client credentials"
+                self.config.cloud_base_url or BackendConfig.get_cloud_backend_url(),
+                purpose="OAuth2 client credentials",
             )
-        except (ValueError, UnsafeUrlError) as exc:
+        except ValueError as exc:
             logger.warning("Rejected unsafe OAuth2 cloud_base_url: %s", exc)
             raise RuntimeError("OAuth2 cloud_base_url is not allowed") from None
         token_url = f"{cloud_base_url}/oauth/token"

@@ -55,6 +55,30 @@ You can also set the backend via environment variables:
 export TRAIGENT_BACKEND_URL=https://your-backend.example.com
 ```
 
+A self-hosted backend on a private network also needs `TRAIGENT_ALLOW_PRIVATE_BACKEND=1`,
+which is pinned to that exact backend origin. See
+[Self-hosted private backend](safety-gates.md#self-hosted-private-backend-traigent_allow_private_backend).
+
+### Strict endpoint mode (self-hosted, no vendor fallback)
+
+By default an unset backend falls back to `https://portal.traigent.ai`. A self-hosted
+deployment that must never contact the vendor cloud can require an explicit endpoint:
+
+```bash
+export TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT=1   # accepts 1 / true / yes
+# or
+export TRAIGENT_DEPLOYMENT_PROFILE=self_hosted
+export TRAIGENT_BACKEND_URL=https://your-backend.example.com
+```
+
+In this mode, if no endpoint is configured (`TRAIGENT_BACKEND_URL`, `TRAIGENT_API_URL`
+or stored `traigent auth login` credentials) the SDK raises `EndpointNotConfiguredError`
+(a `ConfigurationError`) before any network call. The vendor portal link, signup hint,
+local-usage analytics endpoint, dataset-converter default and CSP backend origin are
+also disabled. A configured endpoint that is unreachable fails with a connection error;
+the SDK never retries against a vendor URL. Set `TRAIGENT_WEB_URL` to get portal links
+that do not derive from the backend host. Default (SaaS) behaviour is unchanged.
+
 Verify which backend you're pointing to with:
 
 ```bash

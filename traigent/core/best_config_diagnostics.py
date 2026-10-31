@@ -51,7 +51,7 @@ import weakref
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from enum import StrEnum
-from typing import Any, TypeVar
+from typing import Any
 
 from traigent.utils.exceptions import ConfigurationError
 
@@ -85,10 +85,7 @@ class Category(StrEnum):
 _TRUSTED: dict[int, weakref.ref[BaseException]] = {}
 
 
-_ConfigErrorT = TypeVar("_ConfigErrorT", bound=ConfigurationError)
-
-
-def _trust(error: _ConfigErrorT) -> _ConfigErrorT:
+def _trust[ConfigErrorT: ConfigurationError](error: ConfigErrorT) -> ConfigErrorT:
     key = id(error)
 
     def _forget(_ref: weakref.ref[BaseException], key: int = key) -> None:
@@ -112,7 +109,7 @@ def _safe_error(message: str, **kwargs: Any) -> SafeConfigurationError:
     return _trust(SafeConfigurationError(message, **kwargs))  # type: ignore[return-value]
 
 
-def _mark_safe(error: _ConfigErrorT) -> _ConfigErrorT:
+def _mark_safe[ConfigErrorT: ConfigurationError](error: ConfigErrorT) -> ConfigErrorT:
     """Trust ``error`` as carrying a fixed, literal message (see :func:`fixed_reason`)."""
 
     return _trust(error)
@@ -214,15 +211,12 @@ def fs_guard(message: str) -> Iterator[None]:
             raise
 
 
-_F = TypeVar("_F", bound=Callable[..., Any])
-
-
-def boundary(
+def boundary[F: Callable[..., Any]](
     category: Category,
     message: str,
     *,
     convert: Callable[[BaseException], ConfigurationError] | None = None,
-) -> Callable[[_F], _F]:
+) -> Callable[[F], F]:
     """Decorate a PUBLIC best-config entry point with the one diagnostic boundary.
 
     Whatever leaves the wrapped function is either a trusted refusal (:func:`is_safe`,
@@ -240,7 +234,7 @@ def boundary(
     return ``None`` after a fixed log line) are unaffected: only what escapes is wrapped.
     """
 
-    def decorate(func: _F) -> _F:
+    def decorate(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             error: BaseException

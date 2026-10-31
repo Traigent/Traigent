@@ -17,16 +17,16 @@ Example::
     @traigent.optimize(
         temperature=Range(0.0, 2.0),
         max_tokens=IntRange(100, 4096),
-        model=Choices(["gpt-4", "gpt-3.5-turbo"]),
+        model=Choices(["gpt-5.6-sol", "gpt-5.6-terra"]),
         learning_rate=LogRange(1e-5, 1e-1),
     )
     def my_func(query): ...
 
     # With TVL features (constraints, units)
     temp = Range(0.0, 2.0, unit="ratio")
-    model = Choices(["gpt-4", "gpt-3.5"])
+    model = Choices(["gpt-5.6-sol", "gpt-3.5"])
     constraints = [
-        implies(model.equals("gpt-4"), temp.lte(0.7)),
+        implies(model.equals("gpt-5.6-sol"), temp.lte(0.7)),
     ]
 """
 
@@ -41,10 +41,8 @@ from dataclasses import dataclass, replace
 from typing import (
     TYPE_CHECKING,
     Any,
-    Generic,
     Literal,
     NotRequired,
-    TypeAlias,
     TypedDict,
     TypeGuard,
     TypeVar,
@@ -86,14 +84,14 @@ class IntRangeConfigDict(TypedDict):
     log: NotRequired[bool]
 
 
-FloatRangeTuple: TypeAlias = tuple[float, float]
-IntRangeTuple: TypeAlias = tuple[int, int]
-ChoicesConfigValue: TypeAlias = list[T]
-FloatRangeConfigValue: TypeAlias = FloatRangeTuple | FloatRangeConfigDict
-IntRangeConfigValue: TypeAlias = IntRangeTuple | IntRangeConfigDict
+type FloatRangeTuple = tuple[float, float]
+type IntRangeTuple = tuple[int, int]
+type ChoicesConfigValue[T] = list[T]
+type FloatRangeConfigValue = FloatRangeTuple | FloatRangeConfigDict
+type IntRangeConfigValue = IntRangeTuple | IntRangeConfigDict
 # ParameterRange itself is not generic, so the categorical branch erases the
 # element type at the aggregate alias and is recovered on concrete overloads.
-ParameterRangeConfigValue: TypeAlias = (
+type ParameterRangeConfigValue = (
     FloatRangeConfigValue | IntRangeConfigValue | ChoicesConfigValue[Any]
 )
 
@@ -635,7 +633,7 @@ class LogRange(NumericConstraintBuilderMixin, ParameterRange):
 
 
 @dataclass(frozen=True, slots=True)
-class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
+class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
     """Categorical choices for optimization.
 
     Args:
@@ -650,11 +648,11 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
             Set to False to allow mixed types (e.g., [None, "default", 1]).
 
     Example:
-        >>> model = Choices(["gpt-4", "gpt-3.5-turbo", "claude-haiku-4-5-20251001"])
+        >>> model = Choices(["gpt-5.6-sol", "gpt-5.6-terra", "claude-haiku-4-5-20251001"])
         >>> use_cache = Choices([True, False], default=True)
         >>> temperature = Choices([0.0, 0.3, 0.7, 1.0])
         >>> # Multi-agent: assign to specific agent
-        >>> financial_model = Choices(["gpt-4", "gpt-3.5"], agent="financial")
+        >>> financial_model = Choices(["gpt-5.6-sol", "gpt-3.5"], agent="financial")
 
     Raises:
         TypeError: If values is a string or bytes, or if enforce_type=True and
@@ -949,6 +947,14 @@ class TextDocument(Choices[str]):
     """
 
     def __init__(self, initial_text: str, name: str | None = None) -> None:
+        """Create a text-document parameter seeded with its initial text.
+
+        Args:
+            initial_text: The single starting document value; it is the only
+                choice until training proposes alternatives. It does not set
+                ``default``, which stays ``None``.
+            name: Optional parameter name.
+        """
         super().__init__((initial_text,), name=name)
 
 
@@ -1024,7 +1030,7 @@ def normalize_config_value(value: LogRange) -> FloatRangeConfigDict: ...
 
 
 @overload
-def normalize_config_value(value: Choices[T]) -> ChoicesConfigValue[T]: ...
+def normalize_config_value[T](value: Choices[T]) -> ChoicesConfigValue[T]: ...
 
 
 @overload
@@ -1032,7 +1038,7 @@ def normalize_config_value(value: tuple[Any, ...]) -> tuple[Any, ...]: ...
 
 
 @overload
-def normalize_config_value(value: list[T]) -> list[T]: ...
+def normalize_config_value[T](value: list[T]) -> list[T]: ...
 
 
 @overload
@@ -1076,7 +1082,7 @@ def normalize_parameter_value(value: LogRange) -> FloatRangeConfigDict: ...
 
 
 @overload
-def normalize_parameter_value(value: Choices[T]) -> ChoicesConfigValue[T]: ...
+def normalize_parameter_value[T](value: Choices[T]) -> ChoicesConfigValue[T]: ...
 
 
 @overload
@@ -1084,7 +1090,7 @@ def normalize_parameter_value(value: tuple[Any, ...]) -> tuple[Any, ...]: ...
 
 
 @overload
-def normalize_parameter_value(value: list[T]) -> list[T]: ...
+def normalize_parameter_value[T](value: list[T]) -> list[T]: ...
 
 
 @overload

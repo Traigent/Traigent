@@ -27,7 +27,8 @@ budget = traigent.ExecutionBudget(
 )
 ```
 
-At least one of `max_cost_usd`, `max_examples`, or `deadline_seconds` must be set.
+At least one of `max_cost_usd`, `max_examples`, `deadline_seconds`, or
+`max_budget_debit_usd` must be set.
 Any value `<= 0` raises `ConfigurationError` at construction (a nonpositive cap
 would block every trial before it starts). Unset dimensions are unbounded.
 
@@ -98,6 +99,66 @@ shared cost is spent.
 # with stop_reason == "execution_budget" (never a pre-run CostLimitExceeded).
 await answer.optimize(cost_limit=2.0, budget=traigent.ExecutionBudget(max_cost_usd=0.50))
 ```
+
+## Explicit allowances for unpriced calls
+
+When provider cost is unknown, a caller may explicitly allocate a conservative
+allowance to each call. This bounds **allocation debits**, not the provider's
+actual USD charge. Unknown actual cost stays unknown. This API is available from
+SDK 0.32.0; SDK 0.31.1 and earlier do not contain it.
+
+```python
+budget = traigent.ExecutionBudget(max_budget_debit_usd=0.21)
+
+def call_provider():
+    lease = budget.reserve_debit(0.05)  # refuses BEFORE placing an unfunded call
+    try:
+        return existing_provider_call()
+    finally:
+        lease.settle_debit()           # retains 0.05 even on failure/cancellation
+
+result = await answer.optimize(budget=budget)
+local_allocation = budget.debit_snapshot()
+print(local_allocation.consumed_budget_debit_usd)
+print(local_allocation.remaining_budget_debit_usd)
+```
+
+The caller's provider-call door alone reserves and settles; the SDK engine never
+automatically charges an allocation debit. The same ledger can cover baseline,
+search, holdout, retries, fallback calls, and direct calls when each uses that
+door. Four 0.05 settlements from 0.21 leave 0.01; another 0.05 reservation raises
+`BudgetDebitExceeded` (import from `traigent.core.execution_budget`). In an
+attached optimization this stops gracefully with `stop_reason="execution_budget"`
+and retains completed trials and any detailed partial example rows. Outside
+optimization, callers handle this typed early-stop exception themselves.
+
+Reservations count both consumed and in-flight allocations atomically across
+threads and async callers in this process. No lock spans the provider call.
+Failure and cancellation do not refund a reservation. Call `lease.release_debit()`
+only after proving the request was never placed or was nonbillable. A lease can
+be settled or released once, only by its owning budget. An optional finite,
+nonnegative `lease.settle_debit(amount)` records an explicit allocation settlement;
+larger amounts are retained without clamping and prevent future admission after
+an overrun. Record actual observed cost separately through existing usage
+telemetry or `record_external`; a debit settlement never supplies that telemetry.
+
+A refused large reservation does not exhaust or poison the shared object: a later
+phase can still reserve a smaller affordable amount. The optimizer's current run
+stops after refusal; it does not silently retry with a smaller allowance.
+
+`debit_snapshot()` is a separate local view containing `max_budget_debit_usd`,
+`consumed_budget_debit_usd`, `reserved_budget_debit_usd`,
+`remaining_budget_debit_usd`, and `overrun_budget_debit_usd`. These fields never
+extend the existing `snapshot()`, result metadata, backend payloads, cost floors,
+winner cost statistics, billing, or observability. No distributed or persistent
+reservation guarantee is provided. Memory is proportional to open leases; close
+each reservation in its provider door.
+
+Actual-cost `max_cost_usd`, explicit `cost_limit` / `TRAIGENT_RUN_COST_LIMIT`,
+strict tracking, and cost-objective refusals remain independent and unchanged.
+An explicit actual-cost cap still refuses unknown actual cost. Do not mirror a
+nominal allowance into an actual-cost cap or clear a caller-supplied cost cap to
+make an unpriced run proceed.
 
 ## Reading what was consumed
 

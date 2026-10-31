@@ -19,6 +19,8 @@ from typing import Any, Self
 
 from ._codec import unb64u
 
+_NOT_A_LABEL_ENVELOPE = "not a label envelope"
+
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _OPAQUE_REF = re.compile(
     rf"^(?:{_UUID}|(?:tenant|project)_[0-9a-f]{{32}}|[a-z]+ref_[0-9a-f]{{32}})$"
@@ -87,6 +89,31 @@ class KeyMaterial(_Checked):
         unb64u(value)
 
 
+def _check_module_identifier(
+    cls: type[CodeIdentifier],
+    module_name: str,
+    qualname: str,
+    root: Path | None,
+    search_paths: list[Path] | None,
+) -> None:
+    """Locate the module source statically and require ``qualname`` to be defined."""
+    if search_paths is not None:
+        search = [Path(p) for p in search_paths]
+    elif root is not None:
+        search = [root]
+    else:
+        search = [Path(p or ".") for p in sys.path]
+    source = cls._find_source(module_name, [p.resolve() for p in search])
+    if source is None:
+        raise ContentClassError("code identifier module source not found")
+    try:
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError) as exc:
+        raise ContentClassError("code identifier source is unreadable") from exc
+    if not cls._defines(tree, qualname):
+        raise ContentClassError("code identifier does not name local code")
+
+
 class CodeIdentifier(_Checked):
     """A code identifier verified against local code WITHOUT importing or running it.
 
@@ -145,22 +172,7 @@ class CodeIdentifier(_Checked):
         match = _CODE_ID.match(identifier)
         if match:
             module_name, qualname = match.groups()
-            search = (
-                [Path(p) for p in search_paths]
-                if search_paths is not None
-                else (
-                    [root] if root is not None else [Path(p or ".") for p in sys.path]
-                )
-            )
-            source = cls._find_source(module_name, [p.resolve() for p in search])
-            if source is None:
-                raise ContentClassError("code identifier module source not found")
-            try:
-                tree = ast.parse(source.read_text(encoding="utf-8"))
-            except (OSError, SyntaxError, ValueError) as exc:
-                raise ContentClassError("code identifier source is unreadable") from exc
-            if not cls._defines(tree, qualname):
-                raise ContentClassError("code identifier does not name local code")
+            _check_module_identifier(cls, module_name, qualname, root, search_paths)
             return cls(identifier)
         base = (root or Path.cwd()).resolve()
         target = (base / identifier).resolve()
@@ -199,11 +211,11 @@ class EncryptedBlob(dict):  # type: ignore[type-arg]
 
     def __init__(self, envelope: dict[str, Any]) -> None:
         if not isinstance(envelope, dict) or set(envelope) != self._KEYS:
-            raise ContentClassError("not a label envelope")
+            raise ContentClassError(_NOT_A_LABEL_ENVELOPE)
         if envelope["version"] != 1 or not isinstance(envelope["key_epoch"], int):
-            raise ContentClassError("not a label envelope")
+            raise ContentClassError(_NOT_A_LABEL_ENVELOPE)
         if envelope["key_epoch"] < 1 or isinstance(envelope["key_epoch"], bool):
-            raise ContentClassError("not a label envelope")
+            raise ContentClassError(_NOT_A_LABEL_ENVELOPE)
         if len(unb64u(envelope["enc"])) != 32:
             raise ContentClassError("bad envelope key share")
         if len(unb64u(envelope["ciphertext"])) not in (48, 80, 144, 272):

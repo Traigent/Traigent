@@ -66,9 +66,9 @@ def _openai_supported_models() -> list[str]:
 logger = get_logger(__name__)
 
 # Common model alias fixes
-MODEL_ALIASES: dict[str, str] = {
-    "o4-mini": "gpt-4o-mini",
-}
+# (o4-mini -> gpt-5.6-terra was removed: o4-mini is retired 2026-10-23 and is
+# now rejected by validation via traigent.config.retired_models.)
+MODEL_ALIASES: dict[str, str] = {}
 
 
 class LangChainAgentExecutor(AgentExecutor):
@@ -99,7 +99,7 @@ class LangChainAgentExecutor(AgentExecutor):
             raise AgentExecutionError("LangChain not available")
 
         if agent_spec.custom_tools:
-            return await self._execute_with_tools(agent_spec.custom_tools)
+            return self._execute_with_tools(agent_spec.custom_tools)
 
         chat_openai_cls, human_message_cls, modern_lc = (
             self._import_langchain_components()
@@ -150,30 +150,33 @@ class LangChainAgentExecutor(AgentExecutor):
         llm = chat_openai_cls(**llm_kwargs)
         return llm, model_name
 
-    async def _execute_langchain_conversation(
-        self, llm, human_message_cls, model_name: str, prompt_text: str
+    @staticmethod
+    def _build_ainvoke_conversation_result(
+        ai_message: Any, model_name: str
     ) -> dict[str, Any]:
-        messages = [human_message_cls(content=prompt_text)]
-        if hasattr(llm, "ainvoke"):
-            ai_message = await llm.ainvoke(messages)
-            output = getattr(ai_message, "content", None) or str(ai_message)
-            usage = getattr(ai_message, "usage_metadata", None)
-            meta: dict[str, Any] = {"model": model_name}
-            if usage and isinstance(usage, dict):
-                # Surface LangChain usage metadata for downstream metrics capture
-                meta["usage_metadata"] = usage
-            # Some LC variants expose response_metadata as well
-            resp_meta = getattr(ai_message, "response_metadata", None)
-            if resp_meta and isinstance(resp_meta, dict):
-                meta["response_metadata"] = resp_meta
-            tokens_used = None
-            if isinstance(usage, dict):
-                tokens_used = usage.get("total_tokens")
-            return {"output": output, "tokens_used": tokens_used, "metadata": meta}
-        response = await llm.agenerate([messages])
-        output = response.generations[0][0].text
+        output = getattr(ai_message, "content", None) or str(ai_message)
+        usage = getattr(ai_message, "usage_metadata", None)
+        meta: dict[str, Any] = {"model": model_name}
+        if usage and isinstance(usage, dict):
+            # Surface LangChain usage metadata for downstream metrics capture
+            meta["usage_metadata"] = usage
+        # Some LC variants expose response_metadata as well
+        resp_meta = getattr(ai_message, "response_metadata", None)
+        if resp_meta and isinstance(resp_meta, dict):
+            meta["response_metadata"] = resp_meta
         tokens_used = None
-        if hasattr(response, "llm_output") and response.llm_output:
+        if isinstance(usage, dict):
+            tokens_used = usage.get("total_tokens")
+        return {"output": output, "tokens_used": tokens_used, "metadata": meta}
+
+    @staticmethod
+    def _build_agenerate_conversation_result(
+        response: Any, model_name: str
+    ) -> dict[str, Any]:
+        output = response.generations[0][0].text
+        has_llm_output = hasattr(response, "llm_output") and bool(response.llm_output)
+        tokens_used = None
+        if has_llm_output:
             tokens_used = response.llm_output.get("token_usage", {}).get("total_tokens")
         return {
             "output": output,
@@ -182,16 +185,26 @@ class LangChainAgentExecutor(AgentExecutor):
                 "model": model_name,
                 "prompt_tokens": (
                     response.llm_output.get("token_usage", {}).get("prompt_tokens")
-                    if hasattr(response, "llm_output") and response.llm_output
+                    if has_llm_output
                     else None
                 ),
                 "completion_tokens": (
                     response.llm_output.get("token_usage", {}).get("completion_tokens")
-                    if hasattr(response, "llm_output") and response.llm_output
+                    if has_llm_output
                     else None
                 ),
             },
         }
+
+    async def _execute_langchain_conversation(
+        self, llm, human_message_cls, model_name: str, prompt_text: str
+    ) -> dict[str, Any]:
+        messages = [human_message_cls(content=prompt_text)]
+        if hasattr(llm, "ainvoke"):
+            ai_message = await llm.ainvoke(messages)
+            return self._build_ainvoke_conversation_result(ai_message, model_name)
+        response = await llm.agenerate([messages])
+        return self._build_agenerate_conversation_result(response, model_name)
 
     async def _execute_langchain_task(
         self, llm, human_message_cls, prompt_text: str
@@ -221,7 +234,7 @@ class LangChainAgentExecutor(AgentExecutor):
             ),
         }
 
-    async def _execute_with_tools(self, tools: list[str]) -> dict[str, Any]:
+    def _execute_with_tools(self, tools: list[str]) -> dict[str, Any]:
         """Reject tool-bearing specs until LangChain tool invocation is implemented."""
         configured_tools = ", ".join(tools)
         detail = f" Configured custom_tools: {configured_tools}." if tools else ""
@@ -255,7 +268,7 @@ class LangChainAgentExecutor(AgentExecutor):
         valid_models = [
             "gpt-4o-mini",
             "GPT-4o",
-            "gpt-4-turbo",
+            "gpt-5.6-sol",
             "claude-2",
             "claude-instant",
         ]
@@ -652,8 +665,7 @@ class OpenAIAgentExecutor(AgentExecutor):
             "gpt-4o-mini-16k",
             "GPT-4o",
             "gpt-4-32k",
-            "gpt-4-turbo",
-            "gpt-4-1106-preview",
+            "gpt-5.6-sol",
         }
 
         model = config.get("model")

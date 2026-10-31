@@ -16,7 +16,7 @@ Our mission: **Anything you can measure, we can improve.** Whether it's accuracy
 
 **Quick Install:**
 
-Install from PyPI — no clone required (Python 3.11+):
+Install from PyPI — no clone required (Python 3.12+):
 
 ```bash
 # pip
@@ -235,7 +235,7 @@ The default run uses Traigent's smart optimizer when portal credentials are avai
 ```python
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4o-mini", "claude-haiku-4-5-20251001", "gemini-1.5-pro"],
+        "model": ["gpt-4o-mini", "claude-haiku-4-5-20251001", "gemini-3.8-flash"],
         "temperature": [0.1, 0.5, 0.9],
     },
     objectives=["accuracy", "cost"],
@@ -276,7 +276,7 @@ def multi_provider_agent(question: str) -> str:
 
 ### Installation
 
-Python 3.11+ on Linux, macOS, or Windows. The published package on [PyPI](https://pypi.org/project/traigent/) is the recommended way to install — `pip install "traigent[recommended]"` or `uv add "traigent[recommended]"`. No repository checkout is required to use the SDK or its `traigent` CLI.
+Python 3.12+ on Linux, macOS, or Windows. The published package on [PyPI](https://pypi.org/project/traigent/) is the recommended way to install — `pip install "traigent[recommended]"` or `uv add "traigent[recommended]"`. No repository checkout is required to use the SDK or its `traigent` CLI.
 
 Commitment linking is POSIX-only for now: it relies on owner-only (mode 0600) bundle files and directory fsync. `traigent certify finalize` is POSIX-only for now, with or without `--link-commitments`, because it always writes a client bundle; `traigent certify verify --open-commitments` is likewise POSIX-only. On other platforms these commands refuse with `LINKAGE_UNSUPPORTED_PLATFORM` before any secret is generated or read and before any request is sent.
 

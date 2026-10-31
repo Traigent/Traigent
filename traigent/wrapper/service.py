@@ -44,7 +44,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, cast
 
 from traigent.hybrid.protocol import (
     EstimatedTokensPerExample,
@@ -56,7 +56,6 @@ from traigent.wrapper.errors import BadRequestError, HybridAPIError
 
 logger = get_logger(__name__)
 
-F = TypeVar("F", bound=Callable[..., Any])
 
 # OpenAPI contract: tunable and objective names must be valid Python identifiers.
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*$")
@@ -194,7 +193,7 @@ class TraigentService:
 
         @app.tvars
         def config_space():
-            return {"model": {"type": "enum", "values": ["gpt-4"]}}
+            return {"model": {"type": "enum", "values": ["gpt-5.6-sol"]}}
 
         @app.execute
         async def run(example_id, data, config):
@@ -307,7 +306,7 @@ class TraigentService:
             # Fallback for non-JSON-native values in custom wrappers.
             return repr(payload)
 
-    def tvars(self, func: F) -> F:
+    def tvars[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register TVAR configuration function.
 
         The decorated function should return a dictionary of TVAR
@@ -317,7 +316,7 @@ class TraigentService:
             @app.tvars
             def config_space():
                 return {
-                    "model": {"type": "enum", "values": ["gpt-4"]},
+                    "model": {"type": "enum", "values": ["gpt-5.6-sol"]},
                     "temperature": {"type": "float", "range": [0.0, 2.0]},
                 }
         """
@@ -325,7 +324,7 @@ class TraigentService:
         self._cached_tvars = None  # Invalidate cache
         return func
 
-    def tunables(self, func: F) -> F:
+    def tunables[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register tunable configuration function.
 
         Client-friendly alias for tvars(). The decorated function should
@@ -335,13 +334,13 @@ class TraigentService:
             @app.tunables
             def config_space():
                 return {
-                    "model": {"type": "enum", "values": ["gpt-4", "claude-3"]},
+                    "model": {"type": "enum", "values": ["gpt-5.6-sol", "claude-3"]},
                     "temperature": {"type": "float", "range": [0.0, 1.0]},
                 }
         """
         return self.tvars(func)
 
-    def execute(self, func: F) -> F:
+    def execute[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register execution handler.
 
         The decorated function receives:
@@ -364,7 +363,7 @@ class TraigentService:
         self._execute_handler = func
         return func
 
-    def evaluate(self, func: F) -> F:
+    def evaluate[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register evaluation handler.
 
         The decorated function receives:
@@ -385,37 +384,37 @@ class TraigentService:
         self._evaluate_handler = func
         return func
 
-    def constraints(self, func: F) -> F:
+    def constraints[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register constraints declaration function."""
         self._constraints_handler = func  # type: ignore[assignment]
         return func
 
-    def objectives(self, func: F) -> F:
+    def objectives[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register objectives declaration function."""
         self._objectives_handler = func  # type: ignore[assignment]
         return func
 
-    def exploration(self, func: F) -> F:
+    def exploration[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register exploration declaration function."""
         self._exploration_handler = func  # type: ignore[assignment]
         return func
 
-    def promotion_policy(self, func: F) -> F:
+    def promotion_policy[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register promotion policy declaration function."""
         self._promotion_policy_handler = func  # type: ignore[assignment]
         return func
 
-    def defaults(self, func: F) -> F:
+    def defaults[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register default-config declaration function."""
         self._defaults_handler = func  # type: ignore[assignment]
         return func
 
-    def measures(self, func: F) -> F:
+    def measures[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register declared measure names function."""
         self._measures_handler = func  # type: ignore[assignment]
         return func
 
-    def evaluation_kwargs(self, func: F) -> F:
+    def evaluation_kwargs[F: Callable[..., Any]](self, func: F) -> F:
         """Decorator to register supported evaluate kwargs."""
         self._evaluation_kwargs_handler = func  # type: ignore[assignment]
         return func
@@ -497,43 +496,7 @@ class TraigentService:
             raise ValueError("evaluation kwarg default must be a scalar value")
 
         domain = dict(definition.domain or {})
-        allowed_domain_keys = {"values", "range", "resolution"}
-        unknown_domain_keys = set(domain) - allowed_domain_keys
-        if unknown_domain_keys:
-            raise ValueError(
-                f"evaluation kwarg domain contains unsupported keys: {sorted(unknown_domain_keys)}"
-            )
-
-        if "values" in domain:
-            values = domain["values"]
-            if not isinstance(values, list) or not values:
-                raise ValueError(
-                    "evaluation kwarg domain.values must be a non-empty list"
-                )
-            if not all(self._is_scalar_value(item) for item in values):
-                raise ValueError(
-                    "evaluation kwarg domain.values entries must all be scalar values"
-                )
-        if "range" in domain:
-            range_spec = domain["range"]
-            if (
-                not isinstance(range_spec, list)
-                or len(range_spec) != 2
-                or not all(
-                    isinstance(item, (int, float)) and not isinstance(item, bool)
-                    for item in range_spec
-                )
-            ):
-                raise ValueError(
-                    "evaluation kwarg domain.range must be a two-item numeric list"
-                )
-        if "resolution" in domain and not (
-            isinstance(domain["resolution"], (int, float))
-            and not isinstance(domain["resolution"], bool)
-        ):
-            raise ValueError("evaluation kwarg domain.resolution must be numeric")
-        if definition.type == "enum" and "values" not in domain:
-            raise ValueError("enum evaluation kwargs must declare domain.values")
+        self._validate_evaluation_kwarg_domain(definition.type, domain)
 
         if definition.default is not None:
             self._validate_evaluation_kwarg_value(definition, definition.default)
@@ -545,6 +508,49 @@ class TraigentService:
             domain=domain or None,
             default=definition.default,
         )
+
+    def _validate_evaluation_kwarg_domain(
+        self, kwarg_type: str, domain: dict[str, Any]
+    ) -> None:
+        """Validate the declared domain of one evaluation kwarg definition."""
+        allowed_domain_keys = {"values", "range", "resolution"}
+        unknown_domain_keys = set(domain) - allowed_domain_keys
+        if unknown_domain_keys:
+            raise ValueError(
+                f"evaluation kwarg domain contains unsupported keys: {sorted(unknown_domain_keys)}"
+            )
+
+        if "values" in domain:
+            self._validate_evaluation_kwarg_domain_values(domain["values"])
+        if "range" in domain:
+            self._validate_evaluation_kwarg_domain_range(domain["range"])
+        if "resolution" in domain and not self._is_plain_number(domain["resolution"]):
+            raise ValueError("evaluation kwarg domain.resolution must be numeric")
+        if kwarg_type == "enum" and "values" not in domain:
+            raise ValueError("enum evaluation kwargs must declare domain.values")
+
+    @staticmethod
+    def _is_plain_number(value: Any) -> bool:
+        """Return whether a value is an int or float but not a bool."""
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    def _validate_evaluation_kwarg_domain_values(self, values: Any) -> None:
+        if not isinstance(values, list) or not values:
+            raise ValueError("evaluation kwarg domain.values must be a non-empty list")
+        if not all(self._is_scalar_value(item) for item in values):
+            raise ValueError(
+                "evaluation kwarg domain.values entries must all be scalar values"
+            )
+
+    def _validate_evaluation_kwarg_domain_range(self, range_spec: Any) -> None:
+        if (
+            not isinstance(range_spec, list)
+            or len(range_spec) != 2
+            or not all(self._is_plain_number(item) for item in range_spec)
+        ):
+            raise ValueError(
+                "evaluation kwarg domain.range must be a two-item numeric list"
+            )
 
     def _resolve_declared_evaluation_kwargs(
         self,
@@ -574,21 +580,7 @@ class TraigentService:
 
         domain = definition.domain or {}
         values = domain.get("values")
-        if definition.type == "bool":
-            if not isinstance(value, bool):
-                raise ValueError("must be a bool")
-        elif definition.type == "int":
-            if not isinstance(value, int) or isinstance(value, bool):
-                raise ValueError("must be an int")
-        elif definition.type == "float":
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                raise ValueError("must be numeric")
-        elif definition.type == "str":
-            if not isinstance(value, str):
-                raise ValueError("must be a string")
-        elif definition.type == "enum":
-            if values is None or value not in values:
-                raise ValueError("must be one of the declared enum values")
+        TraigentService._validate_evaluation_kwarg_type(definition, value, values)
 
         if values is not None and definition.type != "enum" and value not in values:
             raise ValueError("must be one of the declared values")
@@ -603,6 +595,35 @@ class TraigentService:
                 raise ValueError(
                     f"must be within range [{range_spec[0]}, {range_spec[1]}]"
                 )
+
+    @staticmethod
+    def _validate_evaluation_kwarg_type(
+        definition: EvaluationKwargDefinition, value: ScalarValue, values: Any
+    ) -> None:
+        if definition.type == "bool":
+            if not isinstance(value, bool):
+                raise ValueError("must be a bool")
+        elif definition.type == "int":
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError("must be an int")
+        elif definition.type == "float":
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise ValueError("must be numeric")
+        else:
+            TraigentService._validate_evaluation_kwarg_text_type(
+                definition, value, values
+            )
+
+    @staticmethod
+    def _validate_evaluation_kwarg_text_type(
+        definition: EvaluationKwargDefinition, value: ScalarValue, values: Any
+    ) -> None:
+        if definition.type == "str":
+            if not isinstance(value, str):
+                raise ValueError("must be a string")
+        elif definition.type == "enum":
+            if values is None or value not in values:
+                raise ValueError("must be one of the declared enum values")
 
     def _validate_effective_evaluation_kwargs(
         self,
@@ -972,6 +993,82 @@ class TraigentService:
             metrics["cost_unmeasured"] = 1.0
         return metrics
 
+    @staticmethod
+    def _execute_output_item(
+        example_id: str, unpacked: dict[str, Any]
+    ) -> dict[str, Any]:
+        output_item: dict[str, Any] = {
+            "example_id": example_id,
+            "output": unpacked["output"],
+        }
+        # ``cost_usd`` is optional per output item: omit it rather than
+        # send a fabricated 0.0 for a handler that reported nothing.
+        if unpacked["cost_usd"] is not None:
+            output_item["cost_usd"] = unpacked["cost_usd"]
+        if isinstance(unpacked["latency_ms"], (int, float)):
+            output_item["latency_ms"] = float(unpacked["latency_ms"])
+        if unpacked["metrics"]:
+            output_item["metrics"] = unpacked["metrics"]
+        return output_item
+
+    @staticmethod
+    def _batch_error(
+        status: str, failed_example_ids: list[str], mode: str
+    ) -> dict[str, Any]:
+        if mode == "EXECUTION":
+            return {
+                "code": "EXECUTION_PARTIAL_FAILURE"
+                if status == "partial"
+                else "EXECUTION_FAILED",
+                "message": "One or more examples failed during execution",
+                "failed_examples": failed_example_ids,
+            }
+        return {
+            "code": "EVALUATION_PARTIAL_FAILURE"
+            if status == "partial"
+            else "EVALUATION_FAILED",
+            "message": "One or more items failed during evaluation",
+            "failed_examples": failed_example_ids,
+        }
+
+    def _validate_execute_batch(self, examples: Any, tunable_id: Any) -> None:
+        if not isinstance(examples, list) or len(examples) == 0:
+            raise ValueError("examples must be a non-empty list")
+
+        if tunable_id != self.config.tunable_id:
+            raise ValueError(
+                f"tunable_id mismatch: request has '{tunable_id}', "
+                f"service is '{self.config.tunable_id}'"
+            )
+
+        max_batch = self.config.max_batch_size
+        if max_batch and len(examples) > max_batch:
+            raise ValueError(
+                f"Batch size {len(examples)} exceeds max_batch_size {max_batch}"
+            )
+
+    @staticmethod
+    def _accumulate_execute_cost(
+        unpacked: dict[str, Any], priced_cost: float, cost_complete: bool
+    ) -> tuple[float, bool]:
+        if unpacked["cost_usd"] is None:
+            cost_complete = False
+        else:
+            priced_cost += unpacked["cost_usd"]
+        return priced_cost, cost_complete
+
+    def _attach_execute_metadata(
+        self,
+        response: dict[str, Any],
+        all_quality_metrics: list[dict[str, float]],
+        session_id: Any,
+    ) -> None:
+        if all_quality_metrics:
+            response["quality_metrics"] = self._aggregate_metrics(all_quality_metrics)
+
+        if session_id:
+            response["session_id"] = session_id
+
     async def handle_execute(
         self,
         request: dict[str, Any],
@@ -1003,20 +1100,7 @@ class TraigentService:
         examples = request.get("examples")
         session_id = request.get("session_id")
 
-        if not isinstance(examples, list) or len(examples) == 0:
-            raise ValueError("examples must be a non-empty list")
-
-        if tunable_id != self.config.tunable_id:
-            raise ValueError(
-                f"tunable_id mismatch: request has '{tunable_id}', "
-                f"service is '{self.config.tunable_id}'"
-            )
-
-        max_batch = self.config.max_batch_size
-        if max_batch and len(examples) > max_batch:
-            raise ValueError(
-                f"Batch size {len(examples)} exceeds max_batch_size {max_batch}"
-            )
+        TraigentService._validate_execute_batch(self, examples, tunable_id)
 
         if session_id:
             self._touch_or_create_session(session_id)
@@ -1032,7 +1116,7 @@ class TraigentService:
         all_quality_metrics: list[dict[str, float]] = []
         failed_example_ids: list[str] = []
 
-        for inp in examples:
+        for inp in cast(list[Any], examples):
             example_id, data = self._parse_example_input(inp)
             try:
                 result = self._execute_handler(example_id, data, config)
@@ -1040,25 +1124,13 @@ class TraigentService:
                     result = await result
 
                 unpacked = self._unpack_execute_result(result)
-                if unpacked["cost_usd"] is None:
-                    cost_complete = False
-                else:
-                    priced_cost += unpacked["cost_usd"]
+                priced_cost, cost_complete = TraigentService._accumulate_execute_cost(
+                    unpacked, priced_cost, cost_complete
+                )
                 if unpacked["metrics"]:
                     all_quality_metrics.append(unpacked["metrics"])
 
-                output_item: dict[str, Any] = {
-                    "example_id": example_id,
-                    "output": unpacked["output"],
-                }
-                # ``cost_usd`` is optional per output item: omit it rather than
-                # send a fabricated 0.0 for a handler that reported nothing.
-                if unpacked["cost_usd"] is not None:
-                    output_item["cost_usd"] = unpacked["cost_usd"]
-                if isinstance(unpacked["latency_ms"], (int, float)):
-                    output_item["latency_ms"] = float(unpacked["latency_ms"])
-                if unpacked["metrics"]:
-                    output_item["metrics"] = unpacked["metrics"]
+                output_item = TraigentService._execute_output_item(example_id, unpacked)
                 outputs.append(output_item)
 
             except HybridAPIError:
@@ -1066,7 +1138,7 @@ class TraigentService:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Execute failed for {example_id}: {e}")
+                logger.exception(f"Execute failed for {example_id}: {e}")
                 failed_example_ids.append(example_id)
                 # A handler that raised may have spent before it did: a
                 # failure alone does not establish zero cost.
@@ -1090,21 +1162,13 @@ class TraigentService:
         }
 
         if failed_example_ids:
-            response["error"] = {
-                "code": (
-                    "EXECUTION_PARTIAL_FAILURE"
-                    if status == "partial"
-                    else "EXECUTION_FAILED"
-                ),
-                "message": "One or more examples failed during execution",
-                "failed_examples": failed_example_ids,
-            }
+            response["error"] = TraigentService._batch_error(
+                status, failed_example_ids, "EXECUTION"
+            )
 
-        if all_quality_metrics:
-            response["quality_metrics"] = self._aggregate_metrics(all_quality_metrics)
-
-        if session_id:
-            response["session_id"] = session_id
+        TraigentService._attach_execute_metadata(
+            self, response, all_quality_metrics, session_id
+        )
 
         self._store_execution_context(execution_id, config, session_id)
 
@@ -1127,6 +1191,65 @@ class TraigentService:
             target = {"target_id": evaluation["target_id"]}
 
         return example_id, output, target
+
+    def _prepare_evaluation_kwargs(
+        self, raw_kwargs: Any, raw_config_alias: Any
+    ) -> dict[str, ScalarValue]:
+        declared_evaluation_kwargs = self._resolve_declared_evaluation_kwargs()
+        effective_kwargs_raw = (
+            raw_kwargs if raw_kwargs is not None else raw_config_alias or {}
+        )
+        if not isinstance(effective_kwargs_raw, dict):
+            raise BadRequestError(
+                "evaluate kwargs must be an object",
+                error_code="INVALID_EVALUATION_KWARGS",
+            )
+        if not all(
+            self._is_scalar_value(value) for value in effective_kwargs_raw.values()
+        ):
+            raise BadRequestError(
+                "evaluation kwargs must contain only scalar values",
+                error_code="INVALID_EVALUATION_KWARGS",
+            )
+        effective_kwargs: dict[str, ScalarValue] = {
+            str(key): value for key, value in effective_kwargs_raw.items()
+        }
+        self._validate_effective_evaluation_kwargs(
+            effective_kwargs, declared_evaluation_kwargs
+        )
+        if declared_evaluation_kwargs:
+            for defn in declared_evaluation_kwargs:
+                if defn.default is not None and defn.name not in effective_kwargs:
+                    effective_kwargs[defn.name] = defn.default
+        return effective_kwargs
+
+    def _validate_evaluation_batch(self, evaluations: Any, tunable_id: Any) -> None:
+        if not isinstance(evaluations, list):
+            raise ValueError("evaluations must be a list")
+
+        if tunable_id != self.config.tunable_id:
+            raise ValueError(
+                f"tunable_id mismatch: request has '{tunable_id}', "
+                f"service is '{self.config.tunable_id}'"
+            )
+
+    def _invoke_evaluate_handler(
+        self,
+        output: Any,
+        target: Any,
+        effective_kwargs: dict[str, ScalarValue],
+        evaluation_context: Any,
+    ) -> Any:
+        if self._evaluate_handler_arity == 2:
+            return cast(Callable[..., Any], self._evaluate_handler)(output, target)
+        elif self._evaluate_handler_arity == 3:
+            return cast(Callable[..., Any], self._evaluate_handler)(
+                output, target, effective_kwargs
+            )
+        else:
+            return cast(Callable[..., Any], self._evaluate_handler)(
+                output, target, effective_kwargs, evaluation_context
+            )
 
     async def handle_evaluate(
         self,
@@ -1164,44 +1287,14 @@ class TraigentService:
         raw_config_alias = request.get("config")
         session_id = request.get("session_id")
 
-        if not isinstance(evaluations, list):
-            raise ValueError("evaluations must be a list")
-
-        if tunable_id != self.config.tunable_id:
-            raise ValueError(
-                f"tunable_id mismatch: request has '{tunable_id}', "
-                f"service is '{self.config.tunable_id}'"
-            )
+        TraigentService._validate_evaluation_batch(self, evaluations, tunable_id)
 
         if session_id:
             self._touch_or_create_session(session_id)
 
-        declared_evaluation_kwargs = self._resolve_declared_evaluation_kwargs()
-        effective_kwargs_raw = (
-            raw_kwargs if raw_kwargs is not None else raw_config_alias or {}
+        effective_kwargs = TraigentService._prepare_evaluation_kwargs(
+            self, raw_kwargs, raw_config_alias
         )
-        if not isinstance(effective_kwargs_raw, dict):
-            raise BadRequestError(
-                "evaluate kwargs must be an object",
-                error_code="INVALID_EVALUATION_KWARGS",
-            )
-        if not all(
-            self._is_scalar_value(value) for value in effective_kwargs_raw.values()
-        ):
-            raise BadRequestError(
-                "evaluation kwargs must contain only scalar values",
-                error_code="INVALID_EVALUATION_KWARGS",
-            )
-        effective_kwargs: dict[str, ScalarValue] = {
-            str(key): value for key, value in effective_kwargs_raw.items()
-        }
-        self._validate_effective_evaluation_kwargs(
-            effective_kwargs, declared_evaluation_kwargs
-        )
-        if declared_evaluation_kwargs:
-            for defn in declared_evaluation_kwargs:
-                if defn.default is not None and defn.name not in effective_kwargs:
-                    effective_kwargs[defn.name] = defn.default
         evaluation_context = self._lookup_execution_context(execution_id, session_id)
 
         results: list[dict[str, Any]] = []
@@ -1211,14 +1304,9 @@ class TraigentService:
         for evaluation in evaluations:
             example_id, output, target = self._resolve_evaluation_fields(evaluation)
             try:
-                if self._evaluate_handler_arity == 2:
-                    result = self._evaluate_handler(output, target)
-                elif self._evaluate_handler_arity == 3:
-                    result = self._evaluate_handler(output, target, effective_kwargs)
-                else:
-                    result = self._evaluate_handler(
-                        output, target, effective_kwargs, evaluation_context
-                    )
+                result = TraigentService._invoke_evaluate_handler(
+                    self, output, target, effective_kwargs, evaluation_context
+                )
                 if inspect.isawaitable(result):
                     result = await result
 
@@ -1231,7 +1319,7 @@ class TraigentService:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Evaluate failed for {example_id}: {e}")
+                logger.exception(f"Evaluate failed for {example_id}: {e}")
                 failed_example_ids.append(example_id)
                 results.append(
                     {"example_id": example_id, "metrics": {}, "error": str(e)}
@@ -1247,15 +1335,9 @@ class TraigentService:
         }
 
         if failed_example_ids:
-            response["error"] = {
-                "code": (
-                    "EVALUATION_PARTIAL_FAILURE"
-                    if status == "partial"
-                    else "EVALUATION_FAILED"
-                ),
-                "message": "One or more items failed during evaluation",
-                "failed_examples": failed_example_ids,
-            }
+            response["error"] = TraigentService._batch_error(
+                status, failed_example_ids, "EVALUATION"
+            )
 
         self._store_in_idempotency_cache(
             self._evaluate_idempotency_cache, request_id, request_fingerprint, response

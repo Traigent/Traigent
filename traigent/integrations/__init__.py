@@ -18,14 +18,14 @@ Example of zero-code-change optimization:
     @traigent.optimize(
         auto_override_frameworks=True,  # Enable automatic parameter override
         configuration_space={
-            "model": ["gpt-3.5-turbo", "gpt-4", "claude-3-opus"],
+            "model": ["gpt-5.6-terra", "gpt-5.6-sol", "claude-3-opus"],
             "temperature": [0.1, 0.5, 0.9],
             "stream": [True, False]
         }
     )
     def my_function():
         # Your existing LangChain/OpenAI code stays unchanged
-        llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+        llm = ChatOpenAI(model="gpt-5.6-terra", temperature=0.7)
         return llm.invoke("Hello!")
 """
 

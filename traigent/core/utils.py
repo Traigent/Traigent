@@ -42,9 +42,9 @@ def safe_get_nested_attr(obj: Any, path: str, default: Any | None = None) -> Any
         Attribute value or default if path doesn't exist
 
     Example:
-        >>> response = type('Response', (), {'metadata': type('Meta', (), {'model': 'gpt-4'})})()
+        >>> response = type('Response', (), {'metadata': type('Meta', (), {'model': 'gpt-5.6-sol'})})()
         >>> safe_get_nested_attr(response, 'metadata.model', 'unknown')
-        'gpt-4'
+        'gpt-5.6-sol'
         >>> safe_get_nested_attr(response, 'metadata.missing', 'default')
         'default'
     """
@@ -105,26 +105,7 @@ def validate_bounds(
         ValueError: If bounds are invalid for the parameter type
     """
     if param_type in ("float", "integer"):
-        if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
-            raise ValueError(
-                f"{param_type.capitalize()} parameter '{param_name}' must have tuple bounds (min, max)"
-            )
-
-        if param_type == "float":
-            if not all(isinstance(x, (int, float)) for x in bounds):
-                raise ValueError(
-                    f"Float parameter '{param_name}' bounds must be numeric"
-                )
-        elif param_type == "integer":
-            if not all(isinstance(x, int) for x in bounds):
-                raise ValueError(
-                    f"Integer parameter '{param_name}' bounds must be integers"
-                )
-
-        if bounds[0] >= bounds[1]:
-            raise ValueError(
-                f"Invalid bounds for '{param_name}': min ({bounds[0]}) must be less than max ({bounds[1]})"
-            )
+        _validate_numeric_bounds(bounds, param_type, param_name)
 
     elif param_type == "categorical":
         if not isinstance(bounds, (list, tuple)) or len(bounds) == 0:
@@ -133,6 +114,27 @@ def validate_bounds(
             )
 
     return True
+
+
+def _validate_numeric_bounds(
+    bounds: tuple[Any, ...] | list[Any], param_type: str, param_name: str
+) -> None:
+    if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
+        raise ValueError(
+            f"{param_type.capitalize()} parameter '{param_name}' must have tuple bounds (min, max)"
+        )
+    if param_type == "float":
+        if not all(isinstance(x, (int, float)) for x in bounds):
+            raise ValueError(f"Float parameter '{param_name}' bounds must be numeric")
+    elif param_type == "integer":
+        if not all(isinstance(x, int) for x in bounds):
+            raise ValueError(
+                f"Integer parameter '{param_name}' bounds must be integers"
+            )
+    if bounds[0] >= bounds[1]:
+        raise ValueError(
+            f"Invalid bounds for '{param_name}': min ({bounds[0]}) must be less than max ({bounds[1]})"
+        )
 
 
 def validate_positive_number(value: int | float, name: str) -> None:
@@ -228,16 +230,17 @@ def aggregate_metrics(
         elif aggregation_type == "min":
             aggregated[key] = min(values)
         elif aggregation_type == "median":
-            sorted_values = sorted(values)
-            n = len(sorted_values)
-            if n % 2 == 0:
-                aggregated[key] = (
-                    sorted_values[n // 2 - 1] + sorted_values[n // 2]
-                ) / 2
-            else:
-                aggregated[key] = sorted_values[n // 2]
+            aggregated[key] = _median_metric(values)
 
     return aggregated
+
+
+def _median_metric(values: list[float]) -> float:
+    sorted_values = sorted(values)
+    n = len(sorted_values)
+    if n % 2 == 0:
+        return (sorted_values[n // 2 - 1] + sorted_values[n // 2]) / 2
+    return sorted_values[n // 2]
 
 
 def aggregate_tokens(metrics_list: list[dict[str, Any]]) -> dict[str, int]:
@@ -481,41 +484,17 @@ def debug_print_object(obj: Any, max_depth: int = 2, current_depth: int = 0) -> 
         return f"{indent}None"
 
     if isinstance(obj, dict):
-        if not obj:
-            return f"{indent}{{}}"
-        result = f"{indent}{{\n"
-        for key, value in obj.items():
-            result += f"{indent}  {key}: {debug_print_object(value, max_depth, current_depth + 1)}\n"
-        result += f"{indent}}}"
-        return result
+        return _debug_print_dict(obj, indent, max_depth, current_depth)
 
     if isinstance(obj, (list, tuple)):
-        if not obj:
-            return f"{indent}[]"
-        result = f"{indent}[\n"
-        for item in obj[:5]:  # Limit to first 5 items
-            result += (
-                f"{indent}  {debug_print_object(item, max_depth, current_depth + 1)}\n"
-            )
-        if len(obj) > 5:
-            result += f"{indent}  ... ({len(obj) - 5} more items)\n"
-        result += f"{indent}]"
-        return result
+        return _debug_print_sequence(obj, indent, max_depth, current_depth)
 
     # For other objects, try to get a reasonable representation
     try:
         if hasattr(obj, "__dict__"):
             attrs = vars(obj)
             if attrs:
-                result = f"{indent}{type(obj).__name__}(\n"
-                for key, value in list(attrs.items())[
-                    :3
-                ]:  # Limit to first 3 attributes
-                    result += f"{indent}  {key}: {debug_print_object(value, max_depth, current_depth + 1)}\n"
-                if len(attrs) > 3:
-                    result += f"{indent}  ... ({len(attrs) - 3} more attributes)\n"
-                result += f"{indent})"
-                return result
+                return _debug_print_attrs(obj, attrs, indent, max_depth, current_depth)
     except Exception as e:
         # If we fail to introspect the object, log it and fall through to string representation
         logger.debug(
@@ -524,6 +503,46 @@ def debug_print_object(obj: Any, max_depth: int = 2, current_depth: int = 0) -> 
 
     # Fallback to string representation
     return f"{indent}{str(obj)}"
+
+
+def _debug_print_dict(
+    obj: dict[Any, Any], indent: str, max_depth: int, current_depth: int
+) -> str:
+    if not obj:
+        return f"{indent}{{}}"
+    result = f"{indent}{{\n"
+    for key, value in obj.items():
+        result += f"{indent}  {key}: {debug_print_object(value, max_depth, current_depth + 1)}\n"
+    result += f"{indent}}}"
+    return result
+
+
+def _debug_print_sequence(
+    obj: list[Any] | tuple[Any, ...], indent: str, max_depth: int, current_depth: int
+) -> str:
+    if not obj:
+        return f"{indent}[]"
+    result = f"{indent}[\n"
+    for item in obj[:5]:  # Limit to first 5 items
+        result += (
+            f"{indent}  {debug_print_object(item, max_depth, current_depth + 1)}\n"
+        )
+    if len(obj) > 5:
+        result += f"{indent}  ... ({len(obj) - 5} more items)\n"
+    result += f"{indent}]"
+    return result
+
+
+def _debug_print_attrs(
+    obj: Any, attrs: dict[str, Any], indent: str, max_depth: int, current_depth: int
+) -> str:
+    result = f"{indent}{type(obj).__name__}(\n"
+    for key, value in list(attrs.items())[:3]:  # Limit to first 3 attributes
+        result += f"{indent}  {key}: {debug_print_object(value, max_depth, current_depth + 1)}\n"
+    if len(attrs) > 3:
+        result += f"{indent}  ... ({len(attrs) - 3} more attributes)\n"
+    result += f"{indent})"
+    return result
 
 
 # =============================================================================

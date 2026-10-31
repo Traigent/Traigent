@@ -24,10 +24,12 @@ Design invariants (non-negotiable):
   file-existence check only (no network, no mint) so discovery can decide
   whether to attempt SDK discovery or fall back to the ``models.yaml`` list.
 
-OWNER — Phase-0 unknowns (see the ``OWNER:`` comments below): the token-endpoint
-URL and the ``~/.hermes/auth.json`` schema are unverifiable offline. They are
-encoded as env-overridable constants + a single parse location so the OWNER can
-confirm them against real ``hermes-agent`` output before merge.
+UNVERIFIED against the live service (see the ``UNVERIFIED:`` comments below):
+the token endpoint URL, the ``~/.hermes/auth.json`` schema and the refresh
+request shape were never confirmed against the real Nous Portal or
+``hermes-agent`` output. They are encoded as env-overridable constants + a
+single parse location so they can be corrected once verified. The first use of
+the provider logs one value-free warning saying so.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Security FUNC-INTEGRATIONS REQ-INT-008
@@ -35,7 +37,6 @@ confirm them against real ``hermes-agent`` output before merge.
 from __future__ import annotations
 
 import base64
-import binascii
 import hmac
 import json
 import logging
@@ -50,20 +51,38 @@ from traigent.utils.exceptions import TraigentError
 
 logger = logging.getLogger(__name__)
 
+_unverified_warned = False
+_UNVERIFIED_WARNING = (
+    "The Nous provider auth flow is UNVERIFIED against the live service "
+    "(token endpoint, auth.json schema and refresh request shape); expect it "
+    "to fail until confirmed."
+)
 
-# OWNER: confirm against real hermes-agent output in Phase-0 before merge.
+
+def _warn_unverified_once() -> None:
+    """Log the value-free UNVERIFIED warning once per process."""
+    global _unverified_warned
+    if _unverified_warned:
+        return
+    _unverified_warned = True
+    logger.warning(_UNVERIFIED_WARNING)
+
+
+# UNVERIFIED: this inference base URL was not confirmed against the live Nous
+# Portal or real hermes-agent output.
 # The Nous Portal inference base URL (OpenAI-compatible ``/v1`` surface). It is
 # passed EXPLICITLY as ``base_url`` to every OpenAI client so calls never fall
 # through to ``api.openai.com``. Override with ``TRAIGENT_NOUS_BASE_URL``.
 _DEFAULT_NOUS_BASE_URL = "https://inference-api.nousresearch.com/v1"
 
-# OWNER: confirm against real hermes-agent output in Phase-0 before merge.
+# UNVERIFIED: this token endpoint was not confirmed against the live Nous
+# Portal or real hermes-agent output.
 # The endpoint that exchanges a refresh token for a short-lived access JWT.
 # Override with ``TRAIGENT_NOUS_TOKEN_URL``.
 _DEFAULT_NOUS_TOKEN_URL = "https://portal.nousresearch.com/api/auth/refresh"
 
-# OWNER: confirm the ~/.hermes/auth.json schema against real hermes-agent output
-# in Phase-0 before merge. Assumed shape is a JSON object carrying the refresh
+# UNVERIFIED: the ~/.hermes/auth.json schema was not confirmed against real
+# hermes-agent output. Assumed shape is a JSON object carrying the refresh
 # token under one of these keys. If the real file nests it (e.g. under a
 # ``tokens`` object), update the parse in :func:`_read_refresh_token_from_file`.
 _AUTH_FILE_REFRESH_KEYS = ("refresh_token", "refreshToken")
@@ -214,6 +233,7 @@ def get_nous_api_key(
             malformed, the token endpoint fails, or the response carries no
             usable token/expiry. Never returns a stale, empty, or mock token.
     """
+    _warn_unverified_once()
     static = os.environ.get(_STATIC_KEY_ENV)
     if static:
         # Manually-minted JWT / static escape hatch: returned verbatim with no
@@ -369,13 +389,13 @@ def _request_new_token(
     """
     import requests
 
-    # OWNER: confirm in Phase-0 — Nous may expect grant_type=refresh_token
-    # form-encoding instead of this JSON body. The request shape (JSON body +
-    # Content-Type header, and the "refresh_token" field name) is an UNVERIFIED
-    # assumption on par with the URL / auth.json schema / model-id spellings the
-    # other OWNER: markers flag, so it must be confirmed against real
-    # hermes-agent output before merge.
-    preflight_requests("POST", token_url, json={"refresh_token": refresh_token})
+    # UNVERIFIED: the refresh request shape (JSON body + Content-Type header and
+    # the "refresh_token" field name) was not confirmed against the live service;
+    # Nous may expect grant_type=refresh_token form-encoding instead. Same status
+    # as the token URL, auth.json schema and model-id spellings noted above.
+    preflight_requests(
+        "POST", token_url, external=True, json={"refresh_token": refresh_token}
+    )
     response = requests.post(
         token_url,
         json={"refresh_token": refresh_token},
@@ -454,7 +474,7 @@ def _decode_jwt_exp(token: str) -> int | None:
     try:
         decoded = base64.urlsafe_b64decode(payload_segment + padding)
         claims = json.loads(decoded)
-    except (binascii.Error, ValueError, json.JSONDecodeError):
+    except ValueError:
         # Malformed base64 (``binascii.Error``), non-UTF-8 bytes / non-JSON
         # payload (``ValueError`` / ``json.JSONDecodeError``): treat as "no
         # decodable exp" and return None so the caller fails loud with a clean

@@ -51,30 +51,38 @@ _KNOWN_KEYS: dict[str, set[str]] = {
 }
 
 
+def _unknown_key_hint(name: str, prefix: str, known: set[str]) -> str | None:
+    """Return the dotted did-you-mean path for ``name`` or None."""
+    import difflib
+
+    near = difflib.get_close_matches(name, sorted(known), n=1, cutoff=0.7)
+    if not near:
+        return None
+    return f"{prefix}.{near[0]}" if prefix else near[0]
+
+
+def _walk_unknown_keys(
+    node: Any, prefix: str, found: list[tuple[str, str | None]]
+) -> None:
+    if not isinstance(node, dict):
+        return
+    known = _KNOWN_KEYS[prefix]
+    for key in node:
+        name = str(key)
+        path = f"{prefix}.{name}" if prefix else name
+        if name not in known:
+            found.append((path, _unknown_key_hint(name, prefix, known)))
+        elif path in _KNOWN_KEYS:
+            _walk_unknown_keys(node[key], path, found)
+
+
 def find_unknown_config_keys(data: Any) -> list[tuple[str, str | None]]:
     """Return (dotted key path, did-you-mean path or None) for unrecognised keys.
 
     Only key names are inspected; values are never read into the result.
     """
-    import difflib
-
     found: list[tuple[str, str | None]] = []
-
-    def walk(node: Any, prefix: str) -> None:
-        if not isinstance(node, dict):
-            return
-        known = _KNOWN_KEYS[prefix]
-        for key in node:
-            name = str(key)
-            path = f"{prefix}.{name}" if prefix else name
-            if name not in known:
-                near = difflib.get_close_matches(name, sorted(known), n=1, cutoff=0.7)
-                hint = (f"{prefix}.{near[0]}" if prefix else near[0]) if near else None
-                found.append((path, hint))
-            elif path in _KNOWN_KEYS:
-                walk(node[key], path)
-
-    walk(data, "")
+    _walk_unknown_keys(data, "", found)
     return found
 
 

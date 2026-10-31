@@ -111,25 +111,24 @@ class RandomSearchOptimizer(BaseOptimizer):
         cardinality = self.config_space_cardinality
         max_attempts = self._max_unique_sampling_attempts(cardinality)
 
+        config = RandomSearchOptimizer._sample_unique_config(
+            self, cardinality, max_attempts
+        )
+        self._trial_count += 1
+
+        logger.debug(f"Suggesting random trial {self._trial_count}: {config}")
+
+        return config
+
+    def _sample_unique_config(
+        self, cardinality: int | None, max_attempts: int
+    ) -> dict[str, Any]:
         for _attempt in range(max_attempts):
             config = {}
             for param_name, param_def in self.config_space.items():
                 config[param_name] = self._sample_parameter(param_name, param_def)
 
-            # For discrete spaces, check if this config is new
-            if cardinality is not None:
-                is_new = self.register_tried_config(config)
-                if is_new:
-                    break
-                # Duplicate - try again if space not exhausted
-                if self.is_config_space_exhausted():
-                    raise OptimizationError(
-                        f"Config space exhausted: all {cardinality} "
-                        "unique configurations have been tried"
-                    )
-            else:
-                # Continuous space - always accept (duplicates very unlikely)
-                self.register_tried_config(config)
+            if RandomSearchOptimizer._accept_sample(self, config, cardinality):
                 break
         else:
             fallback_config = self._find_untried_discrete_config()
@@ -139,17 +138,32 @@ class RandomSearchOptimizer(BaseOptimizer):
                     f"Failed to find unique config after {max_attempts} attempts"
                 )
             config = fallback_config
-        self._trial_count += 1
-
-        logger.debug(f"Suggesting random trial {self._trial_count}: {config}")
-
         return config
+
+    def _accept_sample(self, config: dict[str, Any], cardinality: int | None) -> bool:
+        if cardinality is not None:
+            is_new = self.register_tried_config(config)
+            if is_new:
+                return True
+            if self.is_config_space_exhausted():
+                raise OptimizationError(
+                    f"Config space exhausted: all {cardinality} "
+                    "unique configurations have been tried"
+                )
+            return False
+        # A resumed continuous run may replay previously evaluated configs.
+        self.register_tried_config(config)
+        return self._hash_config(config) not in getattr(
+            self, "_resume_marked_hashes", ()
+        )
 
     def _max_unique_sampling_attempts(self, cardinality: int | None) -> int:
         """Scale retry effort with finite search-space size."""
 
         if cardinality is None:
-            return 100
+            # Continuous space: a resumed run (#1697) registers prior configs,
+            # and a same-seed replay yields them first; allow skipping all.
+            return 100 + len(self._tried_config_hashes)
         return min(max(cardinality * 2, 100), 10_000)
 
     def _find_untried_discrete_config(self) -> dict[str, Any] | None:

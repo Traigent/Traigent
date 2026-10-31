@@ -157,6 +157,155 @@ async def _handle_keep_alive(
     )
 
 
+async def _route_capabilities(
+    service: TraigentService,
+    receive: Callable,
+    send: Callable,
+    trace_headers: dict[str, str],
+    request_box: list[dict[str, Any] | None],
+) -> None:
+    await send_json_response(
+        send, 200, service.get_capabilities(), headers=trace_headers
+    )
+
+
+async def _route_config_space(
+    service: TraigentService,
+    receive: Callable,
+    send: Callable,
+    trace_headers: dict[str, str],
+    request_box: list[dict[str, Any] | None],
+) -> None:
+    await send_json_response(
+        send, 200, service.get_config_space(), headers=trace_headers
+    )
+
+
+async def _route_execute(
+    service: TraigentService,
+    receive: Callable,
+    send: Callable,
+    trace_headers: dict[str, str],
+    request_box: list[dict[str, Any] | None],
+) -> None:
+    request = await _parse_request(receive)
+    request_box[0] = request
+    response = await _run_with_timeout(
+        service.handle_execute(request),
+        _get_timeout_ms(request, default_ms=30000),
+        EXECUTE_PATH,
+    )
+    await _send_with_request_id(
+        send, response, trace_headers, response.get("request_id")
+    )
+
+
+async def _route_evaluate(
+    service: TraigentService,
+    receive: Callable,
+    send: Callable,
+    trace_headers: dict[str, str],
+    request_box: list[dict[str, Any] | None],
+) -> None:
+    request = await _parse_request(receive)
+    request_box[0] = request
+    response = await _run_with_timeout(
+        service.handle_evaluate(request),
+        _get_timeout_ms(request, default_ms=None),
+        EVALUATE_PATH,
+    )
+    await _send_with_request_id(
+        send, response, trace_headers, response.get("request_id")
+    )
+
+
+async def _route_health(
+    service: TraigentService,
+    receive: Callable,
+    send: Callable,
+    trace_headers: dict[str, str],
+    request_box: list[dict[str, Any] | None],
+) -> None:
+    await send_json_response(send, 200, service.get_health(), headers=trace_headers)
+
+
+async def _route_keep_alive(
+    service: TraigentService,
+    receive: Callable,
+    send: Callable,
+    trace_headers: dict[str, str],
+    request_box: list[dict[str, Any] | None],
+) -> None:
+    request = await _parse_request(receive)
+    request_box[0] = request
+    await _handle_keep_alive(service, request, send, trace_headers)
+
+
+# (method, path) -> handler. Matched by equality, in order.
+_ROUTES: tuple[tuple[str, str, Callable[..., Any]], ...] = (
+    ("GET", CAPABILITIES_PATH, _route_capabilities),
+    ("GET", CONFIG_SPACE_PATH, _route_config_space),
+    ("POST", EXECUTE_PATH, _route_execute),
+    ("POST", EVALUATE_PATH, _route_evaluate),
+    ("GET", HEALTH_PATH, _route_health),
+    ("POST", KEEP_ALIVE_PATH, _route_keep_alive),
+)
+
+
+async def _dispatch(
+    service: TraigentService,
+    path: str,
+    method: str,
+    receive: Callable,
+    send: Callable,
+    trace_headers: dict[str, str],
+    request_box: list[dict[str, Any] | None],
+) -> None:
+    for route_method, route_path, handler in _ROUTES:
+        if path == route_path and method == route_method:
+            await handler(service, receive, send, trace_headers, request_box)
+            return
+
+    await send_json_response(
+        send,
+        404,
+        _make_error_response("NOT_FOUND", f"Not found: {method} {path}"),
+        headers=trace_headers,
+    )
+
+
+def _error_headers(
+    trace_headers: dict[str, str], request: dict[str, Any] | None
+) -> dict[str, str]:
+    return _response_headers_with_request_id(
+        trace_headers,
+        request.get("request_id") if request else None,
+    )
+
+
+async def _send_hybrid_error(
+    send: Callable,
+    e: HybridAPIError,
+    trace_headers: dict[str, str],
+    request: dict[str, Any] | None,
+) -> None:
+    logger.warning(
+        "Hybrid API handler returned explicit error: status=%s code=%s message=%s",
+        e.status_code,
+        e.error_code,
+        str(e),
+    )
+    error_headers = _error_headers(trace_headers, request)
+    if e.headers:
+        error_headers.update(e.headers)
+    await send_json_response(
+        send,
+        e.status_code,
+        _make_error_response(e.error_code, str(e), details=e.details),
+        headers=error_headers,
+    )
+
+
 def create_app(service: TraigentService) -> Callable[..., Any]:
     """Create ASGI application for TraigentService.
 
@@ -175,81 +324,20 @@ def create_app(service: TraigentService) -> Callable[..., Any]:
         path = scope["path"]
         method = scope["method"]
         trace_headers = _extract_trace_headers(scope)
-        request: dict[str, Any] | None = None
+        # Holds the parsed request (once available) for error correlation.
+        request_box: list[dict[str, Any] | None] = [None]
 
         # Route to handler
         try:
-            if path == CAPABILITIES_PATH and method == "GET":
-                await send_json_response(
-                    send, 200, service.get_capabilities(), headers=trace_headers
-                )
-
-            elif path == CONFIG_SPACE_PATH and method == "GET":
-                await send_json_response(
-                    send, 200, service.get_config_space(), headers=trace_headers
-                )
-
-            elif path == EXECUTE_PATH and method == "POST":
-                request = await _parse_request(receive)
-                response = await _run_with_timeout(
-                    service.handle_execute(request),
-                    _get_timeout_ms(request, default_ms=30000),
-                    EXECUTE_PATH,
-                )
-                await _send_with_request_id(
-                    send, response, trace_headers, response.get("request_id")
-                )
-
-            elif path == EVALUATE_PATH and method == "POST":
-                request = await _parse_request(receive)
-                response = await _run_with_timeout(
-                    service.handle_evaluate(request),
-                    _get_timeout_ms(request, default_ms=None),
-                    EVALUATE_PATH,
-                )
-                await _send_with_request_id(
-                    send, response, trace_headers, response.get("request_id")
-                )
-
-            elif path == HEALTH_PATH and method == "GET":
-                await send_json_response(
-                    send, 200, service.get_health(), headers=trace_headers
-                )
-
-            elif path == KEEP_ALIVE_PATH and method == "POST":
-                request = await _parse_request(receive)
-                await _handle_keep_alive(service, request, send, trace_headers)
-
-            else:
-                await send_json_response(
-                    send,
-                    404,
-                    _make_error_response("NOT_FOUND", f"Not found: {method} {path}"),
-                    headers=trace_headers,
-                )
+            await _dispatch(
+                service, path, method, receive, send, trace_headers, request_box
+            )
 
         except HybridAPIError as e:
-            logger.warning(
-                "Hybrid API handler returned explicit error: status=%s code=%s message=%s",
-                e.status_code,
-                e.error_code,
-                str(e),
-            )
-            error_headers = _response_headers_with_request_id(
-                trace_headers,
-                request.get("request_id") if request else None,
-            )
-            if e.headers:
-                error_headers.update(e.headers)
-            await send_json_response(
-                send,
-                e.status_code,
-                _make_error_response(e.error_code, str(e), details=e.details),
-                headers=error_headers,
-            )
+            await _send_hybrid_error(send, e, trace_headers, request_box[0])
 
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in request: {e}")
+            logger.exception(f"Invalid JSON in request: {e}")
             await send_json_response(
                 send,
                 400,
@@ -258,29 +346,21 @@ def create_app(service: TraigentService) -> Callable[..., Any]:
             )
 
         except ValueError as e:
-            logger.error(f"Request error: {e}")
-            error_headers = _response_headers_with_request_id(
-                trace_headers,
-                request.get("request_id") if request else None,
-            )
+            logger.exception(f"Request error: {e}")
             await send_json_response(
                 send,
                 400,
                 _make_error_response("INVALID_REQUEST", str(e)),
-                headers=error_headers,
+                headers=_error_headers(trace_headers, request_box[0]),
             )
 
         except Exception as e:
-            logger.error(f"Internal error: {e}")
-            error_headers = _response_headers_with_request_id(
-                trace_headers,
-                request.get("request_id") if request else None,
-            )
+            logger.exception(f"Internal error: {e}")
             await send_json_response(
                 send,
                 500,
                 _make_error_response("INTERNAL_ERROR", str(e)),
-                headers=error_headers,
+                headers=_error_headers(trace_headers, request_box[0]),
             )
 
     return app

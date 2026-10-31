@@ -63,6 +63,27 @@ class _CaptureBucket:
     observed: dict[tuple[str, str, str | None, str | None], int] = field(
         default_factory=dict
     )
+    #: Provider-call attempt ledger. It lives ONLY on the ROOT
+    #: (outermost) bucket and is guarded by the root's lock: nested scopes
+    #: share their root's ledger, so there is nothing to merge or forward and
+    #: ids are unique across nested and ended scopes. See
+    #: ``traigent.utils.vendor_retry``. Counters are independent of the capped
+    #: record list.
+    root: Any = None
+    vendor_attempts: list[dict[str, Any]] = field(default_factory=list)
+    vendor_call_count: int = 0
+    vendor_attempt_total: int = 0  # counted when an attempt is OPENED
+    vendor_done_total: int = 0  # attempts that reached a final outcome
+    vendor_retry_total: int = 0
+    vendor_known_usage_total: int = 0
+    vendor_records_truncated: bool = False
+    #: Per-example attribution (an example's agent run is a "slot"): attempts
+    #: and known-usage attempts per slot, and the slots whose agent explicitly
+    #: reported its total cost (``with_usage``), which covers all the slot's spend.
+    vendor_slot_count: int = 0
+    vendor_slot_attempts: dict[int, int] = field(default_factory=dict)
+    vendor_slot_known: dict[int, int] = field(default_factory=dict)
+    vendor_reported_slots: set[int] = field(default_factory=set)
 
     def observed_provider_versions(self) -> list[dict[str, Any]]:
         """This trial's observations as an ``ObservedProviderVersionV1`` list."""
@@ -70,6 +91,131 @@ class _CaptureBucket:
 
         with self.lock:
             return observations_payload(dict(self.observed))
+
+
+_MAX_VENDOR_ATTEMPT_RECORDS = 10_000
+
+
+def _root_of(bucket: _CaptureBucket | None) -> _CaptureBucket | None:
+    return None if bucket is None else (bucket.root or bucket)
+
+
+def begin_vendor_call() -> int:
+    """Number a new logical provider call, from the root bucket (0 outside one)."""
+    root = _root_of(_capture_scope.get())
+    if root is None:
+        return 0
+    with root.lock:
+        root.vendor_call_count += 1
+        return root.vendor_call_count
+
+
+def current_capture_bucket() -> _CaptureBucket | None:
+    """The active trial's capture bucket, if any."""
+    return _capture_scope.get()
+
+
+_example_slot: ContextVar[int | None] = ContextVar(
+    "traigent_example_slot", default=None
+)
+
+
+@contextmanager
+def example_slot() -> Iterator[int | None]:
+    """Attribute provider attempts made inside to one example's agent run."""
+    root = _root_of(_capture_scope.get())
+    if root is None:
+        yield None
+        return
+    with root.lock:
+        root.vendor_slot_count += 1
+        slot = root.vendor_slot_count
+    token = _example_slot.set(slot)
+    try:
+        yield slot
+    finally:
+        _example_slot.reset(token)
+
+
+def mark_example_cost_reported(slot: int | None) -> None:
+    """The example's agent reported its own total cost: it covers the slot."""
+    root = _root_of(_capture_scope.get())
+    if root is None or slot is None:
+        return
+    with root.lock:
+        root.vendor_reported_slots.add(slot)
+
+
+class VendorAttemptHandle:
+    """One opened provider-call attempt, updated in place until it finishes."""
+
+    __slots__ = ("root", "record", "done", "slot")
+
+    def __init__(
+        self,
+        root: _CaptureBucket | None,
+        record: dict[str, Any] | None,
+        slot: int | None = None,
+    ):
+        self.root = root
+        self.record = record
+        self.done = False
+        self.slot = slot
+
+
+def open_vendor_attempt(
+    record: dict[str, Any], bucket: _CaptureBucket | None = None
+) -> VendorAttemptHandle:
+    """Count an attempt the moment it is opened (outcome ``in_progress``).
+
+    An attempt that is abandoned (a stream never consumed, a cancelled
+    consumer) therefore stays counted, with unknown usage.
+    """
+    root = _root_of(bucket if bucket is not None else _capture_scope.get())
+    if root is None:
+        return VendorAttemptHandle(None, None)
+    stored: dict[str, Any] | None = None
+    slot = _example_slot.get()
+    with root.lock:
+        root.vendor_attempt_total += 1
+        if slot is not None:
+            root.vendor_slot_attempts[slot] = root.vendor_slot_attempts.get(slot, 0) + 1
+        if len(root.vendor_attempts) < _MAX_VENDOR_ATTEMPT_RECORDS:
+            stored = {"outcome": "in_progress", "usage": None, **record}
+            root.vendor_attempts.append(stored)
+        else:
+            root.vendor_records_truncated = True
+    return VendorAttemptHandle(root, stored, slot)
+
+
+def finish_vendor_attempt(handle: VendorAttemptHandle, **updates: Any) -> None:
+    """Give an opened attempt its final outcome (idempotent, atomic)."""
+    root = handle.root
+    if root is None:
+        return
+    with root.lock:
+        if handle.done:
+            return
+        handle.done = True
+        root.vendor_done_total += 1
+        if updates.get("retried"):
+            root.vendor_retry_total += 1
+        if updates.get("usage_known"):
+            root.vendor_known_usage_total += 1
+            if handle.slot is not None:
+                root.vendor_slot_known[handle.slot] = (
+                    root.vendor_slot_known.get(handle.slot, 0) + 1
+                )
+        if handle.record is not None:
+            handle.record.update(updates)
+
+
+def record_vendor_attempt(record: dict[str, Any]) -> None:
+    """Open and immediately finish one attempt (dropped outside a scope)."""
+    handle = open_vendor_attempt(record)
+    updates = dict(record)
+    updates.setdefault("outcome", "success")
+    finish_vendor_attempt(handle, **updates)
 
 
 #: The capture scope for the trial running in this context, or ``None`` when no
@@ -165,18 +311,41 @@ class capture_scope:
 
     Usable as ``with`` or ``async with``.  Nesting is safe: the innermost scope
     wins and the outer one is restored on exit.
+
+    The provider-call attempt ledger belongs to the nearest enclosing
+    *ledger owner*. A scope with ``ledger_owner=True`` (the trial scope) starts
+    a fresh ledger with its own lock, so trials started inside another scope
+    never see each other's attempts; a plain nested scope (the evaluator's)
+    shares its nearest owner's ledger. A top-level scope is always an owner.
     """
 
-    __slots__ = ("_token",)
+    __slots__ = ("_token", "_ledger_owner", "_slot_token")
+
+    def __init__(self, ledger_owner: bool = False) -> None:
+        self._ledger_owner = ledger_owner
+        self._slot_token: Any = None
 
     def __enter__(self) -> _CaptureBucket:
+        parent = _capture_scope.get()
         bucket = _CaptureBucket()
+        if parent is None or self._ledger_owner:
+            bucket.root = bucket
+        else:
+            bucket.root = parent.root or parent
         self._token = _capture_scope.set(bucket)
+        if self._ledger_owner:
+            # A new ledger starts a new numbering of example slots: do not
+            # inherit the enclosing example's slot (its ids belong to another
+            # ledger and would wrongly attribute this trial's attempts).
+            self._slot_token = _example_slot.set(None)
         return bucket
 
     def __exit__(self, *exc_info: Any) -> None:
         seal_captured_responses()
         finish_captured_responses(discard=True)
+        if self._slot_token is not None:
+            _example_slot.reset(self._slot_token)
+            self._slot_token = None
         _capture_scope.reset(self._token)
 
     async def __aenter__(self) -> _CaptureBucket:
@@ -212,6 +381,33 @@ def capture_owner(owner: int) -> Iterator[None]:
 
 # Cap on the per-thread "last response" stack (see set_last_response).
 _MAX_THREAD_LOCAL_RESPONSES = 64
+
+
+def _capture_response_in_bucket(
+    bucket: _CaptureBucket, response: Any, requested_model: Any, key: Any
+) -> None:
+    with bucket.lock:
+        if bucket.sealed:
+            if not bucket.finished:
+                bucket.late.append(
+                    (
+                        response,
+                        requested_model if isinstance(requested_model, str) else None,
+                    )
+                )
+            # Captures after evaluate's final handoff cannot update its
+            # returned result. Live timed-out workers already make that
+            # trial unmeasured; never assume their remaining spend is $0.
+            return
+        bucket.responses.append(response)
+        bucket.owners.append(_capture_owner.get())
+        bucket.requested.append(
+            requested_model
+            if isinstance(requested_model, str) and requested_model
+            else None
+        )
+        if key is not None:
+            bucket.by_key[key] = response
 
 
 class LangChainMetadataCapture:
@@ -252,30 +448,7 @@ class LangChainMetadataCapture:
         # the historical behaviour for callers outside a trial.
         bucket = _capture_scope.get()
         if bucket is not None:
-            with bucket.lock:
-                if bucket.sealed:
-                    if not bucket.finished:
-                        bucket.late.append(
-                            (
-                                response,
-                                requested_model
-                                if isinstance(requested_model, str)
-                                else None,
-                            )
-                        )
-                    # Captures after evaluate's final handoff cannot update its
-                    # returned result. Live timed-out workers already make that
-                    # trial unmeasured; never assume their remaining spend is $0.
-                    return
-                bucket.responses.append(response)
-                bucket.owners.append(_capture_owner.get())
-                bucket.requested.append(
-                    requested_model
-                    if isinstance(requested_model, str) and requested_model
-                    else None
-                )
-                if key is not None:
-                    bucket.by_key[key] = response
+            _capture_response_in_bucket(bucket, response, requested_model, key)
             return
 
         with self._response_lock:
@@ -830,6 +1003,14 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
     if _patch_ainvoke(model_cls, class_name, "bedrock"):
         patched_any = True
 
+    if _patch_bedrock_streams(model_cls, class_name):
+        patched_any = True
+
+    return patched_any
+
+
+def _patch_bedrock_streams(model_cls: Any, class_name: str) -> bool:
+    patched_any = False
     for meth_name, flag in [
         ("stream", "_traigent_patched_stream"),
         ("astream", "_traigent_patched_astream"),
@@ -894,245 +1075,62 @@ def patch_langchain_for_metadata_capture(
 
     # Patch ChatAnthropic
     before, patched_any = patched_any, False
+    state = [False]
     try:
         from langchain_anthropic import ChatAnthropic
 
-        # Store original method
-        if getattr(ChatAnthropic, "_traigent_patched_invoke", False) is False:
-            original_invoke = ChatAnthropic.invoke
-
-            def invoke_with_capture_anthropic(
-                self: Any, *args: Any, **kwargs: Any
-            ) -> Any:
-                """Wrapped invoke method that captures response with timing."""
-                # Check if mock mode is enabled — return mock response without API call
-                from traigent.integrations.utils.mock_adapter import MockAdapter
-
-                if MockAdapter.is_mock_enabled("anthropic"):
-                    from langchain_core.messages import AIMessage
-
-                    model_name = getattr(self, "model", "mock-model")
-                    mock_data = MockAdapter.get_mock_response(
-                        "anthropic", model=model_name
-                    )
-                    content = mock_data["content"][0]["text"]
-                    response = AIMessage(
-                        content=content,
-                        response_metadata={
-                            "model_name": mock_data["model"],
-                            "stop_reason": mock_data["stop_reason"],
-                            "response_time_ms": 0.0,
-                        },
-                        usage_metadata={
-                            "input_tokens": mock_data["usage"]["input_tokens"],
-                            "output_tokens": mock_data["usage"]["output_tokens"],
-                            "total_tokens": mock_data["usage"]["input_tokens"]
-                            + mock_data["usage"]["output_tokens"],
-                        },
-                    )
-                    capture_langchain_response(response)
-                    return response
-
-                start_time = time.perf_counter()
-                with _capture_ownership(self) as owns:
-                    response = original_invoke(self, *args, **kwargs)
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-
-                # Inject timing into response metadata
-                if not hasattr(response, "response_metadata"):
-                    response.response_metadata = {}
-                response.response_metadata["response_time_ms"] = response_time_ms
-
-                if owns:
-                    capture_observed_response(
-                        response,
-                        provider="anthropic",
-                        requested_model=requested_model_of(self),
-                    )
-                logger.debug(
-                    f"Captured ChatAnthropic invoke usage: {getattr(response, 'usage_metadata', None)}, "
-                    f"response_time_ms: {response_time_ms:.2f}"
-                )
-                return response
-
-            ChatAnthropic.invoke = invoke_with_capture_anthropic
-            ChatAnthropic._traigent_patched_invoke = True
-            logger.info("✅ Patched ChatAnthropic.invoke for metadata capture")
-            patched_any = True
-
-        if _patch_ainvoke(ChatAnthropic, "ChatAnthropic", "anthropic"):
-            patched_any = True
-
-        # Patch stream methods if available
-        for meth_name, flag in [
-            ("stream", "_traigent_patched_stream"),
-            ("astream", "_traigent_patched_astream"),
-        ]:
-            if hasattr(ChatAnthropic, meth_name) and not getattr(
-                ChatAnthropic, flag, False
-            ):
-                original_meth = getattr(ChatAnthropic, meth_name)
-
-                if meth_name == "stream":
-                    setattr(
-                        ChatAnthropic,
-                        meth_name,
-                        _create_stream_wrapper(original_meth, provider="anthropic"),
-                    )
-                else:
-                    setattr(
-                        ChatAnthropic,
-                        meth_name,
-                        _create_astream_wrapper(original_meth, provider="anthropic"),
-                    )
-                setattr(ChatAnthropic, flag, True)
-                logger.info(
-                    f"✅ Patched ChatAnthropic.{meth_name} for metadata capture"
-                )
+        try:
+            _install_anthropic_capture(ChatAnthropic, state)
+        finally:
+            patched_any = state[0]
 
         out["anthropic"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
         out["anthropic"] = classify_import_failure("langchain_anthropic")
-        if out["anthropic"] == INSTALL_FAILED:
-            logger.error(
-                "Failed to patch langchain_anthropic: import error in an installed package"
-            )
-        else:
-            logger.debug("ChatAnthropic not available, skipping")
+        _log_anthropic_import_failure(out["anthropic"])
     except Exception as e:
         out["anthropic"] = INSTALL_FAILED
-        logger.error(f"Failed to patch ChatAnthropic: {e}")
+        logger.exception(f"Failed to patch ChatAnthropic: {e}")
     patched_any = patched_any or before
 
     # Patch ChatOpenAI
     before, patched_any = patched_any, False
+    state = [False]
     try:
         from langchain_openai import ChatOpenAI
 
-        if getattr(ChatOpenAI, "_traigent_patched_invoke", False) is False:
-            original_invoke_openai = ChatOpenAI.invoke
-
-            def invoke_with_capture_openai(self: Any, *args: Any, **kwargs: Any) -> Any:
-                """Wrapped invoke method that captures response with timing."""
-                # Check if mock mode is enabled — return mock response without API call
-                from traigent.integrations.utils.mock_adapter import MockAdapter
-
-                if MockAdapter.is_mock_enabled("openai"):
-                    from langchain_core.messages import AIMessage
-
-                    model_name = getattr(self, "model_name", None) or getattr(
-                        self, "model", "mock-model"
-                    )
-                    mock_data = MockAdapter.get_mock_response(
-                        "openai", model=model_name
-                    )
-                    content = mock_data["choices"][0]["message"]["content"]
-                    response = AIMessage(
-                        content=content,
-                        response_metadata={
-                            "model_name": mock_data["model"],
-                            "finish_reason": mock_data["choices"][0]["finish_reason"],
-                            "response_time_ms": 0.0,
-                        },
-                        usage_metadata={
-                            "input_tokens": mock_data["usage"]["prompt_tokens"],
-                            "output_tokens": mock_data["usage"]["completion_tokens"],
-                            "total_tokens": mock_data["usage"]["total_tokens"],
-                        },
-                    )
-                    capture_langchain_response(response)
-                    return response
-
-                start_time = time.perf_counter()
-                with _capture_ownership(self) as owns, instrumented_provider_call():
-                    response = original_invoke_openai(self, *args, **kwargs)
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-
-                # Inject timing into response metadata
-                if not hasattr(response, "response_metadata"):
-                    response.response_metadata = {}
-                response.response_metadata["response_time_ms"] = response_time_ms
-
-                if owns:
-                    capture_observed_response(
-                        response,
-                        provider="openai",
-                        requested_model=requested_model_of(self),
-                    )
-                logger.debug(
-                    f"Captured ChatOpenAI invoke usage: {getattr(response, 'usage_metadata', None)}, "
-                    f"response_time_ms: {response_time_ms:.2f}"
-                )
-                return response
-
-            ChatOpenAI.invoke = invoke_with_capture_openai
-            ChatOpenAI._traigent_patched_invoke = True
-            logger.info("✅ Patched ChatOpenAI.invoke for metadata capture")
-            patched_any = True
-
-        if _patch_ainvoke(ChatOpenAI, "ChatOpenAI", "openai"):
-            patched_any = True
-
-        for meth_name, flag in [
-            ("stream", "_traigent_patched_stream"),
-            ("astream", "_traigent_patched_astream"),
-        ]:
-            if hasattr(ChatOpenAI, meth_name) and not getattr(ChatOpenAI, flag, False):
-                original_meth = getattr(ChatOpenAI, meth_name)
-                if meth_name == "stream":
-                    setattr(
-                        ChatOpenAI,
-                        meth_name,
-                        _create_stream_wrapper(original_meth, provider="openai"),
-                    )
-                else:
-                    setattr(
-                        ChatOpenAI,
-                        meth_name,
-                        _create_astream_wrapper(original_meth, provider="openai"),
-                    )
-                setattr(ChatOpenAI, flag, True)
-                logger.info(f"✅ Patched ChatOpenAI.{meth_name} for metadata capture")
+        try:
+            _install_openai_capture(ChatOpenAI, state)
+        finally:
+            patched_any = state[0]
 
         out["openai"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
         out["openai"] = classify_import_failure("langchain_openai")
-        if out["openai"] == INSTALL_FAILED:
-            logger.error(
-                "Failed to patch langchain_openai: import error in an installed package"
-            )
-        else:
-            logger.debug("ChatOpenAI not available, skipping")
+        _log_openai_import_failure(out["openai"])
     except Exception as e:
         out["openai"] = INSTALL_FAILED
-        logger.error(f"Failed to patch ChatOpenAI: {e}")
+        logger.exception(f"Failed to patch ChatOpenAI: {e}")
     patched_any = patched_any or before
 
     # Patch langchain_aws Bedrock chat models
     before, patched_any = patched_any, False
+    state = [False]
     try:
         import langchain_aws
 
-        for class_name in ("ChatBedrock", "ChatBedrockConverse"):
-            model_cls = getattr(langchain_aws, class_name, None)
-            if model_cls is None:
-                logger.debug("langchain_aws.%s not available, skipping", class_name)
-                continue
-            if _patch_langchain_bedrock_model(model_cls, f"langchain_aws.{class_name}"):
-                patched_any = True
+        try:
+            _install_bedrock_capture(langchain_aws, state)
+        finally:
+            patched_any = state[0]
 
         out["bedrock"] = INSTALL_INSTALLED if patched_any else INSTALL_ALREADY
     except ImportError:
         out["bedrock"] = classify_import_failure("langchain_aws")
-        if out["bedrock"] == INSTALL_FAILED:
-            logger.error(
-                "Failed to patch langchain_aws: import error in an installed package"
-            )
-        else:
-            logger.debug("langchain_aws not available, skipping Bedrock")
+        _log_bedrock_import_failure(out["bedrock"])
     except Exception as e:
         out["bedrock"] = INSTALL_FAILED
-        logger.error(f"Failed to patch langchain_aws Bedrock models: {e}")
+        logger.exception(f"Failed to patch langchain_aws Bedrock models: {e}")
     patched_any = patched_any or before
 
     if not patched_any:
@@ -1140,3 +1138,222 @@ def patch_langchain_for_metadata_capture(
         return False
 
     return True
+
+
+def _install_anthropic_capture(ChatAnthropic: Any, state: list[bool]) -> None:
+    # Store original method
+    if getattr(ChatAnthropic, "_traigent_patched_invoke", False) is False:
+        original_invoke = ChatAnthropic.invoke
+
+        def invoke_with_capture_anthropic(self: Any, *args: Any, **kwargs: Any) -> Any:
+            """Wrapped invoke method that captures response with timing."""
+            # Check if mock mode is enabled — return mock response without API call
+            from traigent.integrations.utils.mock_adapter import MockAdapter
+
+            if MockAdapter.is_mock_enabled("anthropic"):
+                from langchain_core.messages import AIMessage
+
+                model_name = getattr(self, "model", "mock-model")
+                mock_data = MockAdapter.get_mock_response("anthropic", model=model_name)
+                content = mock_data["content"][0]["text"]
+                response = AIMessage(
+                    content=content,
+                    response_metadata={
+                        "model_name": mock_data["model"],
+                        "stop_reason": mock_data["stop_reason"],
+                        "response_time_ms": 0.0,
+                    },
+                    usage_metadata={
+                        "input_tokens": mock_data["usage"]["input_tokens"],
+                        "output_tokens": mock_data["usage"]["output_tokens"],
+                        "total_tokens": mock_data["usage"]["input_tokens"]
+                        + mock_data["usage"]["output_tokens"],
+                    },
+                )
+                capture_langchain_response(response)
+                return response
+
+            start_time = time.perf_counter()
+            with _capture_ownership(self) as owns:
+                response = original_invoke(self, *args, **kwargs)
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+
+            # Inject timing into response metadata
+            if not hasattr(response, "response_metadata"):
+                response.response_metadata = {}
+            response.response_metadata["response_time_ms"] = response_time_ms
+
+            if owns:
+                capture_observed_response(
+                    response,
+                    provider="anthropic",
+                    requested_model=requested_model_of(self),
+                )
+            logger.debug(
+                f"Captured ChatAnthropic invoke usage: {getattr(response, 'usage_metadata', None)}, "
+                f"response_time_ms: {response_time_ms:.2f}"
+            )
+            return response
+
+        ChatAnthropic.invoke = invoke_with_capture_anthropic
+        ChatAnthropic._traigent_patched_invoke = True
+        logger.info("✅ Patched ChatAnthropic.invoke for metadata capture")
+        state[0] = True
+
+    if _patch_ainvoke(ChatAnthropic, "ChatAnthropic", "anthropic"):
+        state[0] = True
+
+    # Patch stream methods if available
+    _install_anthropic_streams(ChatAnthropic)
+
+
+def _install_openai_capture(ChatOpenAI: Any, state: list[bool]) -> None:
+    if getattr(ChatOpenAI, "_traigent_patched_invoke", False) is False:
+        original_invoke_openai = ChatOpenAI.invoke
+
+        def invoke_with_capture_openai(self: Any, *args: Any, **kwargs: Any) -> Any:
+            """Wrapped invoke method that captures response with timing."""
+            # Check if mock mode is enabled — return mock response without API call
+            from traigent.integrations.utils.mock_adapter import MockAdapter
+
+            if MockAdapter.is_mock_enabled("openai"):
+                from langchain_core.messages import AIMessage
+
+                model_name = getattr(self, "model_name", None) or getattr(
+                    self, "model", "mock-model"
+                )
+                mock_data = MockAdapter.get_mock_response("openai", model=model_name)
+                content = mock_data["choices"][0]["message"]["content"]
+                response = AIMessage(
+                    content=content,
+                    response_metadata={
+                        "model_name": mock_data["model"],
+                        "finish_reason": mock_data["choices"][0]["finish_reason"],
+                        "response_time_ms": 0.0,
+                    },
+                    usage_metadata={
+                        "input_tokens": mock_data["usage"]["prompt_tokens"],
+                        "output_tokens": mock_data["usage"]["completion_tokens"],
+                        "total_tokens": mock_data["usage"]["total_tokens"],
+                    },
+                )
+                capture_langchain_response(response)
+                return response
+
+            start_time = time.perf_counter()
+            with _capture_ownership(self) as owns, instrumented_provider_call():
+                response = original_invoke_openai(self, *args, **kwargs)
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+
+            # Inject timing into response metadata
+            if not hasattr(response, "response_metadata"):
+                response.response_metadata = {}
+            response.response_metadata["response_time_ms"] = response_time_ms
+
+            if owns:
+                capture_observed_response(
+                    response,
+                    provider="openai",
+                    requested_model=requested_model_of(self),
+                )
+            logger.debug(
+                f"Captured ChatOpenAI invoke usage: {getattr(response, 'usage_metadata', None)}, "
+                f"response_time_ms: {response_time_ms:.2f}"
+            )
+            return response
+
+        ChatOpenAI.invoke = invoke_with_capture_openai
+        ChatOpenAI._traigent_patched_invoke = True
+        logger.info("✅ Patched ChatOpenAI.invoke for metadata capture")
+        state[0] = True
+
+    if _patch_ainvoke(ChatOpenAI, "ChatOpenAI", "openai"):
+        state[0] = True
+
+    _install_openai_streams(ChatOpenAI)
+
+
+def _install_bedrock_capture(langchain_aws: Any, state: list[bool]) -> None:
+    for class_name in ("ChatBedrock", "ChatBedrockConverse"):
+        model_cls = getattr(langchain_aws, class_name, None)
+        if model_cls is None:
+            logger.debug("langchain_aws.%s not available, skipping", class_name)
+            continue
+        if _patch_langchain_bedrock_model(model_cls, f"langchain_aws.{class_name}"):
+            state[0] = True
+
+
+def _log_anthropic_import_failure(outcome: str) -> None:
+    if outcome == INSTALL_FAILED:
+        logger.error(
+            "Failed to patch langchain_anthropic: import error in an installed package"
+        )
+    else:
+        logger.debug("ChatAnthropic not available, skipping")
+
+
+def _log_openai_import_failure(outcome: str) -> None:
+    if outcome == INSTALL_FAILED:
+        logger.error(
+            "Failed to patch langchain_openai: import error in an installed package"
+        )
+    else:
+        logger.debug("ChatOpenAI not available, skipping")
+
+
+def _log_bedrock_import_failure(outcome: str) -> None:
+    if outcome == INSTALL_FAILED:
+        logger.error(
+            "Failed to patch langchain_aws: import error in an installed package"
+        )
+    else:
+        logger.debug("langchain_aws not available, skipping Bedrock")
+
+
+def _install_anthropic_streams(ChatAnthropic: Any) -> None:
+    for meth_name, flag in [
+        ("stream", "_traigent_patched_stream"),
+        ("astream", "_traigent_patched_astream"),
+    ]:
+        if hasattr(ChatAnthropic, meth_name) and not getattr(
+            ChatAnthropic, flag, False
+        ):
+            original_meth = getattr(ChatAnthropic, meth_name)
+
+            if meth_name == "stream":
+                setattr(
+                    ChatAnthropic,
+                    meth_name,
+                    _create_stream_wrapper(original_meth, provider="anthropic"),
+                )
+            else:
+                setattr(
+                    ChatAnthropic,
+                    meth_name,
+                    _create_astream_wrapper(original_meth, provider="anthropic"),
+                )
+            setattr(ChatAnthropic, flag, True)
+            logger.info(f"✅ Patched ChatAnthropic.{meth_name} for metadata capture")
+
+
+def _install_openai_streams(ChatOpenAI: Any) -> None:
+    for meth_name, flag in [
+        ("stream", "_traigent_patched_stream"),
+        ("astream", "_traigent_patched_astream"),
+    ]:
+        if hasattr(ChatOpenAI, meth_name) and not getattr(ChatOpenAI, flag, False):
+            original_meth = getattr(ChatOpenAI, meth_name)
+            if meth_name == "stream":
+                setattr(
+                    ChatOpenAI,
+                    meth_name,
+                    _create_stream_wrapper(original_meth, provider="openai"),
+                )
+            else:
+                setattr(
+                    ChatOpenAI,
+                    meth_name,
+                    _create_astream_wrapper(original_meth, provider="openai"),
+                )
+            setattr(ChatOpenAI, flag, True)
+            logger.info(f"✅ Patched ChatOpenAI.{meth_name} for metadata capture")

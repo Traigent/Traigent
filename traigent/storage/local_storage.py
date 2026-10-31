@@ -43,6 +43,44 @@ def _coerce_optional_cost(value: Any) -> float | None:
         return None
 
 
+def _trial_cost_sources(
+    metadata: Mapping[str, Any | None],
+) -> list[Mapping[str, Any | None]]:
+    sources: list[Mapping[str, Any | None]] = [metadata]
+    for nested_key in ("all_metrics", "metrics"):
+        nested_value = metadata.get(nested_key)
+        if isinstance(nested_value, Mapping):
+            sources.append(nested_value)
+
+    evaluation_result = metadata.get("evaluation_result")
+    if isinstance(evaluation_result, Mapping):
+        sources.append(evaluation_result)
+        evaluation_metrics = evaluation_result.get("metrics")
+        if isinstance(evaluation_metrics, Mapping):
+            sources.append(evaluation_metrics)
+    return sources
+
+
+def _derive_cost_aliases(costs: dict[str, float | None]) -> None:
+    if costs["total_cost"] is None and costs["cost"] is not None:
+        costs["total_cost"] = costs["cost"]
+    if costs["cost"] is None and costs["total_cost"] is not None:
+        costs["cost"] = costs["total_cost"]
+    if costs["total_cost"] is None:
+        input_cost = costs["input_cost"]
+        output_cost = costs["output_cost"]
+        if input_cost is not None and output_cost is not None:
+            costs["total_cost"] = input_cost + output_cost
+            costs["cost"] = costs["total_cost"]
+
+
+def _complete_total_and_cost(costs: dict[str, float | None]) -> None:
+    if costs["total_cost"] is None and costs["cost"] is not None:
+        costs["total_cost"] = costs["cost"]
+    if costs["cost"] is None and costs["total_cost"] is not None:
+        costs["cost"] = costs["total_cost"]
+
+
 def extract_trial_cost_fields(
     metadata: Mapping[str, Any | None] | None,
 ) -> dict[str, float | None]:
@@ -57,18 +95,7 @@ def extract_trial_cost_fields(
     if not isinstance(metadata, Mapping):
         return costs
 
-    sources: list[Mapping[str, Any | None]] = [metadata]
-    for nested_key in ("all_metrics", "metrics"):
-        nested_value = metadata.get(nested_key)
-        if isinstance(nested_value, Mapping):
-            sources.append(nested_value)
-
-    evaluation_result = metadata.get("evaluation_result")
-    if isinstance(evaluation_result, Mapping):
-        sources.append(evaluation_result)
-        evaluation_metrics = evaluation_result.get("metrics")
-        if isinstance(evaluation_metrics, Mapping):
-            sources.append(evaluation_metrics)
+    sources = _trial_cost_sources(metadata)
 
     for source in sources:
         for field in TRIAL_COST_FIELDS:
@@ -80,16 +107,7 @@ def extract_trial_cost_fields(
                 source.get("total_example_cost")
             )
 
-    if costs["total_cost"] is None and costs["cost"] is not None:
-        costs["total_cost"] = costs["cost"]
-    if costs["cost"] is None and costs["total_cost"] is not None:
-        costs["cost"] = costs["total_cost"]
-    if costs["total_cost"] is None:
-        input_cost = costs["input_cost"]
-        output_cost = costs["output_cost"]
-        if input_cost is not None and output_cost is not None:
-            costs["total_cost"] = input_cost + output_cost
-            costs["cost"] = costs["total_cost"]
+    _derive_cost_aliases(costs)
 
     return costs
 
@@ -292,7 +310,7 @@ class LocalStorageManager:
         except ValueError:
             return None
 
-    def _try_cleanup_stale_lock(self, lock_path: Path, lock_name: str) -> bool:
+    def _try_cleanup_stale_lock(self, lock_path: Path) -> bool:
         """Remove stale lock when owner PID is no longer running."""
         owner_pid = self._read_lock_pid(lock_path)
         if owner_pid is None or self._is_process_alive(owner_pid):
@@ -354,7 +372,7 @@ class LocalStorageManager:
                 break
             except FileExistsError:
                 # Lock is held by another process
-                if self._try_cleanup_stale_lock(lock_path, lock_name):
+                if self._try_cleanup_stale_lock(lock_path):
                     continue
                 if time.time() - start_time > timeout:
                     # the lock name can embed a session id: kept off the message
@@ -422,6 +440,34 @@ class LocalStorageManager:
             self._save_session(session)
             logger.debug("Updated session status")
 
+    def _is_better_trial_score(self, session: Any, score: float) -> bool:
+        """Whether ``score`` beats the session's current best for its objective."""
+        primary_objective = self._resolve_primary_objective_name(
+            session.optimization_config
+        )
+        orientation = self._resolve_primary_objective_orientation(
+            session.optimization_config, primary_objective
+        )
+        if session.best_score is None:
+            return True
+        if orientation == "band":
+            low, high = self._resolve_primary_objective_band(
+                session.optimization_config, primary_objective
+            )
+
+            def distance_from_band(value: float) -> float:
+                if low <= value <= high:
+                    return 0.0
+                return min(abs(value - low), abs(value - high))
+
+            return distance_from_band(score) < distance_from_band(session.best_score)
+        is_minimize = is_minimization_objective(
+            primary_objective, orientation=orientation
+        )
+        if is_minimize:
+            return bool(score < session.best_score)
+        return bool(score > session.best_score)
+
     def add_trial_result(
         self,
         session_id: str,
@@ -469,16 +515,7 @@ class LocalStorageManager:
             if coerced_value is not None:
                 extracted_costs[field] = coerced_value
 
-        if (
-            extracted_costs["total_cost"] is None
-            and extracted_costs["cost"] is not None
-        ):
-            extracted_costs["total_cost"] = extracted_costs["cost"]
-        if (
-            extracted_costs["cost"] is None
-            and extracted_costs["total_cost"] is not None
-        ):
-            extracted_costs["cost"] = extracted_costs["total_cost"]
+        _complete_total_and_cost(extracted_costs)
 
         trial_result = TrialResult(
             trial_id=len(session.trials) + 1,
@@ -502,35 +539,7 @@ class LocalStorageManager:
 
         # Update best score if this is better
         if score is not None:
-            primary_objective = self._resolve_primary_objective_name(
-                session.optimization_config
-            )
-            orientation = self._resolve_primary_objective_orientation(
-                session.optimization_config, primary_objective
-            )
-            if session.best_score is None:
-                is_better = True
-            elif orientation == "band":
-                low, high = self._resolve_primary_objective_band(
-                    session.optimization_config, primary_objective
-                )
-
-                def distance_from_band(value: float) -> float:
-                    if low <= value <= high:
-                        return 0.0
-                    return min(abs(value - low), abs(value - high))
-
-                is_better = distance_from_band(score) < distance_from_band(
-                    session.best_score
-                )
-            else:
-                is_minimize = is_minimization_objective(
-                    primary_objective, orientation=orientation
-                )
-                if is_minimize:
-                    is_better = score < session.best_score
-                else:
-                    is_better = score > session.best_score
+            is_better = self._is_better_trial_score(session, score)
             if is_better:
                 session.best_score = score
                 session.best_config = config.copy()
@@ -587,6 +596,25 @@ class LocalStorageManager:
 
         return "score"
 
+    @staticmethod
+    def _schema_orientation(
+        schema: Any, primary_objective: str
+    ) -> tuple[str | None] | None:
+        """Orientation declared in the objective schema as a 1-tuple, else None."""
+        if not isinstance(schema, dict):
+            return None
+        definitions = schema.get("objectives")
+        if not isinstance(definitions, list):
+            return None
+        for definition in definitions:
+            if (
+                isinstance(definition, dict)
+                and definition.get("name") == primary_objective
+            ):
+                orientation = definition.get("orientation")
+                return (str(orientation) if orientation is not None else None,)
+        return None
+
     def _resolve_primary_objective_orientation(
         self,
         optimization_config: dict[str, Any | None] | None,
@@ -595,16 +623,9 @@ class LocalStorageManager:
         if not isinstance(optimization_config, dict):
             return "maximize" if primary_objective == "score" else None
         schema = optimization_config.get("objective_schema")
-        if isinstance(schema, dict):
-            definitions = schema.get("objectives")
-            if isinstance(definitions, list):
-                for definition in definitions:
-                    if (
-                        isinstance(definition, dict)
-                        and definition.get("name") == primary_objective
-                    ):
-                        orientation = definition.get("orientation")
-                        return str(orientation) if orientation is not None else None
+        declared = LocalStorageManager._schema_orientation(schema, primary_objective)
+        if declared is not None:
+            return declared[0]
         orientations = optimization_config.get("objective_orientations")
         if isinstance(orientations, dict) and primary_objective in orientations:
             return str(orientations[primary_objective])
@@ -623,33 +644,57 @@ class LocalStorageManager:
         optimization_config: dict[str, Any | None] | None,
         primary_objective: str,
     ) -> tuple[float, float]:
-        if isinstance(optimization_config, dict):
-            schema = optimization_config.get("objective_schema")
-            if isinstance(schema, dict):
-                definitions = schema.get("objectives")
-                if isinstance(definitions, list):
-                    for definition in definitions:
-                        if not (
-                            isinstance(definition, dict)
-                            and definition.get("name") == primary_objective
-                        ):
-                            continue
-                        band = definition.get("band")
-                        target = band.get("target") if isinstance(band, dict) else None
-                        if isinstance(target, list) and len(target) == 2:
-                            low, high = target
-                            if (
-                                isinstance(low, (int, float))
-                                and not isinstance(low, bool)
-                                and isinstance(high, (int, float))
-                                and not isinstance(high, bool)
-                                and math.isfinite(low)
-                                and math.isfinite(high)
-                                and low <= high
-                            ):
-                                return float(low), float(high)
+        band = LocalStorageManager._banded_target_from_config(
+            optimization_config, primary_objective
+        )
+        if band is not None:
+            return band
         # the objective name is stored caller config: not quoted
         raise ValueError("Banded objective requires a complete target band")
+
+    @staticmethod
+    def _banded_target_from_config(
+        optimization_config: dict[str, Any | None] | None,
+        primary_objective: str,
+    ) -> tuple[float, float] | None:
+        """Valid ``(low, high)`` target of the primary objective, else None."""
+        if not isinstance(optimization_config, dict):
+            return None
+        schema = optimization_config.get("objective_schema")
+        if not isinstance(schema, dict):
+            return None
+        definitions = schema.get("objectives")
+        if not isinstance(definitions, list):
+            return None
+        for definition in definitions:
+            if not (
+                isinstance(definition, dict)
+                and definition.get("name") == primary_objective
+            ):
+                continue
+            band = definition.get("band")
+            target = band.get("target") if isinstance(band, dict) else None
+            valid = LocalStorageManager._valid_target(target)
+            if valid is not None:
+                return valid
+        return None
+
+    @staticmethod
+    def _valid_target(target: Any) -> tuple[float, float] | None:
+        if not (isinstance(target, list) and len(target) == 2):
+            return None
+        low, high = target
+        if (
+            isinstance(low, (int, float))
+            and not isinstance(low, bool)
+            and isinstance(high, (int, float))
+            and not isinstance(high, bool)
+            and math.isfinite(low)
+            and math.isfinite(high)
+            and low <= high
+        ):
+            return float(low), float(high)
+        return None
 
     def finalize_session(
         self,
@@ -813,19 +858,23 @@ class LocalStorageManager:
 
     _SESSION_INDEX_NAME = "session_summary_index.json"
 
-    def session_summaries(self) -> list[SessionSummary]:
-        """Return ``status`` / ``completed_trials`` for every stored session.
+    @staticmethod
+    def _is_fresh_summary_entry(cached: Any, stat: os.stat_result) -> bool:
+        """Whether a cached index entry is well-formed and matches ``stat``."""
+        return (
+            isinstance(cached, list)
+            and len(cached) == 4
+            and type(cached[0]) is int
+            and type(cached[1]) is int
+            and isinstance(cached[2], str)
+            and cached[2] in {status.value for status in OptimizationStatus}
+            and type(cached[3]) is int
+            and cached[3] >= 0
+            and cached[0] == stat.st_mtime_ns
+            and cached[1] == stat.st_size
+        )
 
-        Equivalent to reading those two fields from :meth:`list_sessions`, but
-        a session file is parsed only when its ``(mtime_ns, size)`` differs
-        from the cached entry in ``cache/session_summary_index.json``. Callers
-        that only count sessions (the post-run incentive hint, #2457) would
-        otherwise re-read every stored session after every run: O(history)
-        work that grew to a ~1 min stall on a large ``~/.traigent``.
-        """
-        sessions_dir = self.storage_path / "sessions"
-        if not sessions_dir.exists():
-            return []
+    def _session_index_path(self) -> Path | None:
         # ``cache`` may be a symlink to somewhere else: confine the index (and
         # its temp file) to the storage root like session writes are, and run
         # uncached rather than follow the link out.
@@ -845,6 +894,10 @@ class LocalStorageManager:
                 index_path = None
         except (PathTraversalError, OSError, ValueError):
             index_path = None
+        return index_path
+
+    @staticmethod
+    def _read_session_summary_index(index_path: Path | None) -> dict[str, Any]:
         index: dict[str, Any] = {}
         try:
             if index_path is None:
@@ -855,6 +908,23 @@ class LocalStorageManager:
                 index = loaded
         except (OSError, ValueError):
             index = {}
+        return index
+
+    def session_summaries(self) -> list[SessionSummary]:
+        """Return ``status`` / ``completed_trials`` for every stored session.
+
+        Equivalent to reading those two fields from :meth:`list_sessions`, but
+        a session file is parsed only when its ``(mtime_ns, size)`` differs
+        from the cached entry in ``cache/session_summary_index.json``. Callers
+        that only count sessions (the post-run incentive hint, #2457) would
+        otherwise re-read every stored session after every run: O(history)
+        work that grew to a ~1 min stall on a large ``~/.traigent``.
+        """
+        sessions_dir = self.storage_path / "sessions"
+        if not sessions_dir.exists():
+            return []
+        index_path = self._session_index_path()
+        index = self._read_session_summary_index(index_path)
 
         fresh: dict[str, list[Any]] = {}
         for session_file in sessions_dir.glob("*.json"):
@@ -863,19 +933,8 @@ class LocalStorageManager:
             except OSError:
                 continue
             session_id = session_file.stem
-            cached = index.get(session_id)
-            if (
-                isinstance(cached, list)
-                and len(cached) == 4
-                and type(cached[0]) is int
-                and type(cached[1]) is int
-                and isinstance(cached[2], str)
-                and cached[2] in {status.value for status in OptimizationStatus}
-                and type(cached[3]) is int
-                and cached[3] >= 0
-                and cached[0] == stat.st_mtime_ns
-                and cached[1] == stat.st_size
-            ):
+            cached: Any = index.get(session_id)
+            if self._is_fresh_summary_entry(cached, stat):
                 fresh[session_id] = cached
                 continue
             session = self.load_session(session_id)
@@ -1268,15 +1327,8 @@ class LocalStorageManager:
         Returns:
             True if configuration has been seen and successfully evaluated before
         """
-        user_config_keys = {
-            key for key in config if isinstance(key, str) and not key.startswith("_")
-        }
-        base_keys = (
-            {key for key in keys if isinstance(key, str) and not key.startswith("_")}
-            | user_config_keys
-            if keys
-            else None
-        )
+        user_config_keys = self._user_config_key_set(config)
+        base_keys = self._user_config_key_set(keys) | user_config_keys if keys else None
 
         try:
             # List all sessions for this function
@@ -1291,44 +1343,11 @@ class LocalStorageManager:
                 if not session:
                     continue
 
-                # Check dataset match (prefer evaluation_set metadata)
-                session_dataset = (
-                    session.metadata.get("evaluation_set") if session.metadata else None
-                )
-                if not session_dataset:
-                    session_dataset = (
-                        session.metadata.get("dataset_name")
-                        if session.metadata
-                        else None
-                    )
-
-                if session_dataset != dataset_name:
+                if self._session_dataset_name(session) != dataset_name:
                     continue
 
-                # Check trials for matching config
-                if session.trials:
-                    for trial in session.trials:
-                        # Check if trial was successful (no error)
-                        if trial.error is None:
-                            # Compare the complete user-facing identity on both
-                            # sides. Unioning realized user keys preserves spec
-                            # awareness when a config space later expands or
-                            # narrows, while ignoring runtime-only metadata.
-                            if base_keys is None:
-                                compare_keys = None
-                            else:
-                                trial_user_keys = {
-                                    key
-                                    for key in trial.config
-                                    if isinstance(key, str) and not key.startswith("_")
-                                }
-                                compare_keys = sorted(base_keys | trial_user_keys)
-                            target_hash = self.compute_config_hash(config, compare_keys)
-                            trial_hash = self.compute_config_hash(
-                                trial.config, compare_keys
-                            )
-                            if trial_hash == target_hash:
-                                return True
+                if self._session_has_matching_trial(session, config, base_keys):
+                    return True
 
         except Exception as e:
             logger.warning(
@@ -1337,6 +1356,86 @@ class LocalStorageManager:
             # Best effort - don't fail optimization due to dedup errors
 
         return False
+
+    @staticmethod
+    def _user_config_key_set(keys: Any) -> set[str]:
+        """User-facing keys: strings without the runtime-metadata underscore."""
+        return {key for key in keys if isinstance(key, str) and not key.startswith("_")}
+
+    @staticmethod
+    def _session_dataset_name(session: Any) -> Any:
+        """Dataset a session ran on (prefer evaluation_set metadata)."""
+        session_dataset = (
+            session.metadata.get("evaluation_set") if session.metadata else None
+        )
+        if not session_dataset:
+            session_dataset = (
+                session.metadata.get("dataset_name") if session.metadata else None
+            )
+        return session_dataset
+
+    def _session_has_matching_trial(
+        self,
+        session: Any,
+        config: dict[str, Any],
+        base_keys: set[str] | None,
+    ) -> bool:
+        """True when a successful trial of ``session`` has the same config identity."""
+        if session.trials:
+            for trial in session.trials:
+                # Check if trial was successful (no error)
+                if trial.error is None and self._trial_config_matches(
+                    trial, config, base_keys
+                ):
+                    return True
+        return False
+
+    def _trial_config_matches(
+        self,
+        trial: Any,
+        config: dict[str, Any],
+        base_keys: set[str] | None,
+    ) -> bool:
+        # Compare the complete user-facing identity on both
+        # sides. Unioning realized user keys preserves spec
+        # awareness when a config space later expands or
+        # narrows, while ignoring runtime-only metadata.
+        if base_keys is None:
+            compare_keys = None
+        else:
+            trial_user_keys = self._user_config_key_set(trial.config)
+            compare_keys = sorted(base_keys | trial_user_keys)
+        target_hash = self.compute_config_hash(config, compare_keys)
+        trial_hash = self.compute_config_hash(trial.config, compare_keys)
+        return trial_hash == target_hash
+
+    def _cached_result_in_session(
+        self,
+        session_info: Any,
+        function_name: str,
+        dataset_name: str,
+        config: dict[str, Any],
+    ) -> TrialResult | None:
+        if session_info.function_name != function_name:
+            return None
+
+        # Ensure dataset matches before attempting reuse
+        session = self.load_session(session_info.session_id)
+        if not session:
+            return None
+
+        session_dataset = (
+            session.metadata.get("evaluation_set") if session.metadata else None
+        )
+        if not session_dataset:
+            session_dataset = (
+                session.metadata.get("dataset_name") if session.metadata else None
+            )
+
+        if session_dataset != dataset_name:
+            return None
+
+        return self.find_cached_result(session_info.session_id, config)
 
     def find_cached_result_across_sessions(
         self,
@@ -1365,28 +1464,9 @@ class LocalStorageManager:
 
         try:
             for session_info in self.list_sessions():
-                if session_info.function_name != function_name:
-                    continue
-
-                # Ensure dataset matches before attempting reuse
-                session = self.load_session(session_info.session_id)
-                if not session:
-                    continue
-
-                session_dataset = (
-                    session.metadata.get("evaluation_set") if session.metadata else None
+                cached = self._cached_result_in_session(
+                    session_info, function_name, dataset_name, config
                 )
-                if not session_dataset:
-                    session_dataset = (
-                        session.metadata.get("dataset_name")
-                        if session.metadata
-                        else None
-                    )
-
-                if session_dataset != dataset_name:
-                    continue
-
-                cached = self.find_cached_result(session_info.session_id, config)
                 if cached is None:
                     continue
 

@@ -196,12 +196,27 @@ class TestPrivacyCompliance:
             # such; the wire only gets `capabilities`, a closed `environment` enum and
             # opaque `*_ref` values (tests/unit/cloud/test_content_less_session.py).
             "content_less",
+            # ecd1 digest of the user-code scorer (SHA-256, domain-separated). It
+            # identifies code, never content: no source, comment, name or literal
+            # crosses. The dataclass always lists the field; it is None here
+            # because the SDK withholds it in privacy mode and content-less mode
+            # (tests/unit/cloud/test_code_evaluator_payload.py).
+            "evaluator_code_digest",
+            # Closed G1 intent flag and optional 1-30 day co-sign deadline. The
+            # dataclass always lists them; they are serialized only when the run
+            # set ExecutionOptions.snapshot_store (session_g1_required_to_wire),
+            # so a run without it sends nothing extra -- asserted below on the
+            # value, not just the key.
+            "snapshot_g1_required",
+            "snapshot_g1_deadline_days",
         }
 
         for req in dummy_server.received_data:
             if req["request_type"] == "SessionCreationRequest":
                 assert set(req["fields"]).issubset(allowed_fields)
                 assert req["content_identity_sent"] is False
+                assert req["evaluator_code_digest_sent"] is False
+                assert req["snapshot_g1_sent"] is False
 
     @pytest.mark.asyncio
     async def test_only_indices_in_suggestions(self, privacy_optimizer, dummy_server):

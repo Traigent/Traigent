@@ -83,6 +83,7 @@ from traigent.cloud.trial_operations import (
 )
 from traigent.cloud.url_security import (
     CloudUrlUnreachableError,
+    is_plain_http_origin_parts,
     validate_cloud_base_url,
 )
 from traigent.cloud.user_agent import get_sdk_user_agent
@@ -97,13 +98,25 @@ from traigent.evaluators.base import Dataset
 from traigent.labels.transport_gate import (
     TransportGateRefusal,
     client_origins,
+    freeze_json_body,
     gate_session,
+    observe_requests_response,
     preflight_requests,
 )
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
+from traigent.utils.optimization_only_egress import parse_flag
 from traigent.utils.retry import RetryConfig, RetryHandler
+
+BACKEND_CLIENT = "backend client"
+REQUESTS_IS_UNAVAILABLE = "requests is unavailable"
+AGENT_HEAD_FETCH = "Agent-head fetch"
+BACKEND_BEST_CONFIG_URL_IS_INVALID = "Backend best-config URL is invalid"
+BEST_CONFIG_PUBLISH = "Best-config publish"
+BEST_CONFIG_FETCH = "Best-config fetch"
+EXAMPLE_FEATURE_UPLOAD = "Example feature upload"
 
 # Type alias for aiohttp session, falling back to Any at runtime if unavailable
 if TYPE_CHECKING:
@@ -217,20 +230,21 @@ def _token_refs_body_is_closed(body: Any) -> bool:
         or not 1 <= len(items) <= _TOKEN_REFS_MAX_ITEMS
     ):
         return False
-    for item in items:
-        if not isinstance(item, dict) or not set(item) <= {"kind", "parent_ref"}:
+    return all(_token_ref_item_is_closed(item) for item in items)
+
+
+def _token_ref_item_is_closed(item: Any) -> bool:
+    if not isinstance(item, dict) or not set(item) <= {"kind", "parent_ref"}:
+        return False
+    kind = item.get("kind")
+    if not isinstance(kind, str) or kind not in _TOKEN_REFS_KINDS:
+        return False
+    parent = item.get("parent_ref")
+    if kind == "choice":
+        if not isinstance(parent, str) or not _TOKEN_REFS_PARENT_REF.fullmatch(parent):
             return False
-        kind = item.get("kind")
-        if not isinstance(kind, str) or kind not in _TOKEN_REFS_KINDS:
-            return False
-        parent = item.get("parent_ref")
-        if kind == "choice":
-            if not isinstance(parent, str) or not _TOKEN_REFS_PARENT_REF.fullmatch(
-                parent
-            ):
-                return False
-        elif "parent_ref" in item:
-            return False
+    elif "parent_ref" in item:
+        return False
     return True
 
 
@@ -440,6 +454,9 @@ def _retry_after_seconds(headers: Any) -> float | None:
 
 
 def _raise_for_transient_backend_response(response: Any, operation: str) -> None:
+    observe_requests_response(
+        response
+    )  # a closed 403 optimization_only latches its scope
     status_code = getattr(response, "status_code", None)
     if status_code not in _SYNC_BACKEND_TRANSIENT_STATUSES:
         return
@@ -475,6 +492,18 @@ def _run_sync_backend_request_with_retry(
             f"{operation} failed ({type(error).__name__})"
         ) from error
     raise CloudServiceError(f"{operation} failed ({type(error).__name__})") from None
+
+
+def _refuse_redirect_response(response: Any, operation: str) -> None:
+    """Fail closed on a 3xx answer to a credential-bearing backend call.
+
+    The request is sent with ``allow_redirects=False``; a backend that answers with a
+    redirect is an error, never a place to follow (the credential header would travel
+    with it). Checked after the retry wrapper so a redirect is never retried.
+    """
+    status = int(getattr(response, "status_code", 0))
+    if 300 <= status < 400:
+        raise CloudServiceError(f"{operation} refused HTTP redirect (status {status})")
 
 
 def _session_is_closed(session: Any) -> bool:
@@ -881,11 +910,104 @@ class ExperimentGroupsNamespace:
                 page_size=page_size,
             )
 
+    async def table(
+        self,
+        group_id: str,
+        project_id: str,
+        *,
+        page_size: int = 100,
+        max_rows: int = 10_000,
+    ) -> Any:
+        """Return one table across all runs in a run group (Traigent#1711).
+
+        Follows the backend's cursor mode (rows with ``measures``) and returns
+        a :class:`~traigent.cloud.run_group_table.RunGroupTable`. Cost is
+        ``None`` when unmeasured, never ``0``. Fetching stops after
+        ``max_rows`` rows and sets ``truncated``. Backend and transport errors
+        surface as :class:`~traigent.cloud.analytics_client.AnalyticsClientError`
+        carrying only the HTTP status, never request or response content.
+        """
+        from traigent.cloud.analytics_client import AnalyticsClientError
+        from traigent.cloud.run_group_table import RunGroupTable, build_run_group_row
+
+        project_id = _require_project_id(project_id)
+        if not isinstance(group_id, str) or not group_id.strip():
+            raise ValueError("group_id must be a non-empty string")
+        if not 1 <= page_size <= 200 or max_rows < 1:
+            raise ValueError("page_size must be 1..200 and max_rows positive")
+        rows: list[Any] = []
+        truncated = False
+        cursor: str | None = None
+        try:
+            async with await self._new_read_client() as reader:
+                while True:
+                    (
+                        window,
+                        cursor,
+                    ) = await reader.browse_experiment_group_configuration_runs(
+                        group_id, project_id, cursor=cursor, limit=page_size
+                    )
+                    rows.extend(build_run_group_row(r) for r in window)
+                    if len(rows) >= max_rows:
+                        truncated = cursor is not None or len(rows) > max_rows
+                        rows = rows[:max_rows]
+                        break
+                    if cursor is None:
+                        break
+        except AnalyticsClientError:
+            raise
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            raise AnalyticsClientError(
+                "run group table request failed",
+                status_code=status if isinstance(status, int) else None,
+            ) from None
+        return RunGroupTable(group_id=group_id, rows=rows, truncated=truncated)
+
 
 # Backwards compatibility: expose shared bridge instance at this module scope so
 # existing tests patching ``traigent.cloud.backend_client.bridge`` continue to
 # work after the refactor.
 bridge = _bridge
+
+
+def _resolve_backend_urls(
+    base_url: str | None, backend_config: BackendClientConfig
+) -> tuple[str | None, str | None, str]:
+    explicit_base_origin = None
+    explicit_api_base = None
+    if base_url:
+        parsed_origin, parsed_path = BackendConfig.split_api_url(base_url)
+        explicit_base_origin = parsed_origin or BackendConfig.normalize_backend_origin(
+            base_url
+        )
+        if explicit_base_origin:
+            explicit_api_base = (
+                f"{explicit_base_origin}"
+                f"{parsed_path or BackendConfig.get_default_api_path()}"
+            )
+
+    effective_base_url = (
+        explicit_base_origin or base_url or backend_config.backend_base_url
+    )
+    if effective_base_url is None:
+        effective_base_url = BackendConfig.get_backend_url()
+
+    return explicit_base_origin, explicit_api_base, effective_base_url
+
+
+def _validate_backend_api_path(api_path: str | None) -> None:
+    _decoded_api_path = api_path or ""
+    for _ in range(8):
+        _next = unquote(_decoded_api_path)
+        if _next == _decoded_api_path:
+            break
+        _decoded_api_path = _next
+    else:
+        # Still changing after 8 decodes — pathologically encoded; reject.
+        raise ValueError("backend client API base URL must not contain path traversal")
+    if any(seg in {".", ".."} for seg in _decoded_api_path.split("/") if seg):
+        raise ValueError("backend client API base URL must not contain path traversal")
 
 
 class BackendIntegratedClient:
@@ -917,6 +1039,7 @@ class BackendIntegratedClient:
         rate_limit_period: float = 60.0,
         local_storage_path: str | None = None,
         no_egress: bool = False,
+        optimization_only: bool | None = None,
     ) -> None:
         """Initialize backend integrated client.
 
@@ -931,7 +1054,12 @@ class BackendIntegratedClient:
             rate_limit_calls: Maximum calls within rate limit period
             rate_limit_period: Rate limit period in seconds
             no_egress: Runtime policy flag that forbids backend transport
+            optimization_only: Opt in (True) or out (False) of optimization-only egress;
+                None defers to ``TRAIGENT_OPTIMIZATION_ONLY`` (unset = legacy behaviour).
         """
+        self.optimization_only = parse_flag(
+            optimization_only, source="optimization_only"
+        )
         if isinstance(api_key, BackendClientConfig) and backend_config is None:
             backend_config = api_key
             api_key = None
@@ -943,110 +1071,7 @@ class BackendIntegratedClient:
 
         self.backend_config = backend_config or BackendClientConfig()
 
-        explicit_base_origin = None
-        explicit_api_base = None
-        if base_url:
-            parsed_origin, parsed_path = BackendConfig.split_api_url(base_url)
-            explicit_base_origin = (
-                parsed_origin or BackendConfig.normalize_backend_origin(base_url)
-            )
-            if explicit_base_origin:
-                explicit_api_base = (
-                    f"{explicit_base_origin}"
-                    f"{parsed_path or BackendConfig.get_default_api_path()}"
-                )
-
-        effective_base_url = (
-            explicit_base_origin or base_url or self.backend_config.backend_base_url
-        )
-        if effective_base_url is None:
-            effective_base_url = BackendConfig.get_backend_url()
-
-        # Validate and sanitize URLs.  If the supplied URL is simply
-        # *unreachable* (host cannot be resolved), mark _url_invalid so
-        # get_interaction_policy() can fall back to the static policy without
-        # raising.  UNSAFE-origin rejections (private/loopback/metadata IPs,
-        # bad scheme, embedded credentials, path traversal) are NOT caught here
-        # — they keep failing loud to preserve SSRF protection.  The live
-        # validation path is otherwise entirely unchanged.
-        self._url_invalid = False
-        try:
-            effective_base_url = validate_cloud_base_url(
-                effective_base_url, purpose="backend client"
-            )
-            self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
-
-            backend_base_url = self.base_url
-            if not explicit_base_origin:
-                backend_base_url = self.backend_config.backend_base_url or self.base_url
-            backend_base_url = validate_cloud_base_url(
-                backend_base_url, purpose="backend client"
-            )
-            self.backend_config.backend_base_url = (
-                self._api_ops.validate_and_sanitize_url(backend_base_url)
-            )
-
-            if explicit_api_base and not getattr(
-                self.backend_config, "api_explicitly_set", False
-            ):
-                api_base_candidate = explicit_api_base
-            else:
-                api_base_candidate = (
-                    self.backend_config.api_base_url
-                    or BackendConfig.build_api_base(
-                        self.backend_config.backend_base_url
-                    )
-                )
-            api_origin, api_path = BackendConfig.split_api_url(api_base_candidate)
-            if api_origin is None:
-                raise ValueError("backend client API base URL must include an origin")
-            api_origin = validate_cloud_base_url(api_origin, purpose="backend client")
-            # validate_cloud_base_url only saw the origin; the API path is
-            # reattached below, so re-check the (decoded) path for traversal
-            # here — otherwise an explicit api_base_url like ".../../admin" would
-            # bypass the traversal guard that validate_cloud_base_url applies to
-            # full URLs.
-            # Decode to a fixed point (bounded) so multiply-encoded traversal
-            # (e.g. %25252e) cannot survive a fixed two-pass decode.
-            _decoded_api_path = api_path or ""
-            for _ in range(8):
-                _next = unquote(_decoded_api_path)
-                if _next == _decoded_api_path:
-                    break
-                _decoded_api_path = _next
-            else:
-                # Still changing after 8 decodes — pathologically encoded; reject.
-                raise ValueError(
-                    "backend client API base URL must not contain path traversal"
-                )
-            if any(seg in {".", ".."} for seg in _decoded_api_path.split("/") if seg):
-                raise ValueError(
-                    "backend client API base URL must not contain path traversal"
-                )
-            api_base_candidate = (
-                f"{api_origin}{api_path or BackendConfig.get_default_api_path()}"
-            )
-            self.api_base_url = self._api_ops.validate_and_sanitize_url(
-                api_base_candidate
-            )
-            self.backend_config.api_base_url = self.api_base_url
-        except CloudUrlUnreachableError:
-            # The backend host could not be resolved (genuinely unreachable).
-            # Store a safe inert placeholder so the rest of __init__ completes;
-            # get_interaction_policy() will short-circuit to _static_interaction_policy,
-            # while every cloud op fails closed via _raise_if_backend_egress_disabled.
-            # NOTE: unsafe-origin ValueErrors are intentionally NOT caught here —
-            # they propagate so SSRF/credentialed-URL rejections still fail loud.
-            self._url_invalid = True
-            _placeholder = "https://backend.invalid"
-            self.base_url = _placeholder
-            self.backend_config.backend_base_url = _placeholder
-            self.api_base_url = _placeholder
-            self.backend_config.api_base_url = _placeholder
-            logger.debug(
-                "BackendIntegratedClient: URL validation failed; "
-                "falling back to static interaction policy"
-            )
+        BackendIntegratedClient._initialize_urls(self, base_url)
 
         self.enable_fallback = enable_fallback
         self.no_egress = bool(no_egress)
@@ -1138,6 +1163,83 @@ class BackendIntegratedClient:
             tuple[str | None, str | None], dict[str, Any]
         ] = {}
         self._interaction_policy_fallback_logged = False
+
+    def _initialize_urls(self, base_url: str | None) -> None:
+        explicit_base_origin, explicit_api_base, effective_base_url = (
+            _resolve_backend_urls(base_url, self.backend_config)
+        )
+
+        # Validate and sanitize URLs.  If the supplied URL is simply
+        # *unreachable* (host cannot be resolved), mark _url_invalid so
+        # get_interaction_policy() can fall back to the static policy without
+        # raising.  UNSAFE-origin rejections (private/loopback/metadata IPs,
+        # bad scheme, embedded credentials, path traversal) are NOT caught here
+        # — they keep failing loud to preserve SSRF protection.  The live
+        # validation path is otherwise entirely unchanged.
+        self._url_invalid = False
+        try:
+            effective_base_url = validate_cloud_base_url(
+                effective_base_url, purpose=BACKEND_CLIENT
+            )
+            self.base_url = self._api_ops.validate_and_sanitize_url(effective_base_url)
+
+            backend_base_url = self.base_url
+            if not explicit_base_origin:
+                backend_base_url = self.backend_config.backend_base_url or self.base_url
+            backend_base_url = validate_cloud_base_url(
+                backend_base_url, purpose=BACKEND_CLIENT
+            )
+            self.backend_config.backend_base_url = (
+                self._api_ops.validate_and_sanitize_url(backend_base_url)
+            )
+
+            if explicit_api_base and not getattr(
+                self.backend_config, "api_explicitly_set", False
+            ):
+                api_base_candidate = explicit_api_base
+            else:
+                api_base_candidate = (
+                    self.backend_config.api_base_url
+                    or BackendConfig.build_api_base(
+                        self.backend_config.backend_base_url
+                    )
+                )
+            api_origin, api_path = BackendConfig.split_api_url(api_base_candidate)
+            if api_origin is None:
+                raise ValueError("backend client API base URL must include an origin")
+            api_origin = validate_cloud_base_url(api_origin, purpose=BACKEND_CLIENT)
+            # validate_cloud_base_url only saw the origin; the API path is
+            # reattached below, so re-check the (decoded) path for traversal
+            # here — otherwise an explicit api_base_url like ".../../admin" would
+            # bypass the traversal guard that validate_cloud_base_url applies to
+            # full URLs.
+            # Decode to a fixed point (bounded) so multiply-encoded traversal
+            # (e.g. %25252e) cannot survive a fixed two-pass decode.
+            _validate_backend_api_path(api_path)
+            api_base_candidate = (
+                f"{api_origin}{api_path or BackendConfig.get_default_api_path()}"
+            )
+            self.api_base_url = self._api_ops.validate_and_sanitize_url(
+                api_base_candidate
+            )
+            self.backend_config.api_base_url = self.api_base_url
+        except CloudUrlUnreachableError:
+            # The backend host could not be resolved (genuinely unreachable).
+            # Store a safe inert placeholder so the rest of __init__ completes;
+            # get_interaction_policy() will short-circuit to _static_interaction_policy,
+            # while every cloud op fails closed via _raise_if_backend_egress_disabled.
+            # NOTE: unsafe-origin ValueErrors are intentionally NOT caught here —
+            # they propagate so SSRF/credentialed-URL rejections still fail loud.
+            self._url_invalid = True
+            _placeholder = "https://backend.invalid"
+            self.base_url = _placeholder
+            self.backend_config.backend_base_url = _placeholder
+            self.api_base_url = _placeholder
+            self.backend_config.api_base_url = _placeholder
+            logger.debug(
+                "BackendIntegratedClient: URL validation failed; "
+                "falling back to static interaction policy"
+            )
 
     @property
     def analytics(self) -> "AnalyticsNamespace":
@@ -1604,28 +1706,25 @@ class BackendIntegratedClient:
         if getattr(self, "_url_invalid", False) is True:
             return self
         if AIOHTTP_AVAILABLE:
-            # Try to get headers, but don't fail if authentication is not available
+            # Authentication is checked here, but its headers are never kept as
+            # session defaults (#2716): a pooled session outlives credential
+            # changes, so every request sends its current credentials per request.
             # B4 ROUND 4: ``AuthenticationError`` must propagate -- a
-            # backend-rejected key must NEVER produce an authenticated session,
-            # even one with empty auth headers (which could be paired with a
-            # raw key elsewhere in the stack). Other exceptions (e.g. Edge
-            # Analytics mode without a key) continue with empty headers.
+            # backend-rejected key must NEVER produce an authenticated session.
+            # Other exceptions (e.g. Edge Analytics mode without a key) continue.
             try:
-                headers = await self.auth_manager.auth.get_headers()
+                await self.auth_manager.auth.get_headers()
             except AuthenticationError:
                 raise
             except Exception as e:
-                # In Edge Analytics mode or when no API key is available, continue without auth headers
+                # In Edge Analytics mode or when no API key is available, continue without auth
                 logger.debug(f"No authentication available for context manager: {e}")
-                headers = {}
 
-            # Add security headers
-            headers.update(
-                {
-                    "X-Request-ID": self._generate_request_nonce(),
-                    "X-Client-Version": "2.0.0",
-                }
-            )
+            # Non-credential session defaults only.
+            headers: dict[str, str] = {
+                "X-Request-ID": self._generate_request_nonce(),
+                "X-Client-Version": "2.0.0",
+            }
             if self._pool_for_loop(asyncio.get_running_loop()) is not None:
                 # Keep the running loop's pool: in-flight requests may be using it.
                 return self
@@ -1640,6 +1739,7 @@ class BackendIntegratedClient:
                     trust_env=True,
                 ),
                 origins=client_origins(self),
+                optimization_only=oo_egress.explicit_of(self),
             )
             self._register_session_finalizer(self._session)
         return self
@@ -1669,8 +1769,11 @@ class BackendIntegratedClient:
         # unexpected errors are surfaced as ``CloudServiceError`` rather
         # than silently swallowed -- still fail-closed for auth, but
         # without losing diagnostic context.
+        # The credential check stays fail closed, but the headers it returns are
+        # never session defaults (#2716): this session is pooled and outlives a
+        # credential change, so each request sends its current credentials.
         try:
-            headers = await self.auth_manager.auth.get_headers()
+            await self.auth_manager.auth.get_headers()
         except AuthenticationError:
             # Do NOT fall back to raw-key headers. Re-raise so callers
             # see the auth failure instead of getting a session that
@@ -1684,18 +1787,17 @@ class BackendIntegratedClient:
             raise CloudServiceError(
                 f"Failed to build authenticated session ({type(exc).__name__})"
             ) from None
-        headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
-        headers.setdefault("User-Agent", _SDK_USER_AGENT)
+        defaults = {"Content-Type": _JSON_CONTENT_TYPE, "User-Agent": _SDK_USER_AGENT}
 
         return gate_session(
             aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-                # Same rule as __aenter__: no stale trace context in
-                # long-lived session-default headers.
-                headers=_strip_trace_context_headers(headers),
+                # Non-credential defaults only (see above).
+                headers=defaults,
                 trust_env=True,
             ),
             origins=client_origins(self),
+            optimization_only=oo_egress.explicit_of(self),
         )
 
     def _loop_pools(self) -> dict[int, tuple[weakref.ref[Any], Any]]:
@@ -2015,6 +2117,9 @@ class BackendIntegratedClient:
         evaluator_id_source: EvaluatorIdSource | None = None,
         content_identity: dict[str, Any] | None = None,
         content_less: Any = None,
+        evaluator_code_digest: str | None = None,
+        snapshot_g1_required: bool = False,
+        snapshot_g1_deadline_days: int | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -2045,6 +2150,9 @@ class BackendIntegratedClient:
             evaluator_id_source=evaluator_id_source,
             content_identity=content_identity,
             content_less=content_less,
+            evaluator_code_digest=evaluator_code_digest,
+            snapshot_g1_required=snapshot_g1_required,
+            snapshot_g1_deadline_days=snapshot_g1_deadline_days,
         )
 
     async def create_hybrid_session(
@@ -2348,10 +2456,16 @@ class BackendIntegratedClient:
     ) -> int:
         """Read an agent's current head generation (0 if never promoted)."""
         self._raise_if_backend_egress_disabled("fetch agent head")
+        oo_egress.assert_closed_ids(
+            "agent_head_fetch",
+            agent_id,
+            environment,
+            explicit=oo_egress.policy_of(self),
+        )
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError("requests is unavailable") from exc
+            raise CloudServiceError(REQUESTS_IS_UNAVAILABLE) from exc
 
         base = self._build_best_config_url()
         if not base:
@@ -2359,6 +2473,13 @@ class BackendIntegratedClient:
         url = f"{base}/agent-heads/{quote(agent_id, safe='')}"
 
         headers = self._get_sync_auth_headers(target="backend")
+        # second, credential-scoped check now that the final headers are known
+        oo_egress.assert_closed_ids(
+            "agent_head_fetch",
+            agent_id,
+            environment,
+            explicit=oo_egress.policy_of(self, headers, url),
+        )
         params = {"environment": environment} if environment else None
 
         def _get_head() -> Any:
@@ -2369,6 +2490,7 @@ class BackendIntegratedClient:
                     params=params,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
+                    allow_redirects=False,
                 )
             except (
                 requests.exceptions.ConnectionError,
@@ -2377,12 +2499,13 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    transport_failed_message("Agent-head fetch", exc)
+                    transport_failed_message(AGENT_HEAD_FETCH, exc)
                 ) from None
-            _raise_for_transient_backend_response(response, "Agent-head fetch")
+            _raise_for_transient_backend_response(response, AGENT_HEAD_FETCH)
             return response
 
-        response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
+        response = _run_sync_backend_request_with_retry(AGENT_HEAD_FETCH, _get_head)
+        _refuse_redirect_response(response, AGENT_HEAD_FETCH)
         if response.status_code >= 400:
             raise CloudServiceError(
                 f"Agent-head fetch rejected: "
@@ -2463,7 +2586,7 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError("requests is unavailable") from exc
+            raise CloudServiceError(REQUESTS_IS_UNAVAILABLE) from exc
 
         session = gate_session(requests.Session(), origins=[url], strict=True)
         try:
@@ -2514,7 +2637,7 @@ class BackendIntegratedClient:
             response = self._protected_request(
                 "GET",
                 url,
-                operation="Agent-head fetch",
+                operation=AGENT_HEAD_FETCH,
                 params={"environment": environment},
                 headers=headers,
             )
@@ -2529,7 +2652,7 @@ class BackendIntegratedClient:
                 )
             return response
 
-        response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
+        response = _run_sync_backend_request_with_retry(AGENT_HEAD_FETCH, _get_head)
         if response.status_code >= 400:
             raise self._head_refusal_from_response(response)
         try:
@@ -2672,7 +2795,7 @@ class BackendIntegratedClient:
         self._raise_if_backend_egress_disabled("publish best config")
         url = self._build_best_config_url()
         if not url:
-            raise CloudServiceError("Backend best-config URL is invalid")
+            raise CloudServiceError(BACKEND_BEST_CONFIG_URL_IS_INVALID)
         headers = self._get_sync_auth_headers(target="backend")
         if if_match:
             headers["If-Match"] = if_match
@@ -2681,10 +2804,15 @@ class BackendIntegratedClient:
         payload: dict[str, Any] = {"spec": spec}
         if environment:
             payload["environment"] = environment
+        payload = oo_egress.project_for_send(
+            oo_egress.PHASE_BEST_CONFIG,
+            payload,
+            explicit=oo_egress.policy_of(self, headers, url),
+        )
         response = self._protected_request(
             "POST",
             url,
-            operation="Best-config publish",
+            operation=BEST_CONFIG_PUBLISH,
             json=payload,
             headers=headers,
         )
@@ -2723,31 +2851,15 @@ class BackendIntegratedClient:
         # fail before any request (ConfigurationError, no key echoed).
         check_publishable_spec(spec)
         if agent_ref is not None:
-            from traigent.cloud import content_less as content_less_session
-
-            if agent_id is not None or expected_head_generation is None:
-                raise CloudServiceError(
-                    "agent_ref requires expected_head_generation and excludes agent_id"
-                )
-            if not content_less_session.is_well_formed_ref("agent", agent_ref):
-                raise CloudServiceError("agent_ref is not a valid agent reference")
-            if (
-                isinstance(expected_head_generation, bool)
-                or not isinstance(expected_head_generation, int)
-                or not 0 <= expected_head_generation <= _MAX_HEAD_GENERATION
-            ):
-                raise CloudServiceError("expected_head_generation is out of range")
-            protected = self._publish_best_config_protected_sync(
+            return BackendIntegratedClient._publish_best_config_with_ref(
+                self,
                 spec,
-                environment=environment,
-                if_match=if_match,
-                agent_ref=agent_ref,
-                expected_head_generation=expected_head_generation,
+                environment,
+                if_match,
+                agent_id,
+                expected_head_generation,
+                agent_ref,
             )
-            self._verify_published_best_config_identity(
-                protected, spec, environment=environment
-            )
-            return protected
         if (agent_id is None) != (expected_head_generation is None):
             raise CloudServiceError(
                 "agent_id and expected_head_generation must be provided together"
@@ -2756,11 +2868,11 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError("requests is unavailable") from exc
+            raise CloudServiceError(REQUESTS_IS_UNAVAILABLE) from exc
 
         url = self._build_best_config_url()
         if not url:
-            raise CloudServiceError("Backend best-config URL is invalid")
+            raise CloudServiceError(BACKEND_BEST_CONFIG_URL_IS_INVALID)
 
         headers = self._get_sync_auth_headers(target="backend")
         if if_match:
@@ -2773,16 +2885,24 @@ class BackendIntegratedClient:
         payload: dict[str, Any] = {"spec": spec}
         if environment:
             payload["environment"] = environment
+        payload = oo_egress.project_for_send(
+            oo_egress.PHASE_BEST_CONFIG,
+            payload,
+            explicit=oo_egress.policy_of(self, headers, url),
+        )
 
         def _post_best_config() -> Any:
             try:
-                preflight_requests("POST", url, json=payload)
+                body_json = freeze_json_body(payload)
+                preflight_requests("POST", url, json=body_json)
                 response = requests.post(  # nosec B113 - timeout is provided
                     url,
-                    json=payload,
+                    json=body_json,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
+                    allow_redirects=False,
                 )
+                observe_requests_response(response)
             except (
                 requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
@@ -2790,15 +2910,16 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    transport_failed_message("Best-config publish", exc)
+                    transport_failed_message(BEST_CONFIG_PUBLISH, exc)
                 ) from None
-            _raise_for_transient_backend_response(response, "Best-config publish")
+            _raise_for_transient_backend_response(response, BEST_CONFIG_PUBLISH)
             return response
 
         response = _run_sync_backend_request_with_retry(
-            "Best-config publish",
+            BEST_CONFIG_PUBLISH,
             _post_best_config,
         )
+        _refuse_redirect_response(response, BEST_CONFIG_PUBLISH)
 
         if response.status_code == 409 and expected_head_generation is not None:
             stale = self._stale_head_error_from_response(
@@ -2819,6 +2940,41 @@ class BackendIntegratedClient:
             published, spec, environment=environment
         )
         return published
+
+    def _publish_best_config_with_ref(
+        self,
+        spec: dict[str, Any],
+        environment: str | None,
+        if_match: str | None,
+        agent_id: str | None,
+        expected_head_generation: int | None,
+        agent_ref: str,
+    ) -> dict[str, Any]:
+        from traigent.cloud import content_less as content_less_session
+
+        if agent_id is not None or expected_head_generation is None:
+            raise CloudServiceError(
+                "agent_ref requires expected_head_generation and excludes agent_id"
+            )
+        if not content_less_session.is_well_formed_ref("agent", agent_ref):
+            raise CloudServiceError("agent_ref is not a valid agent reference")
+        if (
+            isinstance(expected_head_generation, bool)
+            or not isinstance(expected_head_generation, int)
+            or not 0 <= expected_head_generation <= _MAX_HEAD_GENERATION
+        ):
+            raise CloudServiceError("expected_head_generation is out of range")
+        protected = self._publish_best_config_protected_sync(
+            spec,
+            environment=environment,
+            if_match=if_match,
+            agent_ref=agent_ref,
+            expected_head_generation=expected_head_generation,
+        )
+        self._verify_published_best_config_identity(
+            protected, spec, environment=environment
+        )
+        return protected
 
     @staticmethod
     def _verify_published_best_config_identity(
@@ -2857,18 +3013,32 @@ class BackendIntegratedClient:
     ) -> dict[str, Any] | None:
         """Fetch the current backend best config, returning None on 304/404."""
         self._raise_if_backend_egress_disabled("fetch best config")
+        oo_egress.assert_closed_ids(
+            "best_config_fetch",
+            config_id,
+            environment,
+            function_ref,
+            explicit=oo_egress.policy_of(self),
+        )
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError("requests is unavailable") from exc
+            raise CloudServiceError(REQUESTS_IS_UNAVAILABLE) from exc
 
         url = self._build_best_config_url(config_id)
         if not url:
-            raise CloudServiceError("Backend best-config URL is invalid")
+            raise CloudServiceError(BACKEND_BEST_CONFIG_URL_IS_INVALID)
 
         headers = self._get_sync_auth_headers(target="backend")
         if etag:
             headers["If-None-Match"] = etag
+        oo_egress.assert_closed_ids(
+            "best_config_fetch",
+            config_id,
+            environment,
+            function_ref,
+            explicit=oo_egress.policy_of(self, headers, url),
+        )
         params = {
             key: value
             for key, value in {
@@ -2886,6 +3056,7 @@ class BackendIntegratedClient:
                     params=params or None,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
+                    allow_redirects=False,
                 )
             except (
                 requests.exceptions.ConnectionError,
@@ -2894,17 +3065,23 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    transport_failed_message("Best-config fetch", exc)
+                    transport_failed_message(BEST_CONFIG_FETCH, exc)
                 ) from None
-            _raise_for_transient_backend_response(response, "Best-config fetch")
+            _raise_for_transient_backend_response(response, BEST_CONFIG_FETCH)
             return response
 
         response = _run_sync_backend_request_with_retry(
-            "Best-config fetch",
+            BEST_CONFIG_FETCH,
             _get_best_config,
         )
+        if response.status_code == 304:
+            # Not Modified answers the If-None-Match conditional fetch. It is not a
+            # redirect: nothing is followed and no Location is read, so it is answered
+            # before the redirect guard (which refuses every other 3xx).
+            return None
+        _refuse_redirect_response(response, BEST_CONFIG_FETCH)
 
-        if response.status_code in {304, 404}:
+        if response.status_code == 404:
             return None
         if response.status_code >= 400:
             raise CloudServiceError(
@@ -2961,7 +3138,7 @@ class BackendIntegratedClient:
         try:
             import requests
         except ImportError as exc:  # pragma: no cover - requests is required
-            raise CloudServiceError("requests is unavailable") from exc
+            raise CloudServiceError(REQUESTS_IS_UNAVAILABLE) from exc
 
         url = self._build_purpose_keys_url()
         if not url:
@@ -2979,6 +3156,7 @@ class BackendIntegratedClient:
             timeout=(min(self.timeout, 5.0), min(self.timeout, 10.0)),
             allow_redirects=False,
         )
+        observe_requests_response(response)
         if response.status_code != 200:
             raise PurposeKeyGrantFetchError(
                 response.status_code, _envelope_error_code(response)
@@ -2994,15 +3172,7 @@ class BackendIntegratedClient:
     def _process_records_url(self, suffix: str) -> str | None:
         """URL under ``<api base>/certification/process-records``, or ``None`` if unusable."""
         parsed = urlparse(self.api_base_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            return None
-        if (
-            parsed.username
-            or parsed.password
-            or parsed.params
-            or parsed.query
-            or parsed.fragment
-        ):
+        if not is_plain_http_origin_parts(parsed):
             return None
         path = f"{parsed.path.rstrip('/')}/certification/process-records{suffix}"
         return cast(
@@ -3040,6 +3210,7 @@ class BackendIntegratedClient:
         status = 0
         code: str | None = None
         try:
+            body = freeze_json_body(body)
             preflight_requests(method, url, json=body)
             response = requests.request(  # nosec B113 - timeout is provided
                 method,
@@ -3049,6 +3220,7 @@ class BackendIntegratedClient:
                 timeout=(min(self.timeout, 5.0), self.timeout),
                 allow_redirects=False,
             )
+            observe_requests_response(response)
             status = int(response.status_code)
             if status not in (200, 201):
                 code = _envelope_error_code(response)
@@ -3073,13 +3245,15 @@ class BackendIntegratedClient:
     ) -> dict[str, Any]:
         """``POST /certification/process-records/<id>/finalize``; returns the full envelope."""
         return self._process_records_request_sync(
-            "POST", f"/{build_session_row_id}/finalize", payload
+            "POST",
+            f"/{quote(str(build_session_row_id), safe='')}/finalize",
+            payload,
         )
 
     def get_process_record_sync(self, build_session_row_id: str) -> dict[str, Any]:
         """``GET /certification/process-records/<id>``; returns the full envelope."""
         return self._process_records_request_sync(
-            "GET", f"/{build_session_row_id}", None
+            "GET", f"/{quote(str(build_session_row_id), safe='')}", None
         )
 
     def upload_example_features(
@@ -3090,6 +3264,10 @@ class BackendIntegratedClient:
     ) -> bool:
         """Upload per-run example features for backend-side analytics."""
         self._raise_if_backend_egress_disabled("upload example features")
+        # Per-example features describe the dataset: not available in this mode.
+        oo_egress.refuse_if_active(
+            "example_feature_upload", explicit=oo_egress.policy_of(self)
+        )
         if not experiment_run_id or not feature_kind or not features:
             return False
 
@@ -3132,17 +3310,23 @@ class BackendIntegratedClient:
         url = self._build_feature_upload_url(experiment_run_id)
         if not url:
             return False
+        oo_egress.refuse_if_active(
+            "example_feature_upload", explicit=oo_egress.policy_of(self, headers, url)
+        )
         payload = {"feature_kind": feature_kind, "features": features}
 
         def _post_example_features() -> Any:
             try:
-                preflight_requests("POST", url, json=payload)
+                body_json = freeze_json_body(payload)
+                preflight_requests("POST", url, json=body_json)
                 response = requests.post(  # nosec B113 - timeout is provided
                     url,
-                    json=payload,
+                    json=body_json,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
+                    allow_redirects=False,
                 )
+                observe_requests_response(response)
             except (
                 requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
@@ -3150,16 +3334,17 @@ class BackendIntegratedClient:
                 TimeoutError,
             ) as exc:
                 raise _SyncBackendTransientError(
-                    transport_failed_message("Example feature upload", exc)
+                    transport_failed_message(EXAMPLE_FEATURE_UPLOAD, exc)
                 ) from None
-            _raise_for_transient_backend_response(response, "Example feature upload")
+            _raise_for_transient_backend_response(response, EXAMPLE_FEATURE_UPLOAD)
             return response
 
         try:
             response = _run_sync_backend_request_with_retry(
-                "Example feature upload",
+                EXAMPLE_FEATURE_UPLOAD,
                 _post_example_features,
             )
+            _refuse_redirect_response(response, EXAMPLE_FEATURE_UPLOAD)
         except Exception as exc:
             logger.debug(
                 "Example feature upload failed for run %s: %s",

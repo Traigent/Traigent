@@ -225,7 +225,7 @@ class TraigentCloudService:
             )
 
         except CloudRemoteExecutionUnavailableError as e:
-            logger.error(f"Cloud service unavailable for request {request_id}: {e}")
+            logger.exception(f"Cloud service unavailable for request {request_id}: {e}")
             return OptimizationResponse(
                 request_id=request_id,
                 best_config={},
@@ -242,7 +242,7 @@ class TraigentCloudService:
             )
 
         except Exception as e:
-            logger.error(f"Optimization failed for request {request_id}: {e}")
+            logger.exception(f"Optimization failed for request {request_id}: {e}")
             return OptimizationResponse(
                 request_id=request_id,
                 best_config={},

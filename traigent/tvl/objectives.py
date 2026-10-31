@@ -344,15 +344,14 @@ def compare_banded_objectives(
         winner: Literal["a", "b", "tie"] = "a"
     elif b_in_band and not a_in_band:
         winner = "b"
+    # Both in band or both outside: compare deviations
+    # Smaller deviation is better (closer to band center)
+    elif abs(a_deviation - b_deviation) < 1e-10:
+        winner = "tie"
+    elif a_deviation < b_deviation:
+        winner = "a"
     else:
-        # Both in band or both outside: compare deviations
-        # Smaller deviation is better (closer to band center)
-        if abs(a_deviation - b_deviation) < 1e-10:
-            winner = "tie"
-        elif a_deviation < b_deviation:
-            winner = "a"
-        else:
-            winner = "b"
+        winner = "b"
 
     return BandedComparisonResult(
         winner=winner,

@@ -101,9 +101,9 @@ def _sanitize_metadata_value(value: Any, *, key: str | None = None) -> Any:
     return to_jsonable(value)
 
 
-def _build_observe_enrichment_metadata() -> dict[str, Any]:
-    raw_applied_config = applied_config_context.get(None)
-    raw_active_config = config_context.get(None)
+def _active_observe_config(
+    raw_applied_config: Any, raw_active_config: Any
+) -> tuple[Any, str | None]:
     active_config_source: str | None = None
 
     active_config = _sanitize_metadata_value(raw_applied_config)
@@ -117,7 +117,10 @@ def _build_observe_enrichment_metadata() -> dict[str, Any]:
         else:
             active_config = None
 
-    raw_trial_context = get_trial_context()
+    return active_config, active_config_source
+
+
+def _sanitize_trial_context(raw_trial_context: Any) -> dict[str, Any]:
     optimization_context: dict[str, Any] = {}
     if isinstance(raw_trial_context, dict):
         for raw_key, raw_value in raw_trial_context.items():
@@ -127,6 +130,19 @@ def _build_observe_enrichment_metadata() -> dict[str, Any]:
             optimization_context[normalized_key] = _sanitize_metadata_value(
                 raw_value, key=normalized_key
             )
+
+    return optimization_context
+
+
+def _build_observe_enrichment_metadata() -> dict[str, Any]:
+    raw_applied_config = applied_config_context.get(None)
+    raw_active_config = config_context.get(None)
+    active_config, active_config_source = _active_observe_config(
+        raw_applied_config, raw_active_config
+    )
+
+    raw_trial_context = get_trial_context()
+    optimization_context = _sanitize_trial_context(raw_trial_context)
 
     if isinstance(active_config, dict) and active_config:
         config_snapshot = optimization_context.get("config_snapshot")
@@ -396,12 +412,11 @@ class ObserveContext:
                             redact_output=self.redact_output,
                         )
                 except Exception:
-                    logger.error(
+                    logger.exception(
                         "Observability decorator finish failed for trace "
                         "'%s'; the traced call's own result/exception is "
                         "unaffected.",
                         self._trace_id,
-                        exc_info=True,
                     )
         finally:
             # M4: restore context on finish failure too -- without this

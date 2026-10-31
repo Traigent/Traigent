@@ -9,11 +9,15 @@ from typing import Any, cast
 
 import backoff
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.core.session_types import safe_http_error_summary
+from traigent.labels.transport_gate import gate_session
+from traigent.utils import optimization_only_egress as oo_egress
+from traigent.utils.wire_text import filter_wire_metadata
+
+_SESSION_ID_REQUIRED = "session_id must be a non-empty string"
 
 logger = logging.getLogger(__name__)
 
@@ -51,17 +55,79 @@ def _is_transient_submission_error(exc: BaseException) -> bool:
 _SESSION_NOT_INITIALIZED = "Session not initialized"
 
 
+def _wire_submission(submission: dict[str, Any]) -> dict[str, Any]:
+    """Return a detached copy of a metric submission with metadata allowlisted (#2241)."""
+    if "metadata" not in submission:
+        return dict(submission)
+    return {**submission, "metadata": filter_wire_metadata(submission["metadata"])}
+
+
+def _group_metrics_by_session(metric_buffer: list[Any]) -> dict[str, list[Any]]:
+    # Group by session
+    sessions: dict[str, list[Any]] = {}
+    for session_id, submission in metric_buffer:
+        if session_id not in sessions:
+            sessions[session_id] = []
+        sessions[session_id].append(submission)
+
+    return sessions
+
+
+def _flush_response(
+    results: list[dict[str, Any]],
+    errors: list[Any],
+    retained: list[Any],
+    dropped: int,
+    abandoned: int,
+) -> dict[str, Any]:
+    # Return appropriate response
+    if not errors:
+        if len(results) == 1:
+            return results[0]
+        else:
+            return {
+                "status": "batch_flushed",
+                "sessions_processed": len(results),
+                "results": results,
+            }
+    else:
+        return {
+            "status": "partial_success",
+            "successful": len(results),
+            "failed": len(errors),
+            "results": results,
+            "errors": errors,
+            # #1922: so a caller can tell "will be retried on the next
+            # flush" from "gone for good".
+            "retained_for_retry": len(retained),
+            "dropped_over_cap": dropped,
+            "abandoned_permanent": abandoned,
+        }
+
+
 class OptimizerDirectClient:
     """Direct client for optimizer metric submission in hybrid mode."""
 
-    def __init__(self, endpoint: str, token: str, *, no_egress: bool = False) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        token: str,
+        *,
+        no_egress: bool = False,
+        optimization_only: bool | None = None,
+    ) -> None:
         """Initialize optimizer direct client.
 
         Args:
             endpoint: Optimizer endpoint URL
             token: JWT token for authentication
             no_egress: Runtime policy flag that forbids backend transport
+            optimization_only: Explicit optimization-only egress setting (None defers
+                to ``TRAIGENT_OPTIMIZATION_ONLY``; unset = legacy behaviour)
         """
+        self.optimization_only = oo_egress.parse_flag(
+            optimization_only, source="optimization_only"
+        )
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError(
                 "aiohttp is required for OptimizerDirectClient. Install the optional dependency."
@@ -92,6 +158,24 @@ class OptimizerDirectClient:
         self._retained_count = 0
         self._flush_task: asyncio.Task[None] | None = None
 
+    def _wire_submission(
+        self, submission: dict[str, Any], session_id: str
+    ) -> dict[str, Any]:
+        """The exact body sent for one metric submission (projected when opted in)."""
+        return cast(
+            dict[str, Any],
+            oo_egress.project_for_send(
+                oo_egress.PHASE_OPTIMIZER_METRICS,
+                _wire_submission(submission),
+                explicit=oo_egress.policy_from_headers(
+                    self.endpoint,
+                    {"Authorization": f"Bearer {self.token}"},
+                    self.optimization_only,
+                ),
+                session_id=session_id,
+            ),
+        )
+
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before optimizer backend transport."""
 
@@ -109,6 +193,7 @@ class OptimizerDirectClient:
                 trust_env=True,
             ),
             origins=[self.endpoint],
+            optimization_only=self.optimization_only,
         )
         # Start background flush task
         self._flush_task = asyncio.create_task(self._periodic_flush())
@@ -162,11 +247,11 @@ class OptimizerDirectClient:
             "trial_id": trial_id,
             "metrics": metrics,
             "execution_time": execution_time,
-            "metadata": metadata or {},
+            "metadata": filter_wire_metadata(metadata),
         }
 
         if not isinstance(session_id, str) or not session_id.strip():
-            raise ValueError("session_id must be a non-empty string")
+            raise ValueError(_SESSION_ID_REQUIRED)
         if not isinstance(trial_id, str) or not trial_id.strip():
             raise ValueError("trial_id must be a non-empty string")
         session_id = session_id.strip()
@@ -203,7 +288,7 @@ class OptimizerDirectClient:
         if self.session is None:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         if not isinstance(session_id, str) or not session_id.strip():
-            raise ValueError("session_id must be a non-empty string")
+            raise ValueError(_SESSION_ID_REQUIRED)
         session_id = session_id.strip()
         try:
             async with self.session.get(
@@ -221,7 +306,7 @@ class OptimizerDirectClient:
                 return cast(dict[str, Any], await response.json())
 
         except aiohttp.ClientError as e:
-            logger.error(f"Failed to get next configuration: {str(e)}")
+            logger.exception(f"Failed to get next configuration: {str(e)}")
             raise
 
     async def get_session_status(self, session_id: str) -> dict[str, Any]:
@@ -237,7 +322,7 @@ class OptimizerDirectClient:
         if self.session is None:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         if not isinstance(session_id, str) or not session_id.strip():
-            raise ValueError("session_id must be a non-empty string")
+            raise ValueError(_SESSION_ID_REQUIRED)
         session_id = session_id.strip()
         try:
             async with self.session.get(
@@ -255,7 +340,7 @@ class OptimizerDirectClient:
                 return cast(dict[str, Any], await response.json())
 
         except aiohttp.ClientError as e:
-            logger.error(f"Failed to get session status: {str(e)}")
+            logger.exception(f"Failed to get session status: {str(e)}")
             raise
 
     async def flush(self) -> None:
@@ -264,73 +349,7 @@ class OptimizerDirectClient:
             if self._metric_buffer:
                 await self._flush_buffer()
 
-    async def _flush_buffer(self) -> dict[str, Any]:
-        """Flush metric buffer to optimizer.
-
-        Returns:
-            Flush response
-        """
-        if not self._metric_buffer:
-            return {"status": "no_metrics", "message": "No metrics to flush"}
-
-        # Group by session
-        sessions: dict[str, list[Any]] = {}
-        for session_id, submission in self._metric_buffer:
-            if session_id not in sessions:
-                sessions[session_id] = []
-            sessions[session_id].append(submission)
-
-        # Submit each session's metrics
-        results = []
-        errors = []
-        retry_sessions: set[str] = set()
-        abandoned = 0
-
-        for session_id, submissions in sessions.items():
-            try:
-                if len(submissions) == 1:
-                    # Single metric submission
-                    result = await self._submit_single(session_id, submissions[0])
-                else:
-                    # Batch submission
-                    result = await self._submit_batch(session_id, submissions)
-                results.append(result)
-
-            except Exception as e:
-                transient = _is_transient_submission_error(e)
-                logger.error(
-                    "Failed to submit metrics for session %s (%s): %s",
-                    session_id,
-                    "will retry" if transient else "permanent, discarding",
-                    str(e),
-                )
-                errors.append(
-                    {
-                        "session_id": session_id,
-                        "error": str(e),
-                        "metrics_count": len(submissions),
-                        "retryable": transient,
-                    }
-                )
-                if transient:
-                    # Keep this session's metrics buffered for the next flush
-                    # (#1922). Clearing the whole buffer here dropped the
-                    # metrics of the session that had just FAILED, so one
-                    # transient 5xx or timeout silently discarded up to
-                    # batch_size trials' worth of optimizer signal while the
-                    # run still reported "completed".
-                    retry_sessions.add(session_id)
-                else:
-                    # A permanent rejection (4xx, bad token, expired session)
-                    # must NOT be retained. _submit_batch is all-or-nothing and
-                    # retained entries regroup with later ones under the same
-                    # session_id, so one permanently-rejected submission would
-                    # poison every subsequent metric for that session -- losing
-                    # strictly more than the unconditional clear this fix
-                    # replaced. 413 is self-reinforcing besides: the payload
-                    # only grows on retry.
-                    abandoned += len(submissions)
-
+    def _retain_failed_metrics(self, retry_sessions: set[str]) -> tuple[list[Any], int]:
         # Replace, never clear: accepted submissions are dropped, retryable
         # ones stay. Filtering the ORIGINAL buffer rather than the grouped
         # `sessions` dict preserves chronological order, which the retention
@@ -367,29 +386,75 @@ class OptimizerDirectClient:
         # retained backlog rides the periodic flush instead.
         self._retained_count = len(retained)
 
-        # Return appropriate response
-        if not errors:
-            if len(results) == 1:
-                return results[0]
-            else:
-                return {
-                    "status": "batch_flushed",
-                    "sessions_processed": len(results),
-                    "results": results,
-                }
-        else:
-            return {
-                "status": "partial_success",
-                "successful": len(results),
-                "failed": len(errors),
-                "results": results,
-                "errors": errors,
-                # #1922: so a caller can tell "will be retried on the next
-                # flush" from "gone for good".
-                "retained_for_retry": len(retained),
-                "dropped_over_cap": dropped,
-                "abandoned_permanent": abandoned,
-            }
+        return retained, dropped
+
+    async def _flush_buffer(self) -> dict[str, Any]:
+        """Flush metric buffer to optimizer.
+
+        Returns:
+            Flush response
+        """
+        if not self._metric_buffer:
+            return {"status": "no_metrics", "message": "No metrics to flush"}
+
+        sessions = _group_metrics_by_session(self._metric_buffer)
+
+        # Submit each session's metrics
+        results = []
+        errors = []
+        retry_sessions: set[str] = set()
+        abandoned = 0
+
+        for session_id, submissions in sessions.items():
+            try:
+                if len(submissions) == 1:
+                    # Single metric submission
+                    result = await self._submit_single(session_id, submissions[0])
+                else:
+                    # Batch submission
+                    result = await self._submit_batch(session_id, submissions)
+                results.append(result)
+
+            except Exception as e:
+                transient = _is_transient_submission_error(e)
+                logger.exception(
+                    "Failed to submit metrics for session %s (%s): %s",
+                    session_id,
+                    "will retry" if transient else "permanent, discarding",
+                    str(e),
+                )
+                errors.append(
+                    {
+                        "session_id": session_id,
+                        "error": str(e),
+                        "metrics_count": len(submissions),
+                        "retryable": transient,
+                    }
+                )
+                if transient:
+                    # Keep this session's metrics buffered for the next flush
+                    # (#1922). Clearing the whole buffer here dropped the
+                    # metrics of the session that had just FAILED, so one
+                    # transient 5xx or timeout silently discarded up to
+                    # batch_size trials' worth of optimizer signal while the
+                    # run still reported "completed".
+                    retry_sessions.add(session_id)
+                else:
+                    # A permanent rejection (4xx, bad token, expired session)
+                    # must NOT be retained. _submit_batch is all-or-nothing and
+                    # retained entries regroup with later ones under the same
+                    # session_id, so one permanently-rejected submission would
+                    # poison every subsequent metric for that session -- losing
+                    # strictly more than the unconditional clear this fix
+                    # replaced. 413 is self-reinforcing besides: the payload
+                    # only grows on retry.
+                    abandoned += len(submissions)
+
+        retained, dropped = OptimizerDirectClient._retain_failed_metrics(
+            self, retry_sessions
+        )
+
+        return _flush_response(results, errors, retained, dropped, abandoned)
 
     async def _submit_single(
         self, session_id: str, submission: dict[str, Any]
@@ -408,7 +473,8 @@ class OptimizerDirectClient:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         try:
             async with self.session.post(
-                f"{self.endpoint}/{session_id}", json=submission
+                f"{self.endpoint}/{session_id}",
+                json=self._wire_submission(submission, session_id),
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()
@@ -448,7 +514,12 @@ class OptimizerDirectClient:
             raise RuntimeError(_SESSION_NOT_INITIALIZED)
         try:
             async with self.session.post(
-                f"{self.endpoint}/{session_id}/batch", json={"submissions": submissions}
+                f"{self.endpoint}/{session_id}/batch",
+                json={
+                    "submissions": [
+                        self._wire_submission(s, session_id) for s in submissions
+                    ]
+                },
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()
@@ -489,7 +560,7 @@ class OptimizerDirectClient:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Periodic flush failed: {str(e)}")
+                logger.exception(f"Periodic flush failed: {str(e)}")
                 # Continue running even if flush fails
 
     def set_batch_size(self, size: int) -> None:

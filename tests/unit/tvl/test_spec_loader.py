@@ -2682,3 +2682,82 @@ constraints:
         descriptions = [dc.description for dc in artifact.derived_constraints]
         assert "Base temperature limit" in descriptions
         assert "Child token minimum" in descriptions
+
+
+class TestDerivedEnvironmentContextWarning1618:
+    """Derived constraints are per-trial only; warn on environment.context."""
+
+    _TEMPLATE = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4", "gpt-4o"]
+
+constraints:
+  derived:
+{derived}
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+
+    def _load(self, tmp_path: Path, derived: str) -> list[str]:
+        spec = tmp_path / "spec.tvl.yml"
+        spec.write_text(self._TEMPLATE.format(derived=derived), encoding="utf-8")
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            load_tvl_spec(spec_path=spec)
+        return [
+            str(w.message) for w in record if "environment.context" in str(w.message)
+        ]
+
+    def test_warns_once_naming_constraint_ids(self, tmp_path: Path) -> None:
+        msgs = self._load(
+            tmp_path,
+            '    - require: "environment.context.quota >= 1000"\n'
+            '    - require: "env.budget >= 1"\n'
+            '    - require: "environment.context.limit >= 5"',
+        )
+        assert len(msgs) == 1
+        assert "derived_constraint_0" in msgs[0]
+        assert "derived_constraint_2" in msgs[0]
+        assert "derived_constraint_1" not in msgs[0]
+        assert "per trial only" in msgs[0]
+
+    def test_no_warning_without_environment_context(self, tmp_path: Path) -> None:
+        assert self._load(tmp_path, '    - require: "env.budget >= 1000"') == []
+
+    def test_spaced_form_is_not_detected(self, tmp_path: Path) -> None:
+        """Boundary: the literal-text check does not see ``environment . context``."""
+        assert (
+            self._load(tmp_path, '    - require: "environment . context.quota >= 1000"')
+            == []
+        )
+
+    def test_bracket_form_is_not_detected(self, tmp_path: Path) -> None:
+        """Boundary: the literal-text check does not see ``environment["context"]``."""
+        assert (
+            self._load(
+                tmp_path, '    - require: "environment[\\"context\\"].quota >= 1000"'
+            )
+            == []
+        )
+
+    def test_quoted_string_containing_text_is_flagged(self, tmp_path: Path) -> None:
+        """Boundary: the literal-text check can match inside a string literal."""
+        msgs = self._load(
+            tmp_path,
+            "    - require: \"model == 'environment.context'\"",
+        )
+        assert len(msgs) == 1
+        assert "derived_constraint_0" in msgs[0]
+
+    def test_warning_contains_no_values(self, tmp_path: Path) -> None:
+        msgs = self._load(
+            tmp_path,
+            '    - require: "environment.context.secret_marker >= 987654"',
+        )
+        assert len(msgs) == 1
+        assert "987654" not in msgs[0]
+        assert "secret_marker" not in msgs[0]

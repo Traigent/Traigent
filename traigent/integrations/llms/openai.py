@@ -28,6 +28,10 @@ from ..framework_override import (
     register_framework_mapping,
 )
 
+_OPENAI_ASYNC_CLIENT_PATH = "openai.AsyncOpenAI"
+
+_OPENAI_CLIENT_PATH = "openai.OpenAI"
+
 logger = get_logger(__name__)
 
 
@@ -37,7 +41,7 @@ class OpenAIIntegration:
     def __init__(self) -> None:
         """Initialize OpenAI SDK integration."""
         self.supported_clients: dict[str, Any] = {
-            "openai.OpenAI": {
+            _OPENAI_CLIENT_PATH: {
                 "model": "model",
                 "temperature": "temperature",
                 "max_tokens": "max_tokens",
@@ -49,7 +53,7 @@ class OpenAIIntegration:
                 "tools": "tools",
                 "tool_choice": "tool_choice",
             },
-            "openai.AsyncOpenAI": {
+            _OPENAI_ASYNC_CLIENT_PATH: {
                 "model": "model",
                 "temperature": "temperature",
                 "max_tokens": "max_tokens",
@@ -138,7 +142,7 @@ def enable_openai_optimization(client_types: list[str] | None = None) -> None:
         def my_openai_app():
             client = openai.OpenAI()
             response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-5.6-terra",
                 messages=[{"role": "user", "content": "Hello!"}]
             )
             return response.choices[0].message.content
@@ -161,12 +165,12 @@ def get_supported_openai_clients() -> list[str]:
 
 def enable_sync_openai() -> None:
     """Enable optimization for synchronous OpenAI client only."""
-    enable_openai_optimization(["openai.OpenAI"])
+    enable_openai_optimization([_OPENAI_CLIENT_PATH])
 
 
 def enable_async_openai() -> None:
     """Enable optimization for asynchronous OpenAI client only."""
-    enable_openai_optimization(["openai.AsyncOpenAI"])
+    enable_openai_optimization([_OPENAI_ASYNC_CLIENT_PATH])
 
 
 def openai_context(
@@ -215,10 +219,10 @@ def auto_detect_openai() -> None:
         available_clients = []
 
         if hasattr(openai, "OpenAI"):
-            available_clients.append("openai.OpenAI")
+            available_clients.append(_OPENAI_CLIENT_PATH)
 
         if hasattr(openai, "AsyncOpenAI"):
-            available_clients.append("openai.AsyncOpenAI")
+            available_clients.append(_OPENAI_ASYNC_CLIENT_PATH)
 
         if available_clients:
             enable_openai_optimization(available_clients)

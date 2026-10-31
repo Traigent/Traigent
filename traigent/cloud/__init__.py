@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from importlib import import_module
 
+_TRAIGENT_CLOUD_DTOS = "traigent.cloud.dtos"
+_TRAIGENT_CLOUD_SUBSET_SELECTION = "traigent.cloud.subset_selection"
+
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "TraigentCloudClient": ("traigent.cloud.client", "TraigentCloudClient"),
     "TraigentCloudService": ("traigent.cloud.service", "TraigentCloudService"),
@@ -20,53 +23,55 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "AuthManager": ("traigent.cloud.auth", "AuthManager"),
     "APIKey": ("traigent.cloud.auth", "APIKey"),
     "BillingManager": ("traigent.cloud.billing", "BillingManager"),
-    "QuotaExceededErrorDTO": ("traigent.cloud.dtos", "QuotaExceededErrorDTO"),
+    "QuotaExceededErrorDTO": (_TRAIGENT_CLOUD_DTOS, "QuotaExceededErrorDTO"),
     "WalletInsufficientBalanceErrorDTO": (
-        "traigent.cloud.dtos",
+        _TRAIGENT_CLOUD_DTOS,
         "WalletInsufficientBalanceErrorDTO",
     ),
-    "WalletTopUpPackDTO": ("traigent.cloud.dtos", "WalletTopUpPackDTO"),
+    "WalletTopUpPackDTO": (_TRAIGENT_CLOUD_DTOS, "WalletTopUpPackDTO"),
     "WalletTopUpPacksResponseDTO": (
-        "traigent.cloud.dtos",
+        _TRAIGENT_CLOUD_DTOS,
         "WalletTopUpPacksResponseDTO",
     ),
     "ExperimentGroupSourceExperimentDTO": (
-        "traigent.cloud.dtos",
+        _TRAIGENT_CLOUD_DTOS,
         "ExperimentGroupSourceExperimentDTO",
     ),
     "GroupedConfigurationRunRowDTO": (
-        "traigent.cloud.dtos",
+        _TRAIGENT_CLOUD_DTOS,
         "GroupedConfigurationRunRowDTO",
     ),
+    "RunGroupRow": ("traigent.cloud.run_group_table", "RunGroupRow"),
+    "RunGroupTable": ("traigent.cloud.run_group_table", "RunGroupTable"),
     "ExperimentGroupOverviewDTO": (
-        "traigent.cloud.dtos",
+        _TRAIGENT_CLOUD_DTOS,
         "ExperimentGroupOverviewDTO",
     ),
     "ExperimentGroupDetailDTO": (
-        "traigent.cloud.dtos",
+        _TRAIGENT_CLOUD_DTOS,
         "ExperimentGroupDetailDTO",
     ),
     "ExperimentGroupStatusSummaryDTO": (
-        "traigent.cloud.dtos",
+        _TRAIGENT_CLOUD_DTOS,
         "ExperimentGroupStatusSummaryDTO",
     ),
     "ExperimentGroupsPageDTO": (
-        "traigent.cloud.dtos",
+        _TRAIGENT_CLOUD_DTOS,
         "ExperimentGroupsPageDTO",
     ),
     "GroupedConfigurationRunsPageDTO": (
-        "traigent.cloud.dtos",
+        _TRAIGENT_CLOUD_DTOS,
         "GroupedConfigurationRunsPageDTO",
     ),
     "UsageTracker": ("traigent.cloud.billing", "UsageTracker"),
-    "SmartSubsetSelector": ("traigent.cloud.subset_selection", "SmartSubsetSelector"),
-    "DiverseSampling": ("traigent.cloud.subset_selection", "DiverseSampling"),
+    "SmartSubsetSelector": (_TRAIGENT_CLOUD_SUBSET_SELECTION, "SmartSubsetSelector"),
+    "DiverseSampling": (_TRAIGENT_CLOUD_SUBSET_SELECTION, "DiverseSampling"),
     "RepresentativeSampling": (
-        "traigent.cloud.subset_selection",
+        _TRAIGENT_CLOUD_SUBSET_SELECTION,
         "RepresentativeSampling",
     ),
     "HighConfidenceSampling": (
-        "traigent.cloud.subset_selection",
+        _TRAIGENT_CLOUD_SUBSET_SELECTION,
         "HighConfidenceSampling",
     ),
 }
@@ -89,6 +94,8 @@ __all__ = [
     "ExperimentGroupStatusSummaryDTO",
     "ExperimentGroupsPageDTO",
     "GroupedConfigurationRunsPageDTO",
+    "RunGroupRow",
+    "RunGroupTable",
     "UsageTracker",
     "SmartSubsetSelector",
     "DiverseSampling",

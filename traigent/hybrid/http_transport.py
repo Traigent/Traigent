@@ -13,7 +13,6 @@ from typing import Any
 
 import httpx
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.hybrid.protocol import (
     BenchmarksResponse,
@@ -33,6 +32,7 @@ from traigent.hybrid.transport import (
     TransportServerError,
     TransportTimeoutError,
 )
+from traigent.labels.transport_gate import gate_session
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -125,10 +125,12 @@ class HTTPTransport:
                         base_url=self.base_url,
                         headers=headers,
                         timeout=httpx.Timeout(self.timeout),
+                        follow_redirects=False,
                         limits=limits,
                         http2=use_http2,
                     ),
                     origins=[self.base_url],
+                    external=True,  # the customer's own evaluator service
                 )
                 self._closed = False
 

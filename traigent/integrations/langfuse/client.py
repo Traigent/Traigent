@@ -491,7 +491,7 @@ class LangfuseClient:
                     logger.error(f"Failed to get trace {trace_id}: v2 404")
                     return None
             except requests.exceptions.RequestException as e:
-                logger.error(f"Failed to get trace {trace_id}: {e}")
+                logger.exception(f"Failed to get trace {trace_id}: {e}")
                 return None
             else:
                 return self._trace_from_observation_rows(
@@ -505,7 +505,9 @@ class LangfuseClient:
     ) -> dict[str, Any] | None:
         """Legacy v1 ``GET /api/public/traces/{id}`` (Langfuse v3 self-hosted only)."""
         try:
-            preflight_requests("GET", f"{self.host}/api/public/traces/{trace_id}")
+            preflight_requests(
+                "GET", f"{self.host}/api/public/traces/{trace_id}", external=True
+            )
             response = requests.get(
                 f"{self.host}/api/public/traces/{trace_id}",
                 headers=self._get_auth_header(),
@@ -519,7 +521,7 @@ class LangfuseClient:
             result: dict[str, Any] = response.json()
             return result if include_io else self._strip_io(result)
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to get trace {trace_id}: {e}")
+            logger.exception(f"Failed to get trace {trace_id}: {e}")
             return None
 
     # ---- v2 helpers -------------------------------------------------------
@@ -609,6 +611,13 @@ class LangfuseClient:
             partial = True
         return rows, partial
 
+    def _raise_v2_not_found(self, page_no: int, asynchronous: bool) -> None:
+        if page_no == 0 and not self._v2_confirmed:
+            raise _V2Unavailable()
+        if asynchronous:
+            raise aiohttp.ClientError("404 from v2 observations")
+        raise requests.exceptions.HTTPError("404 from v2 observations")
+
     def _fetch_observations_v2(
         self,
         trace_id: str,
@@ -635,6 +644,7 @@ class LangfuseClient:
                 preflight_requests(
                     "GET",
                     f"{self.host}{_V2_OBSERVATIONS_PATH}",
+                    external=True,
                     params=self._v2_params(trace_id, cursor, window, include_io),
                 )
                 response = requests.get(
@@ -644,9 +654,7 @@ class LangfuseClient:
                     timeout=self.timeout,
                 )
                 if response.status_code == 404:
-                    if page_no == 0 and not self._v2_confirmed:
-                        raise _V2Unavailable()
-                    raise requests.exceptions.HTTPError("404 from v2 observations")
+                    LangfuseClient._raise_v2_not_found(self, page_no, False)
                 response.raise_for_status()
                 page, cursor = self._v2_page(response.json())
             except requests.exceptions.RequestException:
@@ -681,7 +689,9 @@ class LangfuseClient:
         window = self._v2_window()
         invalid = 0
         cursor: str | None = None
-        async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+        async with gate_session(
+            aiohttp.ClientSession(trust_env=True), external=True
+        ) as session:
             for page_no in range(max_pages):
                 try:
                     async with session.get(
@@ -691,9 +701,7 @@ class LangfuseClient:
                         timeout=aiohttp.ClientTimeout(total=self.timeout),
                     ) as response:
                         if response.status == 404:
-                            if page_no == 0 and not self._v2_confirmed:
-                                raise _V2Unavailable()
-                            raise aiohttp.ClientError("404 from v2 observations")
+                            LangfuseClient._raise_v2_not_found(self, page_no, True)
                         response.raise_for_status()
                         page, cursor = self._v2_page(await response.json())
                 except (TimeoutError, aiohttp.ClientError):
@@ -727,24 +735,7 @@ class LangfuseClient:
         return value
 
     @staticmethod
-    def _trace_from_observation_rows(
-        trace_id: str,
-        rows: list[dict[str, Any]],
-        partial: bool,
-        *,
-        include_io: bool = False,
-    ) -> dict[str, Any] | None:
-        """Rebuild a v1-shaped trace dict from v2 observation rows.
-
-        v4 has no trace objects; trace-level fields come from the root
-        observation (``isRootObservation`` true, else ``parentObservationId``
-        present and null; explicit logical roots win; the earliest
-        ``startTime`` wins, ties broken by ``id``). With no root, root-derived fields stay
-        unset instead of borrowing a child's. Returns None when the trace has no
-        observations (same as a v1 404).
-        """
-        if not rows:
-            return None
+    def _trace_root(trace_id: str, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
         roots = _root_rows(rows)
         root: dict[str, Any] | None = None
         if roots:
@@ -763,6 +754,28 @@ class LangfuseClient:
                 )
         else:
             logger.warning(f"Trace {trace_id} has no root observation.")
+        return root
+
+    @staticmethod
+    def _trace_from_observation_rows(
+        trace_id: str,
+        rows: list[dict[str, Any]],
+        partial: bool,
+        *,
+        include_io: bool = False,
+    ) -> dict[str, Any] | None:
+        """Rebuild a v1-shaped trace dict from v2 observation rows.
+
+        v4 has no trace objects; trace-level fields come from the root
+        observation (``isRootObservation`` true, else ``parentObservationId``
+        present and null; explicit logical roots win; the earliest
+        ``startTime`` wins, ties broken by ``id``). With no root, root-derived fields stay
+        unset instead of borrowing a child's. Returns None when the trace has no
+        observations (same as a v1 404).
+        """
+        if not rows:
+            return None
+        root = LangfuseClient._trace_root(trace_id, rows)
         trace: dict[str, Any] = {
             "id": trace_id,
             "name": (root.get("traceName") or root.get("name")) if root else None,
@@ -837,7 +850,9 @@ class LangfuseClient:
                     self._observations_partial_by_trace[trace_id] = True
                     return []
             except requests.exceptions.RequestException as e:
-                logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+                logger.exception(
+                    f"Failed to get observations for trace {trace_id}: {e}"
+                )
                 self._observations_partial_by_trace[trace_id] = True
                 return []
             else:
@@ -860,6 +875,7 @@ class LangfuseClient:
                 preflight_requests(
                     "GET",
                     f"{self.host}/api/public/observations",
+                    external=True,
                     params={
                         "traceId": trace_id,
                         "limit": str(_LEGACY_PAGE_LIMIT),
@@ -904,7 +920,7 @@ class LangfuseClient:
 
             return observations
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+            logger.exception(f"Failed to get observations for trace {trace_id}: {e}")
             self._observations_partial_by_trace[trace_id] = True
             return observations  # Return what we have so far
 
@@ -966,7 +982,7 @@ class LangfuseClient:
                     logger.error(f"Failed to get trace {trace_id}: v2 404")
                     return None
             except (TimeoutError, aiohttp.ClientError) as e:
-                logger.error(f"Failed to get trace {trace_id}: {e}")
+                logger.exception(f"Failed to get trace {trace_id}: {e}")
                 return None
             else:
                 return self._trace_from_observation_rows(
@@ -980,7 +996,9 @@ class LangfuseClient:
     ) -> dict[str, Any] | None:
         """Legacy v1 trace endpoint (Langfuse v3 self-hosted only)."""
         try:
-            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+            async with gate_session(
+                aiohttp.ClientSession(trust_env=True), external=True
+            ) as session:
                 async with session.get(
                     f"{self.host}/api/public/traces/{trace_id}",
                     headers=self._get_auth_header(),
@@ -992,7 +1010,7 @@ class LangfuseClient:
                     result: dict[str, Any] = await response.json()
                     return result if include_io else self._strip_io(result)
         except (TimeoutError, aiohttp.ClientError) as e:
-            logger.error(f"Failed to get trace {trace_id}: {e}")
+            logger.exception(f"Failed to get trace {trace_id}: {e}")
             return None
 
     async def get_trace_metrics_async(
@@ -1032,7 +1050,9 @@ class LangfuseClient:
                     self._observations_partial_by_trace[trace_id] = True
                     return []
             except (TimeoutError, aiohttp.ClientError) as e:
-                logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+                logger.exception(
+                    f"Failed to get observations for trace {trace_id}: {e}"
+                )
                 self._observations_partial_by_trace[trace_id] = True
                 return []
             else:
@@ -1050,7 +1070,9 @@ class LangfuseClient:
         self._observations_partial_by_trace[trace_id] = False
 
         try:
-            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+            async with gate_session(
+                aiohttp.ClientSession(trust_env=True), external=True
+            ) as session:
                 while page <= max_pages:
                     async with session.get(
                         f"{self.host}/api/public/observations",
@@ -1090,7 +1112,7 @@ class LangfuseClient:
 
             return observations
         except (TimeoutError, aiohttp.ClientError) as e:
-            logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+            logger.exception(f"Failed to get observations for trace {trace_id}: {e}")
             self._observations_partial_by_trace[trace_id] = True
             return observations  # Return what we have so far
 
@@ -1331,23 +1353,22 @@ class LangfuseClient:
 
             # Per-agent attribution
             agent_id = obs.get_agent_identifier()
-            if agent_id:
-                # Sanitize for MeasuresDict compatibility
-                safe_agent = (
-                    agent_id.replace(".", "_").replace("-", "_").replace(" ", "_")
-                )
+            if not agent_id:
+                continue
+            # Sanitize for MeasuresDict compatibility
+            safe_agent = agent_id.replace(".", "_").replace("-", "_").replace(" ", "_")
 
-                per_agent_costs[safe_agent] = (
-                    per_agent_costs.get(safe_agent, 0.0) + obs.cost
-                )
-                if obs_unpriced:
-                    unmeasured_agents.add(safe_agent)
-                per_agent_latencies[safe_agent] = (
-                    per_agent_latencies.get(safe_agent, 0.0) + obs.latency_ms
-                )
-                per_agent_tokens[safe_agent] = (
-                    per_agent_tokens.get(safe_agent, 0) + obs.total_tokens
-                )
+            per_agent_costs[safe_agent] = (
+                per_agent_costs.get(safe_agent, 0.0) + obs.cost
+            )
+            if obs_unpriced:
+                unmeasured_agents.add(safe_agent)
+            per_agent_latencies[safe_agent] = (
+                per_agent_latencies.get(safe_agent, 0.0) + obs.latency_ms
+            )
+            per_agent_tokens[safe_agent] = (
+                per_agent_tokens.get(safe_agent, 0) + obs.total_tokens
+            )
 
         # An agent with an unpriced LLM call has no cost to report (#2517).
         for safe_agent in unmeasured_agents:

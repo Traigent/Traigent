@@ -19,12 +19,13 @@ Function-derived names are code identifiers (GNFR-PRIV-003) and stay as ``functi
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
 import re
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,7 @@ LEGACY_TOP_LEVEL = (
     "evaluator_id",
     "evaluator_id_source",
     "evaluator_definition_id",
+    "evaluator_code_digest",
     "user_id",
     "billing_tier",
     "identity_version",
@@ -229,6 +231,52 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+#: Domain separator for the credential fingerprint the ref cache scopes by.
+#: Salt and domain separator for the credential fingerprint the ref cache scopes by.
+_CREDENTIAL_FINGERPRINT_SALT = b"traigent-content-less-principal-v1"
+#: PBKDF2 work factor: a key-derivation function, not a bare hash, so a leaked
+#: fingerprint is expensive to brute-force. Paid once per key per process (memoized).
+_CREDENTIAL_FINGERPRINT_ITERATIONS = 200_000
+
+
+@functools.lru_cache(maxsize=64)
+def credential_fingerprint(api_key: str) -> str:
+    """Key-derived (PBKDF2-HMAC-SHA256) fingerprint of the full API key.
+
+    The raw key is never stored or returned; only this derivation is. Memoized per
+    key within the process, so the derivation cost is paid once per key.
+    """
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        api_key.encode("utf-8"),
+        _CREDENTIAL_FINGERPRINT_SALT,
+        _CREDENTIAL_FINGERPRINT_ITERATIONS,
+    ).hex()
+
+
+def principal_for_headers(
+    backend_url: str | None,
+    headers: Mapping[str, str] | Iterable[tuple[str, str]] | None,
+) -> str | None:
+    """Cache scope of the exact outgoing request, or None (cache skipped).
+
+    ``headers`` are the name/value pairs the request is actually sent with, including
+    any session defaults merged in (see ``BackendIntegratedClient``). Only a request
+    that authenticates solely by ``X-API-Key`` is cacheable: any ``Authorization``
+    header (Bearer / JWT), a missing or ambiguous key, or unreadable headers (None)
+    return None.
+    """
+    if headers is None:
+        return None
+    pairs = list(headers.items() if isinstance(headers, Mapping) else headers)
+    if any(name.lower() == "authorization" for name, _ in pairs):
+        return None
+    keys = [value for name, value in pairs if name.lower() == "x-api-key"]
+    if len(keys) != 1 or not isinstance(keys[0], str) or not keys[0]:
+        return None
+    return RefCache.principal(backend_url, credential_fingerprint(keys[0]))
+
+
 def _cache_path() -> Path:
     base = os.getenv("TRAIGENT_RESULTS_FOLDER")
     root = Path(base).expanduser() if base else Path.home() / ".traigent"
@@ -284,13 +332,24 @@ class RefCache:
             logger.debug("content-less ref cache could not be written")
 
     @staticmethod
-    def principal(backend_url: str | None, credential_preview: str | None) -> str:
-        return _digest(f"{backend_url or ''}\x00{credential_preview or ''}")
+    def principal(
+        backend_url: str | None, credential_fingerprint: str | None
+    ) -> str | None:
+        """Cache scope for (backend, credential), or None when either is unknown.
+
+        ``None`` means the identity could not be determined. Reads and writes are then
+        skipped entirely: there is no shared fallback bucket (fail closed).
+        """
+        if not backend_url or not credential_fingerprint:
+            return None
+        return _digest(f"{backend_url}\x00{credential_fingerprint}")
 
     def lookup(
-        self, principal: str, local_keys: Mapping[str, str | None]
+        self, principal: str | None, local_keys: Mapping[str, str | None]
     ) -> dict[str, str]:
         """Cached refs for ``local_keys`` (kind -> local key) in the principal's last scope."""
+        if principal is None:
+            return {}
         with self._lock:
             data = self._load()
         scope = data["scope_index"].get(principal)
@@ -308,12 +367,14 @@ class RefCache:
 
     def store(
         self,
-        principal: str,
+        principal: str | None,
         tenant_id: str,
         project_id: str,
         local_keys: Mapping[str, str | None],
         refs: Mapping[str, str],
     ) -> None:
+        if principal is None:
+            return  # identity unknown: never write under a shared bucket
         scope = f"{tenant_id}/{project_id}"
         with self._lock:
             data = self._load()
@@ -444,7 +505,7 @@ def require_capability(result: Mapping[str, Any]) -> None:
 def prepare_payload(
     payload: dict[str, Any],
     request: Any,
-    principal: str,
+    principal: str | None,
     env: Mapping[str, str] | None = None,
 ) -> tuple[Any, ...]:
     """Rewrite ``payload`` to the content-less shape; returns the response context.

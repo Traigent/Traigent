@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-
 # Closed vocabulary of quota/limit error codes safe to render. Anything else
 # (including backend-invented strings) is shown as "unknown" so a quota
 # diagnostic can never carry backend or customer text (#2550).
@@ -25,25 +24,47 @@ QUOTA_ERROR_CODES = frozenset(
 )
 
 
+# Closed vocabulary of backend refusals that are definitive answers from a
+# reachable backend (e.g. HTTP 503 for a session shape the backend will not
+# create). Never connectivity, never retried on the legacy contract, and the
+# code (only) may be rendered.
+CLOSED_REFUSAL_CODES = frozenset(
+    {
+        "typed_storage_mapping_unavailable",
+        "director_tokens_required",
+        "director_opaque_ids_required",
+        "content_identity_keys_unavailable",
+        # The workspace is limited to optimization (see
+        # traigent.utils.optimization_only_egress): a closed 403, never retried or
+        # degraded to a different request shape or a local fallback.
+        "optimization_only",
+    }
+)
+
+
 # Closed vocabulary of generic backend error codes that may appear in an SDK
 # error message. Anything else is rendered as "unknown" so backend-invented
 # text (which can echo customer content) never reaches an exception or a log
 # (#2552).
-SAFE_HTTP_ERROR_CODES = QUOTA_ERROR_CODES | frozenset(
-    {
-        "bad_request",
-        "conflict",
-        "forbidden",
-        "insufficient_permissions",
-        "internal_error",
-        "invalid_request",
-        "not_found",
-        "rate_limited",
-        "service_unavailable",
-        "session_not_found",
-        "unauthorized",
-        "validation_error",
-    }
+SAFE_HTTP_ERROR_CODES = (
+    QUOTA_ERROR_CODES
+    | CLOSED_REFUSAL_CODES
+    | frozenset(
+        {
+            "bad_request",
+            "conflict",
+            "forbidden",
+            "insufficient_permissions",
+            "internal_error",
+            "invalid_request",
+            "not_found",
+            "rate_limited",
+            "service_unavailable",
+            "session_not_found",
+            "unauthorized",
+            "validation_error",
+        }
+    )
 )
 
 
@@ -91,6 +112,7 @@ class SessionCreationFailureClassification(Enum):
     KEY_NOT_FOUND = "key-not-found"
     BACKEND_UNREACHABLE = "backend-unreachable"
     QUOTA_EXCEEDED = "quota-exceeded"
+    BACKEND_REFUSED = "backend-refused"
     UNKNOWN = "unknown"
 
 
@@ -145,6 +167,12 @@ class SessionCreationFailureDetail:
             missing_permissions = ()
 
         error_code = payload.get("error_code") or payload.get("code")
+        if not error_code:
+            # Director/content-identity refusals nest the closed code as
+            # ``{"error": {"code": ...}}`` (structured field only, never prose).
+            nested = payload.get("error")
+            if isinstance(nested, dict):
+                error_code = nested.get("code")
         message = payload.get("message") or payload.get("error")
 
         return cls(
@@ -179,6 +207,18 @@ class SessionCreationFailureDetail:
         return (
             self.status_code in (402, 429) and "quota" in (self.message or "").lower()
         )
+
+    @property
+    def is_closed_refusal(self) -> bool:
+        """True when the backend refused with a closed refusal code.
+
+        Read only from the structured ``error_code`` field; message text is
+        never consulted. A closed refusal is a reachable-backend answer, never a
+        connectivity failure, so it is not retried on the legacy contract.
+        """
+
+        code = (self.error_code or "").strip().lower()
+        return code in CLOSED_REFUSAL_CODES
 
     @property
     def safe_quota_error_code(self) -> str:

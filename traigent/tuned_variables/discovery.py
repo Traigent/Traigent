@@ -90,6 +90,19 @@ class CallableInfo:
             return True
 
 
+def _passes_signature_filters(
+    info: CallableInfo,
+    required_params: list[str] | None,
+    return_type: type | None,
+) -> bool:
+    """Apply the optional required-params and return-type filters."""
+    if required_params and not info.matches_params(required_params):
+        return False
+    if return_type and not info.matches_return_type(return_type):
+        return False
+    return True
+
+
 def discover_callables(
     module: ModuleType,
     *,
@@ -162,12 +175,7 @@ def discover_callables(
             tags=_extract_tags(obj),
         )
 
-        # Apply required_params filter
-        if required_params and not info.matches_params(required_params):
-            continue
-
-        # Apply return_type filter
-        if return_type and not info.matches_return_type(return_type):
+        if not _passes_signature_filters(info, required_params, return_type):
             continue
 
         result[name] = info

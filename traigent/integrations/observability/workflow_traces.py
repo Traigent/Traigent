@@ -48,9 +48,16 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from traigent._version import get_version
-from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.cloud.url_security import (
+    validate_cloud_base_url,
+)
 from traigent.config.backend_config import BackendConfig
-from traigent.labels.transport_gate import gate_session, preflight_requests
+from traigent.labels.transport_gate import (
+    freeze_json_body,
+    gate_session,
+    observe_requests_response,
+    preflight_requests,
+)
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -861,8 +868,13 @@ class WorkflowTracesClient:
         Returns:
             TraceIngestionResponse with ingestion results
         """
+        from traigent.utils import optimization_only_egress as oo_egress
         from traigent.utils.env_config import is_backend_offline
 
+        if oo_egress.is_active(
+            oo_egress.policy_from_headers(self.backend_url, self._get_headers())
+        ):
+            return TraceIngestionResponse(success=False, error="optimization_only")
         if is_backend_offline():
             return TraceIngestionResponse(success=False, error="offline")
 
@@ -890,15 +902,24 @@ class WorkflowTracesClient:
             )
 
         try:
-            preflight_requests(
-                "POST", f"{self.backend_url}/api/v1/traces/ingest", json=request_payload
-            )
+            ingest_url = f"{self.backend_url}/api/v1/traces/ingest"
+            # Under the self-hosted opt-in the credential-bearing origin never
+            # follows a redirect; a 3xx is reported as a refusal below.
+            request_payload = freeze_json_body(request_payload)
+            preflight_requests("POST", ingest_url, json=request_payload)
             response = requests.post(
-                f"{self.backend_url}/api/v1/traces/ingest",
+                ingest_url,
                 json=request_payload,
                 headers=self._get_headers(),
                 timeout=self.timeout,
+                allow_redirects=False,
             )
+            observe_requests_response(response)
+            if 300 <= response.status_code < 400:
+                return TraceIngestionResponse(
+                    success=False,
+                    error=f"Redirect refused ({response.status_code})",
+                )
             # Auth failures: instance-scoped dedup at DEBUG
             if response.status_code in (401, 403):
                 if not self._auth_ingestion_error_logged:
@@ -914,7 +935,7 @@ class WorkflowTracesClient:
             response.raise_for_status()
             return TraceIngestionResponse.from_dict(response.json())
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to ingest traces: {e}")
+            logger.exception(f"Failed to ingest traces: {e}")
             return TraceIngestionResponse(success=False, error=str(e))
 
     async def ingest_traces_async(
@@ -935,8 +956,13 @@ class WorkflowTracesClient:
         Returns:
             TraceIngestionResponse with ingestion results
         """
+        from traigent.utils import optimization_only_egress as oo_egress
         from traigent.utils.env_config import is_backend_offline
 
+        if oo_egress.is_active(
+            oo_egress.policy_from_headers(self.backend_url, self._get_headers())
+        ):
+            return TraceIngestionResponse(success=False, error="optimization_only")
         if is_backend_offline():
             return TraceIngestionResponse(success=False, error="offline")
 
@@ -990,7 +1016,7 @@ class WorkflowTracesClient:
                     data = await response.json()
                     return TraceIngestionResponse.from_dict(data)
         except aiohttp.ClientError as e:
-            logger.error(f"Failed to ingest traces: {e}")
+            logger.exception(f"Failed to ingest traces: {e}")
             return TraceIngestionResponse(success=False, error=str(e))
 
 
@@ -1069,6 +1095,41 @@ if OTEL_AVAILABLE:
             with self._lock:
                 return self._current_config_run_id
 
+        def _record_missing_run_id(self, spans: list[ReadableSpanType]) -> None:
+            with self._lock:
+                self._dropped_span_count += len(spans)
+                first_drop = not self._warned_missing_run_id
+                self._warned_missing_run_id = True
+            log = logger.warning if first_drop else logger.debug
+            log(
+                "No configuration_run_id bound to TraigentSpanExporter; "
+                "dropping %d span(s). Pass configuration_run_id_getter or "
+                "call set_configuration_run_id().",
+                len(spans),
+            )
+
+        def _export_trace_groups(
+            self,
+            trace_groups: dict[str, list[SpanPayload]],
+            config_run_id: str,
+            all_success: bool,
+        ) -> bool:
+            for trace_id, span_payloads in trace_groups.items():
+                try:
+                    response = self.client.ingest_traces(
+                        spans=span_payloads,
+                        trace_id=trace_id,
+                        configuration_run_id=config_run_id,
+                    )
+                    if not response.success:
+                        logger.warning(f"Failed to export spans: {response.error}")
+                        all_success = False
+                except Exception as e:
+                    logger.exception(f"Error exporting spans: {e}")
+                    all_success = False
+
+            return all_success
+
         def export(self, spans: list[ReadableSpanType]) -> SpanExportResult:
             """Export spans to the Traigent backend.
 
@@ -1083,17 +1144,7 @@ if OTEL_AVAILABLE:
 
             config_run_id = self._get_config_run_id()
             if not config_run_id:
-                with self._lock:
-                    self._dropped_span_count += len(spans)
-                    first_drop = not self._warned_missing_run_id
-                    self._warned_missing_run_id = True
-                log = logger.warning if first_drop else logger.debug
-                log(
-                    "No configuration_run_id bound to TraigentSpanExporter; "
-                    "dropping %d span(s). Pass configuration_run_id_getter or "
-                    "call set_configuration_run_id().",
-                    len(spans),
-                )
+                TraigentSpanExporter._record_missing_run_id(self, spans)
                 return SpanExportResult.FAILURE
 
             # Group spans by trace_id
@@ -1125,19 +1176,9 @@ if OTEL_AVAILABLE:
 
             # Export each trace group; any dropped span fails the export
             all_success = conversion_failures == 0
-            for trace_id, span_payloads in trace_groups.items():
-                try:
-                    response = self.client.ingest_traces(
-                        spans=span_payloads,
-                        trace_id=trace_id,
-                        configuration_run_id=config_run_id,
-                    )
-                    if not response.success:
-                        logger.warning(f"Failed to export spans: {response.error}")
-                        all_success = False
-                except Exception as e:
-                    logger.error(f"Error exporting spans: {e}")
-                    all_success = False
+            all_success = TraigentSpanExporter._export_trace_groups(
+                self, trace_groups, config_run_id, all_success
+            )
 
             return SpanExportResult.SUCCESS if all_success else SpanExportResult.FAILURE
 

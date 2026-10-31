@@ -358,9 +358,12 @@ class TestAutoConfigResult:
         assert "constraints" in spec
         structural = spec["constraints"]["structural"]
         assert len(structural) == 1
-        assert structural[0]["description"] == "Low temp for factual models"
-        assert "implies" in structural[0]["code"]
-        assert structural[0]["requires"] == ["model", "temperature"]
+        # Loader-accepted when/then form, never "code"/"requires" (#2647).
+        assert structural[0]["error_message"] == "Low temp for factual models"
+        assert structural[0]["when"] == "model == 'gpt-4o'"
+        assert structural[0]["then"] == "temperature <= 1.0"
+        assert "code" not in structural[0]
+        assert "requires" not in structural[0]
 
     def test_reconstruct_range_unknown_type(self) -> None:
         from traigent.config_generator.types import _reconstruct_range

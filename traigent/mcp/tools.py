@@ -33,6 +33,8 @@ from traigent.utils.persistence import PersistenceManager
 from traigent.utils.secure_path import PathTraversalError, validate_path
 from traigent.utils.validation import ValidationResult, Validators
 
+_TRAIGENT_DIRNAME = ".traigent"
+
 V1_TOOL_NAMES: tuple[str, ...] = (
     "auth_status",
     "detect_tvars",
@@ -91,6 +93,25 @@ def _optimization_failure(exc: Exception, *, mode: str) -> dict[str, Any]:
     return _failure(message, code="optimization_failed")
 
 
+# Draft eval JSONL and manifests can hold customer examples: owner-only
+# (CodeQL py/overly-permissive-file, confidentiality).
+_PRIVATE_FILE_MODE = 0o600
+
+
+def _open_after_lstat_checks(
+    path: Path, root: Path, rel_parts: tuple[str, ...], flags: int
+) -> int:
+    """Reduced-guarantee open: refuse symlinked components, then a plain open."""
+    current = root
+    for part in rel_parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise OSError(f"refusing to write through symlink: {current}")
+    if path.is_symlink():
+        raise OSError(f"refusing to write through symlink: {path}")
+    return os.open(path, flags, _PRIVATE_FILE_MODE)
+
+
 def _write_text_nofollow(
     path: Path, text: str, *, overwrite: bool, root: Path | None = None
 ) -> None:
@@ -129,18 +150,14 @@ def _write_text_nofollow(
                 next_fd = os.open(part, dir_flags, dir_fd=fd)
                 os.close(fd)
                 fd = next_fd
-            file_fd = os.open(rel_parts[-1], flags, 0o644, dir_fd=fd)
+            file_fd = os.open(rel_parts[-1], flags, _PRIVATE_FILE_MODE, dir_fd=fd)
         finally:
             os.close(fd)
     else:
-        current = root
-        for part in rel_parts[:-1]:
-            current = current / part
-            if current.is_symlink():
-                raise OSError(f"refusing to write through symlink: {current}")
-        if path.is_symlink():
-            raise OSError(f"refusing to write through symlink: {path}")
-        file_fd = os.open(path, flags, 0o644)
+        file_fd = _open_after_lstat_checks(path, root, rel_parts, flags)
+    if hasattr(os, "fchmod"):
+        # Tighten a pre-existing file too (os.open's mode only applies on create).
+        os.fchmod(file_fd, _PRIVATE_FILE_MODE)
     with os.fdopen(file_fd, "w", encoding="utf-8") as handle:
         handle.write(text)
 
@@ -341,21 +358,28 @@ async def auth_status_tool(check: bool = False) -> dict[str, Any]:
                     "source": "backend",
                 }
 
+    auth_type = _auth_type(api_key, credentials)
+
     return {
         "ok": True,
         "authenticated": authenticated,
         "credential_source": credentials.get("source") or "none",
         "api_key": _mask_api_key(api_key),
-        "auth_type": (
-            "api_key"
-            if api_key
-            else ("jwt" if credentials.get("jwt_token") else "none")
-        ),
+        "auth_type": auth_type,
         "tenant_id": tenant_id,
         "project_id": project_id,
         "backend_url": _sanitize_backend_url(cast("str | None", backend_url)),
         "validity": validity,
     }
+
+
+def _auth_type(api_key: str | None, credentials: dict[str, Any]) -> str:
+    if api_key:
+        return "api_key"
+    elif credentials.get("jwt_token"):
+        return "jwt"
+    else:
+        return "none"
 
 
 def _serialize_detection_result(result: DetectionResult) -> dict[str, Any]:
@@ -749,7 +773,7 @@ def _run_loaded_optimizations(
 
     stdout_buffer = io.StringIO()
     stderr_buffer = io.StringIO()
-    persistence = PersistenceManager(".traigent")
+    persistence = PersistenceManager(_TRAIGENT_DIRNAME)
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     summaries: list[dict[str, Any]] = []
     with (
@@ -854,18 +878,9 @@ def run_optimization_tool(
     algorithm: str | None = None,
 ) -> dict[str, Any]:
     """Run local optimization; real mode is gated by confirm and cost_limit."""
-    if mode not in {"mock", "real"}:
-        return _failure("mode must be either 'mock' or 'real'.")
-
-    if mode == "real":
-        if not confirm:
-            return {"ok": False, "refused": True, "message": _REAL_SPEND_MESSAGE}
-        if cost_limit is None or cost_limit <= 0:
-            return {
-                "ok": False,
-                "refused": True,
-                "message": "Real optimization requires an explicit positive cost_limit.",
-            }
+    refusal = _optimization_mode_refusal(mode, confirm, cost_limit)
+    if refusal is not None:
+        return refusal
 
     if script_path is None:
         return _failure("script_path is required for run_optimization v1.")
@@ -881,40 +896,18 @@ def run_optimization_tool(
         return _failure(str(exc), code="path_rejected")
 
     if mode == "real":
-        unapproved_evals = _find_unapproved_eval_manifests(resolved_script.parent)
-        if unapproved_evals:
-            return {
-                "ok": False,
-                "refused": True,
-                "code": "draft_eval_unapproved",
-                "message": (
-                    "Real optimization refuses unapproved draft evaluation data. "
-                    "Review or replace the dataset, then set approval_status to "
-                    "user_approved in the eval manifest."
-                ),
-                "unapproved_evals": unapproved_evals,
-            }
-        from traigent.utils.env_config import is_mock_llm
-
-        if is_mock_llm():
-            return {
-                "ok": False,
-                "refused": True,
-                "message": (
-                    "Real optimization cannot run while mock mode is active in this "
-                    "server process. Restart the MCP server without mock mode for a "
-                    "real spend run."
-                ),
-            }
+        refusal = _real_optimization_refusal(resolved_script)
+        if refusal is not None:
+            return refusal
 
     # Mock runs keep their small default (no real spend to protect). A real
     # run without a caller-supplied max_trials uses the function's own
     # configured max_trials (the SDK default is 10, the previous MCP default)
     # and is not treated as explicitly sized, so the unmeasured-cost safety
     # limit still applies (#2441).
-    effective_trials: int | None = (
-        max_trials if max_trials is not None else (4 if mode == "mock" else None)
-    )
+    effective_trials: int | None = max_trials
+    if effective_trials is None and mode == "mock":
+        effective_trials = 4
     effective_algorithm = algorithm or "random"
 
     # v1 single-agent limitation: optimization runs synchronously below and
@@ -948,6 +941,26 @@ def run_optimization_tool(
     except Exception as exc:
         return _optimization_failure(exc, mode=mode)
 
+    stdout_payload, stderr_payload = _optimization_output(
+        mode, stdout_text, stderr_text
+    )
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "script_path": str(resolved_script),
+        "max_trials": effective_trials,
+        "algorithm": effective_algorithm,
+        "path_policy": "script_path must resolve under the current working directory.",
+        "results": summaries,
+        "stdout": stdout_payload,
+        "stderr": stderr_payload,
+    }
+
+
+def _optimization_output(
+    mode: str, stdout_text: str, stderr_text: str
+) -> tuple[str, str]:
     if mode == "real":
         # Real runs touch live providers; captured stdout/stderr can contain
         # prompts, completions, or other sensitive provider data. Scrub the tails
@@ -962,17 +975,56 @@ def run_optimization_tool(
         stdout_payload = stdout_text[-4000:]
         stderr_payload = stderr_text[-4000:]
 
-    return {
-        "ok": True,
-        "mode": mode,
-        "script_path": str(resolved_script),
-        "max_trials": effective_trials,
-        "algorithm": effective_algorithm,
-        "path_policy": "script_path must resolve under the current working directory.",
-        "results": summaries,
-        "stdout": stdout_payload,
-        "stderr": stderr_payload,
-    }
+    return stdout_payload, stderr_payload
+
+
+def _optimization_mode_refusal(
+    mode: str, confirm: bool, cost_limit: float | None
+) -> dict[str, Any] | None:
+    if mode not in {"mock", "real"}:
+        return _failure("mode must be either 'mock' or 'real'.")
+
+    if mode == "real":
+        if not confirm:
+            return {"ok": False, "refused": True, "message": _REAL_SPEND_MESSAGE}
+        if cost_limit is None or cost_limit <= 0:
+            return {
+                "ok": False,
+                "refused": True,
+                "message": "Real optimization requires an explicit positive cost_limit.",
+            }
+
+    return None
+
+
+def _real_optimization_refusal(resolved_script: Path) -> dict[str, Any] | None:
+    unapproved_evals = _find_unapproved_eval_manifests(resolved_script.parent)
+    if unapproved_evals:
+        return {
+            "ok": False,
+            "refused": True,
+            "code": "draft_eval_unapproved",
+            "message": (
+                "Real optimization refuses unapproved draft evaluation data. "
+                "Review or replace the dataset, then set approval_status to "
+                "user_approved in the eval manifest."
+            ),
+            "unapproved_evals": unapproved_evals,
+        }
+    from traigent.utils.env_config import is_mock_llm
+
+    if is_mock_llm():
+        return {
+            "ok": False,
+            "refused": True,
+            "message": (
+                "Real optimization cannot run while mock mode is active in this "
+                "server process. Restart the MCP server without mock mode for a "
+                "real spend run."
+            ),
+        }
+
+    return None
 
 
 def _serialize_loaded_result(result: Any) -> dict[str, Any]:
@@ -1003,7 +1055,7 @@ def _serialize_loaded_result(result: Any) -> dict[str, Any]:
 
 def get_results_tool(result_name: str | None = None) -> dict[str, Any]:
     """List or show local optimization results from the .traigent store."""
-    persistence = PersistenceManager(".traigent")
+    persistence = PersistenceManager(_TRAIGENT_DIRNAME)
     if result_name is None:
         return {
             "ok": True,
@@ -1031,7 +1083,7 @@ def export_evidence_tool(
     output_dir: str = ".traigent/evidence",
 ) -> dict[str, Any]:
     """Export a local evidence bundle from saved optimization results."""
-    persistence = PersistenceManager(".traigent")
+    persistence = PersistenceManager(_TRAIGENT_DIRNAME)
     if result_name is None:
         results = persistence.list_results()
         if not results:

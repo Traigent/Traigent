@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
@@ -500,7 +500,7 @@ class UsageTracker:
             # executors across many short-lived asyncio.run() calls in tests/CLI usage.
             _write_json_file(self.storage_path, data)
         except Exception as e:
-            logger.error(f"Failed to save usage data: {e}")
+            logger.exception(f"Failed to save usage data: {e}")
 
 
 class BillingManager:
@@ -1007,35 +1007,7 @@ class CostTracker:
 
         # Add to session costs with bounds
         if cost_item.session_id:
-            if cost_item.session_id not in self._session_costs:
-                # Enforce max sessions limit
-                if len(self._session_costs) >= self._max_sessions:
-                    # Remove oldest session (based on oldest cost item)
-                    oldest_session = min(
-                        self._session_costs.keys(),
-                        key=lambda s: (
-                            self._session_costs[s][0].timestamp
-                            if self._session_costs[s]
-                            else float("inf")
-                        ),
-                    )
-                    del self._session_costs[oldest_session]
-                    logger.debug(
-                        f"Removed oldest session {oldest_session} to stay within session limit"
-                    )
-
-                self._session_costs[cost_item.session_id] = []
-
-            # Enforce per-session items limit
-            session_items = self._session_costs[cost_item.session_id]
-            if len(session_items) >= self._max_items_per_session:
-                # Remove oldest items from this session
-                items_to_remove = max(1, self._max_items_per_session // 10)
-                self._session_costs[cost_item.session_id] = session_items[
-                    items_to_remove:
-                ]
-
-            self._session_costs[cost_item.session_id].append(cost_item)
+            self._add_session_cost_item(cost_item)
 
         # Add to pending sync
         if self.config.enable_server_sync:
@@ -1049,6 +1021,43 @@ class CostTracker:
         # Check for cost alerts
         if self.config.enable_real_time_alerts:
             self._check_cost_alerts()
+
+    def _add_session_cost_item(self, cost_item: CostItem) -> None:
+        """Group ``cost_item`` under its session, enforcing the session bounds.
+
+        ``cost_item.session_id`` is deliberately re-read at each use.
+        """
+        if cost_item.session_id not in self._session_costs:
+            self._evict_oldest_session_if_full()
+            self._session_costs[cast(str, cost_item.session_id)] = []
+
+        # Enforce per-session items limit
+        session_items = self._session_costs[cast(str, cost_item.session_id)]
+        if len(session_items) >= self._max_items_per_session:
+            # Remove oldest items from this session
+            items_to_remove = max(1, self._max_items_per_session // 10)
+            self._session_costs[cast(str, cost_item.session_id)] = session_items[
+                items_to_remove:
+            ]
+
+        self._session_costs[cast(str, cost_item.session_id)].append(cost_item)
+
+    def _evict_oldest_session_if_full(self) -> None:
+        # Enforce max sessions limit
+        if len(self._session_costs) >= self._max_sessions:
+            # Remove oldest session (based on oldest cost item)
+            oldest_session = min(
+                self._session_costs.keys(),
+                key=lambda s: (
+                    self._session_costs[s][0].timestamp
+                    if self._session_costs[s]
+                    else float("inf")
+                ),
+            )
+            del self._session_costs[oldest_session]
+            logger.debug(
+                f"Removed oldest session {oldest_session} to stay within session limit"
+            )
 
     # Reporting Methods
 
@@ -1209,7 +1218,7 @@ class CostTracker:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Sync loop error: {e}")
+                logger.exception(f"Sync loop error: {e}")
                 await asyncio.sleep(5)  # Wait before retrying
 
     async def _sync_with_server(self) -> bool:
@@ -1268,7 +1277,7 @@ class CostTracker:
                     return False
 
             except Exception as e:
-                logger.error(f"Cost sync failed: {e}")
+                logger.exception(f"Cost sync failed: {e}")
                 self._stats["failed_syncs"] += 1
                 return False
 

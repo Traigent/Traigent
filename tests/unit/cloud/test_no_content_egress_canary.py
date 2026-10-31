@@ -13,7 +13,10 @@ import pytest
 
 from traigent import optimize
 from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.utils.artifact_fingerprints import artifact_fingerprints_to_wire
+from traigent.utils.artifact_fingerprints import (
+    artifact_fingerprints_to_wire,
+    compute_dataset_fingerprint,
+)
 
 # SDK #2033: opt into the connected/backend code paths (see pyproject markers).
 pytestmark = pytest.mark.backend_online
@@ -759,6 +762,60 @@ def test_customer_dataset_row_ids_never_reach_the_wire(
     for measure in measures:
         example_id = measure["example_id"]
         assert re.fullmatch(r"example_\d+|ex_[0-9a-f]{8}_\d+", example_id), example_id
+
+
+def test_per_call_eval_dataset_content_never_crosses_the_wire(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """#2541: ``optimize(eval_dataset=B)`` takes the same wire path as the
+    decorator dataset. B's canary text must not appear in any outbound body,
+    and the reported dataset identity and count are B's, not the decorator's.
+    """
+    capture = _OutboundCapture()
+    _allow_backend_egress_in_test(monkeypatch, tmp_path / "percall")
+    _install_transport_capture(monkeypatch, capture)
+
+    decorator_dataset = Dataset(
+        name="decorator_dataset",
+        description="Canary-free decorator dataset",
+        examples=[
+            EvaluationExample(
+                input_data={"question": "plain decorator question", "prompt": "p"},
+                expected_output="plain decorator answer",
+            )
+        ],
+    )
+
+    @optimize(
+        eval_dataset=decorator_dataset,
+        objectives=["accuracy"],
+        configuration_space={"temperature": [0.1, 0.9]},
+        algorithm="auto",
+        max_trials=2,
+        offline=False,
+        local_storage_path=str(tmp_path / "percall"),
+    )
+    def canary_app(example: dict[str, Any]) -> str:
+        return "safe-local-output"
+
+    call_dataset = _dataset_with_canaries()
+    result = canary_app.optimize_sync(eval_dataset=call_dataset, progress_bar=False)
+
+    assert result.source == "cloud_brain"
+    _assert_required_production_bodies_were_captured(capture)
+    _assert_no_canaries_crossed_wire(capture)
+
+    session_bodies = [
+        entry["body"] for entry in capture.calls if entry["stage"] == "session-create"
+    ]
+    assert len(session_bodies) == 1
+    body = session_bodies[0]
+    assert body["dataset_id"] == "canary_dataset"
+    assert body["fingerprint_meta"]["dataset_example_count"] == 2
+    outbound_dataset_fp = body["artifact_fingerprints"]["dataset"]
+    assert outbound_dataset_fp == compute_dataset_fingerprint(call_dataset)
+    assert outbound_dataset_fp != compute_dataset_fingerprint(decorator_dataset)
 
 
 def test_artifact_fingerprint_wire_serializer_rejects_raw_content_smuggling() -> None:

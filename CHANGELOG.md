@@ -6,6 +6,143 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-31
+
+### Breaking changes
+
+- The SDK requires Python 3.12 or newer; Python 3.11 is no longer supported (see Changed).
+- `traigent/skills` is no longer bundled in the package; install the skills with `npx skills add Traigent/traigent-skills` (see Removed).
+- `strategy=` is removed from `@optimize`, `.optimize()`, `.optimize_sync()` and `OptimizedFunction(...)`; use `algorithm=` (see Removed).
+- `OptimizationResult.total_cost` and `metrics["total_cost"]` are unknown (`None` / absent) when any trial's cost could not be measured, instead of a partial sum (see Changed).
+- OpenAI models retired on 2026-10-23 are now rejected by model validation (see Changed).
+- In strict self-hosted endpoint mode, an unset backend endpoint raises `EndpointNotConfiguredError` instead of falling back to the vendor portal. This applies only when you opt in (see Added).
+- When the backend refuses session creation with a closed refusal code, the SDK raises `SessionBackendRefusedError` instead of continuing with a local session (see Changed).
+
+### Added
+
+- **Strict self-hosted endpoint mode (#2770).** Set `TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT=1` (or `TRAIGENT_DEPLOYMENT_PROFILE=self_hosted`) and the SDK never falls back to the vendor portal. If no endpoint is configured (`TRAIGENT_BACKEND_URL`, `TRAIGENT_API_URL` or stored `traigent auth login` credentials), it raises `EndpointNotConfiguredError` before any network call. The vendor portal link, signup hint, local-usage analytics endpoint, dataset-converter default and CSP backend origin are disabled in this mode; set `TRAIGENT_WEB_URL` for portal links. The endpoint is resolved only when a backend call is needed, so offline and local-only flows keep working without one. Default behaviour is unchanged. See `docs/features/authentication.md`.
+- **Opt-in `optimization_only` egress mode.** Enabled with `TRAIGENT_OPTIMIZATION_ONLY` or an explicit `optimization_only` argument, and also switched on when the backend reports it for your key. In this mode the SDK sends only a closed, fixed set of fields about the optimization loop, refuses free text in the search space and default configuration, refuses operations the server does not accept in this mode (traces, datasets, hosted model calls), and denies requests to routes outside a fixed allowlist by default. When the mode is off, nothing changes.
+- **Runtime requirements and reactive policies (`traigent.runtime`, `@traigent.requirement`).** Declare a runtime requirement on a function, register it idempotently, watch for breaches and start a human-approved fix, with local guards (`guarded`, `LocalGuardSet`) that act in process. The CLI is `traigent requirements validate|apply|status|watch|respond|explain`. Importing the package starts nothing and contacts nothing.
+- **Customer-side certification commands (`traigent.certification`, `traigent certify keygen|pin|enroll|bind|abandon`).** Opt-in. The evidence file and the signing key stay on your machine (owner-only permissions); only closed identifiers, references and digests are sent to the backend. Pins come from a file you provision yourself, never from the backend call being verified. A run captures its evidence when you pass a snapshot store in `ExecutionOptions.snapshot_store`.
+- **More snapshot storage backends.** `traigent.snapshot.backends` adds `GCSStore`, `AzureBlobStore` and `GitHubStore` next to `LocalDirStore` and `S3Store`, with optional extras for each cloud SDK, and a bounded read of the uncommitted-diff file. Plain `http://` endpoints are refused by default. See `docs/user-guide/execution-snapshot.md`.
+- **Explicit budget allowances for unpriced calls.** `ExecutionBudget(max_budget_debit_usd=...)` and `reserve_debit(...)` refuse a call before it is placed when its allowance is not funded. They bound allocation debits, not the provider's actual charge; unknown actual cost stays unknown. See `docs/guides/execution-budget.md`.
+- **Onboarding failure checks.** A `metric_functions` key that is a near miss for an objective name now warns that the scorer is being ignored. A scorer with a required parameter outside the recognised names raises a `ValidationError` for objective metrics (a warning otherwise) before any model call. When every trial fails with connection errors, the warning points to `TRAIGENT_MOCK_LLM=true` and the offline quickstart.
+- **Agent decision tools on the analytics MCP server.** `agent_decision_ensure`, `agent_decision_latest` and `agent_decision_answer` let a coding agent ask whether Traigent has a question about an agent, show the fixed question and options to the human in the host's own question UI, and post exactly the human's choice. Inputs are ids and closed enums only; backend errors map to the contract's closed reasons. A YES means prepare the baseline evaluation; it never authorises spend.
+
+### Security
+
+- **Credentials are sent per request, not as session defaults (#2716).** Backend pool sessions no longer carry credential defaults.
+- **Cached ID tokens are bounded by the token's own expiry and fail closed on stale entries;** one-time codes are normalised before replay tracking and verification.
+- **Raised minimum versions of dependencies with published advisories:** `filelock>=4.2.1`, plus `nltk>=3.10.4`, `langgraph>=1.2.14` and `opentelemetry-api>=1.45.1` in the optional extras, and `setuptools>=84.1.0` for builds.
+- **Draft evaluation files written by the MCP server are created owner-only (mode 0600).**
+- **Explicit opt-in for a private self-hosted backend (`TRAIGENT_ALLOW_PRIVATE_BACKEND=1`).** Private and loopback backend URLs are still refused by default. With the opt-in set, they are allowed only when the URL's scheme, host and port match `TRAIGENT_BACKEND_URL`. HTTPS, metadata and link-local blocking, redirect refusal and DNS-failure refusal are unchanged. The opt-in is documented in `docs/features/safety-gates.md`.
+
+### Fixed
+
+- **Interrupts are no longer swallowed.** `Ctrl+C` and `SystemExit` raised in a progress callback, your agent function or an evaluator now reach the caller of `optimize()`; permits held by parallel trials are released first.
+- **Portal experiment links now open in the right workspace.** `build_experiment_url` adds the `projectId` query parameter the portal reads (alongside `project_id`), and `build_agent_url` builds project-qualified agent links.
+- **Built-in exact-match accuracy is computed and uploaded only when `accuracy` is a configured metric (#2767).** Before, every example with an expected output got an exact-match `accuracy`, so a run whose objectives were something else uploaded a fake `0.0` accuracy. Now the SDK skips it and logs one info line per evaluator. An `accuracy` you supply yourself (a metric function or a returned metrics mapping) is kept, a measured `0.0` stays `0.0`, and accuracy that nothing measured (no rows, no expected outputs, a resumed row with no stored accuracy) is `None` instead of `0.0` or a success-derived `1.0`. Each row has at most one accuracy value, and the trial accuracy, its `score` alias, the uploaded payload and the per-example summary all use those same values and the same mean. A row's value is: an accuracy you supply (a metric function or a returned mapping), even without an expected output or on a failed attempt, which overrides exact match; otherwise, when `accuracy` is a configured metric and the row has an expected output, exact match 1 or 0 on a new row (a failed attempt or a missing output counts as 0), or the stored accuracy of a reused row, which is never re-scored; otherwise no value. The trial accuracy is the mean over rows that have a value and is absent when none do.
+- **The end-of-run cost warning tells partial from missing cost measurement (#2766).** `COST_UNMEASURED_TRIALS_RAN` and the default-stop message now say "cost could not be measured on M of N examples" (with the `traigent.with_usage(value, total_cost=0)` hint for examples that make no model call) when only some examples lack a measured cost, and "cost could not be measured on any of those examples" when none has one. They describe cost measurement only and make no claim about whether usage was captured. When the example counts are not available they say only that the cost could not be measured. The counts cover every example attempt in the unmeasured trials, not the shortened id list. Warning codes, budget enforcement and known-spend floors are unchanged.
+- **Cloud-brain runs now execute the runtime `custom_evaluator` override.** `optimize(custom_evaluator=...)` was ignored on the cloud path (it ran the decorator's evaluator while the evaluator fingerprint named the override). The effective custom evaluator is now resolved once per `optimize()` entry and used for both execution and identity on every path. The session-create body also gains an optional `evaluator_code_digest` (an `ecd1` digest of the user-code scorer that actually runs) in the typed identity-v2 shape; it is never sent next to an evaluator id, in privacy mode or in content-less mode. Legacy fp1 output is unchanged.
+- **Evaluator `target_filters` is a closed, typed contract.** `EvaluationClient.create_evaluator` and `update_evaluator` now validate `target_filters` client-side against the schema (`environment`, `release`, `name`, `tags`: each a list of 1-20 unique strings; unknown keys and the old string form are rejected without echoing values) and send the schema's wire format. A typed `traigent.evaluation.TargetFilters` is exported; plain dicts of the same shape still work. On update, omitting `target_filters` or passing `None` leaves the filters unchanged, and `{}` clears them. Only meaningful for `observability_trace` evaluators.
+- **`traigent hooks uninstall` now removes Traigent's pre-commit hook and restores the customer's `pre-commit` (#2707).** Uninstall recognised only the pre-push marker, so the pre-commit hook was never removed and its `.backup` was never restored.
+- **Repeated `traigent hooks install --force` no longer overwrites the customer's hook backup (#2707).** A Traigent hook is replaced without a backup; a foreign hook is backed up only when no `.backup` exists, and the install fails closed (files untouched) when one does. `uninstall` no longer restores a backup that holds a Traigent hook; it removes that backup instead. Install and uninstall share one hooks lock, and both refuse a hook that is a symbolic link before touching anything.
+- **Trial error text and three metadata maps now cross to the backend as closed codes and allowlisted keys (#2241).** `error_message` on trial submission and config-run status is reduced to one fixed code (for example `trial_failed` or `no_examples_succeeded`); the full text stays on the local result. `metadata.agent_configuration`, `metadata.surrogate_evaluator` and `summary_stats.metadata` are rebuilt from a key allowlist, so unlisted keys and judge prompts no longer leave the SDK.
+- **TVL derived constraints are documented as per-trial only; the loader warns when a spec relies on `environment.context` (#1618).** `load_tvl_spec` emits one value-free warning naming the derived constraint ids; `docs/tvl/CONSTRAINT_EXPRESSIONS.md` states the rule.
+- **Keyless quickstart is labelled a plumbing check, with no fake winner (#1690).** `traigent quickstart` now ends with a message saying the run used a mock LLM and simulated scores, is not a model comparison, and found no best configuration; the `best config ... scored 0.850` line is gone. Achievements stay blocked in mock runs.
+- **Run-group table across runs (#1711, slice 1).** `client.experiment_groups.table(group_id, project_id)`
+  returns one `RunGroupTable` of every configuration-run in a run group: run id, run name,
+  config, metrics, cost, status and `created_at`. An unmeasured cost is `None` (with
+  `cost_unmeasured`), never `0`. `to_dataframe()` needs the
+  optional pandas extra. Also fixes the group list/configuration-runs reads to send
+  `per_page` and read nested `pagination` (they were ignored before). See `docs/user-guide/run_group_table.md`.
+- **Anthropic key probe uses a current Claude id (#2651).** `validate_providers` probes with `claude-haiku-5-5` (was `claude-haiku-4-5-20251001`); the known-models list carries the Claude 5.5 ids and no retired `claude-3*` ids.
+- **Dev tooling now agrees with CI (#2469).** `release-review.yml` formats with
+  `ruff format --check` (as the required PR gate does) instead of black; the `dev`
+  extra exact-pins `isort==9.0.1` and `mypy==2.3.1` (the versions in
+  `.pre-commit-config.yaml` and `uv.lock`); `scripts/local_gate.sh` tests generated
+  schema types against the commit in `scripts/ci/schema-pin.txt` (exporting it from
+  the sibling checkout when that is at another commit, failing closed when the pin
+  is unreadable or absent).
+- **BREAKING (packaging): the SDK no longer bundles `traigent/skills` (#1609).**
+  The folder and its package-data entry are removed; the skills live only in
+  `Traigent/traigent-skills` (`npx skills add Traigent/traigent-skills`, which
+  `traigent onboard` already runs). The runtime message that pointed at the bundled
+  folder now points to installing `traigent-skills`. The bundle-only content guards
+  (lifecycle-vocabulary lint, decorator-skill snippet test, MLflow skill example
+  check) go with it; the tracker no-local-default check stays.
+- **Nous provider auth flow is marked UNVERIFIED (#2067).** The six "confirm
+  before merge" OWNER markers are now explicit UNVERIFIED notes (token endpoint,
+  `auth.json` schema, refresh request shape, base URL, model-id form), the
+  provider logs one value-free warning at first use, and
+  `docs/guides/nous-provider.md` states the flow was not checked against the live
+  service.
+- **`generate-config -o tvl` structural constraints now load (#2647).** The
+  generator's known constraint shapes (`require(...)`, `implies(...)`,
+  `lambda config: ...`) are translated to the `expr` / `when`-`then` forms the
+  SDK's own `load_tvl_spec` accepts. A shape outside that grammar is skipped
+  with a value-free warning naming only the constraint id, instead of being
+  written as an unloadable `code` entry.
+
+### Changed
+
+- **A closed backend refusal of session creation stops the run.** When the backend refuses session creation with a closed refusal code, the SDK raises `SessionBackendRefusedError` (carrying only the HTTP status and the closed code) and does not continue with a local session. It is not reported as a connectivity problem.
+- **Retired OpenAI models are rejected.** The models OpenAI retired on 2026-10-23 (the `gpt-3.5-turbo` family, `gpt-4`, `gpt-4-turbo`, `gpt-4o-2024-05-13`, `o1`, `o1-pro`, `o3-mini`, `o4-mini` and `gpt-4.1-nano`) are now refused by model validation and removed from the bundled model lists and examples. `gpt-4o`, `gpt-4o-mini`, `gpt-4.1` and `gpt-4.1-mini` stay valid.
+- **Cost reporting for partly measured calls.** The LangChain and PydanticAI integrations report a cost lower bound with `cost_unmeasured` instead of a `$0` total when only part of a call is priced. Bundled first-party prices now cover Claude 5.5 and Fable 5.1 models.
+- **Latency is recorded without mutating provider responses.** The LiteLLM integration no longer attaches timing to pydantic response objects; it keeps it in a side record.
+- **Breaking: Python 3.11 is no longer supported; the SDK requires Python >=3.12 (numpy>=2.5.3 security fix).** `numpy>=2.5.3` now applies on every supported Python.
+- **Honest run cost totals; unmeasured-cost floor in its own field (#2688).** When
+  any trial's cost is unmeasured, `OptimizationResult.total_cost` and
+  `metrics["total_cost"]` are now unknown (`None` / absent) instead of a partial
+  sum; `metrics["cost_floor_usd"]` (known costs plus the floors of unmeasured
+  trials) and `metrics["cost_unmeasured_trials"]` report the exact lower bound
+  and count. Unmeasured trials are submitted with `cost_unmeasured = 1.0` and
+  their floor as top-level `cost_floor_usd` in the results body; budget-armed
+  sessions additionally keep `metrics.cost = floor` as a temporary bridge until
+  the backend reads `cost_floor_usd`; other sessions send no `metrics.cost`.
+  `SimpleScoringEvaluator`
+  no longer hands placeholder `$0` costs (unmeasured or unpriced usage) to the
+  scoring function, progress callback or trial metrics.
+
+### Added
+
+- **Execution snapshots you store yourself (`traigent.snapshot`).** `build_execution_snapshot` captures the dataset rows, configuration, agent and evaluator source (and, only with `capture_dirty_diff=True`, your uncommitted git diff) into one `tes1` bundle; `publish_snapshot`, `verify_snapshot` and `load_snapshot` write it to and check it in storage you own (`LocalDirStore`; `S3Store` via `pip install "traigent[snapshot-s3]"`; `GCSStore` via `traigent[snapshot-gcs]`; `AzureBlobStore` via `traigent[snapshot-azure]`; or `GitHubStore`, which uses a private repository and an existing branch, never overwrites, caps parts at 50 MiB, honours GitHub rate limits and sends the token only to the API host). Reading an opt-in dirty diff is streamed and stopped at the 10 MiB cap. S3-compatible endpoints are supported only if they pass the one-time conditional-write probe. Stores use atomic create-if-absent, remote endpoints must be HTTPS, errors carry no provider text or content, and nothing contacts Traigent. A v1 snapshot is an unbound client declaration, not proof of what ran. See `docs/user-guide/execution-snapshot.md`.
+- **Per-call vendor retry, fault-injection hook, strict retry settings.**
+  With `TRAIGENT_VENDOR_MAX_RETRIES` > 0 the LiteLLM interceptor retries the
+  same provider call on 429/503 (retry_after, else exponential backoff), instead
+  of only moving on to the next configuration. Each trial reports
+  `vendor_call_attempts`, `vendor_call_retries` and per-attempt records
+  (failed attempts have unknown usage, not zero) in `TrialResult.metadata`,
+  totalled on `OptimizationResult.metadata`. New test-only
+  `traigent.testing.inject_vendor_failures(count, kind, per_call)` makes calls
+  fail on purpose (refused in production). Both retry env vars are now parsed
+  strictly: a malformed value raises `ConfigurationError` at run start instead
+  of silently disabling retries.
+- **`compare()` evaluates fixed configs as one experiment (#1952).** `OptimizedFunction.compare(configs, eval_dataset=None, repeats=1)` (and `compare_async`) calls the evaluator `optimize()` builds directly (no orchestrator, backend session, trial submission or `save_to` persistence) for each fully specified config on the same examples, and returns one `ComparisonResult` with per-config mean/spread, per-config cost (unmeasured cost is `None` plus a `cost_lower_bound`, never `0.0`), and a holdout check against the tuning dataset. Configs outside the declared space raise a value-free `ValueError`; cost estimate/approval, cumulative cost limit, strict cost tracking, CI approval, timeout, `max_total_examples` and a shared `ExecutionBudget` apply as in `optimize()` (a reached limit returns a partial result with `stop_reason`); the winner follows the objective's declared orientation; the wrapper's applied config and history are unchanged. See `docs/user-guide/compare_configs.md`.
+- **`optimize(resume_from=...)` resumes a local run (#1697).** Pass a prior
+  `OptimizationResult`, or a result saved with `PersistenceManager.save_result`
+  (integrity manifest verified; tampering raises `ValueError`). Trials whose
+  dataset, scorer, agent and configuration-space `fp1` fingerprints all match
+  and that completed with a measured or unknown cost are reused, count toward
+  `max_trials`, and are not charged to the new run's cost limit; in-flight
+  trials are never reused or retried. Cloud and hybrid runs raise `ValueError`.
+  See `docs/features/resume-from.md`.
+- **`resume_from` reuses completed examples of partial trials (#2541, #1697).**
+  A prior trial that finished only some examples is re-run for the same config
+  with the completed examples (matching example id, input and expected output)
+  reused and only the missing ones evaluated, aggregated as one trial. Reused
+  examples are not charged again to the cost limit, stay in totals, keep unknown
+  cost unknown, and use none of `max_total_examples`. Results without
+  per-example data fall back to trial-level reuse. `optimize(eval_dataset=...)` evaluates a per-call dataset (#2541);
+  the decorator's dataset is used when it is omitted.
+
+### Removed
+
+- **Migration: `auto_optimize`, `trigger`, `batch_size` and `parallel_trials` are removed (#1370 item 10).** They were hard-removed earlier and still raise `TypeError`, but the refusal says only "use supported arguments such as `parallel_config` or `ExecutionOptions`". Use instead: `auto_optimize` → nothing; calling a decorated function only runs its body, so call `.optimize()` or `.optimize_sync()` on it to optimize. `trigger` → call `.optimize()` or `.optimize_sync()` explicitly. `batch_size` → `parallel_config={"example_concurrency": N}`. `parallel_trials` → `parallel_config={"trial_concurrency": N}`.
+- **BREAKING: `strategy=` is removed from `@optimize`, `.optimize()`, `.optimize_sync()` and `OptimizedFunction(...)` (#1370 item 9).** It was the deprecated alias for `algorithm=`. Passing any non-`None` value raises `TypeError` naming `algorithm=<optimizer>`; use `algorithm=` to select the optimizer. A `None` value is treated as not passed. `strategy_params=` is a separate, already-refused parameter and is unchanged.
+- **BREAKING: the `budget_limit`, `budget_metric` and `budget_include_pruned` aliases now name their replacement when refused (#1370 item 9).** They were removed in 0.13.0 and still raised `TypeError`, but with a generic "unknown keyword" message on the decorator path. They now raise `budget_limit parameter was removed in 0.13.0. Use cost_limit=<USD> ... or metric_limit=<value> with metric_name=<name> instead.` (the same message on `.optimize()`). Use `cost_limit` for hard USD spend control, `metric_limit` and `metric_name` for other cumulative metrics, and `metric_include_pruned` for pruned-trial accounting.
+- **`mock` and `mock_mode_config` are refused with a removal message (#1370 item 6).** They were already rejected by the removal guard; this entry records the public removal. The replacement for test code is `traigent.testing.enable_mock_mode_for_quickstart()`.
+
 ## [0.31.1] - 2026-10-24
 
 ### Fixed

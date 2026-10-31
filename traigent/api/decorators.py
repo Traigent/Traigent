@@ -12,7 +12,7 @@ Examples:
     ...     eval_dataset="qa_test.jsonl",
     ...     objectives=["accuracy"],
     ...     configuration_space={
-    ...         "model": ["gpt-3.5-turbo", "gpt-4"],
+    ...         "model": ["gpt-5.6-terra", "gpt-5.6-sol"],
     ...         "temperature": [0.1, 0.5, 0.9]
     ...     }
     ... )
@@ -26,12 +26,12 @@ Examples:
     ...     eval_dataset="customer_support.jsonl",
     ...     objectives=["accuracy", "cost", "latency"],
     ...     configuration_space={
-    ...         "model": ["gpt-3.5-turbo", "gpt-4", "claude-haiku-4-5-20251001"],
+    ...         "model": ["gpt-5.6-terra", "gpt-5.6-sol", "claude-haiku-4-5-20251001"],
     ...         "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
     ...         "max_tokens": [100, 500, 1000]
     ...     },
     ...     constraints=[
-    ...         lambda config: config["temperature"] < 0.8 if config["model"] == "gpt-4" else True,
+    ...         lambda config: config["temperature"] < 0.8 if config["model"] == "gpt-5.6-sol" else True,
     ...         lambda config, metrics: metrics.get("cost") is not None
     ...         and metrics["cost"] <= 0.10
     ...     ]
@@ -43,8 +43,9 @@ Examples:
 
 from __future__ import annotations
 
-import math
+import dataclasses
 import inspect
+import math
 import os
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
@@ -101,10 +102,14 @@ from traigent.core.objectives import (
     normalize_objectives,
 )
 from traigent.core.optimized_function import (
+    _REMOVED_ALIAS_MESSAGES,
     _REMOVED_MOCK_PARAMETERS,
     OptimizedFunction,
+    _reject_removed_aliases,
     _reject_removed_strategy_preset,
+    _removed_alias_message,
     _removed_mock_parameter_message,
+    _without_none_removed_aliases,
 )
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -118,6 +123,8 @@ from traigent.utils.exceptions import (
     ValidationError,
 )
 from traigent.utils.logging import get_logger
+
+_OFFLINE_MUST_BE_BOOL = "offline must be a bool"
 
 logger = get_logger(__name__)
 
@@ -181,13 +188,32 @@ class EvaluationOptions(BaseModel):
     @field_validator("dataset_id", mode="before")
     @classmethod
     def validate_dataset_id(cls, value: Any) -> str | None:
-        """Stripped, non-blank, at most 255 characters; never truncated."""
+        """Normalize a declared dataset id: stripped, non-blank, at most 255 characters.
+
+        The value is never truncated; an invalid value is rejected instead.
+
+        Args:
+            value: The raw ``dataset_id`` supplied by the caller, or ``None``.
+
+        Returns:
+            The normalized dataset id, or ``None`` when no id was declared.
+        """
         from traigent.cloud.models import normalize_declared_dataset_id
 
         return normalize_declared_dataset_id(value)
 
     @model_validator(mode="after")
     def validate_evaluator_identity(self) -> EvaluationOptions:
+        """Validate the evaluator identity fields after model construction.
+
+        Returns:
+            This ``EvaluationOptions`` instance, unchanged.
+
+        Raises:
+            ValueError: If an identity is blank or longer than 200 characters,
+                or if both ``evaluator_id`` and ``evaluator_definition_id``
+                (aliases of each other) are provided.
+        """
         values = [self.evaluator_id, self.evaluator_definition_id]
         for value in values:
             if value is not None and not value.strip():
@@ -233,7 +259,19 @@ class InjectionOptions(BaseModel):
     @field_validator("injection_mode", mode="before")
     @classmethod
     def validate_injection_mode(cls, v: str | InjectionMode) -> str | InjectionMode:
-        """Validate injection_mode and reject removed modes."""
+        """Validate injection_mode and reject removed modes.
+
+        Args:
+            v: The ``injection_mode`` supplied by the caller, as a string or
+                an ``InjectionMode`` member.
+
+        Returns:
+            The value unchanged when it is not a removed mode.
+
+        Raises:
+            ValueError: If ``v`` is a mode removed in v2.x (``"attribute"`` or
+                ``"decorator"``).
+        """
         if isinstance(v, str) and v in ("attribute", "decorator"):
             raise ValueError(
                 f"injection_mode='{v}' has been removed in v2.x. "
@@ -358,6 +396,19 @@ class ExecutionOptions(BaseModel):
             ``TRAIGENT_REQUIRE_RUN_ID`` for this run. An explicit ``True`` or
             ``False`` always overrides the environment variable, including
             explicit ``False`` against an environment set to ``true``.
+        snapshot_store: Opt-in G1 client evidence. A
+            :class:`~traigent.snapshot.SnapshotStore` in storage you own. When
+            set, the run captures the dataset, evaluator and config space into it
+            before any trial (S0, refused with
+            :class:`~traigent.utils.exceptions.SnapshotBindingError` if
+            incomplete or if the certificate service is not ready), and the
+            terminal best configuration after the run (S1). Only blinded
+            commitments are ever sent to Traigent, and only when you later bind.
+            ``None`` (default) changes nothing: no snapshot code is imported.
+        snapshot_g1_deadline_days: Optional co-sign deadline for the G1
+            certificate, an integer from 1 to 30 days (the Backend default is 7
+            when unset). Meaningful only with ``snapshot_store``; setting it
+            without a store is refused.
     """
 
     model_config = ConfigDict(
@@ -376,7 +427,13 @@ class ExecutionOptions(BaseModel):
 
     @property
     def legacy_option_values(self) -> dict[str, Any]:
-        """Read-only view of the captured legacy execution option values."""
+        """Read-only view of the captured legacy execution option values.
+
+        Returns:
+            A shallow copy of the legacy option values captured at construction
+            time. Adding, removing or replacing top-level entries does not affect
+            this object; mutable values inside the copy remain shared with it.
+        """
         return dict(self._legacy_options)
 
     algorithm: str = "auto"
@@ -393,6 +450,8 @@ class ExecutionOptions(BaseModel):
     winner_stability_reps: int = 0
     example_timeout: float | None = None
     require_run_id: bool | None = None
+    snapshot_store: Any = None
+    snapshot_g1_deadline_days: int | None = None
 
     @model_validator(mode="wrap")
     @classmethod
@@ -491,11 +550,40 @@ class ExecutionOptions(BaseModel):
     def _validate_algorithm(cls, v: str) -> str:
         return cast(str, validate_algorithm_name(v))
 
+    @field_validator("snapshot_store")
+    @classmethod
+    def _validate_snapshot_store(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if not all(
+            callable(getattr(v, name, None))
+            for name in ("create_if_absent", "read", "locator")
+        ):
+            raise ValueError("snapshot_store must be a SnapshotStore")
+        return v
+
+    @field_validator("snapshot_g1_deadline_days", mode="before")
+    @classmethod
+    def _validate_snapshot_g1_deadline_days(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 30:
+            raise ValueError(
+                "snapshot_g1_deadline_days must be an integer from 1 to 30"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _validate_snapshot_g1_deadline_needs_store(self) -> ExecutionOptions:
+        if self.snapshot_g1_deadline_days is not None and self.snapshot_store is None:
+            raise ValueError("snapshot_g1_deadline_days requires snapshot_store")
+        return self
+
     @field_validator("offline")
     @classmethod
     def _validate_offline(cls, v: bool) -> bool:
         if not isinstance(v, bool):
-            raise ValueError("offline must be a bool")
+            raise ValueError(_OFFLINE_MUST_BE_BOOL)
         return v
 
     @field_validator("reps_aggregation")
@@ -516,7 +604,9 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
 
-def _is_same_named_twin(value: Any, model_cls: type[BundleModel]) -> bool:
+def _is_same_named_twin[BundleModel: BaseModel](
+    value: Any, model_cls: type[BundleModel]
+) -> bool:
     """Is ``value`` an instance of a *same-named twin* of ``model_cls``?
 
     A twin is a second class object built from the same source class statement:
@@ -547,7 +637,7 @@ def _is_same_named_twin(value: Any, model_cls: type[BundleModel]) -> bool:
     )
 
 
-def _replayable_legacy_inputs(
+def _replayable_legacy_inputs[BundleModel: BaseModel](
     value: BaseModel, model_cls: type[BundleModel]
 ) -> dict[str, Any]:
     """The deprecated *inputs* a twin recorded, for the live model to re-validate.
@@ -577,7 +667,7 @@ def _replayable_legacy_inputs(
     return dict(recorded)
 
 
-def _revalidate_same_named_twin(
+def _revalidate_same_named_twin[BundleModel: BaseModel](
     value: BaseModel, model_cls: type[BundleModel], parameter_name: str
 ) -> BundleModel:
     """Rebuild a twin instance as a real ``model_cls``, or raise ``TypeError``.
@@ -629,7 +719,7 @@ def _revalidate_same_named_twin(
     return rebuilt
 
 
-def _coerce_bundle(
+def _coerce_bundle[BundleModel: BaseModel](
     value: Any, model_cls: type[BundleModel], parameter_name: str
 ) -> BundleModel | None:
     if value is None:
@@ -1111,6 +1201,7 @@ _REMOVED_PARAMETERS = frozenset(
         "batch_size",
         "parallel_trials",
         *_REMOVED_MOCK_PARAMETERS,
+        *_REMOVED_ALIAS_MESSAGES,
         *_JS_BRIDGE_REMOVED_PARAMETERS,
     )
 )
@@ -1164,6 +1255,8 @@ def _removed_parameter_message(parameter_name: str) -> str:
         return _JS_BRIDGE_REMOVED_MESSAGE
     if parameter_name in _REMOVED_MOCK_PARAMETERS:
         return _removed_mock_parameter_message(parameter_name)
+    if parameter_name in _REMOVED_ALIAS_MESSAGES:
+        return _removed_alias_message(parameter_name)
     return (
         f"{parameter_name} parameter has been removed. Use supported arguments such as "
         "parallel_config or ExecutionOptions instead."
@@ -1464,7 +1557,9 @@ def _reject_removed_names_early(
     runtime_overrides: Mapping[str, Any],
     legacy: LegacyOptimizeArgs | dict[str, Any] | None,
 ) -> None:
-    """Reject removed mock parameters even when later shortcuts would skip them."""
+    """Reject removed mock, budget_* and strategy parameters before shortcuts skip them."""
+    # A retired preset name keeps its own message, ahead of the alias message.
+    _reject_removed_strategy_preset(runtime_overrides.get("strategy"))
     names = set(runtime_overrides)
     if isinstance(legacy, LegacyOptimizeArgs):
         names |= set(legacy.extra)
@@ -1472,6 +1567,15 @@ def _reject_removed_names_early(
         names |= set(legacy)
     for name in sorted(names & _REMOVED_MOCK_PARAMETERS):
         raise TypeError(_removed_parameter_message(name))
+    legacy_values: Mapping[str, Any]
+    if isinstance(legacy, LegacyOptimizeArgs):
+        legacy_values = legacy.extra
+    elif isinstance(legacy, dict):
+        legacy_values = legacy
+    else:
+        legacy_values = {}
+    _reject_removed_aliases(runtime_overrides)
+    _reject_removed_aliases(legacy_values)
 
 
 def _parse_legacy_args(
@@ -1494,7 +1598,21 @@ def _build_settings_recorder(
     """Build a recorder function for merging optimize options."""
 
     def record_option(key: str, value: Any, source: str) -> None:
-        """Record a resolved option and track its configuration source."""
+        """Record a resolved option and track its configuration source.
+
+        Args:
+            key: The option name.
+            value: The resolved value; ``None`` is ignored.
+            source: Where the value came from (for example
+                ``"optimize parameter"``), used to detect conflicting settings.
+
+        Returns:
+            None. The shared settings and source maps are updated in place.
+
+        Raises:
+            TypeError: If ``key`` is a removed parameter, or if ``key`` was
+                already supplied from another source with a different value.
+        """
         if key in _REMOVED_PARAMETERS:
             raise TypeError(_removed_parameter_message(key))
         if value is None:
@@ -1913,23 +2031,39 @@ def _coerce_external_service_evaluator(
             hybrid_api=HybridAPIOptions.model_validate(value)
         )
 
+    coerced = _coerce_duck_typed_evaluator(value)
+    if coerced is not None:
+        return coerced
+
+    raise TypeError(
+        "evaluator must be an ExternalServiceEvaluator, external-service options dict, or None"
+    )
+
+
+def _coerce_evaluator_from_model_dump(value: Any) -> ExternalServiceEvaluator | None:
     # Some full-suite reload paths can hand us a pydantic model instance from a
     # previous import of this module. Accept the current public shape rather
     # than relying only on class identity.
     model_dump = getattr(value, "model_dump", None)
-    if callable(model_dump):
-        payload = model_dump()
-        hybrid_payload = (
-            payload.get("hybrid_api") if isinstance(payload, dict) else None
+    if not callable(model_dump):
+        return None
+    payload = model_dump()
+    hybrid_payload = payload.get("hybrid_api") if isinstance(payload, dict) else None
+    hybrid_dump = getattr(hybrid_payload, "model_dump", None)
+    if callable(hybrid_dump):
+        payload["hybrid_api"] = hybrid_dump()
+    if isinstance(payload, dict) and ("hybrid_api" in payload or "kind" in payload):
+        return cast(
+            ExternalServiceEvaluator,
+            ExternalServiceEvaluator.model_validate(payload),
         )
-        hybrid_dump = getattr(hybrid_payload, "model_dump", None)
-        if callable(hybrid_dump):
-            payload["hybrid_api"] = hybrid_dump()
-        if isinstance(payload, dict) and ("hybrid_api" in payload or "kind" in payload):
-            return cast(
-                ExternalServiceEvaluator,
-                ExternalServiceEvaluator.model_validate(payload),
-            )
+    return None
+
+
+def _coerce_duck_typed_evaluator(value: Any) -> ExternalServiceEvaluator | None:
+    from_dump = _coerce_evaluator_from_model_dump(value)
+    if from_dump is not None:
+        return from_dump
 
     if hasattr(value, "hybrid_api"):
         hybrid_value = value.hybrid_api
@@ -1954,10 +2088,7 @@ def _coerce_external_service_evaluator(
         return ExternalServiceEvaluator(
             hybrid_api=HybridAPIOptions.model_validate(hybrid_payload)
         )
-
-    raise TypeError(
-        "evaluator must be an ExternalServiceEvaluator, external-service options dict, or None"
-    )
+    return None
 
 
 def _merge_hybrid_api_options(
@@ -2555,15 +2686,303 @@ def _build_default_experiment_name(
                 return combined
         return obj_suffix[:max_total_length]
 
-    # Fit the function name into the remaining budget, marking any cut with "~".
-    if len(func_name) <= func_budget:
-        func_part = func_name
-    elif func_budget >= 2:
-        func_part = func_name[: func_budget - 1] + "~"
-    else:
-        func_part = func_name[:func_budget]
-
+    func_part = _fit_default_experiment_name_prefix(func_name, func_budget)
     return func_part + suffix
+
+
+def _fit_default_experiment_name_prefix(func_name: str, func_budget: int) -> str:
+    """Fit a function name into a positive budget, marking cuts with ``~``."""
+    if len(func_name) <= func_budget:
+        return func_name
+    if func_budget >= 2:
+        return func_name[: func_budget - 1] + "~"
+    return func_name[:func_budget]
+
+
+def _strip_none_removed_aliases(
+    runtime_overrides: dict[str, Any], legacy: Any
+) -> tuple[dict[str, Any], Any]:
+    """Drop removed aliases passed as ``None`` from overrides and legacy args."""
+    runtime_overrides = _without_none_removed_aliases(runtime_overrides)
+    if isinstance(legacy, dict):
+        legacy = _without_none_removed_aliases(legacy)
+    elif isinstance(legacy, LegacyOptimizeArgs):
+        legacy = dataclasses.replace(
+            legacy, extra=_without_none_removed_aliases(legacy.extra)
+        )
+    return runtime_overrides, legacy
+
+
+def _passthrough_decorator(func: Any) -> Any:
+    """No-op decorator that returns the function unchanged when Traigent is disabled.
+
+    Args:
+        func: The function being decorated.
+
+    Returns:
+        ``func`` itself, unwrapped.
+    """
+    # Cast so the disabled path satisfies the declared return type without
+    # wrapping: the caller only cares that the result is callable with the
+    # same signature and exposes .optimize().
+    return func
+
+
+def _collect_optimize_settings(
+    direct_inputs: dict[str, Any],
+    strategy_params: Mapping[str, Any] | None,
+    runtime_overrides: dict[str, Any],
+    legacy_args: Any,
+) -> tuple[dict[str, Any], dict[str, Any], Any]:
+    """Merge defaults, legacy args, direct parameters and runtime overrides."""
+    combined_settings = dict(_OPTIMIZE_DEFAULTS)
+    if "execution_mode" in _GLOBAL_CONFIG:
+        combined_settings["execution_mode"] = _GLOBAL_CONFIG["execution_mode"]
+    provided_sources: dict[str, str] = {}
+    record_option = _build_settings_recorder(combined_settings, provided_sources)
+
+    if legacy_args:
+        for key, value in legacy_args.iter_known_values():
+            record_option(key, value, "legacy arguments")
+
+    if strategy_params is not None:
+        raise TypeError(
+            "strategy presets are no longer supported; use algorithm or objectives."
+        )
+
+    for key, value in direct_inputs.items():
+        record_option(key, value, "optimize parameter")
+
+    combined_runtime_overrides = _process_runtime_overrides(
+        runtime_overrides, legacy_args, record_option
+    )
+
+    # Extract inline parameter definitions and validate remaining overrides
+    inline_params, remaining_overrides = _extract_inline_params(
+        combined_runtime_overrides
+    )
+    _validate_runtime_overrides(remaining_overrides)
+    return combined_settings, remaining_overrides, inline_params
+
+
+def _validate_framework_targets(framework_targets: Any) -> None:
+    if not framework_targets:
+        return
+    # Fail at decoration, not on the first call: a bare name such as
+    # "langchain" can never be patched (#2299).
+    #
+    # Exempt targets the override registry already knows, exactly as
+    # FrameworkOverrideManager.activate_overrides does: a name registered
+    # via register_framework_mapping() + apply_mock_overrides() has had its
+    # shape accepted already, and validating it here would reject a
+    # registration the manager itself honours.
+    from traigent.integrations.framework_override import (
+        _framework_override_manager,
+        _validate_framework_target,
+    )
+
+    for framework_target in framework_targets:
+        if _framework_override_manager.is_override_registered(framework_target):
+            continue
+        _validate_framework_target(framework_target)
+
+
+def _is_max_trials_explicit(
+    runtime_overrides: dict[str, Any], legacy_args: Any
+) -> bool:
+    if runtime_overrides.get("max_trials") is not None:
+        return True
+    return legacy_args is not None and legacy_args.max_trials is not None
+
+
+def _require_bool_offline(offline_value: Any) -> bool:
+    if not isinstance(offline_value, bool):
+        raise TypeError(_OFFLINE_MUST_BE_BOOL)
+    return offline_value
+
+
+def _resolve_agent_identity(combined_settings: dict[str, Any]) -> Any:
+    """`agent_name` is the preferred spelling; `experiment_name` is the deprecated
+    alias for the same concept, so the explicit value is whichever was supplied."""
+    experiment_name_value = combined_settings["experiment_name"]
+    agent_name_value = combined_settings.get("agent_name")
+    if agent_name_value is not None and experiment_name_value is not None:
+        _warn_deprecated_once(
+            "optimize.experiment_name_with_agent_name",
+            "Both agent_name and experiment_name were supplied; agent_name wins. "
+            "experiment_name is a deprecated alias for the agent's identity — drop it.",
+            stacklevel=5,
+        )
+    if agent_name_value is not None:
+        experiment_name_value = agent_name_value
+    return experiment_name_value
+
+
+def _validate_max_trials(max_trials_value: Any) -> None:
+    if max_trials_value is not None and max_trials_value <= 0:
+        raise ValueError("max_trials must be a positive integer")
+
+
+def _content_less_from_settings(combined_settings: dict[str, Any]) -> Any:
+    """Content-less session options: None unless the caller set one."""
+    if any(
+        combined_settings.get(key) is not None
+        for key in ("content_less", "agent_ref", "environment")
+    ):
+        from traigent.cloud.content_less import ContentLessOptions
+
+        return ContentLessOptions(
+            enabled=combined_settings.get("content_less"),
+            agent_ref=combined_settings.get("agent_ref"),
+            environment=combined_settings.get("environment"),
+        )
+    return None
+
+
+def _evaluation_bundle_extras(
+    evaluation_bundle: Any,
+) -> tuple[Any, Any, Any, Any, Any]:
+    """Optional surrogate/definition/task/dataset fields of the evaluation bundle."""
+    if evaluation_bundle is None:
+        return None, None, None, None, None
+    return (
+        evaluation_bundle.surrogate_evaluator,
+        evaluation_bundle.surrogate_evaluator_name,
+        evaluation_bundle.evaluator_definition_id or evaluation_bundle.evaluator_id,
+        evaluation_bundle.task_type,
+        evaluation_bundle.dataset_id,
+    )
+
+
+def _execution_bundle_extras(execution_bundle: Any) -> tuple[Any, Any, Any]:
+    """Bundle-only execution options (no direct ``@optimize`` kwarg exists).
+
+    No direct @optimize(require_run_id=...) kwarg exists (execution-bundle-only
+    option), so this reads straight from the bundle rather than going through
+    _resolve_execution_bundle_options's direct-kwarg merge. Tri-state:
+    ``None`` (no bundle, or a bundle that left the field unset) means
+    "unspecified" and must stay distinguishable from an explicit ``False``
+    all the way through (G1 v1.0.1 (g), F2) -- collapsing both to ``False``
+    here would make an explicit ``False`` indistinguishable from "defer to
+    TRAIGENT_REQUIRE_RUN_ID" downstream.
+    """
+    if execution_bundle is None:
+        return None, None, None
+    return (
+        execution_bundle.require_run_id,
+        execution_bundle.snapshot_store,
+        execution_bundle.snapshot_g1_deadline_days,
+    )
+
+
+def _hybrid_api_kwargs(hybrid_api_options: Any) -> dict[str, Any]:
+    """OptimizedFunction hybrid-API keyword arguments (defaults when unset)."""
+    if not hybrid_api_options:
+        return {
+            "hybrid_api_endpoint": None,
+            "tunable_id": None,
+            "hybrid_api_transport": None,
+            "hybrid_api_transport_type": "auto",
+            "hybrid_api_batch_size": 1,
+            "hybrid_api_batch_parallelism": 1,
+            "hybrid_api_keep_alive": True,
+            "hybrid_api_heartbeat_interval": 30.0,
+            "hybrid_api_timeout": None,
+            "hybrid_api_auth_header": None,
+            "hybrid_api_auto_discover_tvars": False,
+        }
+    return {
+        "hybrid_api_endpoint": hybrid_api_options.endpoint,
+        "tunable_id": hybrid_api_options.tunable_id,
+        "hybrid_api_transport": hybrid_api_options.transport,
+        "hybrid_api_transport_type": hybrid_api_options.transport_type,
+        "hybrid_api_batch_size": hybrid_api_options.batch_size,
+        "hybrid_api_batch_parallelism": hybrid_api_options.batch_parallelism,
+        "hybrid_api_keep_alive": hybrid_api_options.keep_alive,
+        "hybrid_api_heartbeat_interval": hybrid_api_options.heartbeat_interval,
+        "hybrid_api_timeout": hybrid_api_options.timeout,
+        "hybrid_api_auth_header": hybrid_api_options.auth_header,
+        "hybrid_api_auto_discover_tvars": hybrid_api_options.auto_discover_tvars,
+    }
+
+
+def _snapshot_kwargs(snapshot_store: Any, snapshot_g1_deadline_days: Any) -> dict:
+    if snapshot_store is None:
+        return {}
+    kwargs: dict[str, Any] = {"snapshot_store": snapshot_store}
+    if snapshot_g1_deadline_days is not None:
+        kwargs["snapshot_g1_deadline_days"] = snapshot_g1_deadline_days
+    return kwargs
+
+
+def _normalize_decorator_constraints(
+    constraints: Any, constraint_scope_var_names: Any
+) -> list[Callable[..., bool]] | None:
+    if not constraints:
+        return None
+    from traigent.api.constraints import normalize_constraints
+
+    return normalize_constraints(constraints, constraint_scope_var_names)
+
+
+def _resolve_auto_detected_configuration_space(
+    func: Callable[..., Any],
+    configuration_space: Any,
+    default_config: Any,
+    *,
+    mode: str,
+    min_confidence: Any,
+    include: Any,
+    exclude: Any,
+) -> tuple[Any, Any]:
+    resolved_configuration_space = configuration_space
+    resolved_default_config = default_config
+    if mode != "off" and not resolved_configuration_space:
+        detected_config = _suggest_detected_tvars(
+            func,
+            mode=mode,
+            min_confidence=min_confidence,
+            include=include,
+            exclude=exclude,
+        )
+        if mode == "apply" and detected_config:
+            resolved_configuration_space, detected_defaults = (
+                normalize_configuration_space(detected_config)
+            )
+            if detected_defaults:
+                resolved_default_config = {
+                    **detected_defaults,
+                    **(resolved_default_config or {}),
+                }
+    return resolved_configuration_space, resolved_default_config
+
+
+def _attach_optimized_function_extras(
+    optimized_func: Any,
+    func: Callable[..., Any],
+    *,
+    execution_policy: Any,
+    external_service_evaluator: Any,
+    hybrid_api_options: Any,
+    surrogate_evaluator: Any,
+    surrogate_evaluator_name: Any,
+) -> None:
+    optimized_func.execution_policy = execution_policy
+    optimized_func.external_service_evaluator = external_service_evaluator
+    optimized_func.hybrid_api_options = hybrid_api_options
+    optimized_func.offline = execution_policy.offline
+    # ``@traigent.requirement`` applied below ``@optimize`` stores its
+    # declarations on the raw function; carry them to the wrapper.
+    _declared_requirements = getattr(func, "requirements", None)
+    if _declared_requirements is not None:
+        optimized_func.requirements = _declared_requirements
+    # Surrogate (pre-screen) scorer: read via getattr by the evaluator
+    # factory (_create_effective_evaluator). Absent when unconfigured, so the
+    # no-surrogate path stays byte-identical.
+    if surrogate_evaluator is not None:
+        optimized_func._surrogate_evaluator = surrogate_evaluator
+        if isinstance(surrogate_evaluator_name, str) and surrogate_evaluator_name:
+            optimized_func._surrogate_evaluator_name = surrogate_evaluator_name
 
 
 def optimize(  # NOSONAR(S107)
@@ -2591,7 +3010,6 @@ def optimize(  # NOSONAR(S107)
     evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None,
     algorithm: str = "auto",
     offline: bool = False,
-    strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
     smart_pruning: SmartPruningOptions | dict[str, Any] | None = None,
     # Multi-agent configuration
@@ -2632,9 +3050,6 @@ def optimize(  # NOSONAR(S107)
             only when it exactly names an SDK-owned metric; custom names require
             an ObjectiveSchema with explicit orientation and weight. Omitted values
             fall back to ``traigent.configure(objectives=...)`` or ``["accuracy"]``.
-        strategy: Retained only for signature compatibility; a non-``None`` value
-            now raises ``TypeError``. Use ``algorithm`` to select an optimizer by
-            name, or ``objectives`` to set what is optimized.
         strategy_params: Retained only for signature compatibility; a non-``None``
             value now raises ``TypeError``.
         configuration_space: Dictionary describing the search space. Keys are
@@ -2836,13 +3251,13 @@ def optimize(  # NOSONAR(S107)
 
         WRONG - relying on parameter defaults to be overridden::
 
-            @traigent.optimize(configuration_space={"model": ["gpt-4", "gpt-3.5"]})
-            def my_func(model: str = "gpt-4"):  # model will stay "gpt-4"!
+            @traigent.optimize(configuration_space={"model": ["gpt-5.6-sol", "gpt-3.5"]})
+            def my_func(model: str = "gpt-5.6-sol"):  # model will stay "gpt-5.6-sol"!
                 return call_llm(model=model)
 
         CORRECT - explicitly fetch trial config::
 
-            @traigent.optimize(configuration_space={"model": ["gpt-4", "gpt-3.5"]})
+            @traigent.optimize(configuration_space={"model": ["gpt-5.6-sol", "gpt-3.5"]})
             def my_func():
                 cfg = traigent.get_config()  # Works during trials and after apply_best_config
                 return call_llm(model=cfg["model"])
@@ -2870,13 +3285,13 @@ def optimize(  # NOSONAR(S107)
         ...     objectives=["accuracy"],
         ...     evaluation={"eval_dataset": "qa_test.jsonl"},
         ...     configuration_space={
-        ...         "model": ["gpt-3.5-turbo", "gpt-4"],
+        ...         "model": ["gpt-5.6-terra", "gpt-5.6-sol"],
         ...         "temperature": [0.1, 0.5, 0.9]
         ...     }
         ... )
         ... def answer_question(question: str) -> str:
         ...     # Your existing code - no changes needed!
-        ...     llm = OpenAI(model="gpt-3.5-turbo", temperature=0.7)
+        ...     llm = OpenAI(model="gpt-5.6-terra", temperature=0.7)
         ...     return llm.complete(question)
 
         Multi-objective optimization with constraints:
@@ -2885,12 +3300,12 @@ def optimize(  # NOSONAR(S107)
         ...     objectives=["accuracy", "cost"],
         ...     evaluation={"eval_dataset": "support_tickets.jsonl"},
         ...     configuration_space={
-        ...         "model": ["gpt-3.5-turbo", "gpt-4"],
+        ...         "model": ["gpt-5.6-terra", "gpt-5.6-sol"],
         ...         "temperature": (0.0, 1.0),
         ...         "max_tokens": [100, 500, 1000]
         ...     },
         ...     constraints=[
-        ...         lambda cfg: cfg["max_tokens"] <= 500 if cfg["model"] == "gpt-4" else True,
+        ...         lambda cfg: cfg["max_tokens"] <= 500 if cfg["model"] == "gpt-5.6-sol" else True,
         ...         lambda cfg, metrics: metrics.get("cost") is not None
         ...         and metrics["cost"] <= 0.10
         ...     ]
@@ -2914,7 +3329,7 @@ def optimize(  # NOSONAR(S107)
         ...         "minimal_logging": True,
         ...     },
         ...     configuration_space={
-        ...         "model": ["gpt-4", "claude-haiku-4-5-20251001"],
+        ...         "model": ["gpt-5.6-sol", "claude-haiku-4-5-20251001"],
         ...         "temperature": [0.1, 0.3, 0.5],
         ...         "safety_filter": ["strict", "moderate"]
         ...     }
@@ -2927,6 +3342,10 @@ def optimize(  # NOSONAR(S107)
         Set TRAIGENT_DISABLED=1 environment variable to disable all optimization.
         The decorator becomes a pass-through that returns the original function.
     """
+    # A removed alias passed as None means "not passed": strip it before any
+    # check, so @optimize(strategy=None) behaves as if the key were absent.
+    runtime_overrides, legacy = _strip_none_removed_aliases(runtime_overrides, legacy)
+
     # Explicitly supplied removed parameters are rejected before any shortcut
     # (including the TRAIGENT_DISABLED pass-through below).
     _reject_removed_names_early(runtime_overrides, legacy)
@@ -2936,37 +3355,10 @@ def optimize(  # NOSONAR(S107)
     if is_traigent_disabled():
         logger.debug("Traigent disabled via TRAIGENT_DISABLED env var, returning no-op")
 
-        def passthrough_decorator(
-            func: Callable[_P, _R],
-        ) -> OptimizedFunction[_P, _R]:
-            """No-op decorator that returns the function unchanged when Traigent is disabled."""
-            # Cast so the disabled path satisfies the declared return type without
-            # wrapping: the caller only cares that the result is callable with the
-            # same signature and exposes .optimize().
-            return func  # type: ignore[return-value]
-
-        return passthrough_decorator
+        return _passthrough_decorator
 
     legacy_args = _parse_legacy_args(legacy)
-    max_trials_explicit = runtime_overrides.get("max_trials") is not None
-    if legacy_args is not None and legacy_args.max_trials is not None:
-        max_trials_explicit = True
-
-    combined_settings = dict(_OPTIMIZE_DEFAULTS)
-    if "execution_mode" in _GLOBAL_CONFIG:
-        combined_settings["execution_mode"] = _GLOBAL_CONFIG["execution_mode"]
-    provided_sources: dict[str, str] = {}
-    record_option = _build_settings_recorder(combined_settings, provided_sources)
-
-    if legacy_args:
-        for key, value in legacy_args.iter_known_values():
-            record_option(key, value, "legacy arguments")
-
-    _reject_removed_strategy_preset(strategy)
-    if strategy is not None or strategy_params is not None:
-        raise TypeError(
-            "strategy presets are no longer supported; use algorithm or objectives."
-        )
+    max_trials_explicit = _is_max_trials_explicit(runtime_overrides, legacy_args)
 
     direct_inputs = {
         "objectives": objectives,
@@ -3007,19 +3399,11 @@ def optimize(  # NOSONAR(S107)
         "best_config_stale_ok_ttl_seconds": best_config_stale_ok_ttl_seconds,
         "enable_auto_load_dev_logs": enable_auto_load_dev_logs,
     }
-    for key, value in direct_inputs.items():
-        record_option(key, value, "optimize parameter")
-
-    combined_runtime_overrides = _process_runtime_overrides(
-        runtime_overrides, legacy_args, record_option
+    combined_settings, combined_runtime_overrides, inline_params = (
+        _collect_optimize_settings(
+            direct_inputs, strategy_params, runtime_overrides, legacy_args
+        )
     )
-
-    # Extract inline parameter definitions and validate remaining overrides
-    inline_params, remaining_overrides = _extract_inline_params(
-        combined_runtime_overrides
-    )
-    _validate_runtime_overrides(remaining_overrides)
-    combined_runtime_overrides = remaining_overrides
 
     eval_dataset = combined_settings["eval_dataset"]
     objectives = combined_settings["objectives"]
@@ -3062,29 +3446,10 @@ def optimize(  # NOSONAR(S107)
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
-    if framework_targets:
-        # Fail at decoration, not on the first call: a bare name such as
-        # "langchain" can never be patched (#2299).
-        #
-        # Exempt targets the override registry already knows, exactly as
-        # FrameworkOverrideManager.activate_overrides does: a name registered
-        # via register_framework_mapping() + apply_mock_overrides() has had its
-        # shape accepted already, and validating it here would reject a
-        # registration the manager itself honours.
-        from traigent.integrations.framework_override import (
-            _framework_override_manager,
-            _validate_framework_target,
-        )
-
-        for framework_target in framework_targets:
-            if _framework_override_manager.is_override_registered(framework_target):
-                continue
-            _validate_framework_target(framework_target)
+    _validate_framework_targets(framework_targets)
     effectuation = combined_settings["effectuation"]
     algorithm_value = validate_algorithm_name(combined_settings["algorithm"])
-    offline_value = combined_settings["offline"]
-    if not isinstance(offline_value, bool):
-        raise TypeError("offline must be a bool")
+    offline_value = _require_bool_offline(combined_settings["offline"])
     evaluator_value = combined_settings["evaluator"]
     legacy_execution_options = {
         key: combined_settings[key]
@@ -3127,40 +3492,16 @@ def optimize(  # NOSONAR(S107)
     enable_auto_load_dev_logs_value = combined_settings["enable_auto_load_dev_logs"]
     # Optimizer limits
     max_trials_value = combined_settings["max_trials"]
-    if max_trials_value is not None and max_trials_value <= 0:
-        raise ValueError("max_trials must be a positive integer")
+    _validate_max_trials(max_trials_value)
     # Agent identity (decorator > env var > func.__name__ at decoration time).
-    # `agent_name` is the preferred spelling; `experiment_name` is the deprecated
-    # alias for the same concept, so the explicit value is whichever was supplied.
-    experiment_name_value = combined_settings["experiment_name"]
-    agent_name_value = combined_settings.get("agent_name")
-    if agent_name_value is not None and experiment_name_value is not None:
-        _warn_deprecated_once(
-            "optimize.experiment_name_with_agent_name",
-            "Both agent_name and experiment_name were supplied; agent_name wins. "
-            "experiment_name is a deprecated alias for the agent's identity — drop it.",
-            stacklevel=4,
-        )
-    if agent_name_value is not None:
-        experiment_name_value = agent_name_value
+    experiment_name_value = _resolve_agent_identity(combined_settings)
     # Per-run narrative. Deliberately NOT part of identity resolution above: these
     # vary per run by design, and folding them into identity is exactly what
     # fragments an agent's optimization history into one-run cohorts.
     run_title_value: str | None = combined_settings.get("run_title") or None
     run_description_value: str | None = combined_settings.get("run_description") or None
     # Content-less session options: None unless the caller set one (legacy/env then).
-    content_less_value: Any = None
-    if any(
-        combined_settings.get(key) is not None
-        for key in ("content_less", "agent_ref", "environment")
-    ):
-        from traigent.cloud.content_less import ContentLessOptions
-
-        content_less_value = ContentLessOptions(
-            enabled=combined_settings.get("content_less"),
-            agent_ref=combined_settings.get("agent_ref"),
-            environment=combined_settings.get("environment"),
-        )
+    content_less_value = _content_less_from_settings(combined_settings)
     # Warm-start: prior experiment id to seed this run (empty string -> None).
     warm_start_from_value: str | None = combined_settings.get("warm_start_from") or None
     # Tuned variable auto-detection
@@ -3217,21 +3558,13 @@ def optimize(  # NOSONAR(S107)
     # Optional surrogate (pre-screen) scorer from the evaluation bundle. Resolved
     # here (decorator source only) and validated early; stashed on the
     # OptimizedFunction below so the evaluator factory can attach it.
-    surrogate_evaluator = (
-        evaluation_bundle.surrogate_evaluator if evaluation_bundle is not None else None
-    )
-    surrogate_evaluator_name = (
-        evaluation_bundle.surrogate_evaluator_name
-        if evaluation_bundle is not None
-        else None
-    )
-    evaluator_definition_id = (
-        evaluation_bundle.evaluator_definition_id or evaluation_bundle.evaluator_id
-        if evaluation_bundle is not None
-        else None
-    )
-    task_type = evaluation_bundle.task_type if evaluation_bundle is not None else None
-    dataset_id = evaluation_bundle.dataset_id if evaluation_bundle is not None else None
+    (
+        surrogate_evaluator,
+        surrogate_evaluator_name,
+        evaluator_definition_id,
+        task_type,
+        dataset_id,
+    ) = _evaluation_bundle_extras(evaluation_bundle)
     if surrogate_evaluator is not None:
         _validate_surrogate_evaluator_signature(surrogate_evaluator)
 
@@ -3271,9 +3604,7 @@ def optimize(  # NOSONAR(S107)
         defaults,
     )
     algorithm_value = validate_algorithm_name(resolved_execution.algorithm)
-    offline_value = resolved_execution.offline
-    if not isinstance(offline_value, bool):
-        raise TypeError("offline must be a bool")
+    offline_value = _require_bool_offline(resolved_execution.offline)
     evaluator_value = resolved_execution.evaluator
     local_storage_path = resolved_execution.local_storage_path
     minimal_logging = resolved_execution.minimal_logging
@@ -3292,8 +3623,8 @@ def optimize(  # NOSONAR(S107)
     # all the way through (G1 v1.0.1 (g), F2) -- collapsing both to ``False``
     # here would make an explicit ``False`` indistinguishable from "defer to
     # TRAIGENT_REQUIRE_RUN_ID" downstream.
-    require_run_id_value = (
-        execution_bundle.require_run_id if execution_bundle is not None else None
+    require_run_id_value, snapshot_store_value, snapshot_g1_deadline_value = (
+        _execution_bundle_extras(execution_bundle)
     )
     smart_pruning_config = _normalize_smart_pruning_options(smart_pruning_value)
     external_service_evaluator = _resolve_external_service_evaluator(
@@ -3305,29 +3636,7 @@ def optimize(  # NOSONAR(S107)
         if external_service_evaluator is not None
         else None
     )
-    hybrid_api_endpoint = hybrid_api_options.endpoint if hybrid_api_options else None
-    tunable_id = hybrid_api_options.tunable_id if hybrid_api_options else None
-    hybrid_api_transport = hybrid_api_options.transport if hybrid_api_options else None
-    hybrid_api_transport_type = (
-        hybrid_api_options.transport_type if hybrid_api_options else "auto"
-    )
-    hybrid_api_batch_size = hybrid_api_options.batch_size if hybrid_api_options else 1
-    hybrid_api_batch_parallelism = (
-        hybrid_api_options.batch_parallelism if hybrid_api_options else 1
-    )
-    hybrid_api_keep_alive = (
-        hybrid_api_options.keep_alive if hybrid_api_options else True
-    )
-    hybrid_api_heartbeat_interval = (
-        hybrid_api_options.heartbeat_interval if hybrid_api_options else 30.0
-    )
-    hybrid_api_timeout = hybrid_api_options.timeout if hybrid_api_options else None
-    hybrid_api_auth_header = (
-        hybrid_api_options.auth_header if hybrid_api_options else None
-    )
-    hybrid_api_auto_discover_tvars = (
-        hybrid_api_options.auto_discover_tvars if hybrid_api_options else False
-    )
+    hybrid_api_kwargs = _hybrid_api_kwargs(hybrid_api_options)
 
     tvl_options = _resolve_tvl_options(
         tvl_spec_value, tvl_environment_value, tvl_bundle
@@ -3371,6 +3680,64 @@ def optimize(  # NOSONAR(S107)
         external_service_evaluator,
     )
 
+    optimized_function_kwargs: dict[str, Any] = {
+        "eval_dataset": eval_dataset,
+        "algorithm": runtime_algorithm_value,
+        "safety_constraints": safety_constraints,
+        "config_param": config_param,
+        "auto_override_frameworks": auto_override_frameworks,
+        "framework_targets": framework_targets,
+        "effectuation": bool(effectuation),
+        "execution_mode": runtime_execution_mode,
+        **hybrid_api_kwargs,
+        "local_storage_path": local_storage_path,
+        "minimal_logging": minimal_logging,
+        "max_total_examples": max_total_examples,
+        "samples_include_pruned": samples_include_pruned,
+        "winner_stability_reps": winner_stability_reps_value,
+        "example_timeout": example_timeout_value,
+        "require_run_id": require_run_id_value,
+        **_snapshot_kwargs(snapshot_store_value, snapshot_g1_deadline_value),
+        "smart_pruning": smart_pruning_config,
+        "custom_evaluator": custom_evaluator,
+        "scoring_function": scoring_function,
+        "metric_functions": metric_functions,
+        "evaluator_definition_id": evaluator_definition_id,
+        "task_type": task_type,
+        "dataset_id": dataset_id,
+        "execution_policy": execution_policy,
+        # Multi-agent configuration
+        "agents": agents_config,
+        "agent_prefixes": agent_prefixes_config,
+        "agent_measures": agent_measures_config,
+        "global_measures": global_measures_config,
+        # Config persistence
+        "auto_load_best": auto_load_best_config,
+        "load_from": load_from_config,
+        "config_id": config_id_value,
+        "best_config_source": best_config_source_value,
+        "best_config_strict": best_config_strict_value,
+        "best_config_cache_dir": best_config_cache_dir_value,
+        "best_config_cache_ttl_seconds": best_config_cache_ttl_seconds_value,
+        "best_config_stale_ok_ttl_seconds": best_config_stale_ok_ttl_seconds_value,
+        "enable_auto_load_dev_logs": enable_auto_load_dev_logs_value,
+        # TVL promotion gate for statistical best-config selection
+        "promotion_gate": promotion_gate,
+        # Optimizer limits (extracted from combined_settings)
+        "max_trials": max_trials_value,
+        "_max_trials_explicit": max_trials_explicit,
+        # Per-run narrative — labels only, never identity.
+        "run_title": run_title_value,
+        "run_description": run_description_value,
+        "content_less": content_less_value,
+        # Warm-start: seed this run from a prior experiment's learned configs.
+        "warm_start_from": warm_start_from_value,
+        # Guided-generation defaults (consumed by optimize_with_guidance)
+        "prompt_rewrite": prompt_rewrite,
+        "grow_dataset": grow_dataset,
+        "skill_train": skill_train,
+    }
+
     def decorator(func: Callable[_P, _R]) -> OptimizedFunction[_P, _R]:
         """Actual decorator function.
 
@@ -3409,13 +3776,9 @@ def optimize(  # NOSONAR(S107)
 
         # Normalize Constraint/BoolExpr objects to callables for the optimizer
         # This is done after TVL artifact application to include all constraints
-        normalized_constraints: list[Callable[..., bool]] | None = None
-        if constraints:
-            from traigent.api.constraints import normalize_constraints
-
-            normalized_constraints = normalize_constraints(
-                constraints, constraint_scope_var_names
-            )
+        normalized_constraints = _normalize_decorator_constraints(
+            constraints, constraint_scope_var_names
+        )
 
         # Remove keys from runtime overrides that are passed explicitly below
         # to avoid "got multiple values for keyword argument" errors.
@@ -3424,32 +3787,20 @@ def optimize(  # NOSONAR(S107)
         combined_runtime_overrides.pop("algorithm", None)
         combined_runtime_overrides.pop("max_trials", None)
 
-        resolved_configuration_space = configuration_space
-        resolved_default_config = default_config
-
         # Tuned variable auto-detection:
         # - suggest mode logs candidates
         # - apply mode auto-materializes configuration_space
-        if (
-            effective_auto_detect_tvars_mode != "off"
-            and not resolved_configuration_space
-        ):
-            detected_config = _suggest_detected_tvars(
+        resolved_configuration_space, resolved_default_config = (
+            _resolve_auto_detected_configuration_space(
                 func,
+                configuration_space,
+                default_config,
                 mode=effective_auto_detect_tvars_mode,
                 min_confidence=auto_detect_tvars_min_confidence,
                 include=auto_detect_tvars_include,
                 exclude=auto_detect_tvars_exclude,
             )
-            if effective_auto_detect_tvars_mode == "apply" and detected_config:
-                resolved_configuration_space, detected_defaults = (
-                    normalize_configuration_space(detected_config)
-                )
-                if detected_defaults:
-                    resolved_default_config = {
-                        **detected_defaults,
-                        **(resolved_default_config or {}),
-                    }
+        )
 
         # #1372: loudly warn if CONTEXT-mode tuned knobs shadow the wrapped
         # function's own parameters (silent no-op sweep otherwise).
@@ -3496,95 +3847,30 @@ def optimize(  # NOSONAR(S107)
 
         optimized_func: OptimizedFunction[_P, _R] = OptimizedFunction(  # type: ignore[assignment]
             func=func,
-            eval_dataset=eval_dataset,
             objectives=resolved_schema,
             configuration_space=resolved_configuration_space,
-            algorithm=runtime_algorithm_value,
             default_config=resolved_default_config,
             constraints=normalized_constraints,
-            safety_constraints=safety_constraints,
             injection_mode=actual_injection_mode,
-            config_param=config_param,
-            auto_override_frameworks=auto_override_frameworks,
-            framework_targets=framework_targets,
-            effectuation=bool(effectuation),
-            execution_mode=runtime_execution_mode,
-            hybrid_api_endpoint=hybrid_api_endpoint,
-            tunable_id=tunable_id,
-            hybrid_api_transport=hybrid_api_transport,
-            hybrid_api_transport_type=hybrid_api_transport_type,
-            hybrid_api_batch_size=hybrid_api_batch_size,
-            hybrid_api_batch_parallelism=hybrid_api_batch_parallelism,
-            hybrid_api_keep_alive=hybrid_api_keep_alive,
-            hybrid_api_heartbeat_interval=hybrid_api_heartbeat_interval,
-            hybrid_api_timeout=hybrid_api_timeout,
-            hybrid_api_auth_header=hybrid_api_auth_header,
-            hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
-            local_storage_path=local_storage_path,
-            minimal_logging=minimal_logging,
-            max_total_examples=max_total_examples,
-            samples_include_pruned=samples_include_pruned,
-            winner_stability_reps=winner_stability_reps_value,
-            example_timeout=example_timeout_value,
-            require_run_id=require_run_id_value,
-            smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,
-            custom_evaluator=custom_evaluator,
-            scoring_function=scoring_function,
-            metric_functions=metric_functions,
-            evaluator_definition_id=evaluator_definition_id,
-            task_type=task_type,
-            dataset_id=dataset_id,
             requested_execution_mode=requested_execution_mode,
-            execution_policy=execution_policy,
-            # Multi-agent configuration
-            agents=agents_config,
-            agent_prefixes=agent_prefixes_config,
-            agent_measures=agent_measures_config,
-            global_measures=global_measures_config,
-            # Config persistence
-            auto_load_best=auto_load_best_config,
-            load_from=load_from_config,
-            config_id=config_id_value,
-            best_config_source=best_config_source_value,
-            best_config_strict=best_config_strict_value,
-            best_config_cache_dir=best_config_cache_dir_value,
-            best_config_cache_ttl_seconds=best_config_cache_ttl_seconds_value,
-            best_config_stale_ok_ttl_seconds=best_config_stale_ok_ttl_seconds_value,
-            enable_auto_load_dev_logs=enable_auto_load_dev_logs_value,
-            # TVL promotion gate for statistical best-config selection
-            promotion_gate=promotion_gate,
-            # Optimizer limits (extracted from combined_settings)
-            max_trials=max_trials_value,
-            _max_trials_explicit=max_trials_explicit,
             # Experiment display name: only the explicit value goes into _experiment_name
             # so that TRAIGENT_EXPERIMENT_NAME is checked lazily at access time.
             # The precomputed self-describing default is stored separately.
             experiment_name=experiment_name_value,
             _default_experiment_name=default_experiment_name,
-            # Per-run narrative — labels only, never identity.
-            run_title=run_title_value,
-            run_description=run_description_value,
-            content_less=content_less_value,
-            # Warm-start: seed this run from a prior experiment's learned configs.
-            warm_start_from=warm_start_from_value,
-            # Guided-generation defaults (consumed by optimize_with_guidance)
-            prompt_rewrite=prompt_rewrite,
-            grow_dataset=grow_dataset,
-            skill_train=skill_train,
+            **optimized_function_kwargs,
             **combined_runtime_overrides,
         )
-        optimized_func.execution_policy = execution_policy
-        optimized_func.external_service_evaluator = external_service_evaluator
-        optimized_func.hybrid_api_options = hybrid_api_options
-        optimized_func.offline = execution_policy.offline
-        # Surrogate (pre-screen) scorer: read via getattr by the evaluator
-        # factory (_create_effective_evaluator). Absent when unconfigured, so the
-        # no-surrogate path stays byte-identical.
-        if surrogate_evaluator is not None:
-            optimized_func._surrogate_evaluator = surrogate_evaluator
-            if isinstance(surrogate_evaluator_name, str) and surrogate_evaluator_name:
-                optimized_func._surrogate_evaluator_name = surrogate_evaluator_name
+        _attach_optimized_function_extras(
+            optimized_func,
+            func,
+            execution_policy=execution_policy,
+            external_service_evaluator=external_service_evaluator,
+            hybrid_api_options=hybrid_api_options,
+            surrogate_evaluator=surrogate_evaluator,
+            surrogate_evaluator_name=surrogate_evaluator_name,
+        )
 
         logger.info(
             f"Created optimizable function: {func.__name__} (experiment_name={effective_experiment_name!r})"

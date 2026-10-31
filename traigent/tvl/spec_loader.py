@@ -16,8 +16,8 @@ from typing import Any, Literal, cast
 
 import yaml
 
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.objective_directions import resolve_objective_orientation
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.utils.exceptions import TVLValidationError
 from traigent.utils.logging import get_logger
 
@@ -440,7 +440,7 @@ def _validate_range_membership(
 
 
 def _validate_tuple_components(
-    name: str, domain: dict[str, Any], default: Any, raw_type: str | None
+    name: str, domain: dict[str, Any], default: Any
 ) -> list[str]:
     """Validate a canonical tuple ``components`` domain and default membership."""
     from traigent.tvl.models import _enumerate_tuple_components
@@ -473,50 +473,60 @@ def _validate_domain_structure(
             return _default_type_issues(name, raw_type, default)
         return [f"TVAR '{name}' missing required 'domain' field"]
 
-    issues: list[str] = []
     if isinstance(domain, (list, tuple)):
-        issues.extend(_validate_choice_membership(name, domain, default, raw_type))
-        return issues
+        return _validate_choice_membership(name, domain, default, raw_type)
 
     if isinstance(domain, dict):
-        valid_types = {"range", "choices", "registry"}
-        domain_type = domain.get("type")
-        if domain_type is not None and domain_type not in valid_types:
-            issues.append(
-                f"TVAR '{name}' has invalid domain type '{domain_type}'. "
-                f"Valid: {valid_types}"
-            )
-
-        if "range" in domain or domain_type == "range":
-            issues.extend(_validate_range_membership(name, domain, default, raw_type))
-            return issues
-        if "set" in domain:
-            issues.extend(
-                _validate_choice_membership(name, domain["set"], default, raw_type)
-            )
-            return issues
-        if "values" in domain or domain_type == "choices":
-            issues.extend(
-                _validate_choice_membership(
-                    name, domain.get("values"), default, raw_type
-                )
-            )
-            return issues
-        if "registry" in domain or domain_type == "registry":
-            return issues
-        if "components" in domain and normalized_type == "tuple":
-            return _validate_tuple_components(name, domain, default, raw_type)
-
-        issues.append(
-            f"TVAR '{name}' domain must define one of range, set, values, "
-            "registry, or (tuple types) components"
+        return _validate_dict_domain(
+            name, domain, normalized_type, raw_type=raw_type, default=default
         )
-        return issues
 
     return [
         f"TVAR '{name}' domain should be dict, list, or tuple, "
         f"got {type(domain).__name__}"
     ]
+
+
+def _validate_dict_domain(
+    name: str,
+    domain: dict[str, Any],
+    normalized_type: str | None,
+    *,
+    raw_type: str | None,
+    default: Any,
+) -> list[str]:
+    issues: list[str] = []
+    valid_types = {"range", "choices", "registry"}
+    domain_type = domain.get("type")
+    if domain_type is not None and domain_type not in valid_types:
+        issues.append(
+            f"TVAR '{name}' has invalid domain type '{domain_type}'. "
+            f"Valid: {valid_types}"
+        )
+
+    if "range" in domain or domain_type == "range":
+        issues.extend(_validate_range_membership(name, domain, default, raw_type))
+        return issues
+    if "set" in domain:
+        issues.extend(
+            _validate_choice_membership(name, domain["set"], default, raw_type)
+        )
+        return issues
+    if "values" in domain or domain_type == "choices":
+        issues.extend(
+            _validate_choice_membership(name, domain.get("values"), default, raw_type)
+        )
+        return issues
+    if "registry" in domain or domain_type == "registry":
+        return issues
+    if "components" in domain and normalized_type == "tuple":
+        return _validate_tuple_components(name, domain, default)
+
+    issues.append(
+        f"TVAR '{name}' domain must define one of range, set, values, "
+        "registry, or (tuple types) components"
+    )
+    return issues
 
 
 def _legacy_parameter_type(definition: dict[str, Any]) -> str | None:
@@ -547,93 +557,94 @@ def _validate_legacy_parameter_default(
     return []
 
 
+def _parameter_domain_issues(name: Any, definition: Any) -> list[str]:
+    if not isinstance(name, str):
+        return [
+            f"Configuration parameter name must be string, got {type(name).__name__}"
+        ]
+    if not isinstance(definition, dict):
+        return [f"Parameter '{name}' must be defined as a mapping"]
+
+    parameter_type = _legacy_parameter_type(definition)
+    if parameter_type is None:
+        return [f"Parameter '{name}' must define 'type', 'values', or 'range'"]
+    if parameter_type in {"categorical", "discrete"}:
+        return _validate_choice_membership(
+            name,
+            definition.get("values"),
+            definition.get("default", _MISSING),
+            "enum",
+        )
+    if parameter_type in {"continuous", "float"}:
+        return _validate_range_membership(
+            name, definition, definition.get("default", _MISSING), "float"
+        )
+    if parameter_type in {"integer", "int"}:
+        return _validate_range_membership(
+            name, definition, definition.get("default", _MISSING), "int"
+        )
+    if parameter_type in {"boolean", "bool"}:
+        if "default" in definition:
+            return _default_type_issues(name, "bool", definition["default"])
+        return []
+    return [f"Unsupported parameter type '{parameter_type}' for '{name}'"]
+
+
 def _validate_configuration_space_domains(
     config_space: dict[str, Any],
 ) -> list[str]:
     issues: list[str] = []
     for name, definition in config_space.items():
-        if not isinstance(name, str):
-            issues.append(
-                f"Configuration parameter name must be string, got {type(name).__name__}"
-            )
-            continue
-        if not isinstance(definition, dict):
-            issues.append(f"Parameter '{name}' must be defined as a mapping")
-            continue
-
-        parameter_type = _legacy_parameter_type(definition)
-        if parameter_type is None:
-            issues.append(
-                f"Parameter '{name}' must define 'type', 'values', or 'range'"
-            )
-            continue
-        if parameter_type in {"categorical", "discrete"}:
-            issues.extend(
-                _validate_choice_membership(
-                    name,
-                    definition.get("values"),
-                    definition.get("default", _MISSING),
-                    "enum",
-                )
-            )
-            continue
-        if parameter_type in {"continuous", "float"}:
-            issues.extend(
-                _validate_range_membership(
-                    name, definition, definition.get("default", _MISSING), "float"
-                )
-            )
-            continue
-        if parameter_type in {"integer", "int"}:
-            issues.extend(
-                _validate_range_membership(
-                    name, definition, definition.get("default", _MISSING), "int"
-                )
-            )
-            continue
-        if parameter_type in {"boolean", "bool"}:
-            if "default" in definition:
-                issues.extend(_default_type_issues(name, "bool", definition["default"]))
-            continue
-        issues.append(f"Unsupported parameter type '{parameter_type}' for '{name}'")
+        issues.extend(_parameter_domain_issues(name, definition))
     return issues
+
+
+def _tvar_assignment_domain(tvar_def: dict[str, Any]) -> _AssignmentDomain:
+    raw_type = tvar_def.get("type")
+    return _AssignmentDomain(
+        raw_type=raw_type if isinstance(raw_type, str) else None,
+        domain=tvar_def.get("domain"),
+    )
+
+
+def _collect_list_tvar_domains(
+    tvars: list[Any], domains: dict[str, _AssignmentDomain]
+) -> None:
+    for tvar_def in tvars:
+        if not isinstance(tvar_def, dict):
+            continue
+        name = tvar_def.get("name")
+        if isinstance(name, str) and name:
+            domains[name] = _tvar_assignment_domain(tvar_def)
+
+
+def _collect_tvar_domains(tvars: Any, domains: dict[str, _AssignmentDomain]) -> None:
+    if isinstance(tvars, dict):
+        for name, tvar_def in tvars.items():
+            if isinstance(name, str) and isinstance(tvar_def, dict):
+                domains[name] = _tvar_assignment_domain(tvar_def)
+    elif isinstance(tvars, list):
+        _collect_list_tvar_domains(tvars, domains)
+
+
+def _collect_legacy_parameter_domains(
+    config_space: Any, domains: dict[str, _AssignmentDomain]
+) -> None:
+    if not isinstance(config_space, dict):
+        return
+    for name, definition in config_space.items():
+        if isinstance(name, str) and isinstance(definition, dict):
+            domains[name] = _AssignmentDomain(
+                raw_type=_legacy_parameter_type(definition),
+                domain=definition,
+                legacy_parameter=True,
+            )
 
 
 def _collect_assignment_domains(data: dict[str, Any]) -> dict[str, _AssignmentDomain]:
     domains: dict[str, _AssignmentDomain] = {}
-
-    tvars = data.get("tvars")
-    if isinstance(tvars, dict):
-        for name, tvar_def in tvars.items():
-            if isinstance(name, str) and isinstance(tvar_def, dict):
-                raw_type = tvar_def.get("type")
-                domains[name] = _AssignmentDomain(
-                    raw_type=raw_type if isinstance(raw_type, str) else None,
-                    domain=tvar_def.get("domain"),
-                )
-    elif isinstance(tvars, list):
-        for tvar_def in tvars:
-            if not isinstance(tvar_def, dict):
-                continue
-            name = tvar_def.get("name")
-            raw_type = tvar_def.get("type")
-            if isinstance(name, str) and name:
-                domains[name] = _AssignmentDomain(
-                    raw_type=raw_type if isinstance(raw_type, str) else None,
-                    domain=tvar_def.get("domain"),
-                )
-
-    config_space = data.get("configuration_space")
-    if isinstance(config_space, dict):
-        for name, definition in config_space.items():
-            if isinstance(name, str) and isinstance(definition, dict):
-                raw_type = _legacy_parameter_type(definition)
-                domains[name] = _AssignmentDomain(
-                    raw_type=raw_type,
-                    domain=definition,
-                    legacy_parameter=True,
-                )
-
+    _collect_tvar_domains(data.get("tvars"), domains)
+    _collect_legacy_parameter_domains(data.get("configuration_space"), domains)
     return domains
 
 
@@ -1157,6 +1168,8 @@ def load_tvl_spec(
                     f"expression '{dc.require}' is not valid"
                 ) from exc
 
+    _warn_derived_constraints_using_environment_context(derived_constraints)
+
     # Parse exploration section
     budget, algorithm, convergence, exploration_budgets, exploration_parallelism = (
         _parse_exploration_section(resolved)
@@ -1202,6 +1215,17 @@ def load_tvl_spec(
         exploration_parallelism=exploration_parallelism,
         parameter_agents=parameter_agents,
     )
+
+
+def _bind_constraint_names(context: dict[str, Any], config: dict[str, Any]) -> None:
+    for key, value in (config or {}).items():
+        root = key.split(".", 1)[0]
+        if root in context:
+            continue
+        if root == key:
+            context[root] = _AttributeView.wrap_value(value)
+        elif root not in (config or {}):
+            context[root] = _DottedPrefixView(config or {}, root)
 
 
 def compile_constraint_expression(
@@ -1268,14 +1292,7 @@ def compile_constraint_expression(
         # Canonical TVL atoms reference tvars by BARE name (`zero_shot`) and
         # treat dotted names as FLAT keys (`retriever.k` is one name). Bind
         # each config-key root into the context — reserved names always win.
-        for key, value in (config or {}).items():
-            root = key.split(".", 1)[0]
-            if root in context:
-                continue
-            if root == key:
-                context[root] = _AttributeView.wrap_value(value)
-            elif root not in (config or {}):
-                context[root] = _DottedPrefixView(config or {}, root)
+        _bind_constraint_names(context, config)
         try:
             # SECURITY: This eval() is safe because:
             # 1. Expression is parsed and validated by _validate_expression_ast()
@@ -1296,6 +1313,20 @@ def compile_constraint_expression(
     return _evaluate
 
 
+def _declared_parameter_type(name: str, definition: dict[str, Any]) -> str:
+    """Lower-cased declared type, inferred from ``values``/``range`` when absent."""
+    parameter_type = (definition.get("type") or "").lower()
+    if parameter_type:
+        return parameter_type
+    if "values" in definition:
+        return "categorical"
+    if "range" in definition:
+        return "continuous"
+    raise TVLValidationError(
+        f"Parameter '{name}' must define 'type', 'values', or 'range'"
+    )
+
+
 def _parse_configuration_space(
     resolved: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
@@ -1312,16 +1343,7 @@ def _parse_configuration_space(
             raise TVLValidationError("Configuration parameter names must be strings")
         if not isinstance(definition, dict):
             raise TVLValidationError(f"Parameter '{name}' must be defined as a mapping")
-        parameter_type = (definition.get("type") or "").lower()
-        if not parameter_type:
-            if "values" in definition:
-                parameter_type = "categorical"
-            elif "range" in definition:
-                parameter_type = "continuous"
-            else:
-                raise TVLValidationError(
-                    f"Parameter '{name}' must define 'type', 'values', or 'range'"
-                )
+        parameter_type = _declared_parameter_type(name, definition)
 
         units_value = definition.get("unit")
         if isinstance(units_value, str):
@@ -1870,6 +1892,42 @@ def _compile_constraints_unified(
     return [], None
 
 
+_ENV_CONTEXT_REF = re.compile(r"\benvironment\.context\b")
+
+
+def _warn_derived_constraints_using_environment_context(
+    derived_constraints: list[DerivedConstraint] | None,
+) -> None:
+    """Warn once when derived constraints reference ``environment.context``.
+
+    The SDK evaluates derived constraints per trial only; it does not check
+    them against the runtime environment. The message names constraint
+    positions only, never expression text or values.
+
+    The check is advisory. It is a literal substring match on the text
+    ``environment.context`` (word boundaries only), so it does not detect
+    ``environment . context`` or ``environment["context"]``, and it can match
+    the same text inside a quoted string literal. A warning is a hint to read
+    the spec, not a verdict on it.
+    """
+    if not derived_constraints:
+        return
+    flagged = [
+        dc.index for dc in derived_constraints if _ENV_CONTEXT_REF.search(dc.require)
+    ]
+    if not flagged:
+        return
+    ids = ", ".join(f"derived_constraint_{i}" for i in flagged)
+    warnings.warn(
+        f"TVL derived constraint(s) {ids} reference environment.context. "
+        "The SDK evaluates derived constraints per trial only and does not "
+        "check them against the runtime environment; do not rely on them to "
+        "verify environment feasibility.",
+        UserWarning,
+        stacklevel=2,
+    )
+
+
 def _parse_derived_constraints(entries: list[Any]) -> list[DerivedConstraint] | None:
     """Parse TVL 0.9 derived constraints.
 
@@ -2166,6 +2224,64 @@ def _resolve_algorithm(optimization_section: Any) -> str | None:
     return mapping.get(normalized, normalized)
 
 
+def _compile_conditional_constraint(
+    entry: dict[str, Any], constraint_id: Any, path: Path
+) -> tuple[Callable[..., bool], bool]:
+    when_expr = entry.get("when")
+    then_expr = entry.get("then")
+    if not isinstance(when_expr, str) or not isinstance(then_expr, str):
+        raise TVLValidationError(
+            f"Conditional constraint '{constraint_id}' requires 'when' and 'then' expressions"
+        )
+    when_compiled = compile_constraint_expression(
+        when_expr, label=f"{path}:{constraint_id}:when"
+    )
+    then_compiled = compile_constraint_expression(
+        then_expr, label=f"{path}:{constraint_id}:then"
+    )
+    requires_metrics = _METRICS_PREFIX in when_expr or _METRICS_PREFIX in then_expr
+
+    def _conditional(
+        config: dict[str, Any],
+        metrics: dict[str, Any] | None = None,
+        *,
+        _when: Callable[..., Any] = when_compiled,
+        _then: Callable[..., Any] = then_compiled,
+    ) -> bool:
+        if not _when(config, metrics):
+            return True
+        return bool(_then(config, metrics))
+
+    return _conditional, requires_metrics
+
+
+def _compile_rule_constraint(
+    entry: dict[str, Any], constraint_id: Any, constraint_type: str, path: Path
+) -> tuple[Callable[..., bool], bool]:
+    rule_expr = entry.get("rule")
+    if not isinstance(rule_expr, str):
+        raise TVLValidationError(
+            f"Constraint '{constraint_id}' requires a string 'rule' expression"
+        )
+    requires_metrics = _METRICS_PREFIX in rule_expr
+    compiled_rule = compile_constraint_expression(
+        rule_expr, label=f"{path}:{constraint_id}:rule"
+    )
+
+    if constraint_type != "forbidden":
+        return compiled_rule, requires_metrics
+
+    def _forbidden(
+        config: dict[str, Any],
+        metrics: dict[str, Any] | None = None,
+        *,
+        _rule: Callable[..., Any] = compiled_rule,
+    ) -> bool:
+        return not bool(_rule(config, metrics))
+
+    return _forbidden, requires_metrics
+
+
 def _compile_constraints(
     entries: list[Any],
     path: Path,
@@ -2179,62 +2295,15 @@ def _compile_constraints(
         error_message = (
             entry.get("error_message") or f"Constraint {constraint_id} violated"
         )
-        requires_metrics = False
 
         if constraint_type == "conditional":
-            when_expr = entry.get("when")
-            then_expr = entry.get("then")
-            if not isinstance(when_expr, str) or not isinstance(then_expr, str):
-                raise TVLValidationError(
-                    f"Conditional constraint '{constraint_id}' requires 'when' and 'then' expressions"
-                )
-            when_compiled = compile_constraint_expression(
-                when_expr, label=f"{path}:{constraint_id}:when"
+            evaluator, requires_metrics = _compile_conditional_constraint(
+                entry, constraint_id, path
             )
-            then_compiled = compile_constraint_expression(
-                then_expr, label=f"{path}:{constraint_id}:then"
-            )
-            requires_metrics = (
-                _METRICS_PREFIX in when_expr or _METRICS_PREFIX in then_expr
-            )
-
-            def _conditional(
-                config: dict[str, Any],
-                metrics: dict[str, Any] | None = None,
-                *,
-                _when: Callable[..., Any] = when_compiled,
-                _then: Callable[..., Any] = then_compiled,
-            ) -> bool:
-                if not _when(config, metrics):
-                    return True
-                return bool(_then(config, metrics))
-
-            evaluator = _conditional
-
         else:
-            rule_expr = entry.get("rule")
-            if not isinstance(rule_expr, str):
-                raise TVLValidationError(
-                    f"Constraint '{constraint_id}' requires a string 'rule' expression"
-                )
-            requires_metrics = _METRICS_PREFIX in rule_expr
-            compiled_rule = compile_constraint_expression(
-                rule_expr, label=f"{path}:{constraint_id}:rule"
+            evaluator, requires_metrics = _compile_rule_constraint(
+                entry, constraint_id, constraint_type, path
             )
-
-            if constraint_type == "forbidden":
-
-                def _forbidden(
-                    config: dict[str, Any],
-                    metrics: dict[str, Any] | None = None,
-                    *,
-                    _rule: Callable[..., Any] = compiled_rule,
-                ) -> bool:
-                    return not bool(_rule(config, metrics))
-
-                evaluator = _forbidden  # type: ignore[assignment]
-            else:
-                evaluator = compiled_rule  # type: ignore[assignment]
 
         compiled.append(
             CompiledConstraint(
@@ -2501,6 +2570,15 @@ def _merge_inherited_constraints(
     return merged
 
 
+def _quote_is_unescaped(expression: str, index: int) -> bool:
+    backslashes = 0
+    j = index - 1
+    while j >= 0 and expression[j] == "\\":
+        backslashes += 1
+        j -= 1
+    return backslashes % 2 == 0
+
+
 def _translate_expression(expression: str) -> str:
     """Translate canonical/CEL-like surface syntax to the Python dialect.
 
@@ -2512,8 +2590,8 @@ def _translate_expression(expression: str) -> str:
     """
 
     def _rewrite_segment(segment: str) -> str:
-        segment = re.sub(r"&&", " and ", segment)
-        segment = re.sub(r"\|\|", " or ", segment)
+        segment = segment.replace("&&", " and ")
+        segment = segment.replace("||", " or ")
         segment = re.sub(r"(?<![=!<>])!(?![=])", " not ", segment)
         segment = re.sub(r"\btrue\b", "True", segment, flags=re.IGNORECASE)
         segment = re.sub(r"\bfalse\b", "False", segment, flags=re.IGNORECASE)
@@ -2538,12 +2616,7 @@ def _translate_expression(expression: str) -> str:
         # inside a quoted span: a quote closes it only if preceded by an
         # EVEN number of backslashes (odd means the quote is escaped)
         if ch == quote:
-            backslashes = 0
-            j = i - 1
-            while j >= 0 and expression[j] == "\\":
-                backslashes += 1
-                j -= 1
-            if backslashes % 2 == 0:
+            if _quote_is_unescaped(expression, i):
                 out.append(expression[segment_start : i + 1])
                 segment_start = i + 1
                 quote = None

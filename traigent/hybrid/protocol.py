@@ -353,7 +353,7 @@ class TVARDefinition:
         default: Default value (None = first in domain)
         agent: Agent name for multi-agent grouping
         is_tool: True if this TVAR selects/configures an MCP tool
-        constraints: Conditional constraints (e.g., "requires model == gpt-4")
+        constraints: Conditional constraints (e.g., "requires model == gpt-5.6-sol")
     """
 
     name: str

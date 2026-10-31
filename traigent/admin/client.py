@@ -18,6 +18,7 @@ from traigent.admin.dtos import (
     TenantMembershipStatus,
     TenantSSOConfigDTO,
 )
+from traigent.cloud.url_security import open_no_redirect
 from traigent.core.session_types import safe_http_error_summary
 from traigent.security.tenant import TenantStatus, TenantTier
 from traigent.utils.env_config import raise_if_backend_offline
@@ -26,6 +27,7 @@ from traigent.utils.exceptions import (
     ClientError,
     TraigentConnectionError,
 )
+from traigent.utils.wire_text import filter_wire_metadata
 
 
 class EnterpriseAdminClient:
@@ -91,7 +93,7 @@ class EnterpriseAdminClient:
                 "status": status.value,
                 "tier": tier.value,
                 "quotas": dict(quotas or {}),
-                "metadata": dict(metadata or {}),
+                "metadata": filter_wire_metadata(metadata),
             },
         )
         return TenantDTO.from_dict(self._unwrap_data(payload, "tenant create"))
@@ -102,6 +104,8 @@ class EnterpriseAdminClient:
             payload["status"] = payload["status"].value
         if "tier" in payload and isinstance(payload["tier"], TenantTier):
             payload["tier"] = payload["tier"].value
+        if "metadata" in payload:
+            payload["metadata"] = filter_wire_metadata(payload["metadata"])
         response = self._request_json("PATCH", f"/tenants/{tenant_id}", payload)
         return TenantDTO.from_dict(self._unwrap_data(response, "tenant update"))
 
@@ -238,7 +242,7 @@ class EnterpriseAdminClient:
             method=method,
         )
         try:
-            with request.urlopen(  # nosec B310 - backend_origin is caller-configured API endpoint
+            with open_no_redirect(  # nosec B310 - no-redirect opener, caller-configured endpoint
                 http_request, timeout=self.config.request_timeout
             ) as response:
                 status_code = getattr(response, "status", 200)

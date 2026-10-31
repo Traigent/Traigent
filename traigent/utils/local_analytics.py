@@ -17,7 +17,12 @@ from typing import Any
 
 from traigent._version import get_version
 from traigent.api.types import OptimizationStatus
-from traigent.config.backend_config import DEFAULT_CLOUD_URL
+from traigent.config.backend_config import (
+    DEFAULT_CLOUD_URL,
+    EndpointNotConfiguredError,
+    endpoint_missing_message,
+    is_strict_endpoint_mode,
+)
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager
 
@@ -54,6 +59,37 @@ def _register_background_task(task: asyncio.Task[Any]) -> None:
     task.add_done_callback(_on_done)
 
 
+def _average_config_space_size(completed_sessions: list[Any]) -> float:
+    # Configuration space complexity (aggregated)
+    config_space_sizes: list[int] = []
+    for session in completed_sessions:
+        if hasattr(session, "optimization_config") and session.optimization_config:
+            config_space = session.optimization_config.get("configuration_space", {})
+            if isinstance(config_space, dict):
+                config_space_sizes.append(len(config_space))
+
+    avg_config_space_size = (
+        sum(config_space_sizes) / len(config_space_sizes) if config_space_sizes else 0
+    )
+
+    return avg_config_space_size
+
+
+def _analytics_api_key_error(api_key: str | None) -> str | None:
+    if not api_key:
+        logger.debug("No Traigent API key found, analytics submission skipped")
+        return "No API key available"
+
+    if len(api_key) < MIN_TOKEN_LENGTH:
+        logger.debug(
+            "API key too short for analytics submission (length=%d), skipping",
+            len(api_key),
+        )
+        return "API key invalid"
+
+    return None
+
+
 class LocalAnalytics:
     """Handles privacy-safe analytics collection for Edge Analytics mode."""
 
@@ -67,8 +103,9 @@ class LocalAnalytics:
         storage_path_option = config.get_local_storage_path()
         storage_path_str = storage_path_option or str(Path.home() / ".traigent")
         self.storage = LocalStorageManager(storage_path_str)
-        self.analytics_endpoint = (
-            config.analytics_endpoint or DEFAULT_ANALYTICS_ENDPOINT
+        # Strict-endpoint mode: never default to the vendor analytics host.
+        self.analytics_endpoint = config.analytics_endpoint or (
+            None if is_strict_endpoint_mode() else DEFAULT_ANALYTICS_ENDPOINT
         )
         self.enabled = config.enable_usage_analytics and (
             config.execution_mode == ExecutionMode.LOCAL.value
@@ -135,24 +172,7 @@ class LocalAnalytics:
                 if datetime.fromisoformat(s.created_at) > now - timedelta(days=30)
             ]
 
-            # Configuration space complexity (aggregated)
-            config_space_sizes: list[int] = []
-            for session in completed_sessions:
-                if (
-                    hasattr(session, "optimization_config")
-                    and session.optimization_config
-                ):
-                    config_space = session.optimization_config.get(
-                        "configuration_space", {}
-                    )
-                    if isinstance(config_space, dict):
-                        config_space_sizes.append(len(config_space))
-
-            avg_config_space_size = (
-                sum(config_space_sizes) / len(config_space_sizes)
-                if config_space_sizes
-                else 0
-            )
+            avg_config_space_size = _average_config_space_size(completed_sessions)
 
             # Performance improvement metrics (aggregated)
             improvements: list[float] = []
@@ -249,16 +269,9 @@ class LocalAnalytics:
             from traigent.config.backend_config import BackendConfig
 
             api_key = BackendConfig.get_api_key()
-            if not api_key:
-                logger.debug("No Traigent API key found, analytics submission skipped")
-                return {"success": False, "reason": "No API key available"}
-
-            if len(api_key) < MIN_TOKEN_LENGTH:
-                logger.debug(
-                    "API key too short for analytics submission (length=%d), skipping",
-                    len(api_key),
-                )
-                return {"success": False, "reason": "API key invalid"}
+            api_key_error = _analytics_api_key_error(api_key)
+            if api_key_error:
+                return {"success": False, "reason": api_key_error}
 
             backend_client = backend_client_module.get_backend_client(
                 api_key=api_key,
@@ -357,6 +370,9 @@ class LocalAnalytics:
         except ImportError:
             logger.debug("Backend client not available for analytics submission")
             return {"success": False, "reason": "Backend client not available"}
+        except EndpointNotConfiguredError:
+            logger.debug(endpoint_missing_message("analytics submission"))
+            return {"success": False, "reason": "No backend endpoint configured"}
         except Exception as e:
             logger.debug(f"Analytics submission failed: {e}")
             return {"success": False, "reason": str(e)}

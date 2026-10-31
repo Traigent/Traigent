@@ -162,6 +162,13 @@ class ParallelBatchOptimizer(BaseOptimizer):
             max_batch_size=batch_config.batch_size * 2,
         )
 
+    def mark_config_evaluated(self, config: dict[str, Any]) -> None:
+        """Forward to the inner optimizer that actually produces suggestions (#1697)."""
+        super().mark_config_evaluated(config)
+        inner = getattr(self, "base_optimizer", None)
+        if inner is not None:
+            inner.mark_config_evaluated(config)
+
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
         return cast(dict[str, Any], self.base_optimizer.suggest_next_trial(history))
@@ -231,29 +238,16 @@ class ParallelBatchOptimizer(BaseOptimizer):
                         trial = future.result()
                         completed_trials.append(trial)
 
-                        # Patience counter resets only on a MATERIAL improvement
-                        # (> min_delta over the previous best); sub-delta creep
-                        # must not defer early stopping. Previously min_delta was
-                        # declared in BatchConfig but never read, so any epsilon
-                        # gain reset the counter.
-                        eligible = not trial.metadata.get("objective_unmeasured")
-                        if (
-                            eligible
-                            and trial.score
-                            > best_score + self.batch_config.early_stopping_min_delta
-                        ):
-                            trials_without_improvement = 0
-                        else:
-                            trials_without_improvement += 1
-
-                        # Best-result tracking stays exact: even a sub-delta gain
-                        # is still the best config seen so far.
-                        if eligible and trial.score > best_score:
-                            best_score = trial.score
-                            best_config = config
-                            logger.info(
-                                f"New best score: {best_score:.4f} with config: {config}"
+                        (best_score, best_config, trials_without_improvement) = (
+                            ParallelBatchOptimizer._record_trial_progress(
+                                self,
+                                trial,
+                                config,
+                                best_score,
+                                best_config,
+                                trials_without_improvement,
                             )
+                        )
 
                         # Early stopping check
                         if (
@@ -267,7 +261,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
                             break
 
                     except Exception as e:
-                        logger.error(f"Trial failed for config {config}: {e}")
+                        logger.exception(f"Trial failed for config {config}: {e}")
                         # Create failed trial
                         failed_trial = BatchTrial(
                             configuration=config,
@@ -299,6 +293,37 @@ class ParallelBatchOptimizer(BaseOptimizer):
                 "total_trials": len(completed_trials),
             },
         )
+
+    def _record_trial_progress(
+        self,
+        trial: BatchTrial,
+        config: dict[str, Any],
+        best_score: float,
+        best_config: dict[str, Any] | None,
+        trials_without_improvement: int,
+    ) -> tuple[float, dict[str, Any] | None, int]:
+        # Patience counter resets only on a MATERIAL improvement
+        # (> min_delta over the previous best); sub-delta creep
+        # must not defer early stopping. Previously min_delta was
+        # declared in BatchConfig but never read, so any epsilon
+        # gain reset the counter.
+        eligible = not trial.metadata.get("objective_unmeasured")
+        if (
+            eligible
+            and trial.score > best_score + self.batch_config.early_stopping_min_delta
+        ):
+            trials_without_improvement = 0
+        else:
+            trials_without_improvement += 1
+
+        # Best-result tracking stays exact: even a sub-delta gain
+        # is still the best config seen so far.
+        if eligible and trial.score > best_score:
+            best_score = trial.score
+            best_config = config
+            logger.info(f"New best score: {best_score:.4f} with config: {config}")
+
+        return best_score, best_config, trials_without_improvement
 
     def _run_single_trial_sync(
         self,
@@ -393,7 +418,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
             )
 
         except Exception as e:
-            logger.error(f"Trial failed for config {config}: {e}")
+            logger.exception(f"Trial failed for config {config}: {e}")
             return BatchTrial(
                 configuration=config,
                 score=float("-inf"),
@@ -511,6 +536,13 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             max_trials=requested_max_trials,
             objective_orientations=self.objective_orientations,
         )
+
+    def mark_config_evaluated(self, config: dict[str, Any]) -> None:
+        """Forward to the inner optimizer that actually produces suggestions (#1697)."""
+        super().mark_config_evaluated(config)
+        inner = getattr(self, "_base_optimizer", None)
+        if inner is not None:
+            inner.mark_config_evaluated(config)
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
@@ -696,7 +728,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             )
 
         except Exception as e:
-            logger.error(f"Multi-objective trial {trial_idx} failed: {e}")
+            logger.exception(f"Multi-objective trial {trial_idx} failed: {e}")
             return BatchTrial(
                 configuration=config,
                 score=float("-inf"),
@@ -883,13 +915,12 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                     break
                 elif score1 > score2:
                     at_least_one_better = True
-            else:
-                # Lower is better (for cost, latency, etc.)
-                if score1 > score2:
-                    all_better_or_equal = False
-                    break
-                elif score1 < score2:
-                    at_least_one_better = True
+            # Lower is better (for cost, latency, etc.)
+            elif score1 > score2:
+                all_better_or_equal = False
+                break
+            elif score1 < score2:
+                at_least_one_better = True
 
         return all_better_or_equal and at_least_one_better
 
@@ -954,6 +985,13 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
             target_memory_mb=batch_config.memory_limit_mb,
         )
         self.performance_history: list[Any] = []
+
+    def mark_config_evaluated(self, config: dict[str, Any]) -> None:
+        """Forward to the inner optimizer that actually produces suggestions (#1697)."""
+        super().mark_config_evaluated(config)
+        inner = getattr(self, "base_optimizer", None)
+        if inner is not None:
+            inner.mark_config_evaluated(config)
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
@@ -1114,7 +1152,7 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
             )
 
         except Exception as e:
-            logger.error(f"Adaptive trial {trial_idx} failed: {e}")
+            logger.exception(f"Adaptive trial {trial_idx} failed: {e}")
             return BatchTrial(
                 configuration=config,
                 score=float("-inf"),

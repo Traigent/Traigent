@@ -60,14 +60,16 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud.dtos import (
     ExperimentGroupDetailDTO,
     ExperimentGroupsPageDTO,
+    GroupedConfigurationRunRowDTO,
     GroupedConfigurationRunsPageDTO,
 )
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.cloud.user_agent import get_sdk_user_agent
+from traigent.labels.transport_gate import gate_session
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -84,6 +86,13 @@ if TYPE_CHECKING:
         ObservabilityVariantDetailDTO,
         ObservabilityVariantListDTO,
     )
+
+_AGENT_DECISION = "agent decision"
+_LITERAL_00_00 = "+00:00"
+_MALFORMED_AGENT_DECISION_RESPONSE = "Malformed agent decision response."
+
+OBSERVABILITY_TRACE_SEARCH = "observability trace search"
+DECISION_BRIEF = "decision brief"
 
 logger = get_logger(__name__)
 
@@ -489,7 +498,15 @@ class AnalyticsClientError(RuntimeError):
     Transport errors (connection failures, non-2xx status) are surfaced as the
     underlying :class:`httpx.HTTPError` so callers can distinguish "the backend
     said no" from "the backend lied about the shape".
+
+    ``status_code`` carries the HTTP status when one is known. It is a closed
+    integer field, so the message text can stay a constant (no response body
+    or request detail is echoed).
     """
+
+    def __init__(self, message: str = "", *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _require_object(payload: Any, *, what: str) -> dict[str, Any]:
@@ -775,144 +792,158 @@ _OBSERVABILITY_COST_STATUSES = frozenset(
 )
 
 
+_TRACE_SEARCH_SAFE_ITEM_KEYS = frozenset(
+    {
+        "id",
+        "status",
+        "environment",
+        "release",
+        "started_at",
+        "ended_at",
+        "observation_count",
+        "total_input_tokens",
+        "total_output_tokens",
+        "total_tokens",
+        "total_cost_usd",
+        "total_latency_ms",
+        "cost_status",
+        "priced_cost_usd",
+        "unpriced_observation_count",
+    }
+)
+_TRACE_SEARCH_KNOWN_CONTENT_KEYS = frozenset(
+    {
+        "tenant_id",
+        "project_id",
+        "session_id",
+        "name",
+        "user_id",
+        "custom_trace_id",
+        "tags",
+        "metadata",
+        "execution_context",
+        "input_data",
+        "output_data",
+        "is_bookmarked",
+        "bookmarked_at",
+        "bookmarked_by",
+        "is_published",
+        "published_at",
+        "published_by",
+        "otel_trace_id",
+        "otel_parent_span_id",
+        "root_observation_count",
+        "created_at",
+        "updated_at",
+        "sum_observation_latency_ms",
+        "wall_clock_latency_ms",
+        "user_display_name",
+        "bookmarked_by_display_name",
+        "published_by_display_name",
+    }
+)
+
+
+def _normalize_trace_search_status(item: dict[str, Any], index: int) -> dict[str, Any]:
+    if "status" not in item:
+        return item
+    raw_status = item["status"]
+    item_status = (
+        _OBSERVABILITY_TRACE_STATUS_ALIASES.get(raw_status, raw_status)
+        if isinstance(raw_status, str)
+        else raw_status
+    )
+    _require_observability_enum(
+        item_status,
+        _OBSERVABILITY_TRACE_READ_STATUSES,
+        what=f"items[{index}].status",
+    )
+    item = {**item, "status": item_status}
+    return item
+
+
+def _validate_trace_search_item_fields(item: dict[str, Any], index: int) -> None:
+    if "environment" in item:
+        _require_safe_observability_identifier(
+            item["environment"],
+            what=f"items[{index}].environment",
+            nullable=True,
+            maximum=64,
+        )
+    if "release" in item:
+        _require_safe_observability_identifier(
+            item["release"], what=f"items[{index}].release", nullable=True
+        )
+    for field in ("started_at", "ended_at"):
+        if field in item and item[field] is not None:
+            _require_observability_datetime(item[field], what=f"items[{index}].{field}")
+    for field in (
+        "observation_count",
+        "total_input_tokens",
+        "total_output_tokens",
+        "total_tokens",
+        "total_latency_ms",
+    ):
+        if field in item:
+            _require_observability_integer(item[field], what=f"items[{index}].{field}")
+    # Null total_cost_usd means unknown cost (unpriced/partial); reject only
+    # negatives and non-numbers.
+    for field in ("total_cost_usd", "priced_cost_usd"):
+        if field in item and item[field] is not None:
+            _require_non_negative_observability_number(
+                item[field], what=f"items[{index}].{field}"
+            )
+    if "cost_status" in item:
+        _require_observability_enum(
+            item["cost_status"],
+            _OBSERVABILITY_COST_STATUSES,
+            what=f"items[{index}].cost_status",
+        )
+    if item.get("unpriced_observation_count") is not None:
+        _require_observability_integer(
+            item["unpriced_observation_count"],
+            what=f"items[{index}].unpriced_observation_count",
+        )
+
+
+def _project_trace_search_item(value: Any, index: int) -> dict[str, Any]:
+    item = _require_object(value, what=f"observability trace search items[{index}]")
+    unsupported = sorted(
+        set(item).difference(
+            _TRACE_SEARCH_SAFE_ITEM_KEYS | _TRACE_SEARCH_KNOWN_CONTENT_KEYS
+        )
+    )
+    if unsupported:
+        raise AnalyticsClientError(
+            "Malformed observability trace search response: an unsupported key "
+            f"is present in items[{index}]."
+        )
+    if "id" not in item:
+        raise AnalyticsClientError(
+            f"Malformed observability trace search items[{index}] response: "
+            "missing required key(s): id."
+        )
+    _require_safe_observability_identifier(item["id"], what=f"items[{index}].id")
+    item = _normalize_trace_search_status(item, index)
+    _validate_trace_search_item_fields(item, index)
+    return {key: item[key] for key in _TRACE_SEARCH_SAFE_ITEM_KEYS if key in item}
+
+
 def _project_observability_trace_search(payload: Any) -> dict[str, Any]:
     """Rebuild the safe subset of the ordinary trace-summary response."""
-    source = _require_object(payload, what="observability trace search")
+    source = _require_object(payload, what=OBSERVABILITY_TRACE_SEARCH)
     allowed_top = frozenset(
         {"items", "pagination", "page", "per_page", "total", "has_more"}
     )
     _require_exact_keys(
-        source, allowed_top, what="observability trace search", require_all=False
+        source, allowed_top, what=OBSERVABILITY_TRACE_SEARCH, require_all=False
     )
     items = _require_bounded_list(
         source.get("items"), what="observability trace search items", maximum=100
     )
-    safe_item_keys = frozenset(
-        {
-            "id",
-            "status",
-            "environment",
-            "release",
-            "started_at",
-            "ended_at",
-            "observation_count",
-            "total_input_tokens",
-            "total_output_tokens",
-            "total_tokens",
-            "total_cost_usd",
-            "total_latency_ms",
-            "cost_status",
-            "priced_cost_usd",
-            "unpriced_observation_count",
-        }
-    )
-    known_content_keys = frozenset(
-        {
-            "tenant_id",
-            "project_id",
-            "session_id",
-            "name",
-            "user_id",
-            "custom_trace_id",
-            "tags",
-            "metadata",
-            "execution_context",
-            "input_data",
-            "output_data",
-            "is_bookmarked",
-            "bookmarked_at",
-            "bookmarked_by",
-            "is_published",
-            "published_at",
-            "published_by",
-            "otel_trace_id",
-            "otel_parent_span_id",
-            "root_observation_count",
-            "created_at",
-            "updated_at",
-            "sum_observation_latency_ms",
-            "wall_clock_latency_ms",
-            "user_display_name",
-            "bookmarked_by_display_name",
-            "published_by_display_name",
-        }
-    )
-    projected_items: list[dict[str, Any]] = []
-    for index, value in enumerate(items):
-        item = _require_object(value, what=f"observability trace search items[{index}]")
-        unsupported = sorted(set(item).difference(safe_item_keys | known_content_keys))
-        if unsupported:
-            raise AnalyticsClientError(
-                "Malformed observability trace search response: an unsupported key "
-                f"is present in items[{index}]."
-            )
-        if "id" not in item:
-            raise AnalyticsClientError(
-                f"Malformed observability trace search items[{index}] response: "
-                "missing required key(s): id."
-            )
-        _require_safe_observability_identifier(item["id"], what=f"items[{index}].id")
-        if "status" in item:
-            raw_status = item["status"]
-            item_status = (
-                _OBSERVABILITY_TRACE_STATUS_ALIASES.get(raw_status, raw_status)
-                if isinstance(raw_status, str)
-                else raw_status
-            )
-            _require_observability_enum(
-                item_status,
-                _OBSERVABILITY_TRACE_READ_STATUSES,
-                what=f"items[{index}].status",
-            )
-            item = {**item, "status": item_status}
-        if "environment" in item:
-            _require_safe_observability_identifier(
-                item["environment"],
-                what=f"items[{index}].environment",
-                nullable=True,
-                maximum=64,
-            )
-        if "release" in item:
-            _require_safe_observability_identifier(
-                item["release"], what=f"items[{index}].release", nullable=True
-            )
-        for field in ("started_at", "ended_at"):
-            if field in item and item[field] is not None:
-                _require_observability_datetime(
-                    item[field], what=f"items[{index}].{field}"
-                )
-        for field in (
-            "observation_count",
-            "total_input_tokens",
-            "total_output_tokens",
-            "total_tokens",
-            "total_latency_ms",
-        ):
-            if field in item:
-                _require_observability_integer(
-                    item[field], what=f"items[{index}].{field}"
-                )
-        # Null total_cost_usd means unknown cost (unpriced/partial); reject only
-        # negatives and non-numbers.
-        for field in ("total_cost_usd", "priced_cost_usd"):
-            if field in item and item[field] is not None:
-                _require_non_negative_observability_number(
-                    item[field], what=f"items[{index}].{field}"
-                )
-        if "cost_status" in item:
-            _require_observability_enum(
-                item["cost_status"],
-                _OBSERVABILITY_COST_STATUSES,
-                what=f"items[{index}].cost_status",
-            )
-        if item.get("unpriced_observation_count") is not None:
-            _require_observability_integer(
-                item["unpriced_observation_count"],
-                what=f"items[{index}].unpriced_observation_count",
-            )
-        projected_items.append(
-            {key: item[key] for key in safe_item_keys if key in item}
-        )
+    projected_items: list[dict[str, Any]] = [
+        _project_trace_search_item(value, index) for index, value in enumerate(items)
+    ]
 
     pagination = source.get("pagination")
     if pagination is not None:
@@ -1656,44 +1687,9 @@ def _project_observability_trace_analysis(payload: Any) -> dict[str, Any]:
     }
 
 
-def _project_observability_trace_slice(payload: Any) -> dict[str, Any]:
-    source = _exact_observability_object(
-        payload,
-        keys=_OBSERVABILITY_TRACE_PROJECTION_REQUIRED_KEYS,
-        what="observability trace slice",
-    )
-    for field in ("project_id", "trace_id"):
-        _require_safe_observability_identifier(
-            source[field], what=f"trace_slice.{field}"
-        )
-    if (
-        source["projection_mode"] != "content_free"
-        or source["content_included"] is not False
-    ):
-        raise AnalyticsClientError(
-            "Malformed observability trace slice response: content-free markers are required."
-        )
-    items = _require_bounded_list(
-        source["items"], what="observability trace slice items", maximum=500
-    )
-    item_keys = frozenset(
-        {
-            "observation_id",
-            "parent_observation_id",
-            "semantic_kind",
-            "status",
-            "sequence_index",
-            "depth",
-            "duration_ms",
-            "normalized_tool_id",
-            "normalized_model_id",
-            "input_tokens",
-            "output_tokens",
-            "cost_usd",
-            "is_critical_path",
-            "repeat_group_id",
-        }
-    )
+def _project_observability_trace_slice_items(
+    items: list[Any], item_keys: frozenset[str]
+) -> list[dict[str, Any]]:
     projected_items: list[dict[str, Any]] = []
     for index, value in enumerate(items):
         what = f"trace_slice.items[{index}]"
@@ -1738,6 +1734,48 @@ def _project_observability_trace_slice(payload: Any) -> dict[str, Any]:
                 f"Malformed {what} response: is_critical_path must be a boolean."
             )
         projected_items.append({key: item[key] for key in item_keys})
+    return projected_items
+
+
+def _project_observability_trace_slice(payload: Any) -> dict[str, Any]:
+    source = _exact_observability_object(
+        payload,
+        keys=_OBSERVABILITY_TRACE_PROJECTION_REQUIRED_KEYS,
+        what="observability trace slice",
+    )
+    for field in ("project_id", "trace_id"):
+        _require_safe_observability_identifier(
+            source[field], what=f"trace_slice.{field}"
+        )
+    if (
+        source["projection_mode"] != "content_free"
+        or source["content_included"] is not False
+    ):
+        raise AnalyticsClientError(
+            "Malformed observability trace slice response: content-free markers are required."
+        )
+    items = _require_bounded_list(
+        source["items"], what="observability trace slice items", maximum=500
+    )
+    item_keys = frozenset(
+        {
+            "observation_id",
+            "parent_observation_id",
+            "semantic_kind",
+            "status",
+            "sequence_index",
+            "depth",
+            "duration_ms",
+            "normalized_tool_id",
+            "normalized_model_id",
+            "input_tokens",
+            "output_tokens",
+            "cost_usd",
+            "is_critical_path",
+            "repeat_group_id",
+        }
+    )
+    projected_items = _project_observability_trace_slice_items(items, item_keys)
     next_cursor = source["next_cursor"]
     if next_cursor is not None:
         if (
@@ -1765,6 +1803,74 @@ def _project_observability_trace_slice(payload: Any) -> dict[str, Any]:
         "has_more": source["has_more"],
         "generated_at": source["generated_at"],
     }
+
+
+def _validate_observability_tool_analysis_cost(
+    item: dict[str, Any], *, what: str
+) -> None:
+    # Unknown cost is null, never 0 (documented API behaviour).
+    for field in ("total_cost_usd", "priced_cost_usd"):
+        if item.get(field) is not None:
+            _require_non_negative_observability_number(
+                item[field], what=f"{what}.{field}"
+            )
+    if "cost_status" in item:
+        _require_observability_enum(
+            item["cost_status"],
+            _OBSERVABILITY_COST_STATUSES,
+            what=f"{what}.cost_status",
+        )
+    if "unpriced_attempt_count" in item:
+        _require_observability_integer(
+            item["unpriced_attempt_count"],
+            what=f"{what}.unpriced_attempt_count",
+        )
+
+
+def _project_observability_tool_analysis_items(
+    items: list[Any], item_keys: frozenset[str], optional_item_keys: frozenset[str]
+) -> list[dict[str, Any]]:
+    projected_items: list[dict[str, Any]] = []
+    for index, value in enumerate(items):
+        what = f"tool_analysis.items[{index}]"
+        item = _exact_observability_object(
+            value, keys=item_keys | optional_item_keys, what=what, required=item_keys
+        )
+        _require_safe_observability_identifier(
+            item["normalized_tool_id"], what=f"{what}.normalized_tool_id"
+        )
+        for field in ("trace_count", "attempt_count"):
+            _require_observability_integer(
+                item[field], what=f"{what}.{field}", minimum=1
+            )
+        for field in (
+            "success_count",
+            "failure_count",
+            "retry_count",
+            "fallback_count",
+        ):
+            _require_observability_integer(item[field], what=f"{what}.{field}")
+        for field in ("failure_rate", "retry_rate", "fallback_rate"):
+            _require_observability_number(
+                item[field], what=f"{what}.{field}", minimum=0, maximum=1
+            )
+        for field in ("p50_latency_ms", "p95_latency_ms"):
+            _require_non_negative_observability_number(
+                item[field], what=f"{what}.{field}"
+            )
+        _validate_observability_tool_analysis_cost(item, what=what)
+        issue_ids = _require_bounded_list(
+            item["issue_ids"], what=f"{what}.issue_ids", maximum=100
+        )
+        _require_unique_observability_identifiers(issue_ids, what=f"{what}.issue_ids")
+        projected_items.append(
+            {
+                **{key: item[key] for key in item_keys if key != "issue_ids"},
+                **{key: item[key] for key in optional_item_keys if key in item},
+                "issue_ids": list(issue_ids),
+            }
+        )
+    return projected_items
 
 
 def _project_observability_tool_analysis(payload: Any) -> dict[str, Any]:
@@ -1802,62 +1908,9 @@ def _project_observability_tool_analysis(payload: Any) -> dict[str, Any]:
     optional_item_keys = frozenset(
         {"cost_status", "priced_cost_usd", "unpriced_attempt_count"}
     )
-    projected_items: list[dict[str, Any]] = []
-    for index, value in enumerate(items):
-        what = f"tool_analysis.items[{index}]"
-        item = _exact_observability_object(
-            value, keys=item_keys | optional_item_keys, what=what, required=item_keys
-        )
-        _require_safe_observability_identifier(
-            item["normalized_tool_id"], what=f"{what}.normalized_tool_id"
-        )
-        for field in ("trace_count", "attempt_count"):
-            _require_observability_integer(
-                item[field], what=f"{what}.{field}", minimum=1
-            )
-        for field in (
-            "success_count",
-            "failure_count",
-            "retry_count",
-            "fallback_count",
-        ):
-            _require_observability_integer(item[field], what=f"{what}.{field}")
-        for field in ("failure_rate", "retry_rate", "fallback_rate"):
-            _require_observability_number(
-                item[field], what=f"{what}.{field}", minimum=0, maximum=1
-            )
-        for field in ("p50_latency_ms", "p95_latency_ms"):
-            _require_non_negative_observability_number(
-                item[field], what=f"{what}.{field}"
-            )
-        # Unknown cost is null, never 0 (documented API behaviour).
-        for field in ("total_cost_usd", "priced_cost_usd"):
-            if item.get(field) is not None:
-                _require_non_negative_observability_number(
-                    item[field], what=f"{what}.{field}"
-                )
-        if "cost_status" in item:
-            _require_observability_enum(
-                item["cost_status"],
-                _OBSERVABILITY_COST_STATUSES,
-                what=f"{what}.cost_status",
-            )
-        if "unpriced_attempt_count" in item:
-            _require_observability_integer(
-                item["unpriced_attempt_count"],
-                what=f"{what}.unpriced_attempt_count",
-            )
-        issue_ids = _require_bounded_list(
-            item["issue_ids"], what=f"{what}.issue_ids", maximum=100
-        )
-        _require_unique_observability_identifiers(issue_ids, what=f"{what}.issue_ids")
-        projected_items.append(
-            {
-                **{key: item[key] for key in item_keys if key != "issue_ids"},
-                **{key: item[key] for key in optional_item_keys if key in item},
-                "issue_ids": list(issue_ids),
-            }
-        )
+    projected_items = _project_observability_tool_analysis_items(
+        items, item_keys, optional_item_keys
+    )
     return {
         "project_id": source["project_id"],
         "start_time": source["start_time"],
@@ -2097,6 +2150,22 @@ def _quote_segment(value: str, *, field: str) -> str:
     return quote(text, safe="")
 
 
+def _exact_agent_id_segment(agent_id: str) -> str:
+    """URL-encode an agent id as one path segment, byte-for-byte as given.
+
+    The backend compares ids verbatim, so nothing is stripped; an id that URL normalisation
+    would change or drop (surrounding whitespace, ``.``, ``..``) is rejected without echo.
+    """
+    if (
+        not isinstance(agent_id, str)
+        or not agent_id
+        or agent_id != agent_id.strip()
+        or agent_id in {".", ".."}
+    ):
+        raise ValueError("agent_id is not a valid agent identifier.")
+    return quote(agent_id, safe="")
+
+
 def _json_object_query_value(
     value: Mapping[str, object] | str | None, *, field: str
 ) -> str | None:
@@ -2144,6 +2213,74 @@ DIRECTOR_VALIDITY_CHECKS: tuple[str, ...] = (
 DIRECTOR_VALIDITY_STATUSES: tuple[str, ...] = ("passed", "failed", "missing")
 DIRECTOR_CONFIDENCE_LABELS: tuple[str, ...] = ("low", "medium", "high", "unknown")
 _DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS = 20
+
+# --- Agent decision (host-prompt) channel ---------------------------------------------------
+# Closed vocabularies pinned to the TraigentSchema ``agent_decision`` contract. Nothing here is
+# free text: ids, enums, digests and server-issued versions only.
+AGENT_DECISION_KINDS: tuple[str, ...] = ("PREPARE_BASELINE_EVALUATION",)
+AGENT_DECISION_ANSWERS: tuple[str, ...] = ("YES", "NOT_NOW")
+AGENT_DECISION_OPTIONS_VERSIONS: tuple[str, ...] = ("1",)
+AGENT_DECISION_POLICY_VERSIONS: tuple[str, ...] = ("1",)
+AGENT_DECISION_ERROR_REASONS: tuple[str, ...] = (
+    "DECISION_NOT_FOUND",
+    "DECISION_EXPIRED",
+    "DECISION_SUPERSEDED",
+    "DECISION_ALREADY_ANSWERED",
+    "STALE_BASIS",
+    "VERSION_MISMATCH",
+    "NOT_ELIGIBLE",
+    "REPLAY_MISMATCH",
+    "INVALID_REQUEST",
+    "POLICY_UNAVAILABLE",
+    "UNAUTHENTICATED",
+    "FORBIDDEN",
+    "RATE_LIMITED",
+    "AGENT_NOT_FOUND",
+)
+_AGENT_DECISION_STATUSES = frozenset({"OPEN", "ANSWERED", "EXPIRED", "SUPERSEDED"})
+_AGENT_DECISION_EXECUTION_STATUSES = frozenset(
+    {"NOT_APPLICABLE", "AWAITING_PREFLIGHT", "STARTED", "COMPLETED", "FAILED"}
+)
+_AGENT_DECISION_NEXT_ACTIONS = frozenset({"ASK_BUILDER", "RUN_PREFLIGHT", "NONE"})
+_AGENT_DECISION_KEYS = frozenset(
+    {
+        "decision_id",
+        "kind",
+        "prompt",
+        "options_version",
+        "policy_version",
+        "basis_digest",
+        "status",
+        "answer",
+        "answered_at",
+        "answered_via",
+        "answered_principal_type",
+        "human_responder",
+        "execution_status",
+        "execution_ref",
+        "next_action",
+        "issued_at",
+        "expires_at",
+    }
+)
+AGENT_DECISION_ID_RE = re.compile(r"^dr_[0-9a-f]{32}$")
+AGENT_DECISION_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+AGENT_DECISION_NONCE_RE = re.compile(r"^rn_[0-9a-f]{32}$")
+AGENT_DECISION_EXECUTION_REF_RE = re.compile(r"^xr_[0-9a-f]{32}$")
+AGENT_DECISION_TIMESTAMP_RE = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$"
+)
+_AGENT_DECISION_ANSWERED_VIA = frozenset({"AGENT_HOST_PROMPT"})
+_AGENT_DECISION_PRINCIPAL_TYPES = frozenset({"API_KEY", "USER_SESSION"})
+_AGENT_DECISION_HUMAN_RESPONDERS = frozenset({"UNKNOWN"})
+# Fixed, backend-authored prompt for PREPARE_BASELINE_EVALUATION at options_version 1.
+_AGENT_DECISION_PROMPT: dict[str, Any] = {
+    "question": "Prepare the baseline evaluation for this agent now?",
+    "options": [
+        {"code": "YES", "label": "Yes, prepare it"},
+        {"code": "NOT_NOW", "label": "Not now"},
+    ],
+}
 
 # Required keys of the session-create response.
 _DIRECTOR_SESSION_REQUIRED_KEYS = frozenset(
@@ -2222,6 +2359,9 @@ def _derive_director_idempotency_key(*parts: str) -> str:
     raw = "|".join(parts)
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     return f"dk_{digest[:32]}"
+
+
+_OBSERVABILITY_ANALYSIS_INSIGHTS = "observability analysis insights"
 
 
 class BackendAnalyticsClient:
@@ -2332,9 +2472,24 @@ class BackendAnalyticsClient:
                     base_url=self.backend_url,
                     headers=_strip_trace_context_headers(headers),
                     timeout=self.timeout,
+                    follow_redirects=False,
                 )
             )
         return self._client
+
+    def _optimization_only_policy(
+        self, client: Any, request_headers: dict[str, str]
+    ) -> oo_egress.Policy:
+        """Policy inputs for one request: the client's default headers carry the credential."""
+        if not oo_egress.scope_required(None):
+            return oo_egress.Policy()
+        try:
+            merged = {**dict(client.headers), **request_headers}
+        except Exception:  # noqa: BLE001 - silent-ok: unattributable, env/explicit only
+            merged = dict(request_headers)
+        return oo_egress.Policy(
+            None, oo_egress.credential_scope(self.backend_url, merged)
+        )
 
     def _request_headers(self, headers: dict[str, str] | None = None) -> dict[str, str]:
         """Build a fresh per-request header dict carrying the active trace context.
@@ -2395,9 +2550,18 @@ class BackendAnalyticsClient:
         envelope: bool = True,
     ) -> dict[str, Any]:
         client = self._get_client()
-        response = await client.post(
-            path, headers=self._request_headers(headers), json=json_body
-        )
+        final_headers = self._request_headers(headers)
+        policy = self._optimization_only_policy(client, final_headers)
+        if path.startswith("/api/v1/director/"):
+            # The Director advisory route is the one hosted operation an
+            # optimization_only workspace keeps, but only with the backend's own closed
+            # request shape (nested allowlist): nothing else is sent.
+            oo_egress.assert_director_request(path, json_body, explicit=policy)
+        else:
+            oo_egress.assert_closed_body(
+                json_body, "analytics_request", explicit=policy
+            )
+        response = await client.post(path, headers=final_headers, json=json_body)
         response.raise_for_status()
         return _parse_response(response.json(), what=what, envelope=envelope)
 
@@ -2456,10 +2620,16 @@ class BackendAnalyticsClient:
 
         path = "/api/v1/optimization-comparisons"
         client = self._get_client()
+        final_headers = self._request_headers(self._project_headers(project_id))
+        oo_egress.assert_closed_body(
+            {"run_ids": cleaned},
+            "analytics_request",
+            explicit=self._optimization_only_policy(client, final_headers),
+        )
         response = await client.post(
             path,
             json={"run_ids": cleaned},
-            headers=self._request_headers(self._project_headers(project_id)),
+            headers=final_headers,
         )
         response.raise_for_status()
         return _unwrap_success_data(response.json(), what="run comparison")
@@ -2495,13 +2665,13 @@ class BackendAnalyticsClient:
         )
         payload = await self._get_json(
             path,
-            what="decision brief",
+            what=DECISION_BRIEF,
             headers=self._project_headers(project_id),
             params={"intent": normalized_intent},
         )
-        _require_keys(payload, _DECISION_PAYLOAD_REQUIRED_KEYS, what="decision brief")
+        _require_keys(payload, _DECISION_PAYLOAD_REQUIRED_KEYS, what=DECISION_BRIEF)
         if "attribution" in payload:
-            _validate_attribution(payload["attribution"], what="decision brief")
+            _validate_attribution(payload["attribution"], what=DECISION_BRIEF)
         return payload
 
     async def get_single_run_pareto(
@@ -2772,7 +2942,7 @@ class BackendAnalyticsClient:
             params["tags"] = clean_tags
         payload = await self._get_json(
             f"{_observability_path(project_id)}/traces",
-            what="observability trace search",
+            what=OBSERVABILITY_TRACE_SEARCH,
             params=params,
         )
         return cast(
@@ -2961,7 +3131,7 @@ class BackendAnalyticsClient:
         start_time, end_time = _validate_observability_time_window(start_time, end_time)
         payload = await self._get_json(
             f"{_observability_path(project_id)}/analysis/insights",
-            what="observability analysis insights",
+            what=_OBSERVABILITY_ANALYSIS_INSIGHTS,
             params={
                 "start_time": start_time,
                 "end_time": end_time,
@@ -3045,7 +3215,7 @@ class BackendAnalyticsClient:
                     "agent_id": str(agent_id) if agent_id is not None else None,
                     "dataset_id": str(dataset_id) if dataset_id is not None else None,
                     "page": str(page),
-                    "page_size": str(page_size),
+                    "per_page": str(page_size),
                 }
             ),
         )
@@ -3082,9 +3252,53 @@ class BackendAnalyticsClient:
             path,
             what="experiment group configuration runs",
             headers=self._project_headers(project_id),
-            params={"page": str(page), "page_size": str(page_size)},
+            # The backend reads ``per_page`` (base_route.get_pagination_params);
+            # ``page_size`` was silently ignored and the default 20 applied.
+            params={"page": str(page), "per_page": str(page_size)},
         )
         return GroupedConfigurationRunsPageDTO.from_dict(payload)
+
+    async def browse_experiment_group_configuration_runs(
+        self,
+        group_id: str,
+        project_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> tuple[list[GroupedConfigurationRunRowDTO], str | None]:
+        """Return one cursor window of browse rows (with ``measures``).
+
+        Uses the backend's cursor mode (``cursor``/``limit`` query params; limit
+        1..200). The legacy page mode rows carry no measures. Returns the rows
+        and the next cursor (``None`` on the last window).
+        """
+        path = (
+            "/api/v1/experiment-groups/"
+            f"{_quote_segment(group_id, field='group_id')}/configuration-runs"
+        )
+        payload = await self._get_json(
+            path,
+            what="experiment group configuration runs",
+            headers=self._project_headers(project_id),
+            params=_without_none({"cursor": cursor, "limit": str(limit)}),
+        )
+        items = payload.get("items")
+        if not isinstance(items, list):
+            raise AnalyticsClientError(
+                "experiment group configuration runs: malformed response"
+            )
+        cursor_meta = payload.get("cursor")
+        next_cursor = None
+        if isinstance(cursor_meta, dict) and cursor_meta.get("has_more") is True:
+            raw = cursor_meta.get("next_cursor")
+            if isinstance(raw, str) and raw:
+                next_cursor = raw
+        rows = [
+            GroupedConfigurationRunRowDTO.from_dict(item)
+            for item in items
+            if isinstance(item, dict)
+        ]
+        return rows, next_cursor
 
     # === Director (advisory-only) ===
 
@@ -3262,6 +3476,223 @@ class BackendAnalyticsClient:
         _require_keys(payload, _DIRECTOR_STATE_REQUIRED_KEYS, what="director state")
         return payload
 
+    # === Agent decision (host-prompt) channel ===
+
+    @staticmethod
+    def _agent_decision_headers(project_id: str | None) -> dict[str, str] | None:
+        if project_id is None:
+            return None
+        return BackendAnalyticsClient._project_headers(project_id)
+
+    async def agent_decision_ensure(
+        self,
+        agent_id: str,
+        *,
+        kind: str = "PREPARE_BASELINE_EVALUATION",
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Ask the backend for the OPEN decision on an agent (or ``{"decision": None}``).
+
+        Endpoint: ``POST /api/v1beta/agent-decisions/{agent_id}/ensure``. The body is the
+        closed ``{"kind": ...}`` object; tenant and project come from the authenticated
+        principal (``project_id``, when given, only selects the project via the usual header).
+        """
+        if kind not in AGENT_DECISION_KINDS:
+            raise ValueError("kind must be a supported agent decision kind.")
+        aid = _exact_agent_id_segment(agent_id)
+        payload = await self._post_json(
+            f"/api/v1beta/agent-decisions/{aid}/ensure",
+            what=_AGENT_DECISION,
+            envelope=False,
+            json_body={"kind": kind},
+            headers=self._agent_decision_headers(project_id),
+        )
+        return _validated_agent_decision_response(payload, endpoint="ensure")
+
+    async def agent_decision_latest(
+        self, agent_id: str, *, project_id: str | None = None
+    ) -> dict[str, Any]:
+        """Read the latest decision on an agent in any status (read-only).
+
+        Endpoint: ``GET /api/v1beta/agent-decisions/{agent_id}/latest``.
+        """
+        aid = _exact_agent_id_segment(agent_id)
+        payload = await self._get_json(
+            f"/api/v1beta/agent-decisions/{aid}/latest",
+            what=_AGENT_DECISION,
+            envelope=False,
+            headers=self._agent_decision_headers(project_id),
+        )
+        return _validated_agent_decision_response(payload, endpoint="latest")
+
+    async def agent_decision_answer(
+        self,
+        decision_id: str,
+        *,
+        answer: str,
+        options_version: str,
+        policy_version: str,
+        basis_digest: str,
+        retry_nonce: str,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record the human's closed answer.
+
+        Endpoint: ``POST /api/v1beta/agent-decisions/{decision_id}/answer``. Idempotency is
+        carried by ``retry_nonce`` in the body (fresh per attempt, reused only to retry that
+        attempt); the contract has no ``Idempotency-Key`` header.
+        """
+        if not isinstance(decision_id, str) or not AGENT_DECISION_ID_RE.fullmatch(
+            decision_id
+        ):
+            raise ValueError("decision_id is not a valid decision id.")
+        if answer not in AGENT_DECISION_ANSWERS:
+            raise ValueError("answer must be one of the offered options.")
+        if options_version not in AGENT_DECISION_OPTIONS_VERSIONS:
+            raise ValueError("options_version is not supported.")
+        if policy_version not in AGENT_DECISION_POLICY_VERSIONS:
+            raise ValueError("policy_version is not supported.")
+        if not isinstance(basis_digest, str) or not AGENT_DECISION_DIGEST_RE.fullmatch(
+            basis_digest
+        ):
+            raise ValueError("basis_digest is not a valid digest.")
+        if not isinstance(retry_nonce, str) or not AGENT_DECISION_NONCE_RE.fullmatch(
+            retry_nonce
+        ):
+            raise ValueError("retry_nonce is not a valid retry nonce.")
+        payload = await self._post_json(
+            f"/api/v1beta/agent-decisions/{decision_id}/answer",
+            what=_AGENT_DECISION,
+            envelope=False,
+            json_body={
+                "answer": answer,
+                "options_version": options_version,
+                "policy_version": policy_version,
+                "basis_digest": basis_digest,
+                "retry_nonce": retry_nonce,
+            },
+            headers=self._agent_decision_headers(project_id),
+        )
+        return _validated_agent_decision_response(payload, endpoint="answer")
+
+
+def _valid_agent_decision_timestamp(value: Any, *, nullable: bool) -> bool:
+    if value is None:
+        return nullable
+    if not (
+        isinstance(value, str)
+        and len(value) <= 27
+        and AGENT_DECISION_TIMESTAMP_RE.fullmatch(value) is not None
+    ):
+        return False
+    try:  # the shape is right; the date and time must also exist (always UTC, "Z")
+        datetime.fromisoformat(value[:-1] + _LITERAL_00_00)
+    except ValueError:  # silent-ok: unparseable timestamp fails contract validation; caller returns a fixed error
+        return False
+    return True
+
+
+def _agent_decision_lifecycle_ok(decision: dict[str, Any]) -> bool:
+    """Lifecycle invariants of the contract's decision object (status/answer coupling)."""
+    status = decision["status"]
+    answer = decision["answer"]
+    answer_fields = (
+        decision["answer"],
+        decision["answered_at"],
+        decision["answered_via"],
+        decision["answered_principal_type"],
+        decision["human_responder"],
+    )
+    if status != "ANSWERED":
+        return (
+            all(value is None for value in answer_fields)
+            and decision["execution_status"] == "NOT_APPLICABLE"
+            and decision["execution_ref"] is None
+            and decision["next_action"]
+            == ("ASK_BUILDER" if status == "OPEN" else "NONE")
+        )
+    if any(value is None for value in answer_fields):
+        return False
+    if decision["answered_via"] == "AGENT_HOST_PROMPT" and (
+        decision["human_responder"] != "UNKNOWN"
+    ):
+        return False
+    if answer == "NOT_NOW":
+        return (
+            decision["execution_ref"] is None
+            and decision["execution_status"] == "NOT_APPLICABLE"
+            and decision["next_action"] == "NONE"
+        )
+    execution_status = decision["execution_status"]
+    return (
+        isinstance(decision["execution_ref"], str)
+        and execution_status != "NOT_APPLICABLE"
+        and decision["next_action"]
+        == ("RUN_PREFLIGHT" if execution_status == "AWAITING_PREFLIGHT" else "NONE")
+    )
+
+
+def _validated_agent_decision_response(
+    payload: dict[str, Any], *, endpoint: str = "latest"
+) -> dict[str, Any]:
+    """Check an agent-decision response against the whole endpoint contract.
+
+    ``endpoint`` is ``"ensure"`` (the decision is null or OPEN), ``"answer"`` (the decision
+    is always present and ANSWERED) or ``"latest"`` (any status, or null). Nothing is
+    rewritten. Any body outside the contract raises :class:`AnalyticsClientError` with a
+    fixed message (the offending value is never echoed).
+    """
+    if not isinstance(payload, dict) or set(payload) != {"decision"}:
+        raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
+    decision = payload["decision"]
+    if decision is None:
+        if endpoint == "answer":
+            raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
+        return payload
+    if not isinstance(decision, dict) or set(decision) != _AGENT_DECISION_KEYS:
+        raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
+    try:
+        ok = (
+            isinstance(decision["decision_id"], str)
+            and AGENT_DECISION_ID_RE.fullmatch(decision["decision_id"]) is not None
+            and decision["kind"] in AGENT_DECISION_KINDS
+            and decision["status"] in _AGENT_DECISION_STATUSES
+            and decision["answer"] in (*AGENT_DECISION_ANSWERS, None)
+            and decision["answered_via"] in (*_AGENT_DECISION_ANSWERED_VIA, None)
+            and decision["answered_principal_type"]
+            in (*_AGENT_DECISION_PRINCIPAL_TYPES, None)
+            and decision["human_responder"] in (*_AGENT_DECISION_HUMAN_RESPONDERS, None)
+            and decision["execution_status"] in _AGENT_DECISION_EXECUTION_STATUSES
+            and decision["next_action"] in _AGENT_DECISION_NEXT_ACTIONS
+            and decision["options_version"] in AGENT_DECISION_OPTIONS_VERSIONS
+            and decision["policy_version"] in AGENT_DECISION_POLICY_VERSIONS
+            and isinstance(decision["basis_digest"], str)
+            and AGENT_DECISION_DIGEST_RE.fullmatch(decision["basis_digest"]) is not None
+            and decision["prompt"] == _AGENT_DECISION_PROMPT
+            and (
+                decision["execution_ref"] is None
+                or (
+                    isinstance(decision["execution_ref"], str)
+                    and AGENT_DECISION_EXECUTION_REF_RE.fullmatch(
+                        decision["execution_ref"]
+                    )
+                    is not None
+                )
+            )
+            and _valid_agent_decision_timestamp(decision["answered_at"], nullable=True)
+            and _valid_agent_decision_timestamp(decision["issued_at"], nullable=False)
+            and _valid_agent_decision_timestamp(decision["expires_at"], nullable=False)
+            and _agent_decision_lifecycle_ok(decision)
+            and (endpoint != "ensure" or decision["status"] == "OPEN")
+            and (endpoint != "answer" or decision["status"] == "ANSWERED")
+        )
+    except TypeError:  # unhashable value in a set-membership check
+        ok = False
+
+    if not ok:
+        raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
+    return payload
+
 
 def _require_non_empty(value: str, *, field: str) -> str:
     text = (value or "").strip()
@@ -3296,32 +3727,9 @@ def _require_bounded_list(value: Any, *, what: str, maximum: int) -> list[Any]:
     return value
 
 
-def _validate_observability_analysis_insights_payload(
-    payload: dict[str, Any],
-    *,
-    for_mcp: bool = False,
+def _validate_observability_insights_conformance(
+    payload: dict[str, Any], *, what: str, for_mcp: bool
 ) -> None:
-    what = "observability analysis insights"
-    required_payload_keys = _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS - (
-        frozenset({"limitations"}) if for_mcp else frozenset()
-    )
-    _require_keys(payload, required_payload_keys, what=what)
-    _require_exact_keys(
-        payload,
-        _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS,
-        what=what,
-        require_all=False,
-    )
-    _require_safe_observability_identifier(payload.get("project_id"), what="project_id")
-    _require_observability_datetime(payload.get("start_time"), what="start_time")
-    _require_observability_datetime(payload.get("end_time"), what="end_time")
-    _require_observability_datetime(payload.get("generated_at"), what="generated_at")
-    if payload.get("content_included") is not False:
-        raise AnalyticsClientError(
-            "Malformed observability analysis insights response: "
-            "content_included must be false."
-        )
-
     conformance = _require_object(
         payload.get("conformance"), what=f"{what} conformance"
     )
@@ -3418,6 +3826,10 @@ def _validate_observability_analysis_insights_payload(
             maximum=1,
         )
 
+
+def _validate_observability_insights_recommendations(
+    payload: dict[str, Any], *, what: str, for_mcp: bool
+) -> None:
     recommendations = _require_bounded_list(
         payload.get("recommendations"), what=f"{what} recommendations", maximum=100
     )
@@ -3513,6 +3925,39 @@ def _validate_observability_analysis_insights_payload(
                 "recommendation metrics must contain unique values."
             )
 
+
+def _validate_observability_analysis_insights_payload(
+    payload: dict[str, Any],
+    *,
+    for_mcp: bool = False,
+) -> None:
+    what = _OBSERVABILITY_ANALYSIS_INSIGHTS
+    required_payload_keys = _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS - (
+        frozenset({"limitations"}) if for_mcp else frozenset()
+    )
+    _require_keys(payload, required_payload_keys, what=what)
+    _require_exact_keys(
+        payload,
+        _OBSERVABILITY_ANALYSIS_INSIGHTS_REQUIRED_KEYS,
+        what=what,
+        require_all=False,
+    )
+    _require_safe_observability_identifier(payload.get("project_id"), what="project_id")
+    _require_observability_datetime(payload.get("start_time"), what="start_time")
+    _require_observability_datetime(payload.get("end_time"), what="end_time")
+    _require_observability_datetime(payload.get("generated_at"), what="generated_at")
+    if payload.get("content_included") is not False:
+        raise AnalyticsClientError(
+            "Malformed observability analysis insights response: "
+            "content_included must be false."
+        )
+
+    _validate_observability_insights_conformance(payload, what=what, for_mcp=for_mcp)
+
+    _validate_observability_insights_recommendations(
+        payload, what=what, for_mcp=for_mcp
+    )
+
     if "limitations" in payload:
         limitations = _require_bounded_list(
             payload["limitations"], what=f"{what} limitations", maximum=8
@@ -3572,7 +4017,7 @@ def _require_observability_datetime(value: Any, *, what: str) -> str:
             f"{what} must be an ISO 8601 date-time."
         )
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", _LITERAL_00_00))
     except ValueError as exc:
         raise AnalyticsClientError(
             "Malformed observability analysis insights response: "
@@ -3732,7 +4177,7 @@ def _project_observability_analysis_insights(
     payload: Any, *, for_mcp: bool = False
 ) -> dict[str, Any]:
     """Validate and rebuild analysis insights according to their exact nesting."""
-    source = _require_object(payload, what="observability analysis insights")
+    source = _require_object(payload, what=_OBSERVABILITY_ANALYSIS_INSIGHTS)
     _validate_observability_analysis_insights_payload(source, for_mcp=for_mcp)
     conformance = cast(dict[str, Any], source["conformance"])
     deviations = cast(list[dict[str, Any]], conformance["deviations"])
@@ -3799,7 +4244,7 @@ def _project_observability_analysis_insights(
 def _parse_observability_time(value: str, *, field: str) -> datetime:
     text = _require_non_empty(value, field=field)
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text.replace("Z", _LITERAL_00_00))
     except ValueError as exc:
         raise ValueError(f"{field} must be an ISO 8601 date-time.") from exc
     if parsed.utcoffset() is None:
@@ -3832,53 +4277,9 @@ def _validate_observability_trace_filters(
     string: blank text and empty tag lists become absent, and ``has_outcome``
     is encoded as ``"true"``/``"false"`` (``False`` is kept, ``None`` omitted).
     """
-    clean_model: str | None = None
-    if model is not None:
-        if not isinstance(model, str):
-            raise ValueError("model must be a string.")
-        clean_model = model.strip() or None
-        if (
-            clean_model is not None
-            and len(clean_model) > OBSERVABILITY_MAX_MODEL_LENGTH
-        ):
-            raise ValueError(
-                f"model must be at most {OBSERVABILITY_MAX_MODEL_LENGTH} characters."
-            )
-
-    clean_tags: list[str] = []
-    if tags is not None:
-        if not isinstance(tags, Sequence) or isinstance(tags, (str, bytes)):
-            raise ValueError("tags must be a list of strings.")
-        if len(tags) > OBSERVABILITY_MAX_TAGS:
-            raise ValueError(
-                f"tags must contain at most {OBSERVABILITY_MAX_TAGS} values."
-            )
-        for tag in tags:
-            if not isinstance(tag, str):
-                raise ValueError("tags values must be strings.")
-            text = tag.strip()
-            if not text:
-                raise ValueError("tags values must be non-empty strings.")
-            if len(text) > OBSERVABILITY_MAX_TAG_LENGTH:
-                raise ValueError(
-                    f"tags values must be at most {OBSERVABILITY_MAX_TAG_LENGTH} "
-                    "characters."
-                )
-            clean_tags.append(text)
-        if len(set(clean_tags)) != len(clean_tags):
-            raise ValueError("tags values must be unique.")
-
-    clean_outcome_kind: str | None = None
-    if outcome_kind is not None:
-        if not isinstance(outcome_kind, str):
-            raise ValueError("outcome_kind must be a string.")
-        clean_outcome_kind = outcome_kind.strip() or None
-        if (
-            clean_outcome_kind is not None
-            and clean_outcome_kind not in OBSERVABILITY_OUTCOME_KINDS
-        ):
-            allowed = ", ".join(OBSERVABILITY_OUTCOME_KINDS)
-            raise ValueError(f"outcome_kind must be one of: {allowed}.")
+    clean_model = _clean_observability_model_filter(model)
+    clean_tags = _clean_observability_tags_filter(tags)
+    clean_outcome_kind = _clean_observability_outcome_kind_filter(outcome_kind)
 
     has_outcome_param: str | None = None
     if has_outcome is not None:
@@ -3894,6 +4295,59 @@ def _validate_observability_trace_filters(
     return clean_model, clean_tags, clean_outcome_kind, has_outcome_param
 
 
+def _clean_observability_model_filter(model: object) -> str | None:
+    if model is None:
+        return None
+    if not isinstance(model, str):
+        raise ValueError("model must be a string.")
+    clean_model = model.strip() or None
+    if clean_model is not None and len(clean_model) > OBSERVABILITY_MAX_MODEL_LENGTH:
+        raise ValueError(
+            f"model must be at most {OBSERVABILITY_MAX_MODEL_LENGTH} characters."
+        )
+    return clean_model
+
+
+def _clean_observability_tags_filter(tags: object) -> list[str]:
+    clean_tags: list[str] = []
+    if tags is None:
+        return clean_tags
+    if not isinstance(tags, Sequence) or isinstance(tags, (str, bytes)):
+        raise ValueError("tags must be a list of strings.")
+    if len(tags) > OBSERVABILITY_MAX_TAGS:
+        raise ValueError(f"tags must contain at most {OBSERVABILITY_MAX_TAGS} values.")
+    for tag in tags:
+        if not isinstance(tag, str):
+            raise ValueError("tags values must be strings.")
+        text = tag.strip()
+        if not text:
+            raise ValueError("tags values must be non-empty strings.")
+        if len(text) > OBSERVABILITY_MAX_TAG_LENGTH:
+            raise ValueError(
+                f"tags values must be at most {OBSERVABILITY_MAX_TAG_LENGTH} "
+                "characters."
+            )
+        clean_tags.append(text)
+    if len(set(clean_tags)) != len(clean_tags):
+        raise ValueError("tags values must be unique.")
+    return clean_tags
+
+
+def _clean_observability_outcome_kind_filter(outcome_kind: object) -> str | None:
+    if outcome_kind is None:
+        return None
+    if not isinstance(outcome_kind, str):
+        raise ValueError("outcome_kind must be a string.")
+    clean_outcome_kind = outcome_kind.strip() or None
+    if (
+        clean_outcome_kind is not None
+        and clean_outcome_kind not in OBSERVABILITY_OUTCOME_KINDS
+    ):
+        allowed = ", ".join(OBSERVABILITY_OUTCOME_KINDS)
+        raise ValueError(f"outcome_kind must be one of: {allowed}.")
+    return clean_outcome_kind
+
+
 def _validate_identifier_list(value: object, *, field: str) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         raise ValueError(f"{field} must be a list.")
@@ -3903,6 +4357,58 @@ def _validate_identifier_list(value: object, *, field: str) -> list[str]:
     if any(not item or len(item) > 128 for item in result):
         raise ValueError(f"{field} contains an invalid identifier.")
     return result
+
+
+def _validate_observability_execution_context(
+    execution_context: object, *, field: str
+) -> dict[str, object]:
+    if not isinstance(execution_context, Mapping):
+        raise ValueError(f"{field}.execution_context must be an object.")
+    allowed_context = {
+        "schema_version",
+        "agent_id",
+        "agent_version",
+        "release_id",
+        "deployment_id",
+        "code_revision",
+        "configuration_id",
+        "configuration_version",
+        "prompt_id",
+        "prompt_version",
+        "toolset_id",
+        "toolset_version",
+        "evaluator_id",
+        "evaluator_version",
+        "dataset_id",
+        "dataset_version",
+        "experiment_run_id",
+        "configuration_run_id",
+        "optimization_run_id",
+        "intervention_id",
+    }
+    context_extra = sorted(set(execution_context).difference(allowed_context))
+    if context_extra:
+        raise ValueError(
+            f"{field}.execution_context contains unsupported field(s): "
+            + ", ".join(context_extra)
+            + "."
+        )
+    clean_context: dict[str, object] = {"schema_version": "1.0"}
+    for key, value in execution_context.items():
+        if key == "schema_version":
+            if value != "1.0":
+                raise ValueError(
+                    f"{field}.execution_context.schema_version must be '1.0'."
+                )
+            continue
+        if value is not None and (
+            not isinstance(value, str) or not value.strip() or len(value.strip()) > 128
+        ):
+            raise ValueError(
+                f"{field}.execution_context.{key} must be null or a bounded identifier."
+            )
+        clean_context[key] = value.strip() if isinstance(value, str) else None
+    return clean_context
 
 
 def _validate_observability_cohort(
@@ -3962,53 +4468,7 @@ def _validate_observability_cohort(
     }
     execution_context = cohort.get("execution_context")
     if execution_context is not None:
-        if not isinstance(execution_context, Mapping):
-            raise ValueError(f"{field}.execution_context must be an object.")
-        allowed_context = {
-            "schema_version",
-            "agent_id",
-            "agent_version",
-            "release_id",
-            "deployment_id",
-            "code_revision",
-            "configuration_id",
-            "configuration_version",
-            "prompt_id",
-            "prompt_version",
-            "toolset_id",
-            "toolset_version",
-            "evaluator_id",
-            "evaluator_version",
-            "dataset_id",
-            "dataset_version",
-            "experiment_run_id",
-            "configuration_run_id",
-            "optimization_run_id",
-            "intervention_id",
-        }
-        context_extra = sorted(set(execution_context).difference(allowed_context))
-        if context_extra:
-            raise ValueError(
-                f"{field}.execution_context contains unsupported field(s): "
-                + ", ".join(context_extra)
-                + "."
-            )
-        clean_context: dict[str, object] = {"schema_version": "1.0"}
-        for key, value in execution_context.items():
-            if key == "schema_version":
-                if value != "1.0":
-                    raise ValueError(
-                        f"{field}.execution_context.schema_version must be '1.0'."
-                    )
-                continue
-            if value is not None and (
-                not isinstance(value, str)
-                or not value.strip()
-                or len(value.strip()) > 128
-            ):
-                raise ValueError(
-                    f"{field}.execution_context.{key} must be null or a bounded identifier."
-                )
-            clean_context[key] = value.strip() if isinstance(value, str) else None
-        result["execution_context"] = clean_context
+        result["execution_context"] = _validate_observability_execution_context(
+            execution_context, field=field
+        )
     return result

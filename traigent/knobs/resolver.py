@@ -216,41 +216,9 @@ class KnobResolver:
         )
 
     # ------------------------------------------------------------------
-    def _resolve_calibrated(
-        self,
-        name: str,
-        binding: Calibrated,
-        provided: CalibratedInput,
-        suggestion: Mapping[str, Any],
-        values: dict[str, Any],
-        used_fallbacks: list[str],
-        reject: Any,
+    def _check_calibration_evidence(
+        self, name: str, binding: Calibrated, provided: CalibratedInput, reject: Any
     ) -> None:
-        # Governance is DECLARED (on the binding/target), never inferred
-        # from runtime-presented evidence — the shared predicate keeps this
-        # in lockstep with the orchestrator's strict-mode detection.
-        governed = is_governed(binding)
-
-        # ctx_now derivation (RFC 0001 §3.5): certificates are PARENT-SPECIFIC
-        # — tuned_parent_values must reflect the LIVE suggestion, not whatever
-        # the caller's static context said. Without this rebuild a certificate
-        # issued for one parent value would read fresh for every other value
-        # the optimizer explores (found by the consolidation e2e smoke).
-        # Skipped when a declared parent is absent from the suggestion: that
-        # is already an R2/R4 rejection and the run cannot accept.
-        live_context = provided.context
-        if (
-            live_context is not None
-            and binding.depends_on
-            and all(ref.knob in suggestion for ref in binding.depends_on)
-        ):
-            live_context = dataclasses.replace(
-                live_context,
-                tuned_parent_values=tuple(
-                    (ref.knob, suggestion[ref.knob]) for ref in binding.depends_on
-                ),
-            )
-
         # R7 evidence leakage — split tag or true item intersection
         for observation in provided.observations:
             if observation.split == self._eval_split:
@@ -290,6 +258,43 @@ class KnobResolver:
                     f"CVAR {name!r} has n={provided.context.evidence_n} < "
                     f"conformal floor {floor} for epsilon={binding.target_epsilon}",
                 )
+
+    def _resolve_calibrated(
+        self,
+        name: str,
+        binding: Calibrated,
+        provided: CalibratedInput,
+        suggestion: Mapping[str, Any],
+        values: dict[str, Any],
+        used_fallbacks: list[str],
+        reject: Any,
+    ) -> None:
+        # Governance is DECLARED (on the binding/target), never inferred
+        # from runtime-presented evidence — the shared predicate keeps this
+        # in lockstep with the orchestrator's strict-mode detection.
+        governed = is_governed(binding)
+
+        # ctx_now derivation (RFC 0001 §3.5): certificates are PARENT-SPECIFIC
+        # — tuned_parent_values must reflect the LIVE suggestion, not whatever
+        # the caller's static context said. Without this rebuild a certificate
+        # issued for one parent value would read fresh for every other value
+        # the optimizer explores (found by the consolidation e2e smoke).
+        # Skipped when a declared parent is absent from the suggestion: that
+        # is already an R2/R4 rejection and the run cannot accept.
+        live_context = provided.context
+        if (
+            live_context is not None
+            and binding.depends_on
+            and all(ref.knob in suggestion for ref in binding.depends_on)
+        ):
+            live_context = dataclasses.replace(
+                live_context,
+                tuned_parent_values=tuple(
+                    (ref.knob, suggestion[ref.knob]) for ref in binding.depends_on
+                ),
+            )
+
+        KnobResolver._check_calibration_evidence(self, name, binding, provided, reject)
 
         # calibrator ⊥ — the Accept biconditional requires 𝒦 ≠ ⊥ with NO
         # fallback carve-out (RFC §3.4); §3.5's non-strict fallback applies

@@ -11,11 +11,11 @@ Example:
     >>> # Define parameters
     >>> temperature = Range(0.0, 2.0, name="temperature", unit="ratio")
     >>> max_tokens = IntRange(100, 4096, name="max_tokens", unit="count")
-    >>> model = Choices(["gpt-4", "gpt-3.5-turbo"], name="model")
+    >>> model = Choices(["gpt-5.6-sol", "gpt-5.6-terra"], name="model")
     >>>
     >>> # Define constraints
     >>> constraints = [
-    ...     implies(model.equals("gpt-4"), max_tokens.gte(1000)),
+    ...     implies(model.equals("gpt-5.6-sol"), max_tokens.gte(1000)),
     ... ]
     >>>
     >>> # Create config space
@@ -25,7 +25,7 @@ Example:
     ... )
     >>>
     >>> # Validate a configuration
-    >>> result = space.validate({"temperature": 0.5, "max_tokens": 2000, "model": "gpt-4"})
+    >>> result = space.validate({"temperature": 0.5, "max_tokens": 2000, "model": "gpt-5.6-sol"})
     >>> result.is_valid
     True
 """
@@ -90,6 +90,20 @@ class _ImportedConstraintExpression(BoolExpr):
         return self.expression
 
 
+def _first_canonical_values_spec(
+    cls: type[ConfigSpace],
+    name: str,
+    domain: Mapping[str, Any],
+    entry: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """First non-``None`` canonical ``set``/``values`` spec, else ``None``."""
+    for key in ("set", "values"):
+        canonical = cls._canonical_values_spec(name, domain, entry, key, key)
+        if canonical is not None:
+            return canonical
+    return None
+
+
 @dataclass(frozen=True)
 class ConfigSpace:
     """A complete configuration space with TVARs and constraints.
@@ -115,11 +129,11 @@ class ConfigSpace:
         >>> from traigent.api.config_space import ConfigSpace
         >>>
         >>> temp = Range(0.0, 2.0, name="temperature")
-        >>> model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        >>> model = Choices(["gpt-5.6-sol", "gpt-3.5"], name="model")
         >>>
         >>> space = ConfigSpace(
         ...     tvars={"temperature": temp, "model": model},
-        ...     constraints=[implies(model.equals("gpt-4"), temp.lte(0.7))],
+        ...     constraints=[implies(model.equals("gpt-5.6-sol"), temp.lte(0.7))],
         ... )
     """
 
@@ -139,42 +153,10 @@ class ConfigSpace:
           ``knobs`` is synthesized as all-Tuned via the adapter, so the two
           surfaces can never drift apart.
         """
-        from traigent.knobs import Knob as _Knob
-        from traigent.knobs import knob_to_parameter_range, parameter_range_to_knob
-
         if self.knobs is not None:
-            knobs = dict(self.knobs)
-            for knob_name, knob in knobs.items():
-                if not isinstance(knob, _Knob):
-                    raise TypeError(f"knobs[{knob_name!r}] is not a Knob")
-                if knob.name != knob_name:
-                    raise ValueError(
-                        f"knob mapping key {knob_name!r} != knob.name {knob.name!r}"
-                    )
-            projected = {
-                name: knob_to_parameter_range(knob)
-                for name, knob in knobs.items()
-                if knob.is_tuned()
-            }
-            if self.tvars and dict(self.tvars) != projected:
-                raise ValueError(
-                    "tvars must be the Tuned-only projection of knobs; "
-                    "pass only knobs and let tvars be derived"
-                )
-            object.__setattr__(self, "tvars", MappingProxyType(projected))
-            object.__setattr__(self, "knobs", MappingProxyType(knobs))
+            self._adopt_knobs(dict(self.knobs))
         else:
-            object.__setattr__(self, "tvars", MappingProxyType(dict(self.tvars)))
-            object.__setattr__(
-                self,
-                "knobs",
-                MappingProxyType(
-                    {
-                        name: parameter_range_to_knob(name, parameter_range)
-                        for name, parameter_range in self.tvars.items()
-                    }
-                ),
-            )
+            self._synthesize_knobs()
         object.__setattr__(self, "constraints", tuple(self.constraints))
 
         # Ensure all tvars have unique names
@@ -188,6 +170,47 @@ class ConfigSpace:
             if hasattr(tvar, "name") and tvar.name is None:
                 # Note: We can't modify frozen dataclasses, so we just validate
                 pass
+
+    def _adopt_knobs(self, knobs: dict[str, Knob]) -> None:
+        """Validate ``knobs`` and derive ``tvars`` as their Tuned-only projection."""
+        from traigent.knobs import Knob as _Knob
+        from traigent.knobs import knob_to_parameter_range
+
+        for knob_name, knob in knobs.items():
+            if not isinstance(knob, _Knob):
+                raise TypeError(f"knobs[{knob_name!r}] is not a Knob")
+            if knob.name != knob_name:
+                raise ValueError(
+                    f"knob mapping key {knob_name!r} != knob.name {knob.name!r}"
+                )
+        projected = {
+            name: knob_to_parameter_range(knob)
+            for name, knob in knobs.items()
+            if knob.is_tuned()
+        }
+        if self.tvars and dict(self.tvars) != projected:
+            raise ValueError(
+                "tvars must be the Tuned-only projection of knobs; "
+                "pass only knobs and let tvars be derived"
+            )
+        object.__setattr__(self, "tvars", MappingProxyType(projected))
+        object.__setattr__(self, "knobs", MappingProxyType(knobs))
+
+    def _synthesize_knobs(self) -> None:
+        """Freeze ``tvars`` and derive an all-Tuned ``knobs`` surface from them."""
+        from traigent.knobs import parameter_range_to_knob
+
+        object.__setattr__(self, "tvars", MappingProxyType(dict(self.tvars)))
+        object.__setattr__(
+            self,
+            "knobs",
+            MappingProxyType(
+                {
+                    name: parameter_range_to_knob(name, parameter_range)
+                    for name, parameter_range in self.tvars.items()
+                }
+            ),
+        )
 
     def __getstate__(self) -> dict[str, Any]:
         """Return a pickle-safe representation of the config space."""
@@ -318,6 +341,59 @@ class ConfigSpace:
             tvars[name] = cls._spec_entry_to_range(name, entry)
         return tvars
 
+    @staticmethod
+    def _canonical_values_spec(
+        name: str,
+        domain: Mapping[str, Any],
+        entry: Mapping[str, Any],
+        key: str,
+        label: str,
+    ) -> dict[str, Any] | None:
+        """Spec dict for a canonical ``set``/``values`` domain, else ``None``."""
+        if key not in domain:
+            return None
+        members = domain.get(key)
+        if not isinstance(members, list):
+            raise ValueError(f"TVAR '{name}' {label} domain must contain a list")
+        return {"values": list(members), "default": entry.get("default")}
+
+    @classmethod
+    def _mapping_domain_to_spec_dict(
+        cls,
+        name: str,
+        domain: Mapping[str, Any],
+        entry: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Convert a TVL mapping-form domain into a ``_dict_to_range`` spec."""
+        kind = domain.get("kind")
+        if kind is None:
+            # canonical TVL mapping forms have no 'kind' discriminator
+            if "range" in domain:
+                kind = "range"
+            else:
+                canonical = _first_canonical_values_spec(cls, name, domain, entry)
+                if canonical is not None:
+                    return canonical
+        if kind == "enum":
+            return {
+                "values": list(domain.get("values", [])),
+                "default": entry.get("default"),
+            }
+        if kind == "range":
+            range_values = domain.get("range")
+            if not isinstance(range_values, list) or len(range_values) != 2:
+                raise ValueError(
+                    f"TVAR '{name}' range domain must contain a 2-item list"
+                )
+            return {
+                "low": range_values[0],
+                "high": range_values[1],
+                "step": domain.get("resolution"),
+                "log": bool(domain.get("log", False)),
+                "default": entry.get("default"),
+            }
+        raise ValueError(f"TVAR '{name}' has unsupported domain kind '{kind}'")
+
     @classmethod
     def _spec_entry_to_range(
         cls, name: str, entry: Mapping[str, Any]
@@ -330,55 +406,7 @@ class ConfigSpace:
                 "default": entry.get("default"),
             }
         elif isinstance(domain, Mapping):
-            kind = domain.get("kind")
-            if kind is None:
-                # canonical TVL mapping forms have no 'kind' discriminator
-                if "range" in domain:
-                    kind = "range"
-                elif "set" in domain:
-                    set_values = domain.get("set")
-                    if not isinstance(set_values, list):
-                        raise ValueError(
-                            f"TVAR '{name}' set domain must contain a list"
-                        )
-                    spec_dict = {
-                        "values": list(set_values),
-                        "default": entry.get("default"),
-                    }
-                    kind = "enum_resolved"
-                elif "values" in domain:
-                    enum_values = domain.get("values")
-                    if not isinstance(enum_values, list):
-                        raise ValueError(
-                            f"TVAR '{name}' values domain must contain a list"
-                        )
-                    spec_dict = {
-                        "values": list(enum_values),
-                        "default": entry.get("default"),
-                    }
-                    kind = "enum_resolved"
-            if kind == "enum_resolved":
-                pass  # spec_dict already built from canonical set/values form
-            elif kind == "enum":
-                spec_dict = {
-                    "values": list(domain.get("values", [])),
-                    "default": entry.get("default"),
-                }
-            elif kind == "range":
-                range_values = domain.get("range")
-                if not isinstance(range_values, list) or len(range_values) != 2:
-                    raise ValueError(
-                        f"TVAR '{name}' range domain must contain a 2-item list"
-                    )
-                spec_dict = {
-                    "low": range_values[0],
-                    "high": range_values[1],
-                    "step": domain.get("resolution"),
-                    "log": bool(domain.get("log", False)),
-                    "default": entry.get("default"),
-                }
-            else:
-                raise ValueError(f"TVAR '{name}' has unsupported domain kind '{kind}'")
+            spec_dict = cls._mapping_domain_to_spec_dict(name, domain, entry)
         else:
             raise ValueError(f"TVAR '{name}' domain must be a list or mapping")
 

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
 import json
 import math
@@ -23,7 +24,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
 from traigent.evaluators.dataset_registry import (
@@ -41,8 +42,8 @@ from traigent.identity.examples import result_identity_fields
 from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
-from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.example_id import stamp_row_index
+from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
@@ -62,6 +63,8 @@ from traigent.utils.trial_costs import (
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
     from traigent.core.sample_budget import SampleBudgetLease
+
+_JSON_SUFFIX = ".json"
 
 # Tracing utilities are imported lazily to avoid circular imports
 # The actual import happens in _get_tracing_functions()
@@ -166,9 +169,6 @@ def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) ->
     return sum(measured) / len(measured)
 
 
-_T = TypeVar("_T")
-
-
 class _TaskBoundaryInterrupt:
     """Carries a KeyboardInterrupt/SystemExit back across an asyncio Task boundary.
 
@@ -260,6 +260,23 @@ _ACCURACY_REL_TOL = 1e-9
 _ACCURACY_ABS_TOL = 1e-12
 
 
+def _coerce_json_container(
+    actual: str, stripped: str, expected: Any
+) -> tuple[Any, bool]:
+    # A model that answers with a JSON string against a structured
+    # (dict/list) expected value otherwise scores 0.0 in every trial,
+    # across every config -- a config-independent ceiling (Traigent#1772).
+    try:
+        parsed = json.loads(stripped)
+    except (ValueError, TypeError):
+        return actual, False
+    if isinstance(expected, dict) and isinstance(parsed, dict):
+        return parsed, True
+    if isinstance(expected, (list, tuple)) and isinstance(parsed, list):
+        return parsed, True
+    return actual, False
+
+
 def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bool]:
     """Coerce string outputs for scalar (and JSON-container) typed expected values."""
     stripped = actual.strip()
@@ -269,31 +286,14 @@ def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bo
             return lowered == "true", True
         return actual, False
 
-    if isinstance(expected, int) and not isinstance(expected, bool):
-        try:
-            return float(stripped), True
-        except ValueError:
-            return actual, False
-
-    if isinstance(expected, float):
+    if isinstance(expected, (int, float)):
         try:
             return float(stripped), True
         except ValueError:
             return actual, False
 
     if isinstance(expected, (dict, list, tuple)):
-        # A model that answers with a JSON string against a structured
-        # (dict/list) expected value otherwise scores 0.0 in every trial,
-        # across every config -- a config-independent ceiling (Traigent#1772).
-        try:
-            parsed = json.loads(stripped)
-        except (ValueError, TypeError):
-            return actual, False
-        if isinstance(expected, dict) and isinstance(parsed, dict):
-            return parsed, True
-        if isinstance(expected, (list, tuple)) and isinstance(parsed, list):
-            return parsed, True
-        return actual, False
+        return _coerce_json_container(actual, stripped, expected)
 
     return actual, False
 
@@ -319,6 +319,23 @@ def _typed_accuracy_equality(actual: Any, expected: Any) -> bool:
 _COERCION_TALLY: ContextVar[dict[str, int] | None] = ContextVar(
     "traigent_accuracy_coercion_tally", default=None
 )
+
+# Resume support (#1697, #2541): completed example results of a partially-run
+# prior trial. Bound by the orchestrator for the duration of a resumed run;
+# ``None`` everywhere else, so every other evaluation is byte-identical.
+_RESUME_PREFILL: ContextVar[Any | None] = ContextVar(
+    "traigent_resume_prefill", default=None
+)
+
+
+def bind_resume_prefill(prefill: Any) -> Any:
+    """Bind a resume prefill for this context; returns the reset token."""
+    return _RESUME_PREFILL.set(prefill)
+
+
+def reset_resume_prefill(token: Any) -> None:
+    """Undo :func:`bind_resume_prefill`."""
+    _RESUME_PREFILL.reset(token)
 
 
 def _report_coercion(kind: str, source_len: int) -> None:
@@ -358,6 +375,72 @@ def coercion_log_scope() -> Iterator[None]:
             )
 
 
+def _string_pair_matches(actual: str, expected: str) -> bool:
+    """Exact-match semantics for two strings, incl. numeric-string pairs."""
+    if actual.strip().lower() == expected.strip().lower():
+        return True
+    # Numeric string-string pairs (e.g. the common JSONL habit of storing
+    # numeric gold labels as strings) get zero coercion otherwise: the
+    # existing coercion only fires when the EXPECTED side is typed
+    # (Traigent#1772).
+    #
+    # But NOT when either side is zero-padded. A leading zero followed by
+    # another digit is how identifiers are written -- zip codes, order
+    # numbers, SKUs, phone extensions -- and never how a numeric label is.
+    # Without this, "007" scores as a correct answer to "7": a false
+    # positive in accuracy, which is the value the optimizer argmaxes, so
+    # it would rank a config that returns the wrong identifier first.
+    # Formatting differences that are NOT identifier-shaped still coerce:
+    # "1.0"/"1", ".5"/"0.5", "1e5"/"100000".
+    if _ZERO_PADDED_NUMERIC_RE.match(actual.strip()) or (
+        _ZERO_PADDED_NUMERIC_RE.match(expected.strip())
+    ):
+        return False
+    try:
+        actual_num = float(actual.strip())
+        expected_num = float(expected.strip())
+    except ValueError:
+        return False
+    _report_coercion("numeric", len(actual))
+    return math.isclose(
+        actual_num,
+        expected_num,
+        rel_tol=_ACCURACY_REL_TOL,
+        abs_tol=_ACCURACY_ABS_TOL,
+    )
+
+
+def _float_pair_matches(actual: Any, expected: Any) -> bool:
+    """Tolerant comparison when either side is a float (bools excluded upstream)."""
+    try:
+        return math.isclose(
+            float(actual),
+            float(expected),
+            rel_tol=_ACCURACY_REL_TOL,
+            abs_tol=_ACCURACY_ABS_TOL,
+        )
+    except (TypeError, ValueError):
+        return _typed_accuracy_equality(actual, expected)
+
+
+def _dict_values_match(actual: dict[Any, Any], expected: dict[Any, Any]) -> bool:
+    """Same keys and element-wise accuracy match on every value."""
+    if set(actual.keys()) != set(expected.keys()):
+        return False
+    return all(_accuracy_values_match(actual[key], expected[key]) for key in expected)
+
+
+def _sequence_values_match(
+    actual: list[Any] | tuple[Any, ...], expected: list[Any] | tuple[Any, ...]
+) -> bool:
+    """Same length and element-wise accuracy match."""
+    if len(actual) != len(expected):
+        return False
+    return all(
+        _accuracy_values_match(a, e) for a, e in zip(actual, expected, strict=True)
+    )
+
+
 def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     """Return whether two accuracy values match under SDK exact-match semantics."""
     original_actual = actual
@@ -370,66 +453,20 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     # scalar rules element-wise (list/tuple) or value-wise (dict), keyed on
     # the (possibly just-JSON-coerced) expected shape (Traigent#1772).
     if isinstance(expected, dict) and isinstance(actual, dict):
-        if set(actual.keys()) != set(expected.keys()):
-            return False
-        return all(
-            _accuracy_values_match(actual[key], expected[key]) for key in expected
-        )
+        return _dict_values_match(actual, expected)
 
     if isinstance(expected, (list, tuple)) and isinstance(actual, (list, tuple)):
-        if len(actual) != len(expected):
-            return False
-        return all(
-            _accuracy_values_match(a, e) for a, e in zip(actual, expected, strict=True)
-        )
+        return _sequence_values_match(actual, expected)
 
     if isinstance(actual, str) and isinstance(expected, str):
-        if actual.strip().lower() == expected.strip().lower():
-            return True
-        # Numeric string-string pairs (e.g. the common JSONL habit of storing
-        # numeric gold labels as strings) get zero coercion otherwise: the
-        # existing coercion only fires when the EXPECTED side is typed
-        # (Traigent#1772).
-        #
-        # But NOT when either side is zero-padded. A leading zero followed by
-        # another digit is how identifiers are written -- zip codes, order
-        # numbers, SKUs, phone extensions -- and never how a numeric label is.
-        # Without this, "007" scores as a correct answer to "7": a false
-        # positive in accuracy, which is the value the optimizer argmaxes, so
-        # it would rank a config that returns the wrong identifier first.
-        # Formatting differences that are NOT identifier-shaped still coerce:
-        # "1.0"/"1", ".5"/"0.5", "1e5"/"100000".
-        if _ZERO_PADDED_NUMERIC_RE.match(actual.strip()) or (
-            _ZERO_PADDED_NUMERIC_RE.match(expected.strip())
-        ):
-            return False
-        try:
-            actual_num = float(actual.strip())
-            expected_num = float(expected.strip())
-        except ValueError:
-            return False
-        _report_coercion("numeric", len(actual))
-        return math.isclose(
-            actual_num,
-            expected_num,
-            rel_tol=_ACCURACY_REL_TOL,
-            abs_tol=_ACCURACY_ABS_TOL,
-        )
+        return _string_pair_matches(actual, expected)
 
     if (
         (isinstance(actual, float) or isinstance(expected, float))
         and not isinstance(actual, bool)
         and not isinstance(expected, bool)
     ):
-        try:
-            return math.isclose(
-                float(actual),
-                float(expected),
-                rel_tol=_ACCURACY_REL_TOL,
-                abs_tol=_ACCURACY_ABS_TOL,
-            )
-        except (TypeError, ValueError):
-            return _typed_accuracy_equality(actual, expected)
+        return _float_pair_matches(actual, expected)
 
     return _typed_accuracy_equality(actual, expected)
 
@@ -956,6 +993,42 @@ def _parse_jsonl_examples(resolved_path: Path, source: str) -> list[EvaluationEx
     return examples
 
 
+def _json_examples_envelope(
+    data: dict[str, Any], source: str
+) -> tuple[Iterable[tuple[int, Any]], str | None, str | None, dict[str, Any] | None]:
+    metadata_hint: dict[str, Any] | None = None
+    examples_field = data["examples"]
+    if not isinstance(examples_field, list):
+        raise ValidationError(f"'examples' field must be a list in {source}")
+    iterable = enumerate(examples_field)
+    raw_metadata = data.get("metadata")
+    if raw_metadata is not None:
+        if not isinstance(raw_metadata, dict):
+            raise ValidationError(f"'metadata' field must be an object in {source}")
+        metadata_hint = dict(raw_metadata)
+    name_hint = data.get("name")
+    if name_hint is not None and not isinstance(name_hint, str):
+        raise ValidationError(f"'name' field must be a string in {source}")
+    description_hint = data.get("description")
+    if description_hint is not None and not isinstance(description_hint, str):
+        raise ValidationError(f"'description' field must be a string in {source}")
+    return iterable, name_hint, description_hint, metadata_hint
+
+
+def _json_dataset_layout(
+    data: Any, source: str
+) -> tuple[Iterable[tuple[int, Any]], str | None, str | None, dict[str, Any] | None]:
+    if isinstance(data, list):
+        return enumerate(data), None, None, None
+    if not isinstance(data, dict):
+        raise ValidationError(f"JSON must be array or object in {source}")
+    if "examples" in data:
+        return _json_examples_envelope(data, source)
+    if "input" in data:
+        return [(0, data)], None, None, None
+    raise ValidationError(f"Invalid JSON structure in {source}")
+
+
 def _parse_json_dataset(
     resolved_path: Path, source: str
 ) -> tuple[list[EvaluationExample], str | None, str | None, dict[str, Any] | None]:
@@ -967,42 +1040,10 @@ def _parse_json_dataset(
     except Exception as exc:
         raise ValidationError(f"Error loading JSON from {source}: {exc}") from exc
 
-    name_hint: str | None = None
-    description_hint: str | None = None
-    metadata_hint: dict[str, Any] | None = None
-
     examples: list[EvaluationExample] = []
-    iterable: Iterable[tuple[int, Any]]
-
-    if isinstance(data, list):
-        iterable = enumerate(data)
-    elif isinstance(data, dict):
-        if "examples" in data:
-            examples_field = data["examples"]
-            if not isinstance(examples_field, list):
-                raise ValidationError(f"'examples' field must be a list in {source}")
-            iterable = enumerate(examples_field)
-            raw_metadata = data.get("metadata")
-            if raw_metadata is not None:
-                if not isinstance(raw_metadata, dict):
-                    raise ValidationError(
-                        f"'metadata' field must be an object in {source}"
-                    )
-                metadata_hint = dict(raw_metadata)
-            name_hint = data.get("name")
-            if name_hint is not None and not isinstance(name_hint, str):
-                raise ValidationError(f"'name' field must be a string in {source}")
-            description_hint = data.get("description")
-            if description_hint is not None and not isinstance(description_hint, str):
-                raise ValidationError(
-                    f"'description' field must be a string in {source}"
-                )
-        elif "input" in data:
-            iterable = [(0, data)]
-        else:
-            raise ValidationError(f"Invalid JSON structure in {source}")
-    else:
-        raise ValidationError(f"JSON must be array or object in {source}")
+    iterable, name_hint, description_hint, metadata_hint = _json_dataset_layout(
+        data, source
+    )
 
     for index, item in iterable:
         input_data, expected_output, metadata = _coerce_dataset_example_mapping(
@@ -1191,12 +1232,12 @@ class Dataset:
         resolved_path, registry_entry = _resolve_dataset_source(file_path)
 
         # Additional security: Check file extension
-        if resolved_path.suffix.lower() not in [".jsonl", ".json"]:
+        if resolved_path.suffix.lower() not in [".jsonl", _JSON_SUFFIX]:
             raise ValidationError(
                 f"Dataset must be JSONL or JSON file, got: {resolved_path.suffix}"
             )
 
-        if resolved_path.suffix.lower() == ".json":
+        if resolved_path.suffix.lower() == _JSON_SUFFIX:
             examples, name_hint, description_hint, metadata_hint = _parse_json_dataset(
                 resolved_path, file_path
             )
@@ -1759,13 +1800,13 @@ class BaseEvaluator(ABC):
             execution_budget_lease.finalize()
 
     @staticmethod
-    async def _await_with_sample_lease_cleanup(
-        awaitable: Awaitable[_T],
+    async def _await_with_sample_lease_cleanup[T](
+        awaitable: Awaitable[T],
         sample_lease: SampleBudgetLease | None,
         execution_budget_lease: SampleBudgetLease | None,
         *,
         cleanup_on_cancel: bool = True,
-    ) -> _T:
+    ) -> T:
         """Await one evaluator operation and clean up at its boundary."""
         try:
             return await awaitable
@@ -1999,91 +2040,130 @@ class BaseEvaluator(ABC):
         ragas_results: dict[str, float] = {}
 
         if ragas_metric_names and compute_ragas_metrics is not None:
-            example_results = context.get("example_results") or []
-            dataset_obj = context.get("dataset")
-            dataset_examples: list[Any] | None = None
-            if dataset_obj is not None and hasattr(dataset_obj, "examples"):
-                dataset_examples = list(dataset_obj.examples)
-            elif context.get("dataset_examples") is not None:
-                dataset_examples = list(context["dataset_examples"])
-
-            try:
-                ragas_results = compute_ragas_metrics(
-                    example_results=example_results,
-                    metric_names=ragas_metric_names,
-                    dataset_examples=dataset_examples,
-                    outputs=outputs,
-                    config=self._get_ragas_config(),
-                )
-            except RagasCoverageError as exc:
-                # Too few rows scored: the mean would hide the gap, so the
-                # trial fails closed even for a non-objective metric (#2677).
-                raise EvaluationError(
-                    f"RAGAS coverage below the minimum scored share: {exc}",
-                    original_error=exc,
-                ) from exc
-            except RagasConfigurationError as exc:
-                ragas_results = self._fail_or_record_metric_batch_error(
-                    exc,
-                    ragas_metric_names,
-                    metric_errors,
-                    log_message="RAGAS metrics unavailable: %s",
-                )
-            except Exception as exc:  # pragma: no cover - defensive guard
-                ragas_results = self._fail_or_record_metric_batch_error(
-                    exc,
-                    ragas_metric_names,
-                    metric_errors,
-                    log_message="Failed to compute ragas metrics: %s",
-                )
+            ragas_results = self._compute_ragas_metric_batch(
+                outputs, context, ragas_metric_names, metric_errors
+            )
 
         for metric_name in metric_names:
             if metric_name in ragas_results:
-                metrics[metric_name] = ragas_results[metric_name]
-                # Coverage counts (ints) travel with the score (#2677).
-                for coverage_key in ragas_coverage_keys(metric_name):
-                    if coverage_key in ragas_results:
-                        metrics[coverage_key] = ragas_results[coverage_key]  # type: ignore[assignment]
+                self._copy_ragas_metric(metrics, ragas_results, metric_name)
                 continue
 
             if metric_name in self._metric_registry:
-                metric_func = self._metric_registry[metric_name]
-                try:
-                    # Call metric function with all available data
-                    metric_value = metric_func(
-                        outputs, expected_outputs, errors, **context
-                    )
-                    if metric_value is None and metric_name == "cost":
-                        # Unknown cost stays unknown: no key, never 0.0 (#2517).
-                        continue
-                    metrics[metric_name] = metric_value
-                except Exception as e:
-                    is_objective = metric_name in self.metrics
-                    error_record = {
-                        "metric_name": metric_name,
-                        "example_id": None,
-                        "example_index": None,
-                        "error_type": type(e).__name__,
-                        "error_message": str(e),
-                        "is_objective": is_objective,
-                    }
-                    if is_objective:
-                        raise EvaluationError(
-                            f"Objective metric '{metric_name}' raised "
-                            f"{type(e).__name__}: {e}. Refusing to "
-                            "substitute a fabricated 0.0 score for an "
-                            "optimization objective.",
-                            original_error=e,
-                            details=error_record,
-                        ) from e
-                    logger.warning(f"Failed to compute metric {metric_name}: {e}")
-                    if metric_errors is not None:
-                        metric_errors.append(error_record)
-                    metrics[metric_name] = 0.0
+                self._compute_registry_metric(
+                    metric_name,
+                    metrics,
+                    outputs,
+                    expected_outputs,
+                    errors,
+                    context,
+                    metric_errors,
+                )
             else:
                 logger.warning(f"Unknown metric: {metric_name}")
 
         return metrics
+
+    def _compute_ragas_metric_batch(
+        self,
+        outputs: list[Any],
+        context: dict[str, Any],
+        ragas_metric_names: list[str],
+        metric_errors: list[dict[str, Any]] | None,
+    ) -> dict[str, float]:
+        ragas_results: dict[str, float] = {}
+        example_results = context.get("example_results") or []
+        dataset_obj = context.get("dataset")
+        dataset_examples: list[Any] | None = None
+        if dataset_obj is not None and hasattr(dataset_obj, "examples"):
+            dataset_examples = list(dataset_obj.examples)
+        elif context.get("dataset_examples") is not None:
+            dataset_examples = list(context["dataset_examples"])
+
+        try:
+            ragas_results = compute_ragas_metrics(
+                example_results=example_results,
+                metric_names=ragas_metric_names,
+                dataset_examples=dataset_examples,
+                outputs=outputs,
+                config=self._get_ragas_config(),
+            )
+        except RagasCoverageError as exc:
+            # Too few rows scored: the mean would hide the gap, so the
+            # trial fails closed even for a non-objective metric (#2677).
+            raise EvaluationError(
+                f"RAGAS coverage below the minimum scored share: {exc}",
+                original_error=exc,
+            ) from exc
+        except RagasConfigurationError as exc:
+            ragas_results = self._fail_or_record_metric_batch_error(
+                exc,
+                ragas_metric_names,
+                metric_errors,
+                log_message="RAGAS metrics unavailable: %s",
+            )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            ragas_results = self._fail_or_record_metric_batch_error(
+                exc,
+                ragas_metric_names,
+                metric_errors,
+                log_message="Failed to compute ragas metrics: %s",
+            )
+        return ragas_results
+
+    @staticmethod
+    def _copy_ragas_metric(
+        metrics: dict[str, float],
+        ragas_results: dict[str, float],
+        metric_name: str,
+    ) -> None:
+        metrics[metric_name] = ragas_results[metric_name]
+        # Coverage counts (ints) travel with the score (#2677).
+        for coverage_key in ragas_coverage_keys(metric_name):
+            if coverage_key in ragas_results:
+                metrics[coverage_key] = ragas_results[coverage_key]  # type: ignore[assignment]
+
+    def _compute_registry_metric(
+        self,
+        metric_name: str,
+        metrics: dict[str, float],
+        outputs: list[Any],
+        expected_outputs: list[Any],
+        errors: list[str | None],
+        context: dict[str, Any],
+        metric_errors: list[dict[str, Any]] | None,
+    ) -> None:
+        metric_func = self._metric_registry[metric_name]
+        try:
+            # Call metric function with all available data
+            metric_value = metric_func(outputs, expected_outputs, errors, **context)
+            if metric_value is None and metric_name == "cost":
+                # Unknown cost stays unknown: no key, never 0.0 (#2517).
+                return
+            metrics[metric_name] = metric_value
+        except Exception as e:
+            is_objective = metric_name in self.metrics
+            error_record = {
+                "metric_name": metric_name,
+                "example_id": None,
+                "example_index": None,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "is_objective": is_objective,
+            }
+            if is_objective:
+                raise EvaluationError(
+                    f"Objective metric '{metric_name}' raised "
+                    f"{type(e).__name__}: {e}. Refusing to "
+                    "substitute a fabricated 0.0 score for an "
+                    "optimization objective.",
+                    original_error=e,
+                    details=error_record,
+                ) from e
+            logger.warning(f"Failed to compute metric {metric_name}: {e}")
+            if metric_errors is not None:
+                metric_errors.append(error_record)
+            metrics[metric_name] = 0.0
 
     # Default metric implementations
     def _compute_accuracy(
@@ -2323,6 +2403,33 @@ class BaseEvaluator(ABC):
 
         return sum(lengths) / len(lengths) if lengths else 0.0
 
+    @staticmethod
+    def _mean_example_cost(example_metrics: Any) -> float | None:
+        total_cost = 0.0
+        count = 0
+        unmeasured_rows = 0
+        for metrics in example_metrics:
+            if (
+                metrics
+                and hasattr(metrics, "cost")
+                and getattr(metrics, "measured", True)
+            ):
+                if getattr(metrics.cost, "unmeasured", False):
+                    # No captured usage: unknown, not $0 (#2517).
+                    unmeasured_rows += 1
+                    continue
+                total_cost += metrics.cost.total_cost
+                count += 1
+        if unmeasured_rows > 0:
+            # Some row's cost is unknown: the mean of the rest is a
+            # partial estimate, not the trial's cost (#2517).
+            return None
+        if count == 0:
+            # Rows exist but none carries a cost measurement (e.g.
+            # every example errored): unknown, not $0 (#2517).
+            return None
+        return total_cost / count
+
     def _compute_cost(
         self,
         outputs: list[Any],
@@ -2365,33 +2472,8 @@ class BaseEvaluator(ABC):
         ``ExampleResult``).
         """
         # Extract cost information from context (set by metrics tracker)
-        if "example_metrics" in context:
-            example_metrics = context["example_metrics"]
-            if example_metrics:
-                total_cost = 0.0
-                count = 0
-                unmeasured_rows = 0
-                for metrics in example_metrics:
-                    if (
-                        metrics
-                        and hasattr(metrics, "cost")
-                        and getattr(metrics, "measured", True)
-                    ):
-                        if getattr(metrics.cost, "unmeasured", False):
-                            # No captured usage: unknown, not $0 (#2517).
-                            unmeasured_rows += 1
-                            continue
-                        total_cost += metrics.cost.total_cost
-                        count += 1
-                if unmeasured_rows > 0:
-                    # Some row's cost is unknown: the mean of the rest is a
-                    # partial estimate, not the trial's cost (#2517).
-                    return None
-                if count == 0:
-                    # Rows exist but none carries a cost measurement (e.g.
-                    # every example errored): unknown, not $0 (#2517).
-                    return None
-                return total_cost / count
+        if "example_metrics" in context and context["example_metrics"]:
+            return self._mean_example_cost(context["example_metrics"])
 
         # Fallback: look for cost in context directly
         if "cost" in context:
@@ -2483,7 +2565,56 @@ class BaseEvaluator(ABC):
     # Common evaluation methods to reduce duplication in subclasses
 
     @staticmethod
-    def _unpack_user_metrics(raw: Any) -> tuple[Any, dict[str, float] | None]:
+    def _first_invalid_user_metric(
+        candidate: Mapping[Any, Any],
+    ) -> tuple[Any, Any, bool] | None:
+        """Return ``(key, value, key_invalid)`` for the first entry breaking the wire rule.
+
+        ``key_invalid`` is True when the key is not a wire-valid metric name, False
+        when the key is fine but the value is not a finite non-bool number.
+        """
+        for key, value in candidate.items():
+            if not isinstance(key, str) or not USER_METRIC_KEY_PATTERN.match(key):
+                return key, value, True
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                return key, value, False
+        return None
+
+    @staticmethod
+    def _warn_rejected_user_metric(
+        raw: Any, key: Any, value: Any, key_invalid: bool
+    ) -> None:
+        """Log the single near-miss warning for a rejected ``(output, metrics)`` tuple."""
+        if key_invalid:
+            logger.warning(
+                "Return value %r looks like an (output, metrics) tuple but "
+                "key %r is not a wire-valid metric name (must match "
+                "%s, ASCII); the tuple was NOT treated as (output, metrics) "
+                "and is passed through as raw output.",
+                raw,
+                key,
+                USER_METRIC_KEY_PATTERN.pattern,
+            )
+            return
+        logger.warning(
+            "Return value %r looks like an (output, metrics) tuple but "
+            "value %r for key %r is not a finite number (got %s); the "
+            "tuple was NOT treated as (output, metrics) and is passed "
+            "through as raw output.",
+            raw,
+            value,
+            key,
+            type(value).__name__,
+        )
+
+    @staticmethod
+    def _unpack_user_metrics(
+        raw: Any, *, warn: bool = True
+    ) -> tuple[Any, dict[str, float] | None]:
         """Split a decorated function's return into (output, per-example metrics).
 
         Strict, conservative unpack rule (back-compat is absolute): the return
@@ -2539,34 +2670,11 @@ class BaseEvaluator(ABC):
         # back-compat — but that silently poisons the user's accuracy (the raw
         # tuple becomes the output) with zero signal. Surface exactly ONE warning
         # naming the FIRST offender and stating why; behavior is unchanged.
-        for key, value in candidate.items():
-            if not isinstance(key, str) or not USER_METRIC_KEY_PATTERN.match(key):
-                logger.warning(
-                    "Return value %r looks like an (output, metrics) tuple but "
-                    "key %r is not a wire-valid metric name (must match "
-                    "%s, ASCII); the tuple was NOT treated as (output, metrics) "
-                    "and is passed through as raw output.",
-                    raw,
-                    key,
-                    USER_METRIC_KEY_PATTERN.pattern,
-                )
-                return raw, None
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(float(value))
-            ):
-                logger.warning(
-                    "Return value %r looks like an (output, metrics) tuple but "
-                    "value %r for key %r is not a finite number (got %s); the "
-                    "tuple was NOT treated as (output, metrics) and is passed "
-                    "through as raw output.",
-                    raw,
-                    value,
-                    key,
-                    type(value).__name__,
-                )
-                return raw, None
+        violation = BaseEvaluator._first_invalid_user_metric(candidate)
+        if violation is not None:
+            if warn:
+                BaseEvaluator._warn_rejected_user_metric(raw, *violation)
+            return raw, None
         user_metrics = {key: float(value) for key, value in candidate.items()}
         return output, user_metrics
 
@@ -2704,6 +2812,95 @@ class BaseEvaluator(ABC):
             raise outcome.exc
         return outcome
 
+    @staticmethod
+    def _call_with_trial_config(
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        call_args: tuple[Any, ...],
+        call_kwargs: dict[str, Any],
+        trial_ctx: Any | None,
+    ) -> Any:
+        from traigent.config.context import ConfigurationContext, set_trial_context
+        from traigent.config.context import trial_context as trial_context_var
+
+        # Re-establish the explicit trial context in the copied context.
+        trial_token = None
+        if trial_ctx is not None:
+            trial_token = set_trial_context(trial_ctx)
+        try:
+            with ConfigurationContext(config):
+                try:
+                    return func(*call_args, **call_kwargs)
+                except (KeyboardInterrupt, SystemExit) as exc:
+                    # Keep BaseException-valued worker failures from
+                    # crossing an asyncio Future/Task boundary.  The
+                    # caller unwraps this marker in its own frame.
+                    return _TaskBoundaryInterrupt(exc)
+        finally:
+            if trial_token is not None:
+                trial_context_var.reset(trial_token)
+
+    def _on_sync_worker_done(
+        self,
+        done_future: Any,
+        worker_done_callback: Callable[[], None] | None,
+    ) -> None:
+        """Observe worker failures and release its evaluator lane."""
+        try:
+            done_future.exception()
+        except (asyncio.CancelledError, concurrent.futures.CancelledError):
+            # The result is observed here; callers that were still
+            # awaiting the wrapped Future receive the same failure.
+            pass
+        try:
+            self._sync_worker_slots.release()
+        except ValueError:  # pragma: no cover - defensive guard
+            logger.error("Sync evaluator worker lane released twice")
+        if worker_done_callback is not None:
+            try:
+                worker_done_callback()
+            except BaseException:
+                # Cleanup runs from the executor callback thread and
+                # must never turn into an unobserved callback failure.
+                logger.exception("Sync worker cleanup callback failed")
+
+    @staticmethod
+    def _consume_late_future_result(done_future: asyncio.Future[Any]) -> None:
+        """Prevent a timed-out worker exception from becoming unobserved."""
+        try:
+            done_future.exception()
+        except (asyncio.CancelledError, concurrent.futures.CancelledError):
+            pass
+
+    async def _await_sync_worker_output(
+        self,
+        future: Any,
+        async_future: asyncio.Future[Any],
+        apply_timeout: bool,
+    ) -> tuple[Any, str | None]:
+        """Await a shielded worker future; ``(None, message)`` on timeout."""
+        # A timeout must not cancel a worker that is already running, and
+        # task cancellation must not release its sample admission while
+        # that worker can still execute.  Shielding the wrapped future
+        # gives both paths an explicit ownership boundary.
+        if not (apply_timeout and self.timeout):
+            return await asyncio.shield(async_future), None
+        try:
+            output = await asyncio.wait_for(
+                asyncio.shield(async_future), timeout=self.timeout
+            )
+        except TimeoutError:
+            if not future.cancel() and not future.done():
+                mark_capture_incomplete(future)
+            # A running thread cannot be interrupted.  The worker
+            # completion callback retains the lane and any sample
+            # admission until it settles, while this caller gets
+            # its timeout at the configured wall-clock boundary.
+            error_msg = f"{EXAMPLE_TIMEOUT_ERROR_PREFIX} {self.timeout}s"
+            logger.warning(error_msg)
+            return None, error_msg
+        return output, None
+
     async def _execute_sync_in_thread(
         self,
         func: Callable[..., Any],
@@ -2731,33 +2928,19 @@ class BaseEvaluator(ABC):
         Returns:
             Tuple of (output, error_message)
         """
-        from traigent.config.context import ConfigurationContext, set_trial_context
-        from traigent.config.context import trial_context as trial_context_var
-
         caller_context = copy_context()
-
-        def call_with_config_inner() -> Any:
-            # Re-establish the explicit trial context in the copied context.
-            trial_token = None
-            if trial_ctx is not None:
-                trial_token = set_trial_context(trial_ctx)
-            try:
-                with ConfigurationContext(config):
-                    try:
-                        return func(*call_args, **call_kwargs)
-                    except (KeyboardInterrupt, SystemExit) as exc:
-                        # Keep BaseException-valued worker failures from
-                        # crossing an asyncio Future/Task boundary.  The
-                        # caller unwraps this marker in its own frame.
-                        return _TaskBoundaryInterrupt(exc)
-            finally:
-                if trial_token is not None:
-                    trial_context_var.reset(trial_token)
 
         def call_with_config() -> Any:
             # Match ``asyncio.to_thread`` context propagation for every sync
             # callable, including custom evaluators.
-            return caller_context.run(call_with_config_inner)
+            return caller_context.run(
+                self._call_with_trial_config,
+                func,
+                config,
+                call_args,
+                call_kwargs,
+                trial_ctx,
+            )
 
         temporary_executor = None
         submit_executor = executor
@@ -2787,65 +2970,26 @@ class BaseEvaluator(ABC):
                 worker_started_callback()
 
             def on_worker_done(done_future: Any) -> None:
-                """Observe worker failures and release its evaluator lane."""
-                try:
-                    done_future.exception()
-                except BaseException:
-                    # The result is observed here; callers that were still
-                    # awaiting the wrapped Future receive the same failure.
-                    pass
-                try:
-                    self._sync_worker_slots.release()
-                except ValueError:  # pragma: no cover - defensive guard
-                    logger.error("Sync evaluator worker lane released twice")
-                if worker_done_callback is not None:
-                    try:
-                        worker_done_callback()
-                    except BaseException:
-                        # Cleanup runs from the executor callback thread and
-                        # must never turn into an unobserved callback failure.
-                        logger.exception("Sync worker cleanup callback failed")
+                self._on_sync_worker_done(done_future, worker_done_callback)
 
             future.add_done_callback(on_worker_done)
             slot_acquired = False
             async_future = asyncio.wrap_future(future)
 
-            def consume_late_result(done_future: asyncio.Future[Any]) -> None:
-                """Prevent a timed-out worker exception from becoming unobserved."""
-                try:
-                    done_future.exception()
-                except BaseException:
-                    pass
-
-            async_future.add_done_callback(consume_late_result)
+            async_future.add_done_callback(self._consume_late_future_result)
 
             # A timeout must not cancel a worker that is already running, and
             # task cancellation must not release its sample admission while
             # that worker can still execute.  Shielding the wrapped future
             # gives both paths an explicit ownership boundary.
-            try:
-                if apply_timeout and self.timeout:
-                    try:
-                        output = await asyncio.wait_for(
-                            asyncio.shield(async_future), timeout=self.timeout
-                        )
-                    except TimeoutError:
-                        if not future.cancel() and not future.done():
-                            mark_capture_incomplete(future)
-                        # A running thread cannot be interrupted.  The worker
-                        # completion callback retains the lane and any sample
-                        # admission until it settles, while this caller gets
-                        # its timeout at the configured wall-clock boundary.
-                        error_msg = f"{EXAMPLE_TIMEOUT_ERROR_PREFIX} {self.timeout}s"
-                        logger.warning(error_msg)
-                        return None, error_msg
-                else:
-                    output = await asyncio.shield(async_future)
-            except asyncio.CancelledError:
-                # ``shield`` leaves the wrapped worker future alive.  Return
-                # cancellation promptly; its completion callback owns lane
-                # release and any deferred lease cleanup.
-                raise
+            # ``shield`` leaves the wrapped worker future alive.  Return
+            # cancellation promptly; its completion callback owns lane
+            # release and any deferred lease cleanup.
+            output, timeout_error = await self._await_sync_worker_output(
+                future, async_future, apply_timeout
+            )
+            if timeout_error is not None:
+                return None, timeout_error
 
             if type(output) is _TaskBoundaryInterrupt:
                 raise output.exc
@@ -2870,6 +3014,41 @@ class BaseEvaluator(ABC):
             raise APIKeyError.from_provider_error(error) from error
 
     async def _execute_function(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        input_data: dict[str, Any],
+        executor: Any | None = None,
+        worker_started_callback: Callable[[], None] | None = None,
+        worker_done_callback: Callable[[], None] | None = None,
+        bound_lane_wait: bool = False,
+    ) -> tuple[Any, str | None]:
+        """Run one example's agent call, attributing provider attempts to it.
+
+        Attempts made inside belong to this example; if the agent
+        reports its own total cost (``with_usage``) that report covers them.
+        """
+        from traigent.utils.langchain_interceptor import example_slot
+        from traigent.utils.vendor_retry import mark_if_agent_reported_cost
+
+        with example_slot() as slot:
+            output, error = await self._execute_function_unattributed(
+                func,
+                config,
+                input_data,
+                executor,
+                worker_started_callback,
+                worker_done_callback,
+                bound_lane_wait,
+            )
+            if error is None:
+                # Same unwrap the evaluator applies later, so a supported
+                # ``(with_usage(...), {metrics})`` return is recognised too.
+                unwrapped, _ = self._unpack_user_metrics(output, warn=False)
+                mark_if_agent_reported_cost(slot, unwrapped)
+            return output, error
+
+    async def _execute_function_unattributed(
         self,
         func: Callable[..., Any],
         config: dict[str, Any],
@@ -3024,6 +3203,46 @@ class BaseEvaluator(ABC):
 
         return output, error
 
+    def _resume_prefilled_example(
+        self,
+        config: dict[str, Any],
+        example: EvaluationExample,
+        index: int,
+        detailed: bool,
+    ) -> ExampleResult | None:
+        """A completed example result from a resumed prior trial, or None.
+
+        Only in detailed mode, and only when the stored row's example id, input
+        and expected output equal this row's (#2541). The row is not executed and
+        takes no sample budget.
+        """
+        prefill = _RESUME_PREFILL.get()
+        if prefill is None or not detailed:
+            return None
+        identity = result_identity_fields(example, f"example_{index}")
+        stored = prefill.lookup(
+            config, identity["example_id"], example.input_data, example.expected_output
+        )
+        if stored is None:
+            return None
+        return stamp_row_index(
+            ExampleResult(
+                **identity,
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output=stored["actual_output"],
+                metrics=dict(stored["metrics"]),
+                execution_time=float(stored.get("execution_time") or 0.0),
+                success=True,
+                error_message=None,
+                metadata={
+                    **(example.metadata.copy() if example.metadata else {}),
+                    "resumed_example_from_prior_run": True,
+                },
+            ),
+            index,
+        )
+
     async def _evaluate_batch_sequential(
         self,
         func: Callable[..., Any],
@@ -3043,37 +3262,31 @@ class BaseEvaluator(ABC):
 
         try:
             for i, example in enumerate(dataset.examples):
+                prefilled = self._resume_prefilled_example(config, example, i, detailed)
+                if prefilled is not None:
+                    example_results.append(prefilled)
+                    outputs.append(prefilled.actual_output)
+                    errors.append(None)
+                    consumed += 1
+                    continue
                 if sample_lease and not sample_lease.try_take(1):
                     exhausted = True
                     break
 
-                if detailed:
-                    result = await self._evaluate_single_detailed(
-                        func,
-                        config,
-                        example,
-                        i,
-                        dataset,
-                        executor=None,
-                        progress_callback=progress_callback,
-                        sample_lease=sample_lease,
-                        execution_budget_lease=execution_budget_lease,
-                    )
-                    example_results.append(result)
-                    outputs.append(result.actual_output)
-                    errors.append(result.error_message)
-                else:
-                    output, error = await self._evaluate_single_non_detailed(
-                        func,
-                        config,
-                        example,
-                        i,
-                        progress_callback,
-                        sample_lease,
-                        execution_budget_lease,
-                    )
-                    outputs.append(output)
-                    errors.append(error)
+                await self._evaluate_sequential_example(
+                    func,
+                    config,
+                    example,
+                    i,
+                    dataset,
+                    sample_lease,
+                    detailed,
+                    progress_callback,
+                    execution_budget_lease,
+                    outputs,
+                    errors,
+                    example_results,
+                )
 
                 consumed += 1
         except TrialPrunedError as e:
@@ -3085,6 +3298,50 @@ class BaseEvaluator(ABC):
             raise
 
         return outputs, errors, example_results, consumed, exhausted
+
+    async def _evaluate_sequential_example(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        example: EvaluationExample,
+        index: int,
+        dataset: Dataset,
+        sample_lease: SampleBudgetLease | None,
+        detailed: bool,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        execution_budget_lease: SampleBudgetLease | None,
+        outputs: list[Any],
+        errors: list[str | None],
+        example_results: list[ExampleResult | None],
+    ) -> None:
+        """Evaluate one example of the sequential path and record its outcome."""
+        if detailed:
+            result = await self._evaluate_single_detailed(
+                func,
+                config,
+                example,
+                index,
+                dataset,
+                executor=None,
+                progress_callback=progress_callback,
+                sample_lease=sample_lease,
+                execution_budget_lease=execution_budget_lease,
+            )
+            example_results.append(result)
+            outputs.append(result.actual_output)
+            errors.append(result.error_message)
+        else:
+            output, error = await self._evaluate_single_non_detailed(
+                func,
+                config,
+                example,
+                index,
+                progress_callback,
+                sample_lease,
+                execution_budget_lease,
+            )
+            outputs.append(output)
+            errors.append(error)
 
     def _create_failed_example_result(
         self,
@@ -3187,15 +3444,10 @@ class BaseEvaluator(ABC):
         """Handle a completed task result, storing success or error appropriately."""
         try:
             result = task.result()
-        except TrialPrunedError as e:
+        except TrialPrunedError:
             await self._cancel_pending_tasks(pending_tasks, sample_lease)
-            # Attach partial example results to the exception before re-raising
-            if detailed:
-                collected_results = self._collect_partial_results(
-                    example_results_by_index
-                )
-                if collected_results or e.example_results:
-                    e.example_results = collected_results + list(e.example_results)
+            # The outer concurrent batch owns partial-row attachment. Attaching
+            # here as well duplicates every completed row when it catches this.
             raise
         except asyncio.CancelledError:
             # S7497: CancelledError must be re-raised after cleanup
@@ -3482,6 +3734,91 @@ class BaseEvaluator(ABC):
 
         return outputs, errors, example_results, consumed, exhausted
 
+    async def _handle_done_tasks(
+        self,
+        done: Any,
+        examples: list[EvaluationExample],
+        detailed: bool,
+        sample_lease: SampleBudgetLease | None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        outputs_by_index: dict[int, Any],
+        errors_by_index: dict[int, str | None],
+        example_results_by_index: dict[int, ExampleResult | None],
+        pending_tasks: dict[asyncio.Task[Any], int],
+    ) -> int:
+        handled = 0
+        for task in done:
+            index = pending_tasks.pop(task)
+            await self._handle_task_result(
+                task,
+                index,
+                examples,
+                detailed,
+                sample_lease,
+                progress_callback,
+                outputs_by_index,
+                errors_by_index,
+                example_results_by_index,
+                pending_tasks,
+            )
+            handled += 1
+        return handled
+
+    @staticmethod
+    def _store_prefilled_example(
+        index: int,
+        prefilled: Any,
+        outputs_by_index: dict[int, Any],
+        errors_by_index: dict[int, str | None],
+        example_results_by_index: dict[int, ExampleResult | None],
+    ) -> None:
+        outputs_by_index[index] = prefilled.actual_output
+        errors_by_index[index] = None
+        example_results_by_index[index] = prefilled
+
+    async def _evaluate_example_in_lane(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        dataset: Dataset,
+        example: EvaluationExample,
+        idx: int,
+        *,
+        detailed: bool,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: SampleBudgetLease | None,
+    ) -> Any:
+        if detailed:
+            return await self._evaluate_single_detailed(
+                func,
+                config,
+                example,
+                idx,
+                dataset,
+                executor=None,
+                progress_callback=progress_callback,
+                sample_lease=sample_lease,
+                execution_budget_lease=execution_budget_lease,
+            )
+        cleanup_boundary = self._new_sample_lease_cleanup_boundary(
+            sample_lease, execution_budget_lease
+        )
+        try:
+            with capture_owner(idx):
+                return await self._execute_function(
+                    func,
+                    config,
+                    example.input_data,
+                    executor=None,
+                    worker_started_callback=cleanup_boundary.worker_started,
+                    worker_done_callback=cleanup_boundary.worker_done,
+                    bound_lane_wait=True,
+                )
+        except asyncio.CancelledError:
+            cleanup_boundary.cancel()
+            raise
+
     async def _run_concurrent_tasks(
         self,
         func: Callable[..., Any],
@@ -3505,40 +3842,37 @@ class BaseEvaluator(ABC):
 
         async def evaluate_with_semaphore(example: EvaluationExample, idx: int) -> Any:
             async with semaphore:
-                if detailed:
-                    return await self._evaluate_single_detailed(
-                        func,
-                        config,
-                        example,
-                        idx,
-                        dataset,
-                        executor=None,
-                        progress_callback=progress_callback,
-                        sample_lease=sample_lease,
-                        execution_budget_lease=execution_budget_lease,
-                    )
-                cleanup_boundary = self._new_sample_lease_cleanup_boundary(
-                    sample_lease, execution_budget_lease
+                return await self._evaluate_example_in_lane(
+                    func,
+                    config,
+                    dataset,
+                    example,
+                    idx,
+                    detailed=detailed,
+                    progress_callback=progress_callback,
+                    sample_lease=sample_lease,
+                    execution_budget_lease=execution_budget_lease,
                 )
-                try:
-                    with capture_owner(idx):
-                        return await self._execute_function(
-                            func,
-                            config,
-                            example.input_data,
-                            executor=None,
-                            worker_started_callback=cleanup_boundary.worker_started,
-                            worker_done_callback=cleanup_boundary.worker_done,
-                            bound_lane_wait=True,
-                        )
-                except asyncio.CancelledError:
-                    cleanup_boundary.cancel()
-                    raise
 
         def schedule_more() -> bool:
             """Schedule more tasks. Returns True if budget exhausted."""
-            nonlocal next_index
+            nonlocal next_index, consumed
             while next_index < len(examples) and len(pending_tasks) < self.max_workers:
+                prefilled = self._resume_prefilled_example(
+                    config, examples[next_index], next_index, detailed
+                )
+                if prefilled is not None:
+                    # Reused row (#2541): no execution, no sample budget.
+                    self._store_prefilled_example(
+                        next_index,
+                        prefilled,
+                        outputs_by_index,
+                        errors_by_index,
+                        example_results_by_index,
+                    )
+                    next_index += 1
+                    consumed += 1
+                    continue
                 if sample_lease and not sample_lease.try_take(1):
                     return True
                 example = examples[next_index]
@@ -3555,21 +3889,17 @@ class BaseEvaluator(ABC):
                     pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED
                 )
 
-                for task in done:
-                    index = pending_tasks.pop(task)
-                    await self._handle_task_result(
-                        task,
-                        index,
-                        examples,
-                        detailed,
-                        sample_lease,
-                        progress_callback,
-                        outputs_by_index,
-                        errors_by_index,
-                        example_results_by_index,
-                        pending_tasks,
-                    )
-                    consumed += 1
+                consumed += await self._handle_done_tasks(
+                    done,
+                    examples,
+                    detailed,
+                    sample_lease,
+                    progress_callback,
+                    outputs_by_index,
+                    errors_by_index,
+                    example_results_by_index,
+                    pending_tasks,
+                )
 
                 if not exhausted:
                     exhausted = schedule_more()
@@ -3633,9 +3963,11 @@ class BaseEvaluator(ABC):
             original_prompt=None,
             response_text=None,
             prompt_length=len(prompt_repr),
-            response_length=len(str(result.actual_output))
-            if result.actual_output is not None
-            else 0,
+            response_length=(
+                len(str(result.actual_output))
+                if result.actual_output is not None
+                else 0
+            ),
         )
 
     def _extract_response_metrics(
@@ -3862,6 +4194,37 @@ class BaseEvaluator(ABC):
 
         return {}
 
+    def _merge_progress_metric_value(
+        self,
+        metrics: dict[str, float],
+        metric_name: str,
+        value: Any,
+        example: EvaluationExample,
+        example_index: int,
+    ) -> None:
+        if inspect.isawaitable(value):
+            if inspect.iscoroutine(value):
+                value.close()
+            logger.debug(
+                "Skipping awaitable progress metric %s for example %s; "
+                "the final async evaluator pass will compute it",
+                metric_name,
+                getattr(example, "example_id", None) or example_index,
+            )
+            return
+        if isinstance(value, Mapping):
+            metrics.update(self._coerce_progress_metrics(value))
+        elif value is not None:
+            try:
+                metrics[metric_name] = float(value)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Metric function %s returned non-numeric progress value "
+                    "for example %s",
+                    metric_name,
+                    getattr(example, "example_id", None) or example_index,
+                )
+
     def _call_progress_metric_functions(
         self,
         *,
@@ -3895,28 +4258,9 @@ class BaseEvaluator(ABC):
                     llm_metrics or {},
                     example_index,
                 )
-                if inspect.isawaitable(value):
-                    if inspect.iscoroutine(value):
-                        value.close()
-                    logger.debug(
-                        "Skipping awaitable progress metric %s for example %s; "
-                        "the final async evaluator pass will compute it",
-                        metric_name,
-                        getattr(example, "example_id", None) or example_index,
-                    )
-                    continue
-                if isinstance(value, Mapping):
-                    metrics.update(self._coerce_progress_metrics(value))
-                elif value is not None:
-                    try:
-                        metrics[metric_name] = float(value)
-                    except (TypeError, ValueError):
-                        logger.warning(
-                            "Metric function %s returned non-numeric progress value "
-                            "for example %s",
-                            metric_name,
-                            getattr(example, "example_id", None) or example_index,
-                        )
+                self._merge_progress_metric_value(
+                    metrics, metric_name, value, example, example_index
+                )
             return metrics
 
         return {}
@@ -4359,7 +4703,7 @@ def load_dataset_from_file(file_path: str) -> Dataset:
             registry_entry=registry_entry,
         )
 
-    if suffix == ".json":
+    if suffix == _JSON_SUFFIX:
         examples, name_hint, description_hint, metadata_hint = _parse_json_dataset(
             resolved_path, file_path
         )
@@ -4392,7 +4736,7 @@ def _load_json_dataset(file_path: str) -> Dataset:
         ValidationError: If file format is invalid
     """
     resolved_path, registry_entry = _resolve_dataset_source(file_path)
-    if resolved_path.suffix.lower() != ".json":
+    if resolved_path.suffix.lower() != _JSON_SUFFIX:
         raise ValidationError(f"Dataset must be JSON file, got: {resolved_path.suffix}")
 
     examples, name_hint, description_hint, metadata_hint = _parse_json_dataset(
@@ -4518,13 +4862,14 @@ class SimpleScoringEvaluator(BaseEvaluator):
         Returns:
             Dictionary of LLM metrics
         """
-        return {
+        cost = metrics_obj.cost
+        unpriced = bool(getattr(cost, "unpriced", False))
+        unmeasured = bool(getattr(cost, "unmeasured", False))
+        known_cost = getattr(cost, "known_cost", 0.0)
+        llm_metrics: dict[str, Any] = {
             "total_tokens": getattr(metrics_obj.tokens, "total_tokens", 0),
             "prompt_tokens": getattr(metrics_obj.tokens, "prompt_tokens", 0),
             "completion_tokens": getattr(metrics_obj.tokens, "completion_tokens", 0),
-            "total_cost": getattr(metrics_obj.cost, "total_cost", 0.0),
-            "input_cost": getattr(metrics_obj.cost, "input_cost", 0.0),
-            "output_cost": getattr(metrics_obj.cost, "output_cost", 0.0),
             # True when this example's cost could not be priced -- unknown
             # spend recorded as $0, not verified-free $0 (#1597). Threaded
             # through so per-trial aggregation can distinguish the two
@@ -4532,19 +4877,26 @@ class SimpleScoringEvaluator(BaseEvaluator):
             # Numeric flag (1.0/0.0), never a Python bool: the wire-format
             # ``MeasuresDict`` rejects bool measures for JSON Schema parity
             # (``traigent.cloud.dtos.MeasuresDict._validate_dict``).
-            "cost_unpriced": (
-                1.0 if getattr(metrics_obj.cost, "unpriced", False) else 0.0
-            ),
+            "cost_unpriced": 1.0 if unpriced else 0.0,
             # No captured usage: the cost is unknown, not $0 (#2517).
-            "cost_unmeasured": (
-                1.0 if getattr(metrics_obj.cost, "unmeasured", False) else 0.0
-            ),
-            "known_cost": getattr(metrics_obj.cost, "known_cost", 0.0),
+            "cost_unmeasured": 1.0 if unmeasured else 0.0,
+            "known_cost": known_cost,
             "response_time_ms": getattr(metrics_obj.response, "response_time_ms", 0),
             "tokens_per_second": getattr(metrics_obj.response, "tokens_per_second", 0),
             "model": model_name or "unknown",
             "_full_metrics": metrics_obj,
         }
+        total_cost = getattr(cost, "total_cost", 0.0)
+        if unmeasured or unpriced:
+            # Unknown cost: the cost keys stay out so the scoring function and
+            # progress callback never see a placeholder $0 as a measured
+            # number; the exact known part is the floor (#2688).
+            llm_metrics["known_cost"] = max(float(known_cost or 0.0), float(total_cost))
+        else:
+            llm_metrics["total_cost"] = total_cost
+            llm_metrics["input_cost"] = getattr(cost, "input_cost", 0.0)
+            llm_metrics["output_cost"] = getattr(cost, "output_cost", 0.0)
+        return llm_metrics
 
     def _build_metric_kwargs(
         self,
@@ -4705,8 +5057,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         )
         missing_default = None if strict_nulls else 0.0
 
-        if llm_metrics.get("cost_unmeasured"):
-            # Unknown cost: leave the cost keys out; never record 0.0 (#2517).
+        if llm_metrics.get("cost_unmeasured") or llm_metrics.get("cost_unpriced"):
+            # Unknown cost (no usage, or usage that could not be priced): leave
+            # the cost keys out; never record a placeholder 0.0 (#2517, #2688).
             example_metrics["cost_unmeasured"] = 1.0
             if llm_metrics.get("known_cost"):
                 example_metrics["known_cost"] = llm_metrics["known_cost"]
@@ -4768,30 +5121,118 @@ class SimpleScoringEvaluator(BaseEvaluator):
         aggregated: dict[str, Any] = {}
         for metric in self.metrics:
             if metric in MEASURED_ONLY_METRICS:
-                if not any(
-                    row and _measured_value(row.get(metric)) is not None
-                    for row in all_metrics
-                ):
-                    # Nothing measured this cost: it is unknown, never a
-                    # fabricated 0.0 (#2517). None under strict nulls.
-                    if os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-                        "true",
-                        "1",
-                        "yes",
-                    ):
-                        aggregated[metric] = None
-                    continue
-                aggregated[metric] = aggregate_measured_metric(metric, all_metrics)
+                self._aggregate_measured_only_metric(metric, all_metrics, aggregated)
                 continue
-            metric_values = [m.get(metric, 0.0) for m in all_metrics if m]
-            if metric_values:
-                if "p95" in metric.lower():
-                    aggregated[metric] = self._compute_percentile(metric_values, 0.95)
-                else:
-                    aggregated[metric] = sum(metric_values) / len(metric_values)
+            self._aggregate_plain_metric(metric, all_metrics, aggregated)
+        return aggregated
+
+    @staticmethod
+    def _aggregate_measured_only_metric(
+        metric: str,
+        all_metrics: list[dict[str, Any]],
+        aggregated: dict[str, Any],
+    ) -> None:
+        """Aggregate a cost-style metric that only counts measured rows."""
+        if not any(
+            row and _measured_value(row.get(metric)) is not None for row in all_metrics
+        ):
+            # Nothing measured this cost: it is unknown, never a
+            # fabricated 0.0 (#2517). None under strict nulls.
+            if os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
+                "true",
+                "1",
+                "yes",
+            ):
+                aggregated[metric] = None
+            return
+        aggregated[metric] = aggregate_measured_metric(metric, all_metrics)
+
+    def _aggregate_plain_metric(
+        self,
+        metric: str,
+        all_metrics: list[dict[str, Any]],
+        aggregated: dict[str, Any],
+    ) -> None:
+        """Aggregate a score-style metric over the non-empty rows."""
+        metric_values = [m.get(metric, 0.0) for m in all_metrics if m]
+        if not metric_values:
+            aggregated[metric] = 0.0
+            return
+        if "p95" in metric.lower():
+            aggregated[metric] = self._compute_percentile(metric_values, 0.95)
+        else:
+            aggregated[metric] = sum(metric_values) / len(metric_values)
+
+    @staticmethod
+    def _aggregate_llm_cost_metrics(
+        aggregated: dict[str, Any],
+        all_metrics: list[dict[str, Any]],
+        example_results: list[Any],
+    ) -> None:
+        # Aggregate cost metrics (total, not average)
+        strict_nulls_cost = os.environ.get(
+            "TRAIGENT_STRICT_METRICS_NULLS", ""
+        ).lower() in ("true", "1", "yes")
+        cost_metrics = ["input_cost", "output_cost", "total_cost"]
+        # One shared classifier decides (traigent.utils.trial_costs): a flagged
+        # row, a successful row with no cost, or a trial where no row measured
+        # a cost (every example errored) all make the trial's cost unknown.
+        successes = SimpleScoringEvaluator._example_successes(
+            all_metrics, example_results
+        )
+        unmeasured_rows = trial_cost_unknown(all_metrics, successes)
+        for metric in cost_metrics:
+            metric_values = [
+                m.get(metric, 0.0) for m in all_metrics if m and metric in m
+            ]
+            if metric_values and not unmeasured_rows:
+                aggregated[metric] = sum(metric_values)
+            elif unmeasured_rows:
+                # Some row's cost is unknown: a sum would be a floor, not the
+                # trial's cost. The key stays out (None under strict nulls),
+                # never a fabricated 0.0 (#2517).
+                if strict_nulls_cost:
+                    aggregated[metric] = None
             else:
                 aggregated[metric] = 0.0
-        return aggregated
+        aggregated["cost_unmeasured"] = 1.0 if unmeasured_rows else 0.0
+        if unmeasured_rows:
+            lower_bound = SimpleScoringEvaluator._known_cost_lower_bound(all_metrics)
+            if lower_bound > 0:
+                aggregated["cost_lower_bound"] = lower_bound
+
+    @staticmethod
+    def _example_successes(
+        all_metrics: list[dict[str, Any]], example_results: list[Any]
+    ) -> list[bool] | None:
+        if len(example_results) == len(all_metrics):
+            return [bool(getattr(r, "is_successful", True)) for r in example_results]
+        return None
+
+    @staticmethod
+    def _known_cost_lower_bound(all_metrics: list[dict[str, Any]]) -> float:
+        return sum(
+            float(m.get("total_cost", 0.0) or 0.0)
+            + float(m.get("known_cost", 0.0) or 0.0)
+            for m in all_metrics
+            if m
+        )
+
+    @staticmethod
+    def _aggregate_response_time(
+        aggregated: dict[str, Any], example_results: list[Any]
+    ) -> None:
+        # Keep the explicit millisecond key canonical while preserving the
+        # legacy seconds-based field during the compatibility window.
+        response_times = [
+            r.execution_time
+            for r in example_results
+            if hasattr(r, "execution_time") and r.execution_time > 0
+        ]
+        if response_times:
+            avg_response_time_seconds = sum(response_times) / len(response_times)
+            aggregated["avg_response_time_ms"] = avg_response_time_seconds * 1000.0
+            aggregated["avg_response_time"] = avg_response_time_seconds
 
     def _aggregate_llm_metrics(
         self,
@@ -4817,45 +5258,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
             ]
             aggregated[metric] = sum(metric_values) if metric_values else 0.0
 
-        # Aggregate cost metrics (total, not average)
-        strict_nulls_cost = os.environ.get(
-            "TRAIGENT_STRICT_METRICS_NULLS", ""
-        ).lower() in ("true", "1", "yes")
-        cost_metrics = ["input_cost", "output_cost", "total_cost"]
-        # One shared classifier decides (traigent.utils.trial_costs): a flagged
-        # row, a successful row with no cost, or a trial where no row measured
-        # a cost (every example errored) all make the trial's cost unknown.
-        if len(example_results) == len(all_metrics):
-            successes: list[bool] | None = [
-                bool(getattr(r, "is_successful", True)) for r in example_results
-            ]
-        else:
-            successes = None
-        unmeasured_rows = trial_cost_unknown(all_metrics, successes)
-        for metric in cost_metrics:
-            metric_values = [
-                m.get(metric, 0.0) for m in all_metrics if m and metric in m
-            ]
-            if metric_values and not unmeasured_rows:
-                aggregated[metric] = sum(metric_values)
-            elif unmeasured_rows:
-                # Some row's cost is unknown: a sum would be a floor, not the
-                # trial's cost. The key stays out (None under strict nulls),
-                # never a fabricated 0.0 (#2517).
-                if strict_nulls_cost:
-                    aggregated[metric] = None
-            else:
-                aggregated[metric] = 0.0
-        aggregated["cost_unmeasured"] = 1.0 if unmeasured_rows else 0.0
-        if unmeasured_rows:
-            lower_bound = sum(
-                float(m.get("total_cost", 0.0) or 0.0)
-                + float(m.get("known_cost", 0.0) or 0.0)
-                for m in all_metrics
-                if m
-            )
-            if lower_bound > 0:
-                aggregated["cost_lower_bound"] = lower_bound
+        self._aggregate_llm_cost_metrics(aggregated, all_metrics, example_results)
 
         # True iff ANY example's cost could not be priced -- unknown spend
         # recorded as $0, not verified-free $0 (#1597). Threaded through so
@@ -4868,17 +5271,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
             else 0.0
         )
 
-        # Keep the explicit millisecond key canonical while preserving the
-        # legacy seconds-based field during the compatibility window.
-        response_times = [
-            r.execution_time
-            for r in example_results
-            if hasattr(r, "execution_time") and r.execution_time > 0
-        ]
-        if response_times:
-            avg_response_time_seconds = sum(response_times) / len(response_times)
-            aggregated["avg_response_time_ms"] = avg_response_time_seconds * 1000.0
-            aggregated["avg_response_time"] = avg_response_time_seconds
+        self._aggregate_response_time(aggregated, example_results)
 
         return aggregated
 
@@ -4917,6 +5310,281 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 "fabricated 0.0 score for an optimization objective.",
                 original_error=exc,
             ) from exc
+
+    async def _score_simple_example(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        dataset: Dataset,
+        example: EvaluationExample,
+        i: int,
+        trial_ctx: Any,
+        cleanup_boundary: _SampleLeaseCleanupBoundary,
+    ) -> tuple[ExampleResult, Any, dict[str, Any], dict[str, Any] | None]:
+        from traigent.config.context import ConfigurationContext
+
+        # Clear any previous captured responses before evaluation
+        if self.capture_llm_metrics and self._metrics_available:
+            self._clear_captured_responses()
+
+        # Track timing for this example
+        example_start_time = time.time()
+        # Execute function with configuration context
+        try:
+            with _maybe_restore_trial_context(trial_ctx):
+                with ConfigurationContext(config):
+                    # Preserve SimpleScoringEvaluator's historical
+                    # contract: expand dataset fields as kwargs,
+                    # execute sync callables in the caller task, and
+                    # do not apply BaseEvaluator's dormant timeout.
+                    if is_coroutine_callable(func):
+                        raw_output = await func(**example.input_data)
+                    else:
+                        raw_output = func(**example.input_data)
+        except asyncio.CancelledError:
+            cleanup_boundary.cancel()
+            raise
+
+        # Strict 2-tuple unpack: a (output, numeric-metrics) return
+        # becomes output[0] for ALL downstream purposes; the metrics
+        # merge into this example's metrics (no-override). Any other
+        # shape is left untouched (back-compat).
+        output, user_metrics = self._unpack_user_metrics(raw_output)
+
+        per_example_duration = time.time() - example_start_time
+
+        # Capture LLM metrics after function execution
+        llm_metrics = self._capture_llm_metrics_for_example(output, config, i)
+
+        # Call scoring functions to compute metrics
+        example_metrics = self._compute_example_metrics(
+            output, example, config, dataset, i, llm_metrics
+        )
+
+        # Add LLM metrics if captured
+        if llm_metrics:
+            self._add_llm_metrics_to_example(example_metrics, llm_metrics)
+
+        # Merge per-example user metrics (never overriding computed keys).
+        self._merge_user_metrics(
+            example_metrics, user_metrics, context="simple-scoring lane"
+        )
+
+        # Calculate execution time
+        execution_time = per_example_duration
+        if llm_metrics and llm_metrics.get("response_time_ms", 0) > 0:
+            execution_time = llm_metrics["response_time_ms"] / 1000.0
+
+        # Create ExampleResult
+        example_result = ExampleResult(
+            **result_identity_fields(example, f"example_{i}"),
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=output,
+            metrics=example_metrics,
+            execution_time=execution_time,
+            success=True,
+            error_message=None,
+            metadata=example.metadata.copy() if example.metadata else {},
+        )
+
+        stamp_row_index(example_result, i)
+        return example_result, output, example_metrics, llm_metrics
+
+    @staticmethod
+    def _report_failed_simple_example(
+        failed_result: ExampleResult,
+        i: int,
+        e: Exception,
+        sample_lease: SampleBudgetLease | None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+    ) -> None:
+        if sample_lease:
+            sample_lease.mark_completed()
+        if progress_callback:
+            progress_callback(
+                i,
+                {
+                    "success": False,
+                    "error": str(e),
+                    "metrics": failed_result.metrics,
+                    "output": None,
+                },
+            )
+
+    def _merge_llm_aggregates(
+        self,
+        aggregated_metrics: dict[str, Any],
+        all_metrics: list[dict[str, Any]],
+        example_results: list[Any],
+    ) -> None:
+        llm_agg = self._aggregate_llm_metrics(all_metrics, example_results)
+        aggregated_metrics.update(llm_agg)
+        if llm_agg.get("cost_unmeasured"):
+            # The custom-metric pass may have produced a partial sum for a
+            # cost metric; an unknown trial cost is absent, not a floor.
+            for metric in MEASURED_ONLY_METRICS:
+                if metric not in llm_agg:
+                    aggregated_metrics.pop(metric, None)
+
+    def _aggregate_simple_evaluation_metrics(
+        self,
+        all_metrics: list[dict[str, Any]],
+        example_results: list[Any],
+    ) -> dict[str, Any]:
+        # Aggregate metrics across all examples
+        aggregated_metrics = self._aggregate_custom_metrics(all_metrics)
+
+        # Then aggregate LLM metrics if captured
+        if self.capture_llm_metrics and self._metrics_available:
+            self._merge_llm_aggregates(aggregated_metrics, all_metrics, example_results)
+
+        # Aggregate RAGAS metrics if applicable
+        self._aggregate_ragas_metrics(example_results, aggregated_metrics)
+
+        # Surface tuple-supplied user metrics on the trial result. The custom-,
+        # LLM-, and RAGAS-aggregations above only cover keys the evaluator knows
+        # about (``self.metrics`` / token / cost), so user keys reach
+        # ``example_results[*].metrics`` but never ``result.metrics`` without
+        # this. Uses the SAME shared helper as the local/tracker path: reserved
+        # evaluator keys are skipped (warning-logged), already-present keys are
+        # never clobbered, and the total is capped at the MeasuresDict ceiling
+        # by truncating user keys only.
+        successful_example_metrics = [
+            metric
+            for metric, ex_result in zip(all_metrics, example_results, strict=False)
+            if metric and ex_result is not None and ex_result.is_successful
+        ]
+        aggregate_user_custom_metrics(
+            aggregated_metrics,
+            successful_example_metrics,
+            context="simple-scoring trial aggregation",
+            extra_reserved=self._evaluator_computable_metric_names(),
+        )
+
+        aggregated_metrics.setdefault("examples_attempted", len(example_results))
+
+        # Authoritative final-union cap. ``aggregate_user_custom_metrics`` above
+        # caps the union as it MERGES user keys, but reserved evaluator keys are
+        # added to ``aggregated_metrics`` AFTER that (the custom/LLM/RAGAS
+        # aggregations and ``examples_attempted`` here), so the per-merge cap
+        # alone cannot bound the FINAL union. Re-apply the ceiling as the LAST
+        # step before returning trial metrics so >50 flat metrics can never
+        # escape; only user keys are dropped (evaluator keys are never
+        # sacrificed), matching the local lane's enforce-ceiling call.
+        enforce_user_metric_ceiling(
+            aggregated_metrics,
+            context="simple-scoring trial aggregation",
+            extra_reserved=self._evaluator_computable_metric_names(),
+        )
+        return aggregated_metrics
+
+    @staticmethod
+    def _report_successful_simple_example(
+        i: int,
+        output: Any,
+        example_metrics: dict[str, Any],
+        llm_metrics: dict[str, Any] | None,
+        sample_lease: SampleBudgetLease | None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+    ) -> None:
+        if sample_lease:
+            sample_lease.mark_completed()
+        if progress_callback:
+            progress_callback(
+                i,
+                {
+                    "success": True,
+                    "metrics": example_metrics,
+                    "output": output,
+                    "llm_metrics": llm_metrics,
+                },
+            )
+
+    def _notify_sample_budget_exhausted(
+        self,
+        progress_callback: Callable[[int, dict[str, Any]], Any],
+        consumed: int,
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: SampleBudgetLease | None,
+    ) -> None:
+        try:
+            progress_callback(
+                consumed,
+                {"success": None, "stop_reason": "sample_budget_exhausted"},
+            )
+        except asyncio.CancelledError:
+            self._cleanup_sample_lease_on_cancel(sample_lease, execution_budget_lease)
+            raise
+
+    async def _process_simple_example(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        dataset: Dataset,
+        example: EvaluationExample,
+        i: int,
+        trial_ctx: Any,
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: SampleBudgetLease | None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        example_results: list[ExampleResult],
+        all_metrics: list[dict[str, Any]],
+        outputs: list[Any],
+        errors: list[str | None],
+    ) -> None:
+        cleanup_boundary = self._new_sample_lease_cleanup_boundary(
+            sample_lease, execution_budget_lease
+        )
+        try:
+            (
+                example_result,
+                output,
+                example_metrics,
+                llm_metrics,
+            ) = await self._score_simple_example(
+                func,
+                config,
+                dataset,
+                example,
+                i,
+                trial_ctx,
+                cleanup_boundary,
+            )
+            example_results.append(example_result)
+            self._report_successful_simple_example(
+                i,
+                output,
+                example_metrics,
+                llm_metrics,
+                sample_lease,
+                progress_callback,
+            )
+            all_metrics.append(example_metrics)
+            outputs.append(output)
+            errors.append(None)
+
+        except asyncio.CancelledError:
+            # Scoring and metric callbacks run after admission and may
+            # raise cancellation directly.  Clean up here as well as at
+            # awaited-operation boundaries because an outer orchestrator
+            # can catch this cancellation and return a partial result.
+            cleanup_boundary.cancel()
+            raise
+        except TrialPrunedError as e:
+            if example_results or e.example_results:
+                e.example_results = list(example_results) + list(e.example_results)
+            raise
+        except Exception as e:
+            logger.warning(f"Evaluation failed for example {i}: {e}")
+            failed_result = self._create_failed_example_result(example, i, e)
+            example_results.append(failed_result)
+            self._report_failed_simple_example(
+                failed_result, i, e, sample_lease, progress_callback
+            )
+            all_metrics.append(failed_result.metrics)
+            outputs.append(None)
+            errors.append(str(e))
 
     async def evaluate(
         self,
@@ -4965,14 +5633,14 @@ class SimpleScoringEvaluator(BaseEvaluator):
         if self.capture_llm_metrics and self._metrics_available:
             self._metrics_tracker.start_tracking()
 
-        from traigent.config.context import ConfigurationContext, get_trial_context
+        from traigent.config.context import get_trial_context
 
         trial_ctx = get_trial_context()
 
         # Evaluate function on all examples
-        example_results = []
-        all_metrics = []
-        outputs = []
+        example_results: list[ExampleResult] = []
+        all_metrics: list[dict[str, Any]] = []
+        outputs: list[Any] = []
         errors: list[str | None] = []
         budget_exhausted = False
 
@@ -4984,135 +5652,29 @@ class SimpleScoringEvaluator(BaseEvaluator):
                     i,
                 )
                 break
-            cleanup_boundary = self._new_sample_lease_cleanup_boundary(
-                sample_lease, execution_budget_lease
+            await self._process_simple_example(
+                func,
+                config,
+                dataset,
+                example,
+                i,
+                trial_ctx,
+                sample_lease,
+                execution_budget_lease,
+                progress_callback,
+                example_results,
+                all_metrics,
+                outputs,
+                errors,
             )
-            try:
-                # Clear any previous captured responses before evaluation
-                if self.capture_llm_metrics and self._metrics_available:
-                    self._clear_captured_responses()
-
-                # Track timing for this example
-                example_start_time = time.time()
-                # Execute function with configuration context
-                try:
-                    with _maybe_restore_trial_context(trial_ctx):
-                        with ConfigurationContext(config):
-                            # Preserve SimpleScoringEvaluator's historical
-                            # contract: expand dataset fields as kwargs,
-                            # execute sync callables in the caller task, and
-                            # do not apply BaseEvaluator's dormant timeout.
-                            if is_coroutine_callable(func):
-                                raw_output = await func(**example.input_data)
-                            else:
-                                raw_output = func(**example.input_data)
-                except asyncio.CancelledError:
-                    cleanup_boundary.cancel()
-                    raise
-
-                # Strict 2-tuple unpack: a (output, numeric-metrics) return
-                # becomes output[0] for ALL downstream purposes; the metrics
-                # merge into this example's metrics (no-override). Any other
-                # shape is left untouched (back-compat).
-                output, user_metrics = self._unpack_user_metrics(raw_output)
-
-                per_example_duration = time.time() - example_start_time
-
-                # Capture LLM metrics after function execution
-                llm_metrics = self._capture_llm_metrics_for_example(output, config, i)
-
-                # Call scoring functions to compute metrics
-                example_metrics = self._compute_example_metrics(
-                    output, example, config, dataset, i, llm_metrics
-                )
-
-                # Add LLM metrics if captured
-                if llm_metrics:
-                    self._add_llm_metrics_to_example(example_metrics, llm_metrics)
-
-                # Merge per-example user metrics (never overriding computed keys).
-                self._merge_user_metrics(
-                    example_metrics, user_metrics, context="simple-scoring lane"
-                )
-
-                # Calculate execution time
-                execution_time = per_example_duration
-                if llm_metrics and llm_metrics.get("response_time_ms", 0) > 0:
-                    execution_time = llm_metrics["response_time_ms"] / 1000.0
-
-                # Create ExampleResult
-                example_result = ExampleResult(
-                    **result_identity_fields(example, f"example_{i}"),
-                    input_data=example.input_data,
-                    expected_output=example.expected_output,
-                    actual_output=output,
-                    metrics=example_metrics,
-                    execution_time=execution_time,
-                    success=True,
-                    error_message=None,
-                    metadata=example.metadata.copy() if example.metadata else {},
-                )
-
-                stamp_row_index(example_result, i)
-                example_results.append(example_result)
-                if sample_lease:
-                    sample_lease.mark_completed()
-                if progress_callback:
-                    progress_callback(
-                        i,
-                        {
-                            "success": True,
-                            "metrics": example_metrics,
-                            "output": output,
-                            "llm_metrics": llm_metrics,
-                        },
-                    )
-                all_metrics.append(example_metrics)
-                outputs.append(output)
-                errors.append(None)
-
-            except asyncio.CancelledError:
-                # Scoring and metric callbacks run after admission and may
-                # raise cancellation directly.  Clean up here as well as at
-                # awaited-operation boundaries because an outer orchestrator
-                # can catch this cancellation and return a partial result.
-                cleanup_boundary.cancel()
-                raise
-            except TrialPrunedError as e:
-                if example_results or e.example_results:
-                    e.example_results = list(example_results) + list(e.example_results)
-                raise
-            except Exception as e:
-                logger.warning(f"Evaluation failed for example {i}: {e}")
-                failed_result = self._create_failed_example_result(example, i, e)
-                example_results.append(failed_result)
-                if sample_lease:
-                    sample_lease.mark_completed()
-                if progress_callback:
-                    progress_callback(
-                        i,
-                        {
-                            "success": False,
-                            "error": str(e),
-                            "metrics": failed_result.metrics,
-                            "output": None,
-                        },
-                    )
-                all_metrics.append(failed_result.metrics)
-                outputs.append(None)
-                errors.append(str(e))
 
         if budget_exhausted and progress_callback:
-            try:
-                progress_callback(
-                    len(example_results),
-                    {"success": None, "stop_reason": "sample_budget_exhausted"},
-                )
-            except asyncio.CancelledError:
-                self._cleanup_sample_lease_on_cancel(
-                    sample_lease, execution_budget_lease
-                )
-                raise
+            self._notify_sample_budget_exhausted(
+                progress_callback,
+                len(example_results),
+                sample_lease,
+                execution_budget_lease,
+            )
 
         duration = time.time() - start_time
 
@@ -5120,57 +5682,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
         if self.capture_llm_metrics and self._metrics_available:
             self._metrics_tracker.end_tracking()
 
-        # Aggregate metrics across all examples
-        aggregated_metrics = self._aggregate_custom_metrics(all_metrics)
-
-        # Then aggregate LLM metrics if captured
-        if self.capture_llm_metrics and self._metrics_available:
-            llm_agg = self._aggregate_llm_metrics(all_metrics, example_results)
-            aggregated_metrics.update(llm_agg)
-            if llm_agg.get("cost_unmeasured"):
-                # The custom-metric pass may have produced a partial sum for a
-                # cost metric; an unknown trial cost is absent, not a floor.
-                for metric in MEASURED_ONLY_METRICS:
-                    if metric not in llm_agg:
-                        aggregated_metrics.pop(metric, None)
-
-        # Aggregate RAGAS metrics if applicable
-        self._aggregate_ragas_metrics(example_results, aggregated_metrics)
-
-        # Surface tuple-supplied user metrics on the trial result. The custom-,
-        # LLM-, and RAGAS-aggregations above only cover keys the evaluator knows
-        # about (``self.metrics`` / token / cost), so user keys reach
-        # ``example_results[*].metrics`` but never ``result.metrics`` without
-        # this. Uses the SAME shared helper as the local/tracker path: reserved
-        # evaluator keys are skipped (warning-logged), already-present keys are
-        # never clobbered, and the total is capped at the MeasuresDict ceiling
-        # by truncating user keys only.
-        successful_example_metrics = [
-            metric
-            for metric, ex_result in zip(all_metrics, example_results, strict=False)
-            if metric and ex_result is not None and ex_result.is_successful
-        ]
-        aggregate_user_custom_metrics(
-            aggregated_metrics,
-            successful_example_metrics,
-            context="simple-scoring trial aggregation",
-            extra_reserved=self._evaluator_computable_metric_names(),
-        )
-
-        aggregated_metrics.setdefault("examples_attempted", len(example_results))
-
-        # Authoritative final-union cap. ``aggregate_user_custom_metrics`` above
-        # caps the union as it MERGES user keys, but reserved evaluator keys are
-        # added to ``aggregated_metrics`` AFTER that (the custom/LLM/RAGAS
-        # aggregations and ``examples_attempted`` here), so the per-merge cap
-        # alone cannot bound the FINAL union. Re-apply the ceiling as the LAST
-        # step before returning trial metrics so >50 flat metrics can never
-        # escape; only user keys are dropped (evaluator keys are never
-        # sacrificed), matching the local lane's enforce-ceiling call.
-        enforce_user_metric_ceiling(
-            aggregated_metrics,
-            context="simple-scoring trial aggregation",
-            extra_reserved=self._evaluator_computable_metric_names(),
+        aggregated_metrics = self._aggregate_simple_evaluation_metrics(
+            all_metrics, example_results
         )
 
         # Log results
@@ -5211,31 +5724,12 @@ class SimpleScoringEvaluator(BaseEvaluator):
 
         return infer_response_model(response)
 
-    def _capture_llm_metrics_for_example(
-        self, output: Any, config: dict[str, Any], example_index: int
-    ) -> dict[str, Any] | None:
-        """Capture LLM metrics after function execution.
-
-        Args:
-            output: Function output
-            config: Configuration dictionary
-            example_index: Index of current example
-
-        Returns:
-            Dictionary of LLM metrics or None
-        """
-        if not (self.capture_llm_metrics and self._metrics_available):
-            return None
-
-        captured_responses = [r for r in self._get_all_captured_responses() if r]
-        if not captured_responses:
-            return None
-
-        # Every call made while this example ran is charged, each at its own
-        # model, not only the first (Traigent#2411). A call with no usage stays
-        # unmeasured: it makes the example total a floor, never a $0.
-        config_model = config.get("model")
-        response_text = self._extract_response_text_from_output(output)
+    def _accumulate_captured_calls(
+        self,
+        captured_responses: list[Any],
+        config_model: Any,
+        response_text: Any,
+    ) -> tuple[Any, Any, float, float, bool, Any]:
         metrics_obj = None
         model_name = config_model
         measured_cost = 0.0
@@ -5265,19 +5759,52 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 metrics_obj = call_metrics
                 model_name = call_model
             else:
-                metrics_obj.tokens.input_tokens += call_metrics.tokens.input_tokens
-                metrics_obj.tokens.output_tokens += call_metrics.tokens.output_tokens
-                metrics_obj.tokens.total_tokens += call_metrics.tokens.total_tokens
-                metrics_obj.cost.input_cost += call_metrics.cost.input_cost
-                metrics_obj.cost.output_cost += call_metrics.cost.output_cost
-                metrics_obj.cost.total_cost += call_metrics.cost.total_cost
-                metrics_obj.cost.unpriced = (
-                    metrics_obj.cost.unpriced or call_metrics.cost.unpriced
-                )
-                metrics_obj.response.response_time_ms += (
-                    call_metrics.response.response_time_ms
-                )
+                self._merge_call_metrics(metrics_obj, call_metrics)
             measured_cost = metrics_obj.cost.total_cost
+        return (
+            metrics_obj,
+            model_name,
+            measured_cost,
+            unmeasured_known,
+            any_unmeasured,
+            first_metrics,
+        )
+
+    def _capture_llm_metrics_for_example(
+        self, output: Any, config: dict[str, Any], example_index: int
+    ) -> dict[str, Any] | None:
+        """Capture LLM metrics after function execution.
+
+        Args:
+            output: Function output
+            config: Configuration dictionary
+            example_index: Index of current example
+
+        Returns:
+            Dictionary of LLM metrics or None
+        """
+        if not (self.capture_llm_metrics and self._metrics_available):
+            return None
+
+        captured_responses = [r for r in self._get_all_captured_responses() if r]
+        if not captured_responses:
+            return None
+
+        # Every call made while this example ran is charged, each at its own
+        # model, not only the first (Traigent#2411). A call with no usage stays
+        # unmeasured: it makes the example total a floor, never a $0.
+        config_model = config.get("model")
+        response_text = self._extract_response_text_from_output(output)
+        (
+            metrics_obj,
+            model_name,
+            measured_cost,
+            unmeasured_known,
+            any_unmeasured,
+            first_metrics,
+        ) = self._accumulate_captured_calls(
+            captured_responses, config_model, response_text
+        )
 
         if metrics_obj is None:
             # Nothing was measured: report the first call's own (unmeasured) shape.
@@ -5293,10 +5820,29 @@ class SimpleScoringEvaluator(BaseEvaluator):
         logger.debug(
             f"Captured LLM metrics for example {example_index}: "
             f"tokens={llm_metrics['total_tokens']}, "
-            f"cost=${llm_metrics['total_cost']:.8f}"
+            + self._describe_captured_cost(llm_metrics)
         )
 
         return llm_metrics
+
+    @staticmethod
+    def _describe_captured_cost(llm_metrics: dict[str, Any]) -> str:
+        if "total_cost" not in llm_metrics:
+            return "cost=unmeasured"
+        return f"cost=${llm_metrics['total_cost']:.8f}"
+
+    @staticmethod
+    def _merge_call_metrics(metrics_obj: Any, call_metrics: Any) -> None:
+        metrics_obj.tokens.input_tokens += call_metrics.tokens.input_tokens
+        metrics_obj.tokens.output_tokens += call_metrics.tokens.output_tokens
+        metrics_obj.tokens.total_tokens += call_metrics.tokens.total_tokens
+        metrics_obj.cost.input_cost += call_metrics.cost.input_cost
+        metrics_obj.cost.output_cost += call_metrics.cost.output_cost
+        metrics_obj.cost.total_cost += call_metrics.cost.total_cost
+        metrics_obj.cost.unpriced = (
+            metrics_obj.cost.unpriced or call_metrics.cost.unpriced
+        )
+        metrics_obj.response.response_time_ms += call_metrics.response.response_time_ms
 
     def _compute_example_metrics(
         self,

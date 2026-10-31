@@ -130,6 +130,64 @@ def _emit_session_result(result: dict[str, Any], *, dry_run: bool) -> None:
     _emit_session_warnings(result)
 
 
+def _sync_one_session(
+    sync_manager: SyncManager,
+    session_id: str,
+    *,
+    dry_run: bool,
+    force: bool,
+    as_json: bool,
+) -> tuple[list[str], bool]:
+    """Sync one session; return ``(synced_ids, had_errors)``."""
+    result = sync_manager.sync_session_to_cloud(
+        session_id, dry_run=dry_run, force=force
+    )
+    if as_json:
+        click.echo(json_module.dumps(result, indent=2, default=str))
+    else:
+        _emit_session_result(result, dry_run=dry_run)
+    if result.get("status") in {"success", "already_synced"}:
+        # Record the id SyncManager actually synced, not the raw argument:
+        # downstream lookups (--clean verification) must use the resolved id.
+        return [_synced_session_id(result)], False
+    # A real sync that did not succeed is a failure — exit non-zero
+    # so callers (CI, scripts) do not assume the session was uploaded.
+    return [], not dry_run
+
+
+def _sync_all_sessions(
+    sync_manager: SyncManager, *, dry_run: bool, force: bool, as_json: bool
+) -> tuple[list[str], bool]:
+    """Sync every pending session; return ``(synced_ids, had_errors)``."""
+    result = sync_manager.sync_all_sessions(dry_run, force=force)
+    if as_json:
+        click.echo(json_module.dumps(result, indent=2, default=str))
+    else:
+        click.echo(
+            f"\n📈 Synced {result['synced_successfully']}, "
+            f"skipped {result.get('skipped', 0)}, "
+            f"errors {result['sync_errors']} "
+            f"(of {result['eligible_sessions']} eligible)"
+        )
+        for session_result in result["session_results"]:
+            _emit_session_result(session_result, dry_run=dry_run)
+    synced_ids = [
+        _synced_session_id(r)
+        for r in result["session_results"]
+        if r.get("status") in {"success", "already_synced"}
+    ]
+    return synced_ids, not dry_run and result.get("sync_errors", 0) > 0
+
+
+def _clean_verified(sync_manager: SyncManager, synced_ids: list[str]) -> None:
+    verified = _verified_synced(sync_manager, synced_ids)
+    if verified:
+        cleanup = sync_manager.cleanup_after_sync(verified, keep_backup=True)
+        click.echo(
+            f"🧹 Cleaned {cleanup['sessions_deleted']} synced run(s) (backed up first)."
+        )
+
+
 @click.command(name="sync")
 @click.argument("session_id", required=False)
 @click.option("--all", "sync_all", is_flag=True, help="Sync every pending run")
@@ -174,54 +232,18 @@ def sync_command(
             click.echo("💡 Configure a key with `traigent auth login`.")
             sys.exit(1)
 
-        synced_ids: list[str] = []
-        had_errors = False
         if session_id:
-            result = sync_manager.sync_session_to_cloud(
-                session_id, dry_run=dry_run, force=force
+            synced_ids, had_errors = _sync_one_session(
+                sync_manager, session_id, dry_run=dry_run, force=force, as_json=as_json
             )
-            if as_json:
-                click.echo(json_module.dumps(result, indent=2, default=str))
-            else:
-                _emit_session_result(result, dry_run=dry_run)
-            if result.get("status") in {"success", "already_synced"}:
-                # Record the id SyncManager actually synced, not the raw argument:
-                # downstream lookups (--clean verification) must use the resolved id.
-                synced_ids.append(_synced_session_id(result))
-            elif not dry_run:
-                # A real sync that did not succeed is a failure — exit non-zero
-                # so callers (CI, scripts) do not assume the session was uploaded.
-                had_errors = True
         else:
-            result = sync_manager.sync_all_sessions(dry_run, force=force)
-            if as_json:
-                click.echo(json_module.dumps(result, indent=2, default=str))
-            else:
-                click.echo(
-                    f"\n📈 Synced {result['synced_successfully']}, "
-                    f"skipped {result.get('skipped', 0)}, "
-                    f"errors {result['sync_errors']} "
-                    f"(of {result['eligible_sessions']} eligible)"
-                )
-                for session_result in result["session_results"]:
-                    _emit_session_result(session_result, dry_run=dry_run)
-            synced_ids = [
-                _synced_session_id(r)
-                for r in result["session_results"]
-                if r.get("status") in {"success", "already_synced"}
-            ]
-            if not dry_run and result.get("sync_errors", 0) > 0:
-                had_errors = True
+            synced_ids, had_errors = _sync_all_sessions(
+                sync_manager, dry_run=dry_run, force=force, as_json=as_json
+            )
 
         # --clean: delete local copies only for runs verified synced, with backup.
         if clean and not dry_run and synced_ids:
-            verified = _verified_synced(sync_manager, synced_ids)
-            if verified:
-                cleanup = sync_manager.cleanup_after_sync(verified, keep_backup=True)
-                click.echo(
-                    f"🧹 Cleaned {cleanup['sessions_deleted']} synced run(s) "
-                    "(backed up first)."
-                )
+            _clean_verified(sync_manager, synced_ids)
 
         if had_errors:
             sys.exit(1)

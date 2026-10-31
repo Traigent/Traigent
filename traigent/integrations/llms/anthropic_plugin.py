@@ -21,6 +21,8 @@ from traigent.integrations.utils import Framework
 if TYPE_CHECKING:
     from traigent.config.types import TraigentConfig
 
+_MESSAGES_CREATE = "messages.create"
+
 logger = logging.getLogger(__name__)
 
 
@@ -124,11 +126,11 @@ class AnthropicPlugin(LLMPlugin):
     def get_target_methods(self) -> dict[str, list[str]]:
         """Return mapping of Anthropic classes to methods to override."""
         return {
-            "anthropic.Anthropic": ["messages.create", "messages.stream"],
-            "anthropic.AsyncAnthropic": ["messages.create", "messages.stream"],
-            "anthropic.Client": ["messages.create", "completions.create"],  # Legacy
+            "anthropic.Anthropic": [_MESSAGES_CREATE, "messages.stream"],
+            "anthropic.AsyncAnthropic": [_MESSAGES_CREATE, "messages.stream"],
+            "anthropic.Client": [_MESSAGES_CREATE, "completions.create"],  # Legacy
             "anthropic.AsyncClient": [
-                "messages.create",
+                _MESSAGES_CREATE,
                 "completions.create",
             ],  # Legacy
             "anthropic.resources.messages.Messages": ["create", "stream"],
@@ -154,19 +156,7 @@ class AnthropicPlugin(LLMPlugin):
         if "system" in custom_params and "system" not in overridden:
             overridden["system"] = custom_params["system"]
 
-        # Remove leading system message and promote its content when appropriate
-        messages = overridden.get("messages")
-        if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes)):
-            if messages:
-                first_message = messages[0]
-                if (
-                    isinstance(first_message, Mapping)
-                    and first_message.get("role") == "system"
-                ):
-                    overridden["messages"] = list(messages[1:])
-                    if "system" not in overridden:
-                        system_content = first_message.get("content", "")
-                        overridden["system"] = system_content
+        self._promote_leading_system_message(overridden)
 
         # Handle stop_sequences vs stop parameter naming
         if "stop" in custom_params and "stop_sequences" not in overridden:
@@ -174,40 +164,62 @@ class AnthropicPlugin(LLMPlugin):
 
         # Ensure max_tokens is set (required for Anthropic)
         if "max_tokens" not in overridden and "max_tokens" not in kwargs:
-            # Set a reasonable default based on model
-            model = overridden.get("model", kwargs.get("model", ""))
-            if "claude-3" in model:
-                overridden["max_tokens"] = 4096
-            elif "claude-2" in model:
-                overridden["max_tokens"] = 4096
-            else:
-                overridden["max_tokens"] = 1024
+            overridden["max_tokens"] = self._default_max_tokens(overridden, kwargs)
 
         # Handle tool use format differences
         if "tools" in overridden:
-            # Ensure tools are in Anthropic format
-            tools = overridden["tools"]
-            if isinstance(tools, Sequence) and not isinstance(tools, (str, bytes)):
-                anthropic_tools = []
-                for tool in tools:
-                    if not isinstance(tool, Mapping):
-                        continue
-                    function_payload = tool.get("function")
-                    if isinstance(function_payload, Mapping):
-                        function_name = function_payload.get("name")
-                        if not function_name:
-                            continue
-                        anthropic_tools.append(
-                            {
-                                "name": function_name,
-                                "description": function_payload.get("description", ""),
-                                "input_schema": function_payload.get("parameters", {}),
-                            }
-                        )
-                    else:
-                        anthropic_tools.append(dict(tool))
-
-                if anthropic_tools:
-                    overridden["tools"] = anthropic_tools
+            self._convert_tools(overridden)
 
         return overridden
+
+    @staticmethod
+    def _promote_leading_system_message(overridden: dict[str, Any]) -> None:
+        """Remove a leading system message and promote its content."""
+        messages = overridden.get("messages")
+        if not isinstance(messages, Sequence) or isinstance(messages, (str, bytes)):
+            return
+        if not messages:
+            return
+        first_message = messages[0]
+        if not (
+            isinstance(first_message, Mapping) and first_message.get("role") == "system"
+        ):
+            return
+        overridden["messages"] = list(messages[1:])
+        if "system" not in overridden:
+            overridden["system"] = first_message.get("content", "")
+
+    @staticmethod
+    def _default_max_tokens(overridden: dict[str, Any], kwargs: dict[str, Any]) -> int:
+        """Pick a reasonable default max_tokens based on the model name."""
+        model = overridden.get("model", kwargs.get("model", ""))
+        if "claude-3" in model or "claude-2" in model:
+            return 4096
+        return 1024
+
+    @staticmethod
+    def _convert_tools(overridden: dict[str, Any]) -> None:
+        """Ensure tools are in Anthropic format."""
+        tools = overridden["tools"]
+        if not isinstance(tools, Sequence) or isinstance(tools, (str, bytes)):
+            return
+        anthropic_tools = []
+        for tool in tools:
+            if not isinstance(tool, Mapping):
+                continue
+            function_payload = tool.get("function")
+            if not isinstance(function_payload, Mapping):
+                anthropic_tools.append(dict(tool))
+                continue
+            function_name = function_payload.get("name")
+            if not function_name:
+                continue
+            anthropic_tools.append(
+                {
+                    "name": function_name,
+                    "description": function_payload.get("description", ""),
+                    "input_schema": function_payload.get("parameters", {}),
+                }
+            )
+        if anthropic_tools:
+            overridden["tools"] = anthropic_tools

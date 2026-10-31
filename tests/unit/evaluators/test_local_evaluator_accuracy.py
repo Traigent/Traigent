@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 import traigent
@@ -293,3 +295,543 @@ async def test_optimize_three_argument_metric_function_receives_metrics_payload(
     assert total_tokens == pytest.approx(2.0)
     assert result.best_score == pytest.approx(0.6)
     assert result.trials[0].metrics["accuracy"] == pytest.approx(0.6)
+
+
+def _label_dataset() -> Dataset:
+    return Dataset(
+        [
+            EvaluationExample({"q": "a"}, "label-a"),
+            EvaluationExample({"q": "b"}, "label-b"),
+        ],
+        name="labels",
+        description="rows carry a gold label the function never echoes",
+    )
+
+
+@pytest.mark.asyncio
+async def test_nonobjective_accuracy_not_computed_or_uploaded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Exact-match accuracy is computed and uploaded only when it is a
+    configured metric; otherwise it must not be manufactured as 0.0."""
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={"pass_rate": lambda output, expected, **_: 1.0},
+        detailed=True,
+        execution_mode="local",
+    )
+
+    def func(input_data):
+        return "encoded-metrics-string"
+
+    caplog.set_level(logging.INFO, logger="traigent")
+    first = await evaluator.evaluate(func, {}, _label_dataset())
+    await evaluator.evaluate(func, {}, _label_dataset())
+
+    assert first.metrics is not None
+    assert first.metrics.get("accuracy") is None
+    assert first.metrics.get("score") is None
+    assert first.metrics["pass_rate"] == pytest.approx(1.0)
+    for example in first.example_results:
+        assert "accuracy" not in (example.metrics or {})
+    stats = (first.summary_stats or {}).get("metrics", {})
+    assert stats.get("accuracy", {}).get("count", 0) == 0
+    notices = [
+        r for r in caplog.records if "Built-in exact-match accuracy" in r.getMessage()
+    ]
+    assert len(notices) == 1
+
+
+@pytest.mark.asyncio
+async def test_declared_accuracy_still_computed_and_zero_is_kept() -> None:
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=True, execution_mode="local"
+    )
+    result = await evaluator.evaluate(
+        lambda input_data: "never-matches", {}, _label_dataset()
+    )
+    assert result.metrics["accuracy"] == 0.0
+    assert result.summary_stats["metrics"]["accuracy"]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_supplied_accuracy_survives_when_not_a_configured_metric() -> None:
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={
+            "pass_rate": lambda output, expected, **_: 1.0,
+            "accuracy": lambda output, expected, **_: 0.5,
+        },
+        detailed=True,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(lambda input_data: "x", {}, _label_dataset())
+    assert result.metrics["accuracy"] == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_failed_attempt_without_output_is_a_miss_in_aggregate_and_tracker() -> (
+    None
+):
+    """Declared built-in accuracy: an evaluator failure with no output counts
+    as 0 in the aggregate and in both tracker formats."""
+
+    def func(input_data):
+        if input_data["q"] == "b":
+            raise RuntimeError("boom")
+        return "label-a"
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=True, execution_mode="local"
+    )
+    result = await evaluator.evaluate(func, {}, _label_dataset())
+
+    assert result.metrics["accuracy"] == pytest.approx(0.5)
+    stats = result.summary_stats["metrics"]["accuracy"]
+    assert stats["count"] == 2
+    assert stats["mean"] == pytest.approx(0.5)
+
+
+def _three_label_dataset() -> Dataset:
+    return Dataset(
+        [
+            EvaluationExample({"q": "a"}, "label-a"),
+            EvaluationExample({"q": "b"}, "label-b"),
+            EvaluationExample({"q": "c"}, "label-c"),
+        ],
+        name="labels3",
+        description="three gold labels",
+    )
+
+
+def _resume_prefill_for_first_row(stored_metrics: dict, dataset: Dataset | None = None):
+    from traigent.core.resume import ResumePrefill, config_key
+
+    dataset = dataset or _three_label_dataset()
+    row = {
+        "input_data": dataset.examples[0].input_data,
+        "expected_output": dataset.examples[0].expected_output,
+        "actual_output": "label-a",
+        "metrics": stored_metrics,
+        "execution_time": 0.01,
+    }
+    return ResumePrefill({config_key({}): {"example_0": row}})
+
+
+def _assert_all_accuracy_views_agree(result, payloads, expected):
+    """Trial aggregate, score alias, backend payload and summary stats agree."""
+    (payload,) = payloads
+    stats = result.summary_stats["metrics"].get("accuracy", {})
+    if expected is None:
+        assert result.metrics.get("accuracy") is None
+        assert result.metrics.get("score") is None
+        assert payload["accuracy"] is None
+        assert payload["score"] is None
+        assert stats.get("count", 0) == 0
+        return
+    assert result.metrics["accuracy"] == pytest.approx(expected)
+    assert result.metrics["score"] == pytest.approx(expected)
+    assert payload["accuracy"] == pytest.approx(expected)
+    assert payload["score"] == pytest.approx(expected)
+    assert stats["mean"] == pytest.approx(expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("custom", [False, True], ids=["builtin", "custom"])
+@pytest.mark.parametrize("stored", [True, False], ids=["stored", "unstored"])
+async def test_partial_resume_accuracy_has_one_population(
+    stored: bool, custom: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reused rows are never re-scored: stored scores count, a reused row with
+    no stored score is left out (never 1.0, never 0.0), new rows count as
+    measured, and every accuracy view reports the same value."""
+    from traigent.evaluators.base import bind_resume_prefill, reset_resume_prefill
+    from traigent.evaluators.metrics_tracker import MetricsTracker
+
+    def func(input_data):
+        return {"b": "label-b", "c": "wrong"}[input_data["q"]]
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions=(
+            {"accuracy": lambda output, expected, **_: float(output == expected)}
+            if custom
+            else None
+        ),
+        detailed=True,
+        execution_mode="local",
+    )
+    payloads: list[dict] = []
+    original = MetricsTracker.format_for_backend
+
+    def spy(self, *args, **kwargs):
+        payload = original(self, *args, **kwargs)
+        payloads.append(payload)
+        return payload
+
+    monkeypatch.setattr(MetricsTracker, "format_for_backend", spy)
+    stored_metrics = {"total_cost": 0.0, "input_tokens": 1}
+    if stored:
+        stored_metrics["accuracy"] = 1.0
+    token = bind_resume_prefill(_resume_prefill_for_first_row(stored_metrics))
+    try:
+        result = await evaluator.evaluate(func, {}, _three_label_dataset())
+    finally:
+        reset_resume_prefill(token)
+
+    resumed = [
+        r
+        for r in result.example_results
+        if (r.metadata or {}).get("resumed_example_from_prior_run")
+    ]
+    assert len(resumed) == 1  # the partially resumed evaluation really resumed
+    # new rows: one hit, one miss; plus the reused row only when it has a score
+    _assert_all_accuracy_views_agree(result, payloads, 2 / 3 if stored else 0.5)
+
+
+@pytest.mark.asyncio
+async def test_resumed_row_unmeasured_when_accuracy_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.evaluators.base import bind_resume_prefill, reset_resume_prefill
+    from traigent.evaluators.metrics_tracker import MetricsTracker
+
+    payloads: list[dict] = []
+    original = MetricsTracker.format_for_backend
+
+    def spy(self, *args, **kwargs):
+        payload = original(self, *args, **kwargs)
+        payloads.append(payload)
+        return payload
+
+    monkeypatch.setattr(MetricsTracker, "format_for_backend", spy)
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={"pass_rate": lambda output, expected, **_: 1.0},
+        detailed=True,
+        execution_mode="local",
+    )
+    token = bind_resume_prefill(
+        _resume_prefill_for_first_row({"total_cost": 0.0, "input_tokens": 1})
+    )
+    try:
+        result = await evaluator.evaluate(
+            lambda d: {"b": "label-b", "c": "wrong"}[d["q"]],
+            {},
+            _three_label_dataset(),
+        )
+    finally:
+        reset_resume_prefill(token)
+    _assert_all_accuracy_views_agree(result, payloads, None)
+
+
+@pytest.mark.asyncio
+async def test_returned_mapping_accuracy_without_gold_reaches_every_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A metric function whose returned mapping carries ``accuracy`` is kept
+    when the dataset has no expected outputs, in every accuracy view."""
+    from traigent.evaluators.metrics_tracker import MetricsTracker
+
+    dataset = Dataset(
+        [EvaluationExample({"q": "a"}, None), EvaluationExample({"q": "b"}, None)],
+        name="nogold",
+        description="no expected outputs",
+    )
+    payloads: list[dict] = []
+    original = MetricsTracker.format_for_backend
+
+    def spy(self, *args, **kwargs):
+        payload = original(self, *args, **kwargs)
+        payloads.append(payload)
+        return payload
+
+    monkeypatch.setattr(MetricsTracker, "format_for_backend", spy)
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"quality": lambda output, expected, **_: {"accuracy": 0.25}},
+        detailed=True,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(lambda d: "x", {}, dataset)
+    assert [e.metrics["accuracy"] for e in result.example_results] == [0.25, 0.25]
+    _assert_all_accuracy_views_agree(result, payloads, 0.25)
+
+
+def _spy_format_for_backend(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    from traigent.evaluators.metrics_tracker import MetricsTracker
+
+    payloads: list[dict] = []
+    original = MetricsTracker.format_for_backend
+
+    def spy(self, *args, **kwargs):
+        payload = original(self, *args, **kwargs)
+        payloads.append(payload)
+        return payload
+
+    monkeypatch.setattr(MetricsTracker, "format_for_backend", spy)
+    return payloads
+
+
+def _two_label_dataset() -> Dataset:
+    return Dataset(
+        [
+            EvaluationExample({"q": "a"}, "label-a"),
+            EvaluationExample({"q": "b"}, "label-b"),
+        ],
+        name="labels2",
+        description="two gold labels",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resumed", [False, True], ids=["fresh", "resumed"])
+@pytest.mark.parametrize("detailed", [False, True], ids=["summary", "detailed"])
+async def test_successful_none_output_with_gold_is_a_miss_in_every_view(
+    resumed: bool, detailed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One correct output plus one successful ``None`` output with gold scores
+    0.5 in the trial aggregate, score alias, payload and summary stats, whether
+    or not the correct row was reused from a prior run."""
+    from traigent.evaluators.base import bind_resume_prefill, reset_resume_prefill
+
+    payloads = _spy_format_for_backend(monkeypatch)
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=detailed, execution_mode="local"
+    )
+    dataset = _two_label_dataset()
+    token = (
+        bind_resume_prefill(
+            _resume_prefill_for_first_row(
+                {"total_cost": 0.0, "input_tokens": 1, "accuracy": 1.0}, dataset
+            )
+        )
+        if resumed
+        else None
+    )
+    try:
+        result = await evaluator.evaluate(
+            lambda d: "label-a" if d["q"] == "a" else None, {}, dataset
+        )
+    finally:
+        if token is not None:
+            reset_resume_prefill(token)
+    if resumed and detailed:
+        assert any(
+            (r.metadata or {}).get("resumed_example_from_prior_run")
+            for r in result.example_results
+        )
+    _assert_all_accuracy_views_agree(result, payloads, 0.5)
+
+
+@pytest.mark.asyncio
+async def test_supplied_accuracy_with_gold_overrides_exact_match_everywhere(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A metric function returning ``{"accuracy": 0.25}`` owns the row's
+    accuracy even when the output matches gold; every view reports 0.25."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"quality": lambda output, expected, **_: {"accuracy": 0.25}},
+        detailed=True,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "label-b"}[d["q"]], {}, _two_label_dataset()
+    )
+    _assert_all_accuracy_views_agree(result, payloads, 0.25)
+
+
+@pytest.mark.asyncio
+async def test_blank_gold_row_is_unmeasured_in_detailed_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank expected output is not gold: in detailed mode the per-example
+    scorer must not turn it into a 0.0 that the tracker would take as supplied."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    dataset = Dataset(
+        [EvaluationExample({"q": "a"}, "label-a"), EvaluationExample({"q": "b"}, "")],
+        name="blank-gold",
+        description="one blank gold",
+    )
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=True, execution_mode="local"
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "anything"}[d["q"]], {}, dataset
+    )
+    _assert_all_accuracy_views_agree(result, payloads, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_non_objective_accuracy_function_in_summary_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With ``accuracy`` supplied but not an objective, summary mode has no
+    detailed rows; the trial accuracy is still the per-row mean, not 0.0."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={
+            "pass_rate": lambda output, expected, **_: 1.0,
+            "accuracy": lambda output, expected, **_: (
+                0.2 if output == "label-a" else 0.6
+            ),
+        },
+        detailed=False,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "label-b"}[d["q"]], {}, _two_label_dataset()
+    )
+    _assert_all_accuracy_views_agree(result, payloads, 0.4)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detailed", [False, True], ids=["summary", "detailed"])
+async def test_supplied_accuracy_wins_on_a_failed_row(
+    detailed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A supplied accuracy beats the built-in failed-attempt zero."""
+    payloads = _spy_format_for_backend(monkeypatch)
+
+    def func(input_data):
+        if input_data["q"] == "b":
+            raise RuntimeError("boom")
+        return "label-a"
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"quality": lambda output, expected, **_: {"accuracy": 0.25}},
+        detailed=detailed,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(func, {}, _two_label_dataset())
+    _assert_all_accuracy_views_agree(result, payloads, 0.25)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detailed", [False, True], ids=["summary", "detailed"])
+async def test_custom_accuracy_objective_leaves_a_row_without_a_value_out(
+    detailed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fresh row the custom accuracy function gave no value (and that has no
+    gold for exact match) is unmeasured, not zero-filled, in every view."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    dataset = Dataset(
+        [EvaluationExample({"q": "a"}, "label-a"), EvaluationExample({"q": "b"}, "")],
+        name="custom-objective",
+        description="second row has no gold",
+    )
+
+    def accuracy(output, expected, **_):
+        return 0.8 if output == "label-a" else {"other": 1.0}
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"accuracy": accuracy},
+        detailed=detailed,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "anything"}[d["q"]], {}, dataset
+    )
+    _assert_all_accuracy_views_agree(result, payloads, 0.8)
+
+
+@pytest.mark.asyncio
+async def test_non_objective_accuracy_function_returning_none_is_unmeasured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scalar ``None`` from an accuracy metric function means no value for
+    that row (not a fabricated 0.0); a real value on the other row stands."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={
+            "pass_rate": lambda output, expected, **_: 1.0,
+            "accuracy": lambda output, expected, **_: (
+                0.8 if output == "label-a" else None
+            ),
+        },
+        detailed=False,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "label-b"}[d["q"]], {}, _two_label_dataset()
+    )
+    _assert_all_accuracy_views_agree(result, payloads, 0.8)
+
+
+def _scalar_accuracy(value):
+    return lambda output, expected, **_: value
+
+
+def _mapping_accuracy(value):
+    return lambda output, expected, **_: {"accuracy": value}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["scalar", "mapping"])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), None], ids=str)
+async def test_objective_accuracy_invalid_return_fails_closed_like_none(
+    shape: str, bad: float | None
+) -> None:
+    """An invalid (None or non-finite) accuracy from the declared objective
+    raises exactly as the existing objective ``None`` return does; it is never
+    replaced by the row's exact-match value."""
+    from traigent.utils.exceptions import EvaluationError
+
+    make = _scalar_accuracy if shape == "scalar" else _mapping_accuracy
+    name = "accuracy" if shape == "scalar" else "quality"
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={name: make(bad)},
+        detailed=True,
+        execution_mode="local",
+    )
+    with pytest.raises(EvaluationError) as exc_info:
+        await evaluator.evaluate(
+            lambda d: {"a": "label-a", "b": "label-b"}[d["q"]],
+            {},
+            _two_label_dataset(),
+        )
+    assert exc_info.value.details["metric_name"] == "accuracy"
+    assert exc_info.value.details["is_objective"] is True
+    assert exc_info.value.details["failure_mode"] == (
+        "returned_none" if bad is None else "non_finite_return"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["scalar", "mapping"])
+@pytest.mark.parametrize("detailed", [False, True], ids=["summary", "detailed"])
+async def test_non_objective_accuracy_inf_leaves_the_row_unmeasured(
+    shape: str, detailed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-finite accuracy on a matching row owns that row: it is unmeasured
+    (never 1.0) and the reason is recorded in ``metric_errors``."""
+    payloads = _spy_format_for_backend(monkeypatch)
+    inf = float("inf")
+    pick = (lambda v: v) if shape == "scalar" else (lambda v: {"accuracy": v})
+    name = "accuracy" if shape == "scalar" else "quality"
+    evaluator = LocalEvaluator(
+        metrics=["pass_rate"],
+        metric_functions={
+            "pass_rate": lambda output, expected, **_: 1.0,
+            name: lambda output, expected, **_: pick(
+                0.8 if output == "label-a" else inf
+            ),
+        },
+        detailed=detailed,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(
+        lambda d: {"a": "label-a", "b": "label-b"}[d["q"]], {}, _two_label_dataset()
+    )
+    _assert_all_accuracy_views_agree(result, payloads, 0.8)
+    assert any(
+        e["metric_name"] == "accuracy" and e["failure_mode"] == "non_finite_return"
+        for e in (result.metric_errors or [])
+    )

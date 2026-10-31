@@ -8,8 +8,8 @@ Example:
     >>> from traigent.api.parameter_ranges import Range, Choices
     >>> temp = Range(0.0, 1.0)
     >>> cond = temp.lte(0.7)  # Uses NumericConstraintBuilderMixin.lte()
-    >>> model = Choices(["gpt-4", "gpt-3.5"])
-    >>> cond = model.is_in(["gpt-4"])  # Uses CategoricalConstraintBuilderMixin.is_in()
+    >>> model = Choices(["gpt-5.6-sol", "gpt-3.5"])
+    >>> cond = model.is_in(["gpt-5.6-sol"])  # Uses CategoricalConstraintBuilderMixin.is_in()
 """
 
 from __future__ import annotations
@@ -256,8 +256,8 @@ class CategoricalConstraintBuilderMixin:
         """Create condition: this parameter equals value.
 
         Example:
-            >>> model = Choices(["gpt-4", "gpt-3.5"])
-            >>> cond = model.equals("gpt-4")  # model == "gpt-4"
+            >>> model = Choices(["gpt-5.6-sol", "gpt-3.5"])
+            >>> cond = model.equals("gpt-5.6-sol")  # model == "gpt-5.6-sol"
         """
         from traigent.api.constraints import Condition
 
@@ -268,8 +268,8 @@ class CategoricalConstraintBuilderMixin:
         """Create condition: this parameter does not equal value.
 
         Example:
-            >>> model = Choices(["gpt-4", "gpt-3.5"])
-            >>> cond = model.not_equals("gpt-4")  # model != "gpt-4"
+            >>> model = Choices(["gpt-5.6-sol", "gpt-3.5"])
+            >>> cond = model.not_equals("gpt-5.6-sol")  # model != "gpt-5.6-sol"
         """
         from traigent.api.constraints import Condition
 
@@ -280,8 +280,8 @@ class CategoricalConstraintBuilderMixin:
         """Create condition: this parameter is in the given values.
 
         Example:
-            >>> model = Choices(["gpt-4", "gpt-3.5", "claude"])
-            >>> cond = model.is_in(["gpt-4", "gpt-3.5"])  # model in ["gpt-4", "gpt-3.5"]
+            >>> model = Choices(["gpt-5.6-sol", "gpt-3.5", "claude"])
+            >>> cond = model.is_in(["gpt-5.6-sol", "gpt-3.5"])  # model in ["gpt-5.6-sol", "gpt-3.5"]
         """
         from traigent.api.constraints import Condition
 
@@ -292,7 +292,7 @@ class CategoricalConstraintBuilderMixin:
         """Create condition: this parameter is not in the given values.
 
         Example:
-            >>> model = Choices(["gpt-4", "gpt-3.5", "claude"])
+            >>> model = Choices(["gpt-5.6-sol", "gpt-3.5", "claude"])
             >>> cond = model.not_in(["claude"])  # model not in ["claude"]
         """
         from traigent.api.constraints import Condition

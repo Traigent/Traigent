@@ -25,10 +25,18 @@ from __future__ import annotations
 
 import math
 import re
+import uuid
 from datetime import datetime, timedelta
 from typing import Any, cast
 
 from traigent.cloud.analytics_client import (
+    AGENT_DECISION_ANSWERS,
+    AGENT_DECISION_DIGEST_RE,
+    AGENT_DECISION_ERROR_REASONS,
+    AGENT_DECISION_ID_RE,
+    AGENT_DECISION_NONCE_RE,
+    AGENT_DECISION_OPTIONS_VERSIONS,
+    AGENT_DECISION_POLICY_VERSIONS,
     AnalyticsClientError,
     _project_observability_analysis_insights,
     _project_observability_cohort_comparison,
@@ -43,6 +51,8 @@ from traigent.cloud.analytics_client import (
     normalize_decision_intent,
 )
 from traigent.utils.logging import get_logger
+
+_AGENT_DECISION = "agent decision"
 
 try:
     import httpx
@@ -85,6 +95,9 @@ ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
     "director_start",
     "director_turn",
     "director_state",
+    "agent_decision_ensure",
+    "agent_decision_latest",
+    "agent_decision_answer",
     "analytics_list_experiment_groups",
     "analytics_get_experiment_group",
     "analytics_list_experiment_group_configuration_runs",
@@ -286,6 +299,50 @@ def _validate_director_report(
 _DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS = 20
 
 
+def _validate_director_validity_check(index: int, item: object) -> dict[str, Any]:
+    """Validate one ``client_report.validity_checks`` element."""
+    from traigent.cloud.analytics_client import (
+        DIRECTOR_CONFIDENCE_LABELS,
+        DIRECTOR_VALIDITY_CHECKS,
+        DIRECTOR_VALIDITY_STATUSES,
+    )
+
+    allowed_item_fields = {"check", "status", "confidence_label"}
+    if not isinstance(item, dict):
+        raise _ToolInputError(
+            f"client_report.validity_checks[{index}] must be an object."
+        )
+    item_extra = sorted(set(item).difference(allowed_item_fields))
+    if item_extra:
+        raise _ToolInputError(
+            f"client_report.validity_checks[{index}] contains unsupported "
+            f"field(s): {', '.join(item_extra)}."
+        )
+    check = item.get("check")
+    if check not in DIRECTOR_VALIDITY_CHECKS:
+        allowed = ", ".join(DIRECTOR_VALIDITY_CHECKS)
+        raise _ToolInputError(
+            f"client_report.validity_checks[{index}].check must be one of: {allowed}."
+        )
+    status = item.get("status")
+    if status not in DIRECTOR_VALIDITY_STATUSES:
+        allowed = ", ".join(DIRECTOR_VALIDITY_STATUSES)
+        raise _ToolInputError(
+            f"client_report.validity_checks[{index}].status must be one of: {allowed}."
+        )
+    clean_item: dict[str, Any] = {"check": check, "status": status}
+    confidence_label = item.get("confidence_label")
+    if confidence_label is not None:
+        if confidence_label not in DIRECTOR_CONFIDENCE_LABELS:
+            allowed = ", ".join(DIRECTOR_CONFIDENCE_LABELS)
+            raise _ToolInputError(
+                f"client_report.validity_checks[{index}].confidence_label "
+                f"must be one of: {allowed}."
+            )
+        clean_item["confidence_label"] = confidence_label
+    return clean_item
+
+
 def _validate_director_client_report(
     value: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -297,12 +354,6 @@ def _validate_director_client_report(
     unknown key on either the outer object or an individual check is rejected
     outright.
     """
-    from traigent.cloud.analytics_client import (
-        DIRECTOR_CONFIDENCE_LABELS,
-        DIRECTOR_VALIDITY_CHECKS,
-        DIRECTOR_VALIDITY_STATUSES,
-    )
-
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -325,44 +376,9 @@ def _validate_director_client_report(
             f"{_DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS} items."
         )
 
-    allowed_item_fields = {"check", "status", "confidence_label"}
     clean_checks: list[dict[str, Any]] = []
     for index, item in enumerate(checks):
-        if not isinstance(item, dict):
-            raise _ToolInputError(
-                f"client_report.validity_checks[{index}] must be an object."
-            )
-        item_extra = sorted(set(item).difference(allowed_item_fields))
-        if item_extra:
-            raise _ToolInputError(
-                f"client_report.validity_checks[{index}] contains unsupported "
-                f"field(s): {', '.join(item_extra)}."
-            )
-        check = item.get("check")
-        if check not in DIRECTOR_VALIDITY_CHECKS:
-            allowed = ", ".join(DIRECTOR_VALIDITY_CHECKS)
-            raise _ToolInputError(
-                f"client_report.validity_checks[{index}].check must be one "
-                f"of: {allowed}."
-            )
-        status = item.get("status")
-        if status not in DIRECTOR_VALIDITY_STATUSES:
-            allowed = ", ".join(DIRECTOR_VALIDITY_STATUSES)
-            raise _ToolInputError(
-                f"client_report.validity_checks[{index}].status must be one "
-                f"of: {allowed}."
-            )
-        clean_item: dict[str, Any] = {"check": check, "status": status}
-        confidence_label = item.get("confidence_label")
-        if confidence_label is not None:
-            if confidence_label not in DIRECTOR_CONFIDENCE_LABELS:
-                allowed = ", ".join(DIRECTOR_CONFIDENCE_LABELS)
-                raise _ToolInputError(
-                    f"client_report.validity_checks[{index}].confidence_label "
-                    f"must be one of: {allowed}."
-                )
-            clean_item["confidence_label"] = confidence_label
-        clean_checks.append(clean_item)
+        clean_checks.append(_validate_director_validity_check(index, item))
     return {"validity_checks": clean_checks}
 
 
@@ -379,6 +395,72 @@ def _bounded_identifier_list(value: object, *, field: str, maximum: int) -> list
     if len(set(cleaned)) != len(cleaned):
         raise _ToolInputError(f"{field} values must be unique.")
     return cleaned
+
+
+_EXECUTION_CONTEXT_FIELDS = {
+    "schema_version",
+    "agent_id",
+    "agent_version",
+    "release_id",
+    "deployment_id",
+    "code_revision",
+    "configuration_id",
+    "configuration_version",
+    "prompt_id",
+    "prompt_version",
+    "toolset_id",
+    "toolset_version",
+    "evaluator_id",
+    "evaluator_version",
+    "dataset_id",
+    "dataset_version",
+    "experiment_run_id",
+    "configuration_run_id",
+    "optimization_run_id",
+    "intervention_id",
+}
+
+
+def _check_cohort_sample_limit(sample_limit: object, *, field: str) -> None:
+    if (
+        not isinstance(sample_limit, int)
+        or isinstance(sample_limit, bool)
+        or not 1 <= sample_limit <= 5000
+    ):
+        raise _ToolInputError(
+            f"{field}.sample_limit must be an integer between 1 and 5000."
+        )
+
+
+def _bounded_execution_context(context: object, *, field: str) -> dict[str, object]:
+    if not isinstance(context, dict):
+        raise _ToolInputError(f"{field}.execution_context must be an object.")
+    context_extra = sorted(set(context).difference(_EXECUTION_CONTEXT_FIELDS))
+    if context_extra:
+        raise _ToolInputError(
+            f"{field}.execution_context contains unsupported field(s): "
+            + ", ".join(context_extra)
+            + "."
+        )
+    clean_context: dict[str, object] = {"schema_version": "1.0"}
+    for key, context_value in context.items():
+        if key == "schema_version":
+            if context_value != "1.0":
+                raise _ToolInputError(
+                    f"{field}.execution_context.schema_version must be '1.0'."
+                )
+            continue
+        if context_value is None:
+            clean_context[key] = None
+            continue
+        if not isinstance(context_value, str):
+            raise _ToolInputError(
+                f"{field}.execution_context.{key} must be an identifier or null."
+            )
+        clean_context[key] = _bounded_identifier(
+            context_value, field=f"{field}.execution_context.{key}"
+        )
+    return clean_context
 
 
 def _bounded_cohort(value: object, *, field: str) -> dict[str, object]:
@@ -408,14 +490,7 @@ def _bounded_cohort(value: object, *, field: str) -> dict[str, object]:
     if set(statuses).difference(_TRACE_STATUS_FILTER_VALUES):
         raise _ToolInputError(f"{field}.trace_statuses contains an unsupported status.")
     sample_limit = value.get("sample_limit", 5000)
-    if (
-        not isinstance(sample_limit, int)
-        or isinstance(sample_limit, bool)
-        or not 1 <= sample_limit <= 5000
-    ):
-        raise _ToolInputError(
-            f"{field}.sample_limit must be an integer between 1 and 5000."
-        )
+    _check_cohort_sample_limit(sample_limit, field=field)
     clean: dict[str, object] = {
         "start_time": start_time,
         "end_time": end_time,
@@ -439,56 +514,7 @@ def _bounded_cohort(value: object, *, field: str) -> dict[str, object]:
     }
     context = value.get("execution_context")
     if context is not None:
-        if not isinstance(context, dict):
-            raise _ToolInputError(f"{field}.execution_context must be an object.")
-        allowed_context = {
-            "schema_version",
-            "agent_id",
-            "agent_version",
-            "release_id",
-            "deployment_id",
-            "code_revision",
-            "configuration_id",
-            "configuration_version",
-            "prompt_id",
-            "prompt_version",
-            "toolset_id",
-            "toolset_version",
-            "evaluator_id",
-            "evaluator_version",
-            "dataset_id",
-            "dataset_version",
-            "experiment_run_id",
-            "configuration_run_id",
-            "optimization_run_id",
-            "intervention_id",
-        }
-        context_extra = sorted(set(context).difference(allowed_context))
-        if context_extra:
-            raise _ToolInputError(
-                f"{field}.execution_context contains unsupported field(s): "
-                + ", ".join(context_extra)
-                + "."
-            )
-        clean_context: dict[str, object] = {"schema_version": "1.0"}
-        for key, context_value in context.items():
-            if key == "schema_version":
-                if context_value != "1.0":
-                    raise _ToolInputError(
-                        f"{field}.execution_context.schema_version must be '1.0'."
-                    )
-                continue
-            if context_value is None:
-                clean_context[key] = None
-                continue
-            if not isinstance(context_value, str):
-                raise _ToolInputError(
-                    f"{field}.execution_context.{key} must be an identifier or null."
-                )
-            clean_context[key] = _bounded_identifier(
-                context_value, field=f"{field}.execution_context.{key}"
-            )
-        clean["execution_context"] = clean_context
+        clean["execution_context"] = _bounded_execution_context(context, field=field)
     return clean
 
 
@@ -512,9 +538,16 @@ def _resolved_backend_url(client: Any | None = None) -> str | None:
     candidate = getattr(client, "backend_url", None)
     if not candidate:
         try:
-            from traigent.config.backend_config import BackendConfig
+            from traigent.config.backend_config import (
+                BackendConfig,
+                EndpointNotConfiguredError,
+                endpoint_missing_message,
+            )
 
             candidate = BackendConfig.get_backend_url()
+        except EndpointNotConfiguredError:
+            logger.warning(endpoint_missing_message("backend URL lookup"))
+            return None
         except Exception:  # pragma: no cover - defensive structured fallback
             return None
     return _sanitize_url(str(candidate))
@@ -556,6 +589,69 @@ def _signals_not_ready(response: Any | None) -> bool:
     return False
 
 
+def _error_object(response: Any | None) -> dict[str, Any] | None:
+    payload = _response_payload(response)
+    error = payload.get("error") if isinstance(payload, dict) else None
+    return error if isinstance(error, dict) else None
+
+
+def _not_found_failure(
+    response: Any | None, *, what: str, backend_url: str | None
+) -> dict[str, Any]:
+    if _signals_not_ready(response):
+        return _failure(
+            f"The backend found the run, but {what} analytics are not ready yet.",
+            code="not_ready",
+            http_status=404,
+            backend_url=backend_url,
+        )
+    return _failure(
+        f"The requested {what} was not found on the configured backend.",
+        code="not_found",
+        http_status=404,
+        backend_url=backend_url,
+    )
+
+
+def _conflict_failure(
+    response: Any | None, *, what: str, backend_url: str | None
+) -> dict[str, Any]:
+    # A stale-revision or idempotency conflict is a normal, recoverable
+    # outcome -- never a generic failure. Surface the error code (and, for
+    # stale_revision, the current revision so the caller can re-read
+    # state and retry) instead of collapsing it into backend_unavailable.
+    error = _error_object(response)
+    code = error.get("code") if error is not None else None
+    message = error.get("message") if error is not None else None
+    recognized_codes = {
+        "stale_revision",
+        "idempotency_key_reuse",
+        "turn_in_flight",
+    }
+    result = _failure(
+        message or f"The {what} request conflicts with the session's current state.",
+        code=code if code in recognized_codes else "conflict",
+        http_status=409,
+        backend_url=backend_url,
+    )
+    if error is not None and isinstance(error.get("current_revision"), int):
+        result["current_revision"] = error["current_revision"]
+    return result
+
+
+def _bad_request_failure(
+    response: Any | None, *, what: str, backend_url: str | None
+) -> dict[str, Any]:
+    error = _error_object(response)
+    message = error.get("message") if error is not None else None
+    return _failure(
+        message or f"The {what} request was rejected as invalid.",
+        code="validation_error",
+        http_status=400,
+        backend_url=backend_url,
+    )
+
+
 def _http_status_failure(
     exc: BaseException,
     *,
@@ -582,53 +678,11 @@ def _http_status_failure(
             backend_url=backend_url,
         )
     if status == 404:
-        if _signals_not_ready(response):
-            return _failure(
-                f"The backend found the run, but {what} analytics are not ready yet.",
-                code="not_ready",
-                http_status=status,
-                backend_url=backend_url,
-            )
-        return _failure(
-            f"The requested {what} was not found on the configured backend.",
-            code="not_found",
-            http_status=status,
-            backend_url=backend_url,
-        )
+        return _not_found_failure(response, what=what, backend_url=backend_url)
     if status == 409:
-        # A stale-revision or idempotency conflict is a normal, recoverable
-        # outcome -- never a generic failure. Surface the error code (and, for
-        # stale_revision, the current revision so the caller can re-read
-        # state and retry) instead of collapsing it into backend_unavailable.
-        payload = _response_payload(response)
-        error = payload.get("error") if isinstance(payload, dict) else None
-        code = error.get("code") if isinstance(error, dict) else None
-        message = error.get("message") if isinstance(error, dict) else None
-        recognized_codes = {
-            "stale_revision",
-            "idempotency_key_reuse",
-            "turn_in_flight",
-        }
-        result = _failure(
-            message
-            or f"The {what} request conflicts with the session's current state.",
-            code=code if code in recognized_codes else "conflict",
-            http_status=status,
-            backend_url=backend_url,
-        )
-        if isinstance(error, dict) and isinstance(error.get("current_revision"), int):
-            result["current_revision"] = error["current_revision"]
-        return result
+        return _conflict_failure(response, what=what, backend_url=backend_url)
     if status == 400:
-        payload = _response_payload(response)
-        error = payload.get("error") if isinstance(payload, dict) else None
-        message = error.get("message") if isinstance(error, dict) else None
-        return _failure(
-            message or f"The {what} request was rejected as invalid.",
-            code="validation_error",
-            http_status=status,
-            backend_url=backend_url,
-        )
+        return _bad_request_failure(response, what=what, backend_url=backend_url)
 
     return _failure(
         f"Could not retrieve {what} from the backend.",
@@ -638,7 +692,9 @@ def _http_status_failure(
     )
 
 
-async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
+async def _call_backend(
+    coro_factory: Any, *, what: str, http_error_mapper: Any | None = None
+) -> dict[str, Any]:
     """Run a backend read coroutine and normalize failures to structured output.
 
     ``coro_factory`` is a callable that takes the opened client and returns the
@@ -681,6 +737,10 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
             what,
             getattr(getattr(exc, "response", None), "status_code", None),
         )
+        if http_error_mapper is not None:
+            mapped = http_error_mapper(exc, backend_url)
+            if mapped is not None:
+                return cast("dict[str, Any]", mapped)
         return _http_status_failure(exc, what=what, backend_url=backend_url)
     except _HTTP_TRANSPORT_ERRORS as exc:
         logger.debug("Analytics %s transport failed (%s)", what, type(exc).__name__)
@@ -788,6 +848,31 @@ def _mask_api_key(api_key: str | None) -> dict[str, Any]:
     return {"present": True, "prefix": prefix, "last4": last4}
 
 
+def _usable_stored_jwt(jwt_token: Any) -> Any:
+    if jwt_token is not None and not isinstance(jwt_token, str):
+        return None
+    if isinstance(jwt_token, str) and not jwt_token.strip():
+        return None
+    return jwt_token
+
+
+async def _jwt_credential_authenticated() -> bool:
+    from traigent.cloud.analytics_auth import (
+        resolve_analytics_read_client_credentials,
+    )
+    from traigent.cloud.auth import InvalidCredentialsError
+
+    try:
+        credential_kwargs = await resolve_analytics_read_client_credentials()
+    except InvalidCredentialsError as exc:
+        logger.debug(
+            "Analytics JWT credential validation failed (%s)",
+            type(exc).__name__,
+        )
+        return False
+    return bool(credential_kwargs.get("jwt_token"))
+
+
 async def auth_status_tool() -> dict[str, Any]:
     """Report local auth posture for the analytics MCP (masked; no network).
 
@@ -801,11 +886,7 @@ async def auth_status_tool() -> dict[str, Any]:
     api_key = credentials.get("api_key")
     if api_key is not None and not isinstance(api_key, str):
         api_key = None
-    jwt_token = credentials.get("jwt_token")
-    if jwt_token is not None and not isinstance(jwt_token, str):
-        jwt_token = None
-    if isinstance(jwt_token, str) and not jwt_token.strip():
-        jwt_token = None
+    jwt_token = _usable_stored_jwt(credentials.get("jwt_token"))
 
     credential_source = credentials.get("source") or "none"
     if not api_key:
@@ -818,28 +899,21 @@ async def auth_status_tool() -> dict[str, Any]:
     credential_present = bool(api_key or jwt_token)
     authenticated = bool(api_key)
     if jwt_token and not api_key:
-        from traigent.cloud.analytics_auth import (
-            resolve_analytics_read_client_credentials,
-        )
-        from traigent.cloud.auth import InvalidCredentialsError
+        authenticated = await _jwt_credential_authenticated()
 
-        try:
-            credential_kwargs = await resolve_analytics_read_client_credentials()
-        except InvalidCredentialsError as exc:
-            logger.debug(
-                "Analytics JWT credential validation failed (%s)",
-                type(exc).__name__,
-            )
-            authenticated = False
-        else:
-            authenticated = bool(credential_kwargs.get("jwt_token"))
+    if api_key:
+        auth_type = "api_key"
+    elif jwt_token:
+        auth_type = "jwt"
+    else:
+        auth_type = "none"
 
     return {
         "ok": True,
         "authenticated": authenticated,
         "credential_present": credential_present,
         "credential_source": credential_source if credential_present else "none",
-        "auth_type": "api_key" if api_key else ("jwt" if jwt_token else "none"),
+        "auth_type": auth_type,
         "api_key": _mask_api_key(api_key),
         "backend_url": _sanitize_url(credentials.get("backend_url")),
     }
@@ -1410,81 +1484,90 @@ async def observability_get_related_changes_tool(
     )
 
 
-def _change_brief_guidance(
-    evidence: dict[str, Any],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Build bounded, deterministic guidance from already-projected facts."""
-    hypotheses: list[dict[str, Any]] = []
-    recommendations: list[dict[str, Any]] = []
+def _evidence_count(value: object) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+    ):
+        return 0
+    return max(0, int(value))
 
-    def evidence_count(value: object) -> int:
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-        ):
-            return 0
-        return max(0, int(value))
 
-    analysis = evidence.get("trace_analysis")
-    if not isinstance(analysis, dict):
-        analysis = {}
-
+def _guidance_analysis_completeness(
+    analysis: dict[str, Any],
+    hypotheses: list[dict[str, Any]],
+    recommendations: list[dict[str, Any]],
+) -> None:
     analysis_status = analysis.get("analysis_status")
-    if analysis_status != "completed":
+    if analysis_status == "completed":
+        return
+    hypotheses.append(
+        {
+            "category": "analysis_completeness",
+            "assessment": "unverified",
+            "statement": "Trace derivation is incomplete; structural conclusions may be missing.",
+            "evidence": {
+                "analysis_status": analysis_status,
+                "failure_code": analysis.get("failure_code"),
+            },
+        }
+    )
+    recommendations.append(
+        {
+            "action": "restore_trace_derivation",
+            "rationale": "Complete structural evidence is required before attributing a failure.",
+            "verification": "Re-run this brief after analysis_status becomes completed.",
+        }
+    )
+
+
+def _guidance_tool_reliability(
+    analysis: dict[str, Any],
+    hypotheses: list[dict[str, Any]],
+    recommendations: list[dict[str, Any]],
+) -> None:
+    tool_summaries = analysis.get("tool_summaries")
+    if not isinstance(tool_summaries, list):
+        return
+    for summary in tool_summaries[:20]:
+        if not isinstance(summary, dict):
+            continue
+        failures = _evidence_count(summary.get("failure_count"))
+        retries = _evidence_count(summary.get("retry_count"))
+        fallbacks = _evidence_count(summary.get("fallback_count"))
+        if failures + retries + fallbacks == 0:
+            continue
+        tool_id = summary.get("normalized_tool_id")
         hypotheses.append(
             {
-                "category": "analysis_completeness",
+                "category": "tool_execution_reliability",
                 "assessment": "unverified",
-                "statement": "Trace derivation is incomplete; structural conclusions may be missing.",
+                "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
                 "evidence": {
-                    "analysis_status": analysis_status,
-                    "failure_code": analysis.get("failure_code"),
+                    "normalized_tool_id": tool_id,
+                    "attempt_count": _evidence_count(summary.get("attempt_count")),
+                    "failure_count": failures,
+                    "retry_count": retries,
+                    "fallback_count": fallbacks,
                 },
             }
         )
         recommendations.append(
             {
-                "action": "restore_trace_derivation",
-                "rationale": "Complete structural evidence is required before attributing a failure.",
-                "verification": "Re-run this brief after analysis_status becomes completed.",
+                "action": "test_tool_contract_change",
+                "target_id": tool_id,
+                "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
+                "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change.",
             }
         )
 
-    tool_summaries = analysis.get("tool_summaries")
-    if isinstance(tool_summaries, list):
-        for summary in tool_summaries[:20]:
-            if not isinstance(summary, dict):
-                continue
-            failures = evidence_count(summary.get("failure_count"))
-            retries = evidence_count(summary.get("retry_count"))
-            fallbacks = evidence_count(summary.get("fallback_count"))
-            if failures + retries + fallbacks == 0:
-                continue
-            tool_id = summary.get("normalized_tool_id")
-            hypotheses.append(
-                {
-                    "category": "tool_execution_reliability",
-                    "assessment": "unverified",
-                    "statement": "A tool execution pattern may contribute to this trace's failure or recovery path.",
-                    "evidence": {
-                        "normalized_tool_id": tool_id,
-                        "attempt_count": evidence_count(summary.get("attempt_count")),
-                        "failure_count": failures,
-                        "retry_count": retries,
-                        "fallback_count": fallbacks,
-                    },
-                }
-            )
-            recommendations.append(
-                {
-                    "action": "test_tool_contract_change",
-                    "target_id": tool_id,
-                    "rationale": "The trace contains measured tool failures, retries, or fallbacks.",
-                    "verification": "Compare error_rate, retry_rate, fallback_rate, latency_ms, and cost_usd before and after the change.",
-                }
-            )
 
+def _guidance_loops_and_issues(
+    analysis: dict[str, Any],
+    hypotheses: list[dict[str, Any]],
+    recommendations: list[dict[str, Any]],
+) -> None:
     repeat_groups = analysis.get("repeat_groups")
     if isinstance(repeat_groups, list) and repeat_groups:
         hypotheses.append(
@@ -1520,83 +1603,107 @@ def _change_brief_guidance(
             }
         )
 
+
+def _guidance_change_attribution(
+    evidence: dict[str, Any], hypotheses: list[dict[str, Any]]
+) -> None:
     lineage = evidence.get("related_changes")
     links = lineage.get("links") if isinstance(lineage, dict) else None
-    if isinstance(links, list) and links:
+    if not (isinstance(links, list) and links):
+        return
+    hypotheses.append(
+        {
+            "category": "change_attribution",
+            "assessment": "unverified",
+            "statement": "Linked releases, prompts, configurations, or toolsets are candidate variables, not established causes.",
+            "evidence": {
+                "candidate_changes": [
+                    {
+                        key: link.get(key)
+                        for key in (
+                            "resource_type",
+                            "resource_id",
+                            "resource_version",
+                        )
+                    }
+                    for link in links[:20]
+                    if isinstance(link, dict)
+                ]
+            },
+        }
+    )
+
+
+def _aggregate_recommendation_entry(
+    recommendation: object,
+) -> dict[str, Any] | None:
+    """Wire entry for a recognised aggregate recommendation, else None."""
+    if not isinstance(recommendation, dict):
+        return None
+    category = recommendation.get("category")
+    if not isinstance(category, str):
+        return None
+    rationale = _AGGREGATE_RECOMMENDATION_RATIONALES.get(category)
+    if rationale is None:
+        return None
+    return {
+        "action": "evaluate_aggregate_recommendation",
+        "target_id": recommendation.get("id"),
+        "category": category,
+        "priority": recommendation.get("priority"),
+        "confidence": recommendation.get("confidence"),
+        "subject": recommendation.get("subject"),
+        "rationale": rationale,
+        "evidence": recommendation.get("evidence"),
+        "verification": recommendation.get("measurement"),
+        "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change.",
+    }
+
+
+def _guidance_aggregate_insights(
+    evidence: dict[str, Any],
+    hypotheses: list[dict[str, Any]],
+    recommendations: list[dict[str, Any]],
+) -> None:
+    aggregate_insights = evidence.get("analysis_insights")
+    if not isinstance(aggregate_insights, dict):
+        return
+    conformance = aggregate_insights.get("conformance")
+    if isinstance(conformance, dict) and _evidence_count(
+        conformance.get("alternate_trace_count")
+    ):
         hypotheses.append(
             {
-                "category": "change_attribution",
-                "assessment": "unverified",
-                "statement": "Linked releases, prompts, configurations, or toolsets are candidate variables, not established causes.",
+                "category": "structural_conformance",
+                "assessment": "descriptive_non_causal",
+                "statement": "Alternate structures differ from the dominant observed variant; the baseline is descriptive, not an intended-workflow assertion.",
                 "evidence": {
-                    "candidate_changes": [
-                        {
-                            key: link.get(key)
-                            for key in (
-                                "resource_type",
-                                "resource_id",
-                                "resource_version",
-                            )
-                        }
-                        for link in links[:20]
-                        if isinstance(link, dict)
-                    ]
+                    key: conformance.get(key)
+                    for key in (
+                        "baseline_type",
+                        "baseline_variant_id",
+                        "sampled_trace_count",
+                        "conformance_rate",
+                        "alternate_trace_count",
+                        "alternate_rate",
+                        "alternate_variant_count",
+                        "sample_truncated",
+                    )
                 },
             }
         )
+    aggregate_recommendations = aggregate_insights.get("recommendations")
+    if not isinstance(aggregate_recommendations, list):
+        return
+    for recommendation in aggregate_recommendations[:20]:
+        entry = _aggregate_recommendation_entry(recommendation)
+        if entry is not None:
+            recommendations.append(entry)
 
-    aggregate_insights = evidence.get("analysis_insights")
-    if isinstance(aggregate_insights, dict):
-        conformance = aggregate_insights.get("conformance")
-        if isinstance(conformance, dict) and evidence_count(
-            conformance.get("alternate_trace_count")
-        ):
-            hypotheses.append(
-                {
-                    "category": "structural_conformance",
-                    "assessment": "descriptive_non_causal",
-                    "statement": "Alternate structures differ from the dominant observed variant; the baseline is descriptive, not an intended-workflow assertion.",
-                    "evidence": {
-                        key: conformance.get(key)
-                        for key in (
-                            "baseline_type",
-                            "baseline_variant_id",
-                            "sampled_trace_count",
-                            "conformance_rate",
-                            "alternate_trace_count",
-                            "alternate_rate",
-                            "alternate_variant_count",
-                            "sample_truncated",
-                        )
-                    },
-                }
-            )
-        aggregate_recommendations = aggregate_insights.get("recommendations")
-        if isinstance(aggregate_recommendations, list):
-            for recommendation in aggregate_recommendations[:20]:
-                if not isinstance(recommendation, dict):
-                    continue
-                category = recommendation.get("category")
-                if not isinstance(category, str):
-                    continue
-                rationale = _AGGREGATE_RECOMMENDATION_RATIONALES.get(category)
-                if rationale is None:
-                    continue
-                recommendations.append(
-                    {
-                        "action": "evaluate_aggregate_recommendation",
-                        "target_id": recommendation.get("id"),
-                        "category": category,
-                        "priority": recommendation.get("priority"),
-                        "confidence": recommendation.get("confidence"),
-                        "subject": recommendation.get("subject"),
-                        "rationale": rationale,
-                        "evidence": recommendation.get("evidence"),
-                        "verification": recommendation.get("measurement"),
-                        "caveat": "Observed association only; validate with a bounded before/after cohort before accepting a change.",
-                    }
-                )
 
+def _guidance_cohort_and_instrumentation(
+    evidence: dict[str, Any], recommendations: list[dict[str, Any]]
+) -> None:
     cohort = evidence.get("cohort_comparison")
     if isinstance(cohort, dict):
         recommendations.append(
@@ -1617,6 +1724,26 @@ def _change_brief_guidance(
                 "verification": "Emit typed observations with terminal status and stable tool_name, then rebuild the brief.",
             }
         )
+
+
+def _change_brief_guidance(
+    evidence: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build bounded, deterministic guidance from already-projected facts."""
+    hypotheses: list[dict[str, Any]] = []
+    recommendations: list[dict[str, Any]] = []
+
+    analysis = evidence.get("trace_analysis")
+    if not isinstance(analysis, dict):
+        analysis = {}
+
+    _guidance_analysis_completeness(analysis, hypotheses, recommendations)
+    _guidance_tool_reliability(analysis, hypotheses, recommendations)
+    _guidance_loops_and_issues(analysis, hypotheses, recommendations)
+    _guidance_change_attribution(evidence, hypotheses)
+    _guidance_aggregate_insights(evidence, hypotheses, recommendations)
+    _guidance_cohort_and_instrumentation(evidence, recommendations)
+
     if not hypotheses:
         hypotheses.append(
             {
@@ -1627,6 +1754,66 @@ def _change_brief_guidance(
             }
         )
     return hypotheses[:25], recommendations[:25]
+
+
+def _validate_change_brief_inputs(
+    project_id: str,
+    trace_id: str,
+    start_time: str,
+    end_time: str,
+    reference: dict[str, object] | None,
+    comparison: dict[str, object] | None,
+    metrics: list[str] | None,
+    trace_limit: int,
+    tool_limit: int,
+    insights_limit: int,
+) -> tuple[Any, ...]:
+    pid = _bounded_identifier(project_id, field="project_id")
+    tid = _bounded_identifier(trace_id, field="trace_id")
+    start, end = _bounded_time_window(start_time, end_time)
+    trace_limit = _bounded_limit(trace_limit, maximum=500)
+    tool_limit = _bounded_limit(tool_limit, maximum=100)
+    insights_limit = _bounded_limit(insights_limit, maximum=100)
+    if (reference is None) != (comparison is None):
+        raise _ToolInputError(
+            "reference and comparison must either both be provided or both be omitted."
+        )
+    clean_reference = (
+        _bounded_cohort(reference, field="reference") if reference is not None else None
+    )
+    clean_comparison = (
+        _bounded_cohort(comparison, field="comparison")
+        if comparison is not None
+        else None
+    )
+    clean_metrics = _bounded_identifier_list(metrics or [], field="metrics", maximum=8)
+    if clean_reference is not None and not clean_metrics:
+        clean_metrics = [
+            "error_rate",
+            "retry_rate",
+            "fallback_rate",
+            "latency_ms",
+            "cost_usd",
+        ]
+    unsupported = sorted(set(clean_metrics).difference(_OBSERVABILITY_METRICS))
+    if unsupported:
+        raise _ToolInputError(
+            "metrics contains unsupported value(s): " + ", ".join(unsupported)
+        )
+    if clean_reference is None and clean_metrics:
+        raise _ToolInputError("metrics require both reference and comparison cohorts.")
+    return (
+        pid,
+        tid,
+        start,
+        end,
+        trace_limit,
+        tool_limit,
+        insights_limit,
+        clean_reference,
+        clean_comparison,
+        clean_metrics,
+    )
 
 
 async def observability_build_change_brief_tool(
@@ -1643,46 +1830,29 @@ async def observability_build_change_brief_tool(
 ) -> dict[str, Any]:
     """Compose a privacy-bounded, explicitly non-causal change brief."""
     try:
-        pid = _bounded_identifier(project_id, field="project_id")
-        tid = _bounded_identifier(trace_id, field="trace_id")
-        start, end = _bounded_time_window(start_time, end_time)
-        trace_limit = _bounded_limit(trace_limit, maximum=500)
-        tool_limit = _bounded_limit(tool_limit, maximum=100)
-        insights_limit = _bounded_limit(insights_limit, maximum=100)
-        if (reference is None) != (comparison is None):
-            raise _ToolInputError(
-                "reference and comparison must either both be provided or both be omitted."
-            )
-        clean_reference = (
-            _bounded_cohort(reference, field="reference")
-            if reference is not None
-            else None
+        (
+            pid,
+            tid,
+            start,
+            end,
+            trace_limit,
+            tool_limit,
+            insights_limit,
+            clean_reference,
+            clean_comparison,
+            clean_metrics,
+        ) = _validate_change_brief_inputs(
+            project_id,
+            trace_id,
+            start_time,
+            end_time,
+            reference,
+            comparison,
+            metrics,
+            trace_limit,
+            tool_limit,
+            insights_limit,
         )
-        clean_comparison = (
-            _bounded_cohort(comparison, field="comparison")
-            if comparison is not None
-            else None
-        )
-        clean_metrics = _bounded_identifier_list(
-            metrics or [], field="metrics", maximum=8
-        )
-        if clean_reference is not None and not clean_metrics:
-            clean_metrics = [
-                "error_rate",
-                "retry_rate",
-                "fallback_rate",
-                "latency_ms",
-                "cost_usd",
-            ]
-        unsupported = sorted(set(clean_metrics).difference(_OBSERVABILITY_METRICS))
-        if unsupported:
-            raise _ToolInputError(
-                "metrics contains unsupported value(s): " + ", ".join(unsupported)
-            )
-        if clean_reference is None and clean_metrics:
-            raise _ToolInputError(
-                "metrics require both reference and comparison cohorts."
-            )
     except _ToolInputError as exc:
         return _failure(str(exc))
 
@@ -1841,3 +2011,222 @@ async def director_state_tool(session_id: str) -> dict[str, Any]:
     return await _call_backend(
         lambda reader: reader.director_state(sid), what="director state"
     )
+
+
+# === Agent decision (host-prompt) tools ===
+#
+# The backend issues a CLOSED question about an agent ("Prepare the baseline evaluation for
+# this agent now?"); the customer's coding agent shows it to the human in the host's own
+# question UI and posts back exactly the human's choice. Inputs are ids and closed enums only;
+# results are the backend's closed fields unchanged. A YES means "prepare / preflight the
+# baseline" -- it never authorises spend.
+
+_AGENT_ID_MAX = 255
+# Project ids are opaque server-issued references; the same safe-identifier style as the other
+# tools' ids, and nothing that could break out of a header or a URL query.
+_PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+
+
+def _validate_agent_id(value: str | None) -> str:
+    # The agent id is the customer's own id (the backend accepts any 1-255 character value),
+    # so it is not narrowed to a character class here; it is sent URL-encoded as a single
+    # path segment and never echoed.
+    if (
+        not isinstance(value, str)
+        or value != value.strip()
+        or value in {".", ".."}
+        or not value
+        or len(value) > _AGENT_ID_MAX
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+    ):
+        raise _ToolInputError("agent_id is not a valid agent identifier.")
+    return value
+
+
+def _validate_optional_project_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or _PROJECT_ID_PATTERN.fullmatch(value) is None:
+        raise _ToolInputError("project_id is not a valid project identifier.")
+    return value
+
+
+def _agent_decision_error_mapper(exc: BaseException, backend_url: str | None) -> Any:
+    """Map a backend error to a closed failure; never falls back to a message-echoing path.
+
+    A body matching the contract's closed error shape surfaces its ``reason``. Anything else
+    -- whatever the status -- becomes a fixed failure that carries no backend text.
+    """
+    response = getattr(exc, "response", None)
+    raw_status = getattr(response, "status_code", None)
+    status = raw_status if isinstance(raw_status, int) else None
+    payload = _response_payload(response)
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"error"}
+        or not isinstance(error, dict)
+        or error.get("reason") not in AGENT_DECISION_ERROR_REASONS
+    ):
+        if status in (401, 403):
+            # Both outcomes carry fixed text only (no backend text on either path).
+            return _http_status_failure(
+                exc, what=_AGENT_DECISION, backend_url=backend_url
+            )
+        if status is None or status >= 500:
+            return _failure(
+                "Could not retrieve agent decision from the backend.",
+                code="backend_unavailable",
+                http_status=status,
+                backend_url=backend_url,
+            )
+        return _failure(
+            "The backend refused the agent decision request.",
+            code="request_rejected",
+            http_status=status,
+            backend_url=backend_url,
+        )
+    reason = str(error["reason"])
+    result = _failure(
+        f"The backend refused the agent decision request ({reason}).",
+        code=reason,
+        http_status=status,
+        backend_url=backend_url,
+    )
+    result["reason"] = reason
+    retry_after = error.get("retry_after_seconds")
+    if isinstance(retry_after, int) and not isinstance(retry_after, bool):
+        result["retry_after_seconds"] = max(0, min(86400, retry_after))
+    return result
+
+
+def _agent_url(agent_id: str, project_id: str | None) -> str | None:
+    if project_id is None:
+        return None
+    from traigent.cloud.sync_manager import build_agent_url
+    from traigent.config.backend_config import BackendConfig
+
+    try:
+        url: str = build_agent_url(
+            BackendConfig.get_cloud_web_url(), agent_id, project_id=project_id
+        )
+        return url
+    except Exception as exc:  # noqa: BLE001 - a link is optional
+        logger.debug("Agent portal link construction failed (%s)", type(exc).__name__)
+        return None
+
+
+async def _agent_decision_read(
+    coro_factory: Any, *, agent_id: str, project_id: str | None
+) -> dict[str, Any]:
+    result = await _call_backend(
+        coro_factory,
+        what=_AGENT_DECISION,
+        http_error_mapper=_agent_decision_error_mapper,
+    )
+    if result.get("ok") is True:
+        url = _agent_url(agent_id, project_id)
+        if url is not None:
+            result["agent_url"] = url
+    return result
+
+
+async def agent_decision_ensure_tool(
+    agent_id: str, project_id: str | None = None
+) -> dict[str, Any]:
+    """Ask whether Traigent has a question for the human about this agent.
+
+    Returns ``{"decision": null}`` when none applies now, or the OPEN decision with its closed
+    ``prompt`` (question and options). Show that question and exactly those options to the
+    human, then post their choice with ``agent_decision_answer``.
+    """
+    try:
+        aid = _validate_agent_id(agent_id)
+        pid = _validate_optional_project_id(project_id)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _agent_decision_read(
+        lambda reader: reader.agent_decision_ensure(aid, project_id=pid),
+        agent_id=aid,
+        project_id=pid,
+    )
+
+
+async def agent_decision_latest_tool(
+    agent_id: str, project_id: str | None = None
+) -> dict[str, Any]:
+    """Read the latest decision for this agent in any status (read-only).
+
+    After a YES, ``execution_ref`` and ``next_action`` say what to do next.
+    """
+    try:
+        aid = _validate_agent_id(agent_id)
+        pid = _validate_optional_project_id(project_id)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _agent_decision_read(
+        lambda reader: reader.agent_decision_latest(aid, project_id=pid),
+        agent_id=aid,
+        project_id=pid,
+    )
+
+
+async def agent_decision_answer_tool(
+    decision_id: str,
+    answer: str,
+    options_version: str,
+    policy_version: str,
+    basis_digest: str,
+    retry_nonce: str | None = None,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Post the human's closed answer to a decision.
+
+    ``answer`` must be exactly the option the human chose. ``options_version``,
+    ``policy_version`` and ``basis_digest`` are echoed from the decision. ``retry_nonce`` is
+    generated when omitted and returned, so a retry of the same attempt can reuse it.
+    """
+    nonce = retry_nonce
+    try:
+        did = _require_identifier(decision_id, field="decision_id")
+        if AGENT_DECISION_ID_RE.fullmatch(did) is None:
+            raise _ToolInputError("decision_id is not a valid decision id.")
+        if answer not in AGENT_DECISION_ANSWERS:
+            raise _ToolInputError(
+                f"answer must be one of: {', '.join(AGENT_DECISION_ANSWERS)}."
+            )
+        if options_version not in AGENT_DECISION_OPTIONS_VERSIONS:
+            raise _ToolInputError("options_version is not a supported version.")
+        if policy_version not in AGENT_DECISION_POLICY_VERSIONS:
+            raise _ToolInputError("policy_version is not a supported version.")
+        if (
+            not isinstance(basis_digest, str)
+            or AGENT_DECISION_DIGEST_RE.fullmatch(basis_digest) is None
+        ):
+            raise _ToolInputError("basis_digest is not a valid digest.")
+        if nonce is None:
+            nonce = f"rn_{uuid.uuid4().hex}"
+        elif (
+            not isinstance(nonce, str)
+            or AGENT_DECISION_NONCE_RE.fullmatch(nonce) is None
+        ):
+            raise _ToolInputError("retry_nonce is not a valid retry nonce.")
+        pid = _validate_optional_project_id(project_id)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    final_nonce = nonce
+    result = await _call_backend(
+        lambda reader: reader.agent_decision_answer(
+            did,
+            answer=answer,
+            options_version=options_version,
+            policy_version=policy_version,
+            basis_digest=basis_digest,
+            retry_nonce=final_nonce,
+            project_id=pid,
+        ),
+        what=_AGENT_DECISION,
+        http_error_mapper=_agent_decision_error_mapper,
+    )
+    result["retry_nonce"] = final_nonce
+    return result

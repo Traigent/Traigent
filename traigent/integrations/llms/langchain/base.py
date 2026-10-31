@@ -27,6 +27,12 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+_LC_OPENAI_CHAT = "langchain_openai.ChatOpenAI"
+_LC_OPENAI_LLM = "langchain_openai.OpenAI"
+_LC_ANTHROPIC_CHAT = "langchain_anthropic.ChatAnthropic"
+_LC_LEGACY_OPENAI = "langchain.llms.OpenAI"
+_LC_LEGACY_ANTHROPIC = "langchain.llms.Anthropic"
+
 
 class LangChainIntegration:
     """Enhanced LangChain integration with Traigent optimization."""
@@ -34,7 +40,7 @@ class LangChainIntegration:
     def __init__(self) -> None:
         """Initialize LangChain integration."""
         self.supported_llms: dict[str, Any] = {
-            "langchain_openai.ChatOpenAI": {
+            _LC_OPENAI_CHAT: {
                 "model": "model",
                 "temperature": "temperature",
                 "max_tokens": "max_tokens",
@@ -44,7 +50,7 @@ class LangChainIntegration:
                 "streaming": "streaming",
                 "stream": "streaming",
             },
-            "langchain_openai.OpenAI": {
+            _LC_OPENAI_LLM: {
                 "model": "model",
                 "temperature": "temperature",
                 "max_tokens": "max_tokens",
@@ -52,7 +58,7 @@ class LangChainIntegration:
                 "frequency_penalty": "frequency_penalty",
                 "presence_penalty": "presence_penalty",
             },
-            "langchain_anthropic.ChatAnthropic": {
+            _LC_ANTHROPIC_CHAT: {
                 "model": "model",
                 "temperature": "temperature",
                 "max_tokens": "max_tokens",
@@ -62,7 +68,7 @@ class LangChainIntegration:
                 "streaming": "streaming",
                 "stream": "streaming",
             },
-            "langchain.llms.OpenAI": {
+            _LC_LEGACY_OPENAI: {
                 "model": "model_name",
                 "temperature": "temperature",
                 "max_tokens": "max_tokens",
@@ -70,7 +76,7 @@ class LangChainIntegration:
                 "frequency_penalty": "frequency_penalty",
                 "presence_penalty": "presence_penalty",
             },
-            "langchain.llms.Anthropic": {
+            _LC_LEGACY_ANTHROPIC: {
                 "model": "model",
                 "temperature": "temperature",
                 "max_tokens": "max_tokens_to_sample",
@@ -142,7 +148,7 @@ def enable_langchain_optimization(llm_types: list[str] | None = None) -> None:
         # Your existing LangChain code works unchanged
         @traigent.optimize()
         def my_langchain_app():
-            llm = ChatOpenAI(model="gpt-3.5-turbo")
+            llm = ChatOpenAI(model="gpt-5.6-terra")
             return llm.invoke("Hello world")
 
         # Traigent will automatically test different models/parameters
@@ -190,9 +196,9 @@ def enable_chatgpt_optimization() -> None:
     """Enable optimization for ChatGPT/OpenAI LangChain models."""
     enable_langchain_optimization(
         [
-            "langchain_openai.ChatOpenAI",
-            "langchain_openai.OpenAI",
-            "langchain.llms.OpenAI",
+            _LC_OPENAI_CHAT,
+            _LC_OPENAI_LLM,
+            _LC_LEGACY_OPENAI,
         ]
     )
 
@@ -201,8 +207,8 @@ def enable_claude_optimization() -> None:
     """Enable optimization for Claude/Anthropic LangChain models."""
     enable_langchain_optimization(
         [
-            "langchain_anthropic.ChatAnthropic",
-            "langchain.llms.Anthropic",
+            _LC_ANTHROPIC_CHAT,
+            _LC_LEGACY_ANTHROPIC,
         ]
     )
 
@@ -232,8 +238,8 @@ def auto_detect_langchain_llms() -> None:
 
         available_llms.extend(
             [
-                "langchain_openai.ChatOpenAI",
-                "langchain_openai.OpenAI",
+                _LC_OPENAI_CHAT,
+                _LC_OPENAI_LLM,
             ]
         )
     except ImportError:
@@ -241,12 +247,12 @@ def auto_detect_langchain_llms() -> None:
 
     legacy_langchain_llms = sys.modules.get("langchain.llms")
     if legacy_langchain_llms is not None:
-        available_llms.append("langchain.llms.OpenAI")
+        available_llms.append(_LC_LEGACY_OPENAI)
     else:
         try:
             import langchain.llms  # noqa: F401
 
-            available_llms.append("langchain.llms.OpenAI")
+            available_llms.append(_LC_LEGACY_OPENAI)
         except ImportError:
             pass
 
@@ -254,17 +260,17 @@ def auto_detect_langchain_llms() -> None:
     try:
         import langchain_anthropic  # noqa: F401
 
-        available_llms.append("langchain_anthropic.ChatAnthropic")
+        available_llms.append(_LC_ANTHROPIC_CHAT)
     except ImportError:
         pass
 
     if legacy_langchain_llms is not None:
-        available_llms.append("langchain.llms.Anthropic")
+        available_llms.append(_LC_LEGACY_ANTHROPIC)
     else:
         try:
             import langchain.llms  # noqa: F401, F811
 
-            available_llms.append("langchain.llms.Anthropic")
+            available_llms.append(_LC_LEGACY_ANTHROPIC)
         except ImportError:
             pass
 

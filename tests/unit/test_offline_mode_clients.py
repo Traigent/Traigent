@@ -9,6 +9,7 @@ switch is off.
 
 from __future__ import annotations
 
+import importlib
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -100,7 +101,13 @@ URLOPEN_CLIENTS = [
 def test_urlopen_client_fails_closed_offline(monkeypatch, module_path, factory):
     monkeypatch.setenv(OFFLINE, "true")
     client, call = factory()
-    with patch(f"{module_path}.request.urlopen") as urlopen:
+    # Most clients route through ``open_no_redirect``; the projects client keeps its
+    # own no-redirect opener and still calls ``request.urlopen`` directly.
+    module = importlib.import_module(module_path)
+    seam = (
+        "open_no_redirect" if hasattr(module, "open_no_redirect") else "request.urlopen"
+    )
+    with patch(f"{module_path}.{seam}") as urlopen:
         with pytest.raises(OfflineModeError):
             call(client)
     urlopen.assert_not_called()
@@ -130,7 +137,7 @@ def test_transport_is_reached_when_not_offline(monkeypatch):
     monkeypatch.delenv(OFFLINE, raising=False)
     client, call = _evaluation()
     with patch(
-        "traigent.evaluation.client.request.urlopen",
+        "traigent.evaluation.client.open_no_redirect",
         MagicMock(side_effect=_TransportReached),
     ) as urlopen:
         with pytest.raises(Exception) as excinfo:

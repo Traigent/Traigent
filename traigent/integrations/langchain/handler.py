@@ -85,7 +85,7 @@ def trial_context(config: dict[str, Any]):
         config: Trial configuration dict (temperature, model, etc.)
 
     Example:
-        with trial_context({"temperature": 0.7, "model": "gpt-4"}):
+        with trial_context({"temperature": 0.7, "model": "gpt-5.6-sol"}):
             result = await app.ainvoke(inputs)
     """
     token = _current_trial_context.set(config)
@@ -178,75 +178,92 @@ def _iter_generation_payloads(response: Any) -> list[Any]:
     return payloads
 
 
-def _extract_response_token_usage(response: Any) -> tuple[int, int, int]:
-    llm_output = getattr(response, "llm_output", None)
-    if isinstance(llm_output, dict):
-        for key in ("token_usage", "usage", "usage_metadata"):
-            tokens = _tokens_from_usage(llm_output.get(key))
-            if tokens is not None:
-                return tokens
+_USAGE_KEYS = ("token_usage", "usage", "usage_metadata")
 
+
+def _tokens_from_usage_container(container: Any) -> tuple[int, int, int] | None:
+    """First usable usage entry of a dict, in ``_USAGE_KEYS`` order."""
+    if not isinstance(container, dict):
+        return None
+    for key in _USAGE_KEYS:
+        tokens = _tokens_from_usage(container.get(key))
+        if tokens is not None:
+            return tokens
+    return None
+
+
+def _tokens_from_usage_attrs(holder: Any) -> tuple[int, int, int] | None:
+    """Usable ``usage_metadata`` then ``usage`` attribute of ``holder``."""
     for source in (
-        getattr(response, "usage_metadata", None),
-        getattr(response, "usage", None),
+        getattr(holder, "usage_metadata", None),
+        getattr(holder, "usage", None),
     ):
         tokens = _tokens_from_usage(source)
         if tokens is not None:
             return tokens
+    return None
 
-    response_metadata = getattr(response, "response_metadata", None)
-    if isinstance(response_metadata, dict):
-        for key in ("token_usage", "usage", "usage_metadata"):
-            tokens = _tokens_from_usage(response_metadata.get(key))
-            if tokens is not None:
-                return tokens
 
+def _tokens_from_generation(generation: Any) -> tuple[int, int, int] | None:
+    for candidate in (getattr(generation, "message", None), generation):
+        tokens = _tokens_from_usage_attrs(candidate)
+        if tokens is not None:
+            return tokens
+        tokens = _tokens_from_usage_container(
+            getattr(candidate, "response_metadata", None)
+        )
+        if tokens is not None:
+            return tokens
+    return None
+
+
+def _extract_response_token_usage(response: Any) -> tuple[int, int, int]:
+    tokens = _tokens_from_usage_container(getattr(response, "llm_output", None))
+    if tokens is not None:
+        return tokens
+    tokens = _tokens_from_usage_attrs(response)
+    if tokens is not None:
+        return tokens
+    tokens = _tokens_from_usage_container(getattr(response, "response_metadata", None))
+    if tokens is not None:
+        return tokens
     for generation in _iter_generation_payloads(response):
-        for candidate in (getattr(generation, "message", None), generation):
-            for source in (
-                getattr(candidate, "usage_metadata", None),
-                getattr(candidate, "usage", None),
-            ):
-                tokens = _tokens_from_usage(source)
-                if tokens is not None:
-                    return tokens
-
-            metadata = getattr(candidate, "response_metadata", None)
-            if isinstance(metadata, dict):
-                for key in ("token_usage", "usage", "usage_metadata"):
-                    tokens = _tokens_from_usage(metadata.get(key))
-                    if tokens is not None:
-                        return tokens
-
+        tokens = _tokens_from_generation(generation)
+        if tokens is not None:
+            return tokens
     return 0, 0, 0
 
 
+def _nonempty_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _model_from_mapping(mapping: Any) -> str | None:
+    """Model name from a ``model_name``/``model`` mapping, if it is one."""
+    if not isinstance(mapping, dict):
+        return None
+    return _nonempty_str(mapping.get("model_name") or mapping.get("model"))
+
+
 def _extract_response_model(response: Any) -> str | None:
-    llm_output = getattr(response, "llm_output", None)
-    if isinstance(llm_output, dict):
-        model = llm_output.get("model_name") or llm_output.get("model")
-        if isinstance(model, str) and model:
-            return model
+    model = _model_from_mapping(getattr(response, "llm_output", None))
+    if model:
+        return model
 
-    response_metadata = getattr(response, "response_metadata", None)
-    if isinstance(response_metadata, dict):
-        model = response_metadata.get("model_name") or response_metadata.get("model")
-        if isinstance(model, str) and model:
-            return model
+    model = _model_from_mapping(getattr(response, "response_metadata", None))
+    if model:
+        return model
 
-    model = getattr(response, "model", None)
-    if isinstance(model, str) and model:
+    model = _nonempty_str(getattr(response, "model", None))
+    if model:
         return model
 
     for generation in _iter_generation_payloads(response):
         for candidate in (getattr(generation, "message", None), generation):
-            metadata = getattr(candidate, "response_metadata", None)
-            if isinstance(metadata, dict):
-                model = metadata.get("model_name") or metadata.get("model")
-                if isinstance(model, str) and model:
-                    return model
-            model = getattr(candidate, "model", None)
-            if isinstance(model, str) and model:
+            model = _model_from_mapping(
+                getattr(candidate, "response_metadata", None)
+            ) or _nonempty_str(getattr(candidate, "model", None))
+            if model:
                 return model
 
     return None
@@ -312,7 +329,8 @@ class TraigentHandlerMetrics:
     tool_calls: list[ToolCallMetrics] = field(default_factory=list)
     total_cost: float = 0.0
     #: True when some LLM call's cost is unmeasured: ``total_cost`` is then only
-    #: the priced part, and ``to_measures_dict`` withholds it (Traigent#2517).
+    #: the priced part; ``to_measures_dict`` reports it as ``cost_lower_bound``
+    #: instead of ``total_cost`` (Traigent#2517).
     cost_unmeasured: bool = False
     total_latency_ms: float = 0.0
     total_input_tokens: int = 0
@@ -344,41 +362,46 @@ class TraigentHandlerMetrics:
             f"{prefix}tool_call_count": len(self.tool_calls),
         }
         if self.cost_unmeasured:
-            # Some call's spend is unknown: no total is claimed (#2517).
+            # Some call's spend is unknown: no total is claimed (#2517). The
+            # priced part is sent as an explicit floor, as the JS handler does;
+            # it is a lower bound, never a $0 total.
             measures[f"{prefix}cost_unmeasured"] = 1.0
+            measures[f"{prefix}cost_lower_bound"] = self.total_cost
         else:
             measures[f"{prefix}total_cost"] = self.total_cost
 
-        if include_per_node:
-            # Aggregate by node
-            node_costs: dict[str, float] = {}
-            node_cost_unmeasured: set[str] = set()
-            node_latencies: dict[str, float] = {}
-            node_tokens: dict[str, int] = {}
+        if not include_per_node:
+            return measures
 
-            for call in self.llm_calls:
-                node = call.node_name or "unknown"
-                node_costs[node] = node_costs.get(node, 0.0) + call.cost
-                if call.cost_unmeasured:
-                    node_cost_unmeasured.add(node)
-                node_latencies[node] = node_latencies.get(node, 0.0) + call.latency_ms
-                node_tokens[node] = node_tokens.get(node, 0) + call.total_tokens
+        # Aggregate by node
+        node_costs: dict[str, float] = {}
+        node_cost_unmeasured: set[str] = set()
+        node_latencies: dict[str, float] = {}
+        node_tokens: dict[str, int] = {}
 
-            # Sanitize node names for MeasuresDict
-            def sanitize(name: str) -> str:
-                return re.sub(r"\W", "_", name, flags=re.ASCII)
+        for call in self.llm_calls:
+            node = call.node_name or "unknown"
+            node_costs[node] = node_costs.get(node, 0.0) + call.cost
+            if call.cost_unmeasured:
+                node_cost_unmeasured.add(node)
+            node_latencies[node] = node_latencies.get(node, 0.0) + call.latency_ms
+            node_tokens[node] = node_tokens.get(node, 0) + call.total_tokens
 
-            for node, cost in node_costs.items():
-                if node in node_cost_unmeasured:
-                    continue  # a node with an unmeasured call has no cost
-                safe_node = sanitize(node)
-                measures[f"{prefix}{safe_node}_cost"] = cost
-            for node, latency in node_latencies.items():
-                safe_node = sanitize(node)
-                measures[f"{prefix}{safe_node}_latency_ms"] = latency
-            for node, tokens in node_tokens.items():
-                safe_node = sanitize(node)
-                measures[f"{prefix}{safe_node}_tokens"] = tokens
+        # Sanitize node names for MeasuresDict
+        def sanitize(name: str) -> str:
+            return re.sub(r"\W", "_", name, flags=re.ASCII)
+
+        for node, cost in node_costs.items():
+            if node in node_cost_unmeasured:
+                continue  # a node with an unmeasured call has no cost
+            safe_node = sanitize(node)
+            measures[f"{prefix}{safe_node}_cost"] = cost
+        for node, latency in node_latencies.items():
+            safe_node = sanitize(node)
+            measures[f"{prefix}{safe_node}_latency_ms"] = latency
+        for node, tokens in node_tokens.items():
+            safe_node = sanitize(node)
+            measures[f"{prefix}{safe_node}_tokens"] = tokens
 
         return measures
 

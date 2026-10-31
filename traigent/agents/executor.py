@@ -140,7 +140,7 @@ class AgentExecutor(ABC):
             raise
         except Exception as e:
             duration = time.perf_counter() - start_time
-            logger.error(f"Agent execution failed: {e}")
+            logger.exception(f"Agent execution failed: {e}")
 
             return AgentExecutionResult(
                 output=None,
@@ -347,7 +347,7 @@ class AgentExecutor(ABC):
             logger.info(f"Cleanup completed for {self.__class__.__name__}")
 
         except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
+            logger.exception(f"Error during cleanup: {e}")
             # Mark as done even if cleanup fails to prevent retries
             self._cleanup_done = True
             raise

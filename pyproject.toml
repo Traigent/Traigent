@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=77.0", "wheel"]  # PEP 639 SPDX license expressions require setuptools >= 77
+requires = ["setuptools>=84.1.0", "wheel"]  # PEP 639 SPDX expressions require >=77; GHSA-xmj3-9gf7-h52w fixed in 84.1.0
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.31.2.dev0"
+version = "0.32.0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -12,14 +12,13 @@ description = "Enterprise-grade LLM optimization platform with advanced analytic
 readme = "README.md"
 license = "AGPL-3.0-only OR LicenseRef-Traigent-Commercial"
 license-files = ["LICENSE", "NOTICE", "COMMERCIAL-LICENSE.md", "CONTRIBUTOR-LICENSING.md"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -47,7 +46,7 @@ dependencies = [
     "PyJWT[crypto]>=2.15.1,<3.0.0",  # >=2.15.1: Dependabot alerts — DoS, SSRF via JWKClient, HS256 forgery, alg bypass, kid DoS
     "backoff>=2.2.0",
     "litellm>=1.100.5,<2",  # Floor: 1.84+ escaped the 1.83.x python-dotenv==1.0.1 and openai==2.24.0 exact sub-pins; 1.87.1 is the first stable release verified against this SDK. Upper bound <2 guards against a future breaking major. Only the public API surface (completion, acompletion, cost_per_token, token_counter, model_cost, ModelResponse) is used — stable across the 1.x line.
-    "filelock>=4.0.9,<5",  # AIKIDO-2026-181731 (symlink handling in the lock path), AIKIDO-2026-444439 (fixed in 4.0.9; the <4 cap blocked it); transitive via litellm -> tokenizers -> huggingface-hub, undeclared upstream
+    "filelock>=4.2.1,<5",  # CVE-2026-112940/112913/112907 fixed in 4.2.1; retains AIKIDO-2026-181731 and -444439 fixes; transitive via litellm -> tokenizers -> huggingface-hub, undeclared upstream
     "tenacity>=8.1.0",  # tenacity completes litellm's retry surface: litellm imports it lazily in its public *_with_retries helpers (and the retry path exercised on litellm 1.91.0, #1824) but doesn't declare it — declare it so litellm's retry path works on a clean install
     "rank-bm25",
     "psutil>=5.8.0",
@@ -64,10 +63,16 @@ dependencies = [
 [project.optional-dependencies]
 # Analytics and intelligence features (Sprint 8)
 analytics = [
-    "numpy>=1.21.0; python_version < '3.12'",
-    "numpy>=2.5.3; python_version >= '3.12'",  # AIKIDO-2026-775417; numpy 2.5 needs py>=3.12
+    "numpy>=2.5.3",  # AIKIDO-2026-775417
     "pandas>=1.3.0",
     "matplotlib>=3.5.0",
+]
+
+# Runtime requirements TVL compiler (PY-1): development-only, Python 3.12+.
+# Needed only for TVL-fragment requirements (`@traigent.requirement(tvl=...)`);
+# the kwargs path and `import traigent` work without it. Pinned to the tvl-spec 1.4.0 release on PyPI.
+runtime-tvl = [
+    "tvl-spec==1.4.0",
 ]
 
 # Bayesian optimization (Sprint 4)
@@ -90,7 +95,7 @@ integrations = [
     "anthropic>=0.18.0",
     "groq>=0.9.0",  # Groq cloud inference
     "google-genai>=0.8.0",  # Google's forward SDK for direct Gemini support
-    "google-generativeai>=0.3.0",  # Kept for langchain-google-genai compatibility
+    "google-generativeai>=0.3.0; python_version < '3.14'",  # deprecated upstream; capped grpcio-status on 3.14 blocks google-cloud-storage>=3.10 (Aikido PR #2765). langchain-google-genai 4.x uses google-genai.
     "rank_bm25>=0.2.2",
     "mlflow-skinny>=3.11.1,<4.0",  # Tracking-only MLflow. Full mlflow pins cryptography<50 and blocks CVE-2026-69247 (#2183); this integration uses no model flavors. `mlflow` requires `mlflow-skinny==<same version>`, so installing full mlflow alongside still satisfies this. Floor also covers the mlflow <3.9.0 tarfile.extractall path-traversal (#616).
     "pandas>=1.3.0",  # Preserve the DataFrame surface previously supplied transitively by full mlflow.
@@ -169,19 +174,19 @@ test = [
 # Pin all otel packages to the same minor so UV/pip can't mix incompatible
 # API ↔ SDK ↔ exporter versions (see #558 ReadableLogRecord crash).
 tracing = [
-    "opentelemetry-api>=1.20.0,<2.0.0",
+    "opentelemetry-api>=1.45.1,<2.0.0",  # GHSA/Dependabot 2026-10-23 security floor
     "opentelemetry-sdk>=1.20.0,<2.0.0",
     "opentelemetry-exporter-otlp>=1.20.0,<2.0.0",
 ]
 
 # OpenTelemetry-based observability (traigent.observability.otel).  Tested
-# against opentelemetry 1.44.0; licences verified from package metadata on
+# against opentelemetry 1.45.1 (GHSA/Dependabot 2026-10-23 security floor); licences verified from package metadata on
 # 2026-09-30 (see docs/observability/otel-provenance.md and NOTICE).
 observability = [
-    "opentelemetry-api>=1.44.0,<2.0.0",
-    "opentelemetry-sdk>=1.44.0,<2.0.0",
-    "opentelemetry-exporter-otlp-proto-common>=1.44.0,<2.0.0",
-    "opentelemetry-proto>=1.44.0,<2.0.0",
+    "opentelemetry-api>=1.45.1,<2.0.0",
+    "opentelemetry-sdk>=1.45.1,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-common>=1.45.1,<2.0.0",
+    "opentelemetry-proto>=1.45.1,<2.0.0",
 ]
 # Optional third-party instrumentors (Apache-2.0).  Exact pins: metadata was
 # verified for these versions only.  tests/unit/observability/otel/
@@ -189,31 +194,31 @@ observability = [
 # real packages when an extra is installed (it skips cleanly otherwise), so a
 # default install does not exercise them.
 observability-openai = [
-    "opentelemetry-api>=1.44.0,<2.0.0",
-    "opentelemetry-sdk>=1.44.0,<2.0.0",
-    "opentelemetry-exporter-otlp-proto-common>=1.44.0,<2.0.0",
-    "opentelemetry-proto>=1.44.0,<2.0.0",
+    "opentelemetry-api>=1.45.1,<2.0.0",
+    "opentelemetry-sdk>=1.45.1,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-common>=1.45.1,<2.0.0",
+    "opentelemetry-proto>=1.45.1,<2.0.0",
     "openinference-instrumentation-openai==0.1.61",
 ]
 observability-anthropic = [
-    "opentelemetry-api>=1.44.0,<2.0.0",
-    "opentelemetry-sdk>=1.44.0,<2.0.0",
-    "opentelemetry-exporter-otlp-proto-common>=1.44.0,<2.0.0",
-    "opentelemetry-proto>=1.44.0,<2.0.0",
+    "opentelemetry-api>=1.45.1,<2.0.0",
+    "opentelemetry-sdk>=1.45.1,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-common>=1.45.1,<2.0.0",
+    "opentelemetry-proto>=1.45.1,<2.0.0",
     "openinference-instrumentation-anthropic==2.1.7",
 ]
 observability-langchain = [
-    "opentelemetry-api>=1.44.0,<2.0.0",
-    "opentelemetry-sdk>=1.44.0,<2.0.0",
-    "opentelemetry-exporter-otlp-proto-common>=1.44.0,<2.0.0",
-    "opentelemetry-proto>=1.44.0,<2.0.0",
+    "opentelemetry-api>=1.45.1,<2.0.0",
+    "opentelemetry-sdk>=1.45.1,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-common>=1.45.1,<2.0.0",
+    "opentelemetry-proto>=1.45.1,<2.0.0",
     "openinference-instrumentation-langchain==0.1.76",
 ]
 observability-bedrock = [
-    "opentelemetry-api>=1.44.0,<2.0.0",
-    "opentelemetry-sdk>=1.44.0,<2.0.0",
-    "opentelemetry-exporter-otlp-proto-common>=1.44.0,<2.0.0",
-    "opentelemetry-proto>=1.44.0,<2.0.0",
+    "opentelemetry-api>=1.45.1,<2.0.0",
+    "opentelemetry-sdk>=1.45.1,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-common>=1.45.1,<2.0.0",
+    "opentelemetry-proto>=1.45.1,<2.0.0",
     "openinference-instrumentation-bedrock==0.1.54",
 ]
 
@@ -224,10 +229,10 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.10.0",
     "pytest-xdist>=3.0.0",  # Required by addopts: -n auto --dist loadgroup
-    "black>=26.3.1",  # CVE-2026-32274 fix
-    "isort>=5.10.0",
+    "black>=26.10.1",  # CVE-2026-32274 fix; GHSA/Dependabot 2026-10-23 security floor
+    "isort==9.0.1",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
     "flake8>=5.0.0",
-    "mypy>=1.0.0",
+    "mypy==2.3.1",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
     "types-PyYAML>=6.0.0",
     "types-requests>=2.31.0",
     "types-bleach>=6.0.0",
@@ -252,8 +257,7 @@ docs = [
 # This is the recommended bundle for production ML workloads
 ml = [
     "traigent[bayesian,analytics]",
-    "numpy>=1.21.0; python_version < '3.12'",
-    "numpy>=2.5.3; python_version >= '3.12'",  # AIKIDO-2026-775417; numpy 2.5 needs py>=3.12
+    "numpy>=2.5.3",  # AIKIDO-2026-775417
     "scipy>=1.7.0",
 ]
 
@@ -269,6 +273,21 @@ deepeval = [
 cloud = [
     "traigent[security]",
     "boto3>=1.28.0",
+]
+
+# Execution-snapshot store on S3 / S3-compatible storage (traigent.snapshot.backends.S3Store).
+snapshot-s3 = [
+    "boto3>=1.35.2",  # first release whose PutObject model accepts IfNoneMatch (botocore 1.35.2)
+]
+
+# Execution-snapshot store on Google Cloud Storage (traigent.snapshot.backends.GCSStore).
+snapshot-gcs = [
+    "google-cloud-storage>=3.10.0",  # Aikido PR #2765: 2 CVEs fixed in 3.10.0
+]
+
+# Execution-snapshot store on Azure Blob Storage (traigent.snapshot.backends.AzureBlobStore).
+snapshot-azure = [
+    "azure-storage-blob>=12.20.0",
 ]
 
 # Recommended bundle for end users — everything needed to run optimizations
@@ -314,7 +333,6 @@ exclude = ["tests*", "demos*", "docs*", "traigent.experimental*"]
 traigent = [
     "py.typed",
     "examples/**/*.jsonl",
-    "skills/**/*.md",
     "playbook/schemas/*.json",
     "observability/otel/*.json",
     "connectors/schemas/*.json",
@@ -326,23 +344,24 @@ traigent_validation = ["py.typed"]
 [tool.uv]
 constraint-dependencies = [
     "flask>=3.1.3",
-    "gitpython>=3.1.62",  # security floor; transitive, a relock once dropped it to 3.1.59
+    "gitpython>=3.2.1",  # security floor; transitive, a relock once dropped it to 3.1.59; GHSA/Dependabot 2026-10-23 security floor
     "idna>=3.15",  # CVE-2024-3651 bypass in idna.encode()
-    "langgraph>=1.0.10",
+    "langgraph>=1.2.14",
     "langgraph-sdk>=0.4.4",
     "langsmith>=0.7.31",
     "mako>=1.3.11",
+    "nltk>=3.10.4",  # GHSA-j456-xh4h-cpf2
     "orjson>=3.11.6",
     "pyasn1>=0.6.3",
     "python-dotenv>=1.2.2",
     "urllib3>=2.8.0",
-    "virtualenv>=21.14.4",
+    "virtualenv>=21.14.9",  # GHSA/Dependabot 2026-10-23 security floor
     "werkzeug>=3.1.6",
 ]
 
 [tool.black]
 line-length = 88
-target-version = ["py311", "py312"]
+target-version = ["py312"]
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -504,7 +523,7 @@ exclude_lines = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 88
 exclude = [
     # NOTE: the examples folder is excluded from this lint configuration
@@ -521,7 +540,7 @@ exclude = [
     # Python-only tool -- the REQUIRED pr-gate 'preflight' job format-checks
     # `git diff -- '*.py'` only, while `make format-ruff` passes whole
     # directories and would silently rewrite 26 checked-in Markdown files
-    # (including the user-facing traigent/skills/**/SKILL.md docs), breaking
+    # (and any other checked-in Markdown), breaking
     # that target's documented "matches the REQUIRED 'preflight' CI check"
     # contract. Excluding *.md preserves the exact pre-0.16 scope; adopting
     # Markdown formatting is a separate, deliberate decision.
@@ -559,19 +578,6 @@ known-third-party = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# The traigent-ui plugin is a SEPARATE distribution with its own
-# `requires-python = ">=3.10"` (plugins/traigent-ui/pyproject.toml), while this
-# config targets py311 for the SDK. Two pyupgrade rules rewrite code into
-# 3.11-only forms and are therefore wrong for that subtree:
-#   UP017  datetime.timezone.utc -> datetime.UTC   (datetime.UTC is 3.11+)
-#   UP041  asyncio.TimeoutError  -> TimeoutError   (only ALIASED from 3.11; on
-#          3.10 they are distinct classes, so the rewrite silently stops
-#          catching asyncio.wait_for timeouts -- a behaviour change, not a
-#          modernization)
-# This is not a relaxed gate: applying these rules here produces code that does
-# not run, and in UP041's case code that runs and is wrong. If the plugin's
-# floor is raised to 3.11, delete this entry and re-run `ruff check --fix`.
-"plugins/traigent-ui/**" = ["UP017", "UP041"]
 "__init__.py" = ["F401"]
 "tests/*" = ["B011"]
 "examples/*" = ["E402"]  # Examples often set env vars before imports

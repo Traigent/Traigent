@@ -69,6 +69,8 @@ from traigent.api.types import (
     TrialStatus,
 )
 
+UNNAMED = "<unnamed>"
+
 logger = logging.getLogger(__name__)
 
 #: Version stamped into every artifact written by a loader-aware writer. An
@@ -109,6 +111,7 @@ _UNRESTORED_DEFAULTS: dict[str, Any] = {"source": UNRESTORED_SOURCE}
 _LEGACY_CONFIG_STATE = "config_state"
 _LEGACY_PERSISTENCE = "persistence"
 _LEGACY_FORMATS = frozenset({_LEGACY_CONFIG_STATE, _LEGACY_PERSISTENCE})
+_UNNAMED_ARTIFACT_LABEL = UNNAMED
 
 # Fields that MUST survive a save -> load round trip. Each is durable data about
 # what the run did, not a handle into live machine-local state.
@@ -159,6 +162,15 @@ RESULT_RESET: frozenset[str] = frozenset(
         # init=False memoization cache for the `experiment_stats` property;
         # recomputed on demand from `trials`.
         "_experiment_stats",
+        # Which closed decision the optimizer's promotion gate made for each candidate
+        # of THIS run (config hash -> decision). Live evidence for the hosted deploy
+        # path, recomputable only by re-running; not a fact to restore.
+        "promotion_decisions",
+        # Local-only G1 snapshot evidence: the terminal SnapshotRef (digest + store
+        # locator) and the local client-evidence file path. Machine-local handles
+        # that must never reach Traigent or be reloaded onto another machine.
+        "snapshot_ref",
+        "client_evidence_path",
     }
 )
 
@@ -711,7 +723,7 @@ def _legacy_view(
         # absent, and those take dataclass defaults below.
         return dict(data), []
 
-    label = artifact_name or "<unnamed>"
+    label = artifact_name or _UNNAMED_ARTIFACT_LABEL
     view: dict[str, Any] = {
         key: data[key]
         for key in (
@@ -959,7 +971,7 @@ def verify_envelope_version(
         ValueError: If exactly one of the two stamps is present, or if both are
             present and they disagree.
     """
-    label = f"'{artifact_name}'" if artifact_name else "<unnamed>"
+    label = f"'{artifact_name}'" if artifact_name else UNNAMED
     outer_declared = SCHEMA_VERSION_KEY in envelope
     inner_declared = isinstance(payload, dict) and SCHEMA_VERSION_KEY in payload
 
@@ -1034,7 +1046,7 @@ def decode_result(
         RuntimeError: If this build's :data:`FIELD_INTRODUCED_IN` does not cover
             every restorable field — an SDK defect, not an artifact one.
     """
-    label = f"'{artifact_name}'" if artifact_name else "<unnamed>"
+    label = f"'{artifact_name}'" if artifact_name else UNNAMED
     if not isinstance(data, dict):
         raise ValueError(
             f"Corrupted optimization result artifact {label}: "

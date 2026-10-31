@@ -316,13 +316,13 @@ class ParameterNormalizer:
     Example usage:
         >>> normalizer = ParameterNormalizer()
         >>> # Convert from LangChain format to OpenAI format
-        >>> params = {"model_name": "gpt-4", "streaming": True, "max_tokens": 100}
+        >>> params = {"model_name": "gpt-5.6-sol", "streaming": True, "max_tokens": 100}
         >>> normalized = normalizer.convert(params, from_framework=Framework.LANGCHAIN, to_framework=Framework.OPENAI)
-        >>> # Result: {"model": "gpt-4", "stream": True, "max_tokens": 100}
+        >>> # Result: {"model": "gpt-5.6-sol", "stream": True, "max_tokens": 100}
 
         >>> # Or convert to canonical Traigent format first
         >>> canonical = normalizer.to_canonical(params, from_framework=Framework.LANGCHAIN)
-        >>> # Result: {"model": "gpt-4", "stream": True, "max_tokens": 100}
+        >>> # Result: {"model": "gpt-5.6-sol", "stream": True, "max_tokens": 100}
     """
 
     def __init__(self) -> None:

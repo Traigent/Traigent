@@ -18,12 +18,7 @@ Example usage:
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-EVAL-METRICS REQ-EVAL-005
 
 import math
-from typing import Any, TypedDict, TypeGuard
-
-try:
-    from typing import NotRequired  # Python 3.11+
-except ImportError:
-    from typing import NotRequired  # Python 3.8-3.10
+from typing import Any, NotRequired, TypedDict, TypeGuard
 
 
 class UsageMetadata(TypedDict):
@@ -117,22 +112,28 @@ def is_traigent_metadata(obj: Any) -> TypeGuard[TraigentMetadata]:
         if not isinstance(usage, dict):
             return False
 
-        # Validate token fields if present
-        if "input_tokens" in usage:
-            if not isinstance(usage["input_tokens"], int):
-                return False
-        if "output_tokens" in usage:
-            if not isinstance(usage["output_tokens"], int):
-                return False
-        # Validate response_time_ms if present (optional, float)
-        if "response_time_ms" in usage:
-            if not isinstance(usage["response_time_ms"], (int, float)):
-                return False
+        if not _valid_usage_fields(usage):
+            return False
 
     # Optional field: calls must be a list of per-call breakdown dicts.
     if "calls" in obj and not is_valid_call_breakdown(obj["calls"]):
         return False
 
+    return True
+
+
+def _valid_usage_fields(usage: dict[str, Any]) -> bool:
+    # Validate token fields if present
+    if "input_tokens" in usage:
+        if not isinstance(usage["input_tokens"], int):
+            return False
+    if "output_tokens" in usage:
+        if not isinstance(usage["output_tokens"], int):
+            return False
+    # Validate response_time_ms if present (optional, float)
+    if "response_time_ms" in usage:
+        if not isinstance(usage["response_time_ms"], (int, float)):
+            return False
     return True
 
 
@@ -153,22 +154,33 @@ def is_valid_call_breakdown(calls: Any) -> bool:
             return False
         if "model" not in call or not isinstance(call["model"], str):
             return False
-        if "cost" not in call or isinstance(call["cost"], bool):
+        if not _valid_call_cost(call):
             return False
-        if not isinstance(call["cost"], (int, float)):
+        if not _valid_call_tokens(call):
             return False
-        # Non-finite only. A NEGATIVE cost is left to the downstream clamp,
-        # which is existing documented behaviour (see
-        # test_negative_values_clamped_to_zero): clamping keeps the model names
-        # and loses nothing, and `total_cost` is separately authoritative. NaN
-        # and infinity cannot be clamped meaningfully -- max(0, nan) is nan --
-        # so they are the only values worth dropping the entry for.
-        if not math.isfinite(call["cost"]):
+    return True
+
+
+def _valid_call_tokens(call: dict[str, Any]) -> bool:
+    for token_key in ("input_tokens", "output_tokens"):
+        if token_key in call and (
+            isinstance(call[token_key], bool) or not isinstance(call[token_key], int)
+        ):
             return False
-        for token_key in ("input_tokens", "output_tokens"):
-            if token_key in call and (
-                isinstance(call[token_key], bool)
-                or not isinstance(call[token_key], int)
-            ):
-                return False
+    return True
+
+
+def _valid_call_cost(call: dict[str, Any]) -> bool:
+    if "cost" not in call or isinstance(call["cost"], bool):
+        return False
+    if not isinstance(call["cost"], (int, float)):
+        return False
+    # Non-finite only. A NEGATIVE cost is left to the downstream clamp,
+    # which is existing documented behaviour (see
+    # test_negative_values_clamped_to_zero): clamping keeps the model names
+    # and loses nothing, and `total_cost` is separately authoritative. NaN
+    # and infinity cannot be clamped meaningfully -- max(0, nan) is nan --
+    # so they are the only values worth dropping the entry for.
+    if not math.isfinite(call["cost"]):
+        return False
     return True

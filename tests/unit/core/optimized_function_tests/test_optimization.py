@@ -181,15 +181,13 @@ class TestOptimization:
             await opt_func.optimize(strategy_params={"floor": 0.8})
 
     @pytest.mark.asyncio
-    async def test_runtime_strategy_without_params_remains_deprecated_algorithm_alias(
+    async def test_runtime_strategy_alias_is_removed_and_names_algorithm(
         self, monkeypatch, simple_function, sample_config_space, sample_dataset
     ):
-        """``strategy="grid"`` is still the deprecated alias for ``algorithm``.
+        """``strategy="grid"`` is refused; ``algorithm=`` is the replacement.
 
-        The preset removal shares this parameter, so the pre-existing and
-        unrelated alias needs its own guard against collateral deletion.
-        ``pyproject.toml`` ignores DeprecationWarning, hence pytest.warns
-        rather than a filter.
+        The deprecated alias for ``algorithm`` is removed (#1370 item 9). It
+        must not reach the optimizer, and the refusal must name the replacement.
         """
         opt_func = OptimizedFunction(
             func=simple_function,
@@ -198,18 +196,15 @@ class TestOptimization:
             max_trials=3,
         )
 
-        captured: dict[str, object] = {}
-
         async def fake_execute(**kwargs):
-            captured.update(kwargs)
-            return Mock(spec=OptimizationResult)
+            raise AssertionError("a removed strategy= must not reach execution")
 
         monkeypatch.setattr(opt_func, "_execute_optimization", fake_execute)
 
-        with pytest.warns(DeprecationWarning, match="use 'algorithm' instead"):
+        with pytest.raises(TypeError, match="strategy parameter was removed") as exc:
             await opt_func.optimize(strategy="grid")
 
-        require(captured["algorithm"] == "grid")
+        assert "algorithm=<optimizer>" in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_optimization_with_custom_evaluator(

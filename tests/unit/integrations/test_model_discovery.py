@@ -252,11 +252,8 @@ class TestOpenAIDiscovery:
         discovery = OpenAIDiscovery()
 
         valid_models = [
-            "gpt-4",
             "gpt-4o",
-            "gpt-4-turbo",
-            "gpt-3.5-turbo",
-            "o1",
+            "gpt-4.1",
             "text-davinci-003",
             "code-davinci-002",
             "davinci",
@@ -271,7 +268,16 @@ class TestOpenAIDiscovery:
 
         # Retired o1 preview line (#1936/#1937): shape still matches the
         # pattern, but the canonical denylist rejects it.
-        for retired in ["o1-preview", "o1-mini", "o1-preview-2024-09-12"]:
+        for retired in [
+            "o1-preview",
+            "o1-mini",
+            "o1-preview-2024-09-12",
+            # Retired 2026-10-23
+            "gpt-4",
+            "gpt-4-turbo",
+            "gpt-3.5-turbo",
+            "o1",
+        ]:
             message = f"Retired model {retired} must not validate"
             assert not discovery.is_valid_model(retired), message
 
@@ -876,35 +882,85 @@ class TestDiscoveryWithMockedSDK:
         """Gemini SDK discovery should work with valid API key."""
         mock_model1 = MagicMock()
         mock_model1.name = "models/gemini-pro"
-        mock_model1.supported_generation_methods = ["generateContent"]
+        mock_model1.supported_actions = ["generateContent"]
         mock_model2 = MagicMock()
         mock_model2.name = "models/gemini-1.5-flash"
-        mock_model2.supported_generation_methods = ["generateContent"]
+        mock_model2.supported_actions = ["generateContent"]
+        mock_embed = MagicMock()
+        mock_embed.name = "models/text-embedding-004"
+        mock_embed.supported_actions = ["embedContent"]
 
-        google_module = types.ModuleType("google")
-        generativeai_module = types.ModuleType("google.generativeai")
-        generativeai_module.configure = MagicMock()
-        generativeai_module.list_models = MagicMock(
-            return_value=[mock_model1, mock_model2]
-        )
-        google_module.generativeai = generativeai_module
-
+        genai_module, client = self._fake_genai([mock_model1, mock_model2, mock_embed])
         with patch.dict(
             "sys.modules",
-            {
-                "google": google_module,
-                "google.generativeai": generativeai_module,
-            },
+            {"google": genai_module.parent, "google.genai": genai_module},
         ):
-            discovery = GeminiDiscovery()
-            result = discovery._fetch_models_from_sdk()
+            result = GeminiDiscovery()._fetch_models_from_sdk()
 
-        generativeai_module.configure.assert_called_once_with(
+        genai_module.Client.assert_called_once_with(
             api_key="test-api-key"  # pragma: allowlist secret
         )
+        client.models.list.assert_called_once_with()
+        assert result == [
+            "gemini-1.5-flash",
+            "gemini-pro",
+            "models/gemini-1.5-flash",
+            "models/gemini-pro",
+        ]
 
-        assert "models/gemini-pro" in result
-        assert "models/gemini-1.5-flash" in result
+    @staticmethod
+    def _fake_genai(models: list) -> tuple[types.ModuleType, MagicMock]:
+        google_module = types.ModuleType("google")
+        genai_module = types.ModuleType("google.genai")
+        client = MagicMock()
+        client.models.list.return_value = iter(models)
+        genai_module.Client = MagicMock(return_value=client)
+        google_module.genai = genai_module
+        genai_module.parent = google_module
+        return genai_module, client
+
+    @patch.dict(
+        "os.environ",
+        {"GOOGLE_API_KEY": "test-api-key"},  # pragma: allowlist secret
+    )
+    def test_gemini_sdk_missing_falls_back_to_config(self) -> None:
+        """Missing google-genai raises from the SDK path; list_models uses config."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "google" and "genai" in (fromlist or ()):
+                raise ImportError("No module named 'google.genai'")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=fake_import):
+            discovery = GeminiDiscovery()
+            with pytest.raises(ImportError):
+                discovery._fetch_models_from_sdk()
+            with patch.object(discovery, "_cache", MagicMock(get=lambda k: None)):
+                models = discovery.list_models(force_refresh=True)
+        assert models
+        assert any("gemini" in m for m in models)
+
+    @patch.dict(
+        "os.environ",
+        {"GOOGLE_API_KEY": "test-api-key"},  # pragma: allowlist secret
+    )
+    def test_gemini_sdk_api_error_propagates_and_falls_back(self) -> None:
+        """API errors raise from the SDK path; list_models falls back to config."""
+        genai_module, client = self._fake_genai([])
+        client.models.list.side_effect = RuntimeError("API error")
+        with patch.dict(
+            "sys.modules",
+            {"google": genai_module.parent, "google.genai": genai_module},
+        ):
+            discovery = GeminiDiscovery()
+            with pytest.raises(RuntimeError, match="API error"):
+                discovery._fetch_models_from_sdk()
+            with patch.object(discovery, "_cache", MagicMock(get=lambda k: None)):
+                models = discovery.list_models(force_refresh=True)
+        assert any("gemini" in m for m in models)
 
     def test_mistral_sdk_discovery_with_mocked_client(self) -> None:
         """Mistral SDK discovery should work with mocked client.

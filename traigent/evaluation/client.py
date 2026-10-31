@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Literal, cast, overload
 from collections.abc import Iterator
+from typing import Any, Literal, cast, overload
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
+from traigent.cloud.url_security import open_no_redirect
 from traigent.evaluation.config import EvaluationConfig
 from traigent.evaluation.dtos import (
     AnnotationQueueDTO,
@@ -34,6 +35,10 @@ from traigent.evaluation.dtos import (
     ScoreRecordListResponse,
     TypedMeasureDTO,
 )
+from traigent.evaluation.target_filters import (
+    TargetFilters,
+    validate_target_filters,
+)
 from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
     AuthenticationError,
@@ -41,6 +46,7 @@ from traigent.utils.exceptions import (
     TraigentConnectionError,
 )
 from traigent.utils.pagination import iter_pages
+from traigent.utils.wire_text import filter_wire_metadata
 
 
 class EvaluationClient:
@@ -132,13 +138,14 @@ class EvaluationClient:
         judge_config: JudgeConfigDTO | dict[str, Any],
         description: str | None = None,
         sampling_rate: float = 1.0,
-        target_filters: dict[str, Any] | None = None,
+        target_filters: TargetFilters | dict[str, Any] | None = None,
         is_active: bool = True,
     ) -> EvaluatorDefinitionDTO:
         if isinstance(target_type, str):
             target_type = EvaluationTargetType(target_type)
         if isinstance(judge_config, dict):
             judge_config = JudgeConfigDTO.from_dict(judge_config)
+        validated_filters = validate_target_filters(target_filters)
         payload = self._request_json(
             "POST",
             "/evaluators",
@@ -149,7 +156,7 @@ class EvaluationClient:
                 "target_type": target_type.value,
                 "judge_config": judge_config.to_dict(),
                 "sampling_rate": sampling_rate,
-                "target_filters": dict(target_filters or {}),
+                "target_filters": validated_filters,
                 "is_active": is_active,
             },
         )
@@ -163,6 +170,10 @@ class EvaluationClient:
         **fields: Any,
     ) -> EvaluatorDefinitionDTO:
         payload = dict(fields)
+        if payload.get("target_filters") is not None:
+            payload["target_filters"] = validate_target_filters(
+                payload["target_filters"]
+            )
         if "target_type" in payload and isinstance(
             payload["target_type"], EvaluationTargetType
         ):
@@ -404,7 +415,7 @@ class EvaluationClient:
             "boolean_value": boolean_value,
             "comment": comment,
             "correction_output": correction_output,
-            "metadata": dict(metadata or {}),
+            "metadata": filter_wire_metadata(metadata),
         }
         response = self._request_json("POST", "/scores", payload)
         return ScoreRecordDTO.from_dict(self._unwrap_data(response, "score create"))
@@ -776,7 +787,7 @@ class EvaluationClient:
             method=method,
         )
         try:
-            with request.urlopen(  # nosec B310 - backend_origin is caller-configured API endpoint
+            with open_no_redirect(  # nosec B310 - no-redirect opener, caller-configured endpoint
                 http_request, timeout=self.config.request_timeout
             ) as response:
                 status_code = getattr(response, "status", 200)

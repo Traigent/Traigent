@@ -241,6 +241,16 @@ def _coerce_bounded_float(
     return number
 
 
+def _normalize_selector_entries(value: Sequence[Any], name: str) -> tuple[str, ...]:
+    normalized: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item:
+            raise ValueError(f"{name} entries must be non-empty strings")
+        if item not in normalized:
+            normalized.append(item)
+    return tuple(normalized)
+
+
 def _normalize_metric_selector(value: Any, name: str) -> tuple[str, ...] | None:
     if value is None or value == _AUTO_SELECTOR:
         return None
@@ -249,13 +259,7 @@ def _normalize_metric_selector(value: Any, name: str) -> tuple[str, ...] | None:
             raise ValueError(f"{name} entries must be non-empty strings")
         return (value,)
     if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
-        normalized: list[str] = []
-        for item in value:
-            if not isinstance(item, str) or not item:
-                raise ValueError(f"{name} entries must be non-empty strings")
-            if item not in normalized:
-                normalized.append(item)
-        return tuple(normalized)
+        return _normalize_selector_entries(value, name)
     raise ValueError(f"{name} must be 'auto', a string, or a list of strings")
 
 
@@ -449,32 +453,10 @@ class MetricLimitStopCondition(StopCondition):
             if not self._include_pruned and trial.status == TrialStatus.PRUNED:
                 continue
 
-            metrics = trial.metrics or {}
-            value = metrics.get(self._metric)
-
-            if value is None and self._metric == "total_cost":
-                # Compatibility with older evaluators that reported cost under
-                # different names before metric_limit required an explicit metric.
-                value = metrics.get("cost")
-                if value is None:
-                    value = (trial.metadata or {}).get("total_example_cost")
+            value = self._raw_metric_value(trial)
 
             if value is None and self._metric in _UNMEASURABLE_COST_METRICS:
-                # A trial with no captured LLM usage has an UNKNOWN cost, not a
-                # missing mandatory metric (Traigent#2441). Failing the run
-                # over it would be worse than the old $0; adding 0 would repeat
-                # it. It is left out of the running total, and the cost
-                # enforcer's unknown-cost trial limit governs such a run.
-                self._unmeasured_trials += 1
-                if self._unmeasured_trials == 1:
-                    logger.warning(
-                        "metric_limit on '%s': trial %s has no measured cost; "
-                        "unmeasured trials are left out of the running total "
-                        "(the unmeasured-cost trial limit, "
-                        "TRAIGENT_FALLBACK_TRIAL_LIMIT, bounds them instead).",
-                        self._metric,
-                        trial.trial_id,
-                    )
+                self._note_unmeasured_trial(trial)
                 continue
 
             if value is None:
@@ -482,14 +464,7 @@ class MetricLimitStopCondition(StopCondition):
                     f"Mandatory metric '{self._metric}' missing for trial {trial.trial_id}"
                 )
 
-            try:
-                numeric_value = float(value)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"Metric '{self._metric}' for trial {trial.trial_id} is not numeric: {value!r}"
-                ) from exc
-
-            self._running_total += numeric_value
+            self._running_total += self._to_numeric(trial, value)
 
             if self._running_total >= self._limit:
                 self._last_index = len(trial_seq)
@@ -497,6 +472,43 @@ class MetricLimitStopCondition(StopCondition):
 
         self._last_index = len(trial_seq)
         return self._running_total >= self._limit
+
+    def _raw_metric_value(self, trial: TrialResult) -> Any:
+        metrics = trial.metrics or {}
+        value = metrics.get(self._metric)
+
+        if value is None and self._metric == "total_cost":
+            # Compatibility with older evaluators that reported cost under
+            # different names before metric_limit required an explicit metric.
+            value = metrics.get("cost")
+            if value is None:
+                value = (trial.metadata or {}).get("total_example_cost")
+        return value
+
+    def _note_unmeasured_trial(self, trial: TrialResult) -> None:
+        # A trial with no captured LLM usage has an UNKNOWN cost, not a
+        # missing mandatory metric (Traigent#2441). Failing the run
+        # over it would be worse than the old $0; adding 0 would repeat
+        # it. It is left out of the running total, and the cost
+        # enforcer's unknown-cost trial limit governs such a run.
+        self._unmeasured_trials += 1
+        if self._unmeasured_trials == 1:
+            logger.warning(
+                "metric_limit on '%s': trial %s has no measured cost; "
+                "unmeasured trials are left out of the running total "
+                "(the unmeasured-cost trial limit, "
+                "TRAIGENT_FALLBACK_TRIAL_LIMIT, bounds them instead).",
+                self._metric,
+                trial.trial_id,
+            )
+
+    def _to_numeric(self, trial: TrialResult, value: Any) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Metric '{self._metric}' for trial {trial.trial_id} is not numeric: {value!r}"
+            ) from exc
 
 
 class MaxSamplesStopCondition(StopCondition):
@@ -556,9 +568,7 @@ class MaxSamplesStopCondition(StopCondition):
             if not self._include_pruned and trial.status == TrialStatus.PRUNED:
                 continue
 
-            attempted = extract_examples_attempted(
-                trial, default=None, check_example_results=True
-            )
+            attempted = self._new_examples_attempted(trial)
             if attempted is not None:
                 self._total_attempted += attempted
 
@@ -568,6 +578,23 @@ class MaxSamplesStopCondition(StopCondition):
 
         self._last_index = len(trial_seq)
         return self._total_attempted >= self._max_samples
+
+    @staticmethod
+    def _new_examples_attempted(trial: TrialResult) -> int | None:
+        attempted = extract_examples_attempted(
+            trial, default=None, check_example_results=True
+        )
+        if attempted is None:
+            return None
+        # Work reused from a prior run (resume_from, #1697/#2541) ran no
+        # new examples: only newly evaluated examples use this budget.
+        meta = getattr(trial, "metadata", None) or {}
+        if meta.get("resumed_from_prior_run"):
+            return 0
+        reused = meta.get("resumed_examples_reused")
+        if isinstance(reused, int) and reused > 0:
+            return max(0, attempted - reused)
+        return attempted
 
 
 class SemanticSaturationStopCondition(StopCondition):
@@ -729,19 +756,7 @@ class SemanticSaturationStopCondition(StopCondition):
         if self._config.example_score_metrics is not None:
             return self._config.example_score_metrics
 
-        values_by_metric: dict[str, list[float]] = {}
-        for trial in trials:
-            for result in self._example_results_for_trial(trial):
-                metrics = self._read_example_metrics(result)
-                if not isinstance(metrics, Mapping):
-                    continue
-                for metric_name, raw_value in metrics.items():
-                    if not isinstance(metric_name, str):
-                        continue
-                    value = _coerce_numeric_or_bool(raw_value)
-                    if value is None:
-                        continue
-                    values_by_metric.setdefault(metric_name, []).append(value)
+        values_by_metric = self._collect_example_metric_values(trials)
 
         selected: list[str] = []
         for metric_name in sorted(values_by_metric):
@@ -751,6 +766,29 @@ class SemanticSaturationStopCondition(StopCondition):
             if _looks_like_quality_metric(metric_name) or self._all_binary(values):
                 selected.append(metric_name)
         return tuple(selected)
+
+    def _collect_example_metric_values(
+        self, trials: Sequence[TrialResult]
+    ) -> dict[str, list[float]]:
+        values_by_metric: dict[str, list[float]] = {}
+        for trial in trials:
+            for result in self._example_results_for_trial(trial):
+                for metric_name, value in self._numeric_example_metrics(result):
+                    values_by_metric.setdefault(metric_name, []).append(value)
+        return values_by_metric
+
+    def _numeric_example_metrics(self, result: Any) -> list[tuple[str, float]]:
+        metrics = self._read_example_metrics(result)
+        if not isinstance(metrics, Mapping):
+            return []
+        pairs: list[tuple[str, float]] = []
+        for metric_name, raw_value in metrics.items():
+            if not isinstance(metric_name, str):
+                continue
+            value = _coerce_numeric_or_bool(raw_value)
+            if value is not None:
+                pairs.append((metric_name, value))
+        return pairs
 
     @staticmethod
     def _all_binary(values: Sequence[float]) -> bool:
@@ -769,20 +807,30 @@ class SemanticSaturationStopCondition(StopCondition):
                 if metric not in quality_metric_set
             )
 
-        objective_names: list[str] = []
         if self._schema is not None:
-            for objective in self._schema.objectives:
-                name = objective.name
-                if name in quality_metric_set:
-                    continue
-                if _looks_like_quality_metric(
-                    name
-                ) and not _looks_like_continuous_metric(name):
-                    continue
-                objective_names.append(name)
+            objective_names = self._schema_continuous_objectives(quality_metric_set)
             if objective_names:
                 return tuple(objective_names)
 
+        return self._trial_continuous_objectives(trials, quality_metric_set)
+
+    def _schema_continuous_objectives(self, quality_metric_set: set[str]) -> list[str]:
+        objective_names: list[str] = []
+        for objective in self._schema.objectives:  # type: ignore[union-attr]
+            name = objective.name
+            if name in quality_metric_set:
+                continue
+            if _looks_like_quality_metric(name) and not _looks_like_continuous_metric(
+                name
+            ):
+                continue
+            objective_names.append(name)
+        return objective_names
+
+    @staticmethod
+    def _trial_continuous_objectives(
+        trials: Sequence[TrialResult], quality_metric_set: set[str]
+    ) -> tuple[str, ...]:
         aggregate_metric_names: set[str] = set()
         for trial in trials:
             for metric_name, raw_value in (trial.metrics or {}).items():
@@ -1049,6 +1097,8 @@ class CostLimitStopCondition(StopCondition):
                     status.limit_usd,
                     status.unmeasured_trial_count,
                     status.accumulated_cost_usd,
+                    status.unmeasured_missing_examples,
+                    status.unmeasured_attempted_examples,
                 )
             )
         return (
@@ -1097,11 +1147,15 @@ class ExecutionBudgetStopCondition(StopCondition):
         Args:
             trials: Trial results (unused — the budget is authoritative).
         """
-        return self._budget.exhausted_dimension is not None
+        return (
+            self._budget.exhausted_dimension is not None or self._budget.debit_exhausted
+        )
 
     def get_reason(self) -> str:
         """Get a descriptive reason naming the exhausted dimension."""
         snapshot = self._budget.snapshot()
+        if snapshot.exhausted_dimension is None and self._budget.debit_exhausted:
+            return "Conservative execution allowance exhausted (actual cost separate)"
         dimension = snapshot.exhausted_dimension or "unknown"
         if dimension == "cost":
             return (
@@ -1183,13 +1237,7 @@ class SafetyConstraintStopCondition(StopCondition):
         trial_seq = trials if isinstance(trials, Sequence) else list(trials)
 
         new_trials = trial_seq[self._last_index :]
-        for trial in new_trials:
-            if trial.status != TrialStatus.COMPLETED:
-                continue
-            metrics = trial.metrics or {}
-            config = trial.config or {}
-            for constraint in self._constraints:
-                self._validator.record_result(constraint, config, metrics)
+        SafetyConstraintStopCondition._record_new_trials(self, new_trials)
         self._last_index = len(trial_seq)
 
         for constraint in self._constraints:
@@ -1211,6 +1259,15 @@ class SafetyConstraintStopCondition(StopCondition):
                 return True
 
         return False
+
+    def _record_new_trials(self, new_trials: Iterable[TrialResult]) -> None:
+        for trial in new_trials:
+            if trial.status != TrialStatus.COMPLETED:
+                continue
+            metrics = trial.metrics or {}
+            config = trial.config or {}
+            for constraint in self._constraints:
+                self._validator.record_result(constraint, config, metrics)
 
 
 class HypervolumeConvergenceStopCondition(StopCondition):

@@ -1,15 +1,23 @@
 """Unit tests for API operations module."""
 
+import hashlib
 import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from traigent.cloud import content_less as content_less_session
+from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.api_operations import (
     _JSON_CONTENT_TYPE,
     AIOHTTP_AVAILABLE,
     ApiOperations,
     _typed_configuration_space,
+)
+from traigent.cloud.auth import (
+    AuthCredentials,
+    AuthManager,
+    AuthMode,
 )
 from traigent.cloud.client import (
     CloudRemoteExecutionUnavailableError,
@@ -22,6 +30,7 @@ from traigent.cloud.models import (
     SessionCreationRequest,
     TrialResultSubmission,
 )
+from traigent.utils.wire_text import WIRE_ERROR_CODES
 
 # SDK #2033: opt into the connected/backend code paths (see pyproject markers).
 pytestmark = pytest.mark.backend_online
@@ -267,71 +276,46 @@ class TestSanitizeErrorMessage:
         """Test empty string returns None."""
         assert self.ops.sanitize_error_message("") is None
 
-    def test_api_key_redacted(self):
-        """Test API keys are redacted."""
-        msg = "Error with api_key=example-key-1234"
-        result = self.ops.sanitize_error_message(msg)
-        assert "example-key-1234" not in result
-        assert "[REDACTED]" in result
-
-    def test_token_redacted(self):
-        """Test tokens are redacted."""
-        msg = "Invalid token: eyJhbGciOiJIUzI1NiJ9"  # noqa: S105 - test JWT fragment
-        result = self.ops.sanitize_error_message(msg)
-        assert "[REDACTED]" in result
-
-    def test_password_redacted(self):
-        """Test passwords are redacted."""
-        msg = "password=secret123"
-        result = self.ops.sanitize_error_message(msg)
-        assert "[REDACTED]" in result
-
-    def test_home_path_redacted(self):
-        """Test home paths are redacted."""
-        msg = "Error in /home/username/secret/file.py"
-        result = self.ops.sanitize_error_message(msg)
-        assert "/home/username" not in result
-        assert "[PATH]" in result
-
-    def test_users_path_redacted(self):
-        """Test Users paths are redacted (macOS)."""
-        msg = "Error in /Users/username/secret/file.py"
-        result = self.ops.sanitize_error_message(msg)
-        assert "/Users/username" not in result
-        assert "[PATH]" in result
-
     @pytest.mark.parametrize(
         ("msg", "leaked"),
         [
+            ("Error with api_key=example-key-1234", "example-key-1234"),
+            ("Invalid token: eyJhbGciOiJIUzI1NiJ9", "eyJhbGciOiJIUzI1NiJ9"),
+            ("password=secret123", "secret123"),
+            ("Error in /home/username/secret/file.py", "username"),
+            ("Error in /Users/username/secret/file.py", "username"),
             ("auth failed: Authorization: Bearer abc123tokenvalue", "abc123tokenvalue"),
             ("header Authorization: Basic dXNlcjpwYXNz sent", "dXNlcjpwYXNz"),
-            ("got Bearer abc123tokenvalue here", "abc123tokenvalue"),
-            ("bearer short-tok", "short-tok"),
             ("connect password='hunter2' failed", "hunter2"),
-            ('connect password="hunter2" failed', "hunter2"),
-            ("connect pwd=hunter2 failed", "hunter2"),
-            ("connect passwd: hunter2 failed", "hunter2"),
-            ("PASSWORD='Hunter 2 x' failed", "Hunter 2"),
-            ("secret='s3cr3t' x", "s3cr3t"),
             ("client_secret=abcdef123", "abcdef123"),
-            ("access_key=AKIDEXAMPLE1", "AKIDEXAMPLE1"),
-            ("apikey: 'k-12345'", "k-12345"),
-            ('{"api_key": "k-12345"}', "k-12345"),
-            ("db_password=hunter2", "hunter2"),
             (r"Error in C:\Users\alice\proj\file.py", "alice"),
-            (r"Error in c:\users\Bob\x.py", "Bob"),
-            ("Error in C:/Users/alice/proj/file.py", "alice"),
+            (r"open C:\Users\alice\a\b.py failed", "alice"),
         ],
     )
-    def test_additional_secret_shapes_redacted(self, msg, leaked):
-        """Bearer/Authorization, quoted key-value secrets, Windows user paths."""
+    def test_error_text_never_sent_only_closed_code(self, msg, leaked):
+        """#2241: the wire carries a member of the closed list, never the text."""
         result = self.ops.sanitize_error_message(msg)
+        assert result in WIRE_ERROR_CODES
         assert leaked not in result
-        assert "REDACTED" in result or "[PATH]" in result
 
-    def test_windows_user_path_becomes_path_marker(self):
-        result = self.ops.sanitize_error_message(r"open C:\Users\alice\a\b.py failed")
-        assert result == "open [PATH] failed"
+    def test_canary_in_exception_text_never_reaches_wire_value(self):
+        canary = "CANARY_PROMPT_TEXT_zz91 and the model replied CANARY_REPLY_zz92"
+        result = self.ops.sanitize_error_message(f"ValueError: {canary}")
+        assert result == "trial_failed"
+        assert "CANARY" not in result
+
+    @pytest.mark.parametrize(
+        ("msg", "code"),
+        [
+            ("No examples succeeded (3 failed)", "no_examples_succeeded"),
+            ("Trial cancelled: cost limit reached", "trial_cancelled"),
+            ("trial_pruned", "trial_pruned"),
+            ("Rate limit hit for model x", "vendor_rate_limit"),
+            ("insufficient_quota", "vendor_quota_exhausted"),
+        ],
+    )
+    def test_known_failures_map_to_specific_codes(self, msg, code):
+        assert self.ops.sanitize_error_message(msg) == code
 
     def test_windows_user_path_with_space_in_name(self):
         result = self.ops.sanitize_error_message(
@@ -339,11 +323,11 @@ class TestSanitizeErrorMessage:
         )
         assert "John" not in result
         assert "Smith" not in result
-        assert "[PATH]" in result
+        assert result in WIRE_ERROR_CODES
 
     def test_sentence_without_path_untouched(self):
         msg = "The Users table is missing a column named John"
-        assert self.ops.sanitize_error_message(msg) == msg
+        assert self.ops.sanitize_error_message(msg) in WIRE_ERROR_CODES
 
     @pytest.mark.parametrize(
         "msg",
@@ -358,7 +342,8 @@ class TestSanitizeErrorMessage:
         ],
     )
     def test_ordinary_text_not_over_redacted(self, msg):
-        assert self.ops.sanitize_error_message(msg) == msg
+        result = self.ops.sanitize_error_message(msg)
+        assert result in WIRE_ERROR_CODES
 
     @pytest.mark.parametrize(
         ("msg", "leaked"),
@@ -398,7 +383,9 @@ class TestSanitizeErrorMessage:
         ],
     )
     def test_more_secret_shapes_redacted(self, msg, leaked):
-        assert leaked not in self.ops.sanitize_error_message(msg)
+        result = self.ops.sanitize_error_message(msg)
+        assert leaked not in result
+        assert result in WIRE_ERROR_CODES
 
     def test_basic_token_cut_by_input_cap_is_redacted(self):
         msg = " basic " + "ajpp" * 1025
@@ -408,11 +395,11 @@ class TestSanitizeErrorMessage:
         msg = "Authorization: " + "x" * 4067 + "\nBasic " + "ajpp" * 100
         out = self.ops.sanitize_error_message(msg)
         assert "ajp" not in out
-        assert out.endswith("Basic [REDACTED]")
+        assert out in WIRE_ERROR_CODES
 
     def test_basic_prose_before_long_text_is_unchanged(self):
         msg = "basic usage of the API " + "x" * 5000
-        assert self.ops.sanitize_error_message(msg).startswith("basic usage of the API")
+        assert self.ops.sanitize_error_message(msg) in WIRE_ERROR_CODES
 
     @pytest.mark.parametrize(
         "msg",
@@ -427,15 +414,15 @@ class TestSanitizeErrorMessage:
         ],
     )
     def test_error_codes_and_ids_survive(self, msg):
-        """Credential scrubbing must not eat numeric codes, ids or emails."""
-        assert self.ops.sanitize_error_message(msg) == msg
+        """#2241: numeric codes, ids and emails are not sent either; only the closed code is."""
+        assert self.ops.sanitize_error_message(msg) in WIRE_ERROR_CODES
 
     def test_windows_path_keeps_text_after_username(self):
         result = self.ops.sanitize_error_message(
             r"C:\Users\alice: not found code E1234"
         )
         assert "alice" not in result
-        assert result == "[PATH]: not found code E1234"
+        assert result in WIRE_ERROR_CODES
 
     @pytest.mark.parametrize(
         ("msg", "leaked"),
@@ -453,17 +440,20 @@ class TestSanitizeErrorMessage:
         ],
     )
     def test_full_authorization_value_redacted(self, msg, leaked):
-        assert leaked not in self.ops.sanitize_error_message(msg)
+        result = self.ops.sanitize_error_message(msg)
+        assert leaked not in result
+        assert result in WIRE_ERROR_CODES
 
     def test_credentials_cut_by_input_cap_are_redacted(self):
         msg = "https://alice:hunter2" + "x" * 5000 + "@host/path"
         result = self.ops.sanitize_error_message(msg)
         assert "hunter2" not in result
         assert "alice" not in result
+        assert result in WIRE_ERROR_CODES
 
     def test_short_url_without_userinfo_survives(self):
         msg = "GET https://example.com"
-        assert self.ops.sanitize_error_message(msg) == msg
+        assert self.ops.sanitize_error_message(msg) in WIRE_ERROR_CODES
 
     @pytest.mark.parametrize(
         "text",
@@ -478,17 +468,16 @@ class TestSanitizeErrorMessage:
         assert time.perf_counter() - start < 1.0
 
     def test_long_message_truncated(self):
-        """Test long messages are truncated."""
+        """Long text is never sent; the wire value is one closed code."""
         msg = "x" * 2000
         result = self.ops.sanitize_error_message(msg)
-        assert len(result) <= 1020  # 1000 + "[truncated]" suffix
-        assert "[truncated]" in result
+        assert result in WIRE_ERROR_CODES
 
     def test_normal_message_preserved(self):
         """Test normal message is preserved."""
         msg = "Normal error message"
         result = self.ops.sanitize_error_message(msg)
-        assert result == msg
+        assert result in WIRE_ERROR_CODES
 
 
 class TestCreateTraigentSessionViaApi:
@@ -609,6 +598,58 @@ class TestQuotaRefusalSessionCreate:
                 await ops.create_traigent_session_via_api(request)
 
         assert info.value is quota_exc
+        assert post.await_count == 1  # no legacy-contract retry
+
+
+class TestClosedRefusalSessionCreate:
+    """SDK-52: a closed backend refusal must not trigger the legacy retry."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "typed_storage_mapping_unavailable",
+            "director_tokens_required",
+            "director_opaque_ids_required",
+            "content_identity_keys_unavailable",
+        ],
+    )
+    async def test_closed_refusal_skips_legacy_retry_and_keeps_detail(
+        self, monkeypatch, code
+    ):
+        from traigent.cloud.client import CloudServiceError
+        from traigent.cloud.session_types import SessionCreationFailureDetail
+
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "auto")
+        client = Mock()
+        client.auth_manager.augment_headers = AsyncMock(return_value={})
+        ops = ApiOperations(client)
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+        )
+        refusal_exc = CloudServiceError("Session creation failed: HTTP 503")
+        refusal_exc.session_creation_failure = (
+            SessionCreationFailureDetail.from_http_response(
+                503, f'{{"error_code": "{code}"}}'
+            )
+        )
+        post = AsyncMock(side_effect=refusal_exc)
+        with (
+            patch(
+                "traigent.cloud.api_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
+            patch.object(ops, "_post_session_creation", new=post),
+            patch.object(ops, "_is_governed_request", return_value=False),
+        ):
+            with pytest.raises(CloudServiceError) as info:
+                await ops.create_traigent_session_via_api(request)
+
+        assert info.value is refusal_exc
         assert post.await_count == 1  # no legacy-contract retry
 
 
@@ -1636,7 +1677,7 @@ class TestUpdateConfigRunStatusSuccess:
             assert result is True
 
         _, kwargs = mock_session.put.call_args
-        assert kwargs["json"]["error_message"] == "evaluator raised ValueError"
+        assert kwargs["json"]["error_message"] == "trial_failed"  # closed code (#2241)
         assert "error" not in kwargs["json"]
 
     @pytest.mark.asyncio
@@ -2315,24 +2356,287 @@ class TestOrchestratorDefaultConfigPayload:
         assert orch._consume_default_config() is None
 
 
+_CONTENT_LESS_URL = "https://api.example.test"
+_AGENT_REF = "agentref_" + "a" * 32
+_KEY_A = "tg_" + "a" * 61
+_KEY_B = "tg_" + "b" * 61
+
+
+def _ops_for(auth: AuthManager) -> ApiOperations:
+    client = Mock()
+    client.backend_config.api_base_url = _CONTENT_LESS_URL
+    client.auth_manager = Mock(spec=["auth"])
+    client.auth_manager.auth = auth
+    return ApiOperations(client)
+
+
+async def _accept_key(self, api_key):  # noqa: ARG001 - backend validation boundary
+    return None
+
+
+def _backend_accepts_keys():
+    """Patch the backend validation call only; every other auth step is real."""
+    return patch.object(AuthManager, "_validate_api_key_with_backend", new=_accept_key)
+
+
+def _spy_cache_reads_and_writes(monkeypatch):
+    reads, writes = [], []
+    orig_load = content_less_session.RefCache._load
+    orig_save = content_less_session.RefCache._save
+    monkeypatch.setattr(
+        content_less_session.RefCache,
+        "_load",
+        lambda self: reads.append(1) or orig_load(self),
+    )
+    monkeypatch.setattr(
+        content_less_session.RefCache,
+        "_save",
+        lambda self, data: writes.append(1) or orig_save(self, data),
+    )
+    return reads, writes
+
+
 class TestContentLessPrincipal:
-    """Regression (#2710 mypy sweep): the principal read a method that does not exist."""
+    """The cache scope is derived from the headers the request is sent with.
 
-    def test_principal_carries_credential_preview(self):
-        """The preview comes from ``auth_manager.auth``; the old call always failed.
+    Each test builds the real outgoing headers with ``AuthManager.get_auth_headers``
+    and checks both the cache selection and the credential on the wire.
+    """
 
-        ``BackendAuthManager`` has no ``get_api_key_preview``; the old lookup raised
-        AttributeError, which the broad except swallowed, so every principal was
-        keyed by URL alone. ``spec=["auth"]`` mirrors the real BackendAuthManager.
+    @pytest.mark.asyncio
+    async def test_single_key_scope_is_the_fingerprint_of_the_outgoing_key(self):
+        auth = AuthManager(api_key=_KEY_A)
+        with _backend_accepts_keys():
+            assert (await auth.authenticate()).success
+            headers = await auth.get_auth_headers()
+        assert headers["X-API-Key"] == _KEY_A
+        principal = _ops_for(auth)._principal_for_headers(headers)
+        assert principal == content_less_session.RefCache.principal(
+            _CONTENT_LESS_URL, content_less_session.credential_fingerprint(_KEY_A)
+        )
+
+    @pytest.mark.asyncio
+    async def test_same_preview_different_keys_do_not_share_refs(self, tmp_path):
+        key_1 = "tg_a" + "1" * 56 + "wxyz"
+        key_2 = "tg_a" + "2" * 56 + "wxyz"
+        assert APIKeyManager.mask_key(key_1) == APIKeyManager.mask_key(key_2)
+        principals = []
+        for key in (key_1, key_2):
+            auth = AuthManager(api_key=key)
+            with _backend_accepts_keys():
+                assert (await auth.authenticate()).success
+                headers = await auth.get_auth_headers()
+            principals.append(_ops_for(auth)._principal_for_headers(headers))
+        principal_1, principal_2 = principals
+        assert principal_1 is not None and principal_2 is not None
+        assert principal_1 != principal_2
+
+        cache = content_less_session.RefCache(tmp_path / "refs.json")
+        local_keys = {"agent": "agent-x"}
+        cache.store(principal_1, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        assert cache.lookup(principal_1, local_keys) == {"agent": _AGENT_REF}
+        assert cache.lookup(principal_2, local_keys) == {}
+
+    @pytest.mark.asyncio
+    async def test_reauthenticated_key_is_the_scope_not_the_earlier_one(
+        self, tmp_path, monkeypatch
+    ):
+        """A is authenticated and cached; A is dropped; B is in env and is re-authenticated.
+
+        Clearing A is the reproducible form of the divergence: the earlier key stays
+        in ``_last_auth_result`` and A's refs stay in the cache. The request must carry
+        B, and the scope must be B's, with A's refs not used.
         """
-        client = Mock()
-        client.backend_config.api_base_url = "https://api.example.test"
-        client.auth_manager = Mock(spec=["auth"])
-        client.auth_manager.auth.get_api_key_preview = Mock(return_value="tgk_abcd")
-        ops = ApiOperations(client)
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        local_keys = {"agent": "agent-x"}
+        cache = content_less_session.RefCache(tmp_path / "refs.json")
+        auth = AuthManager(api_key=_KEY_A)
+        with _backend_accepts_keys():
+            assert (await auth.authenticate()).success
+            headers_a = await auth.get_auth_headers()
+        ops = _ops_for(auth)
+        principal_a = ops._principal_for_headers(headers_a)
+        cache.store(principal_a, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        assert cache.lookup(principal_a, local_keys) == {"agent": _AGENT_REF}
 
-        with_key = ops._content_less_principal()
-        client.auth_manager.auth.get_api_key_preview.return_value = None
-        without_key = ops._content_less_principal()
+        auth.set_api_key(None)
+        monkeypatch.setenv("TRAIGENT_API_KEY", _KEY_B)
+        with _backend_accepts_keys():
+            headers_b = await auth.get_auth_headers()
+        assert headers_b["X-API-Key"] == _KEY_B
+        principal_b = ops._principal_for_headers(headers_b)
+        assert principal_b == content_less_session.RefCache.principal(
+            _CONTENT_LESS_URL, content_less_session.credential_fingerprint(_KEY_B)
+        )
+        assert principal_b != principal_a
+        assert cache.lookup(principal_b, local_keys) == {}
 
-        assert with_key != without_key
+    @pytest.mark.asyncio
+    async def test_api_key_then_jwt_is_never_cached(self, monkeypatch, tmp_path):
+        """A JWT request carries no X-API-Key: no cache read, no cache write."""
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        local_keys = {"agent": "agent-x"}
+        cache = content_less_session.RefCache(tmp_path / "refs.json")
+        auth = AuthManager(api_key=_KEY_A)
+        with _backend_accepts_keys():
+            assert (await auth.authenticate()).success
+        ops = _ops_for(auth)
+        principal_a = ops._principal_for_headers(await auth.get_auth_headers())
+        cache.store(principal_a, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+
+        validator_result = type(
+            "ValidationResult",
+            (),
+            {
+                "valid": True,
+                "claims": {"sub": "test"},
+                "warnings": [],
+                "expires_at": None,
+                "error": None,
+            },
+        )()
+        with patch(
+            "traigent.security.jwt_validator.get_secure_jwt_validator"
+        ) as validator:
+            validator.return_value.validate_token.return_value = validator_result
+            jwt_result = await auth.authenticate(
+                AuthCredentials(
+                    mode=AuthMode.JWT_TOKEN,
+                    jwt_token="header.payload.signature",
+                )
+            )
+        assert jwt_result.success
+        headers = await auth.get_auth_headers()
+        assert "X-API-Key" not in headers
+        assert headers["Authorization"].startswith("Bearer ")
+
+        principal = ops._principal_for_headers(headers)
+        assert principal is None
+        reads, writes = _spy_cache_reads_and_writes(monkeypatch)
+        assert cache.lookup(principal, local_keys) == {}
+        cache.store(principal, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        assert reads == []
+        assert writes == []
+
+    @pytest.mark.asyncio
+    async def test_cleared_key_with_no_other_source_sends_nothing_cacheable(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        auth = AuthManager(api_key=_KEY_A)
+        with _backend_accepts_keys():
+            assert (await auth.authenticate()).success
+        auth.set_api_key(None)
+        with _backend_accepts_keys(), pytest.raises(Exception):  # noqa: B017
+            await auth.get_auth_headers()
+        assert _ops_for(auth)._principal_for_headers({}) is None
+
+    def test_unknown_identity_skips_cache_read_and_write(self, tmp_path, monkeypatch):
+        cache_path = tmp_path / "refs.json"
+        local_keys = {"agent": "agent-x"}
+        legacy = content_less_session._digest(f"{_CONTENT_LESS_URL}\x00")
+        seeded = content_less_session.RefCache(cache_path)
+        seeded.store(legacy, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        # Control: a known scope reads the populated entry from this same file.
+        assert seeded.lookup(legacy, local_keys) == {"agent": _AGENT_REF}
+
+        reads, writes = _spy_cache_reads_and_writes(monkeypatch)
+        cache = content_less_session.RefCache(cache_path)
+        assert cache.lookup(None, local_keys) == {}
+        cache.store(None, "t1", "p1", local_keys, {"agent": _AGENT_REF})
+        assert reads == []
+        assert writes == []
+
+    def test_fingerprint_is_domain_separated_stable_and_hides_the_key(self):
+        headers = {"X-API-Key": _KEY_A}
+        principal = content_less_session.principal_for_headers(
+            _CONTENT_LESS_URL, headers
+        )
+        assert principal == content_less_session.principal_for_headers(
+            _CONTENT_LESS_URL, dict(headers)
+        )
+        fingerprint = hashlib.pbkdf2_hmac(
+            "sha256", _KEY_A.encode(), b"traigent-content-less-principal-v1", 200_000
+        ).hex()
+        assert principal == content_less_session.RefCache.principal(
+            _CONTENT_LESS_URL, fingerprint
+        )
+        assert fingerprint == content_less_session.credential_fingerprint(_KEY_A)
+        assert _KEY_A not in principal and "a" * 61 not in principal
+
+    def test_ambiguous_or_mixed_headers_are_never_cacheable(self):
+        url = _CONTENT_LESS_URL
+        assert content_less_session.principal_for_headers(url, {}) is None
+        assert (
+            content_less_session.principal_for_headers(
+                url, {"X-API-Key": _KEY_A, "Authorization": "Bearer t"}
+            )
+            is None
+        )
+        assert (
+            content_less_session.principal_for_headers(
+                url, {"X-API-Key": _KEY_A, "x-api-key": _KEY_B}
+            )
+            is None
+        )
+        assert (
+            content_less_session.principal_for_headers(url, {"X-API-Key": ""}) is None
+        )
+        assert (
+            content_less_session.principal_for_headers(None, {"X-API-Key": _KEY_A})
+            is None
+        )
+
+
+class TestStrictModeMissingEndpointFailsClosed:
+    """Strict self-hosted mode: run-status/measures updates raise, not return False."""
+
+    def setup_method(self):
+        from traigent.config.backend_config import EndpointNotConfiguredError
+
+        self._exc = EndpointNotConfiguredError
+        mock_client = Mock()
+        mock_client.auth_manager = Mock()
+        mock_client.auth_manager.augment_headers = AsyncMock(
+            return_value={"Content-Type": _JSON_CONTENT_TYPE}
+        )
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.api_base_url = None
+        self.ops = ApiOperations(mock_client)
+
+    def _patches(self):
+        exc = self._exc
+
+        def _no_endpoint():
+            raise exc("no endpoint configured")
+
+        session_cm = AsyncMock(
+            __aenter__=AsyncMock(return_value=AsyncMock()), __aexit__=AsyncMock()
+        )
+        return (
+            patch("traigent.cloud.api_operations.aiohttp"),
+            patch(
+                "traigent.cloud.api_operations.gate_session",
+                Mock(return_value=session_cm),
+            ),
+            patch(
+                "traigent.cloud.api_operations.BackendConfig.get_backend_api_url",
+                staticmethod(_no_endpoint),
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_config_run_status_raises(self):
+        p1, p2, p3 = self._patches()
+        with p1, p2, p3:
+            with pytest.raises(self._exc):
+                await self.ops.update_config_run_status("config_123", "COMPLETED")
+
+    @pytest.mark.asyncio
+    async def test_update_config_run_measures_raises(self):
+        p1, p2, p3 = self._patches()
+        with p1, p2, p3:
+            with pytest.raises(self._exc):
+                await self.ops.update_config_run_measures(
+                    "config_123", {"accuracy": 0.9}
+                )

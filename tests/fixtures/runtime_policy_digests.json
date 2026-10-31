@@ -1,0 +1,171 @@
+{
+  "comment": "Shared by the Python and JS SDK tests. Identical content in both repos; edit both.",
+  "numbers": [
+    { "value": 0.000001, "canonical": "0.000001" },
+    { "value": 0.0000001, "canonical": "0.0000001" },
+    { "value": 0.05, "canonical": "0.05" },
+    { "value": 0.5, "canonical": "0.5" },
+    { "value": 2000, "canonical": "2000" },
+    { "value": 2000.0, "canonical": "2000" },
+    { "value": 10, "canonical": "10" },
+    { "value": 10.0, "canonical": "10" },
+    { "value": 1e21, "canonical": "1000000000000000000000" },
+    { "value": 123456789012345680000.0, "canonical": "123456789012345680000" },
+    { "value": -0.0, "canonical": "0" },
+    { "value": 0.1, "canonical": "0.1" },
+    { "value": 0.0000125, "canonical": "0.0000125" },
+    { "value": -2.5, "canonical": "-2.5" },
+    { "value": 0.999999, "canonical": "0.999999" }
+  ],
+  "declarations": [
+    {
+      "id": "tiny_rate_1e-6",
+      "declaration": {
+        "environment": "production",
+        "confidence": 0.95,
+        "window_hours": 6,
+        "grace_minutes": 30,
+        "min_samples": 200,
+        "max_unresolved_fraction": 0.05,
+        "closure_windows": 2,
+        "closure_max_age_hours": 24,
+        "false_alarm_budget": 0.05,
+        "horizon_days": 30,
+        "name": "tiny_rate",
+        "latency_threshold_ms": 2000,
+        "max_violation_rate": 1e-6,
+        "on_breach": "alert"
+      },
+      "canonical_json": "{\"monitors\":[{\"decision\":{\"confidence\":0.95,\"false_alarm_budget\":0.05,\"horizon_days\":30,\"max_unresolved_fraction\":0.05,\"method\":\"clopper_pearson_exact_v1\",\"min_samples\":200},\"episode\":{\"closure_max_age_hours\":24,\"closure_windows\":2},\"evidence\":{\"deployment_environment\":\"production\",\"source\":\"backend_trace_metadata\"},\"name\":\"tiny_rate_monitor\",\"phase\":\"runtime\",\"profile\":\"backend_v1\",\"requirement\":\"tiny_rate\",\"window\":{\"grace_minutes\":30,\"tumbling_hours\":6}}],\"requirements\":[{\"kind\":\"rate_bound\",\"max_rate\":0.000001,\"name\":\"tiny_rate\",\"unit\":\"trace\",\"violation\":{\"exceeds\":2000,\"metric\":\"wall_clock_latency_ms\"}}],\"responses\":[{\"name\":\"tiny_rate_ladder\",\"rules\":[{\"do\":\"notify\",\"id\":\"alert_opened\",\"severity\":\"warning\",\"trigger\":{\"event\":\"episode_opened\",\"monitor\":\"tiny_rate_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_resolved\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_resolved\",\"monitor\":\"tiny_rate_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_withdrawn\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_withdrawn\",\"monitor\":\"tiny_rate_monitor\"}}]}],\"tvl_version\":\"1.3\"}",
+      "policy_digest": "06d20c091b3f90e59d3db32220e664f8c978b365fb0ffb80723ad96c738ca9c5"
+    },
+    {
+      "id": "tinier_rate_1e-7",
+      "declaration": {
+        "environment": "production",
+        "confidence": 0.95,
+        "window_hours": 6,
+        "grace_minutes": 30,
+        "min_samples": 200,
+        "max_unresolved_fraction": 0.05,
+        "closure_windows": 2,
+        "closure_max_age_hours": 24,
+        "false_alarm_budget": 0.05,
+        "horizon_days": 30,
+        "name": "tinier_rate",
+        "latency_threshold_ms": 2000,
+        "max_violation_rate": 1e-7,
+        "on_breach": "alert"
+      },
+      "canonical_json": "{\"monitors\":[{\"decision\":{\"confidence\":0.95,\"false_alarm_budget\":0.05,\"horizon_days\":30,\"max_unresolved_fraction\":0.05,\"method\":\"clopper_pearson_exact_v1\",\"min_samples\":200},\"episode\":{\"closure_max_age_hours\":24,\"closure_windows\":2},\"evidence\":{\"deployment_environment\":\"production\",\"source\":\"backend_trace_metadata\"},\"name\":\"tinier_rate_monitor\",\"phase\":\"runtime\",\"profile\":\"backend_v1\",\"requirement\":\"tinier_rate\",\"window\":{\"grace_minutes\":30,\"tumbling_hours\":6}}],\"requirements\":[{\"kind\":\"rate_bound\",\"max_rate\":0.0000001,\"name\":\"tinier_rate\",\"unit\":\"trace\",\"violation\":{\"exceeds\":2000,\"metric\":\"wall_clock_latency_ms\"}}],\"responses\":[{\"name\":\"tinier_rate_ladder\",\"rules\":[{\"do\":\"notify\",\"id\":\"alert_opened\",\"severity\":\"warning\",\"trigger\":{\"event\":\"episode_opened\",\"monitor\":\"tinier_rate_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_resolved\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_resolved\",\"monitor\":\"tinier_rate_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_withdrawn\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_withdrawn\",\"monitor\":\"tinier_rate_monitor\"}}]}],\"tvl_version\":\"1.3\"}",
+      "policy_digest": "a7afe645a22f0507840bf5d687e22ad8333a82f259dbc8c8e777948af2370066"
+    },
+    {
+      "id": "default_rate_0.05",
+      "declaration": {
+        "environment": "production",
+        "confidence": 0.95,
+        "window_hours": 6,
+        "grace_minutes": 30,
+        "min_samples": 200,
+        "max_unresolved_fraction": 0.05,
+        "closure_windows": 2,
+        "closure_max_age_hours": 24,
+        "false_alarm_budget": 0.05,
+        "horizon_days": 30,
+        "name": "default_rate",
+        "latency_threshold_ms": 2000,
+        "max_violation_rate": 0.05,
+        "on_breach": "alert"
+      },
+      "canonical_json": "{\"monitors\":[{\"decision\":{\"confidence\":0.95,\"false_alarm_budget\":0.05,\"horizon_days\":30,\"max_unresolved_fraction\":0.05,\"method\":\"clopper_pearson_exact_v1\",\"min_samples\":200},\"episode\":{\"closure_max_age_hours\":24,\"closure_windows\":2},\"evidence\":{\"deployment_environment\":\"production\",\"source\":\"backend_trace_metadata\"},\"name\":\"default_rate_monitor\",\"phase\":\"runtime\",\"profile\":\"backend_v1\",\"requirement\":\"default_rate\",\"window\":{\"grace_minutes\":30,\"tumbling_hours\":6}}],\"requirements\":[{\"kind\":\"rate_bound\",\"max_rate\":0.05,\"name\":\"default_rate\",\"unit\":\"trace\",\"violation\":{\"exceeds\":2000,\"metric\":\"wall_clock_latency_ms\"}}],\"responses\":[{\"name\":\"default_rate_ladder\",\"rules\":[{\"do\":\"notify\",\"id\":\"alert_opened\",\"severity\":\"warning\",\"trigger\":{\"event\":\"episode_opened\",\"monitor\":\"default_rate_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_resolved\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_resolved\",\"monitor\":\"default_rate_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_withdrawn\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_withdrawn\",\"monitor\":\"default_rate_monitor\"}}]}],\"tvl_version\":\"1.3\"}",
+      "policy_digest": "7b7afa569fc636150b7895f272be24a961aca706743691d4b156b4bce38cd286"
+    },
+    {
+      "id": "fix_ceiling_10",
+      "declaration": {
+        "environment": "production",
+        "confidence": 0.95,
+        "window_hours": 6,
+        "grace_minutes": 30,
+        "min_samples": 200,
+        "max_unresolved_fraction": 0.05,
+        "closure_windows": 2,
+        "closure_max_age_hours": 24,
+        "false_alarm_budget": 0.05,
+        "horizon_days": 30,
+        "name": "fix_ten",
+        "latency_threshold_ms": 2000,
+        "max_violation_rate": 0.05,
+        "max_fix_cost_usd": 10,
+        "on_breach": "fix"
+      },
+      "canonical_json": "{\"monitors\":[{\"decision\":{\"confidence\":0.95,\"false_alarm_budget\":0.05,\"horizon_days\":30,\"max_unresolved_fraction\":0.05,\"method\":\"clopper_pearson_exact_v1\",\"min_samples\":200},\"episode\":{\"closure_max_age_hours\":24,\"closure_windows\":2},\"evidence\":{\"deployment_environment\":\"production\",\"source\":\"backend_trace_metadata\"},\"name\":\"fix_ten_monitor\",\"phase\":\"runtime\",\"profile\":\"backend_v1\",\"requirement\":\"fix_ten\",\"window\":{\"grace_minutes\":30,\"tumbling_hours\":6}}],\"requirements\":[{\"kind\":\"rate_bound\",\"max_rate\":0.05,\"name\":\"fix_ten\",\"unit\":\"trace\",\"violation\":{\"exceeds\":2000,\"metric\":\"wall_clock_latency_ms\"}}],\"responses\":[{\"name\":\"fix_ten_ladder\",\"rules\":[{\"do\":\"notify\",\"id\":\"alert_opened\",\"severity\":\"warning\",\"trigger\":{\"event\":\"episode_opened\",\"monitor\":\"fix_ten_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_resolved\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_resolved\",\"monitor\":\"fix_ten_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_withdrawn\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_withdrawn\",\"monitor\":\"fix_ten_monitor\"}},{\"do\":\"open_next_step\",\"id\":\"restore\",\"trigger\":{\"event\":\"episode_opened\",\"monitor\":\"fix_ten_monitor\"}},{\"approval\":\"human\",\"do\":\"optimize\",\"id\":\"fix\",\"trigger\":{\"event\":\"episode_opened\",\"monitor\":\"fix_ten_monitor\"}}]}],\"tvl_version\":\"1.3\"}",
+      "policy_digest": "5f5534d22cda471582c34b2d83faa9b7e5eef72b8affa94d94ae49dda49ba89b"
+    },
+    {
+      "id": "fix_ceiling_0.5",
+      "declaration": {
+        "environment": "production",
+        "confidence": 0.95,
+        "window_hours": 6,
+        "grace_minutes": 30,
+        "min_samples": 200,
+        "max_unresolved_fraction": 0.05,
+        "closure_windows": 2,
+        "closure_max_age_hours": 24,
+        "false_alarm_budget": 0.05,
+        "horizon_days": 30,
+        "name": "fix_half",
+        "latency_threshold_ms": 500,
+        "max_violation_rate": 0.01,
+        "max_fix_cost_usd": 0.5,
+        "on_breach": "fix"
+      },
+      "canonical_json": "{\"monitors\":[{\"decision\":{\"confidence\":0.95,\"false_alarm_budget\":0.05,\"horizon_days\":30,\"max_unresolved_fraction\":0.05,\"method\":\"clopper_pearson_exact_v1\",\"min_samples\":200},\"episode\":{\"closure_max_age_hours\":24,\"closure_windows\":2},\"evidence\":{\"deployment_environment\":\"production\",\"source\":\"backend_trace_metadata\"},\"name\":\"fix_half_monitor\",\"phase\":\"runtime\",\"profile\":\"backend_v1\",\"requirement\":\"fix_half\",\"window\":{\"grace_minutes\":30,\"tumbling_hours\":6}}],\"requirements\":[{\"kind\":\"rate_bound\",\"max_rate\":0.01,\"name\":\"fix_half\",\"unit\":\"trace\",\"violation\":{\"exceeds\":500,\"metric\":\"wall_clock_latency_ms\"}}],\"responses\":[{\"name\":\"fix_half_ladder\",\"rules\":[{\"do\":\"notify\",\"id\":\"alert_opened\",\"severity\":\"warning\",\"trigger\":{\"event\":\"episode_opened\",\"monitor\":\"fix_half_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_resolved\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_resolved\",\"monitor\":\"fix_half_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_withdrawn\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_withdrawn\",\"monitor\":\"fix_half_monitor\"}},{\"do\":\"open_next_step\",\"id\":\"restore\",\"trigger\":{\"event\":\"episode_opened\",\"monitor\":\"fix_half_monitor\"}},{\"approval\":\"human\",\"do\":\"optimize\",\"id\":\"fix\",\"trigger\":{\"event\":\"episode_opened\",\"monitor\":\"fix_half_monitor\"}}]}],\"tvl_version\":\"1.3\"}",
+      "policy_digest": "bf1dae68a6b96fbe8a15d6d6e8b8d5bcfae4cfb4ef0abf447bf797b3f2be6660"
+    },
+    {
+      "id": "log_threshold_30000_conf_99",
+      "declaration": {
+        "environment": "production",
+        "confidence": 0.99,
+        "window_hours": 6,
+        "grace_minutes": 30,
+        "min_samples": 200,
+        "max_unresolved_fraction": 0.5,
+        "closure_windows": 2,
+        "closure_max_age_hours": 24,
+        "false_alarm_budget": 0.5,
+        "horizon_days": 30,
+        "name": "log_slow",
+        "latency_threshold_ms": 30000,
+        "max_violation_rate": 0.1,
+        "on_breach": "log"
+      },
+      "canonical_json": "{\"monitors\":[{\"decision\":{\"confidence\":0.99,\"false_alarm_budget\":0.5,\"horizon_days\":30,\"max_unresolved_fraction\":0.5,\"method\":\"clopper_pearson_exact_v1\",\"min_samples\":200},\"episode\":{\"closure_max_age_hours\":24,\"closure_windows\":2},\"evidence\":{\"deployment_environment\":\"production\",\"source\":\"backend_trace_metadata\"},\"name\":\"log_slow_monitor\",\"phase\":\"runtime\",\"profile\":\"backend_v1\",\"requirement\":\"log_slow\",\"window\":{\"grace_minutes\":30,\"tumbling_hours\":6}}],\"requirements\":[{\"kind\":\"rate_bound\",\"max_rate\":0.1,\"name\":\"log_slow\",\"unit\":\"trace\",\"violation\":{\"exceeds\":30000,\"metric\":\"wall_clock_latency_ms\"}}],\"responses\":[{\"name\":\"log_slow_ladder\",\"rules\":[{\"do\":\"notify\",\"id\":\"log_opened\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_opened\",\"monitor\":\"log_slow_monitor\"}},{\"do\":\"notify\",\"id\":\"log_resolved\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_resolved\",\"monitor\":\"log_slow_monitor\"}},{\"do\":\"notify\",\"id\":\"log_withdrawn\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_withdrawn\",\"monitor\":\"log_slow_monitor\"}}]}],\"tvl_version\":\"1.3\"}",
+      "policy_digest": "b46ba79033b0ee36018e1f39f2b3aac318456937bbdbfd10c9484d88ed345d5d"
+    },
+    {
+      "id": "near_one_rate",
+      "declaration": {
+        "environment": "staging",
+        "confidence": 0.95,
+        "window_hours": 24,
+        "grace_minutes": 30,
+        "min_samples": 200,
+        "max_unresolved_fraction": 0.05,
+        "closure_windows": 2,
+        "closure_max_age_hours": 24,
+        "false_alarm_budget": 0.05,
+        "horizon_days": 30,
+        "name": "near_one",
+        "latency_threshold_ms": 600000,
+        "max_violation_rate": 0.999999,
+        "on_breach": "alert"
+      },
+      "canonical_json": "{\"monitors\":[{\"decision\":{\"confidence\":0.95,\"false_alarm_budget\":0.05,\"horizon_days\":30,\"max_unresolved_fraction\":0.05,\"method\":\"clopper_pearson_exact_v1\",\"min_samples\":200},\"episode\":{\"closure_max_age_hours\":24,\"closure_windows\":2},\"evidence\":{\"deployment_environment\":\"staging\",\"source\":\"backend_trace_metadata\"},\"name\":\"near_one_monitor\",\"phase\":\"runtime\",\"profile\":\"backend_v1\",\"requirement\":\"near_one\",\"window\":{\"grace_minutes\":30,\"tumbling_hours\":24}}],\"requirements\":[{\"kind\":\"rate_bound\",\"max_rate\":0.999999,\"name\":\"near_one\",\"unit\":\"trace\",\"violation\":{\"exceeds\":600000,\"metric\":\"wall_clock_latency_ms\"}}],\"responses\":[{\"name\":\"near_one_ladder\",\"rules\":[{\"do\":\"notify\",\"id\":\"alert_opened\",\"severity\":\"warning\",\"trigger\":{\"event\":\"episode_opened\",\"monitor\":\"near_one_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_resolved\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_resolved\",\"monitor\":\"near_one_monitor\"}},{\"do\":\"notify\",\"id\":\"alert_withdrawn\",\"severity\":\"info\",\"trigger\":{\"event\":\"episode_withdrawn\",\"monitor\":\"near_one_monitor\"}}]}],\"tvl_version\":\"1.3\"}",
+      "policy_digest": "46b5ddf4b09b35ddc4ce4024fee2348f64348b866fe9f469dbc23d67ed79db12"
+    }
+  ]
+}

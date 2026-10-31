@@ -163,11 +163,11 @@ def _python_version_step() -> dict[str, Any]:
     version = (
         f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     )
-    status = "passed" if sys.version_info >= (3, 11) else "failed"
+    status = "passed" if sys.version_info >= (3, 12) else "failed"
     return {
         "id": "python_version",
         "status": status,
-        "description": f"Python {version}; Traigent requires Python >=3.11",
+        "description": f"Python {version}; Traigent requires Python >=3.12",
     }
 
 
@@ -442,6 +442,76 @@ def _run_quickstart_verification() -> bool:
     return True
 
 
+def _maybe_install_dependency(project_markers: list[str]) -> None:
+    if project_markers:
+        dependency_command = _dependency_command(project_markers)
+        if click.confirm(
+            f"Add the SDK to this project with `{_command_text(dependency_command)}`?",
+            default=False,
+        ):
+            _run_command(dependency_command)
+    else:
+        console.print("No Python project marker found; dependency install skipped.")
+
+
+def _ensure_authenticated(
+    no_login: bool, backend_url: str | None, write_env: bool
+) -> bool:
+    """Run device login when needed. Returns False if login failed."""
+    auth_cli = TraigentAuthCLI(backend_url_override=backend_url)
+    current_auth_status = asyncio.run(_auth_status(auth_cli))
+    if current_auth_status == "authenticated":
+        return True
+    if no_login:
+        console.print("Device login skipped because --no-login was set.")
+        return True
+    save_env_file = write_env or click.confirm(
+        "Write project credentials to this directory's .env file?",
+        default=False,
+    )
+    return bool(
+        asyncio.run(
+            auth_cli.device_login(
+                save_env_file=save_env_file,
+                write_env_explicit=write_env,
+            )
+        )
+    )
+
+
+def _offer_skills_install(
+    detected_agents: list[AgentName], profile: OnboardProfile
+) -> None:
+    skills_command = _skills_command_for_profile(profile)
+    skills_prompt_label = (
+        "the Traigent first-run beginner journey"
+        if profile == "beginner"
+        else "Traigent agent skills"
+    )
+    for agent in detected_agents:
+        if click.confirm(
+            f"Install {skills_prompt_label} for {AGENT_LABELS[agent]}?",
+            default=False,
+        ):
+            _run_command(skills_command)
+
+
+def _offer_mcp_registration(detected_agents: list[AgentName]) -> None:
+    if not _mcp_help_succeeds():
+        console.print(
+            "`traigent mcp` is not available in this SDK build yet; "
+            "MCP registration skipped."
+        )
+        return
+    for agent in detected_agents:
+        command = _mcp_registration_command(agent)
+        if click.confirm(
+            f"Register Traigent MCP for {AGENT_LABELS[agent]}?",
+            default=False,
+        ):
+            _run_command(command)
+
+
 def _run_interactive_onboard(
     no_login: bool,
     backend_url: str | None,
@@ -456,64 +526,17 @@ def _run_interactive_onboard(
     console.print("\n[bold blue]Traigent Onboarding[/bold blue]")
     console.print(python_step["description"])
     if python_step["status"] != "passed":
-        raise click.ClickException("Python >=3.11 is required.")
+        raise click.ClickException("Python >=3.12 is required.")
 
     _print_detection_table(project_markers, detected_agents)
 
-    if project_markers:
-        dependency_command = _dependency_command(project_markers)
-        if click.confirm(
-            f"Add the SDK to this project with `{_command_text(dependency_command)}`?",
-            default=False,
-        ):
-            _run_command(dependency_command)
-    else:
-        console.print("No Python project marker found; dependency install skipped.")
+    _maybe_install_dependency(project_markers)
 
-    auth_cli = TraigentAuthCLI(backend_url_override=backend_url)
-    current_auth_status = asyncio.run(_auth_status(auth_cli))
-    if current_auth_status != "authenticated":
-        if no_login:
-            console.print("Device login skipped because --no-login was set.")
-        else:
-            save_env_file = write_env or click.confirm(
-                "Write project credentials to this directory's .env file?",
-                default=False,
-            )
-            if not asyncio.run(
-                auth_cli.device_login(
-                    save_env_file=save_env_file,
-                    write_env_explicit=write_env,
-                )
-            ):
-                return False
+    if not _ensure_authenticated(no_login, backend_url, write_env):
+        return False
 
-    skills_command = _skills_command_for_profile(profile)
-    skills_prompt_label = (
-        "the Traigent first-run beginner journey"
-        if profile == "beginner"
-        else "Traigent agent skills"
-    )
-    for agent in detected_agents:
-        if click.confirm(
-            f"Install {skills_prompt_label} for {AGENT_LABELS[agent]}?",
-            default=False,
-        ):
-            _run_command(skills_command)
-
-    if _mcp_help_succeeds():
-        for agent in detected_agents:
-            command = _mcp_registration_command(agent)
-            if click.confirm(
-                f"Register Traigent MCP for {AGENT_LABELS[agent]}?",
-                default=False,
-            ):
-                _run_command(command)
-    else:
-        console.print(
-            "`traigent mcp` is not available in this SDK build yet; "
-            "MCP registration skipped."
-        )
+    _offer_skills_install(detected_agents, profile)
+    _offer_mcp_registration(detected_agents)
 
     if not _run_quickstart_verification():
         return False

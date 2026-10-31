@@ -75,7 +75,7 @@ The backend integration module is automatically used by the Traigent orchestrato
 from traigent import optimize
 
 @optimize(
-    model="gpt-3.5-turbo",
+    model="gpt-5.6-terra",
     algorithm="auto",  # Backend suggestions with SDK-run trials
 )
 def my_function(prompt: str) -> str:

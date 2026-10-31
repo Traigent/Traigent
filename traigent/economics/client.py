@@ -36,7 +36,6 @@ from email.utils import parsedate_to_datetime
 from types import MappingProxyType
 from typing import Any, cast
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.economics.contract import (
@@ -44,6 +43,7 @@ from traigent.economics.contract import (
     PROJECT_ID_HEADER,
     TELEMETRY_ENDPOINT,
 )
+from traigent.economics.egress import enforce_characterization_egress
 from traigent.economics.errors import (
     EconomicsBatchTooLarge,
     EconomicsIdempotencyConflict,
@@ -52,10 +52,11 @@ from traigent.economics.errors import (
     EconomicsTelemetryContractError,
     EconomicsTelemetryTransportError,
 )
-from traigent.economics.egress import enforce_characterization_egress
 from traigent.economics.payload import build_telemetry_request, canonical_json_bytes
 from traigent.economics.result import TelemetryIngestResult
 from traigent.economics.schema import validate_request_or_fail
+from traigent.labels.transport_gate import gate_session
+from traigent.utils import optimization_only_egress as oo_egress
 
 try:  # pragma: no cover - exercised only when httpx is absent
     import httpx
@@ -480,6 +481,16 @@ class EconomicsTelemetryClient:
     # -- request / response -----------------------------------------------------
 
     async def _post_with_retry(self, content: bytes, headers: dict[str, str]) -> Any:
+        # optimization_only: telemetry is not part of the optimization loop. It is already
+        # schema-validated, but it is only sent when the whole body is closed values
+        # (identifier keys; identifier/digest/number leaves); otherwise refused locally.
+        oo_egress.assert_closed_json_bytes(
+            content,
+            "economics_telemetry",
+            explicit=oo_egress.policy_from_headers(
+                self.backend_url, self._auth_headers()
+            ),
+        )
         # Fail-safe gate, checked immediately before the only transport call in
         # this class: never send an economics telemetry request without a
         # credential attached. A missing credential is not a reason to POST and

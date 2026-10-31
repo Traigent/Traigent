@@ -47,6 +47,7 @@ Counts/rates/enums/finite numbers only — never content.
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -620,57 +621,25 @@ def _drive_cascade(
     - a gated nested majority_vote ensemble's OWN vote feeds the gate (F1a);
     - an ``error`` is absorbing (propagates to the cascade error).
     """
-    gates: list[Gate] = []
-    for gate in body.gates:
-        if gate.kind is not IRGateKind.MARGIN_BELOW:  # pragma: no cover - IR-guarded
-            return _error(
-                f"composite-runtime: post-cascade gate kind {gate.kind.value!r} "
-                "is not executable (margin_below only)"
-            )
-        gates.append(
-            Gate(
-                kind=GateKind.MARGIN_BELOW,
-                threshold_ref=_build_threshold_ref(gate.threshold, calibrated_values),
-            )
-        )
+    gates, gate_error = _build_runtime_gates(body, calibrated_values)
+    if gate_error is not None:
+        return gate_error
 
     escalations = 0
     last = len(body.arms) - 1
     for index, arm in enumerate(body.arms):
         is_last = index == last
         try:
-            if isinstance(arm, StageArm):
-                outcome = _evaluate_stage_arm(
-                    arm, stages, gated=not is_last, config=config
-                )
-            elif is_last:
-                # A terminal nested arm: any composite kind; no vote needed.
-                inner = _execute_node(
-                    registry[arm.ref],
-                    stages,
-                    registry,
-                    config,
-                    calibrated_values,
-                    signals,
-                    predicates,
-                )
-                outcome = _ArmOutcome(
-                    output=inner.output,
-                    vote=None,
-                    kind=inner.result_kind,
-                    error=inner.error,
-                )
-            else:
-                # A GATED nested arm MUST be a majority_vote ensemble (F1a).
-                outcome = _run_nested_majority_vote(
-                    registry[arm.ref],
-                    stages,
-                    registry,
-                    config,
-                    calibrated_values,
-                    signals,
-                    predicates,
-                )
+            outcome = _evaluate_cascade_arm(
+                arm,
+                is_last,
+                stages,
+                registry,
+                config,
+                calibrated_values,
+                signals,
+                predicates,
+            )
         except Exception as exc:  # noqa: BLE001 - error is absorbing (§3.2.1)
             return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
 
@@ -681,59 +650,122 @@ def _drive_cascade(
             )
 
         if is_last:
-            step = CascadeStep(
-                stage_index=index,
-                stage_name="",
-                output=outcome.output,
-                representative=outcome.output,
-                vote=outcome.vote,
-                escalations=escalations,
-            )
-            if outcome.kind is ResultKind.NO_ACCEPT:
-                # Only the terminal arm's no_accept becomes the cascade's (F1b).
-                return _no_accept(_cascade_measures(step, body))
-            return CompositeRunResult(
-                output=outcome.output,
-                result_kind=ResultKind.OUTPUT,
-                measures=_cascade_measures(step, body),
-                error=None,
-            )
+            return _decided_cascade_result(outcome, index, escalations, body)
 
         # A non-terminal (gated) arm.
-        if outcome.kind is ResultKind.NO_ACCEPT:
-            # F1b: a gated arm's no_accept ESCALATES to the next stage.
-            escalations += 1
-            continue
-        runtime_gate = gates[index]
-        if outcome.vote is None:  # pragma: no cover - guarded above for stages
-            return _error(
-                f"composite-runtime: gated cascade arm {index} has no vote to "
-                "feed the gate (margin-bearing arm required)"
-            )
-        try:
-            escalate = runtime_gate.should_escalate(outcome.vote)
-        except Exception as exc:  # noqa: BLE001 - non-finite/unset threshold
-            return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
+        escalate = _gated_arm_escalates(outcome, gates[index], index)
+        if isinstance(escalate, CompositeRunResult):
+            return escalate
         if escalate:
             escalations += 1
             continue
-        step = CascadeStep(
-            stage_index=index,
-            stage_name="",
-            output=outcome.output,
-            representative=outcome.output,
-            vote=outcome.vote,
-            escalations=escalations,
-        )
-        return CompositeRunResult(
-            output=outcome.output,
-            result_kind=ResultKind.OUTPUT,
-            measures=_cascade_measures(step, body),
-            error=None,
-        )
+        return _decided_cascade_result(outcome, index, escalations, body)
 
     return _error(  # pragma: no cover - the loop always returns at the last arm
         "composite-runtime: cascade driver reached an unreachable terminal state"
+    )
+
+
+def _gated_arm_escalates(
+    outcome: _ArmOutcome, gate: Gate, index: int
+) -> bool | CompositeRunResult:
+    """Whether a non-terminal arm escalates; an ``error`` result on a gate fault."""
+    if outcome.kind is ResultKind.NO_ACCEPT:
+        # F1b: a gated arm's no_accept ESCALATES to the next stage.
+        return True
+    if outcome.vote is None:  # pragma: no cover - guarded above for stages
+        return _error(
+            f"composite-runtime: gated cascade arm {index} has no vote to "
+            "feed the gate (margin-bearing arm required)"
+        )
+    try:
+        return bool(gate.should_escalate(outcome.vote))
+    except Exception as exc:  # noqa: BLE001 - non-finite/unset threshold
+        return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
+
+
+def _build_runtime_gates(
+    body: CascadeBody, calibrated_values: Mapping[str, float | int]
+) -> tuple[list[Gate], CompositeRunResult | None]:
+    """Build the live gates; a non-margin gate kind yields an ``error`` result."""
+    gates: list[Gate] = []
+    for gate in body.gates:
+        if gate.kind is not IRGateKind.MARGIN_BELOW:  # pragma: no cover - IR-guarded
+            return gates, _error(
+                f"composite-runtime: post-cascade gate kind {gate.kind.value!r} "
+                "is not executable (margin_below only)"
+            )
+        gates.append(
+            Gate(
+                kind=GateKind.MARGIN_BELOW,
+                threshold_ref=_build_threshold_ref(gate.threshold, calibrated_values),
+            )
+        )
+    return gates, None
+
+
+def _evaluate_cascade_arm(
+    arm: Arm,
+    is_last: bool,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    config: Mapping[str, Any],
+    calibrated_values: Mapping[str, float | int],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> _ArmOutcome:
+    """Evaluate one arm for the manual driver (may raise; the caller absorbs)."""
+    if isinstance(arm, StageArm):
+        return _evaluate_stage_arm(arm, stages, gated=not is_last, config=config)
+    if is_last:
+        # A terminal nested arm: any composite kind; no vote needed.
+        inner = _execute_node(
+            registry[arm.ref],
+            stages,
+            registry,
+            config,
+            calibrated_values,
+            signals,
+            predicates,
+        )
+        return _ArmOutcome(
+            output=inner.output,
+            vote=None,
+            kind=inner.result_kind,
+            error=inner.error,
+        )
+    # A GATED nested arm MUST be a majority_vote ensemble (F1a).
+    return _run_nested_majority_vote(
+        registry[arm.ref],
+        stages,
+        registry,
+        config,
+        calibrated_values,
+        signals,
+        predicates,
+    )
+
+
+def _decided_cascade_result(
+    outcome: _ArmOutcome, index: int, escalations: int, body: CascadeBody
+) -> CompositeRunResult:
+    """The cascade result once arm ``index`` is the deciding arm."""
+    step = CascadeStep(
+        stage_index=index,
+        stage_name="",
+        output=outcome.output,
+        representative=outcome.output,
+        vote=outcome.vote,
+        escalations=escalations,
+    )
+    if index == len(body.arms) - 1 and outcome.kind is ResultKind.NO_ACCEPT:
+        # Only the terminal arm's no_accept becomes the cascade's (F1b).
+        return _no_accept(_cascade_measures(step, body))
+    return CompositeRunResult(
+        output=outcome.output,
+        result_kind=ResultKind.OUTPUT,
+        measures=_cascade_measures(step, body),
+        error=None,
     )
 
 
@@ -1086,7 +1118,8 @@ class _Candidate:
     key: VoteKey
 
 
-def _collect_candidates(
+def _collect_sampling_candidates(
+    cardinality: str,
     body: EnsembleBody,
     stages: Mapping[str, StageEntry],
     registry: Mapping[str, CompositeNode],
@@ -1095,51 +1128,55 @@ def _collect_candidates(
     signals: Mapping[str, Callable[..., Any]],
     predicates: Mapping[str, Callable[..., Any]],
 ) -> tuple[list[_Candidate], int]:
-    """Run the ensemble arms and collect candidate outputs (§3.2).
-
-    Sampling form (``|arms| = 1``): the single arm runs ``k`` times (``k`` the
-    resolved cardinality). Committee form (``|arms| > 1``): each arm runs once;
-    a committee arm yielding ``no_accept`` is EXCLUDED from the vote (§3.2.1),
-    an arm error propagates (absorbing). Returns the surviving candidates and
-    the count excluded BY ``no_accept`` (NOT by error — error already raised).
-    """
+    """Sampling form (``|arms| = 1``): run the single arm ``k`` times."""
     excluded_no_accept = 0
-    if body.cardinality is not None:  # sampling form
-        k = _resolve_cardinality(body.cardinality, config, calibrated_values)
-        arm = body.arms[0]
-        if isinstance(arm, StageArm):
-            runner = _coerce_stage_runner(stages[arm.name])
-            samples = list(runner.run(config))
-            key_fn = runner.key_fn or (lambda x: x)
-            candidates = [_Candidate(output=s, key=key_fn(s)) for s in samples]
-            # Sampling over a stage produces k outputs; cap the declared vote
-            # denominator at k so margins never exceed 1 (the vote_over contract).
-            if len(candidates) != k:
-                raise ValueError(
-                    f"sampling ensemble arm {arm.name!r} declared k={k} "
-                    f"but produced {len(candidates)} samples"
-                )
-            return candidates, excluded_no_accept
-        # F2: a single-arm SAMPLING ensemble over a nested COMPOSITE runs that
-        # composite k times — each run is ONE candidate (keyed by its output via
-        # the nested run's own selection semantics). A nested error is absorbing;
-        # a nested no_accept excludes that draw (§3.2.1).
-        node = registry[arm.ref]
-        sampled: list[_Candidate] = []
-        for _draw in range(k):
-            inner = _execute_node(
-                node, stages, registry, config, calibrated_values, signals, predicates
+    k = _resolve_cardinality(cardinality, config, calibrated_values)
+    arm = body.arms[0]
+    if isinstance(arm, StageArm):
+        runner = _coerce_stage_runner(stages[arm.name])
+        samples = list(runner.run(config))
+        key_fn = runner.key_fn or (lambda x: x)
+        candidates = [_Candidate(output=s, key=key_fn(s)) for s in samples]
+        # Sampling over a stage produces k outputs; cap the declared vote
+        # denominator at k so margins never exceed 1 (the vote_over contract).
+        if len(candidates) != k:
+            raise ValueError(
+                f"sampling ensemble arm {arm.name!r} declared k={k} "
+                f"but produced {len(candidates)} samples"
             )
-            if inner.result_kind is ResultKind.ERROR:
-                raise RuntimeError(
-                    f"sampling ensemble arm {arm.ref!r} failed: {inner.error}"
-                )
-            if inner.result_kind is ResultKind.NO_ACCEPT:
-                excluded_no_accept += 1
-                continue
-            sampled.append(_Candidate(output=inner.output, key=inner.output))
-        return sampled, excluded_no_accept
+        return candidates, excluded_no_accept
+    # F2: a single-arm SAMPLING ensemble over a nested COMPOSITE runs that
+    # composite k times — each run is ONE candidate (keyed by its output via
+    # the nested run's own selection semantics). A nested error is absorbing;
+    # a nested no_accept excludes that draw (§3.2.1).
+    node = registry[arm.ref]
+    sampled: list[_Candidate] = []
+    for _draw in range(k):
+        inner = _execute_node(
+            node, stages, registry, config, calibrated_values, signals, predicates
+        )
+        if inner.result_kind is ResultKind.ERROR:
+            raise RuntimeError(
+                f"sampling ensemble arm {arm.ref!r} failed: {inner.error}"
+            )
+        if inner.result_kind is ResultKind.NO_ACCEPT:
+            excluded_no_accept += 1
+            continue
+        sampled.append(_Candidate(output=inner.output, key=inner.output))
+    return sampled, excluded_no_accept
 
+
+def _collect_committee_candidates(
+    body: EnsembleBody,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    config: Mapping[str, Any],
+    calibrated_values: Mapping[str, float | int],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> tuple[list[_Candidate], int]:
+    """Committee form (``|arms| > 1``): each arm runs once (§3.2.1)."""
+    excluded_no_accept = 0
     candidates = []  # committee form
     for arm in body.arms:
         if isinstance(arm, StageArm):
@@ -1182,6 +1219,29 @@ def _collect_candidates(
                 continue
             candidates.append(_Candidate(output=inner.output, key=inner.output))
     return candidates, excluded_no_accept
+
+
+def _collect_candidates(
+    body: EnsembleBody,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    config: Mapping[str, Any],
+    calibrated_values: Mapping[str, float | int],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> tuple[list[_Candidate], int]:
+    """Run the ensemble arms and collect candidate outputs (§3.2).
+
+    Sampling form (``|arms| = 1``): the single arm runs ``k`` times (``k`` the
+    resolved cardinality). Committee form (``|arms| > 1``): each arm runs once;
+    a committee arm yielding ``no_accept`` is EXCLUDED from the vote (§3.2.1),
+    an arm error propagates (absorbing). Returns the surviving candidates and
+    the count excluded BY ``no_accept`` (NOT by error — error already raised).
+    """
+    args = (body, stages, registry, config, calibrated_values, signals, predicates)
+    if body.cardinality is not None:  # sampling form
+        return _collect_sampling_candidates(body.cardinality, *args)
+    return _collect_committee_candidates(*args)
 
 
 def _majority_vote(candidates: Sequence[_Candidate]) -> tuple[Any, VoteStats]:
@@ -1259,6 +1319,7 @@ def _neg_key(serialized: str) -> Any:
     return _ReverseStr(serialized)
 
 
+@functools.total_ordering
 @dataclass(frozen=True, slots=True)
 class _ReverseStr:
     """A string wrapper whose ordering is REVERSED, so that under ``max`` the
@@ -1527,6 +1588,13 @@ def _execute_loop(
                 error=None,
             )
 
+    return _unaccepted_loop_result(stop, last_kind, last_output, iterations_used)
+
+
+def _unaccepted_loop_result(
+    stop: Any, last_kind: ResultKind, last_output: Any, iterations_used: int
+) -> CompositeRunResult:
+    """The result of a loop that ran out of iterations without an accepting stop."""
     # max_iters reached without acceptance, OR an exhausted loop whose final
     # body result is no_accept -> the loop yields no_accept (§3.2.1).
     measures = _loop_measures(iterations_used, StopReason.EXHAUSTED)
@@ -1701,19 +1769,10 @@ def execute_kchain(
 
     for index, _stage in enumerate(stages):
         iterations_used = index + 1
-        try:
-            raw = runner.run(config, _restrict_state(state, state_keys))
-            result = raw if isinstance(raw, LoopBodyResult) else LoopBodyResult(raw)
-        except Exception as exc:  # noqa: BLE001 - body exception is absorbing
-            return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
-        if result.result_kind is ResultKind.ERROR:
-            # F4 parity: a body ERROR result-kind is the §3.2.1 absorbing error
-            # — the SAME outcome the live loop produces. The chain must NOT
-            # treat the error cell's .output as a produced output (fail closed).
-            return _error(
-                f"composite-runtime: K-chain body of {chain.signal!r} failed: "
-                f"{result.error if isinstance(result, CompositeRunResult) else 'error'}"
-            )
+        result, failure = _kchain_body_step(chain, runner, config, state, state_keys)
+        if failure is not None:
+            return failure
+        assert result is not None
         if result.result_kind is ResultKind.NO_ACCEPT:
             # a no_accept body iteration: escalate (no accepted state to test).
             state = _restrict_state(result.state, state_keys)
@@ -1721,11 +1780,10 @@ def execute_kchain(
         last_output = result.output
         state = _restrict_state(result.state, state_keys)
         try:
-            sigma = _kchain_sigma(chain, state, signals)
-            theta = _resolve_threshold(chain.threshold, calibrated_values)
+            accepted = _kchain_accepts(chain, state, signals, calibrated_values)
         except Exception as exc:  # noqa: BLE001 - signal/threshold absorbing
             return _error(f"composite-runtime: {type(exc).__name__}: {exc}")
-        if sigma >= theta:  # ¬escalate: the signal_accept stop fired
+        if accepted:  # ¬escalate: the signal_accept stop fired
             return CompositeRunResult(
                 output=last_output,
                 result_kind=ResultKind.OUTPUT,
@@ -1736,6 +1794,42 @@ def execute_kchain(
         # complement, §3.8).
 
     return _no_accept(_loop_measures(len(stages), StopReason.EXHAUSTED))
+
+
+def _kchain_body_step(
+    chain: Any,
+    runner: LoopBodyRunner,
+    config: Mapping[str, Any],
+    state: Mapping[str, Any],
+    state_keys: tuple[str, ...],
+) -> tuple[LoopBodyResult | None, CompositeRunResult | None]:
+    """Run one chain body; returns ``(result, None)`` or ``(None, error_result)``."""
+    try:
+        raw = runner.run(config, _restrict_state(state, state_keys))
+        result = raw if isinstance(raw, LoopBodyResult) else LoopBodyResult(raw)
+    except Exception as exc:  # noqa: BLE001 - body exception is absorbing
+        return None, _error(f"composite-runtime: {type(exc).__name__}: {exc}")
+    if result.result_kind is ResultKind.ERROR:
+        # F4 parity: a body ERROR result-kind is the §3.2.1 absorbing error
+        # — the SAME outcome the live loop produces. The chain must NOT
+        # treat the error cell's .output as a produced output (fail closed).
+        return None, _error(
+            f"composite-runtime: K-chain body of {chain.signal!r} failed: "
+            f"{result.error if isinstance(result, CompositeRunResult) else 'error'}"
+        )
+    return result, None
+
+
+def _kchain_accepts(
+    chain: Any,
+    state: Mapping[str, Any],
+    signals: Mapping[str, Callable[..., Any]],
+    calibrated_values: Mapping[str, float | int],
+) -> bool:
+    """Whether ``σ(state) ≥ θ`` (signal read first, then the live threshold)."""
+    sigma = _kchain_sigma(chain, state, signals)
+    theta = _resolve_threshold(chain.threshold, calibrated_values)
+    return bool(sigma >= theta)
 
 
 def _kchain_sigma(
@@ -1786,9 +1880,8 @@ def _missing_stage_names(
         judge = body.aggregate.judge
         if isinstance(judge, StageArm):
             needed.append(judge.name)
-    else:  # LoopBody
-        if isinstance(body.body, StageArm):
-            needed = [body.body.name]
+    elif isinstance(body.body, StageArm):
+        needed = [body.body.name]
     return [name for name in needed if name not in stages]
 
 
@@ -1835,50 +1928,9 @@ def _preflight_reachable(
             continue
         visited.add(node.name)
 
-        missing_stages = _missing_stage_names(node, stages)
-        if missing_stages:
-            return _error(
-                "composite-runtime: missing stage callable(s) "
-                f"{sorted(missing_stages)!r} for composite {node.name!r} "
-                "(fail-closed: a missing stage fails the item's evaluation)"
-            )
-        missing_refs = _missing_composite_refs(node, registry)
-        if missing_refs:
-            return _error(
-                "composite-runtime: missing composite ref(s) "
-                f"{sorted(missing_refs)!r} for composite {node.name!r} "
-                "(fail-closed: an unresolved nested arm fails the item's evaluation)"
-            )
-
-        body = node.body
-        if isinstance(body, LoopBody):
-            stop = body.stop
-            if stop.kind is StopKind.SIGNAL_ACCEPT and stop.signal is not None:
-                if stop.signal.signal not in signals:
-                    return _error(
-                        f"composite-runtime: signal {stop.signal.signal!r} is not "
-                        f"provided for composite {node.name!r} (fail-closed: a "
-                        "missing signal fails the item's evaluation)"
-                    )
-            elif stop.kind is StopKind.EXTERNAL_ACCEPT and stop.predicate is not None:
-                if stop.predicate not in predicates:
-                    return _error(
-                        f"composite-runtime: predicate {stop.predicate!r} is not "
-                        f"provided for composite {node.name!r} (fail-closed: a "
-                        "missing predicate fails the item's evaluation)"
-                    )
-        elif isinstance(body, CascadeBody) and body.placement is Placement.PRE:
-            # A pre-cascade (dispatch) gate's routing signal must be in the
-            # registry FAIL-CLOSED — a missing dispatch signal fails the item's
-            # evaluation BEFORE any arm runs, mirroring the signal_accept stop
-            # preflight (the IR guarantees a signal_below gate carries a signal).
-            for gate in body.gates:
-                if gate.signal is not None and gate.signal.signal not in signals:
-                    return _error(
-                        f"composite-runtime: signal {gate.signal.signal!r} is not "
-                        f"provided for composite {node.name!r} (fail-closed: a "
-                        "missing dispatch signal fails the item's evaluation)"
-                    )
+        failure = _preflight_node(node, stages, registry, signals, predicates)
+        if failure is not None:
+            return failure
 
         # Recurse into every present nested composite ref (missing refs already
         # short-circuited above, so every ref here resolves).
@@ -1886,6 +1938,71 @@ def _preflight_reachable(
             child = registry.get(arm)
             if child is not None and child.name not in visited:
                 stack.append(child)
+    return None
+
+
+def _preflight_node(
+    node: CompositeNode,
+    stages: Mapping[str, StageEntry],
+    registry: Mapping[str, CompositeNode],
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> CompositeRunResult | None:
+    """Fail-closed obligations of ONE node: stages, refs, then body signals."""
+    missing_stages = _missing_stage_names(node, stages)
+    if missing_stages:
+        return _error(
+            "composite-runtime: missing stage callable(s) "
+            f"{sorted(missing_stages)!r} for composite {node.name!r} "
+            "(fail-closed: a missing stage fails the item's evaluation)"
+        )
+    missing_refs = _missing_composite_refs(node, registry)
+    if missing_refs:
+        return _error(
+            "composite-runtime: missing composite ref(s) "
+            f"{sorted(missing_refs)!r} for composite {node.name!r} "
+            "(fail-closed: an unresolved nested arm fails the item's evaluation)"
+        )
+
+    body = node.body
+    if isinstance(body, LoopBody):
+        return _preflight_loop_stop(node, body, signals, predicates)
+    if isinstance(body, CascadeBody) and body.placement is Placement.PRE:
+        # A pre-cascade (dispatch) gate's routing signal must be in the
+        # registry FAIL-CLOSED — a missing dispatch signal fails the item's
+        # evaluation BEFORE any arm runs, mirroring the signal_accept stop
+        # preflight (the IR guarantees a signal_below gate carries a signal).
+        for gate in body.gates:
+            if gate.signal is not None and gate.signal.signal not in signals:
+                return _error(
+                    f"composite-runtime: signal {gate.signal.signal!r} is not "
+                    f"provided for composite {node.name!r} (fail-closed: a "
+                    "missing dispatch signal fails the item's evaluation)"
+                )
+    return None
+
+
+def _preflight_loop_stop(
+    node: CompositeNode,
+    body: LoopBody,
+    signals: Mapping[str, Callable[..., Any]],
+    predicates: Mapping[str, Callable[..., Any]],
+) -> CompositeRunResult | None:
+    stop = body.stop
+    if stop.kind is StopKind.SIGNAL_ACCEPT and stop.signal is not None:
+        if stop.signal.signal not in signals:
+            return _error(
+                f"composite-runtime: signal {stop.signal.signal!r} is not "
+                f"provided for composite {node.name!r} (fail-closed: a "
+                "missing signal fails the item's evaluation)"
+            )
+    elif stop.kind is StopKind.EXTERNAL_ACCEPT and stop.predicate is not None:
+        if stop.predicate not in predicates:
+            return _error(
+                f"composite-runtime: predicate {stop.predicate!r} is not "
+                f"provided for composite {node.name!r} (fail-closed: a "
+                "missing predicate fails the item's evaluation)"
+            )
     return None
 
 

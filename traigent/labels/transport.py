@@ -38,6 +38,7 @@ from typing import Any, NoReturn
 
 import yaml
 
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.logging import get_logger
 
 from . import token_store
@@ -185,7 +186,7 @@ def _negotiated_body(
     """
     if not isinstance(envelope, dict) or any(type(k) is not str for k in envelope):
         raise LabelTransportError("invalid_request")
-    env = {k: envelope[k] for k in list(envelope)}
+    env = {k: envelope[k] for k in envelope}
     if (
         type(object_ref) is not str
         or not _OBJECT_REF.fullmatch(object_ref)
@@ -497,17 +498,24 @@ class LabelTransport:
             code = _negotiated_refusal_code(status, body)
             if code != SERVICE_UNAVAILABLE:
                 raise LabelTransportError(code, status)
-            delay = (
-                retry_after
-                if retry_after is not None
-                else _RETRY_BACKOFF_SECONDS[
-                    min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)
-                ]
+            delay, attempt = _label_retry_delay(
+                retry_after, attempt, deadline, code, status
             )
-            attempt += 1
-            if attempt >= _MAX_WRITE_ATTEMPTS or delay >= deadline - time.monotonic():
-                raise LabelTransportError(code, status)
             await _sleep(delay)
+
+
+def _label_retry_delay(
+    retry_after: float | None, attempt: int, deadline: float, code: str, status: int
+) -> tuple[float, int]:
+    delay = (
+        retry_after
+        if retry_after is not None
+        else _RETRY_BACKOFF_SECONDS[min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)]
+    )
+    attempt += 1
+    if attempt >= _MAX_WRITE_ATTEMPTS or delay >= deadline - time.monotonic():
+        raise LabelTransportError(code, status)
+    return delay, attempt
 
 
 # ------------------------------------------------------------------------ configuration
@@ -538,16 +546,29 @@ def _state_path() -> Path:
 SEQUENCE_NOT_PERSISTED = "sequence_not_persisted"
 
 
+def _state_dir() -> Path:
+    """The resolved state directory: the parent of ``_state_path()``."""
+    return _state_path().parent.resolve()
+
+
 def _require_local_file(path: Path) -> None:
-    """Refuse a state/lock/temp file that is a symlink or resolves outside its own directory.
+    """Refuse a state/lock/temp file unless it lies inside the resolved state directory.
 
     The path is SDK-built (``TRAIGENT_RESULTS_FOLDER`` or ``~/.traigent`` plus a fixed file
-    name), never taken from a server response; this keeps a planted link in that directory
-    from redirecting the replay-protection journal elsewhere. Fails closed.
+    name), never taken from a server response. Fails closed unless the file is not a
+    symlink, its resolved location sits directly in its own parent, and that resolved
+    location is inside the resolved state directory. A planted link, a ``..`` component
+    or an override pointing elsewhere therefore cannot redirect the replay-protection
+    journal, its lock, or its temp file.
     """
     try:
+        resolved = path.resolve()
         parent = path.parent.resolve()
-        if path.is_symlink() or path.resolve().parent != parent:
+        if (
+            path.is_symlink()
+            or resolved.parent != parent
+            or not resolved.is_relative_to(_state_dir())
+        ):
             raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
     except (OSError, RuntimeError):
         raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
@@ -591,11 +612,11 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
     except ImportError:  # no advisory locks on this platform: fail closed
         raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = path.with_suffix(".lock")
         tmp = path.with_suffix(f".tmp{os.getpid()}")
         for candidate in (path, lock_path, tmp):
             _require_local_file(candidate)
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, "a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             data = _read_state(path)
@@ -717,45 +738,58 @@ class LabelSender:
         }
         done: dict[str, int] = {}
         for object_ref, (purpose, text) in labels.items():
-            negotiated = token_store.is_enabled()
-            state = self._journal_state(object_ref) if negotiated else None
-            if existing.get(object_ref):
-                if state in (
-                    token_store.S1_PENDING_LABEL,
-                    token_store.S_LABEL_CONFLICT,
-                ):
-                    # a token whose label was never acknowledged to us already holds a
-                    # revision: a lost-ack write of ours and another writer's label look the
-                    # same, and without an approved reader they cannot be told apart. Never
-                    # skip silently (S1 would stay pending forever): closed unverified state.
-                    self._mark_conflict(object_ref)
-                    _raise_closed(LabelTransportError(LABEL_CONFLICT_UNVERIFIED))
-                continue
-            envelope = writer.seal(
-                text, purpose=purpose, object_ref=object_ref, base_revision=0
+            await LabelSender._send_one(
+                self, object_ref, purpose, text, writer, existing, done
             )
-            try:
-                ack = await self._transport.write_label(
-                    object_ref=object_ref,
-                    purpose=purpose,
-                    base_revision=0,
-                    epoch=writer.epoch,
-                    envelope=envelope,
-                )
-            except LabelTransportError as exc:
-                if exc.code == "stale_revision" and state in (
-                    token_store.S1_PENDING_LABEL,
-                    token_store.S_LABEL_CONFLICT,
-                ):
-                    self._mark_conflict(object_ref)
-                    _raise_closed(
-                        LabelTransportError(LABEL_CONFLICT_UNVERIFIED, exc.status)
-                    )
-                raise
-            done[object_ref] = 1
-            if state in (token_store.S1_PENDING_LABEL, token_store.S2_LABEL_ACKED):
-                self._mark_acked(object_ref, ack)
         return done
+
+    async def _send_one(
+        self,
+        object_ref: str,
+        purpose: str,
+        text: str,
+        writer: LabelWriter,
+        existing: dict[Any, Any],
+        done: dict[str, int],
+    ) -> None:
+        negotiated = token_store.is_enabled()
+        state = self._journal_state(object_ref) if negotiated else None
+        if existing.get(object_ref):
+            if state in (
+                token_store.S1_PENDING_LABEL,
+                token_store.S_LABEL_CONFLICT,
+            ):
+                # a token whose label was never acknowledged to us already holds a
+                # revision: a lost-ack write of ours and another writer's label look the
+                # same, and without an approved reader they cannot be told apart. Never
+                # skip silently (S1 would stay pending forever): closed unverified state.
+                self._mark_conflict(object_ref)
+                _raise_closed(LabelTransportError(LABEL_CONFLICT_UNVERIFIED))
+            return
+        envelope = writer.seal(
+            text, purpose=purpose, object_ref=object_ref, base_revision=0
+        )
+        try:
+            ack = await self._transport.write_label(
+                object_ref=object_ref,
+                purpose=purpose,
+                base_revision=0,
+                epoch=writer.epoch,
+                envelope=envelope,
+            )
+        except LabelTransportError as exc:
+            if exc.code == "stale_revision" and state in (
+                token_store.S1_PENDING_LABEL,
+                token_store.S_LABEL_CONFLICT,
+            ):
+                self._mark_conflict(object_ref)
+                _raise_closed(
+                    LabelTransportError(LABEL_CONFLICT_UNVERIFIED, exc.status)
+                )
+            raise
+        done[object_ref] = 1
+        if state in (token_store.S1_PENDING_LABEL, token_store.S2_LABEL_ACKED):
+            self._mark_acked(object_ref, ack)
 
     def _mark_acked(self, object_ref: str, ack: Mapping[str, Any]) -> None:
         revision = ack.get("revision")
@@ -831,6 +865,7 @@ async def send_session_labels(
     config_path: Path | None = None,
     *,
     token_store_: token_store.TokenStore | None = None,
+    policy: oo_egress.Policy | bool | None = None,
 ) -> dict[str, int]:
     """Best-effort: send the human names of a session's agent / dataset / evaluator.
 
@@ -838,8 +873,15 @@ async def send_session_labels(
     references the Backend issued. Without a configured trust anchor nothing is sent.
     ``token_store_`` is the exact issuance journal for token-kind refs; when given it wins
     over the one derived from the session's ``agent`` reference.
+    ``policy`` is the calling client's effective optimization_only policy (explicit
+    setting + credential scope); the environment and latch are consulted too.
     Never raises: any failure means "label not sent" (closed code logged at debug).
     """
+    if oo_egress.is_active(policy):
+        # optimization_only: these are the customer's own agent / dataset / evaluator
+        # names (sealed to the project key, but still customer text, not a closed
+        # value). "Label not sent" is the documented best-effort outcome.
+        return {}
     labels = {
         refs[kind]: ("label", text)
         for kind, text in texts.items()

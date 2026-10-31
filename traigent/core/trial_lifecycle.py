@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.config.context import TrialContext, WorkflowTraceContext
+from traigent.core.execution_budget import BudgetDebitExceeded
 from traigent.core.optimization_pipeline import (
     build_surrogate_descriptor,
     get_surrogate_evaluator,
@@ -265,6 +266,10 @@ async def apply_surrogate_scoring(
             trial_id,
         )
 
+    _store_surrogate_aggregate(eval_result, scored)
+
+
+def _store_surrogate_aggregate(eval_result: Any, scored: list[float]) -> None:
     if scored:
         aggregate = getattr(eval_result, "metrics", None)
         if isinstance(aggregate, dict):
@@ -321,28 +326,15 @@ class TrialLifecycle:
         orchestrator = self._orchestrator
         optimizer_state_before_suggest = self._snapshot_optimizer_state()
 
-        if (
-            orchestrator.max_trials is not None
-            and trial_count >= orchestrator.max_trials
-        ):
-            logger.info(f"Trial limit reached: {orchestrator.max_trials}")
-            orchestrator._stop_reason = "max_trials_reached"
+        if TrialLifecycle._sequential_trial_limit_reached(orchestrator, trial_count):
             return trial_count, "break"
 
-        config = orchestrator._consume_default_config()
-        if config is not None:
-            # baseline trials get the same Fixed/CVAR injection (RFC 0001)
-            config = orchestrator._apply_knob_resolution(config)
+        config = TrialLifecycle._sequential_default_config(orchestrator)
         if config is None:
             try:
-                suggest_next = getattr(orchestrator, "_suggest_next_trial_config", None)
-                if callable(suggest_next):
-                    config = await suggest_next(dataset)
-                else:
-                    config = orchestrator.optimizer.suggest_next_trial(
-                        orchestrator._trials
-                    )
-                    config = orchestrator._apply_knob_resolution(config)
+                config = await TrialLifecycle._suggest_sequential_config(
+                    orchestrator, dataset
+                )
             except OptimizationError as e:
                 stop_reason = self._terminal_optimizer_stop_reason(e)
                 if stop_reason is None:
@@ -361,26 +353,11 @@ class TrialLifecycle:
             logger.info("Optimizer did not suggest a trial configuration")
             return trial_count, "break"
 
-        optuna_trial_id = (
-            config.get("_optuna_trial_id") if isinstance(config, dict) else None
+        config, optuna_trial_id, skip = TrialLifecycle._apply_sequential_cache_policy(
+            orchestrator, config, dataset, function_name
         )
-
-        cache_policy = orchestrator.config.get("cache_policy", "allow_repeats")
-        if cache_policy != "allow_repeats":
-            dataset_name = getattr(dataset, "name", "unnamed_dataset")
-            filtered_configs = orchestrator.cache_policy_handler.apply_policy(  # type: ignore[has-type]
-                [config],
-                cache_policy,
-                function_name or "unknown_function",
-                dataset_name,
-            )
-            if not filtered_configs:
-                logger.info("Configuration already evaluated, skipping")
-                return trial_count, "continue"
-            config = filtered_configs[0]
-            optuna_trial_id = (
-                config.get("_optuna_trial_id") if isinstance(config, dict) else None
-            )
+        if skip:
+            return trial_count, "continue"
 
         config_for_run = prepare_evaluation_config(config)  # type: ignore[arg-type]
         config_for_trial = cast(dict[str, Any], config)
@@ -417,18 +394,11 @@ class TrialLifecycle:
 
         # Phase 2.1: Acquire cost permit before sequential trial execution
         # This ensures sequential trials respect cost limits proactively
-        permit: Permit | None = None
-        if orchestrator.cost_enforcer is not None:
-            permit = await orchestrator.cost_enforcer.acquire_permit_async()
-            if not permit.is_granted:
-                logger.info(
-                    "Sequential trial cancelled due to cost limit reached (config=%s)",
-                    config_for_run,
-                )
-                # Mid-run cost limits are graceful by contract: return a partial
-                # result and surface result.stop_reason == "cost_limit".
-                orchestrator._stop_reason = "cost_limit"
-                return trial_count, "break"
+        permit, denied = await TrialLifecycle._acquire_sequential_permit(
+            orchestrator, config_for_run
+        )
+        if denied:
+            return trial_count, "break"
 
         orchestrator.callback_manager.on_trial_start(trial_count, config_for_run)
 
@@ -451,21 +421,116 @@ class TrialLifecycle:
                 log_on_success=True,
                 permit=permit,
             )
-        except Exception:
-            # Release permit on exception to prevent stranding
-            if (
-                permit is not None
-                and permit.active
-                and orchestrator.cost_enforcer is not None
-            ):
-                await orchestrator.cost_enforcer.release_permit_async(permit)
-                logger.debug(
-                    "Released permit %d after exception in run_sequential_trial",
-                    permit.id,
-                )
+        except Exception as exc:
+            await TrialLifecycle._release_failed_sequential_permit(
+                orchestrator, exc, permit
+            )
             raise
 
+        if getattr(orchestrator, "_execution_debit_denied", False):
+            orchestrator._stop_reason = "execution_budget"
+            return trial_count, "break"
         return trial_count, "continue"
+
+    @staticmethod
+    def _sequential_default_config(orchestrator: Any) -> Any:
+        config = orchestrator._consume_default_config()
+        if config is not None:
+            # baseline trials get the same Fixed/CVAR injection (RFC 0001)
+            config = orchestrator._apply_knob_resolution(config)
+        return config
+
+    @staticmethod
+    def _sequential_trial_limit_reached(orchestrator: Any, trial_count: int) -> bool:
+        if (
+            orchestrator.max_trials is not None
+            and trial_count >= orchestrator.max_trials
+        ):
+            logger.info(f"Trial limit reached: {orchestrator.max_trials}")
+            orchestrator._stop_reason = "max_trials_reached"
+            return True
+
+        return False
+
+    @staticmethod
+    async def _acquire_sequential_permit(
+        orchestrator: Any, config_for_run: dict[str, Any]
+    ) -> tuple[Permit | None, bool]:
+        permit: Permit | None = None
+        if orchestrator.cost_enforcer is not None:
+            permit = await orchestrator.cost_enforcer.acquire_permit_async()
+            if not permit.is_granted:
+                logger.info(
+                    "Sequential trial cancelled due to cost limit reached (config=%s)",
+                    config_for_run,
+                )
+                # Mid-run cost limits are graceful by contract: return a partial
+                # result and surface result.stop_reason == "cost_limit".
+                orchestrator._stop_reason = "cost_limit"
+                return permit, True
+
+        return permit, False
+
+    @staticmethod
+    async def _release_failed_sequential_permit(
+        orchestrator: Any, exc: Exception, permit: Permit | None
+    ) -> None:
+        unmeasured_id = getattr(exc, "unmeasured_trial_id", None)
+        if unmeasured_id is not None and orchestrator.cost_enforcer is not None:
+            # An exhausted vendor call has unknown spend: count it as an
+            # unmeasured trial (releases the permit; strict mode raises
+            # CostTrackingRequiredError) rather than a free no-op.
+            await orchestrator._account_untracked_trial_attempt(
+                trial_id=unmeasured_id, permit=permit
+            )
+        # Release permit on exception to prevent stranding
+        if (
+            permit is not None
+            and permit.active
+            and orchestrator.cost_enforcer is not None
+        ):
+            await orchestrator.cost_enforcer.release_permit_async(permit)
+            logger.debug(
+                "Released permit %d after exception in run_sequential_trial",
+                permit.id,
+            )
+
+    @staticmethod
+    def _apply_sequential_cache_policy(
+        orchestrator: Any, config: Any, dataset: Dataset, function_name: str | None
+    ) -> tuple[Any, Any, bool]:
+        optuna_trial_id = (
+            config.get("_optuna_trial_id") if isinstance(config, dict) else None
+        )
+
+        cache_policy = orchestrator.config.get("cache_policy", "allow_repeats")
+        if cache_policy != "allow_repeats":
+            dataset_name = getattr(dataset, "name", "unnamed_dataset")
+            filtered_configs = orchestrator.cache_policy_handler.apply_policy(  # type: ignore[has-type]
+                [config],
+                cache_policy,
+                function_name or "unknown_function",
+                dataset_name,
+            )
+            if not filtered_configs:
+                logger.info("Configuration already evaluated, skipping")
+                return config, optuna_trial_id, True
+            config = filtered_configs[0]
+            optuna_trial_id = (
+                config.get("_optuna_trial_id") if isinstance(config, dict) else None
+            )
+
+        return config, optuna_trial_id, False
+
+    @staticmethod
+    async def _suggest_sequential_config(orchestrator: Any, dataset: Dataset) -> Any:
+        suggest_next = getattr(orchestrator, "_suggest_next_trial_config", None)
+        if callable(suggest_next):
+            config = await suggest_next(dataset)
+        else:
+            config = orchestrator.optimizer.suggest_next_trial(orchestrator._trials)
+            config = orchestrator._apply_knob_resolution(config)
+        return config
 
     def _terminal_optimizer_stop_reason(self, error: OptimizationError) -> str | None:
         """Classify explicit optimizer terminal states without swallowing defects."""
@@ -598,7 +663,7 @@ class TrialLifecycle:
                 # trial drain -- and be charged for -- another's judge calls
                 # (Traigent#2387). Opened OUTSIDE the evaluator so it spans the
                 # agent's own calls as well as the metric functions'.
-                capture_scope() as capture_bucket,
+                capture_scope(ledger_owner=True) as capture_bucket,
                 TrialContext(
                     trial_id=trial_id,
                     metadata={
@@ -643,8 +708,7 @@ class TrialLifecycle:
             closure = self._finalize_budget_lease(lease)
             if closure:
                 examples_attempted = closure.consumed
-                if closure.exhausted:
-                    budget_exhausted = True
+                budget_exhausted = budget_exhausted or bool(closure.exhausted)
 
             # Surrogate (pre-screen) scoring: cheap second scorer over the
             # already-captured outputs. Runs after constraint enforcement so it
@@ -680,6 +744,7 @@ class TrialLifecycle:
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_budget_metadata(result, closure, budget_exhausted)
             self._apply_effectuation_metadata(result, func)
+            self._apply_vendor_attempts(result, capture_bucket)
             self._apply_content_identity(
                 result,
                 evaluation_config,
@@ -702,6 +767,8 @@ class TrialLifecycle:
             return result
 
         except TrialPrunedError as prune_error:
+            if self._record_run_local_debit_denial(prune_error):
+                raise
             result = self._build_trial_error_result(
                 trial_id,
                 evaluation_config,
@@ -712,18 +779,20 @@ class TrialLifecycle:
                 prune_error,
                 is_pruned=True,
             )
-            self._mark_backend_trial_id_acquired(result, backend_trial_id)
-            self._apply_effectuation_metadata(result, func)
-            self._apply_content_identity(
+            self._finalize_error_trial(
                 result,
-                evaluation_config,
-                identity_run,
-                prune_error.example_results,
-                capture_bucket,
+                func=func,
+                trial_id=trial_id,
+                backend_trial_id=backend_trial_id,
+                evaluation_config=evaluation_config,
+                identity_run=identity_run,
+                example_results=prune_error.example_results,
+                capture_bucket=capture_bucket,
+                span=span,
+                start_time=start_time,
+                status="pruned",
+                error=prune_error,
             )
-            record_trial_result(span, status="pruned", error=str(prune_error))
-            end_time = time.time()
-            self._collect_workflow_span(trial_id, result, start_time, end_time)
             return result
 
         except TVLConstraintError as constraint_error:
@@ -736,14 +805,20 @@ class TrialLifecycle:
                 optuna_trial_id,
                 constraint_error,
             )
-            self._mark_backend_trial_id_acquired(result, backend_trial_id)
-            self._apply_effectuation_metadata(result, func)
-            self._apply_content_identity(
-                result, evaluation_config, identity_run, None, capture_bucket
+            self._finalize_error_trial(
+                result,
+                func=func,
+                trial_id=trial_id,
+                backend_trial_id=backend_trial_id,
+                evaluation_config=evaluation_config,
+                identity_run=identity_run,
+                example_results=None,
+                capture_bucket=capture_bucket,
+                span=span,
+                start_time=start_time,
+                status="failed",
+                error=constraint_error,
             )
-            record_trial_result(span, status="failed", error=str(constraint_error))
-            end_time = time.time()
-            self._collect_workflow_span(trial_id, result, start_time, end_time)
             return result
 
         except APIKeyError:
@@ -764,13 +839,8 @@ class TrialLifecycle:
             # Re-raise as VendorPauseError so the orchestrator can prompt
             # the user to resume or stop, instead of silently failing.
             # classify_vendor_error is guaranteed to match for these types.
-            from traigent.core.exception_handler import classify_vendor_error
-
-            category = classify_vendor_error(vendor_exc)
-            raise VendorPauseError(
-                str(vendor_exc),
-                original_error=vendor_exc,
-                category=category,
+            raise self._build_vendor_pause(
+                vendor_exc, trial_id, capture_bucket
             ) from vendor_exc
 
         except Exception as exc:
@@ -784,19 +854,87 @@ class TrialLifecycle:
                 optuna_trial_id,
                 exc,
             )
-            self._mark_backend_trial_id_acquired(result, backend_trial_id)
-            self._apply_effectuation_metadata(result, func)
-            self._apply_content_identity(
-                result, evaluation_config, identity_run, None, capture_bucket
+            self._finalize_error_trial(
+                result,
+                func=func,
+                trial_id=trial_id,
+                backend_trial_id=backend_trial_id,
+                evaluation_config=evaluation_config,
+                identity_run=identity_run,
+                example_results=None,
+                capture_bucket=capture_bucket,
+                span=span,
+                start_time=start_time,
+                status="failed",
+                error=exc,
             )
-            record_trial_result(span, status="failed", error=str(exc))
-            end_time = time.time()
-            self._collect_workflow_span(trial_id, result, start_time, end_time)
             return result
 
         finally:
             if lease is not None and closure is None:
                 closure = self._finalize_budget_lease(lease)
+
+    def _record_run_local_debit_denial(self, prune_error: TrialPrunedError) -> bool:
+        """Flag a refusal by this run's own budget; True means it is foreign.
+
+        The caller re-raises a foreign refusal from its own ``except`` frame so
+        the original exception and traceback propagate untouched.
+        """
+        if not isinstance(prune_error, BudgetDebitExceeded):
+            return False
+        orchestrator = self._orchestrator
+        if prune_error.budget is not getattr(orchestrator, "execution_budget", None):
+            return True
+        # Run-local refusal only: do not poison the shared budget when
+        # another phase can still afford a smaller reservation.
+        orchestrator._execution_debit_denied = True
+        return False
+
+    def _build_vendor_pause(
+        self, vendor_exc: Exception, trial_id: str, capture_bucket: Any
+    ) -> VendorPauseError:
+        """Wrap a vendor failure so the orchestrator can prompt resume or stop."""
+        from traigent.core.exception_handler import classify_vendor_error
+
+        category = classify_vendor_error(vendor_exc)
+        unmeasured = self._note_abandoned_vendor_attempts(trial_id, capture_bucket)
+        pause = VendorPauseError(
+            str(vendor_exc),
+            original_error=vendor_exc,
+            category=category,
+        )
+        if unmeasured:
+            # No TrialResult will exist: the sequential caller accounts the
+            # abandoned attempt as unknown spend (fail closed when strict).
+            pause.unmeasured_trial_id = trial_id
+        return pause
+
+    def _finalize_error_trial(
+        self,
+        result: TrialResult,
+        *,
+        func: Callable[..., Any],
+        trial_id: str,
+        backend_trial_id: str | None,
+        evaluation_config: dict[str, Any],
+        identity_run: Any,
+        example_results: Any,
+        capture_bucket: Any,
+        span: Any,
+        start_time: float,
+        status: str,
+        error: BaseException,
+    ) -> None:
+        """Annotate a pruned/failed trial result and close its tracing records."""
+        self._mark_backend_trial_id_acquired(result, backend_trial_id)
+        self._apply_effectuation_metadata(result, func)
+        self._apply_vendor_attempts(result, capture_bucket)
+        self._apply_content_identity(
+            result, evaluation_config, identity_run, example_results, capture_bucket
+        )
+        record_trial_result(span, status=status, error=str(error))
+        end_time = time.time()
+        self._collect_workflow_span(trial_id, result, start_time, end_time)
 
     @staticmethod
     def _mark_backend_trial_id_acquired(
@@ -854,6 +992,57 @@ class TrialLifecycle:
                 getattr(result, "trial_id", "<unknown>"),
                 type(exc).__name__,
             )
+
+    @staticmethod
+    def _apply_vendor_attempts(result: TrialResult, capture_bucket: Any) -> None:
+        """Record per-trial provider-call attempts; no-op when none.
+
+        Any attempt without reported usage (a retried failure, a stream closed
+        early or failed mid-way, an incomplete attempt) has no cost telemetry, so the
+        trial's spend is a lower bound: it is flagged ``cost_unmeasured`` (known
+        spend kept as the floor) and flows through the existing honest-cost
+        machinery, including strict-mode ``CostTrackingRequiredError``.
+        """
+        if capture_bucket is None:
+            return
+        try:
+            from traigent.utils.vendor_retry import summarize_bucket
+
+            summary = summarize_bucket(capture_bucket)
+            if not summary:
+                return
+            result.metadata = {**(result.metadata or {}), **summary}
+            if summary["vendor_call_unmeasured_attempts"] > 0:
+                metrics = result.metrics
+                if isinstance(metrics, dict):
+                    # The floor itself moves to its own wire field at
+                    # submission (session_budgets / backend_session_manager).
+                    metrics["cost_unmeasured"] = 1.0
+        except Exception:  # noqa: BLE001 - accounting must never fail a trial
+            logger.debug("Vendor attempt metadata omitted", exc_info=True)
+
+    def _note_abandoned_vendor_attempts(
+        self, trial_id: str, capture_bucket: Any
+    ) -> bool:
+        """Keep attempts of a trial that ended in a vendor pause in run totals.
+
+        Returns True when any abandoned attempt has no usable usage, i.e. the
+        trial's provider spend is unknown (never scored as free).
+        """
+        if capture_bucket is None:
+            return False
+        try:
+            from traigent.utils.vendor_retry import summarize_bucket
+
+            summary = summarize_bucket(capture_bucket)
+            if summary:
+                self._orchestrator._abandoned_vendor_attempts.append(
+                    {"trial_id": trial_id, **summary}
+                )
+                return int(summary.get("vendor_call_unmeasured_attempts") or 0) > 0
+        except Exception:  # noqa: BLE001
+            logger.debug("Abandoned vendor attempts omitted", exc_info=True)
+        return False
 
     def _apply_effectuation_metadata(
         self,
@@ -1040,57 +1229,79 @@ class TrialLifecycle:
         }
 
         def _progress_callback(step: int, data: dict[str, Any]) -> None:
-            state["last_step"] = step
-            if not isinstance(data, dict):
-                data = {}
-            if data.get("stop_reason"):
-                return
-
-            state["evaluated"] = int(state.get("evaluated", 0)) + 1
-            metric_value = self._extract_progress_value(data, objective_name)
-            if metric_value is None:
-                success = data.get("success")
-                if isinstance(success, bool):
-                    metric_value = 1.0 if success else 0.0
-            if metric_value is None:
-                metric_value = float(state.get("last_running_score", 0.0))
-
-            state["metric_sum"] = float(state.get("metric_sum", 0.0)) + metric_value
-            state["correct_sum"] = float(state.get("correct_sum", 0.0)) + metric_value
-            evaluated = max(1, int(state["evaluated"]))
-            running_score = float(state["metric_sum"]) / evaluated
-            state["last_running_score"] = running_score
-
-            cost_delta = self._extract_progress_cost(data)
-            if cost_delta is not None:
-                state["partial_cost_usd"] = (
-                    float(state.get("partial_cost_usd", 0.0)) + cost_delta
-                )
-
-            payload: dict[str, Any] = {
-                "session_id": session_id,
-                "trial_id": trial_id,
-                "running_score": running_score,
-                "examples_attempted": int(state["evaluated"]),
-            }
-            if objective_name:
-                payload["objective_name"] = objective_name
-            partial_cost = float(state.get("partial_cost_usd", 0.0))
-            if partial_cost > 0:
-                payload["partial_cost_usd"] = partial_cost
-
-            report = getattr(manager, "report_intermediate_progress", None)
-            decision = report(payload) if callable(report) else {}
-            if isinstance(decision, dict) and decision.get("prune") is True:
-                reason = decision.get("prune_reason") or "cloud smart pruning"
-                logger.info(
-                    "Cloud smart pruning requested trial pruning after %s examples: %s",
-                    state["evaluated"],
-                    reason,
-                )
-                raise TrialPrunedError(str(reason), step=int(state["evaluated"]))
+            TrialLifecycle._report_progress(
+                self, step, data, state, objective_name, session_id, trial_id, manager
+            )
 
         return _progress_callback, state
+
+    def _report_progress(
+        self,
+        step: int,
+        data: dict[str, Any],
+        state: dict[str, Any],
+        objective_name: str | None,
+        session_id: str | None,
+        trial_id: str,
+        manager: Any,
+    ) -> None:
+        state["last_step"] = step
+        if not isinstance(data, dict):
+            data = {}
+        if data.get("stop_reason"):
+            return
+
+        state["evaluated"] = int(state.get("evaluated", 0)) + 1
+        metric_value = TrialLifecycle._progress_metric_value(
+            self, data, objective_name, state
+        )
+
+        state["metric_sum"] = float(state.get("metric_sum", 0.0)) + metric_value
+        state["correct_sum"] = float(state.get("correct_sum", 0.0)) + metric_value
+        evaluated = max(1, int(state["evaluated"]))
+        running_score = float(state["metric_sum"]) / evaluated
+        state["last_running_score"] = running_score
+
+        cost_delta = self._extract_progress_cost(data)
+        if cost_delta is not None:
+            state["partial_cost_usd"] = (
+                float(state.get("partial_cost_usd", 0.0)) + cost_delta
+            )
+
+        payload: dict[str, Any] = {
+            "session_id": session_id,
+            "trial_id": trial_id,
+            "running_score": running_score,
+            "examples_attempted": int(state["evaluated"]),
+        }
+        if objective_name:
+            payload["objective_name"] = objective_name
+        partial_cost = float(state.get("partial_cost_usd", 0.0))
+        if partial_cost > 0:
+            payload["partial_cost_usd"] = partial_cost
+
+        report = getattr(manager, "report_intermediate_progress", None)
+        decision = report(payload) if callable(report) else {}
+        if isinstance(decision, dict) and decision.get("prune") is True:
+            reason = decision.get("prune_reason") or "cloud smart pruning"
+            logger.info(
+                "Cloud smart pruning requested trial pruning after %s examples: %s",
+                state["evaluated"],
+                reason,
+            )
+            raise TrialPrunedError(str(reason), step=int(state["evaluated"]))
+
+    def _progress_metric_value(
+        self, data: dict[str, Any], objective_name: str | None, state: dict[str, Any]
+    ) -> float:
+        metric_value = self._extract_progress_value(data, objective_name)
+        if metric_value is None:
+            success = data.get("success")
+            if isinstance(success, bool):
+                metric_value = 1.0 if success else 0.0
+        if metric_value is None:
+            metric_value = float(state.get("last_running_score", 0.0))
+        return metric_value
 
     def _primary_objective_name(self) -> str | None:
         objectives = getattr(self._orchestrator, "objectives", None)
@@ -1415,13 +1626,7 @@ class TrialLifecycle:
                 SpanType,
             )
 
-            # Determine span status based on trial status
-            if trial_result.status == TrialStatus.COMPLETED:
-                span_status = SpanStatus.COMPLETED.value
-            elif trial_result.status == TrialStatus.PRUNED:
-                span_status = SpanStatus.REJECTED.value
-            else:
-                span_status = SpanStatus.FAILED.value
+            span_status = TrialLifecycle._workflow_span_status(trial_result, SpanStatus)
 
             # Create span payload
             # Note: trial_id IS the configuration_run_id (backend creates it at /next-trial)
@@ -1512,6 +1717,14 @@ class TrialLifecycle:
 
         except Exception as exc:
             logger.debug(f"Failed to collect workflow span for trial {trial_id}: {exc}")
+
+    @staticmethod
+    def _workflow_span_status(trial_result: TrialResult, span_status: Any) -> Any:
+        if trial_result.status == TrialStatus.COMPLETED:
+            return span_status.COMPLETED.value
+        if trial_result.status == TrialStatus.PRUNED:
+            return span_status.REJECTED.value
+        return span_status.FAILED.value
 
     # =========================================================================
     # Error Result Building

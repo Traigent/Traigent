@@ -8,8 +8,13 @@ before pushes.
 
 from __future__ import annotations
 
+import contextlib
+import os
 import stat
+import time
+from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
 
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import (
@@ -18,7 +23,29 @@ from traigent.utils.secure_path import (
     validate_path,
 )
 
+_fcntl: ModuleType | None = None
+try:  # POSIX advisory locks; absent on platforms without fcntl (e.g. Windows).
+    import fcntl
+
+    _fcntl = fcntl
+except ImportError:  # pragma: no cover - exercised only on non-POSIX hosts
+    _fcntl = None
+
 logger = get_logger(__name__)
+
+# One lock per repository hooks directory serialises install and uninstall, so
+# the ownership check, backup, replacement and restoration cannot interleave.
+HOOKS_LOCK_NAME = ".traigent-hooks.lock"
+HOOKS_LOCK_TIMEOUT_SECONDS = 10.0
+_HOOKS_LOCK_POLL_SECONDS = 0.05
+_HOOKS_LOCK_TIMEOUT_MESSAGE = (
+    "Timed out waiting for another Traigent hook operation to finish. Retry "
+    f"when it completes, or remove {HOOKS_LOCK_NAME} if no operation is running."
+)
+_SYMLINKED_HOOK_MESSAGE = (
+    "Refusing to change a Git hook that is a symbolic link. Replace the link "
+    "with a regular file or remove it, then re-run."
+)
 
 # Pre-push hook script content
 PRE_PUSH_HOOK_SCRIPT = """#!/bin/bash
@@ -83,6 +110,88 @@ $TRAIGENT_CMD hooks check --quick
 # Hook marker to identify Traigent-installed hooks
 HOOK_MARKER = "# Traigent pre-push hook - validates agent configurations"
 
+# The pre-commit script carries no HOOK_MARKER line, so it has its own marker.
+PRE_COMMIT_HOOK_MARKER = "# Traigent pre-commit hook - quick config check"
+
+
+def _is_traigent_hook(content: str) -> bool:
+    """Return True when hook text was written by Traigent's installer."""
+    return HOOK_MARKER in content or PRE_COMMIT_HOOK_MARKER in content
+
+
+def _read_hook_text(path: Path, base_dir: Path) -> str:
+    """Read hook text for ownership checks; undecodable bytes count as foreign."""
+    try:
+        return safe_read_text(path, base_dir)
+    except UnicodeDecodeError:
+        return ""
+
+
+def _refuse_symlinked_hook(hook_path: Path) -> None:
+    """Fail closed when a hook path is a symlink.
+
+    Must run before ``validate_path()``, which resolves symlinks: after
+    resolution the link itself is no longer visible and writes would land on
+    its target, which may be a file the repository shares with other hooks.
+    """
+    if hook_path.is_symlink():
+        raise RuntimeError(_SYMLINKED_HOOK_MESSAGE)
+
+
+@contextlib.contextmanager
+def _hooks_lock(hooks_dir: Path, timeout: float | None = None) -> Iterator[None]:
+    """Hold the repository-level hooks lock for the duration of the block.
+
+    POSIX uses ``fcntl.flock``. Without ``fcntl`` the lock is an
+    ``O_CREAT | O_EXCL`` file that is removed on release. Either way a waiter
+    gives up after ``timeout`` seconds with a value-free ``RuntimeError``.
+    """
+    limit = HOOKS_LOCK_TIMEOUT_SECONDS if timeout is None else timeout
+    lock_path = hooks_dir / HOOKS_LOCK_NAME
+    deadline = time.monotonic() + limit
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+
+    if _fcntl is not None:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | nofollow, 0o644)
+        try:
+            while True:
+                try:
+                    _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    _check_hooks_lock_deadline(deadline)
+                    time.sleep(_HOOKS_LOCK_POLL_SECONDS)
+            try:
+                yield
+            finally:
+                _fcntl.flock(fd, _fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+        return
+
+    while True:
+        try:
+            fd = os.open(
+                lock_path,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY | nofollow,
+                0o644,
+            )
+            break
+        except FileExistsError:
+            _check_hooks_lock_deadline(deadline)
+            time.sleep(_HOOKS_LOCK_POLL_SECONDS)
+    try:
+        yield
+    finally:
+        os.close(fd)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(lock_path)
+
+
+def _check_hooks_lock_deadline(deadline: float) -> None:
+    if time.monotonic() >= deadline:
+        raise RuntimeError(_HOOKS_LOCK_TIMEOUT_MESSAGE) from None
+
 
 class HooksInstaller:
     """Installs and manages Git hooks for Traigent."""
@@ -134,15 +243,21 @@ class HooksInstaller:
         hooks_dir = self.get_hooks_dir()
         results = {}
 
-        # Install pre-push hook
-        results["pre-push"] = self._install_hook(
-            hooks_dir / "pre-push", PRE_PUSH_HOOK_SCRIPT, force
-        )
+        with _hooks_lock(hooks_dir):
+            # Refuse before any hook is touched, with or without force, so a
+            # symlinked second hook cannot leave the first one half-written.
+            for name in ("pre-push", "pre-commit"):
+                _refuse_symlinked_hook(hooks_dir / name)
 
-        # Install pre-commit hook (optional, lighter check)
-        results["pre-commit"] = self._install_hook(
-            hooks_dir / "pre-commit", PRE_COMMIT_HOOK_SCRIPT, force
-        )
+            # Install pre-push hook
+            results["pre-push"] = self._install_hook(
+                hooks_dir / "pre-push", PRE_PUSH_HOOK_SCRIPT, force
+            )
+
+            # Install pre-commit hook (optional, lighter check)
+            results["pre-commit"] = self._install_hook(
+                hooks_dir / "pre-commit", PRE_COMMIT_HOOK_SCRIPT, force
+            )
 
         return results
 
@@ -158,6 +273,7 @@ class HooksInstaller:
             True if hook was installed successfully
         """
         hooks_dir = self.get_hooks_dir()
+        _refuse_symlinked_hook(hook_path)
         hook_path = validate_path(hook_path, hooks_dir, must_exist=False)
 
         if hook_path.exists():
@@ -173,10 +289,20 @@ class HooksInstaller:
                     )
                     return False
 
-            # Backup existing hook
-            backup_path = hook_path.with_suffix(".backup")
-            hook_path.rename(backup_path)
-            logger.info(f"Backed up existing hook to {backup_path}")
+            # A Traigent hook is replaced without a backup. A foreign hook is
+            # backed up without clobbering: os.link fails if the backup exists.
+            if not _is_traigent_hook(_read_hook_text(hook_path, hooks_dir)):
+                backup_path = hook_path.with_suffix(".backup")
+                try:
+                    os.link(hook_path, backup_path, follow_symlinks=False)
+                except FileExistsError as exc:
+                    raise RuntimeError(
+                        f"Refusing to replace the existing {hook_path.name} hook: "
+                        "a .backup file from an earlier install is already present. "
+                        "Move or delete that .backup file, then re-run."
+                    ) from exc
+                logger.info(f"Backed up existing hook to {backup_path.name}")
+            hook_path.unlink()
 
         # Write hook script
         safe_write_text(hook_path, content, hooks_dir)
@@ -197,9 +323,13 @@ class HooksInstaller:
         hooks_dir = self.get_hooks_dir()
         results = {}
 
-        for hook_name in ["pre-push", "pre-commit"]:
-            hook_path = hooks_dir / hook_name
-            results[hook_name] = self._uninstall_hook(hook_path)
+        with _hooks_lock(hooks_dir):
+            for hook_name in ["pre-push", "pre-commit"]:
+                _refuse_symlinked_hook(hooks_dir / hook_name)
+
+            for hook_name in ["pre-push", "pre-commit"]:
+                hook_path = hooks_dir / hook_name
+                results[hook_name] = self._uninstall_hook(hook_path)
 
         return results
 
@@ -216,8 +346,8 @@ class HooksInstaller:
             return True
 
         # Only remove if it's a Traigent hook
-        content = safe_read_text(hook_path, self.hooks_dir)
-        if HOOK_MARKER not in content:
+        content = _read_hook_text(hook_path, self.hooks_dir)
+        if not _is_traigent_hook(content):
             logger.warning(
                 f"Hook at {hook_path} was not installed by Traigent - skipping"
             )
@@ -226,11 +356,18 @@ class HooksInstaller:
         hook_path.unlink()
         logger.info(f"Removed hook at {hook_path}")
 
-        # Restore backup if exists
+        # Restore backup if exists, unless it is itself a Traigent hook
         backup_path = hook_path.with_suffix(".backup")
         if backup_path.exists():
-            backup_path.rename(hook_path)
-            logger.info(f"Restored backup from {backup_path}")
+            if _is_traigent_hook(_read_hook_text(backup_path, self.hooks_dir)):
+                backup_path.unlink()
+                logger.warning(
+                    f"Removed {backup_path.name}: it held a Traigent hook, "
+                    "not an original hook, so nothing was restored"
+                )
+            else:
+                backup_path.rename(hook_path)
+                logger.info(f"Restored backup from {backup_path.name}")
 
         return True
 
@@ -252,8 +389,8 @@ class HooksInstaller:
             if not hook_path.exists():
                 status[hook_name] = "not installed"
             else:
-                content = safe_read_text(hook_path, hooks_dir)
-                if HOOK_MARKER in content:
+                content = _read_hook_text(hook_path, hooks_dir)
+                if _is_traigent_hook(content):
                     status[hook_name] = "installed (traigent)"
                 else:
                     status[hook_name] = "installed (other)"
@@ -307,7 +444,7 @@ def install_hooks(repo_path: Path | str | None = None, force: bool = False) -> b
         results = installer.install(force=force)
         return all(results.values())
     except Exception as e:
-        logger.error(f"Failed to install hooks: {e}")
+        logger.exception(f"Failed to install hooks: {e}")
         return False
 
 
@@ -332,5 +469,5 @@ def uninstall_hooks(repo_path: Path | str | None = None) -> bool:
         results = installer.uninstall()
         return all(results.values())
     except Exception as e:
-        logger.error(f"Failed to uninstall hooks: {e}")
+        logger.exception(f"Failed to uninstall hooks: {e}")
         return False

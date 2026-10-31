@@ -16,6 +16,7 @@ Documentation for Traigent SDK features and configuration options.
 - **[Safety Gates](safety-gates.md)** - Cost coverage, CI approval, dataset containment, backend validation, and content logging controls.
 - **[Agent Observability Spans](observability-spans.md)** - Public workflow-span API plus Bedrock token, cost, and mock capture paths.
 - **[Content Identity](content-identity.md)** - Opt-in keyed example ids and dataset roots; `TRAIGENT_CONTENT_IDENTITY` / `TraigentConfig(content_identity=...)` and the Backend purpose-key grant fetch.
+- **[Resuming a local run](resume-from.md)** - `optimize(resume_from=...)` reuses finished trials whose dataset, scorer, agent and space identity match; local runs only.
 
 ## Overview
 

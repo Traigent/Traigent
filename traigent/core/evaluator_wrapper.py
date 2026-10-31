@@ -16,21 +16,22 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
-from traigent.utils.example_id import stamp_row_index
 from traigent.core.utils import safe_get_nested_attr
-from traigent.evaluators.metrics_tracker import RESERVED_METRIC_KEYS
 from traigent.evaluators.base import (
+    EXAMPLE_TIMEOUT_ERROR_PREFIX,
     MEASURED_ONLY_METRICS,
     BaseEvaluator,
     Dataset,
     EvaluationExample,
     EvaluationResult,
     _maybe_restore_trial_context,
-    EXAMPLE_TIMEOUT_ERROR_PREFIX,
+    _SampleLeaseCleanupBoundary,
     aggregate_measured_metric,
     failed_row_metrics,
 )
+from traigent.evaluators.metrics_tracker import RESERVED_METRIC_KEYS
 from traigent.identity.examples import result_identity_fields
+from traigent.utils.example_id import stamp_row_index
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
@@ -67,6 +68,86 @@ def _measured_number(value: Any) -> float | None:
         return None
     number = float(value)
     return number if math.isfinite(number) else None
+
+
+def _leave_metric_unknown(aggregated: dict[str, Any], metric: str) -> None:
+    """Record ``metric`` as unknown: None under strict nulls, else left out."""
+    if _strict_metrics_nulls():
+        aggregated[metric] = None
+    else:
+        aggregated.pop(metric, None)
+
+
+def _any_row_measured(all_metrics: list[dict[str, Any]], metric: str) -> bool:
+    """True when some row reports a finite numeric ``metric``."""
+    return any(
+        row and _measured_number(row.get(metric)) is not None for row in all_metrics
+    )
+
+
+def _record_llm_cost(example_result: ExampleResult, llm_metrics: Any) -> None:
+    """Record the captured cost of one example, or flag it as unmeasured."""
+    if safe_get_nested_attr(llm_metrics, "cost.unmeasured", False):
+        # Unknown cost: leave the cost keys out, flag it (#2517).
+        example_result.metrics["cost_unmeasured"] = 1.0
+        # The part that WAS measured stays a floor, never a total.
+        known = safe_get_nested_attr(
+            llm_metrics, _COST_TOTAL_COST, 0.0
+        ) + safe_get_nested_attr(llm_metrics, "cost.known_cost", 0.0)
+        if known > 0:
+            example_result.metrics["cost_lower_bound"] = known
+    else:
+        example_result.metrics["input_cost"] = safe_get_nested_attr(
+            llm_metrics, "cost.input_cost", 0.0
+        )
+        example_result.metrics["output_cost"] = safe_get_nested_attr(
+            llm_metrics, "cost.output_cost", 0.0
+        )
+        example_result.metrics["total_cost"] = safe_get_nested_attr(
+            llm_metrics, _COST_TOTAL_COST, 0.0
+        )
+
+
+def _record_llm_usage(example_result: ExampleResult, llm_metrics: Any) -> None:
+    """Record captured tokens, cost and model latency on an example result."""
+    if example_result.metrics is None:
+        example_result.metrics = {}
+
+    # Add token and cost metrics
+    example_result.metrics["input_tokens"] = safe_get_nested_attr(
+        llm_metrics, "tokens.input_tokens", 0
+    )
+    example_result.metrics["output_tokens"] = safe_get_nested_attr(
+        llm_metrics, "tokens.output_tokens", 0
+    )
+    example_result.metrics["total_tokens"] = safe_get_nested_attr(
+        llm_metrics, "tokens.total_tokens", 0
+    )
+    _record_llm_cost(example_result, llm_metrics)
+
+    response_time_ms = safe_get_nested_attr(llm_metrics, "response.response_time_ms", 0)
+    if response_time_ms > 0:
+        response_time_ms = float(response_time_ms)
+        example_result.metrics["response_time_ms"] = response_time_ms
+        example_result.metadata["response_time_ms"] = response_time_ms
+        # Compatibility: remove in <next-minor> once consumers have
+        # migrated to canonical response_time_ms.
+        model_response_time = response_time_ms / 1000.0
+        example_result.metrics["model_response_time"] = model_response_time
+        example_result.metadata["model_response_time"] = model_response_time
+
+
+def _record_function_duration(
+    example_result: ExampleResult, per_example_duration: float
+) -> None:
+    """Record the measured function duration in canonical and legacy keys."""
+    execution_time_ms = float(per_example_duration) * 1000.0
+    example_result.metrics["execution_time_ms"] = execution_time_ms
+    example_result.metadata["execution_time_ms"] = execution_time_ms
+    # Compatibility: remove in <next-minor> once consumers have
+    # migrated to canonical execution_time_ms.
+    example_result.metrics["function_duration"] = per_example_duration
+    example_result.metadata["function_duration"] = per_example_duration
 
 
 # Substrings that mark a config key as secret-bearing. Comparison is
@@ -106,6 +187,7 @@ def _redact_config_for_log(config: dict[str, Any]) -> dict[str, Any]:
 
 
 if TYPE_CHECKING:
+    from traigent.config.context import ConfigurationContext
     from traigent.core.execution_budget import ExecutionBudget
     from traigent.core.sample_budget import SampleBudgetLease
 
@@ -116,6 +198,9 @@ if TYPE_CHECKING:
 _SDK_MEASURED_OBJECTIVES = (MEASURED_ONLY_METRICS | RESERVED_METRIC_KEYS) - frozenset(
     {"accuracy", "score"}
 )
+
+
+_COST_TOTAL_COST = "cost.total_cost"
 
 
 class CustomEvaluatorWrapper(BaseEvaluator):
@@ -315,7 +400,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         return bool(
             safe_get_nested_attr(metrics, "tokens.input_tokens", 0)
             or safe_get_nested_attr(metrics, "tokens.output_tokens", 0)
-            or safe_get_nested_attr(metrics, "cost.total_cost", 0.0)
+            or safe_get_nested_attr(metrics, _COST_TOTAL_COST, 0.0)
             or safe_get_nested_attr(metrics, "cost.cost_explicit", False)
         )
 
@@ -354,61 +439,11 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             example_result.metadata["llm_usage_measured"] = bool(llm_metrics)
 
         if llm_metrics:
-            if example_result.metrics is None:
-                example_result.metrics = {}
-
-            # Add token and cost metrics
-            example_result.metrics["input_tokens"] = safe_get_nested_attr(
-                llm_metrics, "tokens.input_tokens", 0
-            )
-            example_result.metrics["output_tokens"] = safe_get_nested_attr(
-                llm_metrics, "tokens.output_tokens", 0
-            )
-            example_result.metrics["total_tokens"] = safe_get_nested_attr(
-                llm_metrics, "tokens.total_tokens", 0
-            )
-            if safe_get_nested_attr(llm_metrics, "cost.unmeasured", False):
-                # Unknown cost: leave the cost keys out, flag it (#2517).
-                example_result.metrics["cost_unmeasured"] = 1.0
-                # The part that WAS measured stays a floor, never a total.
-                known = safe_get_nested_attr(
-                    llm_metrics, "cost.total_cost", 0.0
-                ) + safe_get_nested_attr(llm_metrics, "cost.known_cost", 0.0)
-                if known > 0:
-                    example_result.metrics["cost_lower_bound"] = known
-            else:
-                example_result.metrics["input_cost"] = safe_get_nested_attr(
-                    llm_metrics, "cost.input_cost", 0.0
-                )
-                example_result.metrics["output_cost"] = safe_get_nested_attr(
-                    llm_metrics, "cost.output_cost", 0.0
-                )
-                example_result.metrics["total_cost"] = safe_get_nested_attr(
-                    llm_metrics, "cost.total_cost", 0.0
-                )
-
-            response_time_ms = safe_get_nested_attr(
-                llm_metrics, "response.response_time_ms", 0
-            )
-            if response_time_ms > 0:
-                response_time_ms = float(response_time_ms)
-                example_result.metrics["response_time_ms"] = response_time_ms
-                example_result.metadata["response_time_ms"] = response_time_ms
-                # Compatibility: remove in <next-minor> once consumers have
-                # migrated to canonical response_time_ms.
-                model_response_time = response_time_ms / 1000.0
-                example_result.metrics["model_response_time"] = model_response_time
-                example_result.metadata["model_response_time"] = model_response_time
+            _record_llm_usage(example_result, llm_metrics)
 
         # Track total function duration
         if per_example_duration is not None:
-            execution_time_ms = float(per_example_duration) * 1000.0
-            example_result.metrics["execution_time_ms"] = execution_time_ms
-            example_result.metadata["execution_time_ms"] = execution_time_ms
-            # Compatibility: remove in <next-minor> once consumers have
-            # migrated to canonical execution_time_ms.
-            example_result.metrics["function_duration"] = per_example_duration
-            example_result.metadata["function_duration"] = per_example_duration
+            _record_function_duration(example_result, per_example_duration)
 
         # Set execution time if not already set
         current_execution_time = getattr(example_result, "execution_time", 0.0)
@@ -532,24 +567,79 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         trial_unmeasured = _truthy_flag(aggregated.get("cost_unmeasured"))
         for metric in MEASURED_ONLY_METRICS & set(self.metrics):
             if trial_unmeasured:
-                if _strict_metrics_nulls():
-                    aggregated[metric] = None
-                else:
-                    aggregated.pop(metric, None)
+                _leave_metric_unknown(aggregated, metric)
                 continue
-            if any(
-                row and _measured_number(row.get(metric)) is not None
-                for row in all_metrics
-            ):
+            if _any_row_measured(all_metrics, metric):
                 continue
             source = "total_cost" if metric == "cost" else metric
             captured = _measured_number(aggregated.get(source))
             if captured is not None:
                 aggregated[metric] = captured
-            elif _strict_metrics_nulls():
+            else:
+                _leave_metric_unknown(aggregated, metric)
+
+    @staticmethod
+    def _aggregate_unknown_llm_cost(
+        all_metrics: list[dict[str, Any]],
+        aggregated: dict[str, float | None],
+        strict_nulls: bool,
+    ) -> None:
+        # A flagged row, a successful row with no captured cost, or no
+        # measured row at all: the sum would be a floor (or nothing), not
+        # the trial's cost, so no cost total is claimed (#2517).
+        aggregated["cost_unmeasured"] = 1.0
+        # The spend rows did report is a valid floor (never a total): keep
+        # it so budgeted submission sends it with the flag, not 0.0.
+        reported_floor = sum(known_spend_lower_bound(row) for row in all_metrics if row)
+        if reported_floor > 0:
+            aggregated["cost_lower_bound"] = reported_floor
+        for metric in _LLM_COST_METRICS:
+            if strict_nulls:
                 aggregated[metric] = None
             else:
                 aggregated.pop(metric, None)
+
+    @staticmethod
+    def _aggregate_llm_cost(
+        all_metrics: list[dict[str, Any]],
+        example_results: list[ExampleResult],
+        aggregated: dict[str, float | None],
+        strict_nulls: bool,
+    ) -> None:
+        if trial_cost_unknown(
+            all_metrics,
+            [bool(getattr(r, "success", True)) for r in example_results]
+            if len(example_results) == len(all_metrics)
+            else None,
+        ):
+            CustomEvaluatorWrapper._aggregate_unknown_llm_cost(
+                all_metrics, aggregated, strict_nulls
+            )
+        elif any(
+            row_reports_zero_provider_attempts(row) and not row_has_measured_cost(row)
+            for row in all_metrics
+        ):
+            # Rows that explicitly report zero provider attempts spent nothing.
+            # Fold the spend the other rows reported under ANY cost alias
+            # first (``cost`` is not one of the summed keys above), and only
+            # when no row reported any cost materialize the established
+            # measured zero (a sum over no rows would omit the keys).
+            reported = sum(
+                known_spend_lower_bound(row)
+                for row in all_metrics
+                if row_has_measured_cost(row)
+            )
+            if any(row_has_measured_cost(row) for row in all_metrics):
+                # Always the combined per-row spend: the plain sum above only
+                # saw rows reporting ``total_cost`` and would drop a row that
+                # reports ``cost``. ``known_spend_lower_bound`` takes the max
+                # across one row's aliases (trial_costs.py), so a row echoing
+                # the same spend as ``cost`` and ``total_cost`` counts once.
+                aggregated["total_cost"] = reported
+            else:
+                for metric in _LLM_COST_METRICS:
+                    if aggregated.get(metric) is None:
+                        aggregated[metric] = 0.0
 
     def _aggregate_llm_metrics(
         self, all_metrics: list[dict[str, Any]], example_results: list[ExampleResult]
@@ -584,53 +674,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             elif strict_nulls:
                 aggregated[metric] = None
 
-        if trial_cost_unknown(
-            all_metrics,
-            [bool(getattr(r, "success", True)) for r in example_results]
-            if len(example_results) == len(all_metrics)
-            else None,
-        ):
-            # A flagged row, a successful row with no captured cost, or no
-            # measured row at all: the sum would be a floor (or nothing), not
-            # the trial's cost, so no cost total is claimed (#2517).
-            aggregated["cost_unmeasured"] = 1.0
-            # The spend rows did report is a valid floor (never a total): keep
-            # it so budgeted submission sends it with the flag, not 0.0.
-            reported_floor = sum(
-                known_spend_lower_bound(row) for row in all_metrics if row
-            )
-            if reported_floor > 0:
-                aggregated["cost_lower_bound"] = reported_floor
-            for metric in _LLM_COST_METRICS:
-                if strict_nulls:
-                    aggregated[metric] = None
-                else:
-                    aggregated.pop(metric, None)
-        elif any(
-            row_reports_zero_provider_attempts(row) and not row_has_measured_cost(row)
-            for row in all_metrics
-        ):
-            # Rows that explicitly report zero provider attempts spent nothing.
-            # Fold the spend the other rows reported under ANY cost alias
-            # first (``cost`` is not one of the summed keys above), and only
-            # when no row reported any cost materialize the established
-            # measured zero (a sum over no rows would omit the keys).
-            reported = sum(
-                known_spend_lower_bound(row)
-                for row in all_metrics
-                if row_has_measured_cost(row)
-            )
-            if any(row_has_measured_cost(row) for row in all_metrics):
-                # Always the combined per-row spend: the plain sum above only
-                # saw rows reporting ``total_cost`` and would drop a row that
-                # reports ``cost``. ``known_spend_lower_bound`` takes the max
-                # across one row's aliases (trial_costs.py), so a row echoing
-                # the same spend as ``cost`` and ``total_cost`` counts once.
-                aggregated["total_cost"] = reported
-            else:
-                for metric in _LLM_COST_METRICS:
-                    if aggregated.get(metric) is None:
-                        aggregated[metric] = 0.0
+        CustomEvaluatorWrapper._aggregate_llm_cost(
+            all_metrics, example_results, aggregated, strict_nulls
+        )
 
         measured_rows = sum(
             1
@@ -674,6 +720,227 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             f"Did you mean to use metric_functions instead of custom_evaluator?\n"
             f"Original error: {error}"
         ) from error
+
+    async def _invoke_custom_evaluator(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        example: EvaluationExample,
+        trial_ctx: dict[str, Any] | None,
+        cleanup_boundary: _SampleLeaseCleanupBoundary,
+    ) -> Any:
+        if is_coroutine_callable(self.custom_evaluator):
+            try:
+                # Per-example limit (``example_timeout``), not
+                # the run-level timeout.
+                # Shared helper keeps KeyboardInterrupt /
+                # SystemExit contained at the task boundary.
+                example_result = await self._execute_async_with_timeout(
+                    self.custom_evaluator,
+                    (func, config, example),
+                    {},
+                )
+            except asyncio.CancelledError:
+                cleanup_boundary.cancel()
+                raise
+            except TimeoutError:
+                raise RuntimeError(
+                    f"{EXAMPLE_TIMEOUT_ERROR_PREFIX} {self.timeout}s"
+                ) from None
+        else:
+            # Run blocking custom evaluators off the main event loop so
+            # concurrent async tasks (progress callbacks, heartbeats)
+            # are not starved while long-running per-example work runs.
+            def run_custom_evaluator(
+                example: EvaluationExample = example,
+            ) -> Any:
+                return self.custom_evaluator(func, config, example)
+
+            (
+                output,
+                execution_error,
+            ) = await self._execute_sync_in_thread(
+                run_custom_evaluator,
+                config,
+                (),
+                {},
+                None,
+                trial_ctx,
+                worker_started_callback=cleanup_boundary.worker_started,
+                worker_done_callback=cleanup_boundary.worker_done,
+                apply_timeout=True,
+                bound_lane_wait=True,
+            )
+            if execution_error is not None:
+                raise RuntimeError(execution_error)
+            example_result = output
+        return example_result
+
+    async def _evaluate_custom_example(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        example: EvaluationExample,
+        i: int,
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: SampleBudgetLease | None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        trial_ctx: dict[str, Any] | None,
+        context_class: type[ConfigurationContext],
+        example_results: list[ExampleResult],
+        all_metrics: list[dict[str, Any]],
+        outputs: list[Any],
+        errors: list[str | None],
+    ) -> tuple[int, int]:
+        consumed_examples = 0
+        raised_rows = 0
+        cleanup_boundary = self._new_sample_lease_cleanup_boundary(
+            sample_lease, execution_budget_lease
+        )
+        try:
+            # Clear any previous captured responses before evaluation
+            if self.capture_llm_metrics and self._metrics_available:
+                self._clear_captured_responses()
+
+            # Set configuration context and call custom evaluator
+            with _maybe_restore_trial_context(trial_ctx):
+                with context_class(config):
+                    per_example_start = time.time()
+                    try:
+                        example_result = (
+                            await CustomEvaluatorWrapper._invoke_custom_evaluator(
+                                self,
+                                func,
+                                config,
+                                example,
+                                trial_ctx,
+                                cleanup_boundary,
+                            )
+                        )
+                    except asyncio.CancelledError:
+                        cleanup_boundary.cancel()
+                        raise
+                    per_example_duration = time.time() - per_example_start
+
+            # Ensure we got an ExampleResult
+            if not isinstance(example_result, ExampleResult):
+                raise ValueError(
+                    f"Custom evaluator must return ExampleResult, got {type(example_result)}"
+                )
+
+            # Capture and enhance with LLM metrics
+            llm_metrics = self._capture_llm_metrics_for_example(
+                config, example, example_result, i
+            )
+            self._enhance_result_with_llm_metrics(
+                example_result, llm_metrics, per_example_duration
+            )
+
+            stamp_row_index(example_result, i)
+            example_results.append(example_result)
+            consumed_examples += 1
+            if sample_lease:
+                sample_lease.mark_completed()
+            if progress_callback:
+                progress_callback(
+                    i,
+                    {
+                        "success": example_result.success,
+                        "error": example_result.error_message,
+                        "metrics": example_result.metrics,
+                        "output": example_result.actual_output,
+                    },
+                )
+            if example_result.metrics:
+                logger.debug(
+                    f"CustomEvaluatorWrapper: Example {i} returned metrics: {example_result.metrics}"
+                )
+            all_metrics.append(example_result.metrics)
+            outputs.append(example_result.actual_output)
+            errors.append(example_result.error_message)
+
+        except asyncio.CancelledError:
+            # Progress/metric handling occurs after admission too; an
+            # outer orchestrator may catch this and return partial output.
+            cleanup_boundary.cancel()
+            raise
+        except Exception as e:
+            # Check for signature mismatch errors (fail fast with helpful message)
+            try:
+                self._raise_for_interface_mismatch(e)
+            except ValueError:
+                self._abort_execution_budget_evaluation(execution_budget_lease)
+                raise
+
+            logger.warning(f"Custom evaluation failed for example {i}: {e}")
+            failed_result = self._create_failed_example_result(example, i, e)
+            example_results.append(failed_result)
+            consumed_examples += 1
+            raised_rows += 1
+            if sample_lease:
+                sample_lease.mark_completed()
+            if progress_callback:
+                progress_callback(
+                    i,
+                    {
+                        "success": False,
+                        "error": str(e),
+                        "metrics": failed_result.metrics,
+                        "output": None,
+                    },
+                )
+            all_metrics.append(failed_result.metrics)
+            outputs.append(None)
+            errors.append(str(e))
+
+        return consumed_examples, raised_rows
+
+    async def _evaluate_custom_examples(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        dataset: Dataset,
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: SampleBudgetLease | None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        trial_ctx: dict[str, Any] | None,
+        context_class: type[ConfigurationContext],
+        example_results: list[ExampleResult],
+        all_metrics: list[dict[str, Any]],
+        outputs: list[Any],
+        errors: list[str | None],
+    ) -> tuple[int, int, bool]:
+        consumed_examples = 0
+        raised_rows = 0
+        budget_exhausted = False
+        for i, example in enumerate(dataset.examples):
+            if sample_lease and not sample_lease.try_take(1):
+                budget_exhausted = True
+                logger.info(
+                    "Sample budget exhausted before processing example index %s",
+                    i,
+                )
+                break
+            consumed, raised = await CustomEvaluatorWrapper._evaluate_custom_example(
+                self,
+                func,
+                config,
+                example,
+                i,
+                sample_lease,
+                execution_budget_lease,
+                progress_callback,
+                trial_ctx,
+                context_class,
+                example_results,
+                all_metrics,
+                outputs,
+                errors,
+            )
+            consumed_examples += consumed
+            raised_rows += raised
+
+        return consumed_examples, raised_rows, budget_exhausted
 
     async def evaluate(
         self,
@@ -725,157 +992,29 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         trial_ctx = get_trial_context()
 
         # Evaluate function on all examples using custom evaluator
-        example_results = []
-        all_metrics = []
-        outputs = []
+        example_results: list[ExampleResult] = []
+        all_metrics: list[dict[str, Any]] = []
+        outputs: list[Any] = []
         errors: list[str | None] = []
-        consumed_examples = 0
-        raised_rows = 0
-        budget_exhausted = False
-
-        for i, example in enumerate(dataset.examples):
-            if sample_lease and not sample_lease.try_take(1):
-                budget_exhausted = True
-                logger.info(
-                    "Sample budget exhausted before processing example index %s",
-                    i,
-                )
-                break
-            cleanup_boundary = self._new_sample_lease_cleanup_boundary(
-                sample_lease, execution_budget_lease
-            )
-            try:
-                # Clear any previous captured responses before evaluation
-                if self.capture_llm_metrics and self._metrics_available:
-                    self._clear_captured_responses()
-
-                # Set configuration context and call custom evaluator
-                with _maybe_restore_trial_context(trial_ctx):
-                    with ConfigurationContext(config):
-                        per_example_start = time.time()
-                        try:
-                            if is_coroutine_callable(self.custom_evaluator):
-                                try:
-                                    # Per-example limit (``example_timeout``), not
-                                    # the run-level timeout.
-                                    # Shared helper keeps KeyboardInterrupt /
-                                    # SystemExit contained at the task boundary.
-                                    example_result = (
-                                        await self._execute_async_with_timeout(
-                                            self.custom_evaluator,
-                                            (func, config, example),
-                                            {},
-                                        )
-                                    )
-                                except asyncio.CancelledError:
-                                    cleanup_boundary.cancel()
-                                    raise
-                                except TimeoutError:
-                                    raise RuntimeError(
-                                        f"{EXAMPLE_TIMEOUT_ERROR_PREFIX} {self.timeout}s"
-                                    ) from None
-                            else:
-                                # Run blocking custom evaluators off the main event loop so
-                                # concurrent async tasks (progress callbacks, heartbeats)
-                                # are not starved while long-running per-example work runs.
-                                def run_custom_evaluator(
-                                    example: EvaluationExample = example,
-                                ) -> Any:
-                                    return self.custom_evaluator(func, config, example)
-
-                                (
-                                    output,
-                                    execution_error,
-                                ) = await self._execute_sync_in_thread(
-                                    run_custom_evaluator,
-                                    config,
-                                    (),
-                                    {},
-                                    None,
-                                    trial_ctx,
-                                    worker_started_callback=cleanup_boundary.worker_started,
-                                    worker_done_callback=cleanup_boundary.worker_done,
-                                    apply_timeout=True,
-                                    bound_lane_wait=True,
-                                )
-                                if execution_error is not None:
-                                    raise RuntimeError(execution_error)
-                                example_result = output
-                        except asyncio.CancelledError:
-                            cleanup_boundary.cancel()
-                            raise
-                        per_example_duration = time.time() - per_example_start
-
-                # Ensure we got an ExampleResult
-                if not isinstance(example_result, ExampleResult):
-                    raise ValueError(
-                        f"Custom evaluator must return ExampleResult, got {type(example_result)}"
-                    )
-
-                # Capture and enhance with LLM metrics
-                llm_metrics = self._capture_llm_metrics_for_example(
-                    config, example, example_result, i
-                )
-                self._enhance_result_with_llm_metrics(
-                    example_result, llm_metrics, per_example_duration
-                )
-
-                stamp_row_index(example_result, i)
-                example_results.append(example_result)
-                consumed_examples += 1
-                if sample_lease:
-                    sample_lease.mark_completed()
-                if progress_callback:
-                    progress_callback(
-                        i,
-                        {
-                            "success": example_result.success,
-                            "error": example_result.error_message,
-                            "metrics": example_result.metrics,
-                            "output": example_result.actual_output,
-                        },
-                    )
-                if example_result.metrics:
-                    logger.debug(
-                        f"CustomEvaluatorWrapper: Example {i} returned metrics: {example_result.metrics}"
-                    )
-                all_metrics.append(example_result.metrics)
-                outputs.append(example_result.actual_output)
-                errors.append(example_result.error_message)
-
-            except asyncio.CancelledError:
-                # Progress/metric handling occurs after admission too; an
-                # outer orchestrator may catch this and return partial output.
-                cleanup_boundary.cancel()
-                raise
-            except Exception as e:
-                # Check for signature mismatch errors (fail fast with helpful message)
-                try:
-                    self._raise_for_interface_mismatch(e)
-                except ValueError:
-                    self._abort_execution_budget_evaluation(execution_budget_lease)
-                    raise
-
-                logger.warning(f"Custom evaluation failed for example {i}: {e}")
-                failed_result = self._create_failed_example_result(example, i, e)
-                example_results.append(failed_result)
-                consumed_examples += 1
-                raised_rows += 1
-                if sample_lease:
-                    sample_lease.mark_completed()
-                if progress_callback:
-                    progress_callback(
-                        i,
-                        {
-                            "success": False,
-                            "error": str(e),
-                            "metrics": failed_result.metrics,
-                            "output": None,
-                        },
-                    )
-                all_metrics.append(failed_result.metrics)
-                outputs.append(None)
-                errors.append(str(e))
+        (
+            consumed_examples,
+            raised_rows,
+            budget_exhausted,
+        ) = await CustomEvaluatorWrapper._evaluate_custom_examples(
+            self,
+            func,
+            config,
+            dataset,
+            sample_lease,
+            execution_budget_lease,
+            progress_callback,
+            trial_ctx,
+            ConfigurationContext,
+            example_results,
+            all_metrics,
+            outputs,
+            errors,
+        )
 
         duration = time.time() - start_time
 

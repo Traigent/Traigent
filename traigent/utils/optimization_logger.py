@@ -230,53 +230,68 @@ def sanitize_for_logging(
         _memo = {}
 
     if isinstance(value, dict):
-        obj_id = id(value)
-        if obj_id in _memo:
-            return _memo[obj_id]
-        if obj_id in _visited:
-            return "<recursion>"
-        _visited.add(obj_id)
-        sanitized: dict[str, Any] = {}
-        _memo[obj_id] = sanitized
-        for nested_key, nested_value in value.items():
-            sanitized[nested_key] = sanitize_for_logging(
-                nested_value,
-                key_hint=str(nested_key),
-                _visited=_visited,
-                _memo=_memo,
-            )
-        return sanitized
+        return _sanitize_mapping(value, _visited, _memo)
 
     if isinstance(value, (list, tuple, set)):
-        obj_id = id(value)
-        if obj_id in _memo:
-            return _memo[obj_id]
-        if obj_id in _visited:
-            return "<recursion>"
-        _visited.add(obj_id)
-        sanitized_sequence = [
-            sanitize_for_logging(
-                item, key_hint=key_hint, _visited=_visited, _memo=_memo
-            )
-            for item in value
-        ]
-        _memo[obj_id] = sanitized_sequence
-        return sanitized_sequence
+        return _sanitize_sequence(value, key_hint, _visited, _memo)
 
     if isinstance(value, str):
-        if key_hint and _is_sensitive_key(key_hint):
-            return _mask_string(value)
-        if _looks_like_secret(value, key_hint=key_hint):
-            return _mask_string(value)
-        if key_hint and _is_safe_logging_key(key_hint):
-            return value
-        return value
+        return _sanitize_string(value, key_hint)
 
     if isinstance(value, (int, float, bool)) or value is None:
         return value
 
     # Fallback to string for unsupported types (e.g., dataclasses, enums)
     return str(value)
+
+
+def _sanitize_mapping(
+    value: dict[Any, Any], _visited: set[int], _memo: dict[int, Any]
+) -> Any:
+    obj_id = id(value)
+    if obj_id in _memo:
+        return _memo[obj_id]
+    if obj_id in _visited:
+        return "<recursion>"
+    _visited.add(obj_id)
+    sanitized: dict[str, Any] = {}
+    _memo[obj_id] = sanitized
+    for nested_key, nested_value in value.items():
+        sanitized[nested_key] = sanitize_for_logging(
+            nested_value,
+            key_hint=str(nested_key),
+            _visited=_visited,
+            _memo=_memo,
+        )
+    return sanitized
+
+
+def _sanitize_sequence(
+    value: list[Any] | tuple[Any, ...] | set[Any],
+    key_hint: str | None,
+    _visited: set[int],
+    _memo: dict[int, Any],
+) -> Any:
+    obj_id = id(value)
+    if obj_id in _memo:
+        return _memo[obj_id]
+    if obj_id in _visited:
+        return "<recursion>"
+    _visited.add(obj_id)
+    sanitized_sequence = [
+        sanitize_for_logging(item, key_hint=key_hint, _visited=_visited, _memo=_memo)
+        for item in value
+    ]
+    _memo[obj_id] = sanitized_sequence
+    return sanitized_sequence
+
+
+def _sanitize_string(value: str, key_hint: str | None) -> str:
+    if key_hint and _is_sensitive_key(key_hint):
+        return _mask_string(value)
+    if _looks_like_secret(value, key_hint=key_hint):
+        return _mask_string(value)
+    return value
 
 
 def _extract_output_text(output: Any) -> str | None:
@@ -377,30 +392,7 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
     no prompt/response/expected text is written to disk.
     """
     if isinstance(ex, dict):
-        metrics = ex.get("metrics", {})
-        actual = ex.get("actual_output")
-        # ExampleResult uses error_message; HybridExampleResult uses error. Accept either.
-        error = (
-            ex.get("error_message")
-            if ex.get("error_message") is not None
-            else ex.get("error")
-        )
-        return {
-            "example_id": ex.get("example_id"),
-            "query": (
-                (actual.get("query") if isinstance(actual, dict) else None)
-                if log_content
-                else None
-            ),
-            "response": _extract_output_text(actual) if log_content else None,
-            "expected": ex.get("expected_output") if log_content else None,
-            "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
-            **_example_cost_fields(
-                ex.get("cost_usd"), ex.get("cost_unmeasured"), metrics
-            ),
-            "latency_ms": ex.get("latency_ms", 0.0),
-            "error": error,
-        }
+        return _serialize_example_result_dict(ex, log_content=log_content)
     # Dataclass: ExampleResult exposes error_message, HybridExampleResult exposes error.
     metrics = getattr(ex, "metrics", {}) or {}
     actual = getattr(ex, "actual_output", None)
@@ -410,9 +402,7 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
     return {
         "example_id": getattr(ex, "example_id", None),
         "query": (
-            (actual.get("query") if isinstance(actual, dict) else None)
-            if log_content
-            else None
+            actual.get("query") if log_content and isinstance(actual, dict) else None
         ),
         "response": _extract_output_text(actual) if log_content else None,
         "expected": getattr(ex, "expected_output", None) if log_content else None,
@@ -423,6 +413,31 @@ def _serialize_example_result(ex: Any, *, log_content: bool = True) -> dict[str,
             metrics,
         ),
         "latency_ms": getattr(ex, "latency_ms", 0.0),
+        "error": error,
+    }
+
+
+def _serialize_example_result_dict(
+    ex: dict[str, Any], *, log_content: bool
+) -> dict[str, Any]:
+    metrics = ex.get("metrics", {})
+    actual = ex.get("actual_output")
+    # ExampleResult uses error_message; HybridExampleResult uses error. Accept either.
+    error = (
+        ex.get("error_message")
+        if ex.get("error_message") is not None
+        else ex.get("error")
+    )
+    return {
+        "example_id": ex.get("example_id"),
+        "query": (
+            actual.get("query") if log_content and isinstance(actual, dict) else None
+        ),
+        "response": _extract_output_text(actual) if log_content else None,
+        "expected": ex.get("expected_output") if log_content else None,
+        "accuracy": metrics.get("accuracy") if isinstance(metrics, dict) else None,
+        **_example_cost_fields(ex.get("cost_usd"), ex.get("cost_unmeasured"), metrics),
+        "latency_ms": ex.get("latency_ms", 0.0),
         "error": error,
     }
 
@@ -619,22 +634,7 @@ class OptimizationLogger:
             )
             return
 
-        candidates: list[Path] = []
-        for entry in entries:
-            if entry.is_symlink():
-                continue  # never follow symlinks
-            if not entry.is_dir():
-                continue
-            if entry.name == self.run_path.name:
-                continue  # never touch the active run
-            if not _RUN_DIR_NAME_PATTERN.match(entry.name):
-                continue  # unparseable name -> on any doubt, skip
-            if not _run_dir_shows_completion_evidence(entry):
-                # No terminal status on disk: this may be another process's
-                # concurrently ACTIVE run (or a crashed one). No completion
-                # evidence -> skip.
-                continue
-            candidates.append(entry)
+        candidates = OptimizationLogger._retention_candidates(self, entries)
 
         keep_count = max(max_runs - 1, 0)  # -1 reserves a slot for the active run
         if len(candidates) <= keep_count:
@@ -663,14 +663,33 @@ class OptimizationLogger:
                     old_run,
                 )
             except OSError:
-                logger.error(
+                logger.exception(
                     "Failed to prune old optimization-log run directory %s "
                     "while enforcing %s=%d",
                     old_run,
                     ENV_OPTIMIZATION_LOG_MAX_RUNS,
                     max_runs,
-                    exc_info=True,
                 )
+
+    def _retention_candidates(self, entries: list[Path]) -> list[Path]:
+        candidates: list[Path] = []
+        for entry in entries:
+            if entry.is_symlink():
+                continue  # never follow symlinks
+            if not entry.is_dir():
+                continue
+            if entry.name == self.run_path.name:
+                continue  # never touch the active run
+            if not _RUN_DIR_NAME_PATTERN.match(entry.name):
+                continue  # unparseable name -> on any doubt, skip
+            if not _run_dir_shows_completion_evidence(entry):
+                # No terminal status on disk: this may be another process's
+                # concurrently ACTIVE run (or a crashed one). No completion
+                # evidence -> skip.
+                continue
+            candidates.append(entry)
+
+        return candidates
 
     def _write_log_dir_gitignore(self) -> None:
         """Drop a ``.gitignore`` into the log root so per-example content (which
@@ -707,7 +726,7 @@ class OptimizationLogger:
                 json.dump(sanitized, handle, indent=2, default=str, ensure_ascii=False)
             temp_path.replace(file_path)
         except Exception as exc:
-            logger.error(f"Failed to write {file_path}: {exc}")
+            logger.exception(f"Failed to write {file_path}: {exc}")
             raise
         finally:
             if temp_path.exists():

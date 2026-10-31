@@ -20,6 +20,18 @@ from traigent.utils.logging import get_logger
 if TYPE_CHECKING:
     from traigent.cloud.models import AgentSpecification
 
+_DESC_TOP_K = "Top-k sampling parameter"
+
+_DESC_PRESENCE_PENALTY = "Presence penalty"
+
+_DESC_FREQUENCY_PENALTY = "Frequency penalty"
+
+_DESC_TOP_P = "Nucleus sampling parameter"
+
+_DESC_MAX_TOKENS = "Maximum output tokens"
+
+_DESC_TEMPERATURE = "Sampling temperature"
+
 logger = get_logger(__name__)
 
 # Maximum length (in characters) of a single config value substituted into a
@@ -180,7 +192,7 @@ class ConfigurationMapper:
         """
         return self._platform_mappings.get(platform.lower())
 
-    def validate_configuration_compatibility(  # noqa: C901
+    def validate_configuration_compatibility(
         self, agent_spec: AgentSpecification, config_space: dict[str, Any]
     ) -> dict[str, Any]:
         """Validate that configuration space is compatible with agent.
@@ -211,32 +223,25 @@ class ConfigurationMapper:
 
         # Check if config space parameters can be mapped
         for param_name in config_space.keys():
-            mapped = False
-            for param_mapping in mapping.parameter_mappings:
-                if param_mapping.source_key == param_name:
-                    mapped = True
-                    supported_parameters.append(param_name)
-
-                    # Validate parameter space definition if validation function exists
-                    if param_mapping.validation:
-                        try:
-                            # For config space validation, check if it's a list or tuple
-                            param_space = config_space[param_name]
-                            if isinstance(param_space, (list, tuple)):
-                                # Validate each possible value
-                                for value in param_space:
-                                    param_mapping.validation(value)
-                            else:
-                                # Single value validation
-                                param_mapping.validation(param_space)
-                        except (ValueError, TypeError) as e:
-                            warnings.append(f"Parameter {param_name}: {e}")
-                    break
-
-            if not mapped:
+            param_mapping = next(
+                (
+                    candidate
+                    for candidate in mapping.parameter_mappings
+                    if candidate.source_key == param_name
+                ),
+                None,
+            )
+            if param_mapping is None:
                 warnings.append(
                     f"Parameter '{param_name}' has no mapping for platform '{platform}'"
                 )
+                continue
+            supported_parameters.append(param_name)
+            warning = self._parameter_space_warning(
+                param_mapping, param_name, config_space
+            )
+            if warning is not None:
+                warnings.append(warning)
 
         return {
             "compatible": len(errors) == 0,
@@ -245,7 +250,31 @@ class ConfigurationMapper:
             "supported_parameters": supported_parameters,
         }
 
-    def _apply_parameter_mappings(  # noqa: C901
+    @staticmethod
+    def _parameter_space_warning(
+        param_mapping: ParameterMapping,
+        param_name: str,
+        config_space: dict[str, Any],
+    ) -> str | None:
+        """Warning text when the mapping's validation rejects the parameter space."""
+        # Validate parameter space definition if validation function exists
+        if not param_mapping.validation:
+            return None
+        try:
+            # For config space validation, check if it's a list or tuple
+            param_space = config_space[param_name]
+            if isinstance(param_space, (list, tuple)):
+                # Validate each possible value
+                for value in param_space:
+                    param_mapping.validation(value)
+            else:
+                # Single value validation
+                param_mapping.validation(param_space)
+        except (ValueError, TypeError) as e:
+            return f"Parameter {param_name}: {e}"
+        return None
+
+    def _apply_parameter_mappings(
         self, spec: AgentSpecification, config: dict[str, Any], mapping: PlatformMapping
     ) -> AgentSpecification:
         """Apply parameter mappings to specification."""
@@ -257,43 +286,7 @@ class ConfigurationMapper:
             if source_value is None:
                 continue
 
-            # Apply transformation if specified
-            if param_mapping.transform:
-                transform_name = getattr(
-                    param_mapping.transform,
-                    "__name__",
-                    param_mapping.transform.__class__.__name__,
-                )
-                try:
-                    target_value = param_mapping.transform(source_value)
-                except ConfigurationError:
-                    raise
-                except ValueError as err:
-                    raise ConfigurationError(
-                        (
-                            f"Transform '{transform_name}' for parameter "
-                            f"'{param_mapping.source_key}' produced an invalid value: {err}"
-                        ),
-                        {
-                            "source_key": param_mapping.source_key,
-                            "target_key": param_mapping.target_key,
-                            "transform": transform_name,
-                        },
-                    ) from err
-                except Exception as e:
-                    raise ConfigurationError(
-                        (
-                            f"Transform '{transform_name}' raised an unexpected error for "
-                            f"'{param_mapping.source_key}': {e}"
-                        ),
-                        {
-                            "source_key": param_mapping.source_key,
-                            "target_key": param_mapping.target_key,
-                            "transform": transform_name,
-                        },
-                    ) from e
-            else:
-                target_value = source_value
+            target_value = self._transform_mapped_value(param_mapping, source_value)
 
             # Apply validation if specified
             if param_mapping.validation:
@@ -304,34 +297,81 @@ class ConfigurationMapper:
                         f"Validation failed for {param_mapping.target_key}: {e}"
                     ) from e
 
-            # Set the parameter in the appropriate section
-            if param_mapping.target_section == "model_parameters":
-                if spec.model_parameters is None:
-                    spec.model_parameters = {}
-                spec.model_parameters[param_mapping.target_key] = target_value
-            elif param_mapping.target_section == "custom_tools":
-                # Ensure custom_tools is a list of strings
-                if spec.custom_tools is None:
-                    spec.custom_tools = []
-                if isinstance(target_value, list):
-                    spec.custom_tools.extend([str(v) for v in target_value])
-                else:
-                    spec.custom_tools.append(str(target_value))
-            else:
-                # Direct attribute assignment is restricted to an explicit
-                # allowlist so a registered (or imported) mapping cannot
-                # clobber internal/private fields on AgentSpecification.
-                if param_mapping.target_key not in _ALLOWED_DIRECT_ATTR_KEYS:
-                    logger.warning(
-                        "Refusing to set unknown agent specification attribute %r"
-                        " (target_section=%r)",
-                        param_mapping.target_key,
-                        param_mapping.target_section,
-                    )
-                    continue
-                setattr(spec, param_mapping.target_key, target_value)
+            self._set_mapped_value(spec, param_mapping, target_value)
 
         return spec
+
+    @staticmethod
+    def _transform_mapped_value(
+        param_mapping: ParameterMapping, source_value: Any
+    ) -> Any:
+        """Apply the mapping's transform (if any), wrapping failures."""
+        if not param_mapping.transform:
+            return source_value
+        transform_name = getattr(
+            param_mapping.transform,
+            "__name__",
+            param_mapping.transform.__class__.__name__,
+        )
+        try:
+            return param_mapping.transform(source_value)
+        except ConfigurationError:
+            raise
+        except ValueError as err:
+            raise ConfigurationError(
+                (
+                    f"Transform '{transform_name}' for parameter "
+                    f"'{param_mapping.source_key}' produced an invalid value: {err}"
+                ),
+                {
+                    "source_key": param_mapping.source_key,
+                    "target_key": param_mapping.target_key,
+                    "transform": transform_name,
+                },
+            ) from err
+        except Exception as e:
+            raise ConfigurationError(
+                (
+                    f"Transform '{transform_name}' raised an unexpected error for "
+                    f"'{param_mapping.source_key}': {e}"
+                ),
+                {
+                    "source_key": param_mapping.source_key,
+                    "target_key": param_mapping.target_key,
+                    "transform": transform_name,
+                },
+            ) from e
+
+    @staticmethod
+    def _set_mapped_value(
+        spec: AgentSpecification, param_mapping: ParameterMapping, target_value: Any
+    ) -> None:
+        """Set a mapped value in the section of the specification it targets."""
+        if param_mapping.target_section == "model_parameters":
+            if spec.model_parameters is None:
+                spec.model_parameters = {}
+            spec.model_parameters[param_mapping.target_key] = target_value
+        elif param_mapping.target_section == "custom_tools":
+            # Ensure custom_tools is a list of strings
+            if spec.custom_tools is None:
+                spec.custom_tools = []
+            if isinstance(target_value, list):
+                spec.custom_tools.extend([str(v) for v in target_value])
+            else:
+                spec.custom_tools.append(str(target_value))
+        else:
+            # Direct attribute assignment is restricted to an explicit
+            # allowlist so a registered (or imported) mapping cannot
+            # clobber internal/private fields on AgentSpecification.
+            if param_mapping.target_key not in _ALLOWED_DIRECT_ATTR_KEYS:
+                logger.warning(
+                    "Refusing to set unknown agent specification attribute %r"
+                    " (target_section=%r)",
+                    param_mapping.target_key,
+                    param_mapping.target_section,
+                )
+                return
+            setattr(spec, param_mapping.target_key, target_value)
 
     @staticmethod
     def _sanitize_template_value(template_var: str, value: Any) -> str:
@@ -441,31 +481,31 @@ class ConfigurationMapper:
                     source_key="temperature",
                     target_key="temperature",
                     validation=self._validate_temperature,
-                    description="Sampling temperature",
+                    description=_DESC_TEMPERATURE,
                 ),
                 ParameterMapping(
                     source_key="max_tokens",
                     target_key="max_tokens",
                     validation=self._validate_positive_int,
-                    description="Maximum output tokens",
+                    description=_DESC_MAX_TOKENS,
                 ),
                 ParameterMapping(
                     source_key="top_p",
                     target_key="top_p",
                     validation=self._validate_probability,
-                    description="Nucleus sampling parameter",
+                    description=_DESC_TOP_P,
                 ),
                 ParameterMapping(
                     source_key="frequency_penalty",
                     target_key="frequency_penalty",
                     validation=self._validate_penalty,
-                    description="Frequency penalty",
+                    description=_DESC_FREQUENCY_PENALTY,
                 ),
                 ParameterMapping(
                     source_key="presence_penalty",
                     target_key="presence_penalty",
                     validation=self._validate_penalty,
-                    description="Presence penalty",
+                    description=_DESC_PRESENCE_PENALTY,
                 ),
             ],
             template_mappings={
@@ -487,13 +527,13 @@ class ConfigurationMapper:
                     source_key="temperature",
                     target_key="temperature",
                     validation=self._validate_temperature,
-                    description="Sampling temperature",
+                    description=_DESC_TEMPERATURE,
                 ),
                 ParameterMapping(
                     source_key="max_tokens",
                     target_key="max_tokens",
                     validation=self._validate_positive_int,
-                    description="Maximum output tokens",
+                    description=_DESC_MAX_TOKENS,
                 ),
                 ParameterMapping(
                     source_key="top_p",
@@ -505,13 +545,13 @@ class ConfigurationMapper:
                     source_key="frequency_penalty",
                     target_key="frequency_penalty",
                     validation=self._validate_penalty,
-                    description="Frequency penalty",
+                    description=_DESC_FREQUENCY_PENALTY,
                 ),
                 ParameterMapping(
                     source_key="presence_penalty",
                     target_key="presence_penalty",
                     validation=self._validate_penalty,
-                    description="Presence penalty",
+                    description=_DESC_PRESENCE_PENALTY,
                 ),
                 ParameterMapping(
                     source_key="stop_sequences",
@@ -538,25 +578,25 @@ class ConfigurationMapper:
                     source_key="temperature",
                     target_key="temperature",
                     validation=self._validate_temperature,
-                    description="Sampling temperature",
+                    description=_DESC_TEMPERATURE,
                 ),
                 ParameterMapping(
                     source_key="max_tokens",
                     target_key="max_tokens_to_sample",
                     validation=self._validate_positive_int,
-                    description="Maximum output tokens",
+                    description=_DESC_MAX_TOKENS,
                 ),
                 ParameterMapping(
                     source_key="top_p",
                     target_key="top_p",
                     validation=self._validate_probability,
-                    description="Nucleus sampling parameter",
+                    description=_DESC_TOP_P,
                 ),
                 ParameterMapping(
                     source_key="top_k",
                     target_key="top_k",
                     validation=self._validate_positive_int,
-                    description="Top-k sampling parameter",
+                    description=_DESC_TOP_K,
                 ),
                 ParameterMapping(
                     source_key="stop_sequences",
@@ -579,37 +619,37 @@ class ConfigurationMapper:
                     source_key="temperature",
                     target_key="temperature",
                     validation=self._validate_temperature,
-                    description="Sampling temperature",
+                    description=_DESC_TEMPERATURE,
                 ),
                 ParameterMapping(
                     source_key="max_tokens",
                     target_key="max_tokens",
                     validation=self._validate_positive_int,
-                    description="Maximum output tokens",
+                    description=_DESC_MAX_TOKENS,
                 ),
                 ParameterMapping(
                     source_key="top_p",
                     target_key="p",
                     validation=self._validate_probability,
-                    description="Nucleus sampling parameter",
+                    description=_DESC_TOP_P,
                 ),
                 ParameterMapping(
                     source_key="top_k",
                     target_key="k",
                     validation=self._validate_positive_int,
-                    description="Top-k sampling parameter",
+                    description=_DESC_TOP_K,
                 ),
                 ParameterMapping(
                     source_key="frequency_penalty",
                     target_key="frequency_penalty",
                     validation=self._validate_penalty,
-                    description="Frequency penalty",
+                    description=_DESC_FREQUENCY_PENALTY,
                 ),
                 ParameterMapping(
                     source_key="presence_penalty",
                     target_key="presence_penalty",
                     validation=self._validate_penalty,
-                    description="Presence penalty",
+                    description=_DESC_PRESENCE_PENALTY,
                 ),
                 ParameterMapping(
                     source_key="seed",
@@ -633,7 +673,7 @@ class ConfigurationMapper:
                     source_key="temperature",
                     target_key="temperature",
                     validation=self._validate_temperature,
-                    description="Sampling temperature",
+                    description=_DESC_TEMPERATURE,
                 ),
                 ParameterMapping(
                     source_key="max_tokens",
@@ -645,13 +685,13 @@ class ConfigurationMapper:
                     source_key="top_p",
                     target_key="top_p",
                     validation=self._validate_probability,
-                    description="Nucleus sampling parameter",
+                    description=_DESC_TOP_P,
                 ),
                 ParameterMapping(
                     source_key="top_k",
                     target_key="top_k",
                     validation=self._validate_positive_int,
-                    description="Top-k sampling parameter",
+                    description=_DESC_TOP_K,
                 ),
                 ParameterMapping(
                     source_key="stop_sequences",

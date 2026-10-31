@@ -23,6 +23,8 @@ from ..core.constants import (
 )
 from ..utils.logging import get_logger
 
+_NO_CHANGE = "no change"
+
 logger = get_logger(__name__)
 
 
@@ -119,6 +121,40 @@ class BudgetAllocator:
             ResourceType.EVALUATION_TIME: 1.0,
         }
 
+    @staticmethod
+    def _normalize_priorities(
+        priorities: dict[ResourceType, float],
+    ) -> dict[ResourceType, float]:
+        # Sanitize priorities and avoid division by zero when all weights are zero/negative
+        sanitized_priorities = {k: max(0.0, v) for k, v in priorities.items()}
+        total_priority = sum(sanitized_priorities.values())
+        if total_priority <= 0:
+            equal_share = 1.0 / len(sanitized_priorities)
+            return dict.fromkeys(sanitized_priorities, equal_share)
+        return {
+            resource: weight / total_priority
+            for resource, weight in sanitized_priorities.items()
+        }
+
+    def _adjust_for_history(
+        self,
+        resource: ResourceType,
+        base_amount: float,
+        historical_usage: dict[ResourceType, list[float]],
+    ) -> float:
+        if not (resource in historical_usage and historical_usage[resource]):
+            return base_amount
+        # Calculate trend
+        usage_history = historical_usage[resource]
+        if len(usage_history) < 2:
+            return base_amount
+        recent_avg = statistics.mean(usage_history[-3:])
+        overall_avg = statistics.mean(usage_history)
+        trend_factor = recent_avg / overall_avg if overall_avg > 0 else 1.0
+
+        # Adjust allocation based on trend
+        return base_amount * trend_factor * self.adjustment_factors[resource]
+
     def allocate_budget(
         self,
         total_budget: float,
@@ -132,17 +168,7 @@ class BudgetAllocator:
         if not priorities:
             raise ValueError("Priorities must be provided for budget allocation")
 
-        # Sanitize priorities and avoid division by zero when all weights are zero/negative
-        sanitized_priorities = {k: max(0.0, v) for k, v in priorities.items()}
-        total_priority = sum(sanitized_priorities.values())
-        if total_priority <= 0:
-            equal_share = 1.0 / len(sanitized_priorities)
-            normalized_priorities = dict.fromkeys(sanitized_priorities, equal_share)
-        else:
-            normalized_priorities = {
-                resource: weight / total_priority
-                for resource, weight in sanitized_priorities.items()
-            }
+        normalized_priorities = self._normalize_priorities(priorities)
 
         # Base allocation based on priorities
         base_allocations = {
@@ -152,22 +178,9 @@ class BudgetAllocator:
 
         # Adjust based on historical usage patterns
         for resource, base_amount in base_allocations.items():
-            if resource in historical_usage and historical_usage[resource]:
-                # Calculate trend
-                usage_history = historical_usage[resource]
-                if len(usage_history) >= 2:
-                    recent_avg = statistics.mean(usage_history[-3:])
-                    overall_avg = statistics.mean(usage_history)
-                    trend_factor = recent_avg / overall_avg if overall_avg > 0 else 1.0
-
-                    # Adjust allocation based on trend
-                    adjusted_amount = (
-                        base_amount * trend_factor * self.adjustment_factors[resource]
-                    )
-                else:
-                    adjusted_amount = base_amount
-            else:
-                adjusted_amount = base_amount
+            adjusted_amount = self._adjust_for_history(
+                resource, base_amount, historical_usage
+            )
 
             # Apply constraints if provided
             if constraints and resource in constraints:
@@ -293,6 +306,30 @@ class BudgetAllocator:
                 )
 
         return recommendations
+
+
+def _add_action_savings(
+    simulation: dict[str, Any],
+    actions: list[CostOptimizationAction],
+    simulation_days: int,
+) -> None:
+    """Add absolute daily savings of each action, scaled to the simulated span."""
+    for action in actions:
+        if hasattr(action, "estimated_savings_absolute"):
+            savings = action.estimated_savings_absolute * simulation_days
+            simulation["total_savings"] += savings
+            simulation["total_estimated_savings"] += savings
+            simulation["savings_breakdown"][action.resource_type.value] = savings
+
+
+def _add_percent_savings(simulation: dict[str, Any], actions: dict[str, Any]) -> None:
+    """Add savings given as numeric fractions of the baseline cost."""
+    for action_type, savings_percent in actions.items():
+        if isinstance(savings_percent, (int, float)):
+            savings = simulation["baseline_cost"] * savings_percent
+            simulation["total_savings"] += savings
+            simulation["total_estimated_savings"] += savings
+            simulation["savings_breakdown"][action_type] = savings
 
 
 class CostOptimizationAI:
@@ -475,24 +512,9 @@ class CostOptimizationAI:
 
         # Handle different action types
         if isinstance(actions, list):
-            # List of CostOptimizationAction objects
-            for action in actions:
-                if hasattr(action, "estimated_savings_absolute"):
-                    savings = action.estimated_savings_absolute * simulation_days
-                    simulation["total_savings"] += savings
-                    simulation["total_estimated_savings"] += savings
-                    simulation["savings_breakdown"][action.resource_type.value] = (
-                        savings
-                    )
-        else:
-            # Dictionary format
-            if isinstance(actions, dict):
-                for action_type, savings_percent in actions.items():
-                    if isinstance(savings_percent, (int, float)):
-                        savings = simulation["baseline_cost"] * savings_percent
-                        simulation["total_savings"] += savings
-                        simulation["total_estimated_savings"] += savings
-                        simulation["savings_breakdown"][action_type] = savings
+            _add_action_savings(simulation, actions, simulation_days)
+        elif isinstance(actions, dict):
+            _add_percent_savings(simulation, actions)
 
         simulation["projected_cost"] = max(
             0, simulation["baseline_cost"] - simulation["total_savings"]
@@ -1071,7 +1093,7 @@ class ResourceOptimizer:
         else:
             expected_improvements = {
                 "cost_reduction": "0%",
-                "performance_change": "no change",
+                "performance_change": _NO_CHANGE,
                 "resource_utilization": "optimal",
             }
             implementation_steps = [
@@ -1170,7 +1192,7 @@ class ResourceOptimizer:
         else:
             expected_improvements = {
                 "cost_reduction": "0%",
-                "performance_change": "no change",
+                "performance_change": _NO_CHANGE,
                 "storage_efficiency": "optimal",
             }
             implementation_steps = [
@@ -1194,7 +1216,7 @@ class ResourceOptimizer:
 
         expected_improvements = {
             "cost_reduction": "0%",
-            "performance_change": "no change",
+            "performance_change": _NO_CHANGE,
             "resource_efficiency": "unknown",
         }
         implementation_steps = [

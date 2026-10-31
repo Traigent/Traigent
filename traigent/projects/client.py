@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 from collections.abc import Iterator
+from typing import Any
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
@@ -23,6 +23,43 @@ from traigent.utils.exceptions import (
     TraigentConnectionError,
 )
 from traigent.utils.pagination import iter_pages
+
+
+class _RefuseRedirectHandler(request.HTTPRedirectHandler):
+    """Refuse every HTTP redirect on a credential-bearing project request.
+
+    urllib follows redirects by default and re-sends the API key header. The
+    project backend is a validated origin, so a redirect could reach an address
+    the validator never checked (for example the metadata service). Any 3xx is
+    therefore an error, and the redirect target is never requested.
+    """
+
+    def redirect_request(
+        self,
+        req: request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        if fp is not None:
+            fp.close()
+        raise ClientError(
+            f"Project request refused HTTP redirect (status {code})",
+            status_code=code,
+        )
+
+
+def _gate_opener(opener: request.OpenerDirector) -> request.OpenerDirector:
+    """Route this module's urllib opener through the optimization_only transport backstop."""
+    from traigent.labels.transport_gate import gate_opener
+
+    return gate_opener(opener)
+
+
+def _build_opener(*extra_handlers: Any) -> request.OpenerDirector:
+    return _gate_opener(request.build_opener(_RefuseRedirectHandler, *extra_handlers))
 
 
 class ProjectManagementClient:
@@ -198,9 +235,9 @@ class ProjectManagementClient:
             method=method,
         )
         try:
-            with request.urlopen(
+            with _build_opener().open(
                 http_request, timeout=self.config.request_timeout
-            ) as response:  # nosec B310 - backend_origin is caller-configured API endpoint
+            ) as response:  # nosec B310 - backend_origin is caller-configured API endpoint; redirects refused
                 status_code = getattr(response, "status", 200)
                 body = response.read().decode("utf-8") if response else ""
                 parsed = json.loads(body) if body else {}

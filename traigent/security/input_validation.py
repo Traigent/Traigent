@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
 from urllib.parse import urlparse
 
 from traigent.security.config import get_security_flags
@@ -437,6 +437,26 @@ class InputValidator:
 
         return filename
 
+    #: JSON schema type name -> (accepted python types, article + noun for the error)
+    _JSON_TYPE_CHECKS: ClassVar[dict[str, tuple[type | tuple[type, ...], str]]] = {
+        "string": (str, "a string"),
+        "integer": (int, "an integer"),
+        "number": ((int, float), "a number"),
+        "boolean": (bool, "a boolean"),
+        "array": (list, "an array"),
+        "object": (dict, "an object"),
+    }
+
+    @classmethod
+    def _check_json_type(cls, field: str, value: Any, expected_type: Any) -> None:
+        check = (
+            cls._JSON_TYPE_CHECKS.get(expected_type)
+            if isinstance(expected_type, str)
+            else None
+        )
+        if check is not None and not isinstance(value, check[0]):
+            raise ValidationError(f"Field '{field}' must be {check[1]}")
+
     @classmethod
     def validate_json_input(
         cls, data: dict[str, Any], schema: dict[str, Any]
@@ -464,22 +484,7 @@ class InputValidator:
 
             if value is not None:
                 # Type validation
-                expected_type = rules.get("type")
-                if expected_type:
-                    if expected_type == "string" and not isinstance(value, str):
-                        raise ValidationError(f"Field '{field}' must be a string")
-                    elif expected_type == "integer" and not isinstance(value, int):
-                        raise ValidationError(f"Field '{field}' must be an integer")
-                    elif expected_type == "number" and not isinstance(
-                        value, (int, float)
-                    ):
-                        raise ValidationError(f"Field '{field}' must be a number")
-                    elif expected_type == "boolean" and not isinstance(value, bool):
-                        raise ValidationError(f"Field '{field}' must be a boolean")
-                    elif expected_type == "array" and not isinstance(value, list):
-                        raise ValidationError(f"Field '{field}' must be an array")
-                    elif expected_type == "object" and not isinstance(value, dict):
-                        raise ValidationError(f"Field '{field}' must be an object")
+                cls._check_json_type(field, value, rules.get("type"))
 
                 # Additional validation
                 validator = rules.get("validator")

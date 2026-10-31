@@ -39,6 +39,10 @@ from .base import BaseOverrideManager
 # Import static mappings from dedicated module
 from .mappings import METHOD_MAPPINGS, METHOD_PARAMETER_TRANSLATIONS, PARAMETER_MAPPINGS
 
+_OPENAI_ASYNC_CLIENT_PATH = "openai.AsyncOpenAI"
+
+_OPENAI_CLIENT_PATH = "openai.OpenAI"
+
 logger = get_logger(__name__)
 
 # Backwards compatibility alias
@@ -104,7 +108,7 @@ except ImportError:
 
 #: Framework targets whose patched methods return OpenAI SDK objects that
 #: carry ``usage`` (Traigent#2441).
-_OPENAI_USAGE_TARGETS = frozenset({"openai.OpenAI", "openai.AsyncOpenAI"})
+_OPENAI_USAGE_TARGETS = frozenset({_OPENAI_CLIENT_PATH, _OPENAI_ASYNC_CLIENT_PATH})
 
 
 def _unwrap_raw_openai_response(response: Any) -> Any:
@@ -192,6 +196,32 @@ async def _capture_openai_usage_when_awaited(
     response = await pending
     _capture_openai_usage(response, call_kwargs)
     return response
+
+
+def _apply_constructor_mapping(
+    parameter_mapping: dict[str, str],
+    accepted: frozenset[str] | None,
+    config_dict: dict[str, Any],
+    config_space: Any,
+    overridden_kwargs: dict[str, Any],
+    overrides_applied: list[str],
+) -> None:
+    for traigent_param, framework_param in parameter_mapping.items():
+        if accepted is not None and framework_param not in accepted:
+            # e.g. ``openai.OpenAI(model=...)``: the mapping lists
+            # call-time params, which the client constructor rejects
+            # with a TypeError. They are injected at the method call.
+            continue
+        if traigent_param in config_dict:
+            # Only override if parameter is in configuration space (being optimized)
+            # or if no configuration space is set (not in optimization)
+            if config_space is None or traigent_param in config_space:
+                override_value = config_dict[traigent_param]
+                original_value = overridden_kwargs.get(framework_param, "not_set")
+                overridden_kwargs[framework_param] = override_value
+                overrides_applied.append(
+                    f"{framework_param}: {original_value} -> {override_value}"
+                )
 
 
 class FrameworkOverrideManager(BaseOverrideManager):
@@ -325,24 +355,14 @@ class FrameworkOverrideManager(BaseOverrideManager):
             overridden_kwargs = kwargs.copy()
             overrides_applied = []
 
-            for traigent_param, framework_param in parameter_mapping.items():
-                if accepted is not None and framework_param not in accepted:
-                    # e.g. ``openai.OpenAI(model=...)``: the mapping lists
-                    # call-time params, which the client constructor rejects
-                    # with a TypeError. They are injected at the method call.
-                    continue
-                if traigent_param in config_dict:
-                    # Only override if parameter is in configuration space (being optimized)
-                    # or if no configuration space is set (not in optimization)
-                    if config_space is None or traigent_param in config_space:
-                        override_value = config_dict[traigent_param]
-                        original_value = overridden_kwargs.get(
-                            framework_param, "not_set"
-                        )
-                        overridden_kwargs[framework_param] = override_value
-                        overrides_applied.append(
-                            f"{framework_param}: {original_value} -> {override_value}"
-                        )
+            _apply_constructor_mapping(
+                parameter_mapping,
+                accepted,
+                config_dict,
+                config_space,
+                overridden_kwargs,
+                overrides_applied,
+            )
 
             # Record what overrides were applied
             # (logging handled separately if needed)
@@ -406,64 +426,17 @@ class FrameworkOverrideManager(BaseOverrideManager):
             _capture_openai_usage(response, call_kwargs)
             return response
 
+        def call_kwargs_for(kwargs: dict[str, Any]) -> dict[str, Any]:
+            return self._method_call_kwargs(kwargs, supported_params, effective_mapping)
+
         @functools.wraps(original_method)
         def override_method(instance, *args, **kwargs):
             # Check if we're in an optimization context
             if not getattr(override_active, "enabled", False):
                 return original_method(instance, *args, **kwargs)
 
-            # Get current Traigent configuration
-            config = get_config()
-            if not config:
-                return finish(original_method(instance, *args, **kwargs), kwargs)
-
-            # Extract configuration values
-            config_dict = {}
-            if isinstance(config, TraigentConfig):
-                config_dict = config.to_dict()
-                config_dict.update(config.custom_params)
-            elif isinstance(config, dict):
-                config_dict = config
-            else:
-                return finish(original_method(instance, *args, **kwargs), kwargs)
-
-            # Get current configuration space from context to determine what to override
-            from traigent.config.context import get_config_space
-
-            config_space = get_config_space()
-
-            # Override parameters based on supported_params and effective translation.
-            # Iterating supported_params (not parameter_mapping) ensures we inject all
-            # method-accepted generation params even when they are absent from the
-            # class-level PARAMETER_MAPPINGS (e.g. temperature for HF InferenceClient).
-            overridden_kwargs = kwargs.copy()
-            overrides_applied = []
-
-            for traigent_param in supported_params:
-                if traigent_param in config_dict:
-                    # Only override if parameter is in configuration space (being optimized)
-                    # or if no configuration space is set (not in optimization)
-                    if config_space is None or traigent_param in config_space:
-                        framework_param = effective_mapping.get(
-                            traigent_param, traigent_param
-                        )
-                        override_value = config_dict[traigent_param]
-                        original_value = overridden_kwargs.get(
-                            framework_param, "not_set"
-                        )
-                        overridden_kwargs[framework_param] = override_value
-                        overrides_applied.append(
-                            f"{framework_param}: {original_value} -> {override_value}"
-                        )
-
-            # Record what overrides were applied
-            # (logging handled separately if needed)
-
-            # Call original method with overridden parameters
-            return finish(
-                original_method(instance, *args, **overridden_kwargs),
-                overridden_kwargs,
-            )
+            call_kwargs = call_kwargs_for(kwargs)
+            return finish(original_method(instance, *args, **call_kwargs), call_kwargs)
 
         @functools.wraps(original_method)
         async def async_override_method(instance, *args, **kwargs):
@@ -471,54 +444,9 @@ class FrameworkOverrideManager(BaseOverrideManager):
             if not getattr(override_active, "enabled", False):
                 return await original_method(instance, *args, **kwargs)
 
-            # Get current Traigent configuration
-            config = get_config()
-            if not config:
-                return finish(await original_method(instance, *args, **kwargs), kwargs)
-
-            # Extract configuration values
-            config_dict = {}
-            if isinstance(config, TraigentConfig):
-                config_dict = config.to_dict()
-                config_dict.update(config.custom_params)
-            elif isinstance(config, dict):
-                config_dict = config
-            else:
-                return finish(await original_method(instance, *args, **kwargs), kwargs)
-
-            # Get current configuration space from context to determine what to override
-            from traigent.config.context import get_config_space
-
-            config_space = get_config_space()
-
-            # Override parameters based on supported_params and effective translation.
-            overridden_kwargs = kwargs.copy()
-            overrides_applied = []
-
-            for traigent_param in supported_params:
-                if traigent_param in config_dict:
-                    # Only override if parameter is in configuration space (being optimized)
-                    # or if no configuration space is set (not in optimization)
-                    if config_space is None or traigent_param in config_space:
-                        framework_param = effective_mapping.get(
-                            traigent_param, traigent_param
-                        )
-                        override_value = config_dict[traigent_param]
-                        original_value = overridden_kwargs.get(
-                            framework_param, "not_set"
-                        )
-                        overridden_kwargs[framework_param] = override_value
-                        overrides_applied.append(
-                            f"{framework_param}: {original_value} -> {override_value}"
-                        )
-
-            # Record what overrides were applied
-            # (logging handled separately if needed)
-
-            # Call original method with overridden parameters
+            call_kwargs = call_kwargs_for(kwargs)
             return finish(
-                await original_method(instance, *args, **overridden_kwargs),
-                overridden_kwargs,
+                await original_method(instance, *args, **call_kwargs), call_kwargs
             )
 
         # Return async version if original is async
@@ -526,6 +454,49 @@ class FrameworkOverrideManager(BaseOverrideManager):
             return async_override_method
         else:
             return override_method
+
+    @staticmethod
+    def _method_call_kwargs(
+        kwargs: dict[str, Any],
+        supported_params: list[str],
+        effective_mapping: dict[str, str],
+    ) -> dict[str, Any]:
+        """Return the kwargs a wrapped method should be called with.
+
+        ``kwargs`` itself is returned when there is no usable Traigent
+        configuration; otherwise a copy with the configured overrides applied.
+        """
+        config = get_config()
+        if not config:
+            return kwargs
+
+        if isinstance(config, TraigentConfig):
+            config_dict = config.to_dict()
+            config_dict.update(config.custom_params)
+        elif isinstance(config, dict):
+            config_dict = config
+        else:
+            return kwargs
+
+        # Get current configuration space from context to determine what to override
+        from traigent.config.context import get_config_space
+
+        config_space = get_config_space()
+
+        # Iterating supported_params (not parameter_mapping) ensures we inject all
+        # method-accepted generation params even when they are absent from the
+        # class-level PARAMETER_MAPPINGS (e.g. temperature for HF InferenceClient).
+        overridden_kwargs = kwargs.copy()
+        for traigent_param in supported_params:
+            if traigent_param not in config_dict:
+                continue
+            # Only override if parameter is in configuration space (being optimized)
+            # or if no configuration space is set (not in optimization)
+            if config_space is not None and traigent_param not in config_space:
+                continue
+            framework_param = effective_mapping.get(traigent_param, traigent_param)
+            overridden_kwargs[framework_param] = config_dict[traigent_param]
+        return overridden_kwargs
 
     def _apply_method_override(
         self, target_class: type, class_name: str, method_path: str
@@ -603,6 +574,21 @@ class FrameworkOverrideManager(BaseOverrideManager):
             return_type = getattr(func, "__annotations__", {}).get("return")
         return self._annotation_to_class(return_type, func)
 
+    @staticmethod
+    def _add_annotation_resource_module(
+        annotation_name: str, func: Callable[..., Any], candidate_modules: list[str]
+    ) -> None:
+        package_name = getattr(func, "__module__", "").split(".", 1)[0]
+        if package_name and annotation_name.isidentifier():
+            # SDKs such as openai declare ``def responses(self) -> Responses``
+            # but only import ``Responses`` under TYPE_CHECKING and do not
+            # re-export it from ``<pkg>.resources``; the class lives in
+            # ``<pkg>.resources.<lowercased name without Async>`` (Traigent#2444).
+            module_stem = annotation_name.lower().removeprefix("async")
+            sub_module = f"{package_name}.resources.{module_stem}"
+            if sub_module not in candidate_modules:
+                candidate_modules.append(sub_module)
+
     def _annotation_to_class(
         self, annotation: Any, func: Callable[..., Any]
     ) -> type | None:
@@ -625,16 +611,9 @@ class FrameworkOverrideManager(BaseOverrideManager):
         if isinstance(resolved, type):
             return cast(type, resolved)
         candidate_modules = self._annotation_candidate_modules(func)
-        package_name = getattr(func, "__module__", "").split(".", 1)[0]
-        if package_name and annotation_name.isidentifier():
-            # SDKs such as openai declare ``def responses(self) -> Responses``
-            # but only import ``Responses`` under TYPE_CHECKING and do not
-            # re-export it from ``<pkg>.resources``; the class lives in
-            # ``<pkg>.resources.<lowercased name without Async>`` (Traigent#2444).
-            module_stem = annotation_name.lower().removeprefix("async")
-            sub_module = f"{package_name}.resources.{module_stem}"
-            if sub_module not in candidate_modules:
-                candidate_modules.append(sub_module)
+        FrameworkOverrideManager._add_annotation_resource_module(
+            annotation_name, func, candidate_modules
+        )
         for module_name in candidate_modules:
             try:
                 module = importlib.import_module(module_name)
@@ -680,6 +659,15 @@ class FrameworkOverrideManager(BaseOverrideManager):
             return literal_value.strip()
         return annotation
 
+    @staticmethod
+    def _resolve_global_annotation(parts: list[str], globalns: dict[str, Any]) -> Any:
+        resolved = globalns[parts[0]]
+        for part in parts[1:]:
+            resolved = getattr(resolved, part, None)
+            if resolved is None:
+                return None
+        return resolved
+
     def _resolve_annotation_name(
         self, annotation_name: str, globalns: dict[str, Any]
     ) -> Any:
@@ -690,17 +678,12 @@ class FrameworkOverrideManager(BaseOverrideManager):
             return None
 
         if parts[0] in globalns:
-            resolved = globalns[parts[0]]
-            for part in parts[1:]:
-                resolved = getattr(resolved, part, None)
-                if resolved is None:
-                    return None
-            return resolved
+            return FrameworkOverrideManager._resolve_global_annotation(parts, globalns)
 
         for module_end in range(len(parts) - 1, 0, -1):
             module_name = ".".join(parts[:module_end])
             try:
-                resolved = importlib.import_module(module_name)
+                resolved: Any = importlib.import_module(module_name)
             except (ImportError, ValueError):
                 continue
             for part in parts[module_end:]:
@@ -738,79 +721,80 @@ class FrameworkOverrideManager(BaseOverrideManager):
             if self.is_override_registered(target):
                 continue  # Already overridden
 
-            # Try to find and override the target class
-            override_applied = False
-            failure_detail = ""
-
-            # Handle built-in mock classes
-            if target in _BUILTIN_MOCK_TARGETS:
-                # These are handled at the module level when demo is run
-                override_applied = True
-
-            # Try to import and override real framework classes
-            else:
-                try:
-                    module_path, class_name = target.rsplit(".", 1)
-                    module = __import__(module_path, fromlist=[class_name])
-                    target_class = getattr(module, class_name)
-
-                    # Store original constructor
-                    if not hasattr(target_class, "_traigent_original_init"):
-                        target_class._traigent_original_init = target_class.__init__
-
-                    # Apply constructor override
-                    override_constructor = self._create_override_constructor(
-                        target_class._traigent_original_init, target
-                    )
-                    target_class.__init__ = override_constructor
-
-                    # Apply method overrides
-                    method_mappings = self._method_mappings.get(target, {})
-                    for method_path in method_mappings.keys():
-                        self._apply_method_override(target_class, target, method_path)
-
-                    self.register_active_override(target, target_class)
-                    override_applied = True
-
-                except (ImportError, AttributeError) as e:
-                    # Handle specific compatibility errors
-                    error_msg = str(e)
-                    if (
-                        "PydanticUserError" in error_msg
-                        or "__modify_schema__" in error_msg
-                    ):
-                        logger.warning(
-                            f"Pydantic compatibility issue with {target}: {error_msg}"
-                        )
-                        logger.info(
-                            f"Consider upgrading {target.split('.')[0]} package for Pydantic v2 compatibility"
-                        )
-                    else:
-                        failure_detail = error_msg
-                    # Framework not available; reported once below
-                except Exception as e:
-                    # Catch any other errors (including PydanticUserError)
-                    error_msg = str(e)
-                    error_type = type(e).__name__
-                    if (
-                        "PydanticUserError" in error_type
-                        or "pydantic" in error_msg.lower()
-                    ):
-                        logger.warning(
-                            f"Pydantic compatibility issue with {target}: {error_type}: {error_msg}"
-                        )
-                        logger.info(
-                            f"Skipping {target} due to Pydantic v2 compatibility issues. Consider upgrading the package."
-                        )
-                    else:
-                        logger.warning(
-                            f"Unexpected error loading {target}: {error_type}: {error_msg}"
-                        )
-                    # Skip silently to avoid breaking optimization
+            override_applied, failure_detail = self._try_activate_target(target)
 
             if not override_applied:
                 detail = f": {failure_detail}" if failure_detail else ""
                 logger.warning(f"Could not override framework target: {target}{detail}")
+
+    def _try_activate_target(self, target: str) -> tuple[bool, str]:
+        """Try to override one target; return ``(applied, failure_detail)``."""
+        # Handle built-in mock classes
+        if target in _BUILTIN_MOCK_TARGETS:
+            # These are handled at the module level when demo is run
+            return True, ""
+
+        # Try to import and override real framework classes
+        try:
+            self._override_target_class(target)
+            return True, ""
+        except (ImportError, AttributeError) as e:
+            # Framework not available; reported once by the caller
+            return False, self._describe_import_failure(target, str(e))
+        except Exception as e:
+            # Catch any other errors (including PydanticUserError)
+            self._log_unexpected_activation_error(target, e)
+            # Skip silently to avoid breaking optimization
+            return False, ""
+
+    def _override_target_class(self, target: str) -> None:
+        module_path, class_name = target.rsplit(".", 1)
+        module = __import__(module_path, fromlist=[class_name])
+        target_class = getattr(module, class_name)
+
+        # Store original constructor
+        if not hasattr(target_class, "_traigent_original_init"):
+            target_class._traigent_original_init = target_class.__init__
+
+        # Apply constructor override
+        override_constructor = self._create_override_constructor(
+            target_class._traigent_original_init, target
+        )
+        target_class.__init__ = override_constructor
+
+        # Apply method overrides
+        method_mappings = self._method_mappings.get(target, {})
+        for method_path in method_mappings.keys():
+            self._apply_method_override(target_class, target, method_path)
+
+        self.register_active_override(target, target_class)
+
+    @staticmethod
+    def _describe_import_failure(target: str, error_msg: str) -> str:
+        """Log Pydantic compatibility issues; return failure detail otherwise."""
+        if "PydanticUserError" in error_msg or "__modify_schema__" in error_msg:
+            logger.warning(f"Pydantic compatibility issue with {target}: {error_msg}")
+            logger.info(
+                f"Consider upgrading {target.split('.')[0]} package for Pydantic v2 compatibility"
+            )
+            return ""
+        return error_msg
+
+    @staticmethod
+    def _log_unexpected_activation_error(target: str, error: Exception) -> None:
+        error_msg = str(error)
+        error_type = type(error).__name__
+        if "PydanticUserError" in error_type or "pydantic" in error_msg.lower():
+            logger.warning(
+                f"Pydantic compatibility issue with {target}: {error_type}: {error_msg}"
+            )
+            logger.info(
+                f"Skipping {target} due to Pydantic v2 compatibility issues. Consider upgrading the package."
+            )
+        else:
+            logger.warning(
+                f"Unexpected error loading {target}: {error_type}: {error_msg}"
+            )
 
     @property
     def applied_targets(self) -> list[str]:
@@ -1046,59 +1030,21 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
         @functools.wraps(original_method)
         def resilient_wrapper(*args, **kwargs):
-            # Check if we're in an optimization context
-            if not getattr(override_active, "enabled", False):
+            overridden_kwargs = self._resilient_kwargs(
+                override_active, kwargs, parameter_mapping
+            )
+            if overridden_kwargs is None:
                 return original_method(*args, **kwargs)
-
-            # Get current Traigent configuration
-            config = get_config()
-            if not config:
-                return original_method(*args, **kwargs)
-
-            # Extract configuration values
-            config_dict = self._extract_config_dict(config)
-            if not config_dict:
-                return original_method(*args, **kwargs)
-
-            # Apply overrides with fallback strategies
-            overridden_kwargs = kwargs.copy()
-
-            # Strategy 1: Direct mapping
-            for traigent_param, framework_param in parameter_mapping.items():
-                if traigent_param in config_dict:
-                    overridden_kwargs[framework_param] = config_dict[traigent_param]
-
-            # Strategy 2: Try exact parameter names if not already mapped
-            for param_name, param_value in config_dict.items():
-                if param_name not in overridden_kwargs:
-                    overridden_kwargs[param_name] = param_value
-
             return original_method(*args, **overridden_kwargs)
 
         @functools.wraps(original_method)
         async def async_resilient_wrapper(*args, **kwargs):
             # Async version of the resilient wrapper
-            if not getattr(override_active, "enabled", False):
+            overridden_kwargs = self._resilient_kwargs(
+                override_active, kwargs, parameter_mapping
+            )
+            if overridden_kwargs is None:
                 return await original_method(*args, **kwargs)
-
-            config = get_config()
-            if not config:
-                return await original_method(*args, **kwargs)
-
-            config_dict = self._extract_config_dict(config)
-            if not config_dict:
-                return await original_method(*args, **kwargs)
-
-            overridden_kwargs = kwargs.copy()
-
-            for traigent_param, framework_param in parameter_mapping.items():
-                if traigent_param in config_dict:
-                    overridden_kwargs[framework_param] = config_dict[traigent_param]
-
-            for param_name, param_value in config_dict.items():
-                if param_name not in overridden_kwargs:
-                    overridden_kwargs[param_name] = param_value
-
             return await original_method(*args, **overridden_kwargs)
 
         # Return async version if original is async
@@ -1106,6 +1052,42 @@ class FrameworkOverrideManager(BaseOverrideManager):
             return async_resilient_wrapper
         else:
             return resilient_wrapper
+
+    def _resilient_kwargs(
+        self,
+        override_active: Any,
+        kwargs: dict[str, Any],
+        parameter_mapping: dict[str, str],
+    ) -> dict[str, Any] | None:
+        """Merged kwargs for a resilient override, or None to pass through."""
+        # Check if we're in an optimization context
+        if not getattr(override_active, "enabled", False):
+            return None
+
+        # Get current Traigent configuration
+        config = get_config()
+        if not config:
+            return None
+
+        # Extract configuration values
+        config_dict = self._extract_config_dict(config)
+        if not config_dict:
+            return None
+
+        # Apply overrides with fallback strategies
+        overridden_kwargs = kwargs.copy()
+
+        # Strategy 1: Direct mapping
+        for traigent_param, framework_param in parameter_mapping.items():
+            if traigent_param in config_dict:
+                overridden_kwargs[framework_param] = config_dict[traigent_param]
+
+        # Strategy 2: Try exact parameter names if not already mapped
+        for param_name, param_value in config_dict.items():
+            if param_name not in overridden_kwargs:
+                overridden_kwargs[param_name] = param_value
+
+        return overridden_kwargs
 
     def _extract_config_dict(
         self, config: TraigentConfig | dict[str, Any]
@@ -1189,7 +1171,7 @@ def apply_mock_overrides(mock_classes: dict[str, type]) -> None:
 # Convenience functions for common frameworks
 def override_openai_sdk() -> None:
     """Enable overrides for OpenAI SDK classes."""
-    enable_framework_overrides(["openai.OpenAI", "openai.AsyncOpenAI"])
+    enable_framework_overrides([_OPENAI_CLIENT_PATH, _OPENAI_ASYNC_CLIENT_PATH])
 
 
 def override_langchain() -> None:
@@ -1234,8 +1216,8 @@ def override_all_platforms() -> None:
     enable_framework_overrides(
         [
             # OpenAI
-            "openai.OpenAI",
-            "openai.AsyncOpenAI",
+            _OPENAI_CLIENT_PATH,
+            _OPENAI_ASYNC_CLIENT_PATH,
             # LangChain OpenAI
             "langchain.llms.OpenAI",
             "langchain_openai.OpenAI",
@@ -1268,32 +1250,33 @@ def enable_intelligent_overrides(targets: str | list[str]) -> None:
         targets = [targets]
 
     # Check if enhanced features are available
-    if ENHANCED_FEATURES_AVAILABLE:
-        # Use enhanced auto-discovery for package patterns
-        package_patterns = []
-        class_names = []
-
-        for target in targets:
-            if "." in target and target.count(".") >= 2:
-                # Likely a specific class name
-                class_names.append(target)
-            else:
-                # Package pattern
-                package_patterns.append(target)
-
-        # Auto-discover packages if supported
-        if package_patterns and hasattr(_framework_override_manager, "discovery"):
-            for pattern in package_patterns:
-                # Use discovery to find classes
-                logger.info(f"Auto-discovering classes in {pattern}")
-                # Note: Full auto-discovery requires additional implementation
-                logger.debug("Discovery is not yet implemented for pattern %s", pattern)
-
-        # Override specific classes
-        enable_framework_overrides(class_names)
-    else:
+    if not ENHANCED_FEATURES_AVAILABLE:
         # Fallback to standard override
         enable_framework_overrides(targets)
+        return
+
+    # Use enhanced auto-discovery for package patterns
+    package_patterns = []
+    class_names = []
+
+    for target in targets:
+        if "." in target and target.count(".") >= 2:
+            # Likely a specific class name
+            class_names.append(target)
+        else:
+            # Package pattern
+            package_patterns.append(target)
+
+    # Auto-discover packages if supported
+    if package_patterns and hasattr(_framework_override_manager, "discovery"):
+        for pattern in package_patterns:
+            # Use discovery to find classes
+            logger.info(f"Auto-discovering classes in {pattern}")
+            # Note: Full auto-discovery requires additional implementation
+            logger.debug("Discovery is not yet implemented for pattern %s", pattern)
+
+    # Override specific classes
+    enable_framework_overrides(class_names)
 
 
 # Alias for backward compatibility

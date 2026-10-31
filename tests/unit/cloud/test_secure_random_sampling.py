@@ -78,8 +78,8 @@ async def test_session_manager_secure_random_suggestions(monkeypatch):
         optimization_strategy={"min_examples_per_trial": 3},
     )
 
-    config = await manager._suggest_configuration(session, [])
-    subset = await manager._suggest_subset_indices(session, [], dataset_size=5)
+    config = manager._suggest_configuration(session, [])
+    subset = manager._suggest_subset_indices(session, [], dataset_size=5)
 
     assert config == {
         "model": "gpt-4o",

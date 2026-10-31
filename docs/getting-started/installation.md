@@ -14,11 +14,11 @@ pip install "traigent[recommended]"       # Recommended bundle: integrations, an
 ### Fast path (uv)
 
 Use this path if your environment already uses `uv`. It installs the same
-published package and extras; `pip` remains fully supported. Replace `3.11` with
-any supported Python 3.11-3.13 interpreter available in your environment.
+published package and extras; `pip` remains fully supported. Replace `3.12` with
+any supported Python 3.12-3.13 interpreter available in your environment.
 
 ```bash
-uv venv --python 3.11
+uv venv --python 3.12
 source .venv/bin/activate
 uv pip install "traigent[recommended]"    # Same recommended bundle as the pip path
 ```

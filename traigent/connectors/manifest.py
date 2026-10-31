@@ -74,23 +74,51 @@ def _closed_dict(value: Any, allowed: set[str], where: str) -> dict[str, Any]:
     return value
 
 
-def load_manifest(source: str | Path | Mapping[str, Any]) -> ConnectorManifest:
+def _read_raw_manifest(source: str | Path | Mapping[str, Any]) -> Any:
     if isinstance(source, Mapping):
-        raw: Any = dict(source)
-    elif isinstance(source, Path):
-        raw = yaml.safe_load(source.read_text(encoding="utf-8"))
-    elif isinstance(source, str):
-        candidate = Path(source)
-        if "\n" not in source and candidate.is_file():
-            raw = yaml.safe_load(candidate.read_text(encoding="utf-8"))
-        else:
-            raw = (
-                json.loads(source)
-                if source.lstrip().startswith(("{", "["))
-                else yaml.safe_load(source)
-            )
-    else:
+        return dict(source)
+    if isinstance(source, Path):
+        return yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(source, str):
         raise TypeError("manifest source must be a mapping, path, or YAML/JSON string")
+    candidate = Path(source)
+    if "\n" not in source and candidate.is_file():
+        return yaml.safe_load(candidate.read_text(encoding="utf-8"))
+    if source.lstrip().startswith(("{", "[")):
+        return json.loads(source)
+    return yaml.safe_load(source)
+
+
+def _parse_operation(name: Any, values: Any) -> OperationManifest:
+    if type(name) is not str or not name:
+        raise ValueError("operation names must be nonempty strings")
+    op = _closed_dict(values, _OP_KEYS, f"operations.{name}")
+    idem = op.get("idempotency", "none")
+    conditional = op.get("conditional_update", "none")
+    if idem not in _LEVELS or conditional not in _CONDITIONAL:
+        raise ValueError(f"unknown guarantee value for operation {name}")
+    limits = op.get("limits", {})
+    if type(limits) is not dict or any(
+        type(k) is not str or type(v) is not int or v < 0 for k, v in limits.items()
+    ):
+        raise ValueError(f"invalid limits for operation {name}")
+    guarantees = op.get("guarantees", {})
+    if type(guarantees) is not dict:
+        raise ValueError(f"invalid guarantees for operation {name}")
+    typed: dict[str, GuaranteeLevel] = {}
+    for key, value in guarantees.items():
+        if type(key) is not str or key in _OP_KEYS:
+            raise ValueError(f"reserved guarantee key for operation {name}")
+        if type(value) is not str or value not in _LEVELS:
+            raise ValueError(f"unknown guarantee value for operation {name}")
+        typed[key] = _LEVELS[value]
+    return OperationManifest(
+        _LEVELS[idem], _CONDITIONAL[conditional], dict(limits), typed
+    )
+
+
+def load_manifest(source: str | Path | Mapping[str, Any]) -> ConnectorManifest:
+    raw = _read_raw_manifest(source)
     obj = _closed_dict(raw, _TOP_KEYS, "root")
     if set(obj) != _TOP_KEYS or obj["schema_version"] != "1":
         raise ValueError("manifest requires schema_version 1 and all root fields")
@@ -98,33 +126,10 @@ def load_manifest(source: str | Path | Mapping[str, Any]) -> ConnectorManifest:
         raise ValueError("connector and version must be nonempty strings")
     if type(obj["operations"]) is not dict or not obj["operations"]:
         raise ValueError("manifest operations must be a nonempty mapping")
-    operations: dict[str, OperationManifest] = {}
-    for name, values in obj["operations"].items():
-        if type(name) is not str or not name:
-            raise ValueError("operation names must be nonempty strings")
-        op = _closed_dict(values, _OP_KEYS, f"operations.{name}")
-        idem = op.get("idempotency", "none")
-        conditional = op.get("conditional_update", "none")
-        if idem not in _LEVELS or conditional not in _CONDITIONAL:
-            raise ValueError(f"unknown guarantee value for operation {name}")
-        limits = op.get("limits", {})
-        if type(limits) is not dict or any(
-            type(k) is not str or type(v) is not int or v < 0 for k, v in limits.items()
-        ):
-            raise ValueError(f"invalid limits for operation {name}")
-        guarantees = op.get("guarantees", {})
-        if type(guarantees) is not dict:
-            raise ValueError(f"invalid guarantees for operation {name}")
-        typed: dict[str, GuaranteeLevel] = {}
-        for key, value in guarantees.items():
-            if type(key) is not str or key in _OP_KEYS:
-                raise ValueError(f"reserved guarantee key for operation {name}")
-            if type(value) is not str or value not in _LEVELS:
-                raise ValueError(f"unknown guarantee value for operation {name}")
-            typed[key] = _LEVELS[value]
-        operations[name] = OperationManifest(
-            _LEVELS[idem], _CONDITIONAL[conditional], dict(limits), typed
-        )
+    operations = {
+        name: _parse_operation(name, values)
+        for name, values in obj["operations"].items()
+    }
     return ConnectorManifest("1", obj["connector"], obj["version"], operations)
 
 
@@ -138,6 +143,30 @@ def _ordinal(value: str) -> int:
 
 def _allowed_values(key: str) -> Mapping[str, StrEnum]:
     return _CONDITIONAL if key == "conditional_update" else _LEVELS
+
+
+def _intersect_guarantees(
+    declared: dict[str, str],
+    permissions: Mapping[str, str],
+    required: Mapping[str, str] | None,
+) -> tuple[dict[str, str], bool]:
+    final: dict[str, str] = {}
+    reduced = False
+    for key, value in declared.items():
+        perm = permissions.get(key, "none")
+        req = (required or {}).get(key, "none")
+        allowed = _allowed_values(key)
+        if perm not in allowed:
+            perm = "none"
+        actual = min(_ordinal(value), _ordinal(perm))
+        final[key] = (
+            ("none", "emulated", "native")[actual]
+            if key == "idempotency" or key not in {"conditional_update"}
+            else ("none", "read_check", "atomic")[actual]
+        )
+        if _ordinal(req) > actual:
+            reduced = True
+    return final, reduced
 
 
 def resolve_guarantee(
@@ -177,22 +206,7 @@ def resolve_guarantee(
             return GuaranteeResult(
                 GuaranteeState.UNAVAILABLE, GuaranteeReason.NOT_DECLARED, declared
             )
-    final: dict[str, str] = {}
-    reduced = False
-    for key, value in declared.items():
-        perm = permissions.get(key, "none")
-        req = (required or {}).get(key, "none")
-        allowed = _allowed_values(key)
-        if perm not in allowed:
-            perm = "none"
-        actual = min(_ordinal(value), _ordinal(perm))
-        final[key] = (
-            ("none", "emulated", "native")[actual]
-            if key == "idempotency" or key not in {"conditional_update"}
-            else ("none", "read_check", "atomic")[actual]
-        )
-        if _ordinal(req) > actual:
-            reduced = True
+    final, reduced = _intersect_guarantees(declared, permissions, required)
     if all(v == "none" for v in final.values()):
         reason = (
             GuaranteeReason.MANIFEST_NONE

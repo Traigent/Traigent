@@ -10,13 +10,13 @@ from typing import Any
 from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
 from traigent.core.objective_directions import resolve_objective_orientation
+from traigent.utils.discrete_domains import discrete_cardinality_for_config_param
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
 )
-from traigent.utils.discrete_domains import discrete_cardinality_for_config_param
-from traigent.utils.validation import validate_objectives
 from traigent.utils.removed_params import reject_removed_mock_parameters
+from traigent.utils.validation import validate_objectives
 
 logger = get_logger(__name__)
 
@@ -77,28 +77,7 @@ class BaseOptimizer(ABC):
         # Handle objective weights - support both parameter and kwargs
         weights = objective_weights or kwargs.get("objective_weights", {})
 
-        # Initialize objective weights with proper handling
-        if not self.objectives:
-            self.objective_weights = {}
-        elif not weights:
-            # Default to equal weights for all objectives
-            self.objective_weights = dict.fromkeys(self.objectives, 1.0)
-        else:
-            # Start with provided weights
-            self.objective_weights = {}
-            for obj in self.objectives:
-                if obj in weights:
-                    self.objective_weights[obj] = weights[obj]
-                else:
-                    # Use default weight for missing objectives
-                    self.objective_weights[obj] = 1.0
-
-            # Only keep weights for objectives that are specified
-            self.objective_weights = {
-                obj: weight
-                for obj, weight in self.objective_weights.items()
-                if obj in self.objectives
-            }
+        BaseOptimizer._initialize_objective_weights(self, weights)
 
         self.objective_orientations: dict[str, str] = {}
         for obj in self.objectives:
@@ -121,6 +100,30 @@ class BaseOptimizer(ABC):
         self._best_config: dict[str, Any] | None = None
         self._tried_config_hashes: set[str] = set()
         self._config_space_cardinality: int | None = self._compute_cardinality()
+
+    def _initialize_objective_weights(self, weights: dict[str, float]) -> None:
+        # Initialize objective weights with proper handling
+        if not self.objectives:
+            self.objective_weights = {}
+        elif not weights:
+            # Default to equal weights for all objectives
+            self.objective_weights = dict.fromkeys(self.objectives, 1.0)
+        else:
+            # Start with provided weights
+            self.objective_weights = {}
+            for obj in self.objectives:
+                if obj in weights:
+                    self.objective_weights[obj] = weights[obj]
+                else:
+                    # Use default weight for missing objectives
+                    self.objective_weights[obj] = 1.0
+
+            # Only keep weights for objectives that are specified
+            self.objective_weights = {
+                obj: weight
+                for obj, weight in self.objective_weights.items()
+                if obj in self.objectives
+            }
 
     @abstractmethod
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
@@ -401,6 +404,20 @@ class BaseOptimizer(ABC):
             return False
         self._tried_config_hashes.add(config_hash)
         return True
+
+    def mark_config_evaluated(self, config: dict[str, Any]) -> None:
+        """Record a configuration as already evaluated by a resumed run (#1697).
+
+        The optimizer will not propose it again. It is not a suggestion, so no
+        trial count is consumed. Subclasses that enumerate their own candidates
+        override this.
+        """
+        keys = set(self.config_space)
+        filtered = {k: v for k, v in config.items() if not keys or k in keys}
+        self.register_tried_config(filtered)
+        if not hasattr(self, "_resume_marked_hashes"):
+            self._resume_marked_hashes: set[str] = set()
+        self._resume_marked_hashes.add(self._hash_config(filtered))
 
     def is_config_space_exhausted(self) -> bool:
         """Check if all unique configurations have been tried.

@@ -10,12 +10,25 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+import traigent.cloud.client as _cloud_client_module
+from traigent.cloud.auth import AuthManager as _REAL_AUTH_MANAGER
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.models import AgentExecutionRequest, AgentSpecification
 
 # SDK #2033: opt into the connected/backend code paths (see pyproject markers).
 pytestmark = pytest.mark.backend_online
+
+
+@pytest.fixture(autouse=True)
+def _restore_real_auth_manager_after_test():
+    """Several tests here patch ``traigent.cloud.client.AuthManager`` from coroutines
+    run concurrently via ``asyncio.gather``. Interleaved enters can leave a Mock
+    installed after the test, which breaks later files that construct a real client.
+    Restore the genuine class after every test.
+    """
+    yield
+    _cloud_client_module.AuthManager = _REAL_AUTH_MANAGER
 
 
 class TestFullOptimizationWorkflows:
