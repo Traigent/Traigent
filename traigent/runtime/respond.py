@@ -1,4 +1,4 @@
-"""``respond``: a human-approved fix for an open breach (design section 3.2).
+"""``respond``: a human-approved fix for an open breach.
 
 The response is a request to run the function's existing ``.optimize()`` under
 a declared cost ceiling.  Nothing is deployed.  If the optimize run raises, the occurrence is marked failed
@@ -7,7 +7,7 @@ fresh, locally recorded human approval bound to the full-policy digest, rule,
 breach, occurrence, attempt, cost ceiling and an expiry, and by a second round of
 checks immediately before the run.  Any failed check holds: nothing runs.
 
-Two paths.  With ``agent_ref`` the HOSTED path runs (``respond_hosted``, TRAIG-101):
+Two paths.  With ``agent_ref`` the HOSTED path runs (``respond_hosted``):
 a person grants the attempt in the portal, then this controller reserves it, has the
 Backend accept the START, and only then runs ``.optimize()``; it heartbeats the
 reservation while the run is in flight, reports the result with the reservation
@@ -15,7 +15,7 @@ generation, and never asks for a second start.  The local ledger is only a lease
 cache there.  Without ``agent_ref`` the legacy local path below runs: occurrences are
 reserved in a LOCAL ledger, so two controllers (separate state directories) answering
 the same agent are not deduplicated.  Each start still needs its own human approval.
-Occurrence numbers start at 0 (TVL RFC 0003, 7.4).
+Occurrence numbers start at 0.
 """
 
 from __future__ import annotations
@@ -57,9 +57,7 @@ from traigent.runtime.model import (
 
 LOGGER = logging.getLogger("traigent.runtime")
 RESTORE_CODE = "RESTORE_PRODUCTION_REQUIREMENT"
-OCCURRENCE = (
-    0  # RFC 0003 7.4: the first firing is occurrence 0; one start per (breach, rule)
-)
+OCCURRENCE = 0  # the first firing is occurrence 0; one start per (breach, rule)
 
 E_NO_RULE = "no_optimize_rule"
 E_OPTIMIZE_FAILED = "optimize_failed"
@@ -540,7 +538,7 @@ async def _drain(*tasks: asyncio.Future[Any] | None) -> None:
     await asyncio.gather(*live, return_exceptions=True)
 
 
-# --- hosted path (TRAIG-101): reserve -> start -> run -> report -> heartbeat ---------------
+# --- hosted path : reserve -> start -> run -> report -> heartbeat ---------------
 
 E_NO_APPROVED_ATTEMPT = "no_approved_attempt"
 E_ATTEMPT_MISMATCH = "attempt_mismatch"

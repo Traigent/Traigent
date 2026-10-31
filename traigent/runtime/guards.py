@@ -1,10 +1,10 @@
-"""Local guards: ``block_action`` and ``halt_unit``, in process (TRAIG-101).
+"""Local guards: ``block_action`` and ``halt_unit``, in process.
 
 Normative sources (TVL ``origin/main`` 098bcdfba0b7, ``formalization/``):
 
-* RFC 0003 section 7.5 (local guards and ``on_check_error``), section 6.4
-  (prefix-fixed violations), section 6.5 (unit predicates), section 6.3 (events,
-  ``ref``, ``correlation_id``, revocation), section 6.6 (resource limits).
+* The TVL reactive-policy specification: local guards and ``on_check_error``,
+  prefix-fixed violations, unit predicates, events (``ref``, ``correlation_id``,
+  revocation), and resource limits.
 * Formal semantics Definition 12.6 (violation predicates), 12.7 (an evaluator
   profile is outside TVL), 12.8 (classification contract and the local guard
   paragraph).
@@ -21,7 +21,7 @@ records the unit as unresolved.  A unit outside the population is never acted on
 Metric, bounded-response and checker predicates cannot be guards.
 
 Everything here is pure and offline: guards keep working when remote authority is
-unreachable (RFC 0003 section 7.5).  Nothing in this module sends anything.
+unreachable.  Nothing in this module sends anything.
 
 The evaluator-profile choices the RFC leaves open (Definition 12.7) are stated in
 the code where they are made and pinned by the SDK-owned parity vectors in
@@ -62,7 +62,7 @@ HALT = "halt"
 LOCAL_FORMATS = ("tvl-runtime-local/1", "tvl-runtime-local/2")
 GUARD_ACTIONS = ("block_action", "halt_unit")
 ON_CHECK_ERROR = ("block", "allow")
-#: The patterns whose violation a finite prefix fixes (RFC 0003 section 6.4).
+#: The patterns whose violation a finite prefix fixes.
 PREFIX_FIXED = ("absence", "bounded_existence", "precedence", "protocol")
 EVENT_TYPES = (
     "unit_start",
@@ -85,7 +85,7 @@ R_CHECK_ERROR_BLOCK = "check_error_block"
 R_CHECK_ERROR_ALLOW = "check_error_allow"
 R_UNIT_HALTED = "unit_halted"
 
-# causes of an undecidable moment (RFC 0003 section 7.5)
+# causes of an undecidable moment
 C_POPULATION = "population_unknown"
 C_INCOMPLETE = "history_incomplete"
 C_ORDER = "order_unknown"
@@ -211,7 +211,7 @@ def _rule_from_local(
         or not isinstance(evidence, Mapping)
         or evidence.get("source") != "customer_side"
     ):
-        # RFC 0003 section 5.8: response_guard_not_enforceable.
+        # response_guard_not_enforceable.
         raise RuntimeRequirementError(E_NOT_ENFORCEABLE, path)
     among = requirement.get("among")
     if among is not None and not isinstance(among, Mapping):
@@ -340,7 +340,7 @@ def _revocation_index(
     """Index of the first revocation of a grant before position ``upto`` (or ``None``).
 
     An ``authorization_revoked(ref)`` revokes every earlier ``authorization_granted``
-    with the same ``ref`` and correlation key (RFC 0003 section 6.3, Definition 12.6).
+    with the same ``ref`` and correlation key.
     """
     grant = timeline[grant_index]
     grant_key = _key(grant, corr)
@@ -420,7 +420,7 @@ def _precedence_limits_exceeded(
     candidate: Mapping[str, Any],
     limits: Mapping[str, int],
 ) -> bool:
-    """True when a declared resource limit is exceeded (RFC 0003 section 6.6).
+    """True when a declared resource limit is exceeded.
 
     ``max_tracked_correlations`` bounds the distinct keys among the events the
     predicate looks at; ``max_active_obligations`` bounds the grants still pending

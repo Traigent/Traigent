@@ -264,7 +264,7 @@ def _parse_trigger(
     trigger = _closed_keys(node, {"monitor", "rule", "event", "hours"}, {"event"}, path)
     event = trigger["event"]
     if "rule" in trigger:
-        # Outcome trigger (RFC 0004 section 2.2): {rule, event} and nothing else.
+        # Outcome trigger: {rule, event} and nothing else.
         if "monitor" in trigger or "hours" in trigger:
             raise _invalid(path)
         if event not in OUTCOME_EVENTS:
@@ -320,7 +320,7 @@ def _resolve_severity_approval(
     """Apply the per-action severity/approval rules of one response rule."""
     if action == "notify":
         if severity is None:
-            severity = "critical"  # RFC 0003 section 7.2: the default severity
+            severity = "critical"  # the default severity
         if severity not in SEVERITIES:
             raise _invalid(f"{path}.severity")
         if approval is not None:
@@ -328,7 +328,7 @@ def _resolve_severity_approval(
     elif action == "optimize":
         if severity is not None:
             raise _invalid(f"{path}.severity")
-        # Owner ruling: ``approval: standing`` is refused locally with a closed code.
+        # ``approval: standing`` is refused locally with a closed code.
         if approval not in (None, "human"):
             raise RuntimeRequirementError(E_ACTION_UNSUPPORTED, f"{path}.approval")
         approval = "human"
@@ -597,7 +597,7 @@ def compile_hosted_subset(
     A contract with a TVL 1.4 reactive construct compiles to
     ``tvl-runtime-contract/2``; any other contract stays ``/1`` and keeps the
     1.3.0 toolchain stamp, so a Backend that has not yet accepted ``1.4.0``
-    still reads it (RFC 0004 section 3).
+    still reads it.
     """
     compiler = import_compiler()
     try:

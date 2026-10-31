@@ -1,4 +1,4 @@
-"""Test-only fault injection for provider calls (SDK-41).
+"""Test-only fault injection for provider calls.
 
 ``inject_vendor_failures`` makes provider calls made through Traigent's LiteLLM
 interceptor fail on purpose with a retryable 429/503 error, so a developer can

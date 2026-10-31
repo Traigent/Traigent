@@ -351,7 +351,7 @@ def _patch_litellm_sync(litellm: Any) -> bool:
                 """Wrapped completion that captures response with timing."""
                 from traigent.utils.vendor_retry import run_with_vendor_retry
 
-                # Per-call retry (SDK-41; default budget 0 = single attempt).
+                # Per-call retry (default budget 0 = single attempt).
                 return run_with_vendor_retry(
                     lambda: _completion_once(original_completion, args, kwargs),
                     stream=_is_real_stream(kwargs),

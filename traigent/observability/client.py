@@ -248,8 +248,7 @@ def _harden_content_bags(payload: Any) -> Any:
 
     B4 (addendum R3, A4 completion): the common key-based scrubber now also
     covers `correlation_ids`, `tags`, and the COMPLETE `prompt_reference`
-    structure (previously only its `.variables` sub-dict) -- astra's ruling
-    (a) on the prior review: fixed correlation fields and string-only tags
+    structure (previously only its `.variables` sub-dict) -- fixed correlation fields and string-only tags
     mean key scanning is a no-op for well-typed values TODAY, but binding
     A4 requires every arbitrary-data bag to flow through the SAME scrubber
     regardless, so a future extension of any of these shapes is covered
@@ -347,7 +346,7 @@ def _safe_allowlisted_observation_snapshot(
     exactly the "never omit the clearing field" defect B3 forbids. This
     function always keeps the observation (by id) in the outbound update.
 
-    Finding 2 (astra out-astra-privacy-r4.md): takes an already-detached
+    Takes an already-detached
     `_ObservationFallbackDescriptor` -- frozen at snapshot-enqueue time,
     while the client lock was held -- rather than the live `ObservationDTO`
     plus a live, mutable `_TraceState`. Reading `id`/`status`/`type`/
@@ -374,7 +373,7 @@ def _safe_allowlisted_observation_snapshot(
     recorded for this field) is still safe to omit -- there is nothing
     stored server-side yet to leak (M1/A2/B3 test 4).
 
-    Finding 1 (astra out-astra-privacy-r4.md, CONFIRMED P1): `error_message`
+    `error_message`
     gets the SAME clearing treatment, inside `metadata` (where the normal,
     non-fallback update path -- `record_observation`'s
     `merged_metadata["error_message"] = "[REDACTED]"` branch -- already
@@ -483,7 +482,7 @@ def _safe_allowlisted_snapshot(
     cannot tell "first write" apart from "update over prior content" the
     way the descriptor can.
 
-    Finding 2 (astra out-astra-privacy-r4.md, CONFIRMED P2): `state` is a
+    `state` is a
     `_TraceFallbackDescriptor` -- an immutable, detached snapshot of exactly
     what this function needs, frozen at snapshot-enqueue time while the
     client lock was held -- never the live, mutable `_TraceState` itself.
@@ -782,8 +781,7 @@ class _TraceState:
 class _ObservationFallbackDescriptor:
     """Detached, per-observation data the M8/A5 fallback needs, frozen off
     a live `ObservationDTO`/`_TraceState` at snapshot-enqueue time (see
-    `_build_fallback_descriptor`) -- part of the fix for finding 2 (astra
-    out-astra-privacy-r4.md, CONFIRMED P2): a fallback consulting the live,
+    `_build_fallback_descriptor`) -- part of the fix where a fallback consulting the live,
     mutable `_TraceState` after the client lock that guards it was
     released could observe a LATER call's mutation (a completed status, a
     newly added observation) instead of the state as of the snapshot this
@@ -800,7 +798,7 @@ class _ObservationFallbackDescriptor:
     parent_observation_id: str | None
     had_prior_input_data: bool
     had_prior_output_data: bool
-    # Finding 1 (astra out-astra-privacy-r4.md, CONFIRMED P1): whether this
+    # Whether this
     # observation previously carried real `error_message` text, so the
     # fallback can clear it (inside `metadata`, matching the normal
     # non-fallback update path) instead of omitting `metadata` -- and thus
@@ -816,8 +814,7 @@ class _TraceFallbackDescriptor:
     `_build_fallback_descriptor`). Passed through
     `ObservabilityClient._submit_trace_snapshot` and
     `_SyncBatchTransport.submit`/`_prepare_payload` in place of the live
-    `_TraceState` itself -- fix for finding 2 (astra out-astra-privacy-r4.md,
-    CONFIRMED P2): those calls can run well after the enqueueing call
+    `_TraceState` itself -- those calls can run well after the enqueueing call
     released the lock, so consulting the live, shared `_TraceState` there
     risked reflecting a LATER call's mutation of the SAME trace rather than
     the state as of this particular snapshot. Everything on this dataclass
@@ -908,7 +905,7 @@ def _safe_trace_snapshot(
     confirmed probe: a cyclic `input_data` raised `RecursionError` through
     this path).
 
-    Finding 2 (astra out-astra-privacy-r4.md, CONFIRMED P2): also builds and
+    Also builds and
     returns the `_TraceFallbackDescriptor` for this snapshot
     (`_build_fallback_descriptor`), frozen from `state` at THIS instant --
     every one of this function's three call sites holds
@@ -2247,8 +2244,7 @@ class ObservabilityClient:
         `redacted` placeholder (inheriting the TRACE's mode), not silently
         fall back to the CLIENT's own default/config the way the pre-fix
         implementation did (which, for an unconfigured client, is `metadata`
-        and so OMITTED the field instead -- the exact TS/Python divergence
-        astra found).
+        and so OMITTED the field instead -- the exact TS/Python divergence).
 
         A supplied override may TIGHTEN that base only when the trace's own
         mode was itself set from an explicit source (`state.content_mode_
@@ -2435,8 +2431,7 @@ class ObservabilityClient:
             state.mark_content_history(observation_id, "input_data")
         if existing.output_data is not None:
             state.mark_content_history(observation_id, "output_data")
-        # Finding 1 (astra out-astra-privacy-r4.md, CONFIRMED P1):
-        # same tracking for `error_message` -- it is free-form
+        # Same tracking for `error_message` -- it is free-form
         # content (an exception string) subject to the exact same
         # "never omit the clearing field on a later failure" rule as
         # `input_data`/`output_data`, but it lives inside `metadata`
@@ -3379,8 +3374,8 @@ class ObservabilityClient:
         # B2 (addendum R3, A5 completion): a hostile `correction_output`
         # (uncopyable, cyclic, not JSON serializable) must never raise
         # out of this public call -- `_ensure_json_serializable` used to
-        # raise `ClientError` straight into the caller's application
-        # (astra's confirmed finding at client.py:2121). Withhold the
+        # raise `ClientError` straight into the caller's application.
+        # Withhold the
         # field instead, same as a `record`-mode scrub failure below.
         try:
             correction_output = self._ensure_json_serializable(
@@ -3909,8 +3904,7 @@ class ObservabilityClient:
             state = self._trace_states.get(trace_id)
             if state is None or self._closed or self._close_pending:
                 return
-            # Finding 2 (astra out-astra-privacy-r4.md, CONFIRMED P2, A8/M4
-            # snapshot immutability): `_safe_trace_snapshot` freezes a
+            # Snapshot immutability: `_safe_trace_snapshot` freezes a
             # `_TraceFallbackDescriptor` from `state` right here, while this
             # lock is still held. `_submit_trace_snapshot` below runs AFTER
             # the lock is released -- possibly well after, and on a

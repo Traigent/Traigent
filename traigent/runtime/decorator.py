@@ -49,7 +49,7 @@ def _append_compiler_lints(issues: list[Issue], lints: list[dict[str, Any]]) -> 
 
 
 class RequirementList(list[RuntimeRequirement]):
-    """The requirements declared on one function (exactly one in PY-1)."""
+    """The requirements declared on one function (exactly one for now)."""
 
     owner: str = "agent"
 
