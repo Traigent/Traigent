@@ -1097,7 +1097,7 @@ class TestProductionMCPClientFallback:
     @pytest.mark.asyncio
     async def test_fallback_create_experiment(self):
         """Test fallback for create_experiment tool."""
-        response = await self.client._fallback_operation("create_experiment", {})
+        response = self.client._fallback_operation("create_experiment", {})
         assert response.success is True
         assert response.is_fallback is True
         assert "experiment_id" in response.data
@@ -1106,7 +1106,7 @@ class TestProductionMCPClientFallback:
     @pytest.mark.asyncio
     async def test_fallback_start_experiment_run(self):
         """Test fallback for start_experiment_run tool."""
-        response = await self.client._fallback_operation("start_experiment_run", {})
+        response = self.client._fallback_operation("start_experiment_run", {})
         assert response.success is True
         assert response.is_fallback is True
         assert "experiment_run_id" in response.data
@@ -1114,7 +1114,7 @@ class TestProductionMCPClientFallback:
     @pytest.mark.asyncio
     async def test_fallback_create_configuration_run(self):
         """Test fallback for create_configuration_run tool."""
-        response = await self.client._fallback_operation("create_configuration_run", {})
+        response = self.client._fallback_operation("create_configuration_run", {})
         assert response.success is True
         assert response.is_fallback is True
         assert "config_run_id" in response.data
@@ -1122,7 +1122,7 @@ class TestProductionMCPClientFallback:
     @pytest.mark.asyncio
     async def test_fallback_create_agent(self):
         """Test fallback for create_agent tool."""
-        response = await self.client._fallback_operation("create_agent", {})
+        response = self.client._fallback_operation("create_agent", {})
         assert response.success is True
         assert response.is_fallback is True
         assert "agent_id" in response.data
@@ -1130,7 +1130,7 @@ class TestProductionMCPClientFallback:
     @pytest.mark.asyncio
     async def test_fallback_upload_example_set(self):
         """Test fallback for upload_example_set tool."""
-        response = await self.client._fallback_operation("upload_example_set", {})
+        response = self.client._fallback_operation("upload_example_set", {})
         assert response.success is True
         assert response.is_fallback is True
         assert "example_set_id" in response.data
@@ -1138,7 +1138,7 @@ class TestProductionMCPClientFallback:
     @pytest.mark.asyncio
     async def test_fallback_unknown_tool(self):
         """Test fallback for unknown tool."""
-        response = await self.client._fallback_operation("unknown_tool", {})
+        response = self.client._fallback_operation("unknown_tool", {})
         assert response.success is False
         # Even on unknown-tool failure, is_fallback must be True so callers
         # can distinguish "MCP server returned this error" from "we never

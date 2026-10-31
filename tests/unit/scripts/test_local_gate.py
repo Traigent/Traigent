@@ -265,7 +265,7 @@ def _run_sonar_gate(
         for sysdir in ("/usr/bin", "/bin"):
             for tool in Path(sysdir).iterdir():
                 link = nodocker / tool.name
-                if tool.name.startswith("docker") or link.exists():
+                if tool.name.startswith("docker") or link.exists() or link.is_symlink():
                     continue
                 link.symlink_to(tool)
         env["PATH"] = f"{fake_bin}:{nodocker}"
