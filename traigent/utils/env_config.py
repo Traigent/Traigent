@@ -582,6 +582,26 @@ def cost_preflight_mock_exempt() -> bool:
     return is_mock_llm()
 
 
+def mock_cost_preflight_guidance() -> str:
+    """Guidance for a pre-run cost preflight that refuses a mock-mode run.
+
+    Mock mode alone does not skip the preflights (#2681), so a simulated run
+    can still be refused. The refusal must not lead with the approval
+    variables: approving spend is the wrong advice for a run that makes no
+    provider call, and the approval also covers a later real run (#2795).
+    """
+    return (
+        "Mock mode is on, so this run is simulated and no provider is called, "
+        "but mock mode alone does not skip the pre-run cost preflights. For a "
+        "dry run, use a smaller dataset slice, or set "
+        f"{COST_PREFLIGHT_MOCK_EXEMPT_ENV}=true together with a non-production "
+        "environment (for example ENVIRONMENT=development; an unset "
+        "environment counts as production). Do not use "
+        "TRAIGENT_COST_APPROVED for a dry run: it also approves the later "
+        "real run."
+    )
+
+
 _STRICT_COST_ENV = "TRAIGENT_STRICT_COST_ACCOUNTING"
 
 # Run-scoped default for strict cost accounting. ``OptimizedFunction.optimize``

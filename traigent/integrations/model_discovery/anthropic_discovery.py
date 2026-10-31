@@ -43,9 +43,7 @@ KNOWN_ANTHROPIC_MODELS = [
     "claude-sonnet-4-5-20250929",
     "claude-sonnet-4-20250514",
     "claude-haiku-4-5-20251001",
-    # Claude 3.5 family (3.7 Sonnet and 3 Haiku retired, #2646)
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-sonnet-latest",
+    # Claude 3.5 family (3.7 Sonnet, 3 Haiku and 3.5 Sonnet retired, #2646/#2840)
     "claude-3-5-haiku-20241022",
     "claude-3-5-haiku-latest",
     # Claude 3 family. claude-3-opus (+ -latest alias) is on the retirement

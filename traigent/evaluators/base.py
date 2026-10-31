@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
+from traigent.core.exception_handler import is_provider_api_key_failure
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
@@ -3009,8 +3010,7 @@ class BaseEvaluator(ABC):
         Raises:
             APIKeyError: If the error appears to be API key related
         """
-        api_key_tokens = ("api key", "api_key", "authentication", "openai_api_key")
-        if any(token in str(error).lower() for token in api_key_tokens):
+        if is_provider_api_key_failure(error):
             raise APIKeyError.from_provider_error(error) from error
 
     async def _execute_function(

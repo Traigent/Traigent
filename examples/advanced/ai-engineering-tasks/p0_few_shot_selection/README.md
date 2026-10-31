@@ -224,7 +224,7 @@ custom_space = {
     "formatting": ["io_pairs", "with_explanation"] # Task-appropriate formats
 }
 
-@traigent.optimize(config_space=custom_space)
+@traigent.optimize(configuration_space=custom_space)
 def your_few_shot_function(**config):
     # Your implementation
     pass

@@ -292,6 +292,12 @@ def _is_transient_error(exc: Exception) -> bool:
 
     Transient errors don't mean the key is invalid - the service might be temporarily unavailable.
     """
+    # A structured HTTP status is authoritative (e.g. google-genai raises the
+    # same ClientError/ServerError classes for 429 and 400): 408/429/5xx are
+    # transient, whatever the class is called.
+    status = _structured_http_status(exc)
+    if status is not None and (status in (408, 429) or status >= 500):
+        return True
     exc_type = type(exc).__name__
     if exc_type in _TRANSIENT_ERROR_TYPES:
         return True
@@ -300,6 +306,20 @@ def _is_transient_error(exc: Exception) -> bool:
         if parent.__name__ in _TRANSIENT_ERROR_TYPES:
             return True
     return False
+
+
+def _structured_http_status(exc: Exception) -> int | None:
+    """Return the integer HTTP status carried by ``exc`` (or its response)."""
+    response = getattr(exc, "response", None)
+    for source in (exc, response):
+        if source is None:
+            continue
+        for attr in ("status_code", "code", "http_status", "status"):
+            value = getattr(source, attr, None)
+            if isinstance(value, int) and not isinstance(value, bool):
+                if 100 <= value <= 599:
+                    return value
+    return None
 
 
 _INSUFFICIENT_FUNDS_KEYWORDS = (
@@ -339,7 +359,11 @@ def _run_with_timeout[T](func: Callable[[], T], timeout: float, provider: str) -
     Raises:
         TimeoutError: If the function doesn't complete within the timeout.
     """
-    with ThreadPoolExecutor(max_workers=1) as executor:
+    # No ``with`` block: its exit runs ``shutdown(wait=True)``, which would hold
+    # the TimeoutError until the slow call finished (#2844). The abandoned worker
+    # thread is left to finish on its own; queued work is cancelled.
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
         future = executor.submit(func)
         try:
             return future.result(timeout=timeout)
@@ -347,6 +371,8 @@ def _run_with_timeout[T](func: Callable[[], T], timeout: float, provider: str) -
             raise TimeoutError(
                 f"{provider} validation timed out after {timeout}s"
             ) from None
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def validate_model_names(

@@ -39,7 +39,6 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
 traigent.initialize(
-    offline=True,
     minimal_logging=True,
     enable_usage_analytics=False,
 )

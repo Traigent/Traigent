@@ -9,14 +9,61 @@ and optimization effectiveness.
 
 from __future__ import annotations
 
+import math
 import statistics
+from collections.abc import Mapping
 from typing import Any, cast
 
 from traigent.api.types import OptimizationResult, TrialResult
 from traigent.utils.logging import get_logger
+from traigent.utils.relative_change import relative_change
 from traigent.utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
+
+_Orientations = Mapping[str, str | None]
+
+
+def _resolve_orientations(
+    results: OptimizationResult, objectives: list[str]
+) -> dict[str, str | None]:
+    """Resolve each objective's direction from the result (declared, else SDK-owned).
+
+    The primary objective must be resolvable: ranking it without a direction
+    would silently treat a cost or latency objective as higher-is-better
+    (#2819), so the standard "declare an orientation" error is raised. A
+    secondary objective with no known direction is reported with
+    ``orientation=None`` and no best/improvement instead of a guessed one.
+    """
+    orientations: dict[str, str | None] = {}
+    for index, name in enumerate(objectives):
+        try:
+            orientations[name] = results._objective_orientation(name)
+        except ValueError:
+            if index == 0:
+                raise
+            orientations[name] = None
+    return orientations
+
+
+def _is_minimize(orientations: _Orientations | None, objective: str) -> bool:
+    return orientations is not None and orientations.get(objective) == "minimize"
+
+
+def _metric_value(trial: TrialResult, objective: str) -> float | None:
+    """A trial's finite numeric value for ``objective``; None when not reported."""
+    value = trial.metrics.get(objective)
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _best_of(values: list[float], minimize: bool) -> float:
+    return min(values) if minimize else max(values)
+
+
+def _worst_of(values: list[float], minimize: bool) -> float:
+    return max(values) if minimize else min(values)
 
 
 def get_optimization_insights(results: OptimizationResult) -> dict[str, Any]:
@@ -37,6 +84,17 @@ def get_optimization_insights(results: OptimizationResult) -> dict[str, Any]:
         - performance_summary: Overall optimization statistics
         - parameter_insights: Analysis of parameter importance
         - recommendations: Actionable recommendations
+
+        Each ``multi_objective_analysis`` entry carries the objective's
+        ``orientation``; ``best`` and ``improvement`` are ``None`` for a
+        secondary objective whose direction is unknown. Trials that did not
+        report the primary metric are excluded, and ``improvement`` is the
+        best versus the worst trial in the objective's direction.
+
+    Raises:
+        ValueError: The primary objective has no declared orientation and no
+            SDK-owned default (a custom metric such as ``f1``). Declare it in
+            the objective schema or ``results.metadata["objective_orientations"]``.
 
     Example::
 
@@ -66,16 +124,31 @@ def get_optimization_insights(results: OptimizationResult) -> dict[str, Any]:
             "recommendations": [],
         }
 
+    orientations = _resolve_orientations(results, list(results.objectives or []))
+    primary_objective = results.objectives[0] if results.objectives else "score"
+    if results.objectives and not any(
+        _metric_value(t, primary_objective) is not None for t in successful_trials
+    ):
+        return {
+            "error": f"No successful trial reported the primary objective {primary_objective!r}",
+            "top_configurations": [],
+            "performance_summary": {},
+            "parameter_insights": {},
+            "recommendations": [],
+        }
+
     # Generate insights
-    top_configs = _analyze_top_configurations(successful_trials, results.objectives)
+    top_configs = _analyze_top_configurations(
+        successful_trials, results.objectives, orientations=orientations
+    )
     performance_summary = _analyze_performance_summary(
-        successful_trials, results.objectives
+        successful_trials, results.objectives, orientations=orientations
     )
     parameter_insights = _analyze_parameter_importance(
-        successful_trials, results.objectives
+        successful_trials, results.objectives, orientations=orientations
     )
     recommendations = _generate_recommendations(
-        top_configs, parameter_insights, performance_summary
+        top_configs, parameter_insights, performance_summary, orientations
     )
 
     return {
@@ -87,16 +160,29 @@ def get_optimization_insights(results: OptimizationResult) -> dict[str, Any]:
 
 
 def _analyze_top_configurations(
-    trials: list[TrialResult], objectives: list[str], top_k: int = 3
+    trials: list[TrialResult],
+    objectives: list[str],
+    top_k: int = 3,
+    orientations: _Orientations | None = None,
 ) -> list[dict[str, Any]]:
-    """Analyze top performing configurations."""
+    """Analyze top performing configurations.
+
+    Trials are ranked best-first for the primary objective's direction, and a
+    trial that did not report the primary metric is excluded (it is not scored
+    as 0.0).
+    """
     # Sort trials by primary objective (first in list)
     primary_objective = objectives[0] if objectives else "score"
+    minimize = _is_minimize(orientations, primary_objective)
 
-    # Sort trials by primary metric score (descending)
-    sorted_trials = sorted(
-        trials, key=lambda t: t.metrics.get(primary_objective, 0.0), reverse=True
-    )
+    scored = [
+        (value, t)
+        for t in trials
+        if (value := _metric_value(t, primary_objective)) is not None
+    ]
+    sorted_trials = [
+        t for _, t in sorted(scored, key=lambda item: item[0], reverse=not minimize)
+    ]
 
     top_configurations = []
     for i, trial in enumerate(sorted_trials[:top_k]):
@@ -104,10 +190,10 @@ def _analyze_top_configurations(
             "rank": i + 1,
             "config": trial.config.copy(),
             "metrics": trial.metrics.copy(),
-            "score": trial.metrics.get(primary_objective, 0.0),
+            "score": _metric_value(trial, primary_objective),
             "trial_id": trial.trial_id,
             "relative_performance": _calculate_relative_performance(
-                trial, sorted_trials[0]
+                trial, sorted_trials[0], primary_objective, minimize
             ),
         }
 
@@ -139,8 +225,10 @@ def _analyze_top_configurations(
             if cost_per_query is not None:
                 config_analysis["cost_analysis"] = {
                     "cost_per_query": cost_per_query,
-                    "cost_efficiency": _calculate_cost_efficiency(
-                        trial, primary_objective
+                    "cost_efficiency": (
+                        None
+                        if minimize
+                        else _calculate_cost_efficiency(trial, primary_objective)
                     ),
                 }
 
@@ -150,20 +238,37 @@ def _analyze_top_configurations(
 
 
 def _analyze_performance_summary(
-    trials: list[TrialResult], objectives: list[str]
+    trials: list[TrialResult],
+    objectives: list[str],
+    orientations: _Orientations | None = None,
 ) -> dict[str, Any]:
-    """Analyze overall optimization performance."""
+    """Analyze overall optimization performance.
+
+    ``best_score``/``worst_score`` follow the primary objective's direction.
+    ``improvement`` is the relative gain of the best trial over the worst trial
+    in that direction (``relative_change(worst, best, orientation)``): 0.99
+    means the best trial is 99% better than the worst, whether the objective is
+    maximized or minimized. Trials that did not report the primary metric are
+    excluded rather than scored as 0.0.
+    """
     primary_objective = objectives[0] if objectives else "score"
+    minimize = _is_minimize(orientations, primary_objective)
 
     # Extract scores for primary objective
-    scores = [t.metrics.get(primary_objective, 0.0) for t in trials]
+    scores = [
+        v for t in trials if (v := _metric_value(t, primary_objective)) is not None
+    ]
 
     if not scores:
         return {}
 
-    best_score = max(scores)
-    worst_score = min(scores)
+    best_score = _best_of(scores, minimize)
+    worst_score = _worst_of(scores, minimize)
     avg_score = statistics.mean(scores)
+
+    improvement = relative_change(
+        worst_score, best_score, "minimize" if minimize else "maximize"
+    )
 
     summary = {
         "total_trials": len(trials),
@@ -174,7 +279,7 @@ def _analyze_performance_summary(
         "average_score": avg_score,
         "score_std": statistics.stdev(scores) if len(scores) > 1 else 0.0,
         "improvement": (
-            (best_score - worst_score) / worst_score if worst_score > 0 else 0.0
+            improvement if improvement is not None and worst_score > 0 else 0.0
         ),
         "consistency": (
             1.0 - (statistics.stdev(scores) / avg_score)
@@ -186,40 +291,61 @@ def _analyze_performance_summary(
     # Add multi-objective analysis if applicable
     if len(objectives) > 1:
         summary["multi_objective_analysis"] = _summarize_multi_objective_scores(
-            trials, objectives
+            trials, objectives, orientations
         )
 
     return summary
 
 
 def _summarize_multi_objective_scores(
-    trials: list[TrialResult], objectives: list[str]
-) -> dict[str, dict[str, float]]:
-    """Summarize the supplied objective scores in their existing iteration order."""
-    multi_obj_analysis = {}
+    trials: list[TrialResult],
+    objectives: list[str],
+    orientations: _Orientations | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Summarize each objective with its best value in that objective's direction.
+
+    An objective whose direction is unknown reports ``orientation=None`` and no
+    ``best``/``improvement`` (``None``) rather than a guessed direction.
+    """
+    multi_obj_analysis: dict[str, dict[str, Any]] = {}
     for obj in objectives:
-        obj_scores = [t.metrics.get(obj, 0.0) for t in trials]
-        if obj_scores:
-            multi_obj_analysis[obj] = {
-                "best": max(obj_scores),
-                "average": statistics.mean(obj_scores),
-                "improvement": (
-                    (max(obj_scores) - min(obj_scores)) / min(obj_scores)
-                    if min(obj_scores) > 0
-                    else 0.0
-                ),
-            }
+        obj_scores = [v for t in trials if (v := _metric_value(t, obj)) is not None]
+        if not obj_scores:
+            continue
+        if orientations is None:
+            orientation: str | None = "maximize"  # direct (legacy) call
+        else:
+            orientation = orientations.get(obj)
+        if orientation in ("maximize", "minimize"):
+            minimize = orientation == "minimize"
+            best_value: float | None = _best_of(obj_scores, minimize)
+            worst_value = _worst_of(obj_scores, minimize)
+            change = relative_change(worst_value, best_value, orientation)
+            improvement: float | None = (
+                change if change is not None and worst_value > 0 else 0.0
+            )
+        else:
+            best_value, improvement = None, None
+        multi_obj_analysis[obj] = {
+            "orientation": orientation,
+            "best": best_value,
+            "average": statistics.mean(obj_scores),
+            "improvement": improvement,
+        }
     return multi_obj_analysis
 
 
 def _analyze_parameter_importance(
-    trials: list[TrialResult], objectives: list[str]
+    trials: list[TrialResult],
+    objectives: list[str],
+    orientations: _Orientations | None = None,
 ) -> dict[str, Any]:
     """Analyze parameter importance and impact."""
     if not trials or not objectives:
         return {}
 
     primary_objective = objectives[0]
+    minimize = _is_minimize(orientations, primary_objective)
     parameter_analysis = {}
 
     # Get all unique parameters
@@ -230,7 +356,7 @@ def _analyze_parameter_importance(
     # Analyze each parameter
     for param in all_params:
         analysis = _analyze_single_parameter_importance(
-            param, trials, primary_objective
+            param, trials, primary_objective, minimize
         )
         if analysis is not None:
             parameter_analysis[param] = analysis
@@ -239,19 +365,27 @@ def _analyze_parameter_importance(
 
 
 def _analyze_single_parameter_importance(
-    param: str, trials: list[TrialResult], primary_objective: str
+    param: str,
+    trials: list[TrialResult],
+    primary_objective: str,
+    minimize: bool = False,
 ) -> dict[str, Any] | None:
     param_values = []
     param_scores = []
 
     for trial in trials:
-        if param in trial.config:
-            param_values.append(trial.config[param])
-            param_scores.append(trial.metrics.get(primary_objective, 0.0))
+        if param not in trial.config:
+            continue
+        value = trial.config[param]
+        score = _metric_value(trial, primary_objective)
+        if score is None:
+            continue  # did not report the metric: excluded, not scored 0.0
+        param_values.append(value)
+        param_scores.append(score)
 
     if param_values and param_scores:
         # Find best value for this parameter
-        best_idx = param_scores.index(max(param_scores))
+        best_idx = param_scores.index(_best_of(param_scores, minimize))
         best_value = param_values[best_idx]
 
         # Calculate performance impact (association-style measure)
@@ -268,7 +402,7 @@ def _analyze_single_parameter_importance(
             "best_value": best_value,
             "performance_impact": performance_impact,
             "value_distribution": _analyze_value_distribution(
-                param_values, param_scores
+                param_values, param_scores, minimize
             ),
             "optimization_priority": optimization_priority,
         }
@@ -280,6 +414,7 @@ def _generate_recommendations(
     top_configs: list[dict[str, Any]],
     param_insights: dict[str, Any],
     performance_summary: dict[str, Any],
+    orientations: _Orientations | None = None,
 ) -> list[str]:
     """Generate actionable recommendations based on analysis."""
     recommendations = []
@@ -320,6 +455,10 @@ def _generate_recommendations(
                 - second_config["cost_analysis"]["cost_per_query"]
             )
             perf_diff = best_config["score"] - second_config["score"]
+            if _is_minimize(
+                orientations, performance_summary.get("primary_objective", "")
+            ):
+                perf_diff = -perf_diff  # positive = best is better
 
             if (
                 cost_diff > 0 and perf_diff < 0.05
@@ -339,17 +478,28 @@ def _generate_recommendations(
 
 
 def _calculate_relative_performance(
-    trial: TrialResult, best_trial: TrialResult
+    trial: TrialResult,
+    best_trial: TrialResult,
+    primary_objective: str | None = None,
+    minimize: bool = False,
 ) -> float:
-    """Calculate relative performance compared to best trial."""
+    """Calculate relative performance compared to the best trial (1.0 = as good).
+
+    For a minimized objective the ratio is inverted (best / trial) so a worse
+    trial scores below 1.0 in both directions.
+    """
     if not best_trial.metrics:
         return 1.0
 
-    # Use first metric as primary
-    primary_metric = next(iter(best_trial.metrics.keys()))
-    best_score = best_trial.metrics.get(primary_metric, 0.0)
-    trial_score = trial.metrics.get(primary_metric, 0.0)
+    # Primary objective when known; otherwise the first metric (legacy callers).
+    primary_metric = primary_objective or next(iter(best_trial.metrics.keys()))
+    best_score = _metric_value(best_trial, primary_metric)
+    trial_score = _metric_value(trial, primary_metric)
+    if best_score is None or trial_score is None:
+        return 1.0
 
+    if minimize:
+        return 1.0 if trial_score == 0 else best_score / trial_score
     if best_score == 0:
         return 1.0
 
@@ -434,7 +584,7 @@ def _simple_correlation(x: list[float], y: list[float]) -> float:
 
 
 def _analyze_value_distribution(
-    values: list[Any], scores: list[float]
+    values: list[Any], scores: list[float], minimize: bool = False
 ) -> dict[str, Any]:
     """Analyze distribution of parameter values and their performance."""
     unique_values = list(set(values))
@@ -454,7 +604,8 @@ def _analyze_value_distribution(
         val: statistics.mean(scores) for val, scores in value_performance.items()
     }
 
-    best_value = max(avg_performance.keys(), key=lambda k: avg_performance[k])
+    pick = min if minimize else max
+    best_value = pick(avg_performance.keys(), key=lambda k: avg_performance[k])
 
     return {
         "type": "categorical" if isinstance(values[0], str) else "numeric",

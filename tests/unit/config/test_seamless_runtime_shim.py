@@ -16,6 +16,19 @@ def _reset_provider() -> SeamlessParameterProvider:
     return SeamlessParameterProvider(max_cache_size=32)
 
 
+# Stand-in for ``openai.NotFoundError`` / ``anthropic.NotFoundError`` (the typed
+# "unknown model" signal) without requiring the provider SDKs to be installed.
+_ProviderNotFoundError = type("NotFoundError", (Exception,), {"__module__": "openai"})
+
+# The AST transform recompiles a function without its closure, so functions
+# with a local ``model = ...`` assignment must use module-level names.
+_AST_SHAPE_CALLS: list[str] = []
+
+
+class _UndefinedTable(Exception):
+    pass
+
+
 def test_seamless_runtime_shim_applies_signature_default() -> None:
     provider = _reset_provider()
 
@@ -367,7 +380,7 @@ def test_seamless_runtime_shim_invalid_configuration_raises() -> None:
 
     def fn(question: str, model: str = "baseline") -> str:
         if model == "override":
-            raise RuntimeError("model_not_found: unsupported")
+            raise _ProviderNotFoundError("model_not_found: unsupported")
         return model
 
     wrapped = provider.inject_config(fn, {"model": "override"})
@@ -488,7 +501,7 @@ async def test_seamless_invalid_configuration_marks_trial_failed() -> None:
     )
     def target_fn(question: str, model: str = "baseline") -> str:
         if model == "invalid-model-slug":
-            raise RuntimeError("model_not_found: invalid-model-slug")
+            raise _ProviderNotFoundError("model_not_found: invalid-model-slug")
         return "baseline"
 
     result = await target_fn.optimize(algorithm="grid", max_trials=1)
@@ -561,3 +574,269 @@ def test_matched_param_names_covers_every_injectable_kind() -> None:
     matched = SeamlessParameterProvider()._matched_param_names(signature, config)
 
     assert matched == {"pos_only", "normal", "kw_only"}
+
+
+# --- #2841: an exception from the user's own function is not a transform failure
+
+
+def test_seamless_user_exception_runs_once_and_propagates_unchanged() -> None:
+    """Parameter-shim shape: the body must run once, not be re-executed."""
+    provider = _reset_provider()
+    calls: list[str] = []
+
+    def agent(q: str, model: str = "gpt-3.5") -> str:
+        calls.append(model)
+        raise ConnectionError("503 upstream unavailable (transient)")
+
+    wrapped = provider.inject_config(agent, {"model": "gpt-4o"})
+    with pytest.raises(ConnectionError, match="503 upstream"):
+        wrapped("hi")
+    assert calls == ["gpt-4o"]
+
+
+def test_seamless_user_exception_with_local_assignment_is_not_rewritten() -> None:
+    """AST shape: a user RuntimeError must not become SeamlessNoInjectableTargetsError."""
+    provider = _reset_provider()
+    _AST_SHAPE_CALLS.clear()
+
+    def agent(q: str) -> str:
+        model = "baseline"
+        _AST_SHAPE_CALLS.append(model)
+        raise RuntimeError("upstream blew up (user code)")
+
+    wrapped = provider.inject_config(agent, {"model": "gpt-4o"})
+    with pytest.raises(RuntimeError, match="upstream blew up") as exc:
+        wrapped("hi")
+    assert type(exc.value) is RuntimeError
+    assert _AST_SHAPE_CALLS == ["gpt-4o"]
+
+
+def test_seamless_user_exception_on_cached_path_runs_once_and_propagates() -> None:
+    provider = _reset_provider()
+    calls: list[str] = []
+
+    def agent(q: str, model: str = "x") -> str:
+        calls.append(model)
+        if len(calls) > 1:
+            raise ConnectionError("503 on second call")
+        return model
+
+    wrapped = provider.inject_config(agent, {"model": "gpt-4o"})
+    assert wrapped("a") == "gpt-4o"
+    with pytest.raises(ConnectionError, match="503 on second call"):
+        wrapped("b")
+    assert calls == ["gpt-4o", "gpt-4o"]
+
+
+@pytest.mark.parametrize("config_key_shape", ["parameter", "assignment"])
+def test_seamless_does_not_convert_does_not_exist_text_into_config_error(
+    config_key_shape: str,
+) -> None:
+    """A database error that happens to say "does not exist" is user code's."""
+    provider = _reset_provider()
+
+    if config_key_shape == "parameter":
+
+        def agent(q: str, model: str = "x") -> str:
+            raise _UndefinedTable('relation "orders" does not exist')
+
+    else:
+
+        def agent(q: str) -> str:
+            model = "x"  # noqa: F841 - the AST injection target
+            raise _UndefinedTable('relation "orders" does not exist')
+
+    wrapped = provider.inject_config(agent, {"model": "gpt-4o"})
+    with pytest.raises(_UndefinedTable):
+        wrapped("hi")
+
+
+def test_seamless_typed_provider_model_not_found_is_configuration_error() -> None:
+    provider = _reset_provider()
+
+    def agent(q: str, model: str = "x") -> str:
+        raise _ProviderNotFoundError("The model `nope` does not exist")
+
+    wrapped = provider.inject_config(agent, {"model": "nope"})
+    with pytest.raises(ConfigurationError, match="Failed to execute") as exc:
+        wrapped("hi")
+    assert isinstance(exc.value.__cause__, _ProviderNotFoundError)
+
+
+def _bedrock_not_found() -> Exception:
+    error = type("ClientError", (Exception,), {"__module__": "botocore.exceptions"})(
+        "An error occurred (ResourceNotFoundException): Could not resolve the model"
+    )
+    error.response = {"Error": {"Code": "ResourceNotFoundException"}}  # type: ignore[attr-defined]
+    return error
+
+
+def _gemini_not_found() -> Exception:
+    return type("NotFound", (Exception,), {"__module__": "google.api_core.exceptions"})(
+        "404 models/nope is not found"
+    )
+
+
+def _genai_404() -> Exception:
+    error = type("ClientError", (Exception,), {"__module__": "google.genai.errors"})(
+        "404 NOT_FOUND"
+    )
+    error.code = 404  # type: ignore[attr-defined]
+    return error
+
+
+@pytest.mark.parametrize(
+    "make_error",
+    [
+        lambda: type("NotFoundError", (Exception,), {"__module__": "cohere.errors"})(
+            "model not found"
+        ),
+        lambda: type(
+            "NotFoundError", (Exception,), {"__module__": "litellm.exceptions"}
+        )("model not found"),
+        _gemini_not_found,
+        _genai_404,
+        _bedrock_not_found,
+    ],
+    ids=["cohere", "litellm", "gemini", "google-genai", "bedrock"],
+)
+def test_seamless_other_provider_unknown_model_is_configuration_error(
+    make_error,
+) -> None:
+    """Non-OpenAI/Anthropic unknown-model errors keep their old classification."""
+    provider = _reset_provider()
+    error = make_error()
+
+    def agent(q: str, model: str = "x") -> str:
+        raise error
+
+    wrapped = provider.inject_config(agent, {"model": "nope"})
+    with pytest.raises(ConfigurationError, match="Failed to execute") as exc:
+        wrapped("hi")
+    assert exc.value.__cause__ is error
+
+
+def test_seamless_unrelated_not_found_and_client_errors_pass_through() -> None:
+    """Look-alikes outside the provider SDKs, or other codes, are not reclassified."""
+    provider = _reset_provider()
+    foreign = type("NotFoundError", (Exception,), {"__module__": "myapp.errors"})("x")
+    throttled = type(
+        "ClientError", (Exception,), {"__module__": "botocore.exceptions"}
+    )("t")
+    throttled.response = {"Error": {"Code": "ThrottlingException"}}  # type: ignore[attr-defined]
+    for error in (foreign, throttled):
+
+        def agent(q: str, model: str = "x", _e=error) -> str:
+            raise _e
+
+        wrapped = provider.inject_config(agent, {"model": "nope"})
+        with pytest.raises(type(error)):
+            wrapped("hi")
+
+
+def test_seamless_closure_function_with_local_assignment_runs_once_via_shim() -> None:
+    """A rewrite that cannot keep the closure must fall back, not raise NameError.
+
+    The AST rewrite of a nested function with a local assignment to a tuned
+    name is rebuilt without its closure; calling it raised ``NameError`` for the
+    free variable, which the user-error path would have propagated.
+    """
+    provider = _reset_provider()
+    calls: list[int] = []
+
+    def make():
+        prefix = "hello"
+
+        def agent(x: str, model: str = "d") -> str:
+            temperature = 0.0
+            calls.append(1)
+            return prefix + model + x + str(temperature)
+
+        return agent
+
+    wrapped = provider.inject_config(make(), {"model": "gpt-4o", "temperature": 0.5})
+    assert wrapped("!") == "hellogpt-4o!0.0"
+    assert calls == [1]
+
+
+def test_seamless_real_transform_failure_still_falls_back(monkeypatch) -> None:
+    """A genuine AST transform failure still reaches the runtime-shim fallback."""
+    provider = _reset_provider()
+
+    def boom(*_a, **_k):
+        raise SyntaxError("cannot transform")
+
+    monkeypatch.setattr(provider, "_transform_function", boom)
+
+    def agent(q: str, model: str = "x") -> str:
+        return model
+
+    wrapped = provider.inject_config(agent, {"model": "gpt-4o"})
+    assert wrapped("hi") == "gpt-4o"
+    assert provider.get_stats()["fallback_triggers"]["transform_failure"]
+
+
+def test_seamless_user_exception_runs_once_when_no_targets_allowed(
+    monkeypatch,
+) -> None:
+    """The pass-through (no injectable target, opt-out env) must not re-run either."""
+    monkeypatch.setenv("TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS", "true")
+    provider = _reset_provider()
+    calls: list[int] = []
+
+    def agent(q: str) -> str:
+        calls.append(1)
+        raise RuntimeError("boom")
+
+    wrapped = provider.inject_config(agent, {"zzz": 1})
+    with pytest.raises(RuntimeError, match="boom"):
+        wrapped("hi")
+    assert calls == [1]
+
+
+def test_seamless_user_configuration_error_propagates_unchanged() -> None:
+    class MyConfigError(ConfigurationError):
+        pass
+
+    provider = _reset_provider()
+
+    def agent(q: str, model: str = "x") -> str:
+        raise MyConfigError("mine")
+
+    wrapped = provider.inject_config(agent, {"model": "gpt-4o"})
+    with pytest.raises(MyConfigError, match="^mine$"):
+        wrapped("hi")
+
+
+class _PrivateAttrAgent:
+    def __init__(self) -> None:
+        self.__fake_secret = 5
+
+    def run(self, q: str, temperature: float = 0.1):
+        model = "x"
+        return (self.__fake_secret, model, temperature)
+
+
+def test_seamless_name_mangled_method_falls_back_to_shim() -> None:
+    """An AST rewrite loses class-private name mangling (AttributeError that is
+    not the user's bug); it must not be executed, the shim runs it instead."""
+    provider = _reset_provider()
+    wrapped = provider.inject_config(
+        _PrivateAttrAgent.run, {"model": "gpt", "temperature": 0.9}
+    )
+    assert wrapped(_PrivateAttrAgent(), "q") == (5, "x", 0.9)
+
+
+class _Ünï:  # noqa: N801 - non-ASCII class name: mangled to ``_Ünï__z``
+    def __init__(self) -> None:
+        self.__z = 1
+
+    def run(self, q: str, temperature: float = 0.1):
+        model = "x"
+        return (self.__z, model, temperature)
+
+
+def test_seamless_non_ascii_class_mangled_method_falls_back_to_shim() -> None:
+    provider = _reset_provider()
+    wrapped = provider.inject_config(_Ünï.run, {"model": "gpt", "temperature": 0.9})
+    assert wrapped(_Ünï(), "q") == (1, "x", 0.9)

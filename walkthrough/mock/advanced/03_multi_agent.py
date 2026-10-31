@@ -31,7 +31,7 @@ DATASET_PATH = str(
 )
 
 # Initialize Traigent in mock mode
-traigent.initialize(offline=True, minimal_logging=True)
+traigent.initialize(minimal_logging=True)
 
 # Constants for mock responses
 ML_RESPONSE = "Machine learning enables computers to learn from data."

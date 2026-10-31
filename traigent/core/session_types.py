@@ -58,6 +58,7 @@ SAFE_HTTP_ERROR_CODES = (
             "internal_error",
             "invalid_request",
             "not_found",
+            "payload_too_large",
             "rate_limited",
             "service_unavailable",
             "session_not_found",
@@ -264,6 +265,60 @@ class SessionCreationHTTPError(Exception):
     def __init__(self, detail: SessionCreationFailureDetail) -> None:
         super().__init__(detail.one_line_summary())
         self.detail = detail
+
+
+def normalize_next_trial_payload(data: Any) -> Any:
+    """View a ``next-trial`` reply in the typed shape, whichever contract sent it.
+
+    The typed contract answers ``{should_continue, suggestion{trial_id, config,
+    dataset_subset, ...}}``. The legacy (classic) route the backend falls back to
+    answers ``{has_next, trial{trial_id, configuration}, configuration_run_id,
+    dataset_subset_indices: null}``. Every reader of a next-trial reply goes
+    through this so a legacy reply is neither a ``KeyError`` nor, for
+    ``has_next: false``, mistaken for an unreachable backend (#2805).
+
+    A typed payload (or anything that is not a mapping) is returned unchanged.
+    A legacy reply carries no dataset subset (``null`` means the full dataset),
+    so the synthesised suggestion declares an empty-index, full-dataset subset.
+    """
+    if not isinstance(data, dict):
+        return data
+    if "should_continue" in data or "suggestion" in data or "has_next" not in data:
+        return data
+
+    # Anything but a real boolean (None, "false", an error body) is a malformed
+    # reply, not "optimization complete": leave it for the loud paths.
+    if not isinstance(data["has_next"], bool) or "error" in data:
+        return data
+    out = dict(data)
+    has_next = data["has_next"]
+    trial = data.get("trial")
+    trial_id: Any = None
+    if has_next and isinstance(trial, dict):
+        trial_id = trial.get("trial_id") or data.get("configuration_run_id")
+    if isinstance(trial_id, str) and trial_id:
+        configuration = trial.get("configuration") if isinstance(trial, dict) else None
+        out["suggestion"] = {
+            "trial_id": trial_id,
+            "session_id": data.get("session_id") or "",
+            "trial_number": (trial or {}).get("trial_number", 0),
+            "config": dict(configuration) if isinstance(configuration, dict) else {},
+            "dataset_subset": {
+                "indices": [],
+                "selection_strategy": "full_dataset",
+                "confidence_level": 1.0,
+                "estimated_representativeness": 1.0,
+                "metadata": {"legacy_contract": True},
+            },
+            "exploration_type": "exploration",
+            "metadata": {"legacy_contract": True},
+        }
+        out["should_continue"] = True
+        return out
+    # has_next false is a definitive "no more trials"; has_next true without a
+    # usable trial id stays "no slot" (should_continue left truthy, no suggestion).
+    out["should_continue"] = bool(has_next)
+    return out
 
 
 @dataclass

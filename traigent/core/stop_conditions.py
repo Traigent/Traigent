@@ -23,6 +23,7 @@ from traigent.config.feature_flags import _coerce_bool as _coerce_config_bool_va
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.utils import extract_examples_attempted
 from traigent.utils.logging import get_logger
+from traigent.utils.money import format_usd
 
 if TYPE_CHECKING:
     from traigent.core.cost_enforcement import CostEnforcer
@@ -1102,8 +1103,8 @@ class CostLimitStopCondition(StopCondition):
                 )
             )
         return (
-            f"Cost limit reached: ${status.accumulated_cost_usd:.2f} "
-            f">= ${status.limit_usd:.2f} USD"
+            f"Cost limit reached: {format_usd(status.accumulated_cost_usd)} "
+            f">= {format_usd(status.limit_usd)} USD"
         )
 
 
@@ -1160,7 +1161,7 @@ class ExecutionBudgetStopCondition(StopCondition):
         if dimension == "cost":
             return (
                 f"Execution budget cost exhausted: "
-                f"${snapshot.consumed_cost:.2f} of ${snapshot.max_cost_usd:.2f} USD"
+                f"{format_usd(snapshot.consumed_cost)} of {format_usd(snapshot.max_cost_usd)} USD"
             )
         if dimension == "examples":
             return (

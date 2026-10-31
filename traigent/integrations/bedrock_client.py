@@ -188,11 +188,13 @@ class BedrockChatClient:
         return response
 
     @staticmethod
-    def _mock_response(model_id: str) -> BedrockChatResponse:
+    def _mock_response(model_id: str, apply_delay: bool = True) -> BedrockChatResponse:
         from traigent.integrations.utils.mock_adapter import MockAdapter
         from traigent.utils.langchain_interceptor import capture_langchain_response
 
-        mock_data = MockAdapter.get_mock_response("bedrock", model=model_id)
+        mock_data = MockAdapter.get_mock_response(
+            "bedrock", model=model_id, apply_delay=apply_delay
+        )
         usage = dict(mock_data["usage"])
         response = BedrockChatResponse(
             text=mock_data["content"][0]["text"],
@@ -405,7 +407,10 @@ class BedrockChatClient:
         Returns normalized `BedrockChatResponse` with text and raw payload.
         """
         if self._is_mock_enabled():
-            return self._mock_response(model_id)
+            from traigent.integrations.utils.mock_adapter import MockAdapter
+
+            await MockAdapter.await_mock_delay("bedrock")
+            return self._mock_response(model_id, apply_delay=False)
 
         # Try aioboto3 for true async
         try:
@@ -508,10 +513,17 @@ class BedrockChatClient:
         """Async streaming chat invocation; yields text chunks.
 
         Uses aioboto3 for true async streaming or falls back to sync streaming
-        wrapped in an executor.
+        wrapped in an executor. In mock mode the native path is never selected,
+        so the stream is the same deterministic mock ``invoke_stream`` yields
+        whether or not the optional ``aioboto3`` package is installed (#2810).
         """
-        # Try aioboto3 for true async streaming
+        # Try aioboto3 for true async streaming, unless mock mode is on: the
+        # native path would open a provider client instead of returning mock
+        # output, and which one runs would depend on an optional install.
+        use_native = not self._is_mock_enabled()
         try:
+            if not use_native:
+                raise ImportError("mock mode uses the synchronous mock stream")
             import aioboto3  # noqa: F401 - used for availability check and async stream
 
             async for chunk in self._ainvoke_stream_aioboto3(

@@ -9,7 +9,7 @@ to data storage and retrieval.
 import os
 import sys
 import time
-from typing import Any, Dict
+from typing import Any
 
 import requests
 
@@ -55,7 +55,7 @@ def check_backend_health() -> bool:
         return False
 
 
-def check_feature_flags() -> Dict[str, Any]:
+def check_feature_flags() -> dict[str, Any]:
     """Check backend feature flag configuration."""
     try:
         print_status("Checking feature flag configuration...")
@@ -66,9 +66,9 @@ def check_feature_flags() -> Dict[str, Any]:
             features = response.json()
             print_status("✅ Feature flags retrieved successfully", "SUCCESS")
 
-            # Check critical flags for Edge Analytics mode
+            # Check critical flags for local (offline) mode
             critical_flags = {
-                "edge_analytics_only": True,
+                "local_only": True,
                 "api_key_management": True,
                 "cloud_features": False,
                 "evaluation_services": False,
@@ -111,7 +111,7 @@ def check_api_key_management() -> bool:
     try:
         print_status("Checking API key management...")
 
-        # This should work in Edge Analytics mode
+        # This should work in local (offline) mode
         backend_url = os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000")
         response = requests.get(
             f"{backend_url}/api/test/features/api-keys-only", timeout=5
@@ -148,9 +148,9 @@ def check_traigent_import() -> bool:
             "✅ Traigent SDK imported successfully (version available)", "SUCCESS"
         )
 
-        # Check if we can access Edge Analytics mode configuration
-        config = traigent.TraigentConfig.edge_analytics_mode()
-        print_status("✅ Edge Analytics mode configuration created", "SUCCESS")
+        # Check if we can access local (offline) mode configuration
+        config = traigent.TraigentConfig.local_mode()
+        print_status("✅ local (offline) mode configuration created", "SUCCESS")
         print_status(f"  Storage path: {config.get_local_storage_path()}", "INFO")
         print_status(f"  Execution mode: {config.execution_mode}", "INFO")
 
@@ -228,10 +228,10 @@ def run_integration_test() -> bool:
     try:
         print_status("Running basic SDK integration test...")
 
-        # Import Traigent and configure for Edge Analytics mode
+        # Import Traigent and configure for local (offline) mode
         import traigent
 
-        config = traigent.TraigentConfig.edge_analytics_mode()
+        config = traigent.TraigentConfig.local_mode()
         traigent.initialize(
             api_key=api_key,
             api_url=os.environ.get("TRAIGENT_BACKEND_URL", "http://localhost:5000"),

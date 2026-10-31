@@ -120,11 +120,23 @@ def test_detailed_without_score_config_or_trials():
     assert result.output.endswith("Trials: 2\n")
 
 
-def test_detailed_zero_improvement_and_none_summary_are_silent():
+def test_detailed_zero_improvement_is_shown_and_none_summary_is_silent():
+    # #2820: a measured 0.0 improvement is a real value and is printed; only a
+    # missing summary (or an undefined improvement) prints nothing.
     r1, _, _ = _run(_session(), ["--format", "detailed"], summary={"improvement": 0})
     r2, _, _ = _run(_session(), ["--format", "detailed"], summary=None)
-    assert "Improvement" not in r1.output and "Improvement" not in r2.output
+    assert "Improvement: 0.0%" in r1.output
+    assert "Improvement" not in r2.output
     assert "Best Score: 0.9123" in r2.output
+
+
+def test_detailed_zero_baseline_prints_not_available():
+    r, _, _ = _run(
+        _session(),
+        ["--format", "detailed"],
+        summary={"improvement": None, "baseline_score": 0.0},
+    )
+    assert "Improvement: n/a (baseline 0)" in r.output
 
 
 def test_summary_format_local_completed_shows_hint():

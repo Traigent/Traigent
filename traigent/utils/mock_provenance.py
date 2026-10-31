@@ -33,6 +33,8 @@ class MockProvenanceRecorder:
         self._lock = threading.Lock()
         self.mock_responses_served = 0
         self.real_calls_observed = 0
+        #: Provider hosts the mock transport guard blocked during this run (#2812).
+        self.blocked_hosts: dict[str, int] = {}
         self._token: Token[MockProvenanceRecorder | None] | None = None
 
     def _bump(self, mock: bool) -> None:
@@ -41,6 +43,10 @@ class MockProvenanceRecorder:
                 self.mock_responses_served += 1
             else:
                 self.real_calls_observed += 1
+
+    def _bump_blocked(self, host: str) -> None:
+        with self._lock:
+            self.blocked_hosts[host] = self.blocked_hosts.get(host, 0) + 1
 
     def activate(self) -> None:
         self._token = _current.set(self)
@@ -77,3 +83,9 @@ def note_real_call() -> None:
     """An LLM call took the non-mock path (it may still be simulated downstream)."""
     for recorder in _targets():
         recorder._bump(False)
+
+
+def note_mock_blocked(host: str) -> None:
+    """The mock transport guard blocked a raw call to ``host`` (#2812)."""
+    for recorder in _targets():
+        recorder._bump_blocked(host)

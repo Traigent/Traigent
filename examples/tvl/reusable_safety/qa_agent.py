@@ -53,7 +53,7 @@ def retrieve_context(query: str, k: int = 5) -> str:
 
 
 @optimize(
-    spec=str(TVL_SPEC_PATH),
+    tvl_spec=str(TVL_SPEC_PATH),
     objectives=create_default_objectives(
         ["accuracy", "latency_p95"],
         orientations={"latency_p95": "minimize"},

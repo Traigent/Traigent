@@ -9,7 +9,8 @@ A challenging summarization problem that tests the model's ability to:
 """
 
 import sys
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 import traigent
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -66,7 +67,7 @@ class DocumentSummarizationProblem(BaseLangChainProblem):
             expected_model_ranking=["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
         )
 
-    def __init__(self, config: Optional[ProblemConfig] = None):
+    def __init__(self, config: ProblemConfig | None = None):
         if config is None:
             config = self.get_default_config()
         super().__init__(config)
@@ -177,7 +178,7 @@ class DocumentSummarizationProblem(BaseLangChainProblem):
                 metadata={
                     "difficulty": data["difficulty"],
                     "domain": data["domain"],
-                    "example_id": f"sum_{i+1:03d}",
+                    "example_id": f"sum_{i + 1:03d}",
                     "content_length": len(data["content"]),
                     "summary_length": len(data["expected_summary"]),
                 },
@@ -238,7 +239,8 @@ Provide a clear, accurate summary that captures the key points and main ideas.""
             configuration_space=self.get_configuration_space(),
             auto_override_frameworks=True,
             framework_targets=["langchain_openai.ChatOpenAI"],
-            execution_mode="edge_analytics",
+            offline=True,
+            algorithm="grid",
         )
         def document_summarizer_optimized(
             title: str, content: str, target_length: str
@@ -280,10 +282,10 @@ Provide a clear, accurate summary that captures the key points and main ideas.""
 
     def evaluate_custom_metrics(
         self,
-        outputs: List[Any],
-        expected_outputs: List[Any],
-        errors: List[Optional[str]],
-    ) -> Dict[str, float]:
+        outputs: list[Any],
+        expected_outputs: list[Any],
+        errors: list[str | None],
+    ) -> dict[str, float]:
         """Compute document summarization specific metrics."""
         metrics = {}
 
@@ -291,7 +293,9 @@ Provide a clear, accurate summary that captures the key points and main ideas.""
 
         # Content coverage (simplified - measures length similarity as proxy)
         coverage_scores = []
-        for output, expected, error in zip(outputs, expected_outputs, errors):
+        for output, expected, error in zip(
+            outputs, expected_outputs, errors, strict=False
+        ):
             if error is None and expected is not None and output:
                 # Simple length-based coverage score
                 output_words = len(str(output).split())
@@ -306,7 +310,9 @@ Provide a clear, accurate summary that captures the key points and main ideas.""
 
         # Factual accuracy (simplified - uses keyword overlap)
         accuracy_scores = []
-        for output, expected, error in zip(outputs, expected_outputs, errors):
+        for output, expected, error in zip(
+            outputs, expected_outputs, errors, strict=False
+        ):
             if error is None and expected is not None and output:
                 output_words = set(str(output).lower().split())
                 expected_words = set(str(expected).lower().split())
@@ -325,7 +331,7 @@ Provide a clear, accurate summary that captures the key points and main ideas.""
         # Conciseness ratio (information density)
         conciseness_scores = []
         for i, (output, expected, error) in enumerate(
-            zip(outputs, expected_outputs, errors)
+            zip(outputs, expected_outputs, errors, strict=False)
         ):
             if (
                 error is None

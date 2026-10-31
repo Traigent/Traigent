@@ -158,19 +158,49 @@ def _render_metric_cell(metric: str, raw_value: Any, trial: Any = None) -> str:
         return _UNMEASURED_CELL
     if value is None and "cost" in metric.lower():
         return _UNMEASURED_CELL
+    if value is None and _metric_unit(metric) in {"ms", "s"}:
+        return "n/a"
     return _format_metric_value(metric, value or 0.0)
 
 
+_SECONDS_METRICS = frozenset({"duration", "avg_response_time", "response_time"})
+_MS_METRICS = frozenset({"latency"})
+_RATIO_COST_MARKERS = ("_per_cost", "cost_efficiency", "cost_ratio", "per_dollar")
+
+
+def _metric_unit(metric: str) -> str:
+    """Unit of a metric by name: ``usd``, ``ms``, ``s`` or ``fraction``.
+
+    Cost-like and time-like metrics are not fractions and must never be
+    rendered as percentages (#2821). Time units follow the SDK's canonical
+    naming: ``latency`` and ``*_ms`` are milliseconds, ``duration`` and
+    ``avg_response_time`` are seconds.
+    """
+    name = metric.lower()
+    if "cost" in name and not any(m in name for m in _RATIO_COST_MARKERS):
+        return "usd"
+    if name in _MS_METRICS or name.endswith("_ms") or name.startswith("latency_"):
+        return "ms"
+    if name.endswith("_latency"):
+        return "ms"
+    if name in _SECONDS_METRICS or name.endswith("_seconds"):
+        return "s"
+    return "fraction"
+
+
 def _format_metric_value(metric: str, val: float) -> str:
-    if metric == "cost":
+    unit = _metric_unit(metric)
+    if unit == "usd":
         return f"${val:.5f}"
-    if metric == "latency":
+    if unit == "ms":
         # The "latency" metric holds a mean of per-result ``latency_ms`` values
         # (see ``evaluators/hybrid_api.py`` -> ``aggregated["latency"]``), i.e. it
         # is in MILLISECONDS per the canonical ``_ms`` unit contract. Render it
         # with an ``ms`` label; the prior ``f"{val:.3f}s"`` treated the ms value
         # as seconds, overstating latency 1000x (850 ms -> "850.000s" ~= 14 min).
         return f"{val:.0f}ms"
+    if unit == "s":
+        return f"{val:.2f}s"
     return _format_percent_metric(val)
 
 

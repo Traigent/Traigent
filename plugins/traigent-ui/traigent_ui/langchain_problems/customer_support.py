@@ -7,7 +7,8 @@ between models based on reasoning capability.
 """
 
 import sys
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 import traigent
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -96,7 +97,7 @@ class CustomerSupportProblem(BaseLangChainProblem):
             expected_model_ranking=["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
         )
 
-    def __init__(self, config: Optional[ProblemConfig] = None):
+    def __init__(self, config: ProblemConfig | None = None):
         if config is None:
             config = self.get_default_config()
         super().__init__(config)
@@ -488,7 +489,8 @@ Respond with only the category name, nothing else.""",
             configuration_space=self.get_configuration_space(),
             auto_override_frameworks=True,
             framework_targets=["langchain_openai.ChatOpenAI"],
-            execution_mode="edge_analytics",
+            offline=True,
+            algorithm="grid",
         )
         def customer_support_classifier_optimized(query: str) -> str:
             """Optimized customer support ticket classifier."""
@@ -524,10 +526,10 @@ Respond with only the category name, nothing else.""",
 
     def evaluate_custom_metrics(
         self,
-        outputs: List[Any],
-        expected_outputs: List[Any],
-        errors: List[Optional[str]],
-    ) -> Dict[str, float]:
+        outputs: list[Any],
+        expected_outputs: list[Any],
+        errors: list[str | None],
+    ) -> dict[str, float]:
         """Compute customer support specific metrics."""
         metrics = {}
 
@@ -537,7 +539,9 @@ Respond with only the category name, nothing else.""",
         # Standard accuracy
         correct = 0
         total = 0
-        for output, expected, error in zip(outputs, expected_outputs, errors):
+        for output, expected, error in zip(
+            outputs, expected_outputs, errors, strict=False
+        ):
             if error is None and expected is not None:
                 if output == expected:
                     correct += 1
@@ -552,7 +556,9 @@ Respond with only the category name, nothing else.""",
         category_fp = defaultdict(int)
         category_fn = defaultdict(int)
 
-        for output, expected, error in zip(outputs, expected_outputs, errors):
+        for output, expected, error in zip(
+            outputs, expected_outputs, errors, strict=False
+        ):
             if error is None and expected is not None:
                 if output == expected:
                     category_tp[expected] += 1
@@ -581,7 +587,7 @@ Respond with only the category name, nothing else.""",
         hard_correct = 0
         hard_total = 0
         for i, (output, expected, error) in enumerate(
-            zip(outputs, expected_outputs, errors)
+            zip(outputs, expected_outputs, errors, strict=False)
         ):
             if i < len(dataset.examples):
                 difficulty = dataset.examples[i].metadata.get("difficulty", "")

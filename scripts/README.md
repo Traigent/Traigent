@@ -229,7 +229,7 @@ Cleans up temporary files and caches.
 Additional test setup utilities.
 
 #### `test-local-integration.py`
-Tests Edge Analytics mode integration functionality.
+Tests local (offline) mode integration functionality.
 
 ## Quick Usage Examples
 

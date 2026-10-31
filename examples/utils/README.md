@@ -40,8 +40,8 @@ Main setup utilities:
 - `is_mock_mode()` - Returns `True` if `TRAIGENT_MOCK_LLM=true`
 - `setup_mock_environment(base_path)` - Sets HOME and results folder for sandboxed execution
 - `setup_traigent_import()` - Adds traigent to sys.path if not installed
-- `initialize_traigent(mode)` - Initializes traigent with execution mode
-- `quick_setup(base_path, mode)` - All-in-one setup function
+- `initialize_traigent()` - Calls `traigent.initialize()` in mock mode (offline execution is set on the decorator)
+- `quick_setup(base_path)` - All-in-one setup function
 - `get_example_dataset(name, filename)` - Returns path to a dataset file
 
 ### base_example.py

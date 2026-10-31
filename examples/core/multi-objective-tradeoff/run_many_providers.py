@@ -124,7 +124,7 @@ DATA_ROOT = (
 )
 if MOCK:
     try:
-        traigent.initialize(offline=True)
+        traigent.initialize()
     except Exception:
         pass
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")

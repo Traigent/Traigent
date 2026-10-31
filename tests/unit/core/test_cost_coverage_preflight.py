@@ -606,3 +606,28 @@ async def test_cost_preflight_checks_default_model_when_model_is_fixed(
         if FAKE_MODEL in str(warning.message)
         and "results will report $0" in str(warning.message)
     ]
+
+
+@pytest.mark.asyncio
+async def test_unpriced_refusal_under_mock_names_exemption_2795(
+    monkeypatch: pytest.MonkeyPatch,
+    one_example_dataset: Dataset,
+) -> None:
+    """A simulated run refused for an unpriced model is told the dry-run route."""
+    monkeypatch.delenv("TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    opt_func = OptimizedFunction(
+        func=CountedFunction(),
+        configuration_space={"model": [FAKE_MODEL]},
+        eval_dataset=one_example_dataset,
+        max_trials=1,
+    )
+
+    with pytest.raises(UnknownModelError) as excinfo:
+        await _run_with_mocked_orchestrator(opt_func)
+
+    message = str(excinfo.value)
+    assert "TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT" in message
+    assert "set TRAIGENT_COST_APPROVED=true to acknowledge" not in message

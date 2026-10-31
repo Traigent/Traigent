@@ -513,6 +513,9 @@ class TestCheckCostApproval:
                 "traigent.core.cost_estimator.cost_preflight_mock_exempt",
                 return_value=False,
             ),
+            # The refusal text depends on mock mode (#2795); pin it off so a
+            # mock flag leaked by another test cannot change this contract.
+            patch("traigent.core.cost_estimator.is_mock_llm", return_value=False),
             pytest.raises(CostLimitExceeded) as exc_info,
         ):
             estimator.check_cost_approval(_FakeDataset())

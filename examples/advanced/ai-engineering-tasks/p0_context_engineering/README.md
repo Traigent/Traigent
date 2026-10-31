@@ -206,7 +206,7 @@ custom_space = {
     "n_chunks": [3, 5, 7]      # Fewer chunks for cost optimization
 }
 
-@traigent.optimize(config_space=custom_space)
+@traigent.optimize(configuration_space=custom_space)
 def your_rag_function(**config):
     # Your RAG implementation
     pass

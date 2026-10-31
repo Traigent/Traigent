@@ -8,6 +8,8 @@ import os
 import sys
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from traigent.utils.money import format_usd
+
 if TYPE_CHECKING:
     from traigent.core.exception_handler import VendorErrorCategory
 
@@ -412,11 +414,13 @@ class CostLimitExceeded(OptimizationError):
     ) -> None:
         spent = accumulated
         if message is None:
-            message = f"Cost limit exceeded: ${spent:.2f} >= ${limit:.2f} USD"
+            message = (
+                f"Cost limit exceeded: {format_usd(spent)} >= {format_usd(limit)} USD"
+            )
             if estimated is not None:
                 message = (
-                    f"Cost limit exceeded: estimated ${estimated:.2f} >= "
-                    f"${limit:.2f} USD; spent ${spent:.2f}"
+                    f"Cost limit exceeded: estimated {format_usd(estimated)} >= "
+                    f"{format_usd(limit)} USD; spent {format_usd(spent)}"
                 )
         details: dict[str, Any] = {
             "accumulated": accumulated,

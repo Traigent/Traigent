@@ -7,7 +7,8 @@ culinary traditions from Georgia.
 """
 
 import sys
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 import traigent
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -59,7 +60,7 @@ class GeorgianCuisineTriviaQaProblem(BaseLangChainProblem):
             expected_model_ranking=["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
         )
 
-    def __init__(self, config: Optional[ProblemConfig] = None):
+    def __init__(self, config: ProblemConfig | None = None):
         if config is None:
             config = self.get_default_config()
         super().__init__(config)
@@ -313,7 +314,8 @@ Be specific about regional variations and traditional preparations.""",
             configuration_space=self.get_configuration_space(),
             auto_override_frameworks=True,
             framework_targets=["langchain_openai.ChatOpenAI"],
-            execution_mode="edge_analytics",
+            offline=True,
+            algorithm="grid",
         )
         def georgian_cuisine_trivia_optimized(question: str) -> str:
             """Optimized Georgian cuisine trivia assistant."""
@@ -347,10 +349,10 @@ Be specific about regional variations and traditional preparations.""",
 
     def evaluate_custom_metrics(
         self,
-        outputs: List[Any],
-        expected_outputs: List[Any],
-        errors: List[Optional[str]],
-    ) -> Dict[str, float]:
+        outputs: list[Any],
+        expected_outputs: list[Any],
+        errors: list[str | None],
+    ) -> dict[str, float]:
         """Compute Georgian cuisine trivia specific metrics."""
         metrics = {}
 
@@ -364,7 +366,7 @@ Be specific about regional variations and traditional preparations.""",
         culturally_accurate = 0
 
         for _i, (output, expected, error) in enumerate(
-            zip(outputs, expected_outputs, errors)
+            zip(outputs, expected_outputs, errors, strict=False)
         ):
             if error is None and expected is not None and output:
                 total += 1

@@ -223,6 +223,15 @@ def _looks_like_model_string(value: str) -> bool:
     return any(hint in lower for hint in _MODEL_NAME_HINTS)
 
 
+def _bracket_float(value: float) -> tuple[float, float]:
+    """Return a 0.5x-2x bracket around a positive float with ``low < high``."""
+    low, high = round(value * 0.5, 4), round(value * 2.0, 4)
+    if low >= high or low <= 0:
+        # Tiny magnitudes collapse under 4-decimal rounding; keep significant digits.
+        low, high = float(f"{value * 0.5:.3g}"), float(f"{value * 2.0:.3g}")
+    return low, high
+
+
 def _suggest_range(
     canonical_name: str | None, candidate_type: CandidateType, value: Any
 ) -> SuggestedRange | None:
@@ -236,13 +245,20 @@ def _suggest_range(
 
     # Fallback heuristics based on value type
     if candidate_type == CandidateType.NUMERIC_CONTINUOUS and isinstance(value, float):
-        low = round(value * 0.5, 4) if value > 0 else 0.0
-        high = round(value * 2.0, 4) if value > 0 else 1.0
+        if value < 0:
+            return None  # no sensible 0.5x-2x bracket; skip rather than reverse
+        if value == 0:
+            return SuggestedRange(range_type="Range", kwargs={"low": 0.0, "high": 1.0})
+        low, high = _bracket_float(value)
         return SuggestedRange(range_type="Range", kwargs={"low": low, "high": high})
 
     if candidate_type == CandidateType.NUMERIC_INTEGER and isinstance(value, int):
+        if value <= 0:
+            # 0 is typically an explicit "off"; negatives have no 0.5x-2x
+            # bracket. Skip instead of emitting a reversed IntRange (#2799).
+            return None
         low = max(1, value // 2)
-        high = value * 2
+        high = max(low + 1, value * 2)
         return SuggestedRange(range_type="IntRange", kwargs={"low": low, "high": high})
 
     if candidate_type == CandidateType.CATEGORICAL and isinstance(value, str):

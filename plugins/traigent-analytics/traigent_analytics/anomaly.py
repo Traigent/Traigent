@@ -20,6 +20,7 @@ from traigent.core.constants import (
     MAX_REGRESSION_HISTORY_SIZE,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.relative_change import signed_relative_delta
 
 logger = get_logger(__name__)
 
@@ -493,10 +494,7 @@ class PerformanceMonitor:
         baseline_avg = statistics.mean(baseline_values)
         recent_avg = statistics.mean(recent_values)
 
-        if baseline_avg == 0:
-            return anomalies
-
-        change_ratio = (recent_avg - baseline_avg) / baseline_avg
+        change_ratio = signed_relative_delta(baseline_avg, recent_avg)
 
         # Determine if this is a regression
         is_regression = False
@@ -685,10 +683,7 @@ class RegressionDetector:
         baseline_avg = statistics.mean(baseline_float_values)
         recent_avg = statistics.mean(recent_float_values)
 
-        if baseline_avg == 0:
-            return None
-
-        change_ratio = (recent_avg - baseline_avg) / baseline_avg
+        change_ratio = signed_relative_delta(baseline_avg, recent_avg)
 
         # Determine if this is significant regression based on metric type
         is_regression = self._is_significant_regression(metric_name, change_ratio)

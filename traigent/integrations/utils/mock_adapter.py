@@ -26,10 +26,11 @@ Security:
 import asyncio
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, ClassVar
+from typing import Any
 
 from traigent.utils.logging import configure_litellm_logging
 
@@ -77,20 +78,57 @@ class MockResponse:
     response_id: str = "mock-response-id"
 
 
+_STREAM_PIECE_RE = re.compile(r"\S+\s*|\s+")
+
+
+class MockLiteLLMStream:
+    """Offline stand-in for LiteLLM's ``CustomStreamWrapper`` in mock mode (#2801).
+
+    Iterable both ways, like the real wrapper: ``for chunk in stream`` and
+    ``async for chunk in stream``. Each chunk is a ``ModelResponseStream`` whose
+    ``choices[0].delta.content`` holds a piece of the reply, so joining the
+    pieces gives the reply text; a final chunk per choice carries
+    ``finish_reason`` and, on the last one, the synthetic usage block.
+    """
+
+    def __init__(self, chunks: list[Any]) -> None:
+        self._chunks = list(chunks)
+        self._position = 0
+
+    def __iter__(self) -> "MockLiteLLMStream":
+        return self
+
+    def __next__(self) -> Any:
+        if self._position >= len(self._chunks):
+            raise StopIteration
+        chunk = self._chunks[self._position]
+        self._position += 1
+        return chunk
+
+    def __aiter__(self) -> "MockLiteLLMStream":
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            return self.__next__()
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
 class MockAdapter:
     """Lightweight mock adapter for testing without API calls.
 
-    Mock activation is **never** auto-enabled via environment variables.
-    The single source of truth is
-    :func:`traigent.testing.is_mock_mode_enabled`, which is only flipped
-    on by an explicit in-code call to
-    :func:`traigent.testing.enable_mock_mode_for_quickstart`. Tests that
-    want a one-off mock response without flipping the global flag can
-    still call :meth:`get_mock_response` directly from inside a
-    ``unittest.mock.patch`` of the underlying client.
+    Mock mode is never switched on implicitly. It is on only after an
+    explicit in-code call to
+    :func:`traigent.testing.enable_mock_mode_for_quickstart` (the
+    recommended path) or, outside production, when the deprecated
+    ``TRAIGENT_MOCK_LLM`` environment variable is set.
+    :func:`traigent.utils.env_config.is_mock_llm` is the single source of
+    truth for both. Tests that want a one-off mock response without
+    flipping the global flag can still call :meth:`get_mock_response`
+    directly from inside a ``unittest.mock.patch`` of the underlying
+    client.
     """
-
-    _pending_tasks: ClassVar[set[asyncio.Task]] = set()
 
     @classmethod
     def is_mock_enabled(cls, provider: str) -> bool:
@@ -120,10 +158,11 @@ class MockAdapter:
 
     @classmethod
     def _apply_mock_delay(cls, provider: str) -> None:
-        """Apply mock delay, using async sleep if in event loop.
+        """Block for the configured mock latency (synchronous callers only).
 
-        This method detects if it's running inside an async context and
-        uses the appropriate sleep function to avoid blocking the event loop.
+        Async callers must ``await`` :meth:`await_mock_delay` instead: calling
+        this from a running event loop blocks every other coroutine for the
+        whole delay (#2809).
 
         Args:
             provider: Provider name for logging.
@@ -131,23 +170,23 @@ class MockAdapter:
         delay_ms = _get_mock_delay_ms()
         if delay_ms <= 0:
             return
-
-        delay_sec = delay_ms / 1000.0
         logger.debug(f"Mock delay: {delay_ms}ms for {provider}")
+        time.sleep(delay_ms / 1000.0)
 
-        # Check if we're in an async context
-        try:
-            loop = asyncio.get_running_loop()
-            # We're in an async context - schedule async sleep
-            # This won't block synchronous callers
-            task = loop.create_task(asyncio.sleep(delay_sec))
-            cls._pending_tasks.add(task)
-            task.add_done_callback(cls._pending_tasks.discard)
-            # Also do a minimal sync sleep to ensure some delay is visible
-            time.sleep(delay_sec)
-        except RuntimeError:
-            # No running event loop - use sync sleep
-            time.sleep(delay_sec)
+    @classmethod
+    async def await_mock_delay(cls, provider: str) -> None:
+        """Wait for the configured mock latency without blocking the event loop.
+
+        Concurrent async mock calls overlap their delay instead of serializing.
+
+        Args:
+            provider: Provider name for logging.
+        """
+        delay_ms = _get_mock_delay_ms()
+        if delay_ms <= 0:
+            return
+        logger.debug(f"Mock delay (async): {delay_ms}ms for {provider}")
+        await asyncio.sleep(delay_ms / 1000.0)
 
     @classmethod
     def get_mock_response(
@@ -155,19 +194,24 @@ class MockAdapter:
         provider: str,
         response_text: str | None = None,
         model: str | None = None,
+        apply_delay: bool = True,
         **kwargs: Any,
     ) -> Any:
         """Get a provider-appropriate mock response object.
 
-        This method is intended to be invoked **explicitly** from test
-        code (e.g. inside a ``unittest.mock.patch`` of the real client).
-        It is no longer reachable from any production code path via an
-        environment toggle.
+        Every mock interception point serves its response through here, once
+        :func:`traigent.utils.env_config.is_mock_llm` says mock mode is on
+        (the in-code opt-in, or the deprecated environment variable outside
+        production). Test code may also call it directly (e.g. inside a
+        ``unittest.mock.patch`` of the real client).
 
         Args:
             provider: Provider name.
             response_text: Custom response text (optional).
             model: Model name to include in response (optional).
+            apply_delay: Block for the configured ``TRAIGENT_MOCK_DELAY_MS``
+                before returning. Async callers pass ``False`` after
+                ``await``-ing :meth:`await_mock_delay` themselves.
             **kwargs: Additional kwargs (used to extract model if not provided).
 
         Returns:
@@ -175,7 +219,8 @@ class MockAdapter:
         """
         # Apply configurable delay to simulate realistic LLM latency
         # This is useful for testing parallel execution visibility in traces
-        cls._apply_mock_delay(provider)
+        if apply_delay:
+            cls._apply_mock_delay(provider)
 
         # Every mock interception point serves through here: record that a mock
         # response reached a caller, for the run's provenance (#2516).
@@ -184,7 +229,8 @@ class MockAdapter:
         note_mock_response()
 
         mock_data = MockResponse(
-            text=response_text or MockResponse.text,
+            # ``is None`` (not falsy): a caller-supplied empty reply is a reply.
+            text=MockResponse.text if response_text is None else response_text,
             model=model or kwargs.get("model", MockResponse.model),
         )
 
@@ -362,6 +408,60 @@ class MockAdapter:
                 "total_tokens": data.total_tokens,
             },
         )
+
+    @classmethod
+    def expand_litellm_choices(cls, response: Any, n: int) -> Any:
+        """Give a mock LiteLLM response ``n`` identical choices (the ``n=`` arg)."""
+        if n <= 1:
+            return response
+        from litellm.types.utils import Choices, Message
+
+        first = response.choices[0]
+        for index in range(1, n):
+            response.choices.append(
+                Choices(
+                    index=index,
+                    message=Message(role="assistant", content=first.message.content),
+                    finish_reason=first.finish_reason,
+                )
+            )
+        return response
+
+    @classmethod
+    def build_litellm_stream(cls, response: Any) -> MockLiteLLMStream:
+        """Turn a mock LiteLLM response into a stream of ``ModelResponseStream``."""
+        from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
+
+        def chunk(index: int, delta: Any, finish_reason: str | None) -> Any:
+            return ModelResponseStream(
+                id=response.id,
+                model=response.model,
+                choices=[
+                    StreamingChoices(
+                        index=index, delta=delta, finish_reason=finish_reason
+                    )
+                ],
+            )
+
+        chunks: list[Any] = []
+        for choice in response.choices:
+            text = choice.message.content or ""
+            pieces = _STREAM_PIECE_RE.findall(text)
+            for position, piece in enumerate(pieces):
+                role = "assistant" if position == 0 else None
+                chunks.append(
+                    chunk(choice.index, Delta(content=piece, role=role), None)
+                )
+            chunks.append(
+                chunk(
+                    choice.index,
+                    Delta(content=None, role="assistant" if not pieces else None),
+                    choice.finish_reason or "stop",
+                )
+            )
+        if chunks:
+            chunks[-1].usage = response.usage
+        return MockLiteLLMStream(chunks)
 
     @classmethod
     def _build_generic_mock(cls, data: MockResponse) -> dict[str, Any]:

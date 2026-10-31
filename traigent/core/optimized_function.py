@@ -88,6 +88,7 @@ from traigent.core.execution_policy_runtime import (
     policy_requires_cloud,
     unsupported_backend_smart_algorithm_message,
 )
+from traigent.core.model_config_keys import is_model_config_key, is_model_suffix_key
 from traigent.core.objectives import (
     ObjectiveSchema,
     create_default_objectives,
@@ -136,6 +137,7 @@ from traigent.utils.env_config import (
     cost_preflight_mock_exempt,
     is_mock_llm,
     is_strict_cost_accounting,
+    mock_cost_preflight_guidance,
     offline_run_scope,
     strict_cost_accounting_origin,
     strict_cost_accounting_run_default,
@@ -469,11 +471,7 @@ _COST_WARNING_EMITTED = False
 _CONFIG_SPACE_TYPE_ERROR = "Configuration space must be a dictionary"
 
 _CLOUD_FALLBACK_POLICIES = frozenset({"auto", "warn", "never"})
-_MODEL_CONFIG_KEYS = frozenset({"model", "model_name", "model_id", "engine"})
-
-
-def _is_model_config_key(key: object) -> bool:
-    return isinstance(key, str) and key.strip().lower() in _MODEL_CONFIG_KEYS
+_is_model_config_key = is_model_config_key
 
 
 def _iter_config_model_values(value: Any) -> list[str]:
@@ -507,9 +505,22 @@ def _dedupe_model_ids(model_ids: list[str]) -> list[str]:
 
 def _extract_config_space_model_ids(config_space: Mapping[str, Any]) -> list[str]:
     model_ids: list[str] = []
+    suffix_ids: list[str] = []
     for key, value in config_space.items():
-        if _is_model_config_key(key):
+        # ``engine`` and ``model_id`` may name non-LLM things (a vector index,
+        # an embedder), so they are filtered by price like ``*_model`` knobs.
+        if isinstance(key, str) and key.strip().lower() in ("model", "model_name"):
             model_ids.extend(_iter_config_model_values(value))
+        elif _is_model_config_key(key) or is_model_suffix_key(key):
+            suffix_ids.extend(_iter_config_model_values(value))
+    if suffix_ids:
+        # A user ``*_model`` knob (``expert_model``) may hold a non-LLM model
+        # (an embedding or reranker); only values with a known price are
+        # treated as LLMs here, so such a knob cannot fail the preflight (#2807).
+        unpriced = set(
+            find_models_missing_price_coverage(_dedupe_model_ids(suffix_ids))
+        )
+        model_ids.extend(v for v in suffix_ids if v not in unpriced)
     return _dedupe_model_ids(model_ids)
 
 
@@ -4332,17 +4343,39 @@ class OptimizedFunction[**P, R]:
             return
 
         if not sys.stdin.isatty():
+            if is_mock_llm():
+                # Simulated run: name the dry-run route, not spend approval (#2795).
+                how_to_proceed = (
+                    "Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
+                    "TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
+                    f"pricing. {mock_cost_preflight_guidance()}"
+                )
+            else:
+                how_to_proceed = (
+                    "Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON "
+                    "or TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
+                    "pricing, set TRAIGENT_COST_APPROVED=true to acknowledge this "
+                    "cost concern, or run interactively."
+                )
             raise UnknownModelError(
                 "Cost coverage preflight failed before any optimization trial "
                 "started: pricing is unavailable for "
                 f"{formatted}. Cannot prompt for confirmation in a "
-                "non-interactive shell. Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON "
-                "or TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
-                "pricing, set TRAIGENT_COST_APPROVED=true to acknowledge this "
-                "cost concern, or run interactively."
+                f"non-interactive shell. {how_to_proceed}"
             )
 
         plural = "model has" if len(missing) == 1 else "models have"
+        approve_line = (
+            "Set TRAIGENT_COST_APPROVED=true to skip this prompt after acknowledging\n"
+            "    this cost concern"
+        )
+        if is_mock_llm():
+            # Simulated run: approval would also cover the later real run (#2795).
+            approve_line = (
+                "Mock mode is on: use a smaller dataset slice, or set\n"
+                "    TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true with ENVIRONMENT=development\n"
+                "    (not TRAIGENT_COST_APPROVED, which also approves the later real run)"
+            )
         print(
             f"""
 ================================================================================
@@ -4358,8 +4391,7 @@ provider may still bill you.
 Remediation:
   - Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON with explicit per-token pricing
   - Contact Traigent to add model pricing coverage
-  - Set TRAIGENT_COST_APPROVED=true to skip this prompt after acknowledging
-    this cost concern
+  - {approve_line}
 
 ================================================================================
 """,

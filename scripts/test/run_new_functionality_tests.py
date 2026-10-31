@@ -117,16 +117,16 @@ def test_insights_module_functionality():
         trials = optimization_result.trials
         successful_trials = [t for t in trials if t.status == "completed"]
 
-        assert (
-            len(successful_trials) == 3
-        ), f"Expected 3 successful trials, got {len(successful_trials)}"
+        assert len(successful_trials) == 3, (
+            f"Expected 3 successful trials, got {len(successful_trials)}"
+        )
         print("   ✅ Trial filtering logic works")
 
         # Test best configuration identification
         best_trial = max(successful_trials, key=lambda t: t.metrics.get("accuracy", 0))
-        assert (
-            best_trial.trial_id == "trial_2"
-        ), f"Expected trial_2 as best, got {best_trial.trial_id}"
+        assert best_trial.trial_id == "trial_2", (
+            f"Expected trial_2 as best, got {best_trial.trial_id}"
+        )
         print("   ✅ Best trial identification works")
 
         # Test score calculation
@@ -138,9 +138,9 @@ def test_insights_module_functionality():
         # Test parameter analysis
         models = [t.config.get("model") for t in successful_trials]
         unique_models = list(set(models))
-        assert (
-            len(unique_models) == 2
-        ), f"Expected 2 unique models, got {len(unique_models)}"
+        assert len(unique_models) == 2, (
+            f"Expected 2 unique models, got {len(unique_models)}"
+        )
         print("   ✅ Parameter analysis works")
 
         return True
@@ -202,9 +202,9 @@ def test_apply_best_config_logic():
 
         # Check config was applied
         expected_config = {"model": "GPT-4o", "temperature": 0.1, "max_tokens": 150}
-        assert (
-            opt_func._current_config == expected_config
-        ), "Config not applied correctly"
+        assert opt_func._current_config == expected_config, (
+            "Config not applied correctly"
+        )
         print("   ✅ Configuration update works")
 
         # Test with explicit results parameter
@@ -274,9 +274,9 @@ def test_integration_workflow():
             {"accuracy": 0.91, "cost_per_1k": 0.007, "latency": 0.6},
         ]
 
-        for i, (config, metric) in enumerate(zip(configs, metrics)):
+        for i, (config, metric) in enumerate(zip(configs, metrics, strict=False)):
             trial = MockTrialResult(
-                trial_id=f"trial_{i+1}",
+                trial_id=f"trial_{i + 1}",
                 config=config,
                 metrics=metric,
                 status="completed",
@@ -331,9 +331,9 @@ def test_integration_workflow():
         )
         top_3 = sorted_trials[:3]
         assert len(top_3) == 3, "Should get top 3 configurations"
-        assert (
-            top_3[0].metrics["accuracy"] == 0.94
-        ), "Best trial should have 0.94 accuracy"
+        assert top_3[0].metrics["accuracy"] == 0.94, (
+            "Best trial should have 0.94 accuracy"
+        )
         print("   ✅ Top configurations analysis works")
 
         # Test performance summary logic
@@ -366,9 +366,9 @@ def test_integration_workflow():
         best_model = max(model_avg.items(), key=lambda x: x[1])
 
         assert len(model_performance) == 2, "Should have 2 different models"
-        assert (
-            best_model[0] == "GPT-4o"
-        ), f"Expected GPT-4o as best model, got {best_model[0]}"
+        assert best_model[0] == "GPT-4o", (
+            f"Expected GPT-4o as best model, got {best_model[0]}"
+        )
         print("   ✅ Parameter importance analysis works")
 
         return True
@@ -401,14 +401,14 @@ def test_mode_specific_behavior():
             metadata={},
         )
 
-        # Test Edge Analytics mode behavior
+        # Test local (offline) mode behavior
         class LocalModeFunction:
             def __init__(self):
-                self.mode = "edge_analytics"
+                self.mode = "local"
                 self._current_config = {"model": "default"}
 
             def apply_best_config(self, results):
-                # Edge Analytics mode - direct config application
+                # Local mode - direct config application
                 self._current_config = results.best_config.copy()
                 return True
 
@@ -444,9 +444,9 @@ def test_mode_specific_behavior():
         for mode_name, func in modes:
             result = func.apply_best_config(optimization_result)
             assert result is True, f"{mode_name} mode failed"
-            assert (
-                func._current_config == optimization_result.best_config
-            ), f"{mode_name} config mismatch"
+            assert func._current_config == optimization_result.best_config, (
+                f"{mode_name} config mismatch"
+            )
             print(f"   ✅ {mode_name} mode works correctly")
 
         return True
@@ -599,9 +599,9 @@ def test_error_edge_cases():
             }
 
         mixed_insights = test_insights_with_mixed_trials(mixed_result)
-        assert (
-            mixed_insights["successful_count"] == 2
-        ), "Should count 2 successful trials"
+        assert mixed_insights["successful_count"] == 2, (
+            "Should count 2 successful trials"
+        )
         assert mixed_insights["total_count"] == 3, "Should count 3 total trials"
         print("   ✅ Mixed trial status handling works")
 
@@ -650,7 +650,7 @@ def main():
     print("📊 TEST RESULTS SUMMARY")
     print(f"{'=' * 60}")
     print(f"Tests Passed: {passed}/{total}")
-    print(f"Success Rate: {(passed/total)*100:.1f}%")
+    print(f"Success Rate: {(passed / total) * 100:.1f}%")
 
     if passed == total:
         print("\n🎉 ALL TESTS PASSED!")

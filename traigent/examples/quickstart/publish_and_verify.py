@@ -9,11 +9,11 @@ This example is the positive companion to ``python -m traigent.examples.quicksta
 
 Run:
 
-    TRAIGENT_MOCK_LLM=true python -m traigent.examples.quickstart.publish_and_verify
+    python -m traigent.examples.quickstart.publish_and_verify
 
 To publish the run:
 
-    TRAIGENT_API_KEY=<key-with-experiments-write> TRAIGENT_MOCK_LLM=true \
+    TRAIGENT_API_KEY=<placeholder-key-with-experiments-write> \
       python -m traigent.examples.quickstart.publish_and_verify
 
 After a key-backed run completes, open {portal_url} and look for the
@@ -137,7 +137,7 @@ def _print_portal_verification(result: Any) -> None:
     )
     print(
         "[traigent] To publish: set TRAIGENT_API_KEY to a key with "
-        "experiments:write and rerun this module with TRAIGENT_MOCK_LLM=true."
+        "experiments:write and rerun this module."
     )
 
 
