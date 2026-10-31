@@ -191,12 +191,12 @@ def test_workflow_env_binds_base_ref_and_develop_principal():
 
 def test_retarget_from_develop_to_main_is_denied_for_same_author(tmp_path):
     """Predicate level: same author, base develop allowed, then base main denied."""
-    common = dict(
-        files=["traigent/api/decorators.py"],
-        PR_AUTHOR=DEVELOP_PRINCIPAL,
-        PR_AUTHOR_TYPE="User",
-        TRIGGERING_ACTOR=DEVELOP_PRINCIPAL,
-    )
+    common = {
+        "files": ["traigent/api/decorators.py"],
+        "PR_AUTHOR": DEVELOP_PRINCIPAL,
+        "PR_AUTHOR_TYPE": "User",
+        "TRIGGERING_ACTOR": DEVELOP_PRINCIPAL,
+    }
     assert _allows(tmp_path, BASE_REF="develop", **common)
     assert not _allows(tmp_path, BASE_REF="main", **common)
 
