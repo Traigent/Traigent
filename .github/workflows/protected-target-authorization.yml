@@ -4,10 +4,15 @@ name: Protected Target Authorization
 # executes pull-request code. The workflow definition is read from the trusted
 # base branch, so a contributor cannot rewrite the gate in their own PR.
 #
-# Two principals may target a protected branch:
+# Three principals may target a protected branch:
 #
 #   1. The Principal Engineer, unconditionally.
-#   2. Dependabot, ONLY for pull requests whose entire diff is dependency
+#   2. The develop principal (IsraelTraigent), ONLY for pull requests whose base
+#      branch is exactly `develop` and whose head lives in this repository. This
+#      file is promoted to main, so the base-ref test below is what keeps main
+#      owner-only: on a PR targeting main this lane never matches and the
+#      request falls through to the deny logic.
+#   3. Dependabot, ONLY for pull requests whose entire diff is dependency
 #      manifests, OR whose workflow-file changes are action-version bumps and
 #      nothing else. A workflow file is admitted only when EVERY changed line in
 #      it is a `uses:` action reference -- which is exactly the shape of a
@@ -23,7 +28,9 @@ name: Protected Target Authorization
 on:
   pull_request_target:
     branches: [develop, main]
-    types: [opened, reopened, synchronize, ready_for_review]
+    # `edited` is required: a base-branch change (retargeting develop -> main)
+    # must re-run this check, because the develop lane depends on the base.
+    types: [opened, reopened, synchronize, ready_for_review, edited]
   merge_group: {}
 
 permissions:
@@ -44,12 +51,14 @@ jobs:
           PR_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           BASE_REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           # github.actor is the account whose privileges the run carries. On a
           # re-run it stays the original actor, so it cannot be swapped by
           # re-running someone else's workflow. Do not substitute
           # github.triggering_actor here.
           TRIGGERING_ACTOR: ${{ github.actor }}
           PRINCIPAL_ENGINEER: nimrodbusany
+          DEVELOP_PRINCIPAL: IsraelTraigent
           DEPENDABOT: 'dependabot[bot]'
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -74,17 +83,29 @@ jobs:
             exit 0
           fi
 
+          # ---- Lane 1b: the develop principal, develop-targeted PRs only. ----
+          # Every condition must hold; any miss falls through to the deny logic.
+          # main stays owner-only because BASE_REF must be exactly `develop`.
+          if [ "$PR_AUTHOR" = "$DEVELOP_PRINCIPAL" ] \
+             && [ "$PR_AUTHOR_TYPE" = "User" ] \
+             && [ "$BASE_REF" = "develop" ] \
+             && [ "$HEAD_REPO" = "$BASE_REPO" ]; then
+            echo "Authorized: pull request to develop authored by the develop principal."
+            exit 0
+          fi
+
           # ---- Lane 2: Dependabot, manifest-only. Fail closed. ----
           deny() {
             echo "::error::Protected-target authorization denied: $1"
             echo "Protected branches accept pull requests from the Principal Engineer,"
+            echo "from the develop principal when the base branch is develop and the head is in this repository,"
             echo "or from Dependabot when the diff is limited to dependency manifests."
             echo "Author: $PR_AUTHOR (type ${PR_AUTHOR_TYPE:-unknown})"
             exit 1
           }
 
           if [ "$PR_AUTHOR" != "$DEPENDABOT" ]; then
-            deny "author is neither the Principal Engineer nor Dependabot."
+            deny "author is not the Principal Engineer, not the develop principal targeting develop from this repository, and not Dependabot."
           fi
 
           # Identity must be corroborated, not taken from the login alone.
