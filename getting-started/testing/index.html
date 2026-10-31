@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -29,10 +29,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -771,6 +771,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failing-a-provider-call-on-purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failing a Provider Call on Purpose
+      
+    </span>
+  </a>
   
 </li>
       
@@ -2247,6 +2258,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../user-guide/execution-snapshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storing the Execution Snapshot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/injection_modes/" class="md-nav__link">
         
   
@@ -2311,6 +2350,34 @@
     
   
     Tuned Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/compare_configs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparing Fixed Configurations
   
 
     
@@ -3688,6 +3755,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#failing-a-provider-call-on-purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failing a Provider Call on Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#test-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4031,6 +4109,40 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 <span class="c1"># Run tests matching a pattern</span>
 <span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>-k<span class="w"> </span><span class="s2">"test_optimization"</span><span class="w"> </span>-v
 </code></pre></div>
+<h2 id="failing-a-provider-call-on-purpose">Failing a Provider Call on Purpose<a class="headerlink" href="#failing-a-provider-call-on-purpose" title="Permanent link">&para;</a></h2>
+<p><code>traigent.testing.inject_vendor_failures</code> makes provider calls (made through
+Traigent's LiteLLM interceptor) fail with a retryable 429 or 503, so you can see
+how many attempts Traigent made and what they cost. It works in mock mode and
+real mode, and does nothing when not active. It is scoped to the current
+task/thread context, not the whole process. It is refused in production and
+(fail-closed) whenever the environment is unset or unknown: set
+<code>ENVIRONMENT=development</code> (or <code>test</code>) before using it.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">inject_vendor_failures</span>
+
+<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"ENVIRONMENT"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"development"</span>
+<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"TRAIGENT_VENDOR_MAX_RETRIES"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"1"</span>
+<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"TRAIGENT_VENDOR_RETRY_BACKOFF"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"0"</span>
+
+<span class="c1"># One failed attempt across the whole run, then everything succeeds.</span>
+<span class="k">with</span> <span class="n">inject_vendor_failures</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"rate_limit"</span><span class="p">,</span> <span class="n">per_call</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_func</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">"vendor_call_attempts"</span><span class="p">])</span>   <span class="c1"># calls + 1</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">"vendor_call_retries"</span><span class="p">])</span>    <span class="c1"># 1</span>
+<span class="c1"># Per trial: trial.metadata["vendor_call_attempt_records"]</span>
+</code></pre></div>
+<p><code>per_call=True</code> (default) fails every call <code>count</code> times before it succeeds;
+<code>per_call=False</code> shares <code>count</code> failures across all attempts. A failed attempt
+records <code>usage=None, usage_known=False</code> (unknown, never zero); the successful
+attempt records the provider's token usage.</p>
+<p>A call that failed and was retried has no cost telemetry, so its trial is
+flagged <code>cost_unmeasured</code> (known spend is kept as a lower bound). With strict
+cost accounting (the default when <code>cost</code> is an objective or a cost limit is
+set) the run raises <code>CostTrackingRequiredError</code>; set
+<code>TRAIGENT_STRICT_COST_ACCOUNTING=false</code> to warn and continue with the trial
+marked unmeasured. Streaming calls record their outcome when the stream is
+consumed; a stream that fails mid-way is recorded as failed and not retried.</p>
 <h2 id="test-dependencies">Test Dependencies<a class="headerlink" href="#test-dependencies" title="Permanent link">&para;</a></h2>
 <p>The <code>[test]</code> extra includes:</p>
 <ul>
@@ -4224,7 +4336,7 @@ grep<span class="w"> </span>-A<span class="w"> </span><span class="m">5</span><s
 <span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ubuntu-latest</span>
 <span class="w">    </span><span class="nt">strategy</span><span class="p">:</span>
 <span class="w">      </span><span class="nt">matrix</span><span class="p">:</span>
-<span class="w">        </span><span class="nt">python-version</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"3.11"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"3.12"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"3.13"</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">python-version</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"3.12"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"3.13"</span><span class="p p-Indicator">]</span>
 
 <span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v3</span>
@@ -4301,10 +4413,10 @@ grep<span class="w"> </span>-A<span class="w"> </span><span class="m">5</span><s
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

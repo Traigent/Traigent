@@ -17,7 +17,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -25,10 +25,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -1850,6 +1850,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../user-guide/execution-snapshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storing the Execution Snapshot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/injection_modes/" class="md-nav__link">
         
   
@@ -1914,6 +1942,34 @@
     
   
     Tuned Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/compare_configs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparing Fixed Configurations
   
 
     
@@ -3285,6 +3341,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#explicit-allowances-for-unpriced-calls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explicit allowances for unpriced calls
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#reading-what-was-consumed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3389,7 +3456,8 @@ shared <code>ExecutionBudget(max_cost_usd=1.0)</code>, the three phases together
     <span class="n">deadline_seconds</span><span class="o">=</span><span class="mi">1800</span><span class="p">,</span>   <span class="c1"># wall-clock deadline from first attach (30 min)</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>At least one of <code>max_cost_usd</code>, <code>max_examples</code>, or <code>deadline_seconds</code> must be set.
+<p>At least one of <code>max_cost_usd</code>, <code>max_examples</code>, <code>deadline_seconds</code>, or
+<code>max_budget_debit_usd</code> must be set.
 Any value <code>&lt;= 0</code> raises <code>ConfigurationError</code> at construction (a nonpositive cap
 would block every trial before it starts). Unset dimensions are unbounded.</p>
 <p><code>enforce_untracked_cost=False</code> (default) preserves today's permissive behavior;
@@ -3445,6 +3513,57 @@ shared cost is spent.</p>
 <span class="c1"># with stop_reason == "execution_budget" (never a pre-run CostLimitExceeded).</span>
 <span class="k">await</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">cost_limit</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">budget</span><span class="o">=</span><span class="n">traigent</span><span class="o">.</span><span class="n">ExecutionBudget</span><span class="p">(</span><span class="n">max_cost_usd</span><span class="o">=</span><span class="mf">0.50</span><span class="p">))</span>
 </code></pre></div>
+<h2 id="explicit-allowances-for-unpriced-calls">Explicit allowances for unpriced calls<a class="headerlink" href="#explicit-allowances-for-unpriced-calls" title="Permanent link">&para;</a></h2>
+<p>When provider cost is unknown, a caller may explicitly allocate a conservative
+allowance to each call. This bounds <strong>allocation debits</strong>, not the provider's
+actual USD charge. Unknown actual cost stays unknown. This API is available from
+SDK 0.32.0; SDK 0.31.1 and earlier do not contain it.</p>
+<div class="highlight"><pre><span></span><code><span class="n">budget</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">ExecutionBudget</span><span class="p">(</span><span class="n">max_budget_debit_usd</span><span class="o">=</span><span class="mf">0.21</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">call_provider</span><span class="p">():</span>
+    <span class="n">lease</span> <span class="o">=</span> <span class="n">budget</span><span class="o">.</span><span class="n">reserve_debit</span><span class="p">(</span><span class="mf">0.05</span><span class="p">)</span>  <span class="c1"># refuses BEFORE placing an unfunded call</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">existing_provider_call</span><span class="p">()</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="n">lease</span><span class="o">.</span><span class="n">settle_debit</span><span class="p">()</span>           <span class="c1"># retains 0.05 even on failure/cancellation</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">budget</span><span class="o">=</span><span class="n">budget</span><span class="p">)</span>
+<span class="n">local_allocation</span> <span class="o">=</span> <span class="n">budget</span><span class="o">.</span><span class="n">debit_snapshot</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">local_allocation</span><span class="o">.</span><span class="n">consumed_budget_debit_usd</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">local_allocation</span><span class="o">.</span><span class="n">remaining_budget_debit_usd</span><span class="p">)</span>
+</code></pre></div>
+<p>The caller's provider-call door alone reserves and settles; the SDK engine never
+automatically charges an allocation debit. The same ledger can cover baseline,
+search, holdout, retries, fallback calls, and direct calls when each uses that
+door. Four 0.05 settlements from 0.21 leave 0.01; another 0.05 reservation raises
+<code>BudgetDebitExceeded</code> (import from <code>traigent.core.execution_budget</code>). In an
+attached optimization this stops gracefully with <code>stop_reason="execution_budget"</code>
+and retains completed trials and any detailed partial example rows. Outside
+optimization, callers handle this typed early-stop exception themselves.</p>
+<p>Reservations count both consumed and in-flight allocations atomically across
+threads and async callers in this process. No lock spans the provider call.
+Failure and cancellation do not refund a reservation. Call <code>lease.release_debit()</code>
+only after proving the request was never placed or was nonbillable. A lease can
+be settled or released once, only by its owning budget. An optional finite,
+nonnegative <code>lease.settle_debit(amount)</code> records an explicit allocation settlement;
+larger amounts are retained without clamping and prevent future admission after
+an overrun. Record actual observed cost separately through existing usage
+telemetry or <code>record_external</code>; a debit settlement never supplies that telemetry.</p>
+<p>A refused large reservation does not exhaust or poison the shared object: a later
+phase can still reserve a smaller affordable amount. The optimizer's current run
+stops after refusal; it does not silently retry with a smaller allowance.</p>
+<p><code>debit_snapshot()</code> is a separate local view containing <code>max_budget_debit_usd</code>,
+<code>consumed_budget_debit_usd</code>, <code>reserved_budget_debit_usd</code>,
+<code>remaining_budget_debit_usd</code>, and <code>overrun_budget_debit_usd</code>. These fields never
+extend the existing <code>snapshot()</code>, result metadata, backend payloads, cost floors,
+winner cost statistics, billing, or observability. No distributed or persistent
+reservation guarantee is provided. Memory is proportional to open leases; close
+each reservation in its provider door.</p>
+<p>Actual-cost <code>max_cost_usd</code>, explicit <code>cost_limit</code> / <code>TRAIGENT_RUN_COST_LIMIT</code>,
+strict tracking, and cost-objective refusals remain independent and unchanged.
+An explicit actual-cost cap still refuses unknown actual cost. Do not mirror a
+nominal allowance into an actual-cost cap or clear a caller-supplied cost cap to
+make an unpriced run proceed.</p>
 <h2 id="reading-what-was-consumed">Reading what was consumed<a class="headerlink" href="#reading-what-was-consumed" title="Permanent link">&para;</a></h2>
 <p>After a run, the budget's state is on the result metadata (the result shape is
 unchanged — this is additive):</p>
@@ -3580,10 +3699,10 @@ otherwise rank as the cheapest. If an example path genuinely makes no model call
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

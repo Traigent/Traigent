@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -29,10 +29,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -1298,6 +1298,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Backend Validation Loopback Gate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#self-hosted-private-backend-traigent_allow_private_backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-hosted private backend (TRAIGENT_ALLOW_PRIVATE_BACKEND)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1985,6 +2002,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../user-guide/execution-snapshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storing the Execution Snapshot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/injection_modes/" class="md-nav__link">
         
   
@@ -2049,6 +2094,34 @@
     
   
     Tuned Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/compare_configs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparing Fixed Configurations
   
 
     
@@ -3439,6 +3512,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Backend Validation Loopback Gate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#self-hosted-private-backend-traigent_allow_private_backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-hosted private backend (TRAIGENT_ALLOW_PRIVATE_BACKEND)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3545,6 +3635,36 @@ use an explicit non-production environment:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ENVIRONMENT</span><span class="o">=</span>development
 </code></pre></div>
 <p>Do not use this override for production.</p>
+<h3 id="self-hosted-private-backend-traigent_allow_private_backend">Self-hosted private backend (<code>TRAIGENT_ALLOW_PRIVATE_BACKEND</code>)<a class="headerlink" href="#self-hosted-private-backend-traigent_allow_private_backend" title="Permanent link">&para;</a></h3>
+<p>A self-hosted Traigent backend on a private network (RFC 1918, ULA or loopback
+address) is refused by default, because the SDK sends your API key to the
+configured backend. To allow one, set both variables:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_BACKEND_URL</span><span class="o">=</span>https://traigent.internal.example:8443
+<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_ALLOW_PRIVATE_BACKEND</span><span class="o">=</span><span class="m">1</span>
+</code></pre></div>
+<p>Security notes:</p>
+<ul>
+<li>The opt-in is exact: <code>1</code> or <code>true</code> (case-insensitive). Any other value is off.</li>
+<li>It is pinned to the scheme, host and port of <code>TRAIGENT_BACKEND_URL</code>. Any other
+  URL, including a different port on the same host, stays refused. With
+  <code>TRAIGENT_BACKEND_URL</code> unset it does nothing. It never reads <code>TRAIGENT_API_URL</code>.</li>
+<li>HTTPS is still required outside a development environment. Plain HTTP is not
+  relaxed.</li>
+<li>Cloud metadata and link-local addresses (169.254.0.0/16, fe80::/10 and the
+  known metadata hosts) stay blocked in every environment.</li>
+<li>Redirects are refused for the private backend. Any 3xx response from the
+  pinned origin is an error, and the redirect target is never requested. This
+  covers the SDK's project-management client and the SDK's HTTP clients that
+  carry the API key to that origin.</li>
+<li>DNS failures are refused for the pinned host. The opt-in does not accept a
+  name it cannot resolve, and it does not skip the lookup for <code>localhost</code>
+  names. Every resolved answer must pass the always-blocked check.</li>
+<li>A port of <code>0</code>, or any port outside 1-65535, is invalid in the configured URL
+  and in the candidate URL.</li>
+<li>DNS rebinding is not closed by this check. The SDK validates the resolved
+  address but cannot pin the connection to it, so an answer that changes between
+  the validation lookup and the connection is not caught.</li>
+</ul>
 <h2 id="content-logging-opt-out">Content Logging Opt-Out<a class="headerlink" href="#content-logging-opt-out" title="Permanent link">&para;</a></h2>
 <p>Per-example prompt, response, and expected-output content is persisted by
 default for local developer experience. To keep IDs and metrics while omitting
@@ -3608,10 +3728,10 @@ account for hard spend protection.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

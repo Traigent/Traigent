@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -29,10 +29,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -1963,6 +1963,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../user-guide/execution-snapshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storing the Execution Snapshot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/injection_modes/" class="md-nav__link">
         
   
@@ -2027,6 +2055,34 @@
     
   
     Tuned Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/compare_configs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparing Fixed Configurations
   
 
     
@@ -3489,8 +3545,11 @@ files.</p>
 <h2 id="quickstart">Quickstart<a class="headerlink" href="#quickstart" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>traigent<span class="w"> </span>quickstart
 </code></pre></div>
-<p><code>quickstart</code> runs the bundled mock-mode demo. It does not require provider API
-keys and does not make LLM provider calls. LiteLLM may still try an import-time
+<p><code>quickstart</code> runs the bundled mock-mode demo as a plumbing check: it verifies
+the install and the optimize loop using a mock LLM and simulated scores. It is
+not a model comparison and does not report a winner; for a real optimization,
+set a provider API key (see <code>walkthrough/real/01_tuning_qa.py</code>). It does not
+require provider API keys and does not make LLM provider calls. LiteLLM may still try an import-time
 model-cost-map fetch and fall back to bundled pricing data when offline; the
 guarantee is no provider spend, not zero outbound packets.</p>
 <h2 id="copy-paste-example">Copy-Paste Example<a class="headerlink" href="#copy-paste-example" title="Permanent link">&para;</a></h2>
@@ -3551,10 +3610,10 @@ steps ask for consent; non-interactive mode prints a plan for a caller to run.</
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

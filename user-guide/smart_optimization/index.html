@@ -17,7 +17,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -25,10 +25,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -1850,6 +1850,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../execution-snapshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storing the Execution Snapshot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../injection_modes/" class="md-nav__link">
         
   
@@ -1914,6 +1942,34 @@
     
   
     Tuned Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../compare_configs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparing Fixed Configurations
   
 
     
@@ -3284,6 +3340,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#recipe-vary-one-setting-at-a-time-ofat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe: Vary One Setting at a Time (OFAT)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3422,6 +3489,95 @@ want managed smart search through TraigentBackend.</p>
 <p>For offline/local SDK runs, keep using <code>grid</code> or <code>random</code>. These require no
 backend service and remain deterministic/reproducible under the existing local
 SDK execution path.</p>
+<h2 id="recipe-vary-one-setting-at-a-time-ofat">Recipe: Vary One Setting at a Time (OFAT)<a class="headerlink" href="#recipe-vary-one-setting-at-a-time-ofat" title="Permanent link">&para;</a></h2>
+<p>Traigent does not have a built-in one-setting-at-a-time mode yet; it is tracked in
+<a href="https://github.com/Traigent/Traigent/issues/1710">#1710</a>. You can get the same
+comparison today with the local <code>grid</code> optimizer: hold every setting at a baseline,
+and run one small grid per setting in which only that setting has more than one value.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">Choices</span>
+
+<span class="n">EVAL_DATASET</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="s2">"What is the capital of France?"</span><span class="p">,</span> <span class="s2">"expected"</span><span class="p">:</span> <span class="s2">"Paris"</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="s2">"What is the capital of Germany?"</span><span class="p">,</span> <span class="s2">"expected"</span><span class="p">:</span> <span class="s2">"Berlin"</span><span class="p">},</span>
+<span class="p">]</span>
+
+<span class="c1"># Baseline: every setting held at this value unless it is being swept.</span>
+<span class="n">BASELINE</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"gpt-5.4-mini"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.2</span><span class="p">,</span> <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="mi">200</span><span class="p">}</span>
+
+<span class="c1"># The values to try for each setting, one setting at a time.</span>
+<span class="n">SWEEPS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-5.4-mini"</span><span class="p">,</span> <span class="s2">"claude-haiku-5-5"</span><span class="p">],</span>
+    <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">],</span>
+    <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="p">[</span><span class="mi">100</span><span class="p">,</span> <span class="mi">200</span><span class="p">,</span> <span class="mi">400</span><span class="p">],</span>
+<span class="p">}</span>
+
+
+<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="n">EVAL_DATASET</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="n">name</span><span class="p">:</span> <span class="n">Choices</span><span class="p">(</span><span class="n">values</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">values</span> <span class="ow">in</span> <span class="n">SWEEPS</span><span class="o">.</span><span class="n">items</span><span class="p">()},</span>
+    <span class="n">default_config</span><span class="o">=</span><span class="n">BASELINE</span><span class="p">,</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"context"</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>  <span class="c1"># the configuration of the trial being run</span>
+    <span class="k">return</span> <span class="n">call_model</span><span class="p">(</span>
+        <span class="n">question</span><span class="p">,</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"model"</span><span class="p">],</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">],</span>
+        <span class="n">max_tokens</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"max_tokens"</span><span class="p">],</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">one_at_a_time_space</span><span class="p">(</span><span class="n">knob</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Choices</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Hold every setting at its baseline value, except `knob`, which takes all its values."""</span>
+    <span class="n">space</span> <span class="o">=</span> <span class="p">{</span><span class="n">name</span><span class="p">:</span> <span class="n">Choices</span><span class="p">([</span><span class="n">value</span><span class="p">])</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">BASELINE</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+    <span class="n">space</span><span class="p">[</span><span class="n">knob</span><span class="p">]</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">(</span><span class="n">SWEEPS</span><span class="p">[</span><span class="n">knob</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">space</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run_ofat</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">traigent</span><span class="o">.</span><span class="n">OptimizationResult</span><span class="p">]:</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">knob</span> <span class="ow">in</span> <span class="n">SWEEPS</span><span class="p">:</span>
+        <span class="n">results</span><span class="p">[</span><span class="n">knob</span><span class="p">]</span> <span class="o">=</span> <span class="k">await</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
+            <span class="n">algorithm</span><span class="o">=</span><span class="s2">"grid"</span><span class="p">,</span>
+            <span class="n">configuration_space</span><span class="o">=</span><span class="n">one_at_a_time_space</span><span class="p">(</span><span class="n">knob</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">results</span>
+
+
+<span class="n">results</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_ofat</span><span class="p">())</span>
+
+<span class="c1"># Compare: each setting's rows show how its values move accuracy and cost,</span>
+<span class="c1"># with every other setting held at the baseline.</span>
+<span class="k">for</span> <span class="n">knob</span><span class="p">,</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">results</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">knob</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">trial</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">trial</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="n">knob</span><span class="p">]</span><span class="si">!r:</span><span class="s2">&lt;20</span><span class="si">}</span><span class="s2"> "</span>
+            <span class="sa">f</span><span class="s2">"accuracy=</span><span class="si">{</span><span class="n">trial</span><span class="o">.</span><span class="n">metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">'accuracy'</span><span class="p">)</span><span class="si">}</span><span class="s2"> cost=</span><span class="si">{</span><span class="n">trial</span><span class="o">.</span><span class="n">metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">'cost'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+        <span class="p">)</span>
+</code></pre></div>
+<p>Notes:</p>
+<ul>
+<li>Each run also evaluates the <code>default_config</code> baseline as its own trial, so the
+  baseline appears once as the seed and once as its grid value. Total trials are
+  the sum over the sweeps of (values in the sweep + 1), not their product.</li>
+<li>Read each setting's effect from its own rows. Comparing <code>best_score</code> across the
+  per-setting runs answers a different question, because each run has a different
+  search space.</li>
+<li>One-at-a-time runs miss interactions between settings. Once you have a better
+  baseline, re-run the recipe around it.</li>
+<li>Every model id in a sweep must have pricing the SDK can see. If it does not, the run stops
+  at the cost preflight before any trial; supply per-token pricing with
+  <code>TRAIGENT_CUSTOM_MODEL_PRICING_FILE</code> first.</li>
+<li>This recipe uses only the local <code>grid</code> optimizer, so it needs no backend service.
+  Changing <code>BASELINE</code> to a new best config and re-running is the "OFAT around the
+  peak" pattern described in #1710.</li>
+</ul>
 
 
 
@@ -3471,10 +3627,10 @@ SDK execution path.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>
