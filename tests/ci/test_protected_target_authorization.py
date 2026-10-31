@@ -29,6 +29,7 @@ WORKFLOW = (
 REPO = "Traigent/Traigent"
 DEPENDABOT = "dependabot[bot]"
 PRINCIPAL = "nimrodbusany"
+DEVELOP_PRINCIPAL = "IsraelTraigent"
 
 # A real `github-actions` ecosystem bump: Dependabot authored it, and every path
 # is a CI workflow. The path alone does not authorise it — the LINES do. Each of
@@ -127,6 +128,8 @@ def _run(
         "HEAD_REPO": REPO,
         "PRINCIPAL_ENGINEER": PRINCIPAL,
         "DEPENDABOT": DEPENDABOT,
+        "DEVELOP_PRINCIPAL": DEVELOP_PRINCIPAL,
+        "BASE_REF": "develop",
         "GH_TOKEN": "stub",
         "PR_CHANGED_FILES": str(len(files or [])),
     }
@@ -153,6 +156,82 @@ def test_principal_may_change_anything(tmp_path):
         PR_AUTHOR=PRINCIPAL,
         PR_AUTHOR_TYPE="User",
         TRIGGERING_ACTOR=PRINCIPAL,
+    )
+
+
+def test_develop_principal_may_target_develop(tmp_path):
+    assert _allows(
+        tmp_path,
+        files=["traigent/api/decorators.py"],
+        PR_AUTHOR=DEVELOP_PRINCIPAL,
+        PR_AUTHOR_TYPE="User",
+        TRIGGERING_ACTOR=DEVELOP_PRINCIPAL,
+        BASE_REF="develop",
+    )
+
+
+def _workflow_triggers() -> dict:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    # YAML 1.1 parses the bare key `on` as boolean True.
+    return workflow.get("on", workflow.get(True))
+
+
+def test_workflow_reruns_on_retarget_and_keeps_existing_types():
+    types = _workflow_triggers()["pull_request_target"]["types"]
+    for expected in ("opened", "reopened", "synchronize", "ready_for_review", "edited"):
+        assert expected in types
+
+
+def test_workflow_env_binds_base_ref_and_develop_principal():
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    env = workflow["jobs"]["principal-target-authorization"]["steps"][0]["env"]
+    assert env["BASE_REF"] == "${{ github.event.pull_request.base.ref }}"
+    assert env["DEVELOP_PRINCIPAL"] == DEVELOP_PRINCIPAL
+
+
+def test_retarget_from_develop_to_main_is_denied_for_same_author(tmp_path):
+    """Predicate level: same author, base develop allowed, then base main denied."""
+    common = {
+        "files": ["traigent/api/decorators.py"],
+        "PR_AUTHOR": DEVELOP_PRINCIPAL,
+        "PR_AUTHOR_TYPE": "User",
+        "TRIGGERING_ACTOR": DEVELOP_PRINCIPAL,
+    }
+    assert _allows(tmp_path, BASE_REF="develop", **common)
+    assert not _allows(tmp_path, BASE_REF="main", **common)
+
+
+@pytest.mark.parametrize("base_ref", ["main", "develop-x", "release/develop", ""])
+def test_develop_principal_denied_on_other_bases(tmp_path, base_ref):
+    """main stays owner-only: the base-ref test is exact, not a prefix match."""
+    assert not _allows(
+        tmp_path,
+        files=["traigent/api/decorators.py"],
+        PR_AUTHOR=DEVELOP_PRINCIPAL,
+        PR_AUTHOR_TYPE="User",
+        TRIGGERING_ACTOR=DEVELOP_PRINCIPAL,
+        BASE_REF=base_ref,
+    )
+
+
+def test_develop_principal_denied_from_a_fork(tmp_path):
+    assert not _allows(
+        tmp_path,
+        files=["traigent/api/decorators.py"],
+        PR_AUTHOR=DEVELOP_PRINCIPAL,
+        PR_AUTHOR_TYPE="User",
+        TRIGGERING_ACTOR=DEVELOP_PRINCIPAL,
+        HEAD_REPO="attacker/Traigent",
+    )
+
+
+def test_develop_principal_login_needs_user_type(tmp_path):
+    assert not _allows(
+        tmp_path,
+        files=["traigent/api/decorators.py"],
+        PR_AUTHOR=DEVELOP_PRINCIPAL,
+        PR_AUTHOR_TYPE="Bot",
+        TRIGGERING_ACTOR=DEVELOP_PRINCIPAL,
     )
 
 

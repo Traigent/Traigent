@@ -3025,7 +3025,7 @@ class BaseEvaluator(ABC):
     ) -> tuple[Any, str | None]:
         """Run one example's agent call, attributing provider attempts to it.
 
-        Attempts made inside belong to this example (SDK-41); if the agent
+        Attempts made inside belong to this example; if the agent
         reports its own total cost (``with_usage``) that report covers them.
         """
         from traigent.utils.langchain_interceptor import example_slot

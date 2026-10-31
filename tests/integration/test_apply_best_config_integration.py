@@ -14,8 +14,17 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
+from traigent.core.objectives import create_default_objectives
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.utils.exceptions import ConfigurationError
+
+
+def _objectives_with_declared_cost_direction():
+    """Custom metric names need a declared direction since SDK 0.28.0."""
+    return create_default_objectives(
+        ["accuracy", "cost_per_1k", "latency"],
+        orientations={"cost_per_1k": "minimize"},
+    )
 
 
 class TestApplyBestConfigIntegration:
@@ -121,7 +130,7 @@ class TestApplyBestConfigIntegration:
                 "temperature": [0.1, 0.3, 0.7],
                 "max_tokens": [100, 150, 200, 300],
             },
-            objectives=["accuracy", "cost_per_1k", "latency"],
+            objectives=_objectives_with_declared_cost_direction(),
             eval_dataset=sample_dataset_file,
             injection_mode="seamless",  # This will pass config as kwargs
         )
@@ -291,7 +300,7 @@ class TestApplyBestConfigIntegration:
             return f"{model}:{text.upper()}"
 
         modes = [
-            {"execution_mode": "edge_analytics", "name": "edge_analytics"},
+            {"execution_mode": "local", "name": "local"},
             {"execution_mode": "hybrid", "name": "hybrid"},
         ]
 
@@ -357,7 +366,7 @@ class TestApplyBestConfigIntegration:
                 "model": ["gpt-3.5-turbo", "gpt-4o-mini", "GPT-4o"],
                 "temperature": [0.1, 0.5, 0.9],
             },
-            objectives=["accuracy", "cost_per_1k", "latency"],
+            objectives=_objectives_with_declared_cost_direction(),
             eval_dataset=sample_dataset_file,
         )
 

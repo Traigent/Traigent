@@ -1,4 +1,4 @@
-"""Customer-side deploy controller for ``deploy: if_promoted`` (TRAIG-101 plan section 8).
+"""Customer-side deploy controller for ``deploy: if_promoted``.
 
 "Deployed" means the agent head was promoted to the candidate configuration.  The flow
 for one deploy occurrence:
@@ -22,7 +22,7 @@ for one deploy occurrence:
    record, so a lost response can never become ``deploy_failed``.
 
 The candidate configuration published here is customer content, stored in Traigent by
-this deploy target (plan 8.4); every other field this module sends is a closed fact.
+this deploy target; every other field this module sends is a closed fact.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ from traigent.runtime.respond import (
 
 LOGGER = logging.getLogger("traigent.runtime")
 
-#: Transport-failure retry bound (plan 8.6): attempts, and the window they must fit in.
+#: Transport-failure retry bound: attempts, and the window they must fit in.
 MAX_PUBLISH_ATTEMPTS = 3
 RETRY_WINDOW = timedelta(minutes=15)
 E_BINDING_MISMATCH = "deploy_binding_mismatch"

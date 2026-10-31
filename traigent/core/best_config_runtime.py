@@ -141,7 +141,7 @@ class BestConfigSourceMode(StrEnum):
     CLOUD = "cloud"
     REPO_THEN_CLOUD = "repo_then_cloud"
     CLOUD_THEN_REPO = "cloud_then_repo"
-    #: The exact version the agent head pins (TRAIG-101 plan 8.5); fail closed.
+    #: The exact version the agent head pins; fail closed.
     AGENT_HEAD = "agent_head"
 
 

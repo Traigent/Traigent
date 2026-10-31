@@ -1,4 +1,4 @@
-"""``apply``: idempotent registration of a requirement (design section 4.2).
+"""``apply``: idempotent registration of a requirement.
 
 * kwargs requirements use the native create route (provenance ``api``) and need
   no TVL compiler; a TVL-fragment requirement is compiled to the hosted subset

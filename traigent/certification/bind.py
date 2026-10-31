@@ -1,6 +1,6 @@
 """Bind a client evidence root to a certificate build session and co-sign it.
 
-Order (one invocation, SPEC v3 1.7): readiness is checked by the caller before
+Order (one invocation): readiness is checked by the caller before
 spend; then issue-session -> link-run -> bind-g1 -> prepare -> finalize. If a
 session expires part-way, rerun :func:`bind_g1`; it starts from issue-session.
 

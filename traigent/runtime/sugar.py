@@ -1,4 +1,4 @@
-"""Sugar kwargs -> :class:`RuntimeRequirement` (design section 4.2, form A)."""
+"""Sugar kwargs -> :class:`RuntimeRequirement`."""
 
 from __future__ import annotations
 

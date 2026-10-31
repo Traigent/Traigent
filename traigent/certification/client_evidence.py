@@ -371,7 +371,7 @@ def reconstruct_and_compare(
     custody: BlindCustody,
     store: SnapshotStore,
 ) -> ClientEvidence:
-    """Local reconstruction required before any delayed bind (SPEC F11).
+    """Local reconstruction required before any delayed bind.
 
     Loads the retained record, recomputes all four slot commitments and the root
     from the persisted documents and blinds, checks the root equals ``root``,

@@ -1,4 +1,4 @@
-"""Typed client for the TVL 1.4 reactive routes (TRAIG-101, P1 slice 2).
+"""Typed client for the TVL 1.4 reactive routes.
 
 The wire contracts are the closed shapes in TraigentSchema
 (``optimization/tvl_reactive_*.json``, ``execution/best_config_deploy_*.json``,
@@ -12,7 +12,7 @@ there).  Two rules shape this module:
   not sent (``local_state_invalid``), never a fallback to the name or a hash.  Nothing
   here accepts a prompt, an output, a question or any free text.  The one exception is
   :meth:`ReactiveClient.publish_deploy`, whose ``spec`` is the candidate configuration:
-  customer content that this deploy target stores in Traigent by design (plan 8.4).
+  customer content that this deploy target stores in Traigent by design.
 * **Responses are parsed strictly.**  An unknown key, a wrong type, a value outside its
   enum or pattern, or a ref that does not belong to the request fails the whole response
   closed.  Errors are the closed ``Refusal`` envelope; anything else is

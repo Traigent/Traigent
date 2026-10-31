@@ -1,4 +1,4 @@
-"""A local cache of one hosted reservation (TRAIG-101 P1).
+"""A local cache of one hosted reservation.
 
 The Backend is the authority for who may start an effect and who still holds the
 lease (a reservation is the lease; one start per occurrence).  This cache only lets a
