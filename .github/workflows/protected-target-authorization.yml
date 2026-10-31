@@ -28,7 +28,9 @@ name: Protected Target Authorization
 on:
   pull_request_target:
     branches: [develop, main]
-    types: [opened, reopened, synchronize, ready_for_review]
+    # `edited` is required: a base-branch change (retargeting develop -> main)
+    # must re-run this check, because the develop lane depends on the base.
+    types: [opened, reopened, synchronize, ready_for_review, edited]
   merge_group: {}
 
 permissions:
