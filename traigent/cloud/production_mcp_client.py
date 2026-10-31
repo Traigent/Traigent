@@ -545,9 +545,7 @@ class ProductionMCPClient:
 
                 if self.enable_fallback:
                     # Attempt fallback operation
-                    fallback_response = await self._fallback_operation(
-                        tool_name, arguments
-                    )
+                    fallback_response = self._fallback_operation(tool_name, arguments)
                     fallback_response.request_id = operation_id
                     if (
                         not fallback_response.success
@@ -1012,7 +1010,7 @@ class ProductionMCPClient:
 
     # Fallback Operations
 
-    async def _fallback_operation(
+    def _fallback_operation(
         self, tool_name: str, arguments: dict[str, Any]
     ) -> MCPResponse:
         """Fallback operation when MCP server unavailable.
