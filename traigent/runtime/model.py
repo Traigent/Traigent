@@ -1,4 +1,4 @@
-"""Closed data model for runtime requirements and reactive policies (PY-1).
+"""Closed data model for runtime requirements and reactive policies.
 
 A :class:`RuntimeRequirement` is one latency requirement plus a ladder of
 response rules.  Sugar kwargs and TVL fragments both build this object, and
@@ -21,7 +21,7 @@ import yaml
 
 KIND_LATENCY = "latency_violation_rate"
 TVL_VERSION = "1.3"
-#: Declared by any document that uses a TVL 1.4 reactive construct (RFC 0004 section 2.1).
+#: Declared by any document that uses a TVL 1.4 reactive construct.
 TVL_VERSION_REACTIVE = "1.4"
 DEFAULT_ENVIRONMENT = "production"
 
@@ -66,7 +66,7 @@ _INT_RANGES: Mapping[str, tuple[int, int]] = {
 ENVIRONMENT_MAX_LENGTH = 64
 
 EVENTS = ("episode_opened", "episode_resolved", "episode_withdrawn")
-#: TVL 1.4 additions (RFC 0004): a prolonged undecided verdict on the rule's monitor...
+#: TVL 1.4 additions: a prolonged undecided verdict on the rule's monitor...
 UNKNOWN_FOR = "unknown_for"
 #: ...and the repair outcomes an ``optimize`` rule of the same response can record.
 OUTCOME_EVENTS = (
@@ -173,7 +173,7 @@ class Receipt:
 
 @dataclass(frozen=True)
 class NotifyGuard:
-    """A condition on a ``notify`` rule (RFC 0004 section 2.4).
+    """A condition on a ``notify`` rule.
 
     ``kind`` is ``"monitor"`` (state ``episode_open``) or ``"rule"`` (state
     ``attempt_open``); ``ref`` is a monitor name or an ``optimize`` rule id.
@@ -190,10 +190,10 @@ class NotifyGuard:
 class ResponseRule:
     """One rung of the response ladder (``log``/``alert``/``fix`` compile to these).
 
-    ``trigger_rule`` makes the trigger an outcome trigger ``{rule, event}``
-    (RFC 0004 section 2.2); ``hours`` belongs to ``unknown_for``; ``only_while`` /
+    ``trigger_rule`` makes the trigger an outcome trigger ``{rule, event}``.
+    ``hours`` belongs to ``unknown_for``; ``only_while`` /
     ``unless`` are the notification guards; ``deploy`` is the ``optimize`` deploy
-    mode (RFC 0003 section 7.6).
+    mode.
     """
 
     id: str
@@ -244,7 +244,7 @@ class ResponseRule:
 
 @dataclass(frozen=True)
 class PromotionMonitor:
-    """The promotion-phase monitor a ``deploy: if_promoted`` rule needs (RFC 0003 section 6.11).
+    """The promotion-phase monitor a ``deploy: if_promoted`` rule needs.
 
     It judges a candidate once, on the evaluation set; nothing about it runs
     against production traffic.
@@ -594,7 +594,7 @@ class RuntimeRequirement:
         ):
             bad(f"{where}.deploy")
         if rule.deploy == "if_promoted" and self.promotion is None:
-            bad(f"{where}.deploy")  # needs a promotion monitor (RFC 0003 7.6)
+            bad(f"{where}.deploy")  # needs a promotion monitor
         if rule.is_reactive() and rule.action != "notify":
             issues.append(Issue(E_NOTIFY_ONLY, f"{where}.do", "error"))
 
@@ -663,7 +663,7 @@ def _validate_guards(
 
 
 def build_rules(on_breach: str, approval: str = "human") -> tuple[ResponseRule, ...]:
-    """Map the owner's mechanisms onto response rules (design section 3)."""
+    """Map the owner's mechanisms onto response rules."""
     if on_breach == "log":
         return (
             ResponseRule("log_opened", "episode_opened", "notify", "info"),

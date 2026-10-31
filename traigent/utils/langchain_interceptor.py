@@ -63,7 +63,7 @@ class _CaptureBucket:
     observed: dict[tuple[str, str, str | None, str | None], int] = field(
         default_factory=dict
     )
-    #: Provider-call attempt ledger (SDK-41). It lives ONLY on the ROOT
+    #: Provider-call attempt ledger. It lives ONLY on the ROOT
     #: (outermost) bucket and is guarded by the root's lock: nested scopes
     #: share their root's ledger, so there is nothing to merge or forward and
     #: ids are unique across nested and ended scopes. See
@@ -312,7 +312,7 @@ class capture_scope:
     Usable as ``with`` or ``async with``.  Nesting is safe: the innermost scope
     wins and the outer one is restored on exit.
 
-    The provider-call attempt ledger (SDK-41) belongs to the nearest enclosing
+    The provider-call attempt ledger belongs to the nearest enclosing
     *ledger owner*. A scope with ``ledger_owner=True`` (the trial scope) starts
     a fresh ledger with its own lock, so trials started inside another scope
     never see each other's attempts; a plain nested scope (the evaluator's)

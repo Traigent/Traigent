@@ -1388,7 +1388,7 @@ class OptimizationOrchestrator:
         # before the run loop gives up. Cumulative per category so the run always
         # terminates. Opt-in via TRAIGENT_VENDOR_MAX_RETRIES (default 0 = off).
         self._vendor_retry_counts: dict[VendorErrorCategory, int] = {}
-        # SDK-41: attempt ledgers of trials that ended in a vendor pause (no
+        # attempt ledgers of trials that ended in a vendor pause (no
         # TrialResult exists for them), kept so run totals include them.
         self._abandoned_vendor_attempts: list[dict[str, Any]] = []
         self._provider_call_attempts = 0
@@ -3632,7 +3632,7 @@ class OptimizationOrchestrator:
         # intentionally NOT clamped — that clamp was removed with the F1 fix.)
         self._apply_execution_budget()
 
-        # SDK-41: validate the vendor-retry env at run start so a typo fails
+        # validate the vendor-retry env at run start so a typo fails
         # here with a clear message instead of silently disabling retries.
         self._vendor_retry_settings()
         self._abandoned_vendor_attempts = []
@@ -4564,7 +4564,7 @@ class OptimizationOrchestrator:
         Returns ``(max_retries, base_backoff_seconds)``. Defaults to ``0``
         (opt-in) so the documented graceful fail-stop contract is unchanged
         unless the operator sets ``TRAIGENT_VENDOR_MAX_RETRIES``. A malformed
-        value raises ``ConfigurationError`` (SDK-41; validated at run start).
+        value raises ``ConfigurationError`` (validated at run start).
         """
 
         from traigent.utils.vendor_retry import resolve_vendor_retry_settings
@@ -6697,7 +6697,7 @@ class OptimizationOrchestrator:
             )
 
     def _vendor_attempt_totals(self) -> dict[str, Any]:
-        """Run-level provider-call attempt totals (SDK-41); empty when none."""
+        """Run-level provider-call attempt totals; empty when none."""
         attempts = retries = unknown = incomplete = 0
         truncated = False
         records: list[dict[str, Any]] = []

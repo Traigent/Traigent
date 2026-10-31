@@ -337,7 +337,7 @@ def _session_request(
         optimization_strategy=(
             dict(optimization_strategy) if optimization_strategy else None
         ),
-        user_id=None,  # Privacy preserving
+        user_id=None,  # user identity is not sent
         billing_tier="privacy",
         metadata=metadata or {},
         artifact_fingerprints=artifact_fingerprints,
@@ -956,7 +956,7 @@ class SessionOperations:
 
     @staticmethod
     def _raise_if_closed_refusal(exc: Exception) -> None:
-        """Stop the run on a closed backend refusal (SDK-52).
+        """Stop the run on a closed backend refusal.
 
         The backend was reachable and refused with a closed code, so this is not
         a connectivity failure and must not create a LOCAL fallback session.

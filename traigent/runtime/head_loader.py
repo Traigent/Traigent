@@ -1,4 +1,4 @@
-"""Head-resolving config loader: the EXACT version the agent head pins (TRAIG-101 plan 8.5).
+"""Head-resolving config loader: the EXACT version the agent head pins.
 
 Two other reads exist and are wrong for this purpose: the config GET returns the
 *current* version of a best config, and the listing omits specs.  The head can pin an

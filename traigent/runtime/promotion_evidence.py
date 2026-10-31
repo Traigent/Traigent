@@ -1,4 +1,4 @@
-"""Promotion-gate evidence for ``deploy: if_promoted`` (TRAIG-101 plan section 8).
+"""Promotion-gate evidence for ``deploy: if_promoted``.
 
 A candidate of an optimize run is reported to the Backend as a CLOSED fact:
 
@@ -9,7 +9,7 @@ A candidate of an optimize run is reported to the Backend as a CLOSED fact:
   ``NoDecision``), e.g. the SDK ``PromotionGate`` result.
 * ``monitor_verdicts``: one verdict per promotion-phase monitor of the requirement,
   from the TVL reference ``evaluate_promotion_monitor`` over the candidate's
-  evaluation-set counts (RFC 0003 6.11).  A monitor with no counts is
+  evaluation-set counts.  A monitor with no counts is
   ``UNKNOWN(insufficient)``: absence never promotes.
 * ``gate_result_digest``: sha256 over the gate result under the CURRENT contract digest
   (format, contract digest, fingerprint, legacy decision, verdicts keyed by the

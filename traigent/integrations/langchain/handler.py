@@ -330,7 +330,7 @@ class TraigentHandlerMetrics:
     total_cost: float = 0.0
     #: True when some LLM call's cost is unmeasured: ``total_cost`` is then only
     #: the priced part; ``to_measures_dict`` reports it as ``cost_lower_bound``
-    #: instead of ``total_cost`` (Traigent#2517, SDK-40).
+    #: instead of ``total_cost`` (Traigent#2517).
     cost_unmeasured: bool = False
     total_latency_ms: float = 0.0
     total_input_tokens: int = 0
@@ -363,8 +363,8 @@ class TraigentHandlerMetrics:
         }
         if self.cost_unmeasured:
             # Some call's spend is unknown: no total is claimed (#2517). The
-            # priced part is sent as an explicit floor, as the JS handler does
-            # (SDK-40); it is a lower bound, never a $0 total.
+            # priced part is sent as an explicit floor, as the JS handler does;
+            # it is a lower bound, never a $0 total.
             measures[f"{prefix}cost_unmeasured"] = 1.0
             measures[f"{prefix}cost_lower_bound"] = self.total_cost
         else:

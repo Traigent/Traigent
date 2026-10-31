@@ -228,8 +228,7 @@ if LITELLM_AVAILABLE:
 # non-claude-3 Anthropic ids) litellm's *exact* tokenizer lives on
 # huggingface.co and litellm.token_counter()/litellm.encode() fetch it lazily
 # on first use per model — 8 blocked-network attempts and ~24s added latency
-# were observed pricing a Llama model with the host unreachable (owner ruling
-# 2026-09-25; evidence: PR #2433, branch feat/egress-and-behaviour-audit,
+# were observed pricing a Llama model with the host unreachable (evidence: PR #2433, branch feat/egress-and-behaviour-audit,
 # docs/security/network-and-behaviour-manifest.md -- not yet merged to
 # develop as of this change). Setting
 # litellm's own ``disable_hf_tokenizer_download`` flag makes

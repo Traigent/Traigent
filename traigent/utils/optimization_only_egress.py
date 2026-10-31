@@ -1,8 +1,7 @@
 """SDK-side egress projector for ``optimization_only`` workspaces.
 
 A faithful, dependency-free port of the backend's closed metadata contract
-(TraigentBackend ``src/services/optimization_only_metadata_contract.py``,
-``METADATA_CONTRACT_VERSION = 1``, pinned at backend commit ``2d5cceda5``). For an
+(``METADATA_CONTRACT_VERSION = 1``). For an
 ``optimization_only`` tenant the server REBUILDS optimization-loop metadata from a closed
 per-phase schema and refuses trace / dataset / hosted-LLM operations. This module lets the
 SDK apply the same projection locally, at the last moment before a payload is handed to a
@@ -470,7 +469,7 @@ def s_config(value: Any, ctx: _Ctx, depth: int) -> Any:
 
 
 # ---------------------------------------------------------------------------------------
-# Nested schemas matching what the Python SDK sends (design sections 2 and 3).
+# Nested schemas matching what the Python SDK sends.
 # ---------------------------------------------------------------------------------------
 
 _COMPARABILITY = s_obj(
@@ -1309,7 +1308,7 @@ def _project_code_revision(out: dict[str, Any]) -> None:
 
 
 def _project_search_fields(out: dict[str, Any], keys: Iterable[str], ctx: _Ctx) -> None:
-    """Refuse free text in the search space / default config (owner ruling 2026-10-28).
+    """Refuse free text in the search space / default config.
 
     Each present field must be a closed tree; ``warm_start_from`` must be an identifier.
     Raises the closed :class:`MetadataContractViolation` without echoing key or value. The
@@ -2720,7 +2719,7 @@ def assert_closed_ids(
 
 
 # ---- Director request allowlists (port of backend src/services/director/validation.py) ----
-# Pinned at backend 2d5cceda5. ``None`` marks a leaf, a dict an object, a one-element list an
+# ``None`` marks a leaf, a dict an object, a one-element list an
 # array of objects. The backend REJECTS (400) any key not listed, at every depth; it never
 # drops one. The SDK therefore refuses locally. ``RESULT_ALLOWLIST`` is the closed-bridge
 # ``report.result`` shape (src/services/director/closed_bridge.py).

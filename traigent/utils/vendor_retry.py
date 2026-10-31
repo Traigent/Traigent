@@ -1,4 +1,4 @@
-"""Per-call vendor retry for transient provider outages (SDK-41).
+"""Per-call vendor retry for transient provider outages.
 
 Mirrors traigent-js ``src/integrations/vendor-retry.ts``: the retry budget is
 scoped to ONE provider call (never a whole trial), only rate-limit (429) and

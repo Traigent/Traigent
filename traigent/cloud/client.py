@@ -2818,7 +2818,7 @@ class SessionQuotaRefusedError(CloudServiceError):
 
 
 class SessionBackendRefusedError(CloudServiceError):
-    """Session create was refused by the backend with a closed refusal code (SDK-52).
+    """Session create was refused by the backend with a closed refusal code.
 
     A definitive answer from a reachable backend: NEVER a connectivity failure
     and NEVER absorbed into the local-fallback path. The message carries only

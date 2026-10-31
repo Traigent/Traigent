@@ -995,7 +995,7 @@ class TrialLifecycle:
 
     @staticmethod
     def _apply_vendor_attempts(result: TrialResult, capture_bucket: Any) -> None:
-        """Record per-trial provider-call attempts (SDK-41); no-op when none.
+        """Record per-trial provider-call attempts; no-op when none.
 
         Any attempt without reported usage (a retried failure, a stream closed
         early or failed mid-way, an incomplete attempt) has no cost telemetry, so the
