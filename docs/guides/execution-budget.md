@@ -100,13 +100,12 @@ shared cost is spent.
 await answer.optimize(cost_limit=2.0, budget=traigent.ExecutionBudget(max_cost_usd=0.50))
 ```
 
-## Explicit allowances for unpriced calls (local candidate API)
+## Explicit allowances for unpriced calls
 
 When provider cost is unknown, a caller may explicitly allocate a conservative
 allowance to each call. This bounds **allocation debits**, not the provider's
-actual USD charge. Unknown actual cost stays unknown. This API is a local source
-candidate; published SDK 0.31.1 does not contain it. Using it requires a later,
-separately authorized SDK release or an explicitly identified local build.
+actual USD charge. Unknown actual cost stays unknown. This API is available from
+SDK 0.32.0; SDK 0.31.1 and earlier do not contain it.
 
 ```python
 budget = traigent.ExecutionBudget(max_budget_debit_usd=0.21)

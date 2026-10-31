@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-31
+
 ### Added
 
 - **Agent decision tools on the analytics MCP server.** `agent_decision_ensure`, `agent_decision_latest` and `agent_decision_answer` let a coding agent ask whether Traigent has a question about an agent, show the fixed question and options to the human in the host's own question UI, and post exactly the human's choice. Inputs are ids and closed enums only; backend errors map to the contract's closed reasons. A YES means prepare the baseline evaluation; it never authorises spend.
