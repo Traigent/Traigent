@@ -2,15 +2,15 @@
 
 These tests pin what the SDK does TODAY with no network: valid, expired,
 missing-expiry, grace-window and bad-signature licences, and a missing
-file. They change no behaviour. The clock is frozen by replacing the
+file. The clock is frozen by replacing the
 ``time`` name inside ``traigent.core.license``; there are no sleeps and no
 network calls (``offline_mode=True``).
 
 Current behaviour pinned here (not a statement of the desired policy):
 - The SDK default grace period is 86400 s (24 h).
   ``test_default_grace_period_is_current_24h_value`` pins that default.
-- A signed licence with no ``exp`` claim is accepted and never expires
-  (``test_missing_expiry_is_accepted_and_never_expires``).
+- A licence with a missing or non-numeric ``exp`` is refused
+  (``test_missing_expiry_is_refused``).
 """
 
 from __future__ import annotations
@@ -132,19 +132,29 @@ class TestOfflineLicenceStates:
         assert after_exp.validate_sync().tier == LicenseTier.FREE
         assert after_exp.has_feature_sync(LicenseFeature.PARALLEL_EXECUTION) is False
 
-    def test_missing_expiry_is_accepted_and_never_expires(
-        self, clock, keypair, make_validator
-    ):
-        """CURRENT behaviour (a licence with no expiry never lapses): a
-        signed licence without ``exp`` is valid forever."""
+    def test_missing_expiry_is_refused(self, clock, keypair, make_validator, caplog):
+        """A signed licence without ``exp`` fails closed to the free tier."""
         key, _ = keypair
         v = make_validator(_token(key))
-        info = v.validate_sync()
-        assert info.tier == LicenseTier.PRO
-        assert info.expires_at is None
-        clock.advance(10 * 365 * 86400)
-        assert info.is_valid is True
-        assert info.has_feature(LicenseFeature.PARALLEL_EXECUTION) is True
+        with caplog.at_level("WARNING"):
+            info = v.validate_sync()
+        assert info.tier == LicenseTier.FREE
+        assert info.validation_source == "none"
+        assert v.has_feature_sync(LicenseFeature.PARALLEL_EXECUTION) is False
+        assert "missing or invalid expiry" in caplog.text
+        assert "Acme" not in caplog.text
+
+    @pytest.mark.parametrize(
+        "bad_exp",
+        ["4102444800", None, True, [1], {"a": 1}, float("inf"), float("nan")],
+    )
+    def test_non_numeric_expiry_is_refused(
+        self, clock, keypair, make_validator, bad_exp
+    ):
+        key, _ = keypair
+        v = make_validator(_token(key, exp=bad_exp))
+        assert v.validate_sync().tier == LicenseTier.FREE
+        assert v.has_feature_sync(LicenseFeature.PARALLEL_EXECUTION) is False
 
     def test_bad_signature_is_rejected(self, clock, make_validator):
         other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
