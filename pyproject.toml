@@ -38,7 +38,7 @@ dependencies = [
     "rich>=12.0.0",
     "aiohttp>=3.14.4,<4.0",  # GHSA-2g87-pp6c-29x5, CVE-2026-111063/111064 fixed in 3.14.4
     "yarl>=1.24.5,<2",  # AIKIDO-2026-181733 — URL host parsing/normalisation; transitive via aiohttp, which does not floor it
-    "multidict>=6.9.1,<7",  # patched multidict; transitive via aiohttp/yarl, which do not floor it
+    "multidict>=6.9.1,<8",  # patched multidict; transitive via aiohttp/yarl, which do not floor it
     "anyio>=4.14.2",  # AIKIDO-2026-889297 / anyio#1208 IDNA2008 TLS hostname cert-matching (fixed 4.14.2; transitive via httpx/anthropic/mcp)
     "requests>=2.33.0",  # Required by Langfuse integration sync fallback; CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7 fix
     "jsonschema>=4.0.0",
@@ -72,7 +72,7 @@ analytics = [
 # Needed only for TVL-fragment requirements (`@traigent.requirement(tvl=...)`);
 # the kwargs path and `import traigent` work without it. Pinned to the tvl-spec 1.4.0 release on PyPI.
 runtime-tvl = [
-    "tvl-spec==1.4.0",
+    "tvl-spec==1.5.0",
 ]
 
 # Bayesian optimization (Sprint 4)
@@ -198,28 +198,28 @@ observability-openai = [
     "opentelemetry-sdk>=1.45.1,<2.0.0",
     "opentelemetry-exporter-otlp-proto-common>=1.45.1,<2.0.0",
     "opentelemetry-proto>=1.45.1,<2.0.0",
-    "openinference-instrumentation-openai==0.1.61",
+    "openinference-instrumentation-openai==0.1.66",
 ]
 observability-anthropic = [
     "opentelemetry-api>=1.45.1,<2.0.0",
     "opentelemetry-sdk>=1.45.1,<2.0.0",
     "opentelemetry-exporter-otlp-proto-common>=1.45.1,<2.0.0",
     "opentelemetry-proto>=1.45.1,<2.0.0",
-    "openinference-instrumentation-anthropic==2.1.7",
+    "openinference-instrumentation-anthropic==3.1.0",
 ]
 observability-langchain = [
     "opentelemetry-api>=1.45.1,<2.0.0",
     "opentelemetry-sdk>=1.45.1,<2.0.0",
     "opentelemetry-exporter-otlp-proto-common>=1.45.1,<2.0.0",
     "opentelemetry-proto>=1.45.1,<2.0.0",
-    "openinference-instrumentation-langchain==0.1.76",
+    "openinference-instrumentation-langchain==0.1.80",
 ]
 observability-bedrock = [
     "opentelemetry-api>=1.45.1,<2.0.0",
     "opentelemetry-sdk>=1.45.1,<2.0.0",
     "opentelemetry-exporter-otlp-proto-common>=1.45.1,<2.0.0",
     "opentelemetry-proto>=1.45.1,<2.0.0",
-    "openinference-instrumentation-bedrock==0.1.54",
+    "openinference-instrumentation-bedrock==0.1.61",
 ]
 
 # Development dependencies
@@ -230,14 +230,14 @@ dev = [
     "pytest-mock>=3.10.0",
     "pytest-xdist>=3.0.0",  # Required by addopts: -n auto --dist loadgroup
     "black>=26.10.1",  # CVE-2026-32274 fix; GHSA/Dependabot 2026-10-23 security floor
-    "isort==9.0.1",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
+    "isort==9.0.2",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
     "flake8>=5.0.0",
-    "mypy==2.3.1",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
+    "mypy==2.4.1",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
     "types-PyYAML>=6.0.0",
     "types-requests>=2.31.0",
     "types-bleach>=6.0.0",
     "pre-commit>=3.0.0",
-    "ruff==0.16.9",  # Exact pin (issue #1550): CI preflight installs this exact
+    "ruff==0.17.3",  # Exact pin (issue #1550): CI preflight installs this exact
     # version so an unrelated ruff release can't retroactively fail PRs on
     # pre-existing lint debt. Bump deliberately, in the same PR as any fix-up.
     "bandit>=1.7.0",
