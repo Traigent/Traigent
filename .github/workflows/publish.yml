@@ -70,7 +70,7 @@ jobs:
         bash scripts/ci/assert_sha_on_main.sh "$GIT_SHA" $TAG_ARG
 
     - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: "3.12"
 
@@ -202,7 +202,7 @@ jobs:
     # Publish to Test PyPI (manual dispatch only)
     - name: Publish to Test PyPI
       if: github.event_name == 'workflow_dispatch' && inputs.environment == 'testpypi'
-      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+      uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
       with:
         repository-url: https://test.pypi.org/legacy/
         verbose: true
@@ -210,7 +210,7 @@ jobs:
     # Publish to production PyPI (automatic on tag push, or manual dispatch)
     - name: Publish to PyPI
       if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'pypi')
-      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+      uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
       with:
         verbose: true
 
@@ -259,7 +259,7 @@ jobs:
       run: sleep 300
 
     - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: "3.12"
 
