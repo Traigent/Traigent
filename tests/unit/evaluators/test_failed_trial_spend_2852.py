@@ -78,3 +78,36 @@ def test_scorer_error_is_a_failed_trial_with_its_spend(rows: int) -> None:
     )
     assert trial.metrics["cost"] == pytest.approx(rows * one_call)
     assert not trial.metrics.get("cost_unmeasured")
+
+
+def _judge(output, expected, *args, **kwargs):
+    # A real LLM-as-judge shape: the call is made (and paid for), then the
+    # reply cannot be parsed and the scorer raises.
+    litellm.completion(
+        model=MODEL,
+        messages=[{"role": "user", "content": "judge"}],
+        mock_response="not json",
+    )
+    raise ValueError("judge reply is not JSON")
+
+
+def test_judge_that_calls_an_llm_then_raises_is_a_failed_trial_with_judge_spend() -> (
+    None
+):
+    # Must not escape as "Cost extraction failed ... An unpriced call is not
+    # recorded as $0": the judge call is priced and folded into the row.
+    result = _run(1, _judge)
+
+    trial = result.trials[0]
+    assert str(getattr(trial.status, "value", trial.status)) == "failed"
+    assert "judge reply is not JSON" in (trial.error_message or "")
+    one_call = litellm.completion_cost(
+        completion_response=litellm.completion(
+            model=MODEL,
+            messages=[{"role": "user", "content": "q"}],
+            mock_response="paris",
+        )
+    )
+    # Agent call + judge call, both measured.
+    assert trial.metrics["cost"] > one_call
+    assert not trial.metrics.get("cost_unmeasured")

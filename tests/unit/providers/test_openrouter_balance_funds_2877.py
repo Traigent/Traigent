@@ -172,3 +172,39 @@ def test_non_finite_key_headroom_is_unknown_not_available(monkeypatch):
         _resp({"data": {"total_credits": 10, "total_usage": 1}}),
     )
     assert status.funds == "unknown"
+
+
+def test_inflight_credit_wording_is_insufficient_funds():
+    from traigent.providers.validation import _is_insufficient_funds_error
+
+    assert _is_insufficient_funds_error(
+        Exception("would exceed your available credits given your in-flight requests")
+    )
+
+
+def _zero_balance_get(url, **kwargs):
+    if url == _KEY:
+        return _resp({"data": {"limit": None, "limit_remaining": None, "usage": 0}})
+    return _resp({"data": {"total_credits": 0, "total_usage": 0}})
+
+
+def test_zero_balance_does_not_block_free_model_preflight(monkeypatch):
+    from traigent.providers.validation import preflight_run_providers
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", _FAKE_SECRET)
+    with patch("requests.get", side_effect=_zero_balance_get):
+        preflight_run_providers(["openrouter/z-ai/glm-5.2:free"])
+
+
+def test_zero_balance_still_blocks_paid_model_preflight(monkeypatch):
+    from traigent.providers.validation import preflight_run_providers
+    from traigent.utils.exceptions import ProviderValidationError
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", _FAKE_SECRET)
+    with patch("requests.get", side_effect=_zero_balance_get):
+        with pytest.raises(ProviderValidationError):
+            preflight_run_providers(["openrouter/openai/gpt-4o-mini"])
+        with pytest.raises(ProviderValidationError):
+            preflight_run_providers(
+                ["openrouter/z-ai/glm-5.2:free", "openrouter/openai/gpt-4o-mini"]
+            )

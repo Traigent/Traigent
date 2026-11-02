@@ -317,6 +317,7 @@ _INSUFFICIENT_FUNDS_KEYWORDS = (
     "code: 402",
     "error 402",
     "402 payment",
+    "exceed your available credits",
 )
 
 
@@ -494,6 +495,10 @@ class ProviderStatus:
     error_type: str | None = None
     skipped: bool = False
     funds: str = _FUNDS_NOT_CHECKED
+    #: True when ``funds`` is depleted because of the account balance alone
+    #: (the key's own limit still has room). Zero-priced ``:free`` models do
+    #: not draw on that balance, so preflight does not block them on it.
+    balance_depleted: bool = False
 
 
 @dataclass
@@ -735,8 +740,10 @@ class ProviderValidator:
         if 200 <= code < 300:
             funds = _openrouter_funds(response)
             message = "Available"
+            balance_depleted = False
             if funds != _FUNDS_DEPLETED:
                 funds, message = self._openrouter_balance(key, response)
+                balance_depleted = funds == _FUNDS_DEPLETED
             if funds == _FUNDS_DEPLETED:
                 return ProviderStatus(
                     provider="openrouter",
@@ -744,6 +751,7 @@ class ProviderValidator:
                     message=_MSG_INSUFFICIENT_FUNDS.format(provider="OpenRouter"),
                     error_type="InsufficientFunds",
                     funds=_FUNDS_DEPLETED,
+                    balance_depleted=balance_depleted,
                 )
             self._cache_success("openrouter", key)
             return ProviderStatus(
@@ -1447,6 +1455,12 @@ _NON_BLOCKING_ERROR_TYPES = frozenset(
 )
 
 
+def _only_free_openrouter_models(models: Sequence[str]) -> bool:
+    """True when every OpenRouter model in ``models`` is a ``:free`` id."""
+    ids = [m for m in models if get_run_provider_for_model(m) == "openrouter"]
+    return bool(ids) and all(m.endswith(":free") for m in ids)
+
+
 def preflight_run_providers(
     models: Sequence[str],
     *,
@@ -1471,12 +1485,17 @@ def preflight_run_providers(
         models,
         timeout=get_validation_timeout() if timeout is None else timeout,
     )
+    only_free = _only_free_openrouter_models(models)
     failed = [
         (provider, status.error_type or "Unknown")
         for provider, status in results.items()
         if not status.valid
         and not status.skipped
         and (status.error_type or "Unknown") not in _NON_BLOCKING_ERROR_TYPES
+        # A zero account balance does not block a run that only uses ``:free``
+        # models (#2877 regression: it was non-blocking before the balance
+        # check). A depleted key limit still blocks.
+        and not (provider == "openrouter" and status.balance_depleted and only_free)
     ]
     for provider, status in results.items():
         if status.skipped:

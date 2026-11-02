@@ -2587,15 +2587,26 @@ class LocalEvaluator(BaseEvaluator):
         metric_errors: list[dict[str, Any]] | None,
         captures: _CaptureOwnership | None,
     ) -> None:
-        produced_metric_keys = await self._apply_custom_metric_functions(
-            example_metric,
-            output,
-            example_obj,
-            config,
-            index,
-            metric_errors=metric_errors,
-            captures=captures,
-        )
+        detailed_row = _result_row(example_results, index) if self.detailed else None
+        try:
+            produced_metric_keys = await self._apply_custom_metric_functions(
+                example_metric,
+                output,
+                example_obj,
+                config,
+                index,
+                metric_errors=metric_errors,
+                captures=captures,
+            )
+        except EvaluationError:
+            # A judge that called an LLM and then raised still spent money:
+            # fold that spend into the row before the failure propagates, so
+            # the failed trial reports it instead of leaving the call
+            # unattributed (#2852).
+            self._fold_metric_function_llm_cost(
+                example_metric, example_result=detailed_row, captures=captures
+            )
+            raise
 
         # Fold LLM spend made *inside* a metric function / judge (e.g. an
         # LLM-as-judge calling litellm.completion) into this example's
@@ -2606,7 +2617,6 @@ class LocalEvaluator(BaseEvaluator):
         # (Traigent#2297). Left uncorrected, `total_cost` and the
         # permit-based cost enforcement in `core/cost_enforcement.py`
         # never see judge spend.
-        detailed_row = _result_row(example_results, index) if self.detailed else None
         self._fold_metric_function_llm_cost(
             example_metric, example_result=detailed_row, captures=captures
         )
