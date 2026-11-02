@@ -16,6 +16,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Offline licence files now fail closed when the token has no expiry. A signed (or legacy unsigned) offline licence whose `exp` claim is missing or not a finite number is refused and the SDK runs at the free tier, the same as an expired licence. Reissue such licences with an `exp` claim. The grace period default (86400 s) is unchanged.
 
+### Fixed
+
+- `custom_evaluator` now surfaces non-objective `ExampleResult.metrics` keys in `trial.metrics`, matching the tuple and `metric_functions` lanes; objectives and SDK-computed names are never overwritten (#2873).
+
 ## [0.32.0] - 2026-10-31
 
 ### Breaking changes
