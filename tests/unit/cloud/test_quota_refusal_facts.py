@@ -182,3 +182,25 @@ class TestUntrackedBanner:
             result, SessionCreationFailureClassification.QUOTA_EXCEEDED
         )
         assert "Wait until 2026-12-01 00:00 UTC" in remedy
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        {"resource_type": []},
+        {"resource_type": {}},
+        {"resource_type": ["api_calls"], "limit": 5},
+        {"reset_at": "0001-01-01T00:00:00+05:00"},
+        {"reset_at": "9999-12-31T23:59:59-05:00"},
+    ],
+)
+def test_hostile_quota_body_never_crashes_fact_parsing(hostile):
+    from traigent.core.session_types import QuotaRefusalFacts
+
+    QuotaRefusalFacts.from_payload(hostile)  # must not raise
+
+
+def test_huge_number_is_rendered_bounded():
+    from traigent.core.session_types import _fmt_quota_number
+
+    assert len(_fmt_quota_number(1e300)) < 20

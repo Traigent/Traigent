@@ -59,10 +59,15 @@ def _quota_datetime(value: Any) -> datetime | None:
         parsed = datetime.fromisoformat(value.strip())
     except ValueError:
         return None
-    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    try:
+        return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    except OverflowError:  # silent-ok: out-of-range date is no usable reset time
+        return None
 
 
 def _fmt_quota_number(value: float) -> str:
+    if abs(value) >= 1e15:  # bound the rendered length of a hostile figure
+        return f"{value:.3g}"
     return str(int(value)) if float(value).is_integer() else f"{value:.2f}"
 
 
@@ -86,7 +91,11 @@ class QuotaRefusalFacts:
             return None
         resource = payload.get("resource_type")
         facts = cls(
-            resource_type=resource if resource in QUOTA_RESOURCE_TYPES else None,
+            resource_type=(
+                resource
+                if isinstance(resource, str) and resource in QUOTA_RESOURCE_TYPES
+                else None
+            ),
             limit=_quota_number(payload.get("limit")),
             current_usage=_quota_number(payload.get("current_usage")),
             requested_units=_quota_number(payload.get("requested_units")),
