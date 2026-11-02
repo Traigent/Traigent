@@ -101,13 +101,20 @@ def test_judge_that_calls_an_llm_then_raises_is_a_failed_trial_with_judge_spend(
     trial = result.trials[0]
     assert str(getattr(trial.status, "value", trial.status)) == "failed"
     assert "judge reply is not JSON" in (trial.error_message or "")
-    one_call = litellm.completion_cost(
+    agent_call = litellm.completion_cost(
         completion_response=litellm.completion(
             model=MODEL,
-            messages=[{"role": "user", "content": "q"}],
+            messages=[{"role": "user", "content": "q0"}],
             mock_response="paris",
         )
     )
-    # Agent call + judge call, both measured.
-    assert trial.metrics["cost"] > one_call
+    judge_call = litellm.completion_cost(
+        completion_response=litellm.completion(
+            model=MODEL,
+            messages=[{"role": "user", "content": "judge"}],
+            mock_response="not json",
+        )
+    )
+    # Agent call + judge call, each charged exactly once.
+    assert trial.metrics["cost"] == pytest.approx(agent_call + judge_call)
     assert not trial.metrics.get("cost_unmeasured")
