@@ -134,35 +134,64 @@ class TestOutputCapKeys2815:
 class TestSuffixKeysDoNotBreakPreflights:
     """A user ``*_model`` knob may hold a non-LLM model (embedding, reranker)."""
 
-    def test_estimate_still_reads_the_suffix_key(self) -> None:
+    def test_estimate_leaves_out_unpriced_suffix_values(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         space = {"model": ["gpt-4o-mini"], "embedding_model": ["all-MiniLM-L6-v2"]}
-        assert "all-MiniLM-L6-v2" in _extract_models(space)
+        with caplog.at_level("INFO"):
+            assert _extract_models(space) == ("gpt-4o-mini",)
+        assert "embedding_model" in caplog.text
+
+    def test_unpriced_expert_model_stays_so_conservative_fallback_fires(self) -> None:
+        space = {"model": ["gpt-4o-mini"], "expert_model": ["acme-paid-expert-1"]}
+        assert "acme-paid-expert-1" in _extract_models(space)
+        fallback = CostEstimator(
+            MagicMock(is_mock_mode=False),
+            max_trials=2,
+            max_total_examples=None,
+            candidate_models=("acme-paid-expert-1",),
+        ).estimate_optimization_cost(_dataset())
+        assert _estimate(space) == pytest.approx(fallback)
+        assert _estimate(space) > _estimate({"model": ["gpt-4o-mini"]})
+
+    @pytest.mark.parametrize(
+        "key",
+        ["embedding_model", "embedder_model", "rerank_model", "reranker_model"],
+    )
+    def test_named_non_llm_keys_are_left_out(self, key: str) -> None:
+        space = {"model": ["gpt-4o-mini"], key: ["acme-unpriced-1"]}
+        assert _extract_models(space) == ("gpt-4o-mini",)
+
+    def test_free_local_embedder_does_not_inflate_the_estimate(self) -> None:
+        base = {"model": ["gpt-4o-mini"]}
+        with_embedder = {**base, "embedding_model": ["all-MiniLM-L6-v2"]}
+        assert _estimate(with_embedder) == _estimate(base)
 
     def test_preflight_ids_skip_unpriced_suffix_values(self) -> None:
         space = {"model": ["gpt-4o-mini"], "embedding_model": ["all-MiniLM-L6-v2"]}
         assert _extract_config_space_model_ids(space) == ["gpt-4o-mini"]
-        assert _extract_models(space, priced_suffix_keys_only=True) == ("gpt-4o-mini",)
 
-    def test_preflight_ids_keep_priced_suffix_values(self) -> None:
+    def test_priced_suffix_values_are_kept_in_both(self) -> None:
         space = {"model": ["gpt-4o-mini"], "expert_model": ["gpt-4o"]}
         assert set(_extract_config_space_model_ids(space)) == {
             "gpt-4o-mini",
             "gpt-4o",
         }
-        assert set(_extract_models(space, priced_suffix_keys_only=True)) == {
-            "gpt-4o-mini",
-            "gpt-4o",
-        }
+        assert set(_extract_models(space)) == {"gpt-4o-mini", "gpt-4o"}
 
-    def test_engine_and_model_id_are_priced_only_in_preflights(self) -> None:
+    def test_engine_and_model_id_are_always_checked_by_preflights(self) -> None:
         space = {
             "model": ["gpt-4o-mini"],
             "engine": ["faiss", "annoy"],
-            "model_id": ["my-embed-v1"],
+            "model_id": ["acme-private-1"],
         }
-        assert _extract_models(space, priced_suffix_keys_only=True) == ("gpt-4o-mini",)
-        assert {"faiss", "annoy", "my-embed-v1"} <= set(_extract_models(space))
-        assert _extract_config_space_model_ids(space) == ["gpt-4o-mini"]
+        assert {"faiss", "annoy", "acme-private-1"} <= set(_extract_models(space))
+        assert set(_extract_config_space_model_ids(space)) == {
+            "gpt-4o-mini",
+            "faiss",
+            "annoy",
+            "acme-private-1",
+        }
 
     def test_fixed_keys_are_always_kept_even_when_unpriced(self) -> None:
         space = {"model": ["my-private-model"]}

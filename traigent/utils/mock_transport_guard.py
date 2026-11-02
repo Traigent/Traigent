@@ -210,7 +210,8 @@ _blocked_hosts: dict[str, int] = {}
 def mock_blocked_calls() -> dict[str, int]:
     """Snapshot of blocked-call counts per host since process start (#2812).
 
-    Only fixed-list provider host names appear, never paths or credentials.
+    Host names only, never paths or credentials; a pattern host can carry a
+    customer's resource label.
     """
     with _blocked_lock:
         return dict(_blocked_hosts)

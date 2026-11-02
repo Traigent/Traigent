@@ -382,6 +382,7 @@ _MISSING_KEY_RE = re.compile(
     rf"|{_MISSING_WORDS}.{{0,60}}?\b{_PROVIDER_KEY_VARS}\b",
     re.IGNORECASE,
 )
+_PROVIDER_KEY_VAR_RE = re.compile(rf"{_PROVIDER_KEY_VARS}", re.IGNORECASE)
 _API_KEY_TEXT_TOKENS = ("api key", "api_key", "authentication", "openai_api_key")
 #: Wording that is a provider's own verdict on a key, whatever wrapper re-raised it.
 _EXPLICIT_KEY_VERDICTS = (
@@ -425,6 +426,13 @@ def is_provider_api_key_failure(exc: BaseException) -> bool:
     if provider_sdk and http_status_of(exc) in (401, 403):
         return True
     if any(base.__name__ in _AUTH_EXCEPTION_NAMES for base in type(exc).__mro__):
+        return True
+    if isinstance(exc, KeyError) and any(
+        isinstance(arg, str) and _PROVIDER_KEY_VAR_RE.fullmatch(arg.strip())
+        for arg in exc.args
+    ):
+        # ``os.environ["OPENAI_API_KEY"]`` with no key set: a run-level setup
+        # error, not a per-example lookup failure.
         return True
     if _is_local_exception(exc):
         return False

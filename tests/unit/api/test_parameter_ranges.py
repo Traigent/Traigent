@@ -888,3 +888,25 @@ class TestChoicesModelUnknownProvider:
     ) -> None:
         monkeypatch.setenv("TRAIGENT_MODELS_ACME_BALANCED", "acme-1")
         assert Choices.model(provider="acme").to_list() == ["acme-1"]
+
+
+def test_int_range_accepts_numpy_integer_step() -> None:
+    np = pytest.importorskip("numpy")
+    assert IntRange(0, 10, step=np.int64(2)).step == 2
+    with pytest.raises(ValueError):
+        IntRange(0, 10, step=float("nan"))
+    with pytest.raises(ValueError):
+        IntRange(0, 10, step=float("inf"))
+
+
+def test_numpy_int_step_becomes_python_int_and_passes_config_validation() -> None:
+    np = pytest.importorskip("numpy")
+    from traigent.utils.validation import validate_config_space
+
+    r = IntRange(0, 10, step=np.int64(2))
+    assert type(r.step) is int
+    value = r.to_config_value()
+    assert type(value["step"]) is int
+    validate_config_space({"batch": value})
+    # integral float steps are normalised too
+    assert type(IntRange(0, 10, step=np.float64(2.0)).step) is int

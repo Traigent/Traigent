@@ -419,7 +419,7 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             )
         if self.step is not None and (
             isinstance(self.step, bool)
-            or not isinstance(self.step, (int, float))
+            or not isinstance(self.step, numbers.Real)
             or not math.isfinite(self.step)
             or self.step != int(self.step)
         ):
@@ -428,6 +428,9 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             )
         if self.step is not None and self.step <= 0:
             raise ValueError(f"IntRange step must be positive, got {self.step}")
+        if self.step is not None:
+            # numpy scalars pass the checks above but fail config validation.
+            object.__setattr__(self, "step", int(self.step))
         if self.log and self.low <= 0:
             raise ValueError(f"log=True requires positive bounds, got low={self.low}")
         if self.log and self.step is not None:

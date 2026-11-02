@@ -569,6 +569,17 @@ def _classify_batch_vendor_error(r: PermittedTrialResult) -> VendorErrorCategory
     return None
 
 
+_NON_LLM_MODEL_KEYS = frozenset(
+    {
+        "embedding_model",
+        "embedder_model",
+        "embed_model",
+        "rerank_model",
+        "reranker_model",
+    }
+)
+
+
 class OptimizationOrchestrator:
     """Orchestrates the optimization process.
 
@@ -841,43 +852,47 @@ class OptimizationOrchestrator:
     @staticmethod
     def _extract_model_candidates_from_config_space(
         config_space: dict[str, Any] | None,
-        *,
-        priced_suffix_keys_only: bool = False,
     ) -> tuple[str, ...]:
         """Extract model candidates from optimizer config space for estimation.
 
         Every model-bearing key is read, not just ``model``/``model_name``: the
         estimate is an upper bound, so a cascade's ``expert_model`` arm must be
-        priced too (#2807). Values under a user ``*_model`` knob may be non-LLM
-        models (embeddings, rerankers), so a preflight passes
-        ``priced_suffix_keys_only=True`` and receives only those whose price is
-        known; the estimate keeps unknown ones and prices them conservatively.
+        priced too (#2807). The fixed keys (``model``, ``model_name``,
+        ``model_id``, ``engine``) are always kept, so an unpriced value is
+        refused by the preflight. Values under a user ``*_model`` knob may be
+        free non-LLM models (embeddings, rerankers); those without a known
+        price are left out, and the keys are named in a log line. Only the
+        explicit non-LLM names in ``_NON_LLM_MODEL_KEYS`` are left out; any
+        other unpriced ``*_model`` value stays so the conservative fallback
+        fires (a paid but unknown ``expert_model`` must not start a run).
         """
         if not isinstance(config_space, dict):
             return ()
 
+        from traigent.utils.cost_calculator import (  # noqa: PLC0415
+            find_models_missing_price_coverage,
+        )
+
         candidates: list[str] = []
+        left_out_keys: list[str] = []
         for key, definition in config_space.items():
-            # Only ``model``/``model_name`` are always LLM ids; ``engine`` and
-            # ``model_id`` may name non-LLM things (vector index, embedder), so
-            # preflights read them only when priced, like ``*_model`` knobs.
-            fixed = isinstance(key, str) and key.strip().lower() in (
-                "model",
-                "model_name",
-            )
-            if not (is_model_config_key(key) or is_model_suffix_key(key)):
+            fixed = is_model_config_key(key)
+            if not (fixed or is_model_suffix_key(key)):
                 continue
             values = OptimizationOrchestrator._normalize_model_candidates(
                 OptimizationOrchestrator._extract_raw_model_candidates(definition)
             )
-            if priced_suffix_keys_only and not fixed and values:
-                from traigent.utils.cost_calculator import (  # noqa: PLC0415
-                    find_models_missing_price_coverage,
-                )
-
+            if not fixed and values and str(key).strip().lower() in _NON_LLM_MODEL_KEYS:
                 unpriced = set(find_models_missing_price_coverage(values))
+                if unpriced:
+                    left_out_keys.append(str(key))
                 values = tuple(v for v in values if v not in unpriced)
             candidates.extend(values)
+        if left_out_keys:
+            logger.info(
+                "Cost estimate leaves out unpriced values under non-LLM model keys: %s",
+                ", ".join(left_out_keys),
+            )
         return tuple(dict.fromkeys(candidates))
 
     @staticmethod
@@ -4226,7 +4241,6 @@ class OptimizationOrchestrator:
         models = list(
             self._extract_model_candidates_from_config_space(
                 getattr(self.optimizer, "config_space", None),
-                priced_suffix_keys_only=True,
             )
         )
         fixed_model = getattr(self.traigent_config, "model", None)
@@ -6874,7 +6888,8 @@ class OptimizationOrchestrator:
 
         Vendor SDKs wrap the guard's error into a bare "Connection error.", so
         the per-trial text reads like an outage. The run-scoped recorder knows
-        the guard blocked provider calls; only fixed-list host names are named.
+        the guard blocked provider calls; host names are named, and a pattern host
+        can carry a customer's resource label.
         """
         recorder = getattr(self, "_mock_recorder", None)
         blocked = getattr(recorder, "blocked_hosts", None)
