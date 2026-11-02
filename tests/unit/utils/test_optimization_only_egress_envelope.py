@@ -758,7 +758,7 @@ def test_mode_off_preflight_serializes_nothing(
     assert prepared.body == b'{"session_id": "s"}'
 
 
-def test_mode_off_aiohttp_wrapper_serializes_once_and_untouched() -> None:
+def test_mode_off_aiohttp_wrapper_serializes_once_and_untouched(_gate_off: Any) -> None:
     calls: list[int] = []
 
     def serializer(value: Any) -> str:
