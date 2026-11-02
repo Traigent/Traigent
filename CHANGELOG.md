@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **OpenRouter responses are priced at the requested id (#2854).** OpenRouter reports `response.model` without the `openrouter/` prefix, and some of those bare ids (`anthropic/claude-haiku-4.5`, `meta-llama/llama-3.3-70b-instruct`, `mistralai/mistral-small-3.2-24b-instruct`) have no price. A call requested through OpenRouter now falls back to the prefixed id, then the requested id, before the "Unknown model ... returning zero cost" warning fires, so a correctly priced run no longer sends users to custom pricing.
+
 ### Changed
 
 - Offline licence files now fail closed when the token has no expiry. A signed (or legacy unsigned) offline licence whose `exp` claim is missing or not a finite number is refused and the SDK runs at the free tier, the same as an expired licence. Reissue such licences with an `exp` claim. The grace period default (86400 s) is unchanged.

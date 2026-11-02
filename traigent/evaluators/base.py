@@ -54,6 +54,7 @@ from traigent.utils.langchain_interceptor import (
 )
 from traigent.utils.logging import get_logger
 from traigent.utils.removed_params import reject_removed_mock_parameters
+from traigent.utils.response_model import resolve_pricing_model
 from traigent.utils.trial_costs import (
     is_cost_unmeasured,
     known_spend_lower_bound,
@@ -5737,7 +5738,13 @@ class SimpleScoringEvaluator(BaseEvaluator):
         any_unmeasured = False
         first_metrics = None
         for position, response in enumerate(captured_responses):
-            call_model = self._model_of_captured_response(response) or config_model
+            config_model_id = config_model if isinstance(config_model, str) else None
+            call_model = (
+                resolve_pricing_model(
+                    self._model_of_captured_response(response), config_model_id
+                )
+                or config_model
+            )
             call_metrics = self._extract_llm_metrics(
                 response=response,
                 model_name=call_model,

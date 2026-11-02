@@ -43,3 +43,38 @@ def infer_response_model(response: Any) -> str | None:
         return None
     except Exception:
         return None
+
+
+_OPENROUTER_PREFIX = "openrouter/"
+
+
+def resolve_pricing_model(
+    response_model: str | None, requested_model: str | None
+) -> str | None:
+    """The id to price a call at: the response's own model unless it cannot be priced.
+
+    OpenRouter reports ``response.model`` WITHOUT the ``openrouter/`` prefix
+    (``anthropic/claude-haiku-4.5``), and some of those bare ids have no price
+    although the requested ``openrouter/...`` id does (#2854). For a call that
+    was requested through OpenRouter, an unpriceable response id falls back to
+    the same id behind the prefix, then to the requested id. When nothing
+    resolves, the response id is returned so the unknown-model warning is real.
+    """
+    if not response_model:
+        return requested_model or None
+    requested_via_openrouter = isinstance(
+        requested_model, str
+    ) and requested_model.lower().startswith(_OPENROUTER_PREFIX)
+    if not requested_via_openrouter:
+        return response_model
+    from traigent.utils.cost_calculator import model_pricing_resolves
+
+    candidates = [
+        response_model,
+        f"{_OPENROUTER_PREFIX}{response_model}",
+        str(requested_model),
+    ]
+    for candidate in dict.fromkeys(candidates):
+        if model_pricing_resolves(candidate):
+            return candidate
+    return response_model

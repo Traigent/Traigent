@@ -281,9 +281,12 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         config_model: str | None = config.get("model")
         if not response:
             return config_model
-        from traigent.utils.response_model import infer_response_model
+        from traigent.utils.response_model import (
+            infer_response_model,
+            resolve_pricing_model,
+        )
 
-        return infer_response_model(response) or config_model
+        return resolve_pricing_model(infer_response_model(response), config_model)
 
     def _reconstruct_original_prompt(self, example: Any) -> list[dict[str, str]]:
         """Reconstruct original prompt from example input.

@@ -56,7 +56,10 @@ from traigent.utils.langchain_interceptor import (
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
 from traigent.utils.logging import get_logger
-from traigent.utils.response_model import infer_response_model
+from traigent.utils.response_model import (
+    infer_response_model,
+    resolve_pricing_model,
+)
 
 logger = get_logger(__name__)
 _METADATA_PATCHES_ATTEMPTED = False
@@ -1836,11 +1839,9 @@ class LocalEvaluator(BaseEvaluator):
         is_agent_call: bool,
     ) -> str | None:
         """Model identity of one call: response, then its request, then config."""
-        return (
-            infer_response_model(response)
-            or requested_model
-            or (agent_model if is_agent_call else None)
-        )
+        return resolve_pricing_model(
+            infer_response_model(response), requested_model
+        ) or (agent_model if is_agent_call else None)
 
     @staticmethod
     def _price_one_call(
