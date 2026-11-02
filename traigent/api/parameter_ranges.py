@@ -419,7 +419,7 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             )
         if self.step is not None and (
             isinstance(self.step, bool)
-            or not isinstance(self.step, (int, float))
+            or not isinstance(self.step, numbers.Real)
             or not math.isfinite(self.step)
             or self.step != int(self.step)
         ):

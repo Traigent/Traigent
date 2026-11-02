@@ -888,3 +888,12 @@ class TestChoicesModelUnknownProvider:
     ) -> None:
         monkeypatch.setenv("TRAIGENT_MODELS_ACME_BALANCED", "acme-1")
         assert Choices.model(provider="acme").to_list() == ["acme-1"]
+
+
+def test_int_range_accepts_numpy_integer_step() -> None:
+    np = pytest.importorskip("numpy")
+    assert IntRange(0, 10, step=np.int64(2)).step == 2
+    with pytest.raises(ValueError):
+        IntRange(0, 10, step=float("nan"))
+    with pytest.raises(ValueError):
+        IntRange(0, 10, step=float("inf"))

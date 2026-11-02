@@ -182,3 +182,10 @@ def test_rate_limit_status_from_non_sdk_client_still_classifies() -> None:
     assert (
         classify_vendor_error(_UserServiceError(429)) is VendorErrorCategory.RATE_LIMIT
     )
+
+
+def test_missing_provider_key_environ_keyerror_aborts() -> None:
+    from traigent.core.exception_handler import is_provider_api_key_failure
+
+    assert is_provider_api_key_failure(KeyError("OPENAI_API_KEY")) is True
+    assert is_provider_api_key_failure(KeyError("some_user_field")) is False
