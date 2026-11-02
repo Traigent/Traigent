@@ -813,6 +813,28 @@ class TestHooksLockAndSymlinkRefusal:
         if not use_fcntl:
             assert not (hooks_dir / installer_module.HOOKS_LOCK_NAME).exists()
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+    @pytest.mark.parametrize("use_fcntl", [True, False])
+    def test_hooks_lock_file_is_owner_only(
+        self,
+        installer: HooksInstaller,
+        monkeypatch: pytest.MonkeyPatch,
+        use_fcntl: bool,
+    ) -> None:
+        """The lock file is created 0o600 on both the flock and O_EXCL paths."""
+        if use_fcntl and installer_module._fcntl is None:
+            pytest.skip("fcntl is not available on this platform")
+        monkeypatch.setattr(
+            installer_module, "_fcntl", installer_module._fcntl if use_fcntl else None
+        )
+        old_umask = os.umask(0)
+        try:
+            lock_path = installer.hooks_dir / installer_module.HOOKS_LOCK_NAME
+            with installer_module._hooks_lock(installer.hooks_dir, timeout=0.2):
+                assert stat.S_IMODE(lock_path.stat().st_mode) == 0o600
+        finally:
+            os.umask(old_umask)
+
     @pytest.mark.parametrize("force", [True, False])
     def test_install_refuses_symlinked_hook_and_touches_nothing(
         self, installer: HooksInstaller, force: bool
