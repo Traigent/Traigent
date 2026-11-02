@@ -152,8 +152,9 @@ def _hooks_lock(hooks_dir: Path, timeout: float | None = None) -> Iterator[None]
     nofollow = getattr(os, "O_NOFOLLOW", 0)
 
     if _fcntl is not None:
-        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | nofollow, 0o644)
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | nofollow, 0o600)
         try:
+            os.fchmod(fd, 0o600)
             while True:
                 try:
                     _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
@@ -174,7 +175,7 @@ def _hooks_lock(hooks_dir: Path, timeout: float | None = None) -> Iterator[None]
             fd = os.open(
                 lock_path,
                 os.O_CREAT | os.O_EXCL | os.O_WRONLY | nofollow,
-                0o644,
+                0o600,
             )
             break
         except FileExistsError:
