@@ -46,9 +46,13 @@ def _quota_number(value: Any) -> float | None:
     """A finite, non-negative real number, else None (bools are not numbers)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    if not math.isfinite(value) or value < 0:
+    try:
+        number = float(value)  # a huge JSON integer overflows here, not in isfinite
+    except OverflowError:
         return None
-    return value
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number
 
 
 def _quota_datetime(value: Any) -> datetime | None:

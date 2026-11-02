@@ -192,6 +192,9 @@ class TestUntrackedBanner:
         {"resource_type": ["api_calls"], "limit": 5},
         {"reset_at": "0001-01-01T00:00:00+05:00"},
         {"reset_at": "9999-12-31T23:59:59-05:00"},
+        {"limit": 10**400},
+        {"limit": -(10**400)},
+        {"current_usage": 10**400, "limit": 5},
     ],
 )
 def test_hostile_quota_body_never_crashes_fact_parsing(hostile):

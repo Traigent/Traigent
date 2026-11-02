@@ -399,7 +399,10 @@ _FUNDS_DEPLETED = "depleted"
 def _number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:  # a huge JSON integer is not a usable figure
+        return None
     return None if math.isnan(number) else number  # NaN is not a number
 
 

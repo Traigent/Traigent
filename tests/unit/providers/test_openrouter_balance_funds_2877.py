@@ -152,3 +152,12 @@ def test_non_finite_balance_is_unknown_not_available(monkeypatch):
         _resp({"data": {"total_credits": float("inf"), "total_usage": float("inf")}}),
     )
     assert status.funds == "unknown"
+
+
+def test_huge_integer_balance_is_unknown_not_a_crash(monkeypatch):
+    status, _ = _check(
+        monkeypatch,
+        _resp({"data": {"limit": 20, "limit_remaining": 16.69}}),
+        _resp({"data": {"total_credits": 10**400, "total_usage": 1}}),
+    )
+    assert status.funds == "unknown"
