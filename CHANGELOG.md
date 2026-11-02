@@ -10,6 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **OpenRouter responses are priced at the requested id (#2854).** OpenRouter reports `response.model` without the `openrouter/` prefix, and some of those bare ids (`anthropic/claude-haiku-4.5`, `meta-llama/llama-3.3-70b-instruct`, `mistralai/mistral-small-3.2-24b-instruct`) have no price. A call requested through OpenRouter now falls back to the prefixed id, then the requested id, before the "Unknown model ... returning zero cost" warning fires, so a correctly priced run no longer sends users to custom pricing.
 - Model validation now rejects the Claude models Anthropic has retired: 3.5 Haiku, dashed 3.5 Sonnet, Sonnet 4, Opus 4 and Opus 4.1, including `-latest` and OpenRouter dotted spellings. They are also dropped from the shipped known-model lists (#2876).
+- OpenRouter funds preflight now also reads the account balance (`/api/v1/credits`) and reports the lower of it and the per-key limit; `unknown` is kept when either call fails. OpenRouter's "would exceed your available credits given your current in-flight requests" error is now classified as insufficient funds, not a retryable error (#2877).
 
 ### Changed
 

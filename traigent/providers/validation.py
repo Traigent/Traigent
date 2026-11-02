@@ -197,6 +197,9 @@ _DEFAULT_VALIDATION_TIMEOUT = 5.0
 
 # OpenRouter's key-info endpoint: 200 for a valid key, 401 otherwise. Free.
 _OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
+# Account balance (total_credits - total_usage), readable with an ordinary key.
+# Independent of the per-key limit above: either one can be the binding cap.
+_OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 
 # Authentication error types that indicate invalid keys (vs transient errors)
 # These are checked by exception class name to avoid importing all SDKs
@@ -385,29 +388,63 @@ def validate_model_names(
 # What a status says about the account's funds. "not_checked": the provider has
 # no balance API, so nothing was verified. "unknown": a check ran but could not
 # tell. "available": a reported limit has headroom. "depleted": a reported limit
-# is exhausted. Only "available" is a claim that funds exist, and then only for
-# the key's own spending limit, never the account balance.
+# is exhausted. Only "available" is a claim that funds exist. For OpenRouter it
+# is the lower of the key's own limit and the account balance (#2877).
 _FUNDS_NOT_CHECKED = "not_checked"
 _FUNDS_UNKNOWN = "unknown"
 _FUNDS_AVAILABLE = "available"
 _FUNDS_DEPLETED = "depleted"
 
 
-def _openrouter_funds(response: object) -> str:
-    """Funds state from an OpenRouter ``/api/v1/key`` response, never raising."""
+def _number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return None if math.isnan(number) else number  # NaN is not a number
+
+
+def _response_data(response: object) -> dict | None:
+    """The ``data`` object of an OpenRouter JSON response, or None."""
     try:
         body = response.json()  # type: ignore[attr-defined]
         data = body.get("data") if isinstance(body, dict) else None
     except Exception:  # noqa: BLE001 - unreadable body is an unknown, not a pass
-        return _FUNDS_UNKNOWN
-    if not isinstance(data, dict):
-        return _FUNDS_UNKNOWN
+        return None
+    return data if isinstance(data, dict) else None
 
-    def _number(value: object) -> float | None:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return None
-        number = float(value)
-        return None if math.isnan(number) else number  # NaN is not a number
+
+def _openrouter_credits_remaining(response: object) -> float | None:
+    """Account balance left from an ``/api/v1/credits`` response, else None."""
+    data = _response_data(response)
+    if data is None:
+        return None
+    total = _number(data.get("total_credits"))
+    used = _number(data.get("total_usage"))
+    if total is None or used is None:
+        return None
+    return total - used
+
+
+def _openrouter_key_remaining(response: object) -> float | None:
+    """Per-key headroom from ``/api/v1/key``: inf when uncapped, None if unreadable."""
+    data = _response_data(response)
+    if data is None:
+        return None
+    if "limit" in data and data["limit"] is None:
+        return math.inf  # uncapped key: the account balance is the only cap
+    remaining = _number(data.get("limit_remaining"))
+    limit = _number(data.get("limit"))
+    if remaining is None and limit is not None:
+        usage = _number(data.get("usage"))
+        remaining = None if usage is None else limit - usage
+    return remaining
+
+
+def _openrouter_funds(response: object) -> str:
+    """Funds state from an OpenRouter ``/api/v1/key`` response, never raising."""
+    data = _response_data(response)
+    if data is None:
+        return _FUNDS_UNKNOWN
 
     limit = _number(data.get("limit"))
     if limit is None:
@@ -689,6 +726,9 @@ class ProviderValidator:
 
         if 200 <= code < 300:
             funds = _openrouter_funds(response)
+            message = "Available"
+            if funds != _FUNDS_DEPLETED:
+                funds, message = self._openrouter_balance(key, response)
             if funds == _FUNDS_DEPLETED:
                 return ProviderStatus(
                     provider="openrouter",
@@ -699,7 +739,7 @@ class ProviderValidator:
                 )
             self._cache_success("openrouter", key)
             return ProviderStatus(
-                provider="openrouter", valid=True, message="Available", funds=funds
+                provider="openrouter", valid=True, message=message, funds=funds
             )
         if code in (401, 403):
             return ProviderStatus(
@@ -730,6 +770,40 @@ class ProviderValidator:
             message=_MSG_VALIDATION_FAILED.format(error_type=f"HTTP{code}"),
             error_type=f"HTTP{code}",
         )
+
+    def _openrouter_balance(self, key: str, key_response: object) -> tuple[str, str]:
+        """Combine the key limit with the account balance (#2877).
+
+        Returns ``(funds, message)``: the lower of the two headroom figures
+        decides, and ``unknown`` whenever either figure cannot be read (never a
+        guess). The key-limit-depleted case is decided before this is called.
+        """
+        key_left = _openrouter_key_remaining(key_response)
+        credits_left: float | None = None
+        try:
+            import requests
+
+            from traigent.labels.transport_gate import preflight_requests
+
+            preflight_requests("GET", _OPENROUTER_CREDITS_URL, external=True)
+            credits_response = requests.get(
+                _OPENROUTER_CREDITS_URL,
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=self.timeout,
+            )
+            if 200 <= credits_response.status_code < 300:
+                credits_left = _openrouter_credits_remaining(credits_response)
+        except Exception as exc:  # noqa: BLE001 - balance unreadable is unknown
+            # Never include the exception text: it can echo the request.
+            logger.warning(_MSG_TRANSIENT_WARNING, "OpenRouter", type(exc).__name__)
+        if key_left is None or credits_left is None:
+            return _FUNDS_UNKNOWN, "Available"
+        binding = min(key_left, credits_left)
+        if binding <= 0:
+            return _FUNDS_DEPLETED, "Available"
+        if binding == credits_left:
+            return _FUNDS_AVAILABLE, f"Available (account balance ${credits_left:.2f})"
+        return _FUNDS_AVAILABLE, "Available"
 
     def _validate_openai(self) -> ProviderStatus:
         """Validate OpenAI API key."""
