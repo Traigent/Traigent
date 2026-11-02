@@ -422,7 +422,9 @@ def _openrouter_credits_remaining(response: object) -> float | None:
     used = _number(data.get("total_usage"))
     if total is None or used is None:
         return None
-    return total - used
+    balance = total - used
+    # inf - inf is NaN: a non-finite account balance is unreadable, not "plenty".
+    return balance if math.isfinite(balance) else None
 
 
 def _openrouter_key_remaining(response: object) -> float | None:

@@ -142,3 +142,13 @@ def test_in_flight_credits_message_is_a_funds_error(message):
     assert classify_vendor_error(Exception(message)) == (
         VendorErrorCategory.INSUFFICIENT_FUNDS
     )
+
+
+def test_non_finite_balance_is_unknown_not_available(monkeypatch):
+    # inf - inf is NaN: a hostile/garbled body must not read as "available".
+    status, _ = _check(
+        monkeypatch,
+        _resp({"data": {"limit": 20, "limit_remaining": 16.69}}),
+        _resp({"data": {"total_credits": float("inf"), "total_usage": float("inf")}}),
+    )
+    assert status.funds == "unknown"
