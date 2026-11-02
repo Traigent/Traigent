@@ -945,14 +945,7 @@ class SessionOperations:
         failure_response = _get_session_creation_failure_detail(exc)
         if failure_response is None or not failure_response.is_quota_refusal:
             return
-        safe = SessionQuotaRefusedError(
-            failure_response.status_code, failure_response.safe_quota_error_code
-        )
-        safe.session_creation_failure = SessionCreationFailureDetail(
-            status_code=failure_response.status_code,
-            error_code=failure_response.safe_quota_error_code,
-        )
-        raise safe from None
+        raise SessionQuotaRefusedError.from_detail(failure_response) from None
 
     @staticmethod
     def _raise_if_closed_refusal(exc: Exception) -> None:
@@ -1288,14 +1281,7 @@ class SessionOperations:
                         response.status, error_text
                     )
                     if detail.is_quota_refusal:
-                        safe = SessionQuotaRefusedError(
-                            response.status, detail.safe_quota_error_code
-                        )
-                        safe.session_creation_failure = SessionCreationFailureDetail(
-                            status_code=response.status,
-                            error_code=detail.safe_quota_error_code,
-                        )
-                        raise safe
+                        raise SessionQuotaRefusedError.from_detail(detail)
                     if detail.is_closed_refusal:
                         refused = SessionBackendRefusedError(
                             response.status, detail.safe_error_code

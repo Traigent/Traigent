@@ -619,6 +619,8 @@ def _untracked_detail_lines(
     if quota_refusal and detail:
         # Quota path: closed error code only, never backend message/raw body.
         lines.append(f"Backend error_code: {detail.safe_quota_error_code}")
+        if detail.quota_facts is not None and detail.quota_facts.describe():
+            lines.append(f"Quota: {detail.quota_facts.describe()}")
     elif detail and detail.error_code:
         # Closed vocabulary only; the backend message/raw body is never printed.
         lines.append(f"Backend error_code: {detail.safe_error_code}")
@@ -695,6 +697,18 @@ def _untracked_remedy_line(
         return (
             "Remedy: re-authenticate with `traigent auth login` or provide a "
             "valid, non-revoked API key."
+        )
+    if (
+        classification == SessionCreationFailureClassification.QUOTA_EXCEEDED
+        and result.failure_response is not None
+        and result.failure_response.quota_facts is not None
+        and result.failure_response.quota_facts.reset_at is not None
+    ):
+        return (
+            "Remedy: a plan quota/limit was reached (the backend is reachable). "
+            f"Wait until {result.failure_response.quota_facts.reset_text} for it "
+            "to reset, upgrade in the Traigent portal (Billing), or reduce the "
+            "requested trials/samples."
         )
     return _UNTRACKED_REMEDIES.get(classification, _UNTRACKED_REMEDY_DEFAULT)
 
