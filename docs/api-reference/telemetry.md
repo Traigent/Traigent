@@ -313,7 +313,9 @@ paraphrase it.
 
 **No-egress runs**:
 - All data is stored **locally** on your machine
-- Data is kept in `~/.traigent/` or your specified `local_storage_path`
+- Data is kept in `~/.traigent/`, your specified `local_storage_path`, or `TRAIGENT_RESULTS_FOLDER`;
+  that includes `incentive_state.json` (hint counters) and `.analytics_id` (anonymous id).
+  `TRAIGENT_DISABLE_HINTS=1` writes no `incentive_state.json` at all
 - You control retention - delete files as needed
 - No data is sent to the Traigent backend
 
@@ -401,7 +403,8 @@ When using `offline=True`, data is stored locally:
 └── .locks/
 ```
 
-You can customize the storage location:
+`incentive_state.json` and `.analytics_id` are written next to `sessions/`, in the same
+folder. You can customize the storage location:
 
 ```python
 @traigent.optimize(

@@ -3852,6 +3852,7 @@ class OptimizedFunction[**P, R]:
                 try:
                     show_upgrade_hint(
                         "session_complete",
+                        config=self.traigent_config,
                         trial_count=len(result.trials),
                         best_score=result.best_score,
                     )
