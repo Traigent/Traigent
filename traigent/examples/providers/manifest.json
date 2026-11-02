@@ -137,7 +137,7 @@
       "import_line": "import litellm",
       "extra_imports": [],
       "llm_expr": null,
-      "models": ["bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0", "bedrock/amazon.titan-text-lite-v1"],
+      "models": ["bedrock/anthropic.claude-haiku-4-5-20251001-v1:0", "bedrock/amazon.titan-text-lite-v1"],
       "env_vars": [
         { "name": "AWS_ACCESS_KEY_ID", "placeholder": "AKIA..." },
         { "name": "AWS_SECRET_ACCESS_KEY", "placeholder": "<aws-secret>" },
