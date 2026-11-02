@@ -1007,7 +1007,7 @@ class TrialLifecycle:
         known floor) to the exception, and it goes onto the failed trial so
         the run's budget counts it instead of reading "no cost reported".
         """
-        spend = getattr(error, "measured_spend", None)
+        spend = getattr(error, "measured_spend", None)  # only EvaluationError has it
         if not isinstance(spend, dict) or not spend:
             return
         metrics = result.metrics

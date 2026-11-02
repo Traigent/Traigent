@@ -2761,7 +2761,7 @@ class LocalEvaluator(BaseEvaluator):
                 # The model call behind this row was already paid for. Hand
                 # the row's measured spend to evaluate() so the failed trial
                 # still reports it (#2852).
-                exc.row_metric = example_metric  # type: ignore[attr-defined]
+                exc.row_metric = example_metric
                 raise
 
         # Emit boundary for this row: an unknown-cost row leaves with no numeric
@@ -3581,7 +3581,7 @@ class LocalEvaluator(BaseEvaluator):
         enforce_unknown_cost_invariant(
             spend, sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only
         )
-        failure.measured_spend = {  # type: ignore[attr-defined]
+        failure.measured_spend = {
             key: spend[key] for key in MEASURED_SPEND_KEYS if key in spend
         }
 
@@ -3800,7 +3800,7 @@ class LocalEvaluator(BaseEvaluator):
                     execution_budget_lease,
                 )
             except EvaluationError as exc:
-                failed_row = getattr(exc, "row_metric", None)
+                failed_row = exc.row_metric
                 if failed_row is None or deferred_failure is not None:
                     raise
                 deferred_failure = exc
