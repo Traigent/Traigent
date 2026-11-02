@@ -161,3 +161,14 @@ def test_huge_integer_balance_is_unknown_not_a_crash(monkeypatch):
         _resp({"data": {"total_credits": 10**400, "total_usage": 1}}),
     )
     assert status.funds == "unknown"
+
+
+def test_non_finite_key_headroom_is_unknown_not_available(monkeypatch):
+    # limit - usage is NaN when both are infinite: the key side needs the same
+    # guard as the account balance, or min(nan, credits) reads as "available".
+    status, _ = _check(
+        monkeypatch,
+        _resp({"data": {"limit": float("inf"), "usage": float("inf")}}),
+        _resp({"data": {"total_credits": 10, "total_usage": 1}}),
+    )
+    assert status.funds == "unknown"

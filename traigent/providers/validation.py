@@ -442,6 +442,9 @@ def _openrouter_key_remaining(response: object) -> float | None:
     if remaining is None and limit is not None:
         usage = _number(data.get("usage"))
         remaining = None if usage is None else limit - usage
+    # inf - inf is NaN: a non-finite headroom is unreadable, not "plenty".
+    if remaining is not None and math.isnan(remaining):
+        return None
     return remaining
 
 
@@ -458,7 +461,7 @@ def _openrouter_funds(response: object) -> str:
     if remaining is None:
         usage = _number(data.get("usage"))
         remaining = None if usage is None else limit - usage
-    if remaining is None:
+    if remaining is None or math.isnan(remaining):
         return _FUNDS_UNKNOWN
     return _FUNDS_DEPLETED if remaining <= 0 else _FUNDS_AVAILABLE
 

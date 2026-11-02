@@ -37,6 +37,10 @@ RETIRED_CLAUDE_IDS = [
     "claude-sonnet-4",
     "claude-opus-4",
     "claude-opus-4.1",
+    # Undated provider aliases of the same retired models
+    "claude-opus-4-1",
+    "claude-opus-4-0",
+    "claude-sonnet-4-0",
 ]
 
 # Still served by Anthropic; must stay valid. claude-sonnet-4-5-20250929

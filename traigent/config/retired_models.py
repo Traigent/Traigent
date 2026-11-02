@@ -83,6 +83,10 @@ RETIRED_MODEL_IDS: frozenset[str] = frozenset(
         "claude-opus-4",
         "claude-opus-4-1-20250805",
         "claude-opus-4.1",
+        # Undated provider aliases of the same retired models
+        "claude-opus-4-1",
+        "claude-opus-4-0",
+        "claude-sonnet-4-0",
         # Gemini 1.x (deprecated) + 2.0 preview, incl. -latest and
         # "models/"-prefixed aliases of the same retired models
         "gemini-1.5-flash",
