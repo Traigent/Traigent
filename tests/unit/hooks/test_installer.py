@@ -835,6 +835,16 @@ class TestHooksLockAndSymlinkRefusal:
         finally:
             os.umask(old_umask)
 
+    def test_existing_hooks_lock_file_is_tightened(self, installer: HooksInstaller) -> None:
+        """A lock file left 0o644 by an older version becomes 0o600 on the flock path."""
+        if installer_module._fcntl is None:
+            pytest.skip("fcntl is not available on this platform")
+        lock_path = installer.hooks_dir / installer_module.HOOKS_LOCK_NAME
+        lock_path.touch()
+        lock_path.chmod(0o644)
+        with installer_module._hooks_lock(installer.hooks_dir, timeout=0.2):
+            assert stat.S_IMODE(lock_path.stat().st_mode) == 0o600
+
     @pytest.mark.parametrize("force", [True, False])
     def test_install_refuses_symlinked_hook_and_touches_nothing(
         self, installer: HooksInstaller, force: bool

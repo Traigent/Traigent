@@ -154,6 +154,7 @@ def _hooks_lock(hooks_dir: Path, timeout: float | None = None) -> Iterator[None]
     if _fcntl is not None:
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | nofollow, 0o600)
         try:
+            os.fchmod(fd, 0o600)
             while True:
                 try:
                     _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
