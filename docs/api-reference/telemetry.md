@@ -315,7 +315,7 @@ paraphrase it.
 - All data is stored **locally** on your machine
 - Data is kept in `~/.traigent/`, your specified `local_storage_path`, or `TRAIGENT_RESULTS_FOLDER`;
   that includes `incentive_state.json` (hint counters) and `.analytics_id` (anonymous id).
-  `TRAIGENT_DISABLE_HINTS=1` writes no `incentive_state.json` at all
+  `TRAIGENT_DISABLE_HINTS=1` writes no `incentive_state.json` at all (and skips the hint-path usage-stats update and its background analytics submission)
 - You control retention - delete files as needed
 - No data is sent to the Traigent backend
 
