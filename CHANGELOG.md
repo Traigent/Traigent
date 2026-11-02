@@ -21,6 +21,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `custom_evaluator` now surfaces non-objective `ExampleResult.metrics` keys in `trial.metrics`, matching the tuple and `metric_functions` lanes; objectives and SDK-computed names are never overwritten (#2873).
 
 - A session-create quota refusal (HTTP 429/402 `quota_exceeded`) now reports the allowlisted resource name, limit, usage, requested units and reset time from the backend payload (all re-validated and re-rendered by the SDK; backend free text is still dropped), and suggests waiting until the reset time as well as upgrading (#2855).
+- A connected run that fails (or is cancelled) is no longer finalized as COMPLETED on the backend: the finalize request now carries a top-level `optimization_outcome` (`completed` / `failed` / `cancelled`). Deploy the Backend change first; an older Backend ignores the key. Local storage records `cancelled` as such (#2853).
 
 ## [0.32.0] - 2026-10-31
 

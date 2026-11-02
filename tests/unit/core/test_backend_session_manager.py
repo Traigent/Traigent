@@ -1198,6 +1198,30 @@ class TestBackendSessionManagerFinalization:
             True,
             certified_selection=None,
             session_aggregation=None,
+            optimization_outcome="completed",
+        )
+
+    @pytest.mark.parametrize(
+        ("status", "outcome"),
+        [
+            (OptimizationStatus.FAILED, "failed"),
+            (OptimizationStatus.CANCELLED, "cancelled"),
+        ],
+    )
+    def test_finalize_session_threads_terminal_outcome(
+        self, backend_session_manager, mock_backend_client, status, outcome
+    ):
+        """#2853: a failed/cancelled run must tell the backend, not look COMPLETED."""
+        backend_session_manager.finalize_session(
+            session_id="test-session-id", optimization_status=status
+        )
+
+        mock_backend_client.finalize_session_sync.assert_called_once_with(
+            "test-session-id",
+            False,
+            certified_selection=None,
+            session_aggregation=None,
+            optimization_outcome=outcome,
         )
 
     def test_finalize_session_threads_session_aggregation(
@@ -1217,6 +1241,7 @@ class TestBackendSessionManagerFinalization:
             True,
             certified_selection=None,
             session_aggregation=payload,
+            optimization_outcome="completed",
         )
 
     def test_finalize_session_without_backend(

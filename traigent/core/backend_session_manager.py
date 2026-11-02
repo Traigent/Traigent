@@ -3793,6 +3793,7 @@ class BackendSessionManager:
         completed: bool,
         report: dict[str, Any] | None,
         session_aggregation: dict[str, Any] | None,
+        optimization_outcome: str,
     ) -> dict[str, Any] | None:
         if hasattr(backend_client, "finalize_session_sync"):
             result: dict[str, Any] | None = backend_client.finalize_session_sync(
@@ -3800,6 +3801,7 @@ class BackendSessionManager:
                 completed,
                 certified_selection=report,
                 session_aggregation=session_aggregation,
+                optimization_outcome=optimization_outcome,
             )
         else:
             result = backend_client.finalize_session(
@@ -3807,8 +3809,25 @@ class BackendSessionManager:
                 completed,
                 certified_selection=report,
                 session_aggregation=session_aggregation,
+                optimization_outcome=optimization_outcome,
             )
         return result
+
+    @staticmethod
+    def finalize_outcome_for_status(
+        optimization_status: OptimizationStatus,
+    ) -> str:
+        """Wire ``optimization_outcome`` for a terminal SDK status (#2853).
+
+        Anything that is not COMPLETED or CANCELLED (FAILED, UNKNOWN, or a
+        non-terminal status handed to a finalize) is a failure: the same
+        reading the ``completed`` flag and the local-storage mirror use.
+        """
+        if optimization_status == OptimizationStatus.COMPLETED:
+            return "completed"
+        if optimization_status == OptimizationStatus.CANCELLED:
+            return "cancelled"
+        return "failed"
 
     @staticmethod
     def _log_finalize_retry(session_id: str, attempt: int, exc: BaseException) -> float:
@@ -3885,6 +3904,7 @@ class BackendSessionManager:
                     completed,
                     report,
                     session_aggregation,
+                    self.finalize_outcome_for_status(optimization_status),
                 )
 
                 if _finalize_acknowledged(result):
