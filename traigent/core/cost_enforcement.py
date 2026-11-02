@@ -1571,18 +1571,6 @@ Options:
                 + ", ".join(str(e) for e in list(unmeasured_examples)[:5])
                 + "."
             )
-        if require_cost_tracking and trial_failed:
-            # A failed trial's cost is unknown because the trial FAILED, not
-            # because a call was unpriced: do not send the user to pricing
-            # settings; point at the trial's own error (#2852).
-            raise CostTrackingRequiredError(
-                f"{trial_desc.capitalize()} failed before its spend could be "
-                f"measured, and {self._require_cost_tracking_reason}, so the "
-                "run stops instead of recording that spend as $0. The cause is "
-                "the trial's own error, logged just above this message; fix it "
-                "and re-run. Pricing settings are not the problem."
-                f"{examples_text}"
-            )
         if require_cost_tracking:
             raise CostTrackingRequiredError(
                 f"Cost extraction failed for {trial_desc} and "

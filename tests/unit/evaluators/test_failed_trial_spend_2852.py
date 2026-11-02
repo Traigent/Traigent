@@ -78,23 +78,3 @@ def test_scorer_error_is_a_failed_trial_with_its_spend(rows: int) -> None:
     )
     assert trial.metrics["cost"] == pytest.approx(rows * one_call)
     assert not trial.metrics.get("cost_unmeasured")
-
-
-def test_failed_trial_with_unknown_spend_does_not_blame_pricing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from traigent.core.cost_enforcement import (
-        CostEnforcer,
-        CostEnforcerConfig,
-        CostTrackingRequiredError,
-    )
-
-    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "true")
-    enforcer = CostEnforcer(CostEnforcerConfig(limit=5.0, limit_explicit=False))
-    permit = enforcer.acquire_permit()
-    with pytest.raises(CostTrackingRequiredError) as caught:
-        enforcer.track_cost(None, permit=permit, trial_failed=True, trial_id="t1")
-    text = str(caught.value)
-    assert "failed before its spend could be measured" in text
-    assert "unpriced call" not in text
-    assert "TRAIGENT_CUSTOM_MODEL_PRICING" not in text
