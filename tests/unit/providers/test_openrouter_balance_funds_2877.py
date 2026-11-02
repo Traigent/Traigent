@@ -14,7 +14,7 @@ import pytest
 from traigent.core.exception_handler import VendorErrorCategory, classify_vendor_error
 from traigent.providers.validation import ProviderValidator
 
-_SECRET = "sk-or-SECRETVALUE123"  # pragma: allowlist secret
+_FAKE_SECRET = "sk-or-SECRETVALUE123"  # pragma: allowlist secret
 _KEY = "https://openrouter.ai/api/v1/key"
 _CREDITS = "https://openrouter.ai/api/v1/credits"
 
@@ -24,7 +24,7 @@ def _resp(body, status=200):
 
 
 def _check(monkeypatch, key_resp, credits_resp=None, credits_exc=None):
-    monkeypatch.setenv("OPENROUTER_API_KEY", _SECRET)
+    monkeypatch.setenv("OPENROUTER_API_KEY", _FAKE_SECRET)
     calls = []
 
     def fake_get(url, **kwargs):
@@ -98,7 +98,7 @@ def test_uncapped_key_uses_account_balance(monkeypatch):
         (_resp({"data": {}}), None),
         (_resp({"data": {"total_credits": "x", "total_usage": 1}}), None),
         (_resp({"data": {"total_credits": float("nan"), "total_usage": 1}}), None),
-        (None, ConnectionError(f"boom {_SECRET}")),
+        (None, ConnectionError(f"boom {_FAKE_SECRET}")),
     ],
 )
 def test_credits_failure_keeps_unknown(monkeypatch, credits_resp, credits_exc):
@@ -110,7 +110,7 @@ def test_credits_failure_keeps_unknown(monkeypatch, credits_resp, credits_exc):
     )
     assert status.valid is True
     assert status.funds == "unknown"
-    assert _SECRET not in status.message
+    assert _FAKE_SECRET not in status.message
 
 
 def test_unreadable_key_body_is_unknown_even_if_credits_ok(monkeypatch):

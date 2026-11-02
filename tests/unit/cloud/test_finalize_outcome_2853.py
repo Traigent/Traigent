@@ -19,7 +19,10 @@ SID = "sess-2853"
 @pytest.fixture
 def client():
     with patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True):
-        c = BackendIntegratedClient(api_key="k", base_url="http://localhost:5000")
+        c = BackendIntegratedClient(
+            api_key="test_key",  # pragma: allowlist secret
+            base_url="http://localhost:5000",
+        )
         c.auth_manager = Mock()
         c.auth_manager.augment_headers = AsyncMock(
             return_value={"Authorization": "Bearer test-key"}
