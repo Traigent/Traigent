@@ -835,7 +835,9 @@ class TestHooksLockAndSymlinkRefusal:
         finally:
             os.umask(old_umask)
 
-    def test_existing_hooks_lock_file_is_tightened(self, installer: HooksInstaller) -> None:
+    def test_existing_hooks_lock_file_is_tightened(
+        self, installer: HooksInstaller
+    ) -> None:
         """A lock file left 0o644 by an older version becomes 0o600 on the flock path."""
         if installer_module._fcntl is None:
             pytest.skip("fcntl is not available on this platform")
