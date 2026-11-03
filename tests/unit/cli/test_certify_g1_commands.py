@@ -218,7 +218,8 @@ def test_bind_reconstruction_failure_makes_no_network_call(
         expected = "EVIDENCE_NOT_FOUND"
     else:
         for item in sorted(Path(evidence_setup["store_dir"]).rglob("*"), reverse=True):
-            item.unlink() if item.is_file() else item.rmdir()
+            if item.is_file():
+                item.unlink()
         expected = "EVIDENCE_STALE_OR_CORRUPT"
     result = CliRunner().invoke(certify, args)
     assert result.exit_code == 1

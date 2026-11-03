@@ -59,6 +59,10 @@ ALLOWED_TEXT: dict[str, tuple[str, str]] = {
         "traigent/config_generator/apply.py",
         "attribute chain traigent.api.decorators",
     ),
+    "execution snapshot object": (
+        "traigent/snapshot/backends/github.py",
+        "the git commit message the GitHub snapshot store writes, not a command",
+    ),
     "optimization": (
         "traigent/integrations/observability/wandb.py",
         "a list of W&B tags",
