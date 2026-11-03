@@ -82,7 +82,12 @@ class TestSignedVerificationWhenKeyConfigured:
 
         token = _signed_token(
             private_key,
-            {"tier": "enterprise", "features": ["cloud_execution"], "org": "Acme"},
+            {
+                "exp": int(time.time()) + 3600,
+                "tier": "enterprise",
+                "features": ["cloud_execution"],
+                "org": "Acme",
+            },
         )
 
         info = validator._decode_license_token(token)
@@ -171,7 +176,10 @@ class TestPublicKeyFromFile:
         key_path.write_bytes(public_pem)
         monkeypatch.setenv("TRAIGENT_LICENSE_PUBLIC_KEY_FILE", str(key_path))
 
-        token = _signed_token(private_key, {"tier": "pro", "features": []})
+        token = _signed_token(
+            private_key,
+            {"exp": int(time.time()) + 3600, "tier": "pro", "features": []},
+        )
 
         info = validator._decode_license_token(token)
         assert info is not None
@@ -292,7 +300,9 @@ class TestLegacyUnsignedFallback:
         self, validator, monkeypatch, caplog
     ):
         monkeypatch.setenv("TRAIGENT_ALLOW_UNSIGNED_LICENSE", "true")
-        token = _unsigned_token({"tier": "pro", "features": []})
+        token = _unsigned_token(
+            {"exp": int(time.time()) + 3600, "tier": "pro", "features": []}
+        )
 
         with caplog.at_level(logging.WARNING):
             info = validator._decode_license_token(token)
