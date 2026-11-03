@@ -62,6 +62,14 @@ class _GatedSession(requests.Session if requests is not None else object):  # ty
             headers = {str(k): v for k, v in dict(request.headers).items()}
             req_key = _tracing()._api_key_from_headers(headers)
             has_bearer = any(k.strip().lower() == "authorization" for k in headers)
+            if has_bearer and oo_egress.is_traigent_trace_endpoint(origin):
+                # Bearer is authenticated first server-side and cannot be validated
+                # for optimization_only: refuse (delegates to the shared warning).
+                return bool(
+                    oo_egress.ensure_trace_egress_allowed(
+                        req_key, origin, headers=headers
+                    )
+                )
             if req_key is None and not has_bearer:
                 # carries no credential at all: the frozen key (checked by the
                 # caller just before) is the only one in play
