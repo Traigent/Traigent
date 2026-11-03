@@ -34,6 +34,7 @@ For OpenTelemetry integration, use TraigentSpanExporter:
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import hashlib
 import json
@@ -877,6 +878,8 @@ class WorkflowTracesClient:
             return TraceIngestionResponse(success=False, error="optimization_only")
         if is_backend_offline():
             return TraceIngestionResponse(success=False, error="offline")
+        if not oo_egress.ensure_trace_egress_allowed(self.auth_token, self.backend_url):
+            return TraceIngestionResponse(success=False, error="optimization_only")
 
         if not REQUESTS_AVAILABLE:
             raise ImportError(
@@ -965,6 +968,11 @@ class WorkflowTracesClient:
             return TraceIngestionResponse(success=False, error="optimization_only")
         if is_backend_offline():
             return TraceIngestionResponse(success=False, error="offline")
+        # the gate may wait on a bounded key validation: keep it off the event loop
+        if not await asyncio.to_thread(
+            oo_egress.ensure_trace_egress_allowed, self.auth_token, self.backend_url
+        ):
+            return TraceIngestionResponse(success=False, error="optimization_only")
 
         if not AIOHTTP_AVAILABLE:
             raise ImportError(
@@ -1759,6 +1767,16 @@ def setup_workflow_tracing(
         or os.environ.get("TRAIGENT_BACKEND_URL")
         or BackendConfig.get_cloud_backend_url()
     )
+    from traigent.utils import optimization_only_egress as oo_egress
+
+    if not oo_egress.ensure_trace_egress_allowed(
+        auth_token
+        or os.environ.get("TRAIGENT_API_KEY")
+        or os.environ.get("TRAIGENT_API_TOKEN"),
+        resolved_url,
+    ):
+        logger.info("Workflow tracing not configured: Traigent trace export is off")
+        return None
     exporter = TraigentSpanExporter(
         backend_url=resolved_url,  # type: ignore[arg-type]
         auth_token=auth_token,

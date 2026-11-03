@@ -55,6 +55,31 @@ def _plugin_version_ok() -> bool:
         return False
 
 
+def _optimization_only_blocks_export() -> bool:
+    """True when optimization_only forbids handing out / using a trace exporter.
+
+    Evaluated on EVERY tracer hand-out and span (not just at construction), so a
+    credential that latches later, or ``TRAIGENT_OPTIMIZATION_ONLY=true`` set after the
+    tracer was cached, stops trace bytes at send time. A non-Traigent collector is
+    untouched; with no OTLP endpoint configured only an explicit/env setting blocks.
+    Fails closed on any error.
+    """
+    try:
+        import os as _os
+
+        from traigent.config.backend_config import BackendConfig
+        from traigent.utils import optimization_only_egress as _oo
+
+        endpoint = _os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+        if not endpoint:
+            return bool(_oo.env_setting())
+        return not _oo.ensure_trace_egress_allowed(
+            BackendConfig.get_api_key(), endpoint
+        )
+    except Exception:  # noqa: BLE001 - fail closed
+        return True
+
+
 # Try to import from the plugin first
 try:
     import importlib.util as _ilu
@@ -86,20 +111,24 @@ try:
 
     _PLUGIN_AVAILABLE = True
 
-    # Gate at the SDK boundary: the offline predicate must apply whichever
-    # implementation is imported, so the plugin's functions are wrapped rather
-    # than trusted. While offline (offline=True run or the offline env vars) no
-    # tracer is handed out, spans are no-ops and nothing is recorded.
+    # Gate at the SDK boundary: the offline AND optimization_only predicates must
+    # apply whichever implementation is imported, so the plugin's functions are
+    # wrapped rather than trusted. While offline (offline=True run or the offline env
+    # vars) or while optimization_only forbids trace export, no tracer is handed out,
+    # spans are no-ops and nothing is recorded.
     import functools as _functools
     from contextlib import contextmanager as _contextmanager
     from typing import Any as _Any
 
     from traigent.utils.env_config import is_backend_offline as _is_offline
 
+    def _blocked() -> bool:
+        return bool(_is_offline() or _optimization_only_blocks_export())
+
     def _gate_call(fn: _Any) -> _Any:
         @_functools.wraps(fn)
         def wrapper(*args: _Any, **kwargs: _Any) -> _Any:
-            if _is_offline():
+            if _blocked():
                 return None
             return fn(*args, **kwargs)
 
@@ -109,7 +138,7 @@ try:
         @_functools.wraps(fn)
         @_contextmanager
         def wrapper(*args: _Any, **kwargs: _Any) -> _Any:
-            if _is_offline():
+            if _blocked():
                 yield None
                 return
             with fn(*args, **kwargs) as span:
@@ -291,6 +320,7 @@ except ImportError:
     # Global tracer instance
     _tracer: Tracer | None = None
     _initialized = False
+    _provider: Any = None
     _test_context: dict[str, Any] = {}
 
     def set_test_context(
@@ -321,7 +351,7 @@ except ImportError:
 
     def _initialize_tracer() -> Tracer | None:
         """Initialize the OpenTelemetry tracer if not already done."""
-        global _tracer, _initialized
+        global _tracer, _initialized, _provider
 
         if _initialized:
             return _tracer
@@ -335,6 +365,16 @@ except ImportError:
         if not otlp_endpoint:
             return None
 
+        from traigent.config.backend_config import BackendConfig
+        from traigent.utils import optimization_only_egress as oo_egress
+
+        # optimization_only: no trace bytes to Traigent (validates the key once in a
+        # fresh process; a non-Traigent collector is untouched).
+        if not oo_egress.ensure_trace_egress_allowed(
+            BackendConfig.get_api_key(), otlp_endpoint
+        ):
+            return None
+
         try:
             resource = Resource.create(
                 {"service.name": "traigent-optimizer", "service.version": "1.0.0"}
@@ -345,6 +385,7 @@ except ImportError:
             otlp_exporter = OTLPHttpSpanExporter(endpoint=f"{otlp_endpoint}/v1/traces")
             provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
             trace.set_tracer_provider(provider)
+            _provider = provider
             _tracer = trace.get_tracer("traigent.core", "1.0.0")
             return _tracer
         except Exception as e:
@@ -361,7 +402,18 @@ except ImportError:
         including truncated example output. Checked per call, so a tracer
         initialized by an earlier online run is not used by an offline one.
         """
+        global _tracer, _provider
         if is_backend_offline():
+            return None
+        if _tracer is not None and _optimization_only_blocks_export():
+            # the credential latched (or the env flipped) after the tracer was cached:
+            # tear the exporter down so queued spans are not sent either.
+            provider, _tracer, _provider = _provider, None, None
+            if provider is not None:
+                try:
+                    provider.shutdown()
+                except Exception:  # noqa: BLE001 - best effort
+                    pass
             return None
         return _initialize_tracer()
 
