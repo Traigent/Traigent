@@ -429,11 +429,49 @@ except ImportError:
         def send(self, request: Any, **kwargs: Any) -> Any:
             if _optimization_only_blocks_export(
                 self._gate_endpoint, self._gate_api_key
-            ):
+            ) or not self._prepared_request_allowed(request):
                 raise ConnectionAbortedError(
                     "optimization_only: trace export blocked at send time"
                 )
+            # Never follow redirects: a collector could bounce the (credentialed)
+            # request to a different, e.g. Traigent, origin the gate never saw.
+            kwargs["allow_redirects"] = False
             return super().send(request, **kwargs)
+
+        def _prepared_request_allowed(self, request: Any) -> bool:
+            """Authorize the PREPARED request: its own origin and its own X-API-Key."""
+            try:
+                from urllib.parse import urlsplit
+
+                from traigent.utils import optimization_only_egress as oo_egress
+
+                parts = urlsplit(str(request.url))
+                if not parts.scheme or not parts.netloc:
+                    return False
+                origin = f"{parts.scheme}://{parts.netloc}"
+                headers = {str(k): v for k, v in dict(request.headers).items()}
+                req_key = _api_key_from_headers(headers)
+                has_bearer = any(k.strip().lower() == "authorization" for k in headers)
+                if req_key is None and not has_bearer:
+                    # carries no credential at all: the frozen key (checked by the
+                    # caller just before) is the only one in play
+                    return bool(
+                        oo_egress.ensure_trace_egress_allowed(
+                            self._gate_api_key, origin
+                        )
+                    )
+                if (
+                    req_key != self._gate_api_key
+                    and oo_egress.is_traigent_trace_endpoint(origin)
+                ):
+                    return False  # credential differs from the frozen, validated one
+                return bool(
+                    oo_egress.ensure_trace_egress_allowed(
+                        req_key, origin, headers=headers
+                    )
+                )
+            except Exception:  # noqa: BLE001 - fail closed
+                return False
 
     class _GatedSpanExporter:
         """Span exporter that re-checks optimization_only on every batch.
