@@ -1,4 +1,4 @@
-"""#1894: traigent-tracing add-ons older than 0.1.1 are ignored."""
+"""#1894: traigent-tracing add-ons older than 0.1.2 are ignored."""
 
 from __future__ import annotations
 
@@ -53,7 +53,9 @@ def reload_with(monkeypatch):
     importlib.reload(tracing)
 
 
-@pytest.mark.parametrize("version", ["0.1.0", "0.0.9", "garbage", "0.1.1rc1", None])
+@pytest.mark.parametrize(
+    "version", ["0.1.0", "0.0.9", "garbage", "0.1.1", "0.1.2rc1", None]
+)
 def test_old_or_unparseable_plugin_uses_embedded(reload_with, caplog, version):
     with caplog.at_level(logging.WARNING, logger="traigent.core.tracing"):
         mod = reload_with(version)
@@ -63,15 +65,15 @@ def test_old_or_unparseable_plugin_uses_embedded(reload_with, caplog, version):
         r.getMessage() for r in caplog.records if "traigent-tracing" in r.getMessage()
     ]
     assert len(msgs) == 1
-    assert "0.1.0" not in msgs[0].replace("0.1.1", "")
+    assert "0.1.0" not in msgs[0].replace("0.1.2", "")
 
 
 def test_metadata_version_preferred_over_module_attr(reload_with):
     assert reload_with("9.9.9", metadata="0.1.0")._PLUGIN_AVAILABLE is False
-    assert reload_with("0.0.1", metadata="0.1.1")._PLUGIN_AVAILABLE is True
+    assert reload_with("0.0.1", metadata="0.1.2")._PLUGIN_AVAILABLE is True
 
 
-@pytest.mark.parametrize("version", ["0.1.1", "0.2.0", "1.0"])
+@pytest.mark.parametrize("version", ["0.1.2", "0.2.0", "1.0"])
 def test_accepted_plugin_is_used_and_gated(reload_with, caplog, monkeypatch, version):
     with caplog.at_level(logging.WARNING, logger="traigent.core.tracing"):
         mod = reload_with(version)

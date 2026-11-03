@@ -345,10 +345,18 @@ def init(
         else:
             provider = tracer_provider
 
+        if not offline and snap_key is None:
+            # The snapshot held no key, so the gate validated none. Raise the usual
+            # configuration error if there still is none; a key that appeared since
+            # was never validated, so it is never sent (no exporter is built).
+            _init_api_key(api_key)
+            offline = True
+
         processor = exporter = None
         if not offline:
             # send exactly what the gate validated: never re-read key/destination
-            key = snap_key if snap_key is not None else _init_api_key(api_key)
+            key = snap_key
+            assert key is not None  # noqa: S101 - narrowed by the guard above
             base = snap_base or (
                 endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}"
             ).rstrip("/")

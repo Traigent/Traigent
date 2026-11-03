@@ -23,12 +23,12 @@ from __future__ import annotations
 
 from typing import Any
 
-_MIN_PLUGIN_VERSION = (0, 1, 1)
+_MIN_PLUGIN_VERSION = (0, 1, 2)
 _PLUGIN_REJECTED = False
 
 
 def _plugin_version_ok() -> bool:
-    """Return True only when the traigent-tracing add-on is >= 0.1.1.
+    """Return True only when the traigent-tracing add-on is >= 0.1.2.
 
     Older add-ons predate the span-attribute scrubbers, so they are ignored in
     favour of the embedded scrubbed implementation. Fails closed: any error,
@@ -223,7 +223,7 @@ except ImportError:
 
         _logging.getLogger(__name__).warning(
             "Ignoring the traigent-tracing add-on: version is older than "
-            "0.1.1 or could not be determined. Using the built-in scrubbed "
+            "0.1.2 or could not be determined. Using the built-in scrubbed "
             "tracing; upgrade the add-on to use it."
         )
 
@@ -412,93 +412,7 @@ except ImportError:
         """Get the current test context."""
         return _test_context.copy()
 
-    class _GatedSession(requests.Session if OTEL_AVAILABLE else object):  # type: ignore[misc]
-        """requests.Session that re-checks the gate before EVERY request.
-
-        OpenTelemetry retries inside one ``export``; a batch-level check cannot see a
-        credential that latches between attempts. ``send`` is the single choke point
-        (``post``/``request`` both land here), so a restricted gate raises instead of
-        sending; OTel treats the error as non-retryable and drops the batch.
-        """
-
-        def __init__(self, endpoint: str, api_key: Any) -> None:
-            super().__init__()
-            self._gate_endpoint = endpoint
-            self._gate_api_key = api_key
-
-        def send(self, request: Any, **kwargs: Any) -> Any:
-            if _optimization_only_blocks_export(
-                self._gate_endpoint, self._gate_api_key
-            ) or not self._prepared_request_allowed(request):
-                raise ConnectionAbortedError(
-                    "optimization_only: trace export blocked at send time"
-                )
-            # Never follow redirects: a collector could bounce the (credentialed)
-            # request to a different, e.g. Traigent, origin the gate never saw.
-            kwargs["allow_redirects"] = False
-            return super().send(request, **kwargs)
-
-        def _prepared_request_allowed(self, request: Any) -> bool:
-            """Authorize the PREPARED request: its own origin and its own X-API-Key."""
-            try:
-                from urllib.parse import urlsplit
-
-                from traigent.utils import optimization_only_egress as oo_egress
-
-                parts = urlsplit(str(request.url))
-                if not parts.scheme or not parts.netloc:
-                    return False
-                origin = f"{parts.scheme}://{parts.netloc}"
-                headers = {str(k): v for k, v in dict(request.headers).items()}
-                req_key = _api_key_from_headers(headers)
-                has_bearer = any(k.strip().lower() == "authorization" for k in headers)
-                if req_key is None and not has_bearer:
-                    # carries no credential at all: the frozen key (checked by the
-                    # caller just before) is the only one in play
-                    return bool(
-                        oo_egress.ensure_trace_egress_allowed(
-                            self._gate_api_key, origin
-                        )
-                    )
-                if (
-                    req_key != self._gate_api_key
-                    and oo_egress.is_traigent_trace_endpoint(origin)
-                ):
-                    return False  # credential differs from the frozen, validated one
-                return bool(
-                    oo_egress.ensure_trace_egress_allowed(
-                        req_key, origin, headers=headers
-                    )
-                )
-            except Exception:  # noqa: BLE001 - fail closed
-                return False
-
-    class _GatedSpanExporter:
-        """Span exporter that re-checks optimization_only on every batch.
-
-        Any tracer already handed out keeps working through this exporter, so the gate
-        lives in the export path: when restricted the batch is dropped (reported as
-        SUCCESS, nothing sent). Shutdown/flush therefore discards queued spans instead
-        of draining them to Traigent.
-        """
-
-        def __init__(self, inner: Any, endpoint: str, api_key: Any = _UNSET) -> None:
-            self._inner = inner
-            self._endpoint = endpoint
-            self._api_key = api_key  # frozen at construction; never re-read per batch
-
-        def export(self, spans: Any) -> Any:
-            from opentelemetry.sdk.trace.export import SpanExportResult
-
-            if _optimization_only_blocks_export(self._endpoint, self._api_key):
-                return SpanExportResult.SUCCESS
-            return self._inner.export(spans)
-
-        def shutdown(self) -> None:
-            self._inner.shutdown()
-
-        def force_flush(self, timeout_millis: int = 30000) -> bool:
-            return bool(self._inner.force_flush(timeout_millis))
+    from traigent.core.trace_export_gate import _GatedSession, _GatedSpanExporter
 
     def _initialize_tracer() -> Tracer | None:
         """Initialize the OpenTelemetry tracer if not already done."""
