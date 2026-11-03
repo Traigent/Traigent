@@ -867,6 +867,34 @@ class TestCostEnforcerEnvironmentVariables:
             enforcer = CostEnforcer()
             assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
 
+    @pytest.mark.parametrize("raw_limit", ["", "  "])
+    def test_blank_env_limit_is_unset_without_warning(
+        self, caplog: pytest.LogCaptureFixture, raw_limit: str
+    ) -> None:
+        """A blank limit behaves like an absent variable: no 'invalid' warning."""
+        with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": raw_limit}):
+            with caplog.at_level("WARNING", logger="traigent.core.cost_enforcement"):
+                enforcer = CostEnforcer()
+        assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
+        assert enforcer.config.limit_explicit is False
+        assert "TRAIGENT_RUN_COST_LIMIT" not in caplog.text
+
+    def test_absent_env_limit_uses_default(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "TRAIGENT_RUN_COST_LIMIT"}
+        with patch.dict(os.environ, env, clear=True):
+            enforcer = CostEnforcer()
+        assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
+        assert enforcer.config.limit_explicit is False
+
+    def test_unparseable_env_limit_still_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": "abc"}):
+            with caplog.at_level("WARNING", logger="traigent.core.cost_enforcement"):
+                enforcer = CostEnforcer()
+        assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
+        assert "Invalid TRAIGENT_RUN_COST_LIMIT='abc'" in caplog.text
+
     @pytest.mark.parametrize("raw_limit", ["-5.0", "0", "0.0"])
     def test_nonpositive_env_limit_raises_at_config_time(self, raw_limit: str) -> None:
         """Nonpositive limits raise instead of silently zeroing the run (#1684)."""

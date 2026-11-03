@@ -764,7 +764,9 @@ class CostEnforcer:
 
         def limit_from_env() -> float:
             raw = os.getenv("TRAIGENT_RUN_COST_LIMIT")
-            if raw is None:
+            if raw is None or not raw.strip():
+                # Blank means "unset" (callers blank it on purpose so a later
+                # load_dotenv cannot refill it): default, no warning.
                 return DEFAULT_COST_LIMIT_USD
             try:
                 parsed = float(raw)
