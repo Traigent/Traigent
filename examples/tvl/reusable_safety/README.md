@@ -161,7 +161,7 @@ from traigent.api.safety import (
 )
 
 @optimize(
-    spec="qa_agent.tvl.yml",
+    tvl_spec="qa_agent.tvl.yml",
     safety_constraints=[
         faithfulness.above(0.85, confidence=0.95),
         hallucination_rate().below(0.1),
@@ -192,7 +192,7 @@ def qa_agent(question: str, **kwargs):
        direction: maximize
    ```
 
-2. Create `new_agent.py` with `@optimize(spec="new_agent.tvl.yml")`
+2. Create `new_agent.py` with `@optimize(tvl_spec="new_agent.tvl.yml")`
 
 ### Add a New Safety Constraint
 

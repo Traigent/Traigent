@@ -31,7 +31,7 @@ DATASET_PATH = str(
 )
 
 # Initialize Traigent in mock mode
-traigent.initialize(offline=True, minimal_logging=True)
+traigent.initialize(minimal_logging=True)
 
 # Define system prompt variants to optimize
 SYSTEM_PROMPTS = [

@@ -221,13 +221,17 @@ from traigent.utils.callbacks import (
 @traigent.optimize(
     configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
     objectives=["accuracy"],
+)
+def my_agent(query: str) -> str:
+    ...
+
+# Callbacks are a call-time argument of .optimize(), not a decorator option
+await my_agent.optimize(
     callbacks=[
         ProgressBarCallback(width=50),
         StatisticsCallback()
     ]
 )
-def my_agent(query: str) -> str:
-    ...
 PYTHON
 sleep 3
 
@@ -284,12 +288,11 @@ class SlackNotificationCallback(OptimizationCallback):
         slack.post(f"Done! Best: {result.best_config}")
 
 # Use it
-@traigent.optimize(
-    configuration_space={...},
-    callbacks=[SlackNotificationCallback()]
-)
+@traigent.optimize(configuration_space={...})
 def my_agent(query: str) -> str:
     ...
+
+await my_agent.optimize(callbacks=[SlackNotificationCallback()])
 PYTHON
 sleep 3
 
@@ -303,11 +306,10 @@ stats_callback = StatisticsCallback()
 
 @traigent.optimize(
     configuration_space={"model": [...], "temperature": [...]},
-    callbacks=[stats_callback]
 )
 def agent(q): ...
 
-await agent.optimize()
+await agent.optimize(callbacks=[stats_callback])
 
 # Get parameter importance analysis
 importance = stats_callback.get_parameter_importance()

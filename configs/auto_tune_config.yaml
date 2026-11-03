@@ -22,7 +22,7 @@ models:
     max_tokens: [500, 1000]
 
   - provider: "anthropic"
-    model: "claude-3-5-sonnet-latest"
+    model: "claude-sonnet-4-6"
     temperature: [0.3, 0.5]
     max_tokens: [1000]
 

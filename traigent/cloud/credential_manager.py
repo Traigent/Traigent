@@ -328,4 +328,21 @@ class CredentialManager:
                 logger.error(f"Failed to delete credentials file: {e}")
                 success = False
 
+        # The encrypted CLI credential is the one ``traigent auth login`` writes
+        # and ``is_authenticated`` reads; leaving it behind made this method
+        # report success while the user stayed logged in (#2833).
+        try:
+            get_secure_credential_store().delete_secure(SECURE_CLI_CREDENTIAL_NAME)
+        except SecurityError as e:
+            # Locked store. Only a failure when an encrypted file would be left
+            # behind; a store that was never configured has nothing to delete.
+            if (Path.home() / ".traigent" / "secure_credentials.enc").exists():
+                logger.error("Could not confirm secure CLI credential deletion: %s", e)
+                success = False
+            else:
+                logger.debug("Secure credential store not configured: %s", e)
+        except OSError as e:
+            logger.error("Could not confirm secure CLI credential deletion: %s", e)
+            success = False
+
         return success

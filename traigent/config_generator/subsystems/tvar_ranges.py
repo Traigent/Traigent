@@ -14,7 +14,8 @@ from typing import Any
 
 from traigent.config_generator.llm_backend import BudgetExhausted, ConfigGenLLM
 from traigent.config_generator.presets.range_presets import get_preset_range
-from traigent.config_generator.types import TVarSpec
+from traigent.config_generator.types import TVarSpec, tvar_spec_problem
+from traigent.tuned_variables.detection_strategies import _bracket_float
 from traigent.tuned_variables.detection_types import (
     DetectionConfidence,
     DetectionResult,
@@ -127,11 +128,12 @@ def _heuristic_from_value(name: str, value: Any) -> TVarSpec | None:
         )
 
     if isinstance(value, float):
+        if value < 0:
+            return None  # no sensible bracket; skip rather than emit a reversed range
         if abs(value) < 1e-10:
             low, high = 0.0, 1.0
         else:
-            low = round(max(0.0, value * 0.5), 4)
-            high = round(value * 2.0, 4)
+            low, high = _bracket_float(value)
         return TVarSpec(
             name=name,
             range_type="Range",
@@ -142,6 +144,8 @@ def _heuristic_from_value(name: str, value: Any) -> TVarSpec | None:
         )
 
     if isinstance(value, int):
+        if value <= 0:
+            return None  # "off"/negative literal: skip (#2799)
         low = max(1, value // 2)
         high = max(low + 1, value * 2)
         return TVarSpec(
@@ -216,6 +220,9 @@ def _parse_llm_range_response(name: str, response: str) -> TVarSpec | None:
     except json.JSONDecodeError:
         return None
 
+    if not isinstance(data, dict):
+        return None
+
     range_type = data.get("range_type")
     kwargs = data.get("kwargs")
     if not range_type or not isinstance(kwargs, dict):
@@ -224,7 +231,7 @@ def _parse_llm_range_response(name: str, response: str) -> TVarSpec | None:
     if range_type not in ("Range", "IntRange", "LogRange", "Choices"):
         return None
 
-    return TVarSpec(
+    spec = TVarSpec(
         name=name,
         range_type=range_type,
         range_kwargs=kwargs,
@@ -232,3 +239,4 @@ def _parse_llm_range_response(name: str, response: str) -> TVarSpec | None:
         confidence=0.6,
         reasoning="LLM-suggested range",
     )
+    return spec if tvar_spec_problem(spec) is None else None

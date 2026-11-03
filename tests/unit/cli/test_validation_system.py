@@ -75,15 +75,6 @@ class TestFunctionDiscovery:
         content = '''
 import traigent
 
-# Mock OptimizedFunction for testing
-class OptimizedFunction:  # Use the exact name expected by function_discovery
-    def __init__(self, func, **kwargs):
-        self.func = func
-        self.eval_dataset = kwargs.get("eval_dataset")
-        self.objectives = kwargs.get("objectives", [])
-        self.decorator_config = kwargs
-        self.optimize = lambda: None  # Add optimize method for discovery
-
 @traigent.optimize(
     eval_dataset="test.jsonl",
     objectives=["accuracy"],
@@ -92,14 +83,6 @@ class OptimizedFunction:  # Use the exact name expected by function_discovery
 def test_function(text: str, model: str = "default", temp: float = 0.5):
     """Test function with default parameters."""
     return {"result": "test"}
-
-# Create mock optimized function instance
-test_function = OptimizedFunction(
-    test_function,
-    eval_dataset="test.jsonl",
-    objectives=["accuracy"],
-    configuration_space={"model": ["default", "optimized"], "temp": [0.0, 0.5, 1.0]}
-)
 
 def regular_function():
     """Regular function that should not be discovered."""
@@ -175,15 +158,15 @@ def regular_function():
         module_path = tmp_path / "local_script.py"
         module_path.write_text(
             """
-class OptimizedFunction:
-    def __init__(self, func):
-        self.func = func
-        self.optimize = lambda: None
+import traigent
 
+@traigent.optimize(
+    eval_dataset="test.jsonl",
+    objectives=["accuracy"],
+    configuration_space={"model": ["default", "optimized"]},
+)
 def local_func(text: str, model: str = "default"):
     return text
-
-local_func = OptimizedFunction(local_func)
 """
         )
         monkeypatch.chdir(tmp_path)
@@ -502,18 +485,15 @@ def test_func():
         module_path = tmp_path / "local_script.py"
         module_path.write_text(
             """
-class OptimizedFunction:
-    def __init__(self, func):
-        self.func = func
-        self.eval_dataset = "test.jsonl"
-        self.objectives = ["accuracy"]
-        self.configuration_space = {"model": ["default", "optimized"]}
-        self.optimize = lambda: None
+import traigent
 
+@traigent.optimize(
+    eval_dataset="test.jsonl",
+    objectives=["accuracy"],
+    configuration_space={"model": ["default", "optimized"]},
+)
 def local_func(text: str, model: str = "default"):
     return text
-
-local_func = OptimizedFunction(local_func)
 """
         )
         (tmp_path / "test.jsonl").write_text(

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +24,28 @@ class OptimizedFunction:
     def has_defaults(self) -> bool:
         """Check if function has any default parameters."""
         return bool(self.default_params)
+
+    @property
+    def baseline_config(self) -> dict[str, Any]:
+        """Configuration the ``check`` baseline runs.
+
+        The decorator's ``default_config`` wins; otherwise the function's
+        signature defaults; otherwise an empty config.
+        """
+        declared = self.decorator_config.get("default_config")
+        if isinstance(declared, dict) and declared:
+            return dict(declared)
+        return dict(self.default_params)
+
+    @property
+    def baseline_source(self) -> str:
+        """Where ``baseline_config`` comes from: default_config|signature|none."""
+        declared = self.decorator_config.get("default_config")
+        if isinstance(declared, dict) and declared:
+            return "default_config"
+        if self.default_params:
+            return "signature"
+        return "none"
 
     @property
     def has_dataset(self) -> bool:
@@ -62,10 +85,19 @@ class ValidationResult:
 
     @property
     def max_improvement(self) -> float:
-        """Get maximum improvement percentage across all metrics."""
+        """Get maximum improvement percentage across all metrics.
+
+        ``inf`` means at least one metric improved from a zero baseline, where
+        a relative percentage is undefined.
+        """
         if not self.improvement_details:
             return 0.0
         return max(self.improvement_details.values())
+
+    @property
+    def has_errors(self) -> bool:
+        """True when validation could not complete (nothing was compared)."""
+        return bool(self.blocking_issues)
 
     @property
     def should_block(self) -> bool:
@@ -82,9 +114,32 @@ class ValidationResult:
         else:
             status = "✅ PASSED"
             max_imp = self.max_improvement
-            reason = f"Optimization improves by up to {max_imp:.1f}%"
+            if math.isinf(max_imp):
+                reason = "Optimization improves over a zero baseline"
+            else:
+                reason = f"Optimization improves by up to {max_imp:.1f}%"
 
         return f"{self.function_name}: {status} - {reason}"
+
+    def _format_compared_metric(self, metric: str, value: float) -> str:
+        improvement = self.improvement_details[metric]
+        if math.isinf(improvement):
+            # Baseline was exactly zero: a percentage is undefined, so show
+            # the absolute change instead (#2803).
+            baseline = self.baseline_metrics.get(metric, 0.0)
+            direction = "↑" if improvement > 0 else "↓"
+            label = "improved" if improvement > 0 else "regressed"
+            return (
+                f"  {metric}: {value:.3f} ({direction} {label} from zero, "
+                f"{value - baseline:+.3f})"
+            )
+        if improvement > 0:
+            direction = "↑"
+        elif improvement < 0:
+            direction = "↓"
+        else:
+            direction = "="
+        return f"  {metric}: {value:.3f} ({direction} {abs(improvement):.1f}%)"
 
     def get_detailed_report(self) -> str:
         """Get a detailed report of the validation result."""
@@ -94,6 +149,8 @@ class ValidationResult:
             "",
             "Baseline Metrics (default parameters):",
         ]
+        if self.baseline_config is not None:
+            lines.insert(3, f"Baseline configuration: {self.baseline_config or '{}'}")
 
         for metric, value in self.baseline_metrics.items():
             lines.append(f"  {metric}: {value:.3f}")
@@ -106,16 +163,11 @@ class ValidationResult:
         )
 
         for metric, value in self.optimized_metrics.items():
-            improvement = self.improvement_details.get(metric, 0.0)
-            if improvement > 0:
-                direction = "↑"
-            elif improvement < 0:
-                direction = "↓"
-            else:
-                direction = "="
-            lines.append(
-                f"  {metric}: {value:.3f} ({direction} {abs(improvement):.1f}%)"
-            )
+            if metric not in self.improvement_details:
+                # Not compared (no baseline counterpart): show no percentage.
+                lines.append(f"  {metric}: {value:.3f}")
+                continue
+            lines.append(self._format_compared_metric(metric, value))
 
         if self.blocking_issues:
             lines.extend(

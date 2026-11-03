@@ -38,6 +38,7 @@ from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import (
     QuotaRefusalFacts,
     SessionCreationFailureDetail,
+    normalize_next_trial_payload,
     safe_http_error_summary,
 )
 from traigent.evaluators.base import Dataset
@@ -2268,6 +2269,7 @@ class TraigentCloudClient(BaseTraigentClient):
         """Deserialize next trial response."""
         from traigent.cloud.models import DatasetSubsetIndices
 
+        data = normalize_next_trial_payload(data)
         suggestion = None
         if data.get("suggestion"):
             sugg_data = data["suggestion"]

@@ -46,7 +46,7 @@ python run.py</code></pre>
         <h2>Scenarios</h2>
     </header>
     <div class="detail-section-body">
-        <ol class="detail-list"><li><strong>Invalid Configuration Space</strong> — Bad types in <code>configuration_space</code> raise <code>ValueError</code></li><li><strong>Sample-Budget Exceeded</strong> — <code>budget_limit</code>/<code>budget_metric</code> stops optimization when budget is exhausted</li><li><strong>Optimization Timeout</strong> — Short timeout results in <code>stop_reason == &quot;timeout&quot;</code></li><li><strong>Preflight Validation</strong> — Check environment variables before running optimization</li><li><strong>Graceful Fallback</strong> — Fall back to a default configuration on any failure</li></ol>
+        <ol class="detail-list"><li><strong>Invalid Configuration Space</strong> — Bad types in <code>configuration_space</code> raise <code>ValueError</code></li><li><strong>Cost-Limit Exceeded</strong> — <code>cost_limit</code> stops optimization when spend is exhausted</li><li><strong>Optimization Timeout</strong> — Short timeout results in <code>stop_reason == &quot;timeout&quot;</code></li><li><strong>Preflight Validation</strong> — Check environment variables before running optimization</li><li><strong>Graceful Fallback</strong> — Fall back to a default configuration on any failure</li></ol>
     </div>
 </section><section class="detail-section" id="error-handling-run">
                     <header class="detail-section-header">
@@ -64,7 +64,7 @@ python run.py</code></pre>
         <h2>Key Patterns</h2>
     </header>
     <div class="detail-section-body">
-        <ul class="detail-list"><li>Validate <code>configuration_space</code> types before decoration</li><li>Use <code>budget_limit</code>/<code>budget_metric</code> to cap resource usage</li><li>Check <code>result.stop_reason</code> for timeout detection (not an exception)</li><li>Always have a fallback configuration for production resilience</li></ul>
+        <ul class="detail-list"><li>Validate <code>configuration_space</code> types before decoration</li><li>Use <code>cost_limit</code> (or <code>metric_limit</code> with <code>metric_name</code>) to cap resource usage</li><li>Check <code>result.stop_reason</code> for timeout detection (not an exception)</li><li>Always have a fallback configuration for production resilience</li></ul>
     </div>
 </section>
                         <section class="detail-section detail-section-source">

@@ -23,7 +23,12 @@ from traigent.config_generator.subsystems.tvar_ranges import generate_tvar_specs
 from traigent.config_generator.subsystems.tvar_recommendations import (
     generate_recommendations,
 )
-from traigent.config_generator.types import AutoConfigResult, SafetySpec
+from traigent.config_generator.types import (
+    AutoConfigResult,
+    SafetySpec,
+    TVarSpec,
+    tvar_spec_problem,
+)
 from traigent.tuned_variables.detection_types import DetectionResult
 
 # All subsystem names that can be selectively enabled.
@@ -37,6 +42,21 @@ ALL_SUBSYSTEMS = frozenset(
         "recommendations",
     }
 )
+
+
+def _drop_invalid_tvars(tvars: list[TVarSpec]) -> tuple[list[TVarSpec], list[str]]:
+    """Drop specs that are not valid search-space entries, with a warning each."""
+    kept: list[TVarSpec] = []
+    warnings: list[str] = []
+    for spec in tvars:
+        problem = tvar_spec_problem(spec)
+        if problem is None:
+            kept.append(spec)
+        else:
+            warnings.append(
+                f"Dropped tuned variable {spec.name!r} ({spec.range_type}): {problem}"
+            )
+    return kept, warnings
 
 
 class ConfigGeneratorPipeline:
@@ -82,6 +102,8 @@ class ConfigGeneratorPipeline:
                 llm=self._llm,
                 source_code=source_code,
             )
+            tvars, dropped = _drop_invalid_tvars(tvars)
+            warnings.extend(dropped)
 
         # 2. Agent classification (shared — used by objectives, safety, benchmarks, recommendations)
         _CLASSIFICATION_CONSUMERS = {

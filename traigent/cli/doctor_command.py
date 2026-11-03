@@ -143,26 +143,34 @@ def _run_key_checks(report: DoctorReport) -> None:
     """Traigent key presence + tg_/uk_ format classification, and vendor
     key presence. Local-only: no network call (issue #1778's "vendor-key
     presence + uk_/tg_ classification")."""
-    traigent_key = os.environ.get("TRAIGENT_API_KEY")
+    # Resolve the key the way the SDK does (env, then stored login, then dev
+    # key) so doctor cannot say "not set" while `auth status` says logged in.
+    from traigent.cloud.credential_manager import CredentialManager
+
+    traigent_key, key_source = CredentialManager.get_api_key_with_source()
+    label = key_source or "TRAIGENT_API_KEY"
     if not traigent_key:
         report.add(
             "Auth",
             "WARN",
-            "TRAIGENT_API_KEY not set (cloud features unavailable; local "
-            "optimization still works)",
+            "TRAIGENT_API_KEY not set and no stored login found (cloud features "
+            "unavailable; local optimization still works)",
         )
     elif any(traigent_key.startswith(prefix) for prefix in _TRAIGENT_KEY_PREFIXES):
         matched = next(p for p in _TRAIGENT_KEY_PREFIXES if traigent_key.startswith(p))
         report.add(
             "Auth",
             "PASS",
-            f"TRAIGENT_API_KEY present and recognized ('{matched}' prefix)",
+            f"{label} present and recognized ('{matched}' prefix)"
+            if label == "TRAIGENT_API_KEY"
+            else f"Traigent API key resolved from {label} and recognized "
+            f"('{matched}' prefix)",
         )
     else:
         report.add(
             "Auth",
             "FAIL",
-            "TRAIGENT_API_KEY is set but does not match a known prefix "
+            f"Traigent API key from {label} does not match a known prefix "
             f"({', '.join(_TRAIGENT_KEY_PREFIXES)})",
         )
 

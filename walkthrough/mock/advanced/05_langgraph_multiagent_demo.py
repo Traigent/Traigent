@@ -77,7 +77,7 @@ from traigent.integrations.observability.workflow_traces import (
 load_dotenv()
 
 # Initialize Traigent
-traigent.initialize(offline=True)
+traigent.initialize()
 
 SCRIPT_DIR = Path(__file__).parent  # Current directory (advanced/)
 

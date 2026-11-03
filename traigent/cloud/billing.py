@@ -23,6 +23,7 @@ from typing import Any, cast
 
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
+from traigent.utils.money import format_usd
 
 logger = get_logger(__name__)
 
@@ -1341,8 +1342,8 @@ class CostTracker:
         if self._total_cost > self.config.cost_alert_threshold:
             self._stats["alerts_triggered"] += 1
             logger.warning(
-                f"Cost alert: Total costs (${self._total_cost:.2f}) "
-                f"exceeded threshold (${self.config.cost_alert_threshold:.2f})"
+                f"Cost alert: Total costs ({format_usd(self._total_cost)}) "
+                f"exceeded threshold ({format_usd(self.config.cost_alert_threshold)})"
             )
 
     def get_statistics(self) -> dict[str, Any]:

@@ -2882,15 +2882,27 @@ class ConfigurationComparison:
     significant_differences: list[tuple[int, int, str]]
     confidence_level: float
 
-    def get_best_configuration(self, metric: str) -> tuple[int, dict[str, Any]]:
-        """Get the best configuration for a specific metric."""
+    def get_best_configuration(
+        self, metric: str, orientation: str | None = None
+    ) -> tuple[int, dict[str, Any]]:
+        """Get the best configuration for a specific metric.
+
+        "Best" follows the metric's direction: the SDK-owned default for names
+        such as ``cost`` and ``latency`` (smallest wins) and ``accuracy``
+        (largest wins), or ``orientation`` (``"maximize"`` / ``"minimize"``)
+        when given. A custom metric name with no declared direction raises
+        instead of silently ranking the worst configuration first.
+        """
         import numpy as np  # noqa: PLC0415
 
         if metric not in self.comparison_metrics:
             raise ValueError(f"Metric '{metric}' not found in comparison") from None
 
+        direction = resolve_objective_orientation(metric, orientation)
         values = self.comparison_metrics[metric]
-        best_idx = int(np.argmax(values))
+        best_idx = int(
+            np.argmin(values) if direction == "minimize" else np.argmax(values)
+        )
         return best_idx, self.configurations[best_idx]
 
 

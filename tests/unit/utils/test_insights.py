@@ -160,10 +160,13 @@ class TestGetOptimizationInsights:
 
         # Check individual objective analysis
         assert multi_obj["accuracy"]["best"] == 0.92
-        assert (
-            multi_obj["cost_per_1k"]["best"] == 0.008
-        )  # Highest cost is "best" in this case
-        assert multi_obj["latency"]["best"] == 0.8
+        # cost_per_1k has no declared or SDK-owned direction: no best is guessed.
+        assert multi_obj["cost_per_1k"]["best"] is None
+        assert multi_obj["cost_per_1k"]["orientation"] is None
+        assert multi_obj["cost_per_1k"]["average"] == pytest.approx(0.00425)
+        # latency is a canonical minimize metric: the lowest value is the best.
+        assert multi_obj["latency"]["best"] == 0.3
+        assert multi_obj["latency"]["orientation"] == "minimize"
 
     def test_get_optimization_insights_parameter_importance(self, optimization_result):
         """Test parameter importance analysis."""

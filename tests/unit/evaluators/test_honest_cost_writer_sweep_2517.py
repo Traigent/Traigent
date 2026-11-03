@@ -279,7 +279,7 @@ def test_insights_report_no_cost_analysis_for_an_unmeasured_trial() -> None:
     flagged = _trial("a", {"accuracy": 1.0, "cost_unmeasured": 1.0, "total_cost": 0.0})
     measured = _trial("b", {"accuracy": 0.9, "cost": 0.0, "total_cost": 0.0})
 
-    rows = _analyze_top_configurations([flagged, measured], "accuracy", 5)
+    rows = _analyze_top_configurations([flagged, measured], ["accuracy"], 5)
 
     by_id = {row["trial_id"]: row for row in rows}
     assert "cost_analysis" not in by_id["a"]

@@ -319,6 +319,7 @@ class TestLocalStorageManager:
         old_session = self.storage.load_session(old_session_id)
         old_time = (datetime.now(UTC) - timedelta(days=35)).isoformat()
         old_session.created_at = old_time
+        old_session.status = "completed"  # only finished sessions are cleaned (#2830)
         self.storage._save_session(old_session)
 
         # Clean up sessions older than 30 days

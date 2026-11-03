@@ -36,7 +36,7 @@ traigent_ui/
 
 ### Optimization Execution
 
-- Run optimizations with various strategies (grid, random, adaptive) in local (`edge_analytics`) mode
+- Run optimizations with various strategies (grid, random, adaptive) in local (`offline=True`) mode
 - Real-time progress tracking and visualization
 - Cost tracking and budget management
 - Multi-objective optimization support

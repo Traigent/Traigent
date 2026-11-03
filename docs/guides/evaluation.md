@@ -382,8 +382,9 @@ Best accuracy: 0.00
 
 4. **Enable Debug Mode**
    ```python
+   traigent.configure(logging_level="DEBUG")  # Print detailed eval info
+
    @traigent.optimize(
-       debug_evaluation=True,  # Print detailed eval info
        eval_dataset="data.jsonl"
    )
    ```
@@ -403,9 +404,13 @@ Best accuracy: 0.00
    np.random.seed(42)
 
    @traigent.optimize(
-       random_seed=42,  # Deterministic optimization
        eval_dataset="data.jsonl"
    )
+   def my_agent(question: str) -> str: ...
+
+   # The seed is a call-time argument of .optimize(), not a decorator option
+   # (it reaches the random-search optimizer).
+   result = my_agent.optimize_sync(algorithm="random", max_trials=10, random_seed=42)
    ```
 
 2. **Increase Sample Size**
@@ -503,12 +508,9 @@ Best accuracy: 0.00
         "total_cost": cost_metric,
     },
 
-    # Enable debugging during development
-    debug_evaluation=True,
-
     # Set reasonable limits
     max_trials=50,
-    timeout_per_trial=60,  # seconds
+    example_timeout=60,  # seconds allowed per evaluated example
 
     # Enable parallel processing
     parallel_config={
