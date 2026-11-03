@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import math
+import time
 from datetime import UTC
 from typing import Any
 
@@ -11,15 +13,59 @@ from rich.console import Console
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.cli.validation_types import OptimizedFunction, ValidationResult
+from traigent.config.context import TrialContext
 from traigent.config.types import resolve_execution_policy
 from traigent.core.objective_directions import resolve_objective_orientation
+from traigent.core.orchestrator_helpers import extract_cost_from_results
+from traigent.core.trial_result_factory import build_success_result
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
+from traigent.utils.langchain_interceptor import capture_scope
 from traigent.utils.logging import get_logger
 from traigent.utils.multi_objective import ParetoFrontCalculator, ParetoPoint
 
 logger = get_logger(__name__)
 console = Console()
+
+
+_THRESHOLD_TOLERANCE = 1e-9
+
+
+def _declared_orientations(func_info: OptimizedFunction) -> dict[str, str]:
+    schema = getattr(func_info.func, "objective_schema", None)
+    definitions = getattr(schema, "objectives", [])
+    return {definition.name: str(definition.orientation) for definition in definitions}
+
+
+def check_prerequisites(func_info: OptimizedFunction) -> list[str]:
+    """Return the blocking issues that stop ``traigent check`` from running.
+
+    Shared by the real run and ``check --dry-run`` so both agree on what blocks.
+    """
+    issues = []
+
+    if not func_info.has_dataset:
+        issues.append("Missing evaluation dataset")
+
+    if not func_info.objectives:
+        issues.append("No objectives specified")
+
+    config_space = func_info.decorator_config.get("configuration_space", {})
+    if not config_space:
+        issues.append("No configuration space specified")
+
+    banded = [
+        name
+        for name, orientation in _declared_orientations(func_info).items()
+        if orientation == "band"
+    ]
+    if banded:
+        issues.append(
+            "CLI validation does not support target-band objectives: "
+            + ", ".join(banded)
+        )
+
+    return issues
 
 
 class OptimizationValidator:
@@ -31,6 +77,11 @@ class OptimizationValidator:
         Args:
             threshold_pct: Minimum improvement threshold percentage (default: 10%)
         """
+        if not math.isfinite(threshold_pct) or threshold_pct < 0:
+            raise ValueError(
+                f"threshold_pct must be a finite number >= 0, got {threshold_pct!r}"
+            )
+        self.threshold_pct = float(threshold_pct)
         self.threshold = threshold_pct / 100.0  # Convert to decimal (0.1 for 10%)
         self.pareto_calculator = ParetoFrontCalculator()
         logger.info(
@@ -67,6 +118,10 @@ class OptimizationValidator:
             # Step 1: Run function with default parameters (baseline)
             console.print("🔍 Running baseline with default parameters...")
             baseline_metrics, baseline_config = await self._run_baseline(func_info)
+            console.print(
+                f"   Baseline configuration ({func_info.baseline_source}): "
+                f"{baseline_config or '{}'}"
+            )
 
             # Step 2: Run Traigent optimization
             console.print("🚀 Running Traigent optimization...")
@@ -76,6 +131,21 @@ class OptimizationValidator:
 
             # Step 3: Compare using Pareto efficiency
             console.print("⚖️  Comparing results using Pareto efficiency...")
+            incomparable = self._incomparable_objectives(
+                baseline_metrics, optimized_metrics, func_info.objectives
+            )
+            if incomparable:
+                return ValidationResult(
+                    function_name=func_info.name,
+                    baseline_metrics=baseline_metrics,
+                    optimized_metrics=optimized_metrics,
+                    is_superior=False,
+                    improvement_details={},
+                    blocking_issues=incomparable,
+                    baseline_config=baseline_config,
+                    optimized_config=optimized_config,
+                    threshold_used=self.threshold,
+                )
             is_superior, improvement_details = self._compare_results(
                 baseline_metrics,
                 optimized_metrics,
@@ -116,30 +186,7 @@ class OptimizationValidator:
         Returns:
             List of blocking issues (empty if all checks pass)
         """
-        issues = []
-
-        if not func_info.has_dataset:
-            issues.append("Missing evaluation dataset")
-
-        if not func_info.objectives:
-            issues.append("No objectives specified")
-
-        config_space = func_info.decorator_config.get("configuration_space", {})
-        if not config_space:
-            issues.append("No configuration space specified")
-
-        banded = [
-            name
-            for name, orientation in self._objective_orientations(func_info).items()
-            if orientation == "band"
-        ]
-        if banded:
-            issues.append(
-                "CLI validation does not support target-band objectives: "
-                + ", ".join(banded)
-            )
-
-        return issues
+        return check_prerequisites(func_info)
 
     async def _run_baseline(
         self, func_info: OptimizedFunction
@@ -152,14 +199,13 @@ class OptimizationValidator:
         Returns:
             Tuple of (baseline_metrics, baseline_config)
         """
-        # Use default parameters as baseline configuration
-        baseline_config = func_info.default_params.copy()
-
-        # If no defaults available, use empty config (function should handle this)
+        # The decorator's default_config is the declared default; signature
+        # defaults are the fallback, and an empty config the last resort.
+        baseline_config = func_info.baseline_config
         if not baseline_config:
-            baseline_config = {}
             logger.warning(
-                f"No default parameters found for {func_info.name}, using empty config"
+                f"No default_config or signature defaults found for "
+                f"{func_info.name}, using empty config"
             )
 
         baseline_metrics = await self._evaluate_configuration(
@@ -193,7 +239,9 @@ class OptimizationValidator:
                 raise RuntimeError("No successful optimization trials") from None
 
             # Use best_metrics property instead of best_trial
-            optimized_metrics = result.best_metrics
+            optimized_metrics = self._filter_metrics_to_objectives(
+                dict(result.best_metrics or {}), func_info, is_mock_llm()
+            )
             optimized_config = result.best_config
 
             logger.info(f"Optimized metrics for {func_info.name}: {optimized_metrics}")
@@ -222,6 +270,9 @@ class OptimizationValidator:
         )
         return LocalEvaluator(
             metrics=objectives,
+            # Per-example rows are needed to total the baseline's cost, as an
+            # optimized trial does (#2824).
+            detailed=True,
             execution_mode=execution_mode,
             metric_functions=metric_fns or None,
         )
@@ -288,7 +339,7 @@ class OptimizationValidator:
                     objective,
                     func_info.name,
                 )
-        return filtered if filtered else metrics
+        return filtered
 
     async def _evaluate_configuration(
         self,
@@ -313,12 +364,96 @@ class OptimizationValidator:
         )
 
         evaluator = self._create_evaluator(func_info, is_mock_mode)
-        evaluation_result = await evaluator.evaluate(
-            configured_callable, effective_config, dataset
+        # Run inside the same trial scopes as an optimized trial: ``with_usage``
+        # only attaches cost/latency metadata when a trial context is active.
+        started = time.time()
+        async with (
+            capture_scope(ledger_owner=True),
+            TrialContext(trial_id="baseline", metadata={"config": effective_config}),
+        ):
+            evaluation_result = await evaluator.evaluate(
+                configured_callable, effective_config, dataset
+            )
+
+        # Assemble the metrics the way an optimized trial does, so cost and
+        # latency objectives are measured on the baseline too (#2824).
+        examples_attempted, total_cost = extract_cost_from_results(
+            evaluation_result, None, "baseline"
+        )
+        trial = build_success_result(
+            trial_id="baseline",
+            evaluation_config=effective_config,
+            eval_result=evaluation_result,
+            duration=time.time() - started,
+            examples_attempted=examples_attempted,
+            total_cost=total_cost,
+            optuna_trial_id=None,
+            primary_objective=func_info.objectives[0] if func_info.objectives else None,
+        )
+        if trial.status == TrialStatus.FAILED:
+            first_error = next(
+                (
+                    str(e).strip().splitlines()[0][:200]
+                    for e in (evaluation_result.errors or [])
+                    if e and str(e).strip()
+                ),
+                None,
+            )
+            raise RuntimeError(
+                f"Baseline run failed for {func_info.name}: no example succeeded "
+                f"with configuration {effective_config or '{}'}"
+                + (f" (first error: {first_error})" if first_error else "")
+            )
+        return self._filter_metrics_to_objectives(
+            dict(trial.metrics or {}), func_info, is_mock_mode
         )
 
-        metrics = evaluation_result.metrics or {}
-        return self._filter_metrics_to_objectives(metrics, func_info, is_mock_mode)
+    @staticmethod
+    def _non_finite_objectives(
+        baseline_metrics: dict[str, float],
+        optimized_metrics: dict[str, float],
+        objectives: list[str],
+    ) -> list[str]:
+        """Names of objectives whose value is NaN or infinite on either side."""
+        bad = []
+        for name in objectives:
+            for metrics in (baseline_metrics, optimized_metrics):
+                value = metrics.get(name)
+                if isinstance(value, (int, float)) and not math.isfinite(value):
+                    bad.append(name)
+                    break
+        return bad
+
+    def _incomparable_objectives(
+        self,
+        baseline_metrics: dict[str, float],
+        optimized_metrics: dict[str, float],
+        objectives: list[str],
+    ) -> list[str]:
+        """Blocking reasons for objectives that cannot be compared (#2824)."""
+        reasons = []
+        for name in objectives:
+            missing = [
+                side
+                for side, metrics in (
+                    ("baseline", baseline_metrics),
+                    ("optimized", optimized_metrics),
+                )
+                if name not in metrics
+            ]
+            if missing:
+                reasons.append(
+                    f"Objective '{name}' could not be compared: it was not "
+                    f"measured on the {' or '.join(missing)} run"
+                )
+        for name in self._non_finite_objectives(
+            baseline_metrics, optimized_metrics, objectives
+        ):
+            reasons.append(
+                f"Objective '{name}' could not be compared: its value is not a "
+                "finite number (NaN or infinity)"
+            )
+        return reasons
 
     def _compare_results(
         self,
@@ -337,6 +472,9 @@ class OptimizationValidator:
         Returns:
             Tuple of (is_superior, improvement_details)
         """
+        if self._non_finite_objectives(baseline_metrics, optimized_metrics, objectives):
+            return False, {}
+
         # Create ParetoPoint objects for comparison
         baseline_point = ParetoPoint(
             config={"type": "baseline"},
@@ -370,18 +508,33 @@ class OptimizationValidator:
                 baseline_val = baseline_metrics[metric]
                 optimized_val = optimized_metrics[metric]
 
+                maximize = maximize_config.get(metric, True)
                 if baseline_val != 0:
                     improvement_pct = (
                         (optimized_val - baseline_val) / abs(baseline_val)
                     ) * 100
                     # Adjust sign based on maximize/minimize preference
-                    if not maximize_config.get(
-                        metric, True
-                    ):  # If minimizing, flip sign
+                    if not maximize:  # If minimizing, flip sign
                         improvement_pct = -improvement_pct
                     improvement_details[metric] = improvement_pct
                 else:
-                    improvement_details[metric] = 0.0
+                    # A relative change from zero is unbounded: any strictly
+                    # better value is an unbounded improvement and any worse
+                    # value an unbounded regression. Never report it as 0.0%
+                    # (#2803); the report shows the absolute delta instead.
+                    # (Assumes unit-scale metrics such as 0-1 scores: the
+                    # absolute delta is compared with the percent threshold
+                    # read as a fraction.)
+                    delta = optimized_val - baseline_val
+                    if not maximize:
+                        delta = -delta
+                    if abs(delta) > self.threshold:
+                        improvement_details[metric] = math.copysign(math.inf, delta)
+                    else:
+                        # A change smaller than the threshold, read as an
+                        # absolute fraction, is noise: report it in percentage
+                        # points so it cannot pass the gate on its own.
+                        improvement_details[metric] = delta * 100
 
         # Check threshold requirement: must be better in ALL metrics AND >threshold in ≥1 metric
         is_superior = self._check_superior_criteria(
@@ -396,11 +549,7 @@ class OptimizationValidator:
 
     @staticmethod
     def _objective_orientations(func_info: OptimizedFunction) -> dict[str, str]:
-        schema = getattr(func_info.func, "objective_schema", None)
-        definitions = getattr(schema, "objectives", [])
-        return {
-            definition.name: str(definition.orientation) for definition in definitions
-        }
+        return _declared_orientations(func_info)
 
     def _get_maximize_config(
         self,
@@ -444,9 +593,10 @@ class OptimizationValidator:
             return False
 
         # Check if at least one metric improves by more than threshold
-        threshold_pct = self.threshold * 100  # Convert to percentage
+        # Strictly more than the threshold, in percent; the tolerance keeps
+        # float noise (0.3 -> 0.33 is 10.000000000000009%) from flipping it.
         significant_improvement = any(
-            abs(improvement) > threshold_pct
+            improvement - self.threshold_pct > _THRESHOLD_TOLERANCE
             for improvement in improvement_details.values()
             if improvement > 0  # Only count positive improvements
         )

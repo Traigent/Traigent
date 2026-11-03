@@ -5,6 +5,7 @@ All types are frozen dataclasses for immutability and thread safety.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -24,6 +25,40 @@ class TVarSpec:
         """Generate Python code like ``Range(low=0.0, high=2.0)``."""
         parts = [f"{k}={v!r}" for k, v in self.range_kwargs.items()]
         return f"{self.range_type}({', '.join(parts)})"
+
+
+def tvar_spec_problem(spec: TVarSpec) -> str | None:
+    """Return why ``spec`` is not a usable search-space entry, or ``None``.
+
+    Rejects reversed or empty numeric ranges (``low >= high``), a
+    non-positive ``LogRange`` lower bound, and ``Choices`` with fewer than two
+    distinct-able values (a one-value choice tunes nothing).
+    """
+    kwargs = spec.range_kwargs
+    if not isinstance(kwargs, dict):
+        return "range kwargs are not a mapping"
+    if spec.range_type in ("Range", "IntRange", "LogRange"):
+        bounds = (kwargs.get("low"), kwargs.get("high"))
+        for bound in bounds:
+            if isinstance(bound, bool) or not isinstance(bound, (int, float)):
+                return f"{spec.range_type} bounds must be numbers"
+            if not math.isfinite(bound):
+                return f"{spec.range_type} bounds must be finite"
+        low, high = bounds
+        assert low is not None and high is not None  # nosec B101 - checked above
+        if low >= high:
+            return f"empty or reversed range (low={low!r}, high={high!r})"
+        if spec.range_type == "LogRange" and low <= 0:
+            return f"LogRange low must be positive (low={low!r})"
+        return None
+    if spec.range_type == "Choices":
+        values = kwargs.get("values")
+        if not isinstance(values, (list, tuple)):
+            return "Choices values must be a list"
+        if len(values) < 2:
+            return f"Choices needs at least two values (got {len(values)})"
+        return None
+    return f"unknown range type {spec.range_type!r}"
 
 
 @dataclass(frozen=True)
@@ -327,8 +362,9 @@ def _structural_constraint_error(
     return (
         f"Cannot emit @traigent.optimize(...) Python code: {count} generated "
         f"structural constraint(s) would be silently dropped because the "
-        f"decorator surface does not accept them. Re-export with `-o tvl` "
-        f"(or call AutoConfigResult.to_tvl_spec()) to preserve them. "
+        f"decorator surface does not accept them. To preserve them, export "
+        f"with `-o tvl` (not combinable with --apply) or call "
+        f"AutoConfigResult.to_tvl_spec(). "
         f"Constraints: {sample}{suffix}"
     )
 

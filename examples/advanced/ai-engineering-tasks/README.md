@@ -51,8 +51,7 @@ import traigent
 
 @traigent.optimize(
     configuration_space=SEARCH_SPACE,     # Parameter combinations to explore
-    objectives=["accuracy", "cost"], # Metrics to optimize
-    direction="maximize",           # Optimization direction
+    objectives=["accuracy", "cost"], # Metrics to optimize (accuracy up, cost down)
     max_trials=100                 # Number of configurations to test
 )
 def optimize_my_task(**config):
@@ -190,7 +189,7 @@ Through these examples, we've discovered:
 from traigent import optimize
 from common_ai_engineering_tasks.p0_structured_output import EXTRACTION_SEARCH_SPACE
 
-@optimize(config_space=EXTRACTION_SEARCH_SPACE)
+@optimize(configuration_space=EXTRACTION_SEARCH_SPACE)
 def extract_invoice_data(text: str, **config):
     # Your existing extraction code
     # Traigent will optimize the config parameters

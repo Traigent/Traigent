@@ -104,6 +104,7 @@ own audit.
 |---|---|---|
 | `./.traigent/optimization_logs/…` (cwd) | Run logs: `.json`, `.jsonl`, `.txt`, a `.gitignore`; atomic `*.json.tmp` + rename | `traigent/utils/optimization_logger.py:507,642,665-667,681,870` |
 | `~/.traigent/` | Usage records and local session storage, atomic write + rename | `traigent/cloud/billing.py:212`, `traigent/storage/local_storage.py:256,944`, `traigent/utils/secure_path.py:212` |
+| `local_storage_path` (per function), else `TRAIGENT_RESULTS_FOLDER`, else `~/.traigent/` | `incentive_state.json` (hint counters, no hint written when `TRAIGENT_DISABLE_HINTS` is set) and `.analytics_id` (anonymous random id) | `traigent/utils/incentives.py`, `traigent/utils/local_analytics.py` |
 | System temp dir | A lock/staging dir created through `huggingface_hub`'s `filelock` when counting Llama tokens, also with `HF_HUB_OFFLINE=1` | via `traigent/utils/cost_calculator.py:397` |
 | `site-packages/…/__pycache__` | Ordinary Python bytecode cache on first import | the import system |
 
@@ -149,9 +150,9 @@ source is unavailable (frozen, obfuscated, or zipped apps) it fails with a
   the running process (`ctypes.dlopen(None)`), triggered by litellm [R]. The SDK
   uses `ctypes.memset` to zero its own credential buffer
   (`traigent/security/credentials.py:250-255`) [S]; no other library is loaded.
-- User modules by path: `traigent/cli/main.py:259-266` and
-  `traigent/cli/function_discovery.py:75-80` (the `traigent` CLI imports the script
-  you name), `traigent/mcp/tools.py:559-571` (MCP tool, same), and
+- User modules by path: `traigent/utils/module_loading.py` (`load_user_module`, the one loader the
+  `traigent` CLI via `traigent/cli/function_discovery.py` and the MCP tool
+  `traigent/mcp/tools.py` use to import the script you name), and
   `traigent/integrations/plugin_registry.py:457-463` (plugins from a trusted
   directory). Each registers in `sys.modules`; none writes the file it runs [S].
 - `importlib.reload` is never called; `traigent/api/decorators.py:533` only

@@ -66,7 +66,7 @@ from traigent.core.cost_enforcement import (
     run_cost_limit_env_is_set,
     validate_cost_limit,
 )
-from traigent.core.cost_estimator import CostEstimator
+from traigent.core.cost_estimator import OUTPUT_TOKEN_CAP_KEYS, CostEstimator
 from traigent.core.exception_handler import (
     VendorErrorCategory,
     classify_systematic_provider_failure,
@@ -93,6 +93,7 @@ from traigent.core.metrics_aggregator import (
     aggregate_metrics,
     build_safeguards_telemetry,
 )
+from traigent.core.model_config_keys import is_model_config_key, is_model_suffix_key
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator_helpers import (
     EFFECTIVE_SUBSET_ATTR,
@@ -154,6 +155,7 @@ from traigent.utils.function_identity import (
 from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
 from traigent.utils.mock_provenance import MockProvenanceRecorder
+from traigent.utils.money import format_usd
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
     is_minimization_objective,
@@ -195,6 +197,7 @@ _EMPTY_SMART_RUN_OWNED_STOP_REASONS = frozenset(
 _OBJECTIVE_UNMATCHED_WARNING_CODE = "OBJECTIVE_UNMATCHED"
 # Issue #2477: every executed trial failed (none succeeded).
 _ALL_TRIALS_FAILED_WARNING_CODE = "ALL_TRIALS_FAILED"
+_MOCK_TRANSPORT_BLOCKED_WARNING_CODE = "MOCK_TRANSPORT_BLOCKED"
 # Issue #1832: a declared, weighted, matched objective whose value is uniformly
 # constant across the ranking-eligible trials cannot influence ``best_config`` —
 # its weight is a silent no-op (e.g. cost/latency = 0 on a no-LLM-scored or
@@ -566,6 +569,17 @@ def _classify_batch_vendor_error(r: PermittedTrialResult) -> VendorErrorCategory
     return None
 
 
+_NON_LLM_MODEL_KEYS = frozenset(
+    {
+        "embedding_model",
+        "embedder_model",
+        "embed_model",
+        "rerank_model",
+        "reranker_model",
+    }
+)
+
+
 class OptimizationOrchestrator:
     """Orchestrates the optimization process.
 
@@ -791,6 +805,9 @@ class OptimizationOrchestrator:
                     getattr(self.optimizer, "config_space", None)
                 )
             ),
+            max_output_tokens_key=self._max_output_tokens_key(
+                getattr(self.optimizer, "config_space", None)
+            ),
         )
 
         self._trial_lifecycle = TrialLifecycle(self)
@@ -836,43 +853,93 @@ class OptimizationOrchestrator:
     def _extract_model_candidates_from_config_space(
         config_space: dict[str, Any] | None,
     ) -> tuple[str, ...]:
-        """Extract model candidates from optimizer config space for estimation."""
+        """Extract model candidates from optimizer config space for estimation.
+
+        Every model-bearing key is read, not just ``model``/``model_name``: the
+        estimate is an upper bound, so a cascade's ``expert_model`` arm must be
+        priced too (#2807). The fixed keys (``model``, ``model_name``,
+        ``model_id``, ``engine``) are always kept, so an unpriced value is
+        refused by the preflight. Values under a user ``*_model`` knob may be
+        free non-LLM models (embeddings, rerankers); those without a known
+        price are left out, and the keys are named in a log line. Only the
+        explicit non-LLM names in ``_NON_LLM_MODEL_KEYS`` are left out; any
+        other unpriced ``*_model`` value stays so the conservative fallback
+        fires (a paid but unknown ``expert_model`` must not start a run).
+        """
         if not isinstance(config_space, dict):
             return ()
 
-        for key in ("model", "model_name"):
-            normalized_candidates = (
-                OptimizationOrchestrator._normalize_model_candidates(
-                    OptimizationOrchestrator._extract_raw_model_candidates(
-                        config_space.get(key)
-                    )
-                )
-            )
-            if normalized_candidates:
-                return normalized_candidates
+        from traigent.utils.cost_calculator import (  # noqa: PLC0415
+            find_models_missing_price_coverage,
+        )
 
-        return ()
+        candidates: list[str] = []
+        left_out_keys: list[str] = []
+        for key, definition in config_space.items():
+            fixed = is_model_config_key(key)
+            if not (fixed or is_model_suffix_key(key)):
+                continue
+            values = OptimizationOrchestrator._normalize_model_candidates(
+                OptimizationOrchestrator._extract_raw_model_candidates(definition)
+            )
+            if not fixed and values and str(key).strip().lower() in _NON_LLM_MODEL_KEYS:
+                unpriced = set(find_models_missing_price_coverage(values))
+                if unpriced:
+                    left_out_keys.append(str(key))
+                values = tuple(v for v in values if v not in unpriced)
+            candidates.extend(values)
+        if left_out_keys:
+            logger.info(
+                "Cost estimate leaves out unpriced values under non-LLM model keys: %s",
+                ", ".join(left_out_keys),
+            )
+        return tuple(dict.fromkeys(candidates))
+
+    @staticmethod
+    def _extract_max_output_tokens_with_key(
+        config_space: dict[str, Any] | None,
+    ) -> tuple[int, str] | None:
+        """Largest output-token cap in the config space and the key it came from.
+
+        Every spelling of the cap counts (``max_tokens`` plus the provider
+        aliases), and the maximum over all of them is used so the pre-run
+        estimate is never below a cap the run may actually apply (#2815).
+        """
+        if not isinstance(config_space, dict):
+            return None
+        best: tuple[int, str] | None = None
+        for key in OUTPUT_TOKEN_CAP_KEYS:
+            definition = config_space.get(key)
+            if isinstance(definition, dict):
+                definition = definition.get("values", definition.get("high"))
+            raw = (
+                definition
+                if isinstance(definition, Sequence)
+                and not isinstance(definition, (str, bytes, bytearray))
+                else (definition,)
+            )
+            for v in raw:
+                if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+                    if best is None or v > best[0]:
+                        best = (v, key)
+        return best
+
+    @staticmethod
+    def _max_output_tokens_key(config_space: dict[str, Any] | None) -> str | None:
+        found = OptimizationOrchestrator._extract_max_output_tokens_with_key(
+            config_space
+        )
+        return found[1] if found else None
 
     @staticmethod
     def _extract_max_output_tokens_from_config_space(
         config_space: dict[str, Any] | None,
     ) -> int | None:
-        """Largest ``max_tokens`` value in the config space, used as output cap."""
-        if not isinstance(config_space, dict):
-            return None
-        definition = config_space.get("max_tokens")
-        if isinstance(definition, dict):
-            definition = definition.get("values", definition.get("high"))
-        raw = (
-            definition
-            if isinstance(definition, Sequence)
-            and not isinstance(definition, (str, bytes, bytearray))
-            else (definition,)
+        """Largest output-token cap value in the config space, or None."""
+        found = OptimizationOrchestrator._extract_max_output_tokens_with_key(
+            config_space
         )
-        values = [
-            v for v in raw if isinstance(v, int) and not isinstance(v, bool) and v > 0
-        ]
-        return max(values) if values else None
+        return found[0] if found else None
 
     @staticmethod
     def _extract_estimated_tokens_per_example(
@@ -4144,6 +4211,7 @@ class OptimizationOrchestrator:
                 configured_max_output_tokens=(
                     self._extract_max_output_tokens_from_config_space(space)
                 ),
+                max_output_tokens_key=self._max_output_tokens_key(space),
             )
             estimates.append((estimator.estimate_optimization_cost(dataset), estimator))
         if not estimates:
@@ -4172,7 +4240,7 @@ class OptimizationOrchestrator:
             return
         models = list(
             self._extract_model_candidates_from_config_space(
-                getattr(self.optimizer, "config_space", None)
+                getattr(self.optimizer, "config_space", None),
             )
         )
         fixed_model = getattr(self.traigent_config, "model", None)
@@ -6164,8 +6232,8 @@ class OptimizationOrchestrator:
             ):
                 return (
                     f"Stopped at {trials} trials: the cost limit "
-                    f"(${status.limit_usd:.2f}) was reached by known spend "
-                    f"of at least ${status.accumulated_cost_usd:.2f} (a "
+                    f"({format_usd(status.limit_usd)}) was reached by known spend "
+                    f"of at least {format_usd(status.accumulated_cost_usd)} (a "
                     f"minimum: cost is unmeasured for "
                     f"{status.unmeasured_trial_count} of "
                     f"{status.trial_count} trials)."
@@ -6813,6 +6881,36 @@ class OptimizationOrchestrator:
             return {}
         return dict(session_summary)
 
+    def _apply_mock_transport_blocked(
+        self, result_warnings: list[str], result_warning_codes: list[str]
+    ) -> None:
+        """Say that mock mode blocked the raw calls behind an all-failed run (#2812).
+
+        Vendor SDKs wrap the guard's error into a bare "Connection error.", so
+        the per-trial text reads like an outage. The run-scoped recorder knows
+        the guard blocked provider calls; host names are named, and a pattern host
+        can carry a customer's resource label.
+        """
+        recorder = getattr(self, "_mock_recorder", None)
+        blocked = getattr(recorder, "blocked_hosts", None)
+        if (
+            not isinstance(blocked, dict)
+            or not blocked
+            or any(t.is_successful for t in self._trials)
+        ):
+            return
+        blocked = dict(blocked)
+        from traigent.utils.mock_transport_guard import MOCK_SCOPE_SUMMARY
+
+        hosts = ", ".join(sorted(blocked))
+        result_warnings.append(
+            f"Mock mode blocked {sum(blocked.values())} raw provider call(s) "
+            f"to {hosts}; the per-trial 'Connection error.' is that block, not "
+            f"a network outage. {MOCK_SCOPE_SUMMARY} Route the call through a "
+            "mocked path, or turn mock mode off for a real run."
+        )
+        result_warning_codes.append(_MOCK_TRANSPORT_BLOCKED_WARNING_CODE)
+
     def _fail_if_completed(
         self, result_status: OptimizationStatus
     ) -> OptimizationStatus:
@@ -7127,6 +7225,7 @@ class OptimizationOrchestrator:
         result_status = self._apply_all_trials_failed(
             result_status, result_warnings, result_warning_codes
         )
+        self._apply_mock_transport_blocked(result_warnings, result_warning_codes)
         self._apply_partial_coverage(
             selection, primary_objective, result_warnings, result_warning_codes
         )

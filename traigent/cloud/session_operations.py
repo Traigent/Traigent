@@ -13,7 +13,7 @@ import time
 import uuid
 from collections.abc import Coroutine
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeVar, cast
 
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
@@ -83,6 +83,65 @@ def _get_session_creation_failure_detail(
     if isinstance(detail, SessionCreationFailureDetail):
         return detail
     return None
+
+
+#: Answered statuses that say nothing about the request body: auth verdicts and
+#: "try again later" replies.
+_NOT_REQUEST_PROBLEM_STATUSES = frozenset({401, 403, 408, 425, 429})
+
+
+def _answered_refusal_status(
+    failure_response: SessionCreationFailureDetail | None,
+) -> int | None:
+    """The 4xx status when the backend ANSWERED the create with a refusal.
+
+    Mirrors ``_classify_by_failure_reason``: a 4xx reply is a reachable
+    backend's verdict on the request, never a connectivity failure, and the
+    run is not degraded to LOCAL because of it (#2806).
+    """
+    status = failure_response.status_code if failure_response else None
+    if isinstance(status, int) and 400 <= status < 500:
+        return status
+    return None
+
+
+def _log_session_create_failure(
+    function_name: str,
+    exc: Exception,
+    failure_response: SessionCreationFailureDetail | None,
+    *,
+    context: str = "backend unreachable",
+) -> None:
+    """Log a failed managed session create with wording that matches the cause.
+
+    A 4xx answer is reported with its HTTP status and closed error code only
+    (never the backend text) and without any claim of a LOCAL degrade. Only a
+    non-answer (transport failure, timeout, 5xx) keeps the "unreachable ...
+    degrading to LOCAL" wording.
+    """
+    if (
+        failure_response is not None
+        and _answered_refusal_status(failure_response) is not None
+    ):
+        logger.warning(
+            "Managed session creation was refused by the backend (%s) for '%s'; "
+            "no managed session was created.%s",
+            failure_response.one_line_summary(),
+            function_name,
+            ""
+            if failure_response.status_code in _NOT_REQUEST_PROBLEM_STATUSES
+            else " The backend was reachable, so this is a problem with the "
+            "request, not the network.",
+        )
+        return
+    logger.warning(
+        "Managed session creation failed (%s) for '%s'; degrading to LOCAL "
+        "execution — results are NOT tracked on the backend (set offline=True "
+        "to make this explicit): %s",
+        context,
+        function_name,
+        exc,
+    )
 
 
 # Transient signals: the SDK could not REACH/validate the backend (the auth
@@ -168,6 +227,11 @@ def _is_definitive_auth_rejection(exc: Exception) -> bool:
 
 
 _T = TypeVar("_T")
+
+#: Terminal outcome of the run, sent as the finalize body's ``optimization_outcome``
+#: (#2853). Closed set: it mirrors the Backend's accepted values.
+OptimizationOutcome = Literal["completed", "failed", "cancelled"]
+_OPTIMIZATION_OUTCOMES = frozenset({"completed", "failed", "cancelled"})
 
 
 async def _with_loop_local_session[T](client: Any, coro: Coroutine[Any, Any, T]) -> T:
@@ -589,14 +653,8 @@ async def _create_session_async(
         # but this is a DOWNGRADE (managed search/tracking is lost), so
         # surface it at WARNING and flag degraded=True on the result so a
         # caller never mistakes the local run for a managed one.
-        logger.warning(
-            "Managed session creation failed (backend unreachable) for "
-            "'%s'; degrading to LOCAL execution — results are NOT tracked "
-            "on the backend (set offline=True to make this explicit): %s",
-            function_name,
-            e,
-        )
         failure_response = _get_session_creation_failure_detail(e)
+        _log_session_create_failure(function_name, e, failure_response)
         fallback_id = self._create_local_fallback_session(
             function_name,
             search_space,
@@ -660,14 +718,8 @@ def _outer_cloud_fallback(
     # Backend unreachable on the outer path — same downgrade semantics as
     # the inner sibling: WARN + flag degraded so the local run is never
     # mistaken for a managed one.
-    logger.warning(
-        "Managed session creation failed (backend unreachable) for '%s'; "
-        "degrading to LOCAL execution — results are NOT tracked on the "
-        "backend (set offline=True to make this explicit): %s",
-        function_name,
-        exc,
-    )
     failure_response = _get_session_creation_failure_detail(exc)
+    _log_session_create_failure(function_name, exc, failure_response)
     fallback_id = self._create_local_fallback_session(
         function_name, search_space, optimization_goal, local_record_metadata
     )
@@ -945,14 +997,7 @@ class SessionOperations:
         failure_response = _get_session_creation_failure_detail(exc)
         if failure_response is None or not failure_response.is_quota_refusal:
             return
-        safe = SessionQuotaRefusedError(
-            failure_response.status_code, failure_response.safe_quota_error_code
-        )
-        safe.session_creation_failure = SessionCreationFailureDetail(
-            status_code=failure_response.status_code,
-            error_code=failure_response.safe_quota_error_code,
-        )
-        raise safe from None
+        raise SessionQuotaRefusedError.from_detail(failure_response) from None
 
     @staticmethod
     def _raise_if_closed_refusal(exc: Exception) -> None:
@@ -996,13 +1041,11 @@ class SessionOperations:
         execution, NOT a downgrade (#1421).
         """
         if intends_cloud_egress:
-            logger.warning(
-                "Managed session creation failed (could not validate credentials "
-                "— backend unreachable) for '%s'; degrading to LOCAL execution — "
-                "results are NOT tracked on the backend (set offline=True to make "
-                "this explicit): %s",
+            _log_session_create_failure(
                 function_name,
                 exc,
+                failure_response,
+                context="could not validate credentials — backend unreachable",
             )
             return SessionCreationResult.fallback(
                 session_id=fallback_id,
@@ -1288,14 +1331,7 @@ class SessionOperations:
                         response.status, error_text
                     )
                     if detail.is_quota_refusal:
-                        safe = SessionQuotaRefusedError(
-                            response.status, detail.safe_quota_error_code
-                        )
-                        safe.session_creation_failure = SessionCreationFailureDetail(
-                            status_code=response.status,
-                            error_code=detail.safe_quota_error_code,
-                        )
-                        raise safe
+                        raise SessionQuotaRefusedError.from_detail(detail)
                     if detail.is_closed_refusal:
                         refused = SessionBackendRefusedError(
                             response.status, detail.safe_error_code
@@ -1450,6 +1486,7 @@ class SessionOperations:
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        optimization_outcome: OptimizationOutcome | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
 
@@ -1463,11 +1500,17 @@ class SessionOperations:
             session_aggregation: Content-free session-level rollup payload
                 (Traigent#1720/#1724, g2:agg-summary), threaded to the
                 finalize endpoint exactly like ``certified_selection``.
+            optimization_outcome: Terminal outcome of the run (``completed`` /
+                ``failed`` / ``cancelled``) sent as the finalize body's
+                ``optimization_outcome`` so the backend does not record a failed
+                run as COMPLETED (#2853). ``None`` (legacy callers) sends no key
+                and keeps the ``include_full_history``-derived local status.
 
         Returns:
             OptimizationFinalizationResponse with session summary
         """
         self._validate_non_empty_string(session_id, "session_id")
+        self._validate_optimization_outcome(optimization_outcome)
         logger.info(f"Finalizing optimization session {session_id}")
 
         # Get session mapping for experiment_run_id, or reconstruct it from the
@@ -1489,6 +1532,7 @@ class SessionOperations:
                     mapping.experiment_run_id,
                     certified_selection=certified_selection,
                     session_aggregation=session_aggregation,
+                    optimization_outcome=optimization_outcome,
                 )
             except (CloudServiceError, EndpointNotConfiguredError):
                 raise
@@ -1509,7 +1553,9 @@ class SessionOperations:
             session = self.client._active_sessions.pop(session_id, None)
         completed_trials = 0
         if session:
-            session.status = OptimizationSessionStatus.COMPLETED
+            session.status = OptimizationSessionStatus(
+                optimization_outcome or "completed"
+            )
             session.updated_at = datetime.now(UTC)
             session.metadata["completed_at"] = (
                 time.time()
@@ -1526,7 +1572,9 @@ class SessionOperations:
         # writing "completed".
         local_storage = getattr(self.client, "local_storage", None)
         if local_storage is not None:
-            local_status = "completed" if include_full_history else "failed"
+            local_status = optimization_outcome or (
+                "completed" if include_full_history else "failed"
+            )
             try:
                 local_storage.finalize_session(session_id, local_status)
             except Exception as _ls_err:
@@ -1835,6 +1883,7 @@ class SessionOperations:
         experiment_run_id: str | None,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        optimization_outcome: OptimizationOutcome | None = None,
     ) -> dict[str, Any] | None:
         """Call backend session finalization endpoint.
 
@@ -1882,7 +1931,10 @@ class SessionOperations:
                 url = f"{api_base}/sessions/{session_id}/finalize"
 
                 finalize_body = SessionOperations._finalization_body(
-                    experiment_run_id, certified_selection, session_aggregation
+                    experiment_run_id,
+                    certified_selection,
+                    session_aggregation,
+                    optimization_outcome,
                 )
                 finalize_body = oo_egress.project_for_send(
                     oo_egress.PHASE_FINALIZE,
@@ -1953,12 +2005,19 @@ class SessionOperations:
         experiment_run_id: str | None,
         certified_selection: dict[str, Any] | None,
         session_aggregation: dict[str, Any] | None,
+        optimization_outcome: OptimizationOutcome | None = None,
     ) -> dict[str, Any]:
+        SessionOperations._validate_optimization_outcome(optimization_outcome)
         finalize_body: dict[str, Any] = {
             "reason": "sdk_explicit_finalization",
         }
         if experiment_run_id is not None:
             finalize_body["experiment_run_id"] = experiment_run_id
+        if optimization_outcome is not None:
+            # #2853: top-level key (the backend reads it from the body root).
+            # An older backend ignores the unknown key and keeps its
+            # COMPLETED behaviour, so deploy the Backend first.
+            finalize_body["optimization_outcome"] = optimization_outcome
         if certified_selection is not None:
             # Phase 8: the client-attested, content-free certified-
             # selection report — TOP-LEVEL key only (the backend
@@ -2090,11 +2149,13 @@ class SessionOperations:
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        optimization_outcome: OptimizationOutcome | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session."""
         import concurrent.futures
 
         self._validate_non_empty_string(session_id, "session_id")
+        self._validate_optimization_outcome(optimization_outcome)
 
         def _run_in_new_loop() -> OptimizationFinalizationResponse | None:
             """Run the async operation in a fresh event loop on this thread."""
@@ -2109,6 +2170,7 @@ class SessionOperations:
                             include_full_history,
                             certified_selection=certified_selection,
                             session_aggregation=session_aggregation,
+                            optimization_outcome=optimization_outcome,
                         ),
                     )
                 )
@@ -2136,6 +2198,15 @@ class SessionOperations:
         except Exception as e:
             logger.warning(f"Failed to finalize session synchronously: {e}")
             return None
+
+    @staticmethod
+    def _validate_optimization_outcome(value: Any) -> None:
+        if value is not None and (
+            not isinstance(value, str) or value not in _OPTIMIZATION_OUTCOMES
+        ):
+            raise ValueError(
+                "optimization_outcome must be completed, failed, or cancelled"
+            )
 
     def delete_session_sync(self, session_id: str, cascade: bool = True) -> bool:
         """Synchronous wrapper for delete_session.

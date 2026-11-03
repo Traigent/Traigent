@@ -540,7 +540,7 @@ async def test_auth_status_check_swallows_validator_exception(
         raise RuntimeError(f"backend returned 500 for key {full_key} at {leaky_url}")
 
     monkeypatch.setattr(
-        "traigent.cli.auth_commands.TraigentAuthCLI._validate_api_key",
+        "traigent.cli.auth_commands.TraigentAuthCLI._check_api_key_state",
         _raise,
     )
 

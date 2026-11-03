@@ -25,7 +25,10 @@ from traigent.cloud.models import (
     dataset_identity_from_record,
 )
 from traigent.cloud.url_security import validate_cloud_base_url
-from traigent.core.session_types import safe_http_error_summary
+from traigent.core.session_types import (
+    normalize_next_trial_payload,
+    safe_http_error_summary,
+)
 from traigent.labels.transport_gate import gate_session
 from traigent.utils import optimization_only_egress as oo_egress
 
@@ -1646,6 +1649,7 @@ class SyncManager:
         payload = self._response_json(response)
         if not isinstance(payload, Mapping):
             return {"success": False, "error": "next-trial response was not JSON"}
+        payload = normalize_next_trial_payload(dict(payload))
         suggestion = payload.get("suggestion")
         trial_id = (
             suggestion.get("trial_id") if isinstance(suggestion, Mapping) else None

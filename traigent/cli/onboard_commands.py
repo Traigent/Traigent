@@ -356,7 +356,7 @@ def _build_non_tty_plan(
             {
                 "id": "verification",
                 "status": "planned",
-                "description": "Run the packaged mock quickstart to verify zero-cost local execution.",
+                "description": "Run the packaged mock quickstart to verify local execution with simulated (free) LLM calls.",
                 "commands": [_command_text(quickstart_command)],
             },
             {

@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +14,7 @@ from typing import Any, cast
 
 import click
 from rich.console import Console
+from rich.markup import escape
 from rich.syntax import Syntax
 from rich.table import Table
 
@@ -22,7 +25,9 @@ from traigent.cli.certify_commands import certify
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_local_commands
 from traigent.cli.sync_commands import register_sync_command
+from traigent.cli.validation_types import ValidationResult
 from traigent.config.types import accepted_algorithm_values
+from traigent.security.redaction import redact_sensitive_text
 from traigent.storage.local_storage import LocalStorageManager, OptimizationSession
 from traigent.utils.console import configure_stdout_encoding
 from traigent.utils.logging import setup_logging
@@ -103,40 +108,15 @@ def _print_optimization_header(
         console.print("Pruned trials will be excluded from the sample budget.")
 
 
-def _is_optimizable_function(obj: Any) -> bool:
-    """Check if an object is decorated with @traigent.optimize."""
-    import inspect
-
-    # Check if it's decorated with @traigent.optimize
-    # The decorator returns an OptimizedFunction instance with an optimize method
-    if inspect.isfunction(obj) and hasattr(obj, "optimize"):
-        return True
-    if hasattr(obj, "__class__") and obj.__class__.__name__ == "OptimizedFunction":
-        return True
-    # Additional check for objects with optimize method
-    if hasattr(obj, "optimize") and callable(getattr(obj, "optimize", None)):
-        if hasattr(obj, "func") or callable(obj):
-            return True
-    return False
-
-
 def _find_optimizable_functions(
     module: Any, function_filter: str | None
 ) -> list[tuple[str, Any]]:
     """Find functions with @traigent.optimize decorator in a module."""
-    import inspect
+    from traigent.utils.module_loading import find_optimized_functions
 
-    optimizable_functions = []
-    for name, obj in inspect.getmembers(module):
-        # Skip private/internal attributes and modules
-        if name.startswith("_") or inspect.ismodule(obj):
-            continue
-
-        if _is_optimizable_function(obj):
-            if function_filter is None or name == function_filter:
-                optimizable_functions.append((name, obj))
-
-    return optimizable_functions
+    return find_optimized_functions(
+        module, None if function_filter is None else [function_filter]
+    )
 
 
 def _build_optimize_kwargs(
@@ -188,9 +168,99 @@ def _display_optimization_result(
     console.print(f"   Successful trials: {len(result.successful_trials)}")
 
     # Save result
-    result_name = f"{func_name}_{algorithm}_{max_trials}"
+    _save_result_announcing_replace(
+        persistence, result, f"{func_name}_{algorithm}_{max_trials}"
+    )
+
+
+def _failed_run_reason(result: Any) -> str | None:
+    """Why a function's run counts as failed, or None when it does not (#2823).
+
+    A run is failed when its status is FAILED, or when it executed trials and
+    none succeeded. A user-cancelled run keeps its partial-results handling.
+    """
+    if getattr(result, "stop_reason", None) == "user_cancelled":
+        return None
+    status = str(getattr(result, "status", "")).lower()
+    if status.endswith("cancelled"):
+        return None
+    trials = getattr(result, "trials", None)
+    successful = getattr(result, "successful_trials", None)
+    # Only a run that recorded a trial failure counts: all-pruned or stopped
+    # runs with nothing successful keep their previous handling.
+    any_failure = any(
+        getattr(t, "error_message", None)
+        or str(getattr(t, "status", "")).lower().endswith("failed")
+        for t in trials or ()
+    )
+    no_success = (
+        bool(trials) and any_failure and successful is not None and len(successful) == 0
+    )
+    if status.endswith("failed") or no_success:
+        first_error = next(
+            (
+                getattr(t, "error_message", None)
+                for t in trials or ()
+                if getattr(t, "error_message", None)
+            ),
+            None,
+        )
+        detail = (
+            f"; first trial error: {redact_sensitive_text(str(first_error))}"
+            if first_error
+            else ""
+        )
+        count = len(trials or ())
+        summary = (
+            f"all {count} trials failed" if count else "the run failed (no trials ran)"
+        )
+        return f"{summary}{detail}"
+    return None
+
+
+def _save_result_announcing_replace(
+    persistence: PersistenceManager, result: Any, result_name: str
+) -> None:
+    """Save ``result``; say so when it replaces an earlier result of that name."""
+    if persistence.result_exists(result_name):
+        console.print(
+            f"   [yellow]Replacing the earlier saved result '{result_name}' "
+            "(results are keyed by function name, algorithm and trial count)."
+            "[/yellow]"
+        )
     persistence.save_result(result, result_name)
     console.print(f"   Results saved as: {result_name}")
+
+
+_MAX_ERROR_CHARS = 500
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+
+
+def _safe_error_text(error: object, limit: int | None = _MAX_ERROR_CHARS) -> str:
+    """Redacted, control-stripped, length-capped, markup-escaped error text."""
+    text = _CONTROL_CHARS.sub("", redact_sensitive_text(str(error)))
+    if limit is not None and len(text) > limit:
+        text = text[:limit] + "... (truncated)"
+    return str(escape(text))
+
+
+def _display_failed_optimization_result(
+    func_name: str,
+    result: Any,
+    reason: str,
+    persistence: PersistenceManager,
+    algorithm: str,
+    max_trials: int,
+) -> None:
+    """Report a run whose trials all failed, without the success tick."""
+    console.print(
+        f"❌ [red]Error optimizing {escape(func_name)}: {_safe_error_text(reason)}[/red]"
+    )
+    for warning in getattr(result, "warnings", None) or []:
+        console.print(f"   [yellow]{_safe_error_text(warning, limit=None)}[/yellow]")
+    _save_result_announcing_replace(
+        persistence, result, f"{func_name}_{algorithm}_{max_trials}"
+    )
 
 
 def _display_optimization_summary(
@@ -251,18 +321,13 @@ def _handle_no_optimizable_functions(function_filter: str | None) -> None:
 
 def _load_user_module(file_path_obj: Path) -> Any | None:
     """Load a Python file as a module. Returns the module or None on failure."""
-    import importlib.util
-    import sys
+    from traigent.utils.module_loading import ModuleSpecError, load_user_module
 
-    spec = importlib.util.spec_from_file_location("user_module", file_path_obj)
-    if spec is None or spec.loader is None:
+    try:
+        return load_user_module(file_path_obj)
+    except ModuleSpecError:
         console.print("[red]Error: Failed to load Python file[/red]")
         return None
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["user_module"] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def _resolve_output_dir(output_dir: str) -> Path:
@@ -277,22 +342,40 @@ def _resolve_output_dir(output_dir: str) -> Path:
     return resolved
 
 
+def _require_finite_threshold(
+    _ctx: click.Context, _param: click.Parameter, value: float
+) -> float:
+    """Reject NaN/inf, which ``FloatRange`` lets through."""
+    if not math.isfinite(value):
+        raise click.BadParameter(f"{value!r} is not a finite number")
+    return value
+
+
 def _parse_comma_separated_list(value: str | None) -> list[str] | None:
     """Parse a comma-separated string into a list of trimmed values."""
-    if not value:
+    if value is None:
         return None
-    return [item.strip() for item in value.split(",")]
+    items = [item.strip() for item in value.split(",")]
+    # A trailing or doubled comma is not a name; "f," means just "f".
+    names = [item for item in items if item]
+    if not names:
+        # An explicit but empty filter must not silently widen to "everything".
+        raise click.UsageError(f"expected at least one name in {value!r}")
+    return names
 
 
 def _filter_functions_by_objectives(
     discovered_functions: list[Any], objectives_filter: list[str]
 ) -> list[Any]:
-    """Filter discovered functions to only include those with specified objectives."""
-    return [
-        func_info
-        for func_info in discovered_functions
-        if any(obj in func_info.objectives for obj in objectives_filter)
-    ]
+    """Keep functions declaring a requested objective, comparing only those objectives."""
+    import dataclasses
+
+    selected = []
+    for func_info in discovered_functions:
+        requested = [obj for obj in func_info.objectives if obj in objectives_filter]
+        if requested:
+            selected.append(dataclasses.replace(func_info, objectives=requested))
+    return selected
 
 
 def _print_check_summary(
@@ -315,26 +398,47 @@ def _print_check_summary(
             console.print(f"\n{result.get_detailed_report()}")
 
 
-def _handle_check_exit(failed_count: int) -> None:
-    """Handle exit logic for the check command."""
-    if failed_count > 0:
-        console.print(
-            f"\n[red]❌ Optimization validation failed for {failed_count} function(s)[/red]"
-        )
-        console.print("Optimization does not improve over default parameters")
-        console.print("To bypass: git push --no-verify")
-        exit(1)
-    else:
+def _handle_check_exit(results: list[Any]) -> None:
+    """Print the closing verdict for ``check`` and exit.
+
+    Errors (nothing was compared) and genuine no-improvement results get
+    different verdicts, and no verdict suggests skipping git hooks.
+    """
+    failed = [r for r in results if r.should_block]
+    if not failed:
         console.print("\n[green]✅ All optimizations validated successfully![/green]")
         console.print("Optimized configurations are superior to default parameters")
         exit(0)
 
+    errored = [r for r in failed if r.has_errors]
+    regressed = [r for r in failed if not r.has_errors]
+    console.print(
+        f"\n[red]❌ Optimization validation failed for {len(failed)} function(s)[/red]"
+    )
+    if errored:
+        names = ", ".join(r.function_name for r in errored)
+        console.print(
+            f"Validation could not complete for {len(errored)} function(s) "
+            f"({names}); see the blocking issues above."
+        )
+        console.print(
+            "Fix the issue above, or rerun with --dry-run to check decorator "
+            "wiring only."
+        )
+    if regressed:
+        names = ", ".join(r.function_name for r in regressed)
+        console.print(
+            f"Optimization does not improve over default parameters for "
+            f"{len(regressed)} function(s): {names}"
+        )
+    exit(1)
 
-def _print_check_header(module_path: str, threshold: int, dry_run: bool) -> None:
+
+def _print_check_header(module_path: str, threshold: float, dry_run: bool) -> None:
     """Print the header for the check command."""
     console.print("\n[bold blue]🔍 Traigent Optimization Validation[/bold blue]")
     console.print(f"Module: [cyan]{module_path}[/cyan]")
-    console.print(f"Threshold: [yellow]{threshold}%[/yellow]")
+    console.print(f"Threshold: [yellow]{threshold:g}%[/yellow]")
     if dry_run:
         console.print(
             "[dim]Running in dry-run mode (no optimization will be executed)[/dim]"
@@ -368,14 +472,22 @@ def _run_single_optimization(
         import asyncio
 
         result = asyncio.run(func.optimize(**optimize_kwargs))
+        failure = _failed_run_reason(result)
+        if failure is not None:
+            _display_failed_optimization_result(
+                func_name, result, failure, persistence, algorithm, max_trials
+            )
+            return None
         _display_optimization_result(
             func_name, result, persistence, algorithm, max_trials
         )
         return (func_name, result)
     except Exception as e:
-        console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
+        console.print(
+            f"❌ [red]Error optimizing {escape(func_name)}: {_safe_error_text(e)}[/red]"
+        )
         if verbose:
-            console.print(traceback.format_exc())
+            console.print(_safe_error_text(traceback.format_exc(), limit=None))
         return None
 
 
@@ -456,6 +568,17 @@ def mcp_serve() -> None:
         raise click.ClickException(str(exc)) from exc
 
 
+#: Features the local SDK always reports False because they run in the cloud.
+_CLOUD_ONLY_FEATURES = frozenset({"tpe_optimization", "bayesian_optimization"})
+
+
+def _has_traigent_credentials() -> bool:
+    """True when the SDK would resolve a Traigent API key (env, login, dev key)."""
+    from traigent.cloud.credential_manager import CredentialManager
+
+    return CredentialManager.get_api_key_with_source()[0] is not None
+
+
 @cli.command()
 def info() -> None:
     """Show Traigent SDK version and system information."""
@@ -473,7 +596,12 @@ def info() -> None:
     features_table.add_column("Status")
 
     for feature, enabled in version_info["features"].items():
-        status = "[green]✓ Enabled[/green]" if enabled else "[red]✗ Disabled[/red]"
+        if feature in _CLOUD_ONLY_FEATURES and not enabled:
+            # Same message as `traigent algorithms`: these run in the Traigent
+            # cloud, so "Disabled" contradicts that table (#2835).
+            status = "[yellow]☁ Cloud only (requires login)[/yellow]"
+        else:
+            status = "[green]✓ Enabled[/green]" if enabled else "[red]✗ Disabled[/red]"
         features_table.add_row(feature.replace("_", " ").title(), status)
 
     console.print(features_table)
@@ -486,7 +614,9 @@ def info() -> None:
 
     for framework, enabled in version_info["integrations"].items():
         status = (
-            "[green]✓ Available[/green]" if enabled else "[yellow]○ Planned[/yellow]"
+            "[green]✓ Available[/green]"
+            if enabled
+            else "[yellow]○ Not installed (pip install traigent\\[integrations])[/yellow]"
         )
         integrations_table.add_row(framework.title(), status)
 
@@ -512,9 +642,15 @@ def algorithms() -> None:
         elif name in {"grid", "random"}:
             availability = "[green]local[/green]"
             notes = "Runs in-process; can sync results when authenticated."
-        else:
+        elif _has_traigent_credentials():
             availability = "[yellow]connected[/yellow]"
             notes = "Accepted public smart name; routed through Traigent cloud."
+        else:
+            availability = "[yellow]requires login[/yellow]"
+            notes = (
+                "Accepted public smart name; routed through Traigent cloud. "
+                "Run `traigent auth login` first."
+            )
 
         table.add_row(name, availability, notes)
 
@@ -792,14 +928,24 @@ async def _run_optimizations(
         console.print(f"\n[bold blue]Optimizing: {func_name}[/bold blue]")
         try:
             result = await func.optimize(**optimize_kwargs)
+            failure = _failed_run_reason(result)
+            if failure is not None:
+                _display_failed_optimization_result(
+                    func_name, result, failure, persistence, algorithm, max_trials
+                )
+                failed_functions.append(func_name)
+                continue
             _display_optimization_result(
                 func_name, result, persistence, algorithm, max_trials
             )
             results.append((func_name, result))
         except Exception as e:
-            console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
+            console.print(
+                f"❌ [red]Error optimizing {escape(func_name)}: "
+                f"{_safe_error_text(e)}[/red]"
+            )
             if verbose:
-                console.print(traceback.format_exc())
+                console.print(_safe_error_text(traceback.format_exc(), limit=None))
             failed_functions.append(func_name)
     return results, failed_functions
 
@@ -914,7 +1060,8 @@ def optimize(
                 verbose,
             )
         )
-        _display_optimization_summary(results, output_dir_resolved)
+        if results:
+            _display_optimization_summary(results, output_dir_resolved)
         if failed_functions:
             console.print(
                 f"\n[red]❌ {len(failed_functions)} function(s) failed to "
@@ -923,9 +1070,9 @@ def optimize(
             sys.exit(1)
 
     except Exception as e:
-        console.print(f"[red]Error loading file: {e}[/red]")
+        console.print(f"[red]Error loading file: {_safe_error_text(e)}[/red]")
         if verbose:
-            console.print(traceback.format_exc())
+            console.print(_safe_error_text(traceback.format_exc(), limit=None))
         sys.exit(1)
     finally:
         if str(parent_dir) in sys.path:
@@ -1430,24 +1577,44 @@ def _build_metrics_comparison_table(
     return metrics_table
 
 
-def _parse_weights(weights_str: str) -> dict[str, float] | None:
+def _parse_weights(weights_str: str) -> dict[str, float]:
     """Parse and normalize weight string like 'accuracy=0.7,cost=0.3'.
 
-    Returns normalized weights dict or None if parsing fails.
+    Returns the weights normalized to sum to 1. Raises ``click.ClickException``
+    naming the offending token for a malformed pair, a duplicate metric, or a
+    weight that is negative or not finite, or when all weights are zero
+    (such weights produce meaningless scores).
     """
-    try:
-        weight_dict: dict[str, float] = {}
-        for pair in weights_str.split(","):
-            key, value = pair.strip().split("=")
-            weight_dict[key.strip()] = float(value.strip())
+    weight_dict: dict[str, float] = {}
+    for raw_pair in weights_str.split(","):
+        pair = raw_pair.strip()
+        key, sep, value = pair.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not key or not value:
+            raise click.ClickException(
+                f"Invalid weights format at '{pair}'. "
+                "Use format: --weights accuracy=0.7,cost=0.3"
+            )
+        try:
+            weight = float(value)
+        except ValueError:
+            raise click.ClickException(
+                f"Invalid weight '{value}' for '{key}': not a number"
+            ) from None
+        if not math.isfinite(weight) or weight < 0:
+            raise click.ClickException(
+                f"Invalid weight '{value}' for '{key}': must be a finite number >= 0"
+            )
+        if key in weight_dict:
+            raise click.ClickException(f"Duplicate weight for '{key}'")
+        weight_dict[key] = weight
 
-        # Normalize weights to sum to 1
-        total = sum(weight_dict.values())
-        if total > 0:
-            weight_dict = {k: v / total for k, v in weight_dict.items()}
-        return weight_dict
-    except ValueError:
-        return None
+    total = sum(weight_dict.values())
+    if total <= 0:
+        raise click.ClickException(
+            "Invalid weights: at least one weight must be greater than 0"
+        )
+    return {k: v / total for k, v in weight_dict.items()}
 
 
 def _declared_result_orientations(result: Any) -> dict[str, str]:
@@ -1941,10 +2108,6 @@ def results_rerank(
     )
 
     weight_dict = _parse_weights(weights)
-    if weight_dict is None:
-        console.print("[red]Invalid weights format[/red]")
-        console.print("Use format: --weights accuracy=0.7,cost=0.3")
-        return
 
     console.print("[bold]Weights (normalized):[/bold]")
     for k, v in weight_dict.items():
@@ -1954,17 +2117,34 @@ def results_rerank(
         result = _load_cli_result(result_name, storage_dir)
 
         if not result.trials:
-            console.print("[yellow]No trials found in this result[/yellow]")
-            return
+            raise click.ClickException("No trials found in this result")
+
+        positive = [key for key, weight in weight_dict.items() if weight > 0]
+        if not any(key in (t.metrics or {}) for t in result.trials for key in positive):
+            raise click.ClickException(
+                "No trials have the specified metrics. "
+                f"Available metrics: {list((result.trials[0].metrics or {}).keys())}"
+            )
 
         scored_trials = _score_trials_for_rerank(result, weight_dict)
 
         if not scored_trials:
-            console.print(
-                "[yellow]No trials have the specified metrics. "
-                f"Available metrics: {list(result.trials[0].metrics.keys())}[/yellow]"
+            if any(
+                key in (trial.metrics or {})
+                for trial in result.trials
+                for key in weight_dict
+            ):
+                # The metrics exist; the run's recorded ranking rules excluded
+                # every trial. That is an outcome, not invalid input.
+                console.print(
+                    "[yellow]No trial is eligible for ranking under this run's "
+                    "recorded comparability rules.[/yellow]"
+                )
+                return
+            raise click.ClickException(
+                "No trials have the specified metrics. "
+                f"Available metrics: {list((result.trials[0].metrics or {}).keys())}"
             )
-            return
 
         # Sort by new score (highest first)
         scored_trials.sort(key=lambda x: x[0], reverse=True)
@@ -2514,13 +2694,12 @@ print(f"Best config: {results.best_config}")""",
             eval_dataset="evals.jsonl",
             objectives=["accuracy", "latency"],
             configuration_space={"temperature": (0.0, 1.0)},
-            callbacks=callbacks
         )
         def my_function(input_text: str, **config) -> str:
             return process(input_text, **config)
 
         # Run with persistence
-        result = asyncio.run(my_function.optimize())
+        result = asyncio.run(my_function.optimize(callbacks=callbacks))
         persistence.save_result(result, "my_optimization_v1")""",
         },
     ]
@@ -2788,6 +2967,16 @@ if __name__ == "__main__":
 '''
 
 
+def _missing_requested_functions(
+    function_filter: list[str] | None, discovered_functions: list[Any]
+) -> list[str]:
+    """Names asked for with ``--functions`` that discovery did not find."""
+    if not function_filter:
+        return []
+    found = {func_info.name for func_info in discovered_functions}
+    return [name for name in function_filter if name not in found]
+
+
 async def _run_validations(
     validator: Any, discovered_functions: list[Any]
 ) -> tuple[list[Any], int, int]:
@@ -2805,7 +2994,22 @@ async def _run_validations(
                 console.print(f"[green]{result.get_summary()}[/green]")
                 passed += 1
         except Exception as e:
-            console.print(f"[red]❌ Error validating {func_info.name}: {e}[/red]")
+            console.print(
+                f"[red]❌ Error validating {escape(func_info.name)}: "
+                f"{_safe_error_text(e)}[/red]"
+            )
+            # Keep the error as a result so the closing verdict can tell it
+            # apart from a genuine no-improvement outcome.
+            results.append(
+                ValidationResult(
+                    function_name=func_info.name,
+                    baseline_metrics={},
+                    optimized_metrics={},
+                    is_superior=False,
+                    improvement_details={},
+                    blocking_issues=[f"Validation error: {_safe_error_text(e)}"],
+                )
+            )
             failed += 1
     return results, passed, failed
 
@@ -2814,9 +3018,19 @@ async def _run_validations(
 @click.argument("module_path", type=str)
 @click.option("--functions", help="Comma-separated function names to check")
 @click.option(
-    "--threshold", default=10, type=int, help="Improvement threshold percentage"
+    "--threshold",
+    default=10.0,
+    type=click.FloatRange(min=0, max=None),
+    callback=_require_finite_threshold,
+    help="Improvement threshold percentage (finite, >= 0; the gain must exceed it)",
 )
-@click.option("--objectives", help="Comma-separated objectives to check")
+@click.option(
+    "--objectives",
+    help=(
+        "Comma-separated objectives to compare; functions declaring none of "
+        "them are skipped"
+    ),
+)
 @click.option(
     "--dry-run",
     is_flag=True,
@@ -2834,7 +3048,7 @@ async def _run_validations(
 def check(
     module_path: str,
     functions: str,
-    threshold: int,
+    threshold: float,
     objectives: str,
     dry_run: bool,
     allow_empty: bool,
@@ -2846,39 +3060,55 @@ def check(
     using Pareto efficiency analysis.
 
     Args:
-        module_path: Path to Python file containing optimizable functions
+        module_path: Path to a Python file, or a dotted module path
+            (``pkg.module``) importable from the current directory
 
     Examples:
         traigent check my_module.py                    # Check all functions
         traigent check my_module.py --functions="func1,func2"  # Check specific functions
         traigent check my_module.py --threshold=15     # Require 15% improvement
         traigent check my_module.py --dry-run          # Preview what would be checked
+        traigent check mypkg.agents.run                # Module inside a package
         traigent check my_module.py --allow-empty      # Zero functions is OK (exit 0)
     """
     import asyncio
     import sys
 
     from traigent.cli.function_discovery import (
+        classify_discovered_functions,
         discover_optimized_functions,
         print_discovery_summary,
-        validate_discovered_functions,
     )
     from traigent.cli.optimization_validator import OptimizationValidator
 
     _print_check_header(module_path, threshold, dry_run)
 
+    function_filter = _parse_comma_separated_list(functions)
+    objectives_filter = _parse_comma_separated_list(objectives)
+
     try:
-        function_filter = _parse_comma_separated_list(functions)
-        objectives_filter = _parse_comma_separated_list(objectives)
         _print_filter_info(function_filter, objectives_filter)
 
         console.print("\n[bold yellow]📋 Step 1: Function Discovery[/bold yellow]")
+        available_names: list[str] = []
         discovered_functions = discover_optimized_functions(
-            module_path, function_filter
+            module_path, function_filter, available_names=available_names
         )
 
-        validation_issues = validate_discovered_functions(discovered_functions)
-        print_discovery_summary(discovered_functions, validation_issues)
+        blocking_issues, notes = classify_discovered_functions(discovered_functions)
+        print_discovery_summary(discovered_functions, blocking_issues, notes)
+
+        missing = _missing_requested_functions(function_filter, discovered_functions)
+        if missing:
+            available = available_names
+            console.print(
+                f"\n[red]❌ Requested function(s) not found: {', '.join(missing)}[/red]"
+            )
+            console.print(
+                "Available @traigent.optimize functions: "
+                f"{', '.join(available) if available else '(none)'}"
+            )
+            sys.exit(1)
 
         if not discovered_functions:
             console.print(
@@ -2904,6 +3134,13 @@ def check(
                 sys.exit(1)
 
         if dry_run:
+            blocking_issues, _ = classify_discovered_functions(discovered_functions)
+            if blocking_issues:
+                console.print(
+                    f"\n[red]❌ Dry run found {len(blocking_issues)} blocking "
+                    "issue(s); the real run would be BLOCKED[/red]"
+                )
+                sys.exit(1)
             console.print(
                 f"\n[green]✅ Dry run completed - found {len(discovered_functions)} function(s) ready for validation[/green]"
             )
@@ -2918,10 +3155,10 @@ def check(
             _run_validations(validator, discovered_functions)
         )
         _print_check_summary(discovered_functions, passed_count, failed_count, results)
-        _handle_check_exit(failed_count)
+        _handle_check_exit(results)
 
     except Exception as e:
-        console.print(f"[red]Error during validation: {e}[/red]")
+        console.print(f"[red]Error during validation: {_safe_error_text(e)}[/red]")
         exit(1)
 
 

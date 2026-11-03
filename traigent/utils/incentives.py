@@ -15,8 +15,8 @@ from ..api.types import OptimizationStatus
 from ..config.types import TraigentConfig
 from ..storage.local_storage import LocalStorageManager
 from ..utils.logging import get_logger
-from .local_analytics import LocalAnalytics, collect_and_submit_analytics
 from .env_config import is_mock_llm
+from .local_analytics import LocalAnalytics, collect_and_submit_analytics
 
 logger = get_logger(__name__)
 
@@ -417,9 +417,20 @@ class IncentiveManager:
         return tips
 
 
-def show_upgrade_hint(context: str = "general", **kwargs) -> None:
-    """Global function to show upgrade hints."""
-    config = TraigentConfig.from_environment()
+def show_upgrade_hint(
+    context: str = "general", config: TraigentConfig | None = None, **kwargs
+) -> None:
+    """Global function to show upgrade hints.
+
+    Pass the caller's resolved ``config`` so the per-function
+    ``local_storage_path`` is honoured; without it the config is rebuilt from
+    environment variables only and state lands in ``~/.traigent`` (#2874).
+    ``TRAIGENT_DISABLE_HINTS`` returns before anything is constructed or
+    written: the opt-out is a promise of silence, not just of display.
+    """
+    if _hints_disabled_by_env():
+        return
+    config = config if config is not None else TraigentConfig.from_environment()
     if config.is_local_mode():
         incentive_manager = IncentiveManager(config)
         incentive_manager.update_usage_stats()
@@ -432,9 +443,14 @@ def show_upgrade_hint(context: str = "general", **kwargs) -> None:
         incentive_manager.show_context_sensitive_hint(context, **kwargs)
 
 
-def show_achievement(achievement: str) -> None:
-    """Global function to show achievement unlock."""
-    config = TraigentConfig.from_environment()
+def show_achievement(achievement: str, config: TraigentConfig | None = None) -> None:
+    """Global function to show achievement unlock.
+
+    See :func:`show_upgrade_hint` for ``config`` and the opt-out (#2874).
+    """
+    if _hints_disabled_by_env():
+        return
+    config = config if config is not None else TraigentConfig.from_environment()
     if config.is_local_mode():
         incentive_manager = IncentiveManager(config)
         message = incentive_manager.show_achievement_unlock(achievement)

@@ -41,7 +41,7 @@ except ImportError:
     exit(1)
 
 # Initialize Traigent for real execution
-traigent.initialize(offline=True)
+traigent.initialize()
 
 # Factory-created parameter ranges
 temperature = Range.temperature(creative=True)  # [0.7, 1.5]

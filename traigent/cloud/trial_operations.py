@@ -13,7 +13,7 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -31,7 +31,10 @@ from traigent.cloud.session_budgets import (
 )
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
-from traigent.core.session_types import safe_http_error_summary
+from traigent.core.session_types import (
+    normalize_next_trial_payload,
+    safe_http_error_summary,
+)
 from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
@@ -87,6 +90,31 @@ def _positive_finite_float(value: Any) -> float | None:
     ):
         return float(value)
     return None
+
+
+#: Results-route statuses that mean "retry later" rather than "rejected" (#2818).
+_TRANSIENT_SUBMIT_STATUSES = frozenset({408, 425, 429})
+#: Of those, only 425 (too early) and 429 (rate limited) are re-sent: both mean
+#: the server did not process the request. A 408 may have been processed, so a
+#: blind re-send of the results could duplicate it; it is reported unacknowledged.
+_RETRYABLE_SUBMIT_STATUSES = frozenset({425, 429})
+_TRIAL_SUBMIT_MAX_ATTEMPTS = 3
+_TRIAL_SUBMIT_MAX_WAIT_SECONDS = 5.0
+
+
+def _submit_retry_delay(response: Any, attempt: int) -> float:
+    """Seconds to wait before retrying a transient submit: Retry-After, capped."""
+    headers = getattr(response, "headers", None)
+    raw = None
+    if isinstance(headers, Mapping):
+        raw = headers.get("Retry-After")
+    try:
+        wait = float(raw) if raw is not None else 0.5 * (2**attempt)
+    except (TypeError, ValueError):
+        wait = 0.5 * (2**attempt)
+    if not math.isfinite(wait) or wait < 0:
+        wait = 0.5 * (2**attempt)
+    return min(wait, _TRIAL_SUBMIT_MAX_WAIT_SECONDS)
 
 
 def _summary_aggregate_scalar(aggregate: Any) -> tuple[bool, Any]:
@@ -586,6 +614,7 @@ class TrialOperations:
 
     @staticmethod
     def _slot_from_next_trial_data(data: Any, session_id: str) -> TrialSlotResult:
+        data = normalize_next_trial_payload(data)
         suggestion = data.get("suggestion") if isinstance(data, dict) else None
         trial_id = suggestion.get("trial_id") if isinstance(suggestion, dict) else None
         if isinstance(trial_id, str) and trial_id:
@@ -990,6 +1019,20 @@ class TrialOperations:
             )
             return True
 
+        # 408/425/429 are "try again later", not a verdict on the request: the
+        # trial is simply not acknowledged (the caller degrades or retries per
+        # policy). Calling it a permanent rejection ended cloud tracking for the
+        # whole run on one rate-limit reply (#2818).
+        if status in _TRANSIENT_SUBMIT_STATUSES:
+            logger.warning(
+                "Trial result was NOT acknowledged by the backend: %s (a "
+                "transient status, not a permanent rejection). Trial %s  Session %s",
+                safe_http_error_summary(status, error_text),
+                trial_id,
+                session_id,
+            )
+            return False
+
         # A non-transient 4xx is a PERMANENT rejection. Label it explicitly so it
         # is not mistaken for a transient backend outage. The session manager
         # decides whether execution policy permits local fallback.
@@ -1202,21 +1245,36 @@ class TrialOperations:
                     session_id=session_id,
                 )
 
-                async with session.post(
-                    url,
-                    json=wire_result,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    return await self._dispatch_results_response(
-                        response,
-                        session_id,
-                        trial_id,
-                        backend_status,
-                        result_data,
-                        clean_metrics,
+                for attempt in range(_TRIAL_SUBMIT_MAX_ATTEMPTS):
+                    async with session.post(
                         url,
+                        json=wire_result,
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    ) as response:
+                        last_attempt = attempt + 1 >= _TRIAL_SUBMIT_MAX_ATTEMPTS
+                        if response.status not in _RETRYABLE_SUBMIT_STATUSES or (
+                            last_attempt
+                        ):
+                            return await self._dispatch_results_response(
+                                response,
+                                session_id,
+                                trial_id,
+                                backend_status,
+                                result_data,
+                                clean_metrics,
+                                url,
+                            )
+                        delay = _submit_retry_delay(response, attempt)
+                    logger.info(
+                        "Trial result submit got a transient HTTP status; "
+                        "retrying in %.1fs (attempt %d of %d)",
+                        delay,
+                        attempt + 2,
+                        _TRIAL_SUBMIT_MAX_ATTEMPTS,
                     )
+                    await asyncio.sleep(delay)
+                raise AssertionError("unreachable: last attempt always returns")
 
         except Exception as exc:
             if is_backend_offline():

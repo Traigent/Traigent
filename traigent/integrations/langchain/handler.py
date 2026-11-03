@@ -22,11 +22,14 @@ Usage:
     metrics = handler.get_metrics()
 
 For optimization integration:
-    @optimize(callbacks=[tracker.get_callback()])
+    @optimize(configuration_space=...)
     def my_workflow(input_data, **config):
         handler = TraigentHandler()
         result = app.invoke(input_data, config={"callbacks": [handler]})
         return result, handler.get_metrics()
+
+    # Callbacks are a call-time argument of .optimize(), not a decorator option
+    results = await my_workflow.optimize(callbacks=[tracker.get_callback()])
 """
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008

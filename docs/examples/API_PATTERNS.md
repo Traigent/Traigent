@@ -303,5 +303,9 @@ enable_mock_mode_for_quickstart()
 ```
 
 Mock mode intercepts supported calls but does not skip the cost-approval or
-model-pricing preflights, because raw provider calls can still be real. Use
-`cost_approved=True` or `TRAIGENT_COST_APPROVED=true` for keyless demos.
+model-pricing preflights, because a raw provider call over an unguarded
+transport or to an unlisted host can still be real. For a keyless demo use a
+smaller dataset slice, or `TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true` with an
+explicit non-production environment (for example `ENVIRONMENT=development`).
+Avoid `cost_approved=True` / `TRAIGENT_COST_APPROVED=true` for a dry run: it
+also approves the later real run.

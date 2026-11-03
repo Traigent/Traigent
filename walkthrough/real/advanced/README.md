@@ -76,9 +76,10 @@ The generator model IDs are sourced from
 - Exact-match accuracy can under-score verbose answers. Keep the real prompt
   terse, or use a contains/semantic scorer for RAG answers. This walkthrough
   uses `semantic_overlap_score`.
-- Run mock mode first. `TRAIGENT_MOCK_LLM=true` costs nothing and now returns
-  LiteLLM-shaped mock responses, so completion access patterns and token usage
-  stay realistic enough for dry-run validation.
+- Run mock mode first. Mock mode (`enable_mock_mode_for_quickstart()`) makes
+  simulated calls free and returns LiteLLM-shaped mock responses, so completion
+  access patterns and token usage stay realistic enough for dry-run validation.
+  The pre-run cost estimate still applies.
 - The cost-coverage preflight is intentional. If you add a future Bedrock model
   ID before pricing exists in LiteLLM or the SDK catalog, the run should fail
   before making calls instead of silently treating it as free.

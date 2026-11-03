@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from dataclasses import fields as dataclass_fields
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -26,9 +26,15 @@ from ..utils.exceptions import TraigentStorageError
 from ..utils.function_identity import sanitize_identifier
 from ..utils.logging import get_logger
 from ..utils.objectives import is_minimization_objective
+from ..utils.relative_change import relative_change
 from ..utils.secure_path import PathTraversalError, safe_open, validate_path
 
 logger = get_logger(__name__)
+
+# Only sessions in one of these states are eligible for retention cleanup. An
+# allow-list (not "everything except running"): a status this SDK does not know
+# (e.g. "unknown", or one written by a newer version) must never be deleted.
+TERMINAL_SESSION_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 TRIAL_COST_FIELDS = ("cost", "total_cost", "input_cost", "output_cost")
 
@@ -439,6 +445,26 @@ class LocalStorageManager:
             session.updated_at = datetime.now(UTC).isoformat()
             self._save_session(session)
             logger.debug("Updated session status")
+
+    def _session_summary_orientation(self, session: Any) -> str | None:
+        """Direction of the session's primary objective, or None when unknown."""
+        primary_objective = self._resolve_primary_objective_name(
+            session.optimization_config
+        )
+        orientation = self._resolve_primary_objective_orientation(
+            session.optimization_config, primary_objective
+        )
+        if orientation == "band":
+            return "band"
+        try:
+            minimize = is_minimization_objective(
+                primary_objective, orientation=orientation
+            )
+        except ValueError:
+            # Undeclared custom objective: the direction is unknown, so the
+            # relative change is reported as unavailable rather than guessed.
+            return None
+        return "minimize" if minimize else "maximize"
 
     def _is_better_trial_score(self, session: Any, score: float) -> bool:
         """Whether ``score`` beats the session's current best for its objective."""
@@ -1082,12 +1108,11 @@ class LocalStorageManager:
         successful_trials = len(
             [trial for trial in session.trials if trial.error is None]
         )
-        improvement = None
-
-        if session.baseline_score and session.best_score:
-            improvement = (
-                session.best_score - session.baseline_score
-            ) / session.baseline_score
+        improvement = relative_change(
+            session.baseline_score,
+            session.best_score,
+            self._session_summary_orientation(session),
+        )
 
         return {
             "session_id": session_id,
@@ -1160,7 +1185,10 @@ class LocalStorageManager:
 
     def cleanup_old_sessions(self, days: int = 30) -> int:
         """
-        Clean up sessions older than specified days.
+        Clean up finished sessions older than specified days.
+
+        Only completed, failed and cancelled sessions are deleted; sessions in
+        any other state (pending, running, unknown) are kept.
 
         Args:
             days: Age threshold in days
@@ -1168,11 +1196,16 @@ class LocalStorageManager:
         Returns:
             Number of sessions deleted
         """
-        cutoff_date = datetime.now(UTC).timestamp() - (days * 24 * 60 * 60)
+        cutoff_date = datetime.now(UTC) - timedelta(days=days)
         deleted_count = 0
 
         for session in self.list_sessions():
-            session_date = datetime.fromisoformat(session.created_at).timestamp()
+            if session.status not in TERMINAL_SESSION_STATUSES:
+                continue  # never delete in-flight or unrecognised sessions
+            session_date = datetime.fromisoformat(session.created_at)
+            # Same reading as the cleanup --dry-run preview: naive means UTC.
+            if session_date.tzinfo is None:
+                session_date = session_date.replace(tzinfo=UTC)
             if session_date < cutoff_date:
                 if self.delete_session(session.session_id):
                     deleted_count += 1

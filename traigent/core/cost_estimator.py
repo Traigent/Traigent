@@ -11,9 +11,14 @@ from traigent.api.types import TrialResult
 from traigent.core.cost_enforcement import CostEnforcer
 from traigent.evaluators.base import Dataset
 from traigent.utils.cost_calculator import UnknownModelError, get_model_token_pricing
-from traigent.utils.env_config import cost_preflight_mock_exempt
+from traigent.utils.env_config import (
+    cost_preflight_mock_exempt,
+    is_mock_llm,
+    mock_cost_preflight_guidance,
+)
 from traigent.utils.exceptions import CostLimitExceeded
 from traigent.utils.logging import get_logger
+from traigent.utils.money import format_usd
 from traigent.utils.trial_costs import is_cost_unmeasured, known_spend_lower_bound
 
 logger = get_logger(__name__)
@@ -30,6 +35,17 @@ _PROMPT_TEMPLATE_ALLOWANCE_TOKENS = 200
 _INPUT_TOKENS_MIN = 256
 _DATASET_SAMPLE_SIZE = 20
 _BUFFER_FACTOR = 1.2
+# Config-space spellings of the output-token cap: ``max_tokens``, the
+# ``FrameworkConstraints`` aliases of it (pinned by a test) and the provider
+# keys ``max_output_tokens`` / ``max_completion_tokens`` (#2815).
+OUTPUT_TOKEN_CAP_KEYS: tuple[str, ...] = (
+    "max_tokens",
+    "max_output_tokens",
+    "max_new_tokens",
+    "max_completion_tokens",
+    "max_length",
+    "max_tokens_to_sample",
+)
 
 
 def _estimate_text_tokens(text: str) -> int:
@@ -85,6 +101,7 @@ class CostEstimator:
     # (issue #1750 follow-up).
     _estimated_calls_per_example: int = 1
     _configured_max_output_tokens: int | None = None
+    _max_output_tokens_key: str | None = None
     # (input, output, input_source, sample_count, example_count) from the last
     # estimate_optimization_cost call; None until then.
     _resolved_assumptions: tuple[int, int, str, int, int] | None = None
@@ -100,6 +117,7 @@ class CostEstimator:
         estimated_output_tokens_per_example: int | None = None,
         estimated_calls_per_example: int | None = None,
         configured_max_output_tokens: int | None = None,
+        max_output_tokens_key: str | None = None,
     ) -> None:
         """Initialize cost estimator.
 
@@ -125,6 +143,11 @@ class CostEstimator:
             if isinstance(configured_max_output_tokens, int)
             and not isinstance(configured_max_output_tokens, bool)
             and configured_max_output_tokens > 0
+            else None
+        )
+        self._max_output_tokens_key = (
+            max_output_tokens_key
+            if self._configured_max_output_tokens is not None
             else None
         )
         self._cost_enforcer = cost_enforcer
@@ -216,6 +239,12 @@ class CostEstimator:
         else:
             input_tokens, output_tokens, source, sampled, examples = resolved
         examples_text = "unknown" if examples is None else str(examples)
+        output_source = (
+            f", from config-space key {self._max_output_tokens_key}"
+            if self._max_output_tokens_key
+            and self._estimated_output_tokens_per_example is None
+            else ""
+        )
         return (
             f"Assumptions: model(s)={', '.join(models)}; "
             f"examples in dataset={examples_text}; "
@@ -223,7 +252,7 @@ class CostEstimator:
             f"{sampled} example(s) sampled, "
             f"prompt-template allowance={_PROMPT_TEMPLATE_ALLOWANCE_TOKENS}, "
             f"minimum={_INPUT_TOKENS_MIN}); "
-            f"output tokens/example={output_tokens} (estimate); "
+            f"output tokens/example={output_tokens} (estimate{output_source}); "
             f"safety buffer={_BUFFER_FACTOR}x. "
             "Real billing may differ; the runtime cost limit still applies."
         )
@@ -359,26 +388,36 @@ class CostEstimator:
             estimated_calls_per_example=self._estimated_calls_per_example,
         ):
             limit = self._cost_enforcer.config.limit
+            if is_mock_llm():
+                # Simulated run: lead with the dry-run route, never with spend
+                # approval (#2795).
+                proceed = mock_cost_preflight_guidance()
+            else:
+                proceed = (
+                    "To proceed, "
+                    "raise TRAIGENT_RUN_COST_LIMIT, approve after review with "
+                    "TRAIGENT_COST_APPROVED=true or cost_approved=True, or "
+                    "calibrate private/unpriced model rates with "
+                    "TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
+                    "TRAIGENT_CUSTOM_MODEL_PRICING_JSON."
+                )
             raise CostLimitExceeded(
                 accumulated=0.0,
                 limit=limit,
                 estimated=estimated_cost,
                 message=(
                     "Cost approval declined. Rough conservative upper-bound "
-                    f"estimate: ${estimated_cost:.2f}, limit: "
-                    f"${limit:.2f}. "
+                    f"estimate: {format_usd(estimated_cost)}, limit: "
+                    f"{format_usd(limit)}. "
                     f"{self._assumptions_summary()} "
-                    "Pre-run estimates use conservative "
+                    "Pre-run estimates price every config-space key named "
+                    "model, model_name, model_id, engine or ending in _model "
+                    "(a model under any other key is not priced), use conservative "
                     "fallback pricing when model pricing is unavailable, and assume "
                     f"{self._estimated_calls_per_example} LLM call(s) per example "
                     "(set estimated_calls_per_example on @traigent.optimize for "
                     "multi-call agents such as self-consistency voting, repair "
-                    "passes, or model cascades). To proceed, "
-                    "raise TRAIGENT_RUN_COST_LIMIT, approve after review with "
-                    "TRAIGENT_COST_APPROVED=true or cost_approved=True, or calibrate "
-                    "private/unpriced model rates with "
-                    "TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
-                    "TRAIGENT_CUSTOM_MODEL_PRICING_JSON."
+                    f"passes, or model cascades). {proceed}"
                 ),
             )
 
@@ -454,7 +493,7 @@ class CostEstimator:
 
         logger.debug(
             f"Cost estimate ({estimation_mode}): {total_samples} total samples "
-            f"× ${base_cost_per_example}/sample × {retry_factor} buffer = ${estimated_total:.2f} "
+            f"× ${base_cost_per_example}/sample × {retry_factor} buffer = {format_usd(estimated_total)} "
             f"(pricing_source={pricing_source})"
         )
 

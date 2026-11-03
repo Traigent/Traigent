@@ -1071,3 +1071,66 @@ class TestBedrockChatClientAsyncInvokeStream:
         # Verify all expected chunks are present
         assert "First" in chunks
         assert "second" in chunks
+
+
+class TestAinvokeStreamMockWithAioboto3Installed:
+    """#2810: mock mode must not depend on the optional aioboto3 package."""
+
+    MODEL = "anthropic.claude-3-haiku-20240307-v1:0"
+
+    @staticmethod
+    def _fake_aioboto3(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        fake = MagicMock(name="aioboto3")
+        fake.Session.side_effect = AssertionError(
+            "aioboto3 provider client was selected under mock mode"
+        )
+        monkeypatch.setitem(__import__("sys").modules, "aioboto3", fake)
+        return fake
+
+    async def _collect(self, client: BedrockChatClient) -> list[str]:
+        return [
+            chunk
+            async for chunk in client.ainvoke_stream(model_id=self.MODEL, messages="hi")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_mock_with_aioboto3_yields_the_sync_mock_stream(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        monkeypatch.setenv("ENVIRONMENT", "development")
+        fake = self._fake_aioboto3(monkeypatch)
+        client = BedrockChatClient()
+
+        chunks = await self._collect(client)
+
+        sync_chunks = list(client.invoke_stream(model_id=self.MODEL, messages="hi"))
+        assert chunks == sync_chunks != []
+        fake.Session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_mock_without_aioboto3_matches_the_sync_mock_stream(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        monkeypatch.setenv("ENVIRONMENT", "development")
+        monkeypatch.setitem(__import__("sys").modules, "aioboto3", None)
+        client = BedrockChatClient()
+
+        chunks = await self._collect(client)
+
+        assert chunks == list(client.invoke_stream(model_id=self.MODEL, messages="hi"))
+
+    @pytest.mark.asyncio
+    async def test_mock_off_with_aioboto3_keeps_the_native_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        client = BedrockChatClient()
+
+        async def native(**_kwargs: object):
+            yield "native-chunk"
+
+        self._fake_aioboto3(monkeypatch)
+        with patch.object(client, "_ainvoke_stream_aioboto3", side_effect=native):
+            assert await self._collect(client) == ["native-chunk"]

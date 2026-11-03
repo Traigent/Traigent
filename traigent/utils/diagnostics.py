@@ -17,7 +17,7 @@ from typing import Any
 
 from traigent.config.provider_support import PROVIDER_SPECS
 from traigent.utils.console import _safe_print
-from traigent.utils.env_config import is_truthy
+from traigent.utils.env_config import is_mock_llm
 
 # ---------------------------------------------------------------------------
 # Redaction.
@@ -629,11 +629,11 @@ class TraigentDiagnostics:
             traigent.initialize(execution_mode="local")
             report.add_success("Traigent", "SDK initialized successfully")
 
-            # Check for mock LLM mode. Use the canonical truthy parser so this
-            # agrees with the runtime's own is_mock_llm() (accepts
-            # 1/true/yes/on, case-insensitive) instead of matching only the
-            # exact string "true" (issue #1766).
-            if is_truthy(os.environ.get("TRAIGENT_MOCK_LLM")):
+            # Check for mock LLM mode through the runtime's own is_mock_llm():
+            # it covers the in-code flag (enable_mock_mode_for_quickstart) and
+            # the legacy env var (accepts 1/true/yes/on, #1766), so the report
+            # cannot contradict what the run will do (#2816).
+            if is_mock_llm():
                 report.add_success(
                     "Traigent", "Mock LLM mode is enabled (good for testing)"
                 )
@@ -720,10 +720,10 @@ class TraigentDiagnostics:
         if report.issues:
             report.add_recommendation("Fix critical issues before proceeding")
 
-        # A truthy check here (not a bare presence check) so a value like
-        # TRAIGENT_MOCK_LLM=false or =0 is correctly treated as "not
-        # enabled" and still gets the recommendation (issue #1766).
-        if not is_truthy(os.environ.get("TRAIGENT_MOCK_LLM")):
+        # is_mock_llm(), not a bare env read: the in-code flag counts, and a
+        # value like TRAIGENT_MOCK_LLM=false or =0 is "not enabled" and still
+        # gets the recommendation (issues #1766, #2816).
+        if not is_mock_llm():
             report.add_recommendation(
                 "Enable mock LLM mode for testing: call "
                 "traigent.testing.enable_mock_mode_for_quickstart() before "

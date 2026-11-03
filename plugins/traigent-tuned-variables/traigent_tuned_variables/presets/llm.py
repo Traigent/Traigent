@@ -171,11 +171,11 @@ def _get_fallback_models(provider: str | None, tier: str) -> list[str]:
         ("openai", "fast"): ["gpt-4o-mini"],
         ("openai", "balanced"): ["gpt-4o-mini", "gpt-4o"],
         ("openai", "quality"): ["gpt-4o"],
-        ("anthropic", "fast"): ["claude-3-haiku-20240307"],
-        ("anthropic", "balanced"): ["claude-3-5-sonnet-20241022"],
-        ("anthropic", "quality"): ["claude-3-opus-20240229"],
+        ("anthropic", "fast"): ["claude-haiku-4-5-20251001"],
+        ("anthropic", "balanced"): ["claude-sonnet-4-6"],
+        ("anthropic", "quality"): ["claude-opus-4-8"],
         (None, "fast"): ["gpt-4o-mini"],
         (None, "balanced"): ["gpt-4o-mini", "gpt-4o"],
-        (None, "quality"): ["gpt-4o", "claude-3-5-sonnet-20241022"],
+        (None, "quality"): ["gpt-4o", "claude-sonnet-4-6"],
     }
     return fallbacks.get((provider, tier), ["gpt-4o-mini"])

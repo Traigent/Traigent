@@ -69,7 +69,7 @@ def get_customer_context(customer_id: str) -> dict[str, Any]:
 
 
 @optimize(
-    spec=str(TVL_SPEC_PATH),
+    tvl_spec=str(TVL_SPEC_PATH),
     objectives=create_default_objectives(
         [
             "latency_p50",

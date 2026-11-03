@@ -56,7 +56,7 @@ from traigent.integrations.observability.workflow_traces import (
 
 load_dotenv()
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
-traigent.initialize(offline=True, minimal_logging=True)
+traigent.initialize(minimal_logging=True)
 
 SCRIPT_DIR = Path(__file__).parent
 DATASET_PATH = str(

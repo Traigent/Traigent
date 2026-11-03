@@ -362,3 +362,17 @@ def lift_cost_floor_to_body(body: dict[str, Any]) -> None:
     metrics = body.get("metrics")
     if isinstance(metrics, dict) and COST_FLOOR_WIRE_KEY in metrics:
         body[COST_FLOOR_WIRE_KEY] = metrics.pop(COST_FLOOR_WIRE_KEY)
+
+
+#: Spend keys a failed evaluation hands to its failed ``TrialResult`` (#2852).
+MEASURED_SPEND_KEYS = (
+    "total_cost",
+    "cost",
+    "input_cost",
+    "output_cost",
+    "cost_unmeasured",
+    "cost_lower_bound",
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+)

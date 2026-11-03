@@ -47,6 +47,7 @@ class _Session:
         self._session_id = session_id
         self._created_at = created_at
         self._function_name = function_name
+        self.status = "completed"  # only finished sessions are deletable
         self.reads = []
 
     @property
@@ -258,7 +259,9 @@ def test_list_sessions_error_reported_and_exits():
 
 
 def test_actual_cleanup_branch_unchanged():
-    result, storage, storage_cls, clock = _run(["--days", "30"], cleanup_result=2)
+    result, storage, storage_cls, clock = _run(
+        ["--days", "30", "--yes"], cleanup_result=2
+    )
     assert result.exit_code == 0
     assert result.output == "✅ Cleaned up 2 sessions older than 30 days\n"
     storage.cleanup_old_sessions.assert_called_once_with(30)
@@ -268,7 +271,7 @@ def test_actual_cleanup_branch_unchanged():
 
 
 def test_actual_cleanup_default_days_and_error():
-    result, storage, *_ = _run([], cleanup_result=0)
+    result, storage, *_ = _run(["--yes"], cleanup_result=0)
     assert result.output == "✅ Cleaned up 0 sessions older than 30 days\n"
     storage.cleanup_old_sessions.assert_called_once_with(30)
 
@@ -277,7 +280,7 @@ def test_actual_cleanup_default_days_and_error():
         patch(f"{MOD}.TraigentConfig"),
         patch(f"{MOD}.LocalStorageManager", return_value=storage),
     ):
-        failed = CliRunner().invoke(cleanup_sessions, ["--days", "5"])
+        failed = CliRunner().invoke(cleanup_sessions, ["--days", "5", "--yes"])
     assert failed.exit_code == 1
     assert failed.output == "Error cleaning up sessions: Cleanup error\n"
 
@@ -291,6 +294,8 @@ def test_config_error_reported_and_exits():
 
 
 def test_plain_namespace_rows_are_supported():
-    ns = SimpleNamespace(session_id="x", function_name="g", created_at=_iso(days=99))
+    ns = SimpleNamespace(
+        session_id="x", function_name="g", created_at=_iso(days=99), status="completed"
+    )
     result, *_ = _run(["--days", "1", "--dry-run"], [ns])
     assert _lines(result)[-1] == "  - x (g)"

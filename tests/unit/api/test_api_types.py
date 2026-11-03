@@ -781,12 +781,16 @@ class TestConfigurationComparison:
         )
 
         # Best score
-        best_idx, best_config = comparison.get_best_configuration("score")
+        best_idx, best_config = comparison.get_best_configuration(
+            "score", orientation="maximize"
+        )
         assert best_idx == 1
         assert best_config["config"] == "B"
 
         # Best speed
-        best_idx, best_config = comparison.get_best_configuration("speed")
+        best_idx, best_config = comparison.get_best_configuration(
+            "speed", orientation="maximize"
+        )
         assert best_idx == 0
         assert best_config["config"] == "A"
 

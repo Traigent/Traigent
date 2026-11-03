@@ -9,7 +9,10 @@ Design notes:
 
 * **Mock by default.** ``TRAIGENT_MOCK_LLM`` defaults to on, so the
   examples run with no API keys and no provider spend (LLM calls are
-  intercepted). Set ``TRAIGENT_MOCK_LLM=false`` for a real run.
+  intercepted). Set ``TRAIGENT_MOCK_LLM=false`` for a real run. That variable
+  is these example scripts' own mock/real switch; in your own code call
+  ``traigent.testing.enable_mock_mode_for_quickstart()`` to turn mock mode on
+  and ``traigent.testing.disable_mock_mode()`` to turn it off.
 * **Mock scorer.** In mock mode the interceptor returns a generic
   placeholder string, so an output-based metric would score every trial
   identically and hide the optimization signal. :func:`demo_scorer`
@@ -128,24 +131,44 @@ def _trial_count(value: Any) -> int | None:
 
 
 @contextlib.contextmanager
-def _scoped_mock_cost_approval() -> Iterator[None]:
-    """Pre-approve cost for the demo invocation only, never process-wide.
+def _scoped_mock_cost_exemption() -> Iterator[None]:
+    """Exempt the demo invocation from the pre-run cost preflights, never process-wide.
 
     The mock-mode preflights stay on (#2681): raw provider calls can be real
     under the mock flag. These demos route every call through LangChain or
-    LiteLLM, which the mock intercepts, so a mock demo run pre-approves, and
-    the previous value is restored afterwards so a later real run in the same
-    process does not inherit approval.
+    LiteLLM, which the mock intercepts, so a mock demo run uses the explicit
+    mock exemption (``TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT``) rather than
+    ``TRAIGENT_COST_APPROVED``: approval would also cover a later real run in
+    the same process (#2795, #2817). The exemption needs a non-production
+    environment, so an unset one is scoped to ``development``. Every value is
+    restored afterwards.
     """
     is_mock = os.environ.get("TRAIGENT_MOCK_LLM", "true").strip().lower() != "false"
-    if not is_mock or "TRAIGENT_COST_APPROVED" in os.environ:
+    if not is_mock:
         yield
         return
-    os.environ["TRAIGENT_COST_APPROVED"] = "true"
+    from traigent.utils.env_config import (
+        COST_PREFLIGHT_MOCK_EXEMPT_ENV,
+        resolve_environment_name,
+    )
+
+    scoped: dict[str, str] = {}
+    if COST_PREFLIGHT_MOCK_EXEMPT_ENV not in os.environ:
+        scoped[COST_PREFLIGHT_MOCK_EXEMPT_ENV] = "true"
+    if resolve_environment_name(default=None) is None:
+        scoped["ENVIRONMENT"] = "development"
+    # Remember what was there (a blank ENVIRONMENT counts as unset to the
+    # resolver but is still a value to put back).
+    previous = {name: os.environ.get(name) for name in scoped}
+    os.environ.update(scoped)
     try:
         yield
     finally:
-        os.environ.pop("TRAIGENT_COST_APPROVED", None)
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def run_optimization(
@@ -158,7 +181,7 @@ def run_optimization(
     would otherwise return a result and exit 0. For a demo that is misleading,
     so we surface it as a non-zero exit with an actionable message.
     """
-    with _scoped_mock_cost_approval():
+    with _scoped_mock_cost_exemption():
         result = asyncio.run(
             answer_fn.optimize(max_trials=max_trials, algorithm=algorithm)
         )

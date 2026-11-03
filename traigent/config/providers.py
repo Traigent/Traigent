@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
 import textwrap
 import types
 from collections import defaultdict
@@ -409,6 +410,81 @@ class SeamlessNoInjectableTargetsError(ConfigurationError):
     """
 
 
+# Marks an AST rewrite that must be analysed but never executed: it was rebuilt
+# without the original closure, or it references class-private (name-mangled)
+# attributes that only the original compilation inside the class resolves.
+_CLOSURE_STRIPPED_ATTR = "__traigent_closure_stripped__"
+
+
+_MANGLED_NAME = re.compile(r"^_\w+?__\w*(?<!__)$")
+
+
+def _uses_mangled_names(code: types.CodeType) -> bool:
+    """True if *code* (or a nested code object) references ``_Class__name``."""
+    if any(_MANGLED_NAME.match(name) for name in code.co_names):
+        return True
+    return any(
+        isinstance(const, types.CodeType) and _uses_mangled_names(const)
+        for const in code.co_consts
+    )
+
+
+class _UserFunctionError(Exception):
+    """Internal carrier for an exception raised by the USER's own callable.
+
+    ``_seamless_run`` treats any other exception as "the AST transform / shim
+    construction failed" and falls back to a second execution. An exception
+    raised while executing the user function is not that, so it is carried
+    out of the transform-and-fallback ladder in this wrapper and re-raised
+    unchanged by ``_seamless_run`` (#2841).
+    """
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+# Provider SDKs signal an unknown model id with a typed 404 error. These are
+# matched by class identity (module root + name), never by message text, so a
+# user function's own ``ValueError("does not exist")`` is not reclassified.
+_PROVIDER_SDK_ROOTS = frozenset(
+    {"openai", "anthropic", "litellm", "cohere", "mistralai"}
+)
+# Bedrock reports an unknown/unavailable model id as a botocore ClientError.
+_BEDROCK_MODEL_ERROR_CODES = frozenset({"ResourceNotFoundException"})
+
+
+def _is_provider_model_not_found(exc: BaseException) -> bool:
+    """True for a provider SDK's typed "unknown model" (HTTP 404) error."""
+    for cls in type(exc).__mro__:
+        root = cls.__module__.split(".", 1)[0]
+        if cls.__name__ == "NotFoundError" and root in _PROVIDER_SDK_ROOTS:
+            return True
+        # Gemini (google-generativeai / google-api-core)
+        if (
+            cls.__module__ == "google.api_core.exceptions"
+            and cls.__name__ == "NotFound"
+        ):
+            return True
+        # Gemini (google-genai): ClientError carrying the HTTP status
+        if (
+            cls.__module__ == "google.genai.errors"
+            and getattr(exc, "code", None) == 404
+        ):
+            return True
+        # Bedrock (botocore): ClientError with an error code
+        if cls.__module__ == "botocore.exceptions" and cls.__name__ == "ClientError":
+            response = getattr(exc, "response", None)
+            code = (
+                (response or {}).get("Error", {}).get("Code")
+                if isinstance(response, dict)
+                else None
+            )
+            if code in _BEDROCK_MODEL_ERROR_CODES:
+                return True
+    return False
+
+
 def _merge_context_config(
     active_config: dict[str, Any],
     current_config: TraigentConfig | dict[str, Any],
@@ -620,44 +696,67 @@ class SeamlessParameterProvider(ConfigurationProvider):
         """
 
         def _handle_injection_error(exc: Exception) -> None:
-            error_text = str(exc).lower()
+            # Only called for exceptions raised by the user's own callable.
+            # Re-raise them unchanged (wrapped in the internal carrier so the
+            # transform-failure fallback does not re-execute the function),
+            # except for a typed "unknown model" signal, which is a
+            # configuration problem rather than a bug in user code (#2841).
             model_value = active_config.get("model")
-            config_error_markers = [
-                "model_not_found",
-                "model not found",
-                "invalid model",
-                "does not exist",
-            ]
-            if isinstance(exc, ConfigurationError) or any(
-                marker in error_text for marker in config_error_markers
-            ):
-                raise ConfigurationError(
+            if _is_provider_model_not_found(exc):
+                error: BaseException = ConfigurationError(
                     "Failed to execute with injected configuration"
                     + (f" (model='{model_value}')" if model_value is not None else "")
                     + f": {exc}"
-                ) from exc
-            raise
+                )
+                error.__cause__ = exc
+            else:
+                error = exc
+            raise _UserFunctionError(error)
 
         cache_key = self._get_cache_key(func, active_config)
 
         # Fast path: return cached transformation
-        cached_func = self._lookup_cached(cache_key, func.__name__)
-        if cached_func is not None:
-            return cached_func(*args, **kwargs)
-
-        # Transform the function
+        user_error: BaseException
         try:
-            return self._seamless_transform_and_run(
-                func, active_config, args, kwargs, cache_key, _handle_injection_error
-            )
-        except SeamlessNoInjectableTargetsError:
-            # Fail closed: do not fall back to a runtime shim, which would
-            # silently no-op the same way and defeat the point of this check.
-            raise
-        except Exception as e:  # noqa: BLE001
-            return self._seamless_fallback(
-                func, active_config, args, kwargs, cache_key, e, _handle_injection_error
-            )
+            cached_func = self._lookup_cached(cache_key, func.__name__)
+            if cached_func is not None:
+                try:
+                    return cached_func(*args, **kwargs)
+                except Exception as exc:  # noqa: BLE001
+                    _handle_injection_error(exc)
+                    raise  # pragma: no cover - handler always raises
+
+            # Transform the function
+            try:
+                return self._seamless_transform_and_run(
+                    func,
+                    active_config,
+                    args,
+                    kwargs,
+                    cache_key,
+                    _handle_injection_error,
+                )
+            except (SeamlessNoInjectableTargetsError, _UserFunctionError):
+                # SeamlessNoInjectableTargetsError: fail closed, do not fall
+                # back to a runtime shim, which would silently no-op the same
+                # way and defeat the point of this check. _UserFunctionError:
+                # the user's own function raised; it must not run twice.
+                raise
+            except Exception as e:  # noqa: BLE001
+                return self._seamless_fallback(
+                    func,
+                    active_config,
+                    args,
+                    kwargs,
+                    cache_key,
+                    e,
+                    _handle_injection_error,
+                )
+        except _UserFunctionError as carrier:
+            user_error = carrier.error
+        # Raised outside the ``except`` block so the carrier does not become
+        # the user error's implicit ``__context__``.
+        raise user_error
 
     def _seamless_transform_and_run(
         self,
@@ -694,6 +793,13 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 return result
 
         if modified_vars:
+            if getattr(transformed_func, _CLOSURE_STRIPPED_ATTR, False):
+                # Executing it would raise NameError for a free variable, which
+                # is indistinguishable from an error in the user's function. Let
+                # the runtime-shim fallback, which keeps the closure, take over.
+                raise RuntimeError(
+                    f"AST rewrite of {func.__name__!r} cannot preserve its closure"
+                )
             ok, result = self._execute_and_cache(
                 transformed_func,
                 args,
@@ -751,7 +857,11 @@ class SeamlessParameterProvider(ConfigurationProvider):
         with self._cache_lock:
             self._compiled_cache[cache_key] = func
             self._cache_access_count[cache_key] = 1
-        return func(*args, **kwargs)
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            error_handler(exc)
+            raise  # pragma: no cover - handler always raises
 
     def _seamless_fallback(
         self,
@@ -904,6 +1014,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
         # Note: When functions are defined inside other functions or methods,
         # they might have closures. The compiled code might not expect the same
         # closure, so we need to handle this carefully.
+        closure_stripped = False
         try:
             new_func = types.FunctionType(
                 func_code,
@@ -913,7 +1024,6 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 func.__closure__,  # Keep closure
             )
         except ValueError as e:
-            # If there's a closure mismatch, try without closure
             if "closure" in str(e):
                 new_func = types.FunctionType(
                     func_code,
@@ -922,6 +1032,9 @@ class SeamlessParameterProvider(ConfigurationProvider):
                     func.__defaults__,
                     None,  # No closure
                 )
+                # The rewrite cannot see the original free variables, so it
+                # may be analysed but must not be executed (#2841).
+                closure_stripped = bool(func.__closure__)
             else:
                 raise
 
@@ -930,6 +1043,8 @@ class SeamlessParameterProvider(ConfigurationProvider):
         new_func.__doc__ = func.__doc__
         new_func.__annotations__ = func.__annotations__
         new_func.__module__ = func.__module__
+        if closure_stripped or _uses_mangled_names(func.__code__):
+            setattr(new_func, _CLOSURE_STRIPPED_ATTR, True)
 
         return new_func, transformer.get_modified_variables()
 
