@@ -63,8 +63,31 @@ RETIRED_MODEL_IDS: frozenset[str] = frozenset(
         "claude-3-haiku-20240307",
         "claude-3-7-sonnet-20250219",
         "claude-3.5-sonnet",
+        # Retired at the provider (#2876): Claude Haiku 3.5 (2026-02-19),
+        # dashed Sonnet 3.5 (2025-10-28), Sonnet 4 and Opus 4 (2026-06-15),
+        # Opus 4.1 (2026-08-05). Dotted spellings are the OpenRouter ids.
+        # Exact-match only: "claude-sonnet-4" does not catch "claude-sonnet-4-6".
+        "claude-3-5-haiku-20241022",
+        "claude-3-5-haiku-latest",
+        "claude-3-5-haiku",
+        "claude-3.5-haiku",
+        "claude-3.5-haiku-20241022",
         "claude-3-5-sonnet-20241022",
+        "claude-3-5-sonnet-20240620",
         "claude-3-5-sonnet-latest",
+        "claude-3-5-sonnet",
+        "claude-3.5-sonnet-20240620",
+        "claude-3.5-sonnet-20241022",
+        "claude-sonnet-4-20250514",
+        "claude-sonnet-4",
+        "claude-opus-4-20250514",
+        "claude-opus-4",
+        "claude-opus-4-1-20250805",
+        "claude-opus-4.1",
+        # Undated provider aliases of the same retired models
+        "claude-opus-4-1",
+        "claude-opus-4-0",
+        "claude-sonnet-4-0",
         # Gemini 1.x (deprecated) + 2.0 preview, incl. -latest and
         # "models/"-prefixed aliases of the same retired models
         "gemini-1.5-flash",

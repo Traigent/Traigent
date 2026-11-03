@@ -186,6 +186,8 @@ def strict_agent(query: str) -> str:
     ...
 ```
 
+Keys in `ExampleResult.metrics` that are not objectives (here `exact_match` and `length_score`) are averaged over the successful rows and appear in `trial.metrics`, the same as keys returned through the `(output, metrics)` tuple or a non-objective `metric_functions` entry. They are diagnostics only: they do not change the score or the ranking. Names the SDK computes itself (such as `cost`, `success_rate`, or your objectives) are never overwritten, and the total is capped at 50 keys by dropping user keys first.
+
 #### Failure semantics: `custom_evaluator` vs `metric_functions`
 
 | Situation | `custom_evaluator` | `metric_functions` |

@@ -241,6 +241,7 @@ def _echo_session_summary(
         try:
             show_upgrade_hint(
                 "cli_usage",
+                config=config,
                 trial_count=session.completed_trials,
                 best_score=session.best_score,
             )

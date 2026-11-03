@@ -73,7 +73,7 @@ from traigent.cloud.session_budgets import (
     is_cost_budget_armed_session,
     remember_cost_budget_armed_session,
 )
-from traigent.cloud.session_operations import SessionOperations
+from traigent.cloud.session_operations import OptimizationOutcome, SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import (
@@ -2193,6 +2193,7 @@ class BackendIntegratedClient:
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        optimization_outcome: OptimizationOutcome | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
         Delegates to session_operations module. Phase 8: an optional
@@ -2204,6 +2205,7 @@ class BackendIntegratedClient:
             include_full_history,
             certified_selection=certified_selection,
             session_aggregation=session_aggregation,
+            optimization_outcome=optimization_outcome,
         )
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
@@ -2217,6 +2219,7 @@ class BackendIntegratedClient:
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        optimization_outcome: OptimizationOutcome | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session.
         Delegates to session_operations module."""
@@ -2225,6 +2228,7 @@ class BackendIntegratedClient:
             include_full_history,
             certified_selection=certified_selection,
             session_aggregation=session_aggregation,
+            optimization_outcome=optimization_outcome,
         )
 
     def delete_session_sync(self, session_id: str, cascade: bool = True) -> bool:

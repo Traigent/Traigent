@@ -37,15 +37,11 @@ KNOWN_ANTHROPIC_MODELS = [
     "claude-opus-4-7",
     "claude-opus-4-6",
     "claude-opus-4-5-20251101",
-    "claude-opus-4-1-20250805",
-    "claude-opus-4-20250514",
     "claude-sonnet-4-6",
     "claude-sonnet-4-5-20250929",
-    "claude-sonnet-4-20250514",
     "claude-haiku-4-5-20251001",
-    # Claude 3.5 family (3.7 Sonnet, 3 Haiku and 3.5 Sonnet retired, #2646/#2840)
-    "claude-3-5-haiku-20241022",
-    "claude-3-5-haiku-latest",
+    # Claude 3.5/4.0/4.1 retired at the provider (#2646, #2876); see
+    # traigent.config.retired_models.
     # Claude 3 family. claude-3-opus (+ -latest alias) is on the retirement
     # track (#1936/#1937) and swept from this served snapshot; see
     # traigent.config.retired_models.

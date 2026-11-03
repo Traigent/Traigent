@@ -7,7 +7,9 @@ depend on it even when the optional cloud package is unavailable.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -22,6 +24,136 @@ QUOTA_ERROR_CODES = frozenset(
         "usage_limit_exceeded",
     }
 )
+
+
+# Closed set of PUBLIC quota resource names the backend reports in a quota 429
+# (``resource_type``). Anything else is dropped, never echoed (#2855).
+QUOTA_RESOURCE_TYPES = frozenset(
+    {
+        "api_calls",
+        "llm_tokens",
+        "optimization_trials",
+        "optimization_samples",
+        "benchmarks",
+        "observability_traces",
+        "observability_events",
+        "observability_bytes",
+    }
+)
+
+
+def _quota_number(value: Any) -> float | None:
+    """A finite, non-negative real number, else None (bools are not numbers)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)  # a huge JSON integer overflows here, not in isfinite
+    except OverflowError:
+        return None
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number
+
+
+def _quota_datetime(value: Any) -> datetime | None:
+    """Parse an ISO-8601 string to an aware UTC datetime, else None."""
+    if not isinstance(value, str) or not 10 <= len(value) <= 64:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    try:
+        return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    except OverflowError:  # silent-ok: out-of-range date is no usable reset time
+        return None
+
+
+def _fmt_quota_number(value: float) -> str:
+    if abs(value) >= 1e15:  # bound the rendered length of a hostile figure
+        return f"{value:.3g}"
+    return str(int(value)) if float(value).is_integer() else f"{value:.2f}"
+
+
+@dataclass(frozen=True)
+class QuotaRefusalFacts:
+    """Allowlisted structured facts from a quota 429 body (#2855).
+
+    Every field is re-validated and re-rendered by the SDK; no backend text
+    (``message``, ``upgrade_url``, raw body) is ever carried.
+    """
+
+    resource_type: str | None = None
+    limit: float | None = None
+    current_usage: float | None = None
+    requested_units: float | None = None
+    reset_at: datetime | None = None
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> QuotaRefusalFacts | None:
+        if not isinstance(payload, dict):
+            return None
+        resource = payload.get("resource_type")
+        facts = cls(
+            resource_type=(
+                resource
+                if isinstance(resource, str) and resource in QUOTA_RESOURCE_TYPES
+                else None
+            ),
+            limit=_quota_number(payload.get("limit")),
+            current_usage=_quota_number(payload.get("current_usage")),
+            requested_units=_quota_number(payload.get("requested_units")),
+            reset_at=_quota_datetime(payload.get("reset_at")),
+        )
+        return facts if facts.has_any else None
+
+    @property
+    def has_any(self) -> bool:
+        return any(
+            v is not None
+            for v in (
+                self.resource_type,
+                self.limit,
+                self.current_usage,
+                self.requested_units,
+                self.reset_at,
+            )
+        )
+
+    @property
+    def reset_text(self) -> str | None:
+        if self.reset_at is None:
+            return None
+        return self.reset_at.strftime("%Y-%m-%d %H:%M UTC")
+
+    def describe(self) -> str:
+        """Content-free ``resource=..., usage=X of limit Y, ...`` fragment."""
+        parts: list[str] = []
+        if self.resource_type:
+            parts.append(f"resource={self.resource_type}")
+        if self.current_usage is not None and self.limit is not None:
+            parts.append(
+                f"usage={_fmt_quota_number(self.current_usage)} "
+                f"of limit {_fmt_quota_number(self.limit)}"
+            )
+        elif self.limit is not None:
+            parts.append(f"limit={_fmt_quota_number(self.limit)}")
+        elif self.current_usage is not None:
+            parts.append(f"usage={_fmt_quota_number(self.current_usage)}")
+        if self.requested_units is not None:
+            parts.append(f"requested={_fmt_quota_number(self.requested_units)}")
+        if self.reset_text:
+            parts.append(f"resets {self.reset_text}")
+        return ", ".join(parts)
+
+    def remedy(self) -> str:
+        """Reset-aware remedy: wait is an option only when ``reset_at`` is known."""
+        if self.reset_text:
+            return (
+                f"Wait until {self.reset_text} for the limit to reset, or "
+                "upgrade your plan in the Traigent portal (Billing)."
+            )
+        return "Upgrade your plan in the Traigent portal (Billing)."
 
 
 # Closed vocabulary of backend refusals that are definitive answers from a
@@ -127,6 +259,7 @@ class SessionCreationFailureDetail:
     missing_permissions: tuple[str, ...] = field(default=(), repr=False)
     raw_body: str | None = field(default=None, repr=False)
     backend_url: str | None = None
+    quota_facts: QuotaRefusalFacts | None = field(default=None, repr=False)
 
     def __repr__(self) -> str:
         # Content-free: backend message, raw body, free-form code and permission
@@ -183,6 +316,7 @@ class SessionCreationFailureDetail:
             missing_permissions=missing_permissions,
             raw_body=raw_body,
             backend_url=backend_url,
+            quota_facts=QuotaRefusalFacts.from_payload(payload),
         )
 
     @property

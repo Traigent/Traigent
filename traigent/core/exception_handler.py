@@ -68,6 +68,7 @@ _VENDOR_ERROR_PATTERNS: list[tuple[str, VendorErrorCategory]] = [
     ("insufficient_funds", VendorErrorCategory.INSUFFICIENT_FUNDS),
     ("insufficient funds", VendorErrorCategory.INSUFFICIENT_FUNDS),
     ("insufficient credits", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("exceed your available credits", VendorErrorCategory.INSUFFICIENT_FUNDS),
     ("billing hard limit", VendorErrorCategory.INSUFFICIENT_FUNDS),
     ("exceeded your current billing", VendorErrorCategory.INSUFFICIENT_FUNDS),
     ("payment required", VendorErrorCategory.INSUFFICIENT_FUNDS),

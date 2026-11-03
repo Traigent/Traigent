@@ -116,6 +116,7 @@ _TERMINAL_MARKERS = (
     "insufficient funds",
     "insufficient credits",
     "payment required",
+    "exceed your available credits",
 )
 
 #: Closed set for the ``error_type`` field of an attempt record.

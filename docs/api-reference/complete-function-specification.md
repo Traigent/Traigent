@@ -122,7 +122,7 @@ def my_agent(question: str) -> str:
 | --- | --- | --- | --- |
 | `algorithm` | `str` | `"auto"` | Optimizer selector. `"auto"` uses Traigent's smart optimizer when authenticated; `"grid"` and `"random"` run local search; smart algorithms require cloud. |
 | `offline` | `bool` | `False` | Force local-only operation with zero Traigent backend egress and no portal sync. |
-| `local_storage_path` | `str \| None` | `None` | Custom directory for persisted results. Falls back to `TRAIGENT_RESULTS_FOLDER` or `~/.traigent/`. |
+| `local_storage_path` | `str \| None` | `None` | Custom directory for persisted results, including the hint state (`incentive_state.json`) and anonymous id (`.analytics_id`). Falls back to `TRAIGENT_RESULTS_FOLDER` or `~/.traigent/`. |
 | `minimal_logging` | `bool` | `True` | Suppresses verbose logs. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Unified concurrency configuration. |
 | `max_total_examples` | `int \| None` | `None` | Global sample budget across all trials (budget guardrail). |

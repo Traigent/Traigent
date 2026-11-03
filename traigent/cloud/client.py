@@ -36,6 +36,7 @@ else:  # pragma: no cover - minimal environments without aiohttp
 
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import (
+    QuotaRefusalFacts,
     SessionCreationFailureDetail,
     normalize_next_trial_payload,
     safe_http_error_summary,
@@ -1921,14 +1922,7 @@ class TraigentCloudClient(BaseTraigentClient):
             response.status, error_text
         )
         if detail.is_quota_refusal:
-            safe = SessionQuotaRefusedError(
-                response.status, detail.safe_quota_error_code
-            )
-            safe.session_creation_failure = SessionCreationFailureDetail(
-                status_code=response.status,
-                error_code=detail.safe_quota_error_code,
-            )
-            raise safe from None
+            raise SessionQuotaRefusedError.from_detail(detail) from None
         if detail.is_closed_refusal:
             refused = SessionBackendRefusedError(
                 response.status, detail.safe_error_code
@@ -2803,20 +2797,51 @@ class SessionQuotaRefusedError(CloudServiceError):
     A definitive answer from a reachable backend (HTTP 429/402 with a closed
     quota error code): NEVER a connectivity failure and NEVER absorbed into the
     local-fallback path. The message carries only the HTTP status, a closed
-    error code and the remedy; backend message text and raw bodies are dropped.
+    error code, allowlisted structured facts re-rendered by the SDK (public
+    resource name, limit/usage/requested numbers, reset time) and the remedy;
+    backend message text and raw bodies are dropped (#2550, #2855).
     """
 
-    def __init__(self, status_code: int | None, error_code: str) -> None:
+    def __init__(
+        self,
+        status_code: int | None,
+        error_code: str,
+        quota_facts: QuotaRefusalFacts | None = None,
+    ) -> None:
         status = f"HTTP {status_code}" if status_code is not None else "HTTP status n/a"
+        facts_text = quota_facts.describe() if quota_facts else ""
+        facts_part = f"; {facts_text}" if facts_text else ""
+        remedy = (
+            quota_facts.remedy()
+            if quota_facts
+            else "Upgrade your plan in the Traigent portal (Billing)."
+        )
         super().__init__(
-            f"Plan quota/limit reached ({status}, error_code={error_code}). "
+            f"Plan quota/limit reached ({status}, error_code={error_code}"
+            f"{facts_part}). "
             "Session creation was refused by the Traigent backend; the run was "
-            "stopped. Upgrade your plan in the Traigent portal (Billing)."
+            f"stopped. {remedy}"
         )
         self.status_code = status_code
         self.error_code = error_code
+        # Allowlisted structured facts (resource/limit/usage/reset); no text.
+        self.quota_facts = quota_facts
         # Sanitized detail (status + closed code only); set by the raiser.
         self.session_creation_failure: Any = None
+
+    @classmethod
+    def from_detail(
+        cls, detail: SessionCreationFailureDetail
+    ) -> SessionQuotaRefusedError:
+        """Build the sanitized error from a parsed quota-refusal detail."""
+        code = detail.safe_quota_error_code
+        err = cls(detail.status_code, code, detail.quota_facts)
+        err.session_creation_failure = SessionCreationFailureDetail(
+            status_code=detail.status_code,
+            error_code=code,
+            quota_facts=detail.quota_facts,
+        )
+        return err
 
 
 class SessionBackendRefusedError(CloudServiceError):

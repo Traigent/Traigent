@@ -2615,6 +2615,11 @@ def project_finalize_payload(data: Any) -> dict[str, Any]:
         raise MetadataContractViolation
     if out.get("session_id") is not None:
         out["session_id"] = _strict_id(out["session_id"], _Ctx())
+    if out.get("optimization_outcome") is not None and (
+        not isinstance(out["optimization_outcome"], str)
+        or out["optimization_outcome"] not in FINALIZE_OUTCOMES
+    ):
+        raise MetadataContractViolation
     for key in list(out):
         if key not in FINALIZE_KEYS:  # unknown members are dropped whatever their value
             del out[key]
@@ -2894,8 +2899,11 @@ FINALIZE_KEYS = frozenset(
         "session_aggregation",
         "session_id",
         "request_metadata",
+        "optimization_outcome",
     }
 )
+#: Closed values of the finalize ``optimization_outcome`` member (#2853).
+FINALIZE_OUTCOMES = frozenset({"completed", "failed", "cancelled"})
 
 
 @dataclass(frozen=True)
