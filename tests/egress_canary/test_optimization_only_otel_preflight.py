@@ -914,3 +914,99 @@ def test_redirect_from_third_party_collector_to_traigent_is_not_followed(
     )
     assert resp.status_code == 307
     assert seen == [f"{collector}/v1/traces"], seen
+
+
+# ---- round-6: validate-then-reread race in the sibling delivery paths -------------------
+
+KEY_A = "tk_race_allowed_a"
+KEY_R = "tk_race_restricted_r"
+
+
+def _race_on_validation(monkeypatch: pytest.MonkeyPatch, switch: Any) -> list[str]:
+    """Validating allowed key A swaps the credential source to restricted key R."""
+    from traigent.cloud.auth import AuthManager
+
+    from . import harness
+
+    # keep X-API-Key on captured requests so the test can see which key was sent
+    monkeypatch.setattr(
+        harness, "SECRET_HEADERS", harness.SECRET_HEADERS - {"x-api-key"}
+    )
+    validated: list[str] = []
+
+    async def fake(self: Any, api_key: str) -> Any:
+        validated.append(api_key)
+        if api_key == KEY_A:
+            switch()
+        elif api_key == KEY_R:
+            self._server_optimization_only = True
+        return None
+
+    monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", fake)
+    return validated
+
+
+def _carries_key(cap: Any, key: str) -> list[Any]:
+    return [
+        r for r in cap.requests if _is_trace(r) and any(v == key for _k, v in r.headers)
+    ]
+
+
+def test_otel_api_credential_change_during_validation_never_sends_new_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.config.backend_config import BackendConfig
+
+    current = {"key": KEY_A}
+    monkeypatch.setattr(
+        BackendConfig, "get_api_key", classmethod(lambda cls: current["key"])
+    )
+    _race_on_validation(monkeypatch, lambda: current.update(key=KEY_R))
+    with capture_egress() as cap:
+        handle = otel.init(endpoint=OTLP_BASE, schedule_delay_s=0.05, exit_flush=False)
+        with handle.tracer.start_as_current_span("x"):
+            pass
+        otel.flush(2)
+        otel.shutdown()
+    assert _carries_key(cap, KEY_R) == []
+    assert cap.guard_violations == []
+
+
+def test_legacy_client_credential_change_during_validation_never_sends_new_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with capture_egress() as cap:
+        client = _legacy_client(api_key=KEY_A)
+
+        def switch() -> None:
+            client.config.api_key = KEY_R
+
+        _race_on_validation(monkeypatch, switch)
+        client._post_batch_sync([{"trace_id": "t"}])
+    assert _carries_key(cap, KEY_R) == []
+    assert cap.guard_violations == []
+
+
+def test_workflow_client_credential_change_during_validation_sync_and_async(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.integrations.observability.workflow_traces import (
+        WorkflowGraphPayload,
+        WorkflowTracesClient,
+    )
+
+    graph = WorkflowGraphPayload(experiment_id="e", nodes=[], edges=[])
+    with capture_egress() as cap:
+        client = WorkflowTracesClient(BACKEND_URL, KEY_A)
+
+        def switch() -> None:
+            client.auth_token = KEY_R
+
+        _race_on_validation(monkeypatch, switch)
+        client.ingest_traces(graph=graph)
+        client.auth_token = KEY_A
+        oo.reset_latch()
+        oo.reset_trace_gate()
+        asyncio.run(client.ingest_traces_async(graph=graph))
+    assert _carries_key(cap, KEY_R) == []
+    assert cap.guard_violations == []
