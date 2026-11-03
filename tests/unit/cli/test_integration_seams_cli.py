@@ -36,6 +36,7 @@ _MODULES_DIR: Path | _FixtureNotApplied = _FixtureNotApplied()  # set per test
 def _scratch(cli_scratch_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys.modules[__name__], "_MODULES_DIR", cli_scratch_dir)
 
+
 _FAILED_MODULE = (
     "class FakeTrial:\n"
     "    is_successful = False\n"
