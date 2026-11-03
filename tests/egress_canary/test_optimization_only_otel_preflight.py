@@ -1010,3 +1010,118 @@ def test_workflow_client_credential_change_during_validation_sync_and_async(
         asyncio.run(client.ingest_traces_async(graph=graph))
     assert _carries_key(cap, KEY_R) == []
     assert cap.guard_violations == []
+
+
+# ---- round-7 review fixes: empty snapshot key, bundled plugin exporter -------------------
+
+R_KEY = "tk_restricted_latched_key"
+
+
+def _carries_key(cap: Any, key: str) -> list[Any]:
+    return [
+        r
+        for r in _trace_posts(cap)
+        if any(k.lower() == "x-api-key" and v == key for k, v in r.headers)
+    ]
+
+
+def test_empty_snapshot_key_then_restricted_key_is_never_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import traigent.observability.otel.api as otel_api
+    from traigent.config.backend_config import BackendConfig
+
+    current = {"key": ""}
+    monkeypatch.setattr(
+        BackendConfig, "get_api_key", classmethod(lambda cls: current["key"])
+    )
+    real_preflight = otel_api._preflight_allows_export
+
+    def preflight_then_key_appears(*a: Any, **k: Any) -> bool:
+        allowed = real_preflight(*a, **k)  # empty key: nothing to validate -> allowed
+        current["key"] = R_KEY  # the key (restricted) shows up after the gate ran
+        return allowed
+
+    monkeypatch.setattr(
+        otel_api, "_preflight_allows_export", preflight_then_key_appears
+    )
+    with capture_egress() as cap:
+        cap.backend.validate_response = dict(RESTRICTED)
+        handle = otel.init(schedule_delay_s=0.05, exit_flush=False)
+        with handle.tracer.start_as_current_span("x"):
+            pass
+        otel.flush(2)
+        otel.shutdown()
+    assert _carries_key(cap, R_KEY) == []
+    assert [r for r in cap.requests if _is_trace(r)] == []
+
+
+def _plugin_tracing(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[Any]]:
+    """Plugin tracing module (loaded by path) whose provider is captured, not global."""
+    import importlib.util
+    import types
+
+    root = Path(__file__).resolve().parents[2]
+    path = root / "plugins" / "traigent-tracing" / "traigent_tracing" / "tracing.py"
+    spec = importlib.util.spec_from_file_location("_plugin_tracing_r7", path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    if not mod.OTEL_AVAILABLE:
+        pytest.skip("OpenTelemetry SDK not available")
+    providers: list[Any] = []
+    real_trace = mod.trace
+    shim = types.SimpleNamespace(
+        set_tracer_provider=providers.append,
+        get_tracer=lambda *a, **k: providers[-1].get_tracer(*a, **k),
+    )
+    monkeypatch.setattr(mod, "trace", shim)
+    del real_trace
+    monkeypatch.setattr(mod, "TRACING_ENABLED", True)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", f"{BACKEND_URL}/otlp")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", raising=False)
+    return mod, providers
+
+
+def test_plugin_never_sends_a_latched_key_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The add-on built its own exporter with no gate: a restricted key in the OTLP
+    headers (validated key A switched to latched R before the build) was sent."""
+    plugin, providers = _plugin_tracing(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", f"x-api-key={R_KEY}")
+    oo.latch_on(oo.credential_scope(BACKEND_URL, {"X-API-Key": R_KEY}))
+    with capture_egress() as cap:
+        tracer = plugin.get_tracer()
+        if tracer is not None:
+            with tracer.start_as_current_span("late"):
+                pass
+            for p in providers:
+                p.force_flush(2000)
+                p.shutdown()
+    assert _carries_key(cap, R_KEY) == []
+    assert _trace_posts(cap) == []
+    assert cap.guard_violations == []
+
+
+def test_previously_returned_plugin_tracer_does_not_export_after_latch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin, providers = _plugin_tracing(monkeypatch)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_HEADERS", raising=False)
+    monkeypatch.setattr(
+        "traigent.config.backend_config.BackendConfig.get_api_key",
+        classmethod(lambda cls: FAKE_API_KEY),
+    )
+    with capture_egress() as cap:
+        cap.backend.validate_response = {"valid": True, "optimization_only": False}
+        tracer = plugin.get_tracer()
+        assert tracer is not None
+        oo.latch_on(oo.credential_scope(BACKEND_URL, {"X-API-Key": FAKE_API_KEY}))
+        with tracer.start_as_current_span("late"):
+            pass
+        for p in providers:
+            p.force_flush(2000)
+            p.shutdown()
+    assert _trace_posts(cap) == []
+    assert cap.guard_violations == []
