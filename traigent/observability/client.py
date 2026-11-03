@@ -3711,6 +3711,13 @@ class ObservabilityClient:
         if self.config.offline_mode or self._credential_egress_disabled:
             self._log_offline_mode_once()
             return None
+        if not oo_egress.ensure_trace_egress_allowed(
+            self.config.api_key,
+            self.config.ingest_url,
+            headers=self.config.build_headers(),
+        ):
+            # fresh process, key unvalidated/restricted/unreachable: send nothing
+            return None
 
         payload = json.dumps({"traces": traces}).encode("utf-8")
         http_request = request.Request(

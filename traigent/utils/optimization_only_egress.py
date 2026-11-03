@@ -33,17 +33,24 @@ import hashlib
 import io
 import ipaddress
 import json
+import logging
 import math
 import os
 import re
 import threading
+import time
 import tokenize
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dc_field
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
+
+from traigent.utils.mock_transport_guard import _canonical_host
+
+logger = logging.getLogger(__name__)
 
 METADATA_CONTRACT_VERSION = 1
 CONTRACT_VERSION_KEY = "metadata_contract_version"
@@ -2072,7 +2079,7 @@ def normalised_origin(url: Any) -> str:
     try:
         parts = urlsplit(str(url))
         scheme = parts.scheme.lower()
-        host = (parts.hostname or "").lower().rstrip(".")
+        host = _canonical_host(parts.hostname or "")
         port = parts.port
     except ValueError:
         return ""
@@ -2234,6 +2241,7 @@ def reset_latch() -> None:
         _latched_scopes.clear()
     with _objectives_lock:
         _session_objectives.clear()
+    reset_trace_gate()
 
 
 def is_active(explicit: bool | Policy | None = None, scope: str | None = None) -> bool:
@@ -2301,6 +2309,324 @@ def note_key_validation(body: Any, scope: str | None = None) -> bool:
         return False
     latch_on(scope)
     return True
+
+
+# ---- trace-egress preflight (one gate for every SDK-owned trace delivery path) -----------
+
+#: Hard wall-clock bound for a whole key preflight (DNS + connect + response).
+TRACE_PREFLIGHT_DEADLINE_S = 10.0
+#: A failed/timed-out preflight is remembered this long, then the gate revalidates (so a
+#: transient outage self-heals and a dead backend costs one deadline per window, not per
+#: span). Definitive answers (allowed / restricted) are remembered for the life of the
+#: process. Timeline of a failure at t=0: calls at t<60s are denied from the cache with no
+#: new work; the first call at t>=60s revalidates (and may block up to the deadline).
+_TRACE_PREFLIGHT_FAILURE_TTL_S = 60.0
+#: At most this many validations may be outstanding at once (one per key+backend); extra
+#: distinct keys are denied immediately rather than spawning more workers.
+_MAX_TRACE_VALIDATORS = 4
+_TRACE_DOMAIN = "traigent.ai"
+
+#: Injectable monotonic clock (tests drive the failure TTL and deadline with it).
+_trace_clock: Callable[[], float] = time.monotonic
+
+# Guards only the dicts below. It is NEVER held while waiting on the network, so no
+# caller can block another behind it and it cannot deadlock with a caller's own lock.
+_trace_gate_lock = threading.Lock()
+#: (sha256(key), validation origin) -> (allowed, definitive, decided_at)
+_trace_decisions: dict[tuple[str, str], tuple[bool, bool, float]] = {}
+
+
+@dataclass
+class _TraceValidator:
+    """One in-flight ``/keys/validate``; stays registered until its thread really ends."""
+
+    started: float
+    done: threading.Event = dc_field(default_factory=threading.Event)
+    box: dict[str, Any] = dc_field(default_factory=dict)
+
+
+#: (sha256(key), validation origin) -> the single in-flight validator for that key.
+_trace_validators: dict[tuple[str, str], _TraceValidator] = {}
+_warned_bearer_only = False
+
+
+def _hostname(url: Any) -> str:
+    """Host as the transport will resolve it: IDNA-folded (U+3002/FF0E/FF61 dots), lower,
+    no trailing dot. Same helper the mock transport guard uses."""
+    try:
+        raw = urlsplit(str(url)).hostname or ""
+    except ValueError:
+        return ""
+    return _canonical_host(raw) if raw else ""
+
+
+def _endpoint_port(url: Any) -> int | None:
+    try:
+        parts = urlsplit(str(url))
+        port = parts.port
+    except ValueError:
+        return None
+    return port or {"https": 443, "http": 80}.get(parts.scheme.lower())
+
+
+def is_traigent_trace_endpoint(endpoint: Any) -> bool:
+    """True unless ``endpoint`` is positively a third-party collector.
+
+    Rule: ``None``/blank/unparseable is Traigent. Otherwise the endpoint is Traigent when
+    its canonical hostname (IDNA-folded, case and trailing dots irrelevant) is
+    ``traigent.ai`` or a subdomain (any port), or equals host AND port of the default
+    cloud URL / configured backend / cloud backend. If the configuration cannot be read,
+    only the ``traigent.ai`` domain counts: an explicit non-Traigent host is third-party
+    (strict-endpoint mode legitimately has no backend configured).
+    """
+    if endpoint is None or not str(endpoint).strip():
+        return True
+    host = _hostname(endpoint)
+    if not host:
+        return True
+    if host == _TRACE_DOMAIN or host.endswith("." + _TRACE_DOMAIN):
+        return True
+    known: set[tuple[str, int | None]] = set()
+    try:
+        from traigent.config.backend_config import DEFAULT_CLOUD_URL, BackendConfig
+
+        urls: list[Any] = [DEFAULT_CLOUD_URL]
+        for getter in (
+            BackendConfig.get_backend_url,
+            BackendConfig.get_cloud_backend_url,
+        ):
+            try:
+                urls.append(getter())
+            except Exception:  # noqa: BLE001 - that getter is unavailable
+                continue
+        known = {(_hostname(u), _endpoint_port(u)) for u in urls}
+    except Exception:  # noqa: BLE001 - no configured backend to match against
+        known = set()
+    known.discard(("", None))
+    return (host, _endpoint_port(endpoint)) in known
+
+
+class _DaemonExecutor:
+    """Runs ``run_in_executor`` work on daemon threads so a stalled resolver cannot keep
+    the interpreter alive (stdlib executor workers are joined at exit)."""
+
+    @staticmethod
+    def install(loop: Any) -> None:
+        original = loop.run_in_executor
+
+        def run_in_executor(executor: Any, func: Any, *args: Any) -> Any:
+            if executor is not None:
+                return original(executor, func, *args)
+            import concurrent.futures
+
+            future: concurrent.futures.Future[Any] = concurrent.futures.Future()
+
+            def work() -> None:
+                if not future.set_running_or_notify_cancel():
+                    return
+                try:
+                    future.set_result(func(*args))
+                except BaseException as exc:  # noqa: BLE001 - relayed to the awaiter
+                    future.set_exception(exc)
+
+            threading.Thread(
+                target=work, name="traigent-trace-preflight-io", daemon=True
+            ).start()
+            import asyncio
+
+            return asyncio.wrap_future(future, loop=loop)
+
+        loop.run_in_executor = run_in_executor
+
+
+def _run_validator(
+    key: tuple[str, str], entry: _TraceValidator, api_key: str, base: str
+) -> None:
+    box = entry.box
+    try:
+        import asyncio
+
+        from traigent.cloud.auth import AuthManager, UnifiedAuthConfig
+
+        manager = AuthManager(config=UnifiedAuthConfig(backend_base_url=base))
+        loop = asyncio.new_event_loop()
+        _DaemonExecutor.install(loop)
+        try:
+            box["error"] = loop.run_until_complete(
+                manager._validate_api_key_with_backend(api_key)
+            )
+        finally:
+            loop.close()
+        box["restricted"] = bool(getattr(manager, "_server_optimization_only", False))
+    except BaseException as exc:  # noqa: BLE001 - fail closed on anything
+        box["exception"] = type(exc).__name__
+    finally:
+        entry.done.set()
+        with _trace_gate_lock:
+            if _trace_validators.get(key) is entry:
+                del _trace_validators[key]
+
+
+def _credential_headers(
+    api_key: str | None, headers: Mapping[str, Any] | None
+) -> tuple[str | None, str | None]:
+    """``(api_key, bearer)`` of the credential the request will actually carry."""
+    if headers is None:
+        return (api_key.strip() if api_key and api_key.strip() else None), None
+    lowered = {str(k).lower(): v for k, v in headers.items()}
+    key = lowered.get("x-api-key")
+    auth = lowered.get("authorization")
+    bearer = None
+    if isinstance(auth, str) and auth.strip():
+        bearer = auth.strip()
+    return (key.strip() if isinstance(key, str) and key.strip() else None), bearer
+
+
+def _validation_base(endpoint: Any) -> str | None:
+    """The backend that is the authority for ``endpoint``: its own origin when explicit,
+    else the configured cloud backend. None when neither can be determined."""
+    if endpoint is not None and str(endpoint).strip():
+        origin = normalised_origin(endpoint)
+        return origin or None
+    try:
+        from traigent.config.backend_config import BackendConfig
+
+        return normalised_origin(BackendConfig.get_cloud_backend_url()) or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def ensure_trace_egress_allowed(
+    api_key: str | None,
+    endpoint: Any = None,
+    *,
+    headers: Mapping[str, Any] | None = None,
+) -> bool:
+    """THE gate for SDK-owned trace delivery: True only if Traigent may receive traces.
+
+    Call before building AND before using (every send) any exporter / trace batch. A
+    third-party endpoint (see :func:`is_traigent_trace_endpoint`) is not ours to restrict:
+    True. For a Traigent endpoint:
+
+    * ``TRAIGENT_OPTIMIZATION_ONLY=true`` denies outright;
+    * the credential is the one the request carries: with ``headers`` (e.g.
+      ``ObservabilityConfig.build_headers()``) it is ``X-API-Key``; without, ``api_key``.
+      A bearer-only request cannot be validated for ``optimization_only`` status, so it
+      FAILS CLOSED (one warning); with both, the API key is validated and a latched
+      bearer also denies, but the bearer itself is not independently validated;
+    * a fresh process has no latch, so ``/keys/validate`` runs against the destination's
+      own origin (explicit endpoint origin, else the configured cloud backend), once per
+      key+origin per process, bounded by :data:`TRACE_PREFLIGHT_DEADLINE_S`; at most one
+      validation per key is ever in flight, later callers share it or are denied;
+    * invalid, unreachable, stalled or flagged keys, a latch for this credential, and
+      AuthManager's own restriction (kept even if latching raised) all mean False.
+
+    Failures are not permanent: after :data:`_TRACE_PREFLIGHT_FAILURE_TTL_S` (60 s) the
+    next call revalidates (and can block up to the deadline); calls inside the window are
+    denied from the cache. A latch set later still wins on every call.
+    """
+    global _warned_bearer_only
+    if not is_traigent_trace_endpoint(endpoint):
+        return True
+    try:
+        if env_setting():
+            return False
+    except ValueError:
+        return False  # invalid env value: fail closed
+    key_text, bearer = _credential_headers(api_key, headers)
+    if not key_text:
+        if bearer and not _warned_bearer_only:
+            _warned_bearer_only = True
+            logger.warning(
+                "Traigent trace export disabled: the request carries only a Bearer "
+                "credential, whose optimization_only status cannot be validated "
+                "(fail closed); configure an API key (X-API-Key) to enable it"
+            )
+        return False
+    base = _validation_base(endpoint)
+    if base is None:
+        return False
+    key = (hashlib.sha256(key_text.encode()).hexdigest(), base)
+    origins = {base, normalised_origin(endpoint) if endpoint else base}
+    try:
+        from traigent.config.backend_config import BackendConfig
+
+        origins.add(normalised_origin(BackendConfig.get_backend_url()))
+    except Exception:  # noqa: BLE001 - config unavailable: base/endpoint still checked
+        pass
+
+    def _latched() -> bool:
+        creds = [{"X-API-Key": key_text}] + (
+            [{"Authorization": bearer}] if bearer else []
+        )
+        return any(is_latched(credential_scope(o, c)) for o in origins for c in creds)
+
+    now = _trace_clock()
+    start = False
+    with _trace_gate_lock:
+        cached = _trace_decisions.get(key)
+        if cached is not None and (
+            cached[1] or now - cached[2] < _TRACE_PREFLIGHT_FAILURE_TTL_S
+        ):
+            return cached[0] and not _latched()
+        entry = _trace_validators.get(key)
+        if entry is None:
+            if len(_trace_validators) >= _MAX_TRACE_VALIDATORS:
+                logger.warning(
+                    "Traigent trace export disabled: too many key validations in "
+                    "flight (fail closed)"
+                )
+                return False
+            entry = _TraceValidator(started=now)
+            _trace_validators[key] = entry
+            start = True
+    if start:
+        try:
+            threading.Thread(
+                target=_run_validator,
+                args=(key, entry, key_text, base),
+                name="traigent-trace-preflight",
+                daemon=True,
+            ).start()
+        except BaseException:  # noqa: BLE001 - cannot start: fail closed
+            with _trace_gate_lock:
+                _trace_validators.pop(key, None)
+            return False
+
+    remaining = TRACE_PREFLIGHT_DEADLINE_S - (_trace_clock() - entry.started)
+    finished = entry.done.is_set() or (remaining > 0 and entry.done.wait(remaining))
+    if not finished:
+        logger.warning(
+            "Traigent trace export disabled: API key validation did not finish "
+            "within %.0fs (fail closed)",
+            TRACE_PREFLIGHT_DEADLINE_S,
+        )
+        status = "failed"
+    elif "exception" in entry.box or entry.box.get("error") is not None:
+        logger.warning(
+            "Traigent trace export disabled: API key could not be validated "
+            "(fail closed)"
+        )
+        status = "failed"
+    else:
+        status = "restricted" if entry.box.get("restricted") else "ok"
+    latched = _latched()
+    allowed = status == "ok" and not latched
+    definitive = allowed or status == "restricted" or latched
+    with _trace_gate_lock:
+        _trace_decisions[key] = (allowed, definitive, _trace_clock())
+    return allowed
+
+
+def reset_trace_gate() -> None:
+    """Test hook: forget every preflight decision (also done by :func:`reset_latch`).
+
+    In-flight validators are left registered: they still own their key until they end.
+    """
+    global _warned_bearer_only
+    with _trace_gate_lock:
+        _trace_decisions.clear()
+    _warned_bearer_only = False
 
 
 # ---- per-session declared objectives (objective-aware metric rules need them) -----------

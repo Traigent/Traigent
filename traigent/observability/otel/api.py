@@ -196,6 +196,25 @@ def _init_is_offline(api_key: str | None, endpoint: str | None) -> bool:
     )
 
 
+def _preflight_allows_export(api_key: str | None, endpoint: str | None) -> bool:
+    """Run the central trace-egress gate BEFORE taking ``_lock`` (it may wait up to its
+    deadline; the worker it waits on never touches ``_lock``, so this cannot deadlock,
+    but holding ``_lock`` that long would stall shutdown()/init() on other threads).
+
+    Returns False only when Traigent must not receive spans. Configuration errors are
+    left for the guarded section below to raise in their usual order.
+    """
+    try:
+        if _init_is_offline(api_key, endpoint):
+            return True  # already offline: no exporter will be built
+        key = api_key if api_key is not None else BackendConfig.get_api_key()
+        if not key or not key.strip():
+            return True  # _init_api_key raises the usual error below
+    except Exception:  # noqa: BLE001 - config errors surface later, in order
+        return True
+    return oo_egress.ensure_trace_egress_allowed(key, endpoint)
+
+
 def _init_provider(
     rate: float, service_name: str | None, environment: str | None, release: str | None
 ) -> TracerProvider:
@@ -281,6 +300,7 @@ def init(
     static strings, never data.
     """
     global _handle, _last_handle
+    export_allowed = _preflight_allows_export(api_key, endpoint)
     with _lock:
         if _handle is not None:
             raise RuntimeError("Traigent observability is already initialised")
@@ -289,7 +309,7 @@ def init(
         ContentPolicy(mode, allowed_span_names)
         rate = _resolve_rate(sample_rate)
         # optimization_only workspaces refuse trace ingest: never build an exporter.
-        offline = _init_is_offline(api_key, endpoint)
+        offline = _init_is_offline(api_key, endpoint) or not export_allowed
         if tracer_provider is not None and not hasattr(
             tracer_provider, "add_span_processor"
         ):
