@@ -853,3 +853,64 @@ def test_retry_inside_export_is_not_sent_after_credential_latches(
         tracing._provider.force_flush(10000)
         _teardown_provider(tracing)
     assert len(sent) == 1  # the internal retry was refused at request level
+
+
+def test_env_headers_set_between_capture_and_exporter_construction_send_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OTel re-reads OTEL_EXPORTER_OTLP_HEADERS when handed empty headers; the request
+    then carries a key the frozen/validated one is not. The prepared request is gated."""
+    tracing = _real_core_tracer(monkeypatch)
+    restricted: set[str] = {"tk_racy_restricted"}
+    _per_key_validation(monkeypatch, restricted)
+    real_resolve = tracing._resolve_trace_headers
+
+    def resolve_then_race() -> dict[str, str]:
+        out = real_resolve()  # empty: the key will come from BackendConfig
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-api-key=tk_racy_restricted")
+        return out
+
+    monkeypatch.setattr(tracing, "_resolve_trace_headers", resolve_then_race)
+    with capture_egress() as cap:
+        tracer = tracing.get_tracer()
+        if tracer is not None:
+            with tracer.start_as_current_span("race"):
+                pass
+            tracing._provider.force_flush(2000)
+        _teardown_provider(tracing)
+    assert _trace_posts(cap) == []
+    assert cap.guard_violations == []
+
+
+def test_redirect_from_third_party_collector_to_traigent_is_not_followed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Older OTel exporters post with the default allow_redirects=True."""
+    import io
+
+    import requests
+    from requests.adapters import HTTPAdapter
+
+    tracing = _real_core_tracer(monkeypatch)
+    collector = "https://collector.example.org"
+    seen: list[str] = []
+
+    def fake_send(self: Any, request: Any, **kwargs: Any) -> Any:
+        seen.append(request.url)
+        resp = requests.Response()
+        resp.status_code = 307
+        resp.url = request.url
+        resp.headers["Location"] = (
+            f"{BACKEND_URL}/api/v1beta/observability/otlp/v1/traces"
+        )
+        resp.request = request
+        resp.raw = io.BytesIO(b"")
+        return resp
+
+    monkeypatch.setattr(HTTPAdapter, "send", fake_send)
+    session = tracing._GatedSession(collector, "tk_third_party")
+    resp = session.post(
+        f"{collector}/v1/traces", data=b"x", headers={"X-API-Key": "tk_third_party"}
+    )
+    assert resp.status_code == 307
+    assert seen == [f"{collector}/v1/traces"], seen
