@@ -196,6 +196,23 @@ def _init_is_offline(api_key: str | None, endpoint: str | None) -> bool:
     )
 
 
+def _snapshot_destination(
+    api_key: str | None, endpoint: str | None
+) -> tuple[str | None, str | None]:
+    """Resolve (key, endpoint base) ONCE; the same values are validated and sent.
+
+    Either is None when it cannot be resolved (errors surface later, in order).
+    """
+    try:
+        key = api_key if api_key is not None else BackendConfig.get_api_key()
+        base = (endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}").rstrip("/")
+    except Exception:  # noqa: BLE001 - config errors surface later, in order
+        return None, None
+    if not key or not key.strip():
+        return None, base
+    return key, base
+
+
 def _preflight_allows_export(api_key: str | None, endpoint: str | None) -> bool:
     """Run the central trace-egress gate BEFORE taking ``_lock`` (it may wait up to its
     deadline; the worker it waits on never touches ``_lock``, so this cannot deadlock,
@@ -300,7 +317,11 @@ def init(
     static strings, never data.
     """
     global _handle, _last_handle
-    export_allowed = _preflight_allows_export(api_key, endpoint)
+    snap_key, snap_base = _snapshot_destination(api_key, endpoint)
+    export_allowed = _preflight_allows_export(
+        snap_key if snap_key is not None else api_key,
+        snap_base if snap_key is not None else endpoint,
+    )
     with _lock:
         if _handle is not None:
             raise RuntimeError("Traigent observability is already initialised")
@@ -326,10 +347,11 @@ def init(
 
         processor = exporter = None
         if not offline:
-            key = _init_api_key(api_key)
-            base = (endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}").rstrip(
-                "/"
-            )
+            # send exactly what the gate validated: never re-read key/destination
+            key = snap_key if snap_key is not None else _init_api_key(api_key)
+            base = snap_base or (
+                endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}"
+            ).rstrip("/")
             url = validate_cloud_base_url(base, purpose="observability OTLP endpoint")
             headers = {"X-API-Key": key.strip(), "User-Agent": "traigent-otel/1"}
             if project:

@@ -3711,19 +3711,23 @@ class ObservabilityClient:
         if self.config.offline_mode or self._credential_egress_disabled:
             self._log_offline_mode_once()
             return None
+        # ONE snapshot of destination + headers: validated and sent as-is, never
+        # re-read from config after the (possibly slow) gate.
+        ingest_url = self.config.ingest_url
+        snapshot_headers = dict(self.config.build_headers())
         if not oo_egress.ensure_trace_egress_allowed(
             self.config.api_key,
-            self.config.ingest_url,
-            headers=self.config.build_headers(),
+            ingest_url,
+            headers=snapshot_headers,
         ):
             # fresh process, key unvalidated/restricted/unreachable: send nothing
             return None
 
         payload = json.dumps({"traces": traces}).encode("utf-8")
         http_request = request.Request(
-            self.config.ingest_url,
+            ingest_url,
             data=payload,
-            headers=self.config.build_headers(),
+            headers=snapshot_headers,
             method="POST",
         )
         try:
