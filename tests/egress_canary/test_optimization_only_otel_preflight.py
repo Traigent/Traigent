@@ -754,3 +754,102 @@ def test_mixed_bearer_and_api_key_validates_api_key_only(
         headers={"X-API-Key": FAKE_API_KEY, "Authorization": "Bearer a.b.c"},
     )
     assert len(seen) == 1
+
+
+# ---- round-4 review fixes: frozen credential identity + request-level gate ---------------
+
+
+def _per_key_validation(
+    monkeypatch: pytest.MonkeyPatch, restricted: set[str]
+) -> list[str]:
+    """Fake backend validation: keys in ``restricted`` latch optimization_only."""
+    from traigent.cloud.auth import AuthManager
+
+    validated: list[str] = []
+
+    async def fake(self: Any, api_key: str) -> Any:
+        validated.append(api_key)
+        if api_key in restricted:
+            self._server_optimization_only = True
+        return None
+
+    monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", fake)
+    return validated
+
+
+def test_duplicate_api_key_headers_last_wins_and_restricted_is_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracing = _real_core_tracer(monkeypatch)
+    monkeypatch.setenv(
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "x-api-key=tk_probe_allowed,x-api-key=tk_probe_restricted",
+    )
+    validated = _per_key_validation(monkeypatch, {"tk_probe_restricted"})
+    with capture_egress() as cap:
+        tracer = tracing.get_tracer()
+        if tracer is not None:
+            with tracer.start_as_current_span("dup"):
+                pass
+            tracing._provider.force_flush(2000)
+        _teardown_provider(tracing)
+    assert "tk_probe_restricted" in validated and "tk_probe_allowed" not in validated
+    assert tracer is None
+    assert _trace_posts(cap) == []
+    assert cap.guard_violations == []
+
+
+def test_env_change_after_init_cannot_swap_the_gated_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracing = _real_core_tracer(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-api-key=tk_frozen_a")
+    restricted: set[str] = set()
+    validated = _per_key_validation(monkeypatch, restricted)
+    with capture_egress() as cap:
+        tracer = tracing.get_tracer()
+        assert tracer is not None
+        # credential A latches; the environment then points at an allowed key B
+        restricted.add("tk_frozen_a")
+        oo.reset_trace_gate()
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-api-key=tk_other_b")
+        with tracer.start_as_current_span("late"):
+            pass
+        tracing._provider.force_flush(2000)
+        _teardown_provider(tracing)
+    assert "tk_other_b" not in validated
+    assert _trace_posts(cap) == []
+    assert cap.guard_violations == []
+
+
+def test_retry_inside_export_is_not_sent_after_credential_latches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import requests
+    from requests.adapters import HTTPAdapter
+
+    tracing = _real_core_tracer(monkeypatch)
+    restricted: set[str] = set()
+    _per_key_validation(monkeypatch, restricted)
+    sent: list[str] = []
+
+    def fake_send(self: Any, request: Any, **kwargs: Any) -> Any:
+        sent.append(request.url)
+        # first attempt: transient 503, and the credential latches meanwhile
+        restricted.add(FAKE_API_KEY)
+        oo.reset_trace_gate()
+        resp = requests.Response()
+        resp.status_code = 503
+        resp.url = request.url
+        resp._content = b""
+        return resp
+
+    with capture_egress():
+        tracer = tracing.get_tracer()
+        assert tracer is not None
+        monkeypatch.setattr(HTTPAdapter, "send", fake_send)
+        with tracer.start_as_current_span("retry"):
+            pass
+        tracing._provider.force_flush(10000)
+        _teardown_provider(tracing)
+    assert len(sent) == 1  # the internal retry was refused at request level
