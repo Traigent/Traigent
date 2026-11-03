@@ -30,6 +30,28 @@ In a terminal, onboarding can offer to:
 In non-interactive mode, onboarding prints a plan and JSON block instead of
 starting login by default. Use `--login` to run device login after the plan.
 
+## Exit codes
+
+These exit codes cover these four commands only. They are pre-1.0 and may
+change in a minor release. They are pinned by
+`tests/unit/cli/test_documented_exit_codes.py`.
+
+| Command | Exit | Meaning |
+|---|---|---|
+| `traigent quickstart` | 0 | Mock demo finished; plumbing check passed |
+| `traigent quickstart` | 1 | No trial succeeded, so no best configuration was found |
+| `traigent validate` | 0 | Dataset passed validation |
+| `traigent validate` | 1 | Dataset path or content failed validation |
+| `traigent validate` | 2 | Usage error, such as a dataset path that does not exist |
+| `traigent check` | 0 | All checked functions improve on defaults, `--dry-run` completed, or nothing was found with `--allow-empty` |
+| `traigent check` | 1 | No optimizable function found, the module path does not exist (reported as 1, not 2), or a function did not improve on its defaults |
+| `traigent check` | 2 | Usage error, such as a missing `MODULE_PATH` argument |
+| `traigent optimize` | 0 | Every optimizable function in the file was optimized |
+| `traigent optimize` | 1 | File failed to load, no decorated function was found, or an optimization failed |
+| `traigent optimize` | 2 | Usage error, such as a file path that does not exist |
+
+In general, any other failure exits 1; usage errors exit 2 (click's default).
+
 ## Device Login
 
 ```bash

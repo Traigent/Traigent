@@ -66,8 +66,11 @@ visible.
 from __future__ import annotations
 
 import re
+import shutil
 import sys
+import tempfile
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 from rich.console import Console
@@ -369,3 +372,28 @@ def plain_cli_text(text: str) -> str:
 def plain() -> Callable[[str], str]:
     """Normalize captured CLI output before a substring assertion."""
     return plain_cli_text
+
+
+#: Parent of the per-test scratch directories.  CLI path guards require
+#: fixture files to live under the workspace, so ``tmp_path`` cannot be used.
+#: The parent is shared between xdist workers and is therefore never removed.
+CLI_SCRATCH_PARENT = Path(__file__).resolve().parent / "temp_modules"
+
+
+@pytest.fixture
+def cli_scratch_dir() -> Iterator[Path]:
+    """A unique, per-test scratch directory under the workspace.
+
+    Only the directory this test created is removed; the shared parent is left
+    alone so concurrent workers cannot race on its creation or removal.
+    ``user_module`` (the name the CLI loads user files under) is dropped from
+    ``sys.modules`` before and after the test.
+    """
+    CLI_SCRATCH_PARENT.mkdir(exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix="cli_", dir=CLI_SCRATCH_PARENT))
+    sys.modules.pop("user_module", None)
+    try:
+        yield scratch
+    finally:
+        sys.modules.pop("user_module", None)
+        shutil.rmtree(scratch, ignore_errors=True)

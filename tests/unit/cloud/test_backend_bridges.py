@@ -21,6 +21,7 @@ from traigent.cloud.models import (
     SessionCreationRequest,
     TrialSuggestion,
 )
+from traigent.core.constants import DEFAULT_MODEL
 from traigent.evaluators.base import Dataset, EvaluationExample
 
 # SDK #2033: opt into the connected/backend code paths (see pyproject markers).
@@ -607,7 +608,7 @@ class TestSDKBackendBridge:
             config_space
         )
 
-        assert model_params["model_id"] == "gpt-3.5"
+        assert model_params["model_id"] == DEFAULT_MODEL
         assert model_params["temperature"] == 0.7
         assert model_params["max_tokens"] == 150
         assert model_params["top_p"] == 1.0
@@ -629,7 +630,7 @@ class TestSDKBackendBridge:
 
         # Single string values that aren't lists fall back to default
         assert (
-            model_params["model_id"] == "gpt-3.5"
+            model_params["model_id"] == DEFAULT_MODEL
         )  # Single string falls back to default
         assert model_params["temperature"] == 0.5
         assert model_params["max_tokens"] == 200
@@ -796,7 +797,7 @@ class TestEdgeCases:
     def test_empty_configuration_space(self, sdk_bridge):
         """Test handling of empty configuration space."""
         model_params = sdk_bridge._create_model_parameters_from_config_space({})
-        assert model_params["model_id"] == "gpt-3.5"
+        assert model_params["model_id"] == DEFAULT_MODEL
         assert model_params["temperature"] == 0.7
 
     def test_malformed_configuration_space(self, sdk_bridge):
@@ -810,7 +811,7 @@ class TestEdgeCases:
         model_params = sdk_bridge._create_model_parameters_from_config_space(
             config_space
         )
-        assert model_params["model_id"] == "gpt-3.5"  # Default
+        assert model_params["model_id"] == DEFAULT_MODEL  # Default
         assert model_params["temperature"] is None  # None value passed through
         assert model_params["max_tokens"] == "invalid"  # Takes as-is for non-list
 

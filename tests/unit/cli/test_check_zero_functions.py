@@ -4,6 +4,7 @@ passed."""
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,23 +13,25 @@ from click.testing import CliRunner
 
 from traigent.cli.main import cli
 
+
 # Module fixtures must live inside the workspace root (secure_path enforces
 # this), so use a scratch dir under this test package rather than tmp_path.
-_MODULES_DIR = Path(__file__).resolve().parent / "temp_modules"
+class _FixtureNotApplied:
+    """Placeholder that fails loudly if used before the fixture rebinds it."""
+
+    def _fail(self, *args: object, **kwargs: object) -> None:
+        raise RuntimeError("cli_scratch_dir fixture not applied")
+
+    __truediv__ = mkdir = _fail
+
+
+_MODULES_DIR: Path | _FixtureNotApplied = _FixtureNotApplied()  # set per test
 
 
 @pytest.fixture()
-def module_dir():
-    _MODULES_DIR.mkdir(exist_ok=True)
-    created: list[Path] = []
-    try:
-        yield created
-    finally:
-        for path in created:
-            if path.exists():
-                path.unlink()
-        if _MODULES_DIR.exists() and not any(_MODULES_DIR.iterdir()):
-            _MODULES_DIR.rmdir()
+def module_dir(cli_scratch_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(sys.modules[__name__], "_MODULES_DIR", cli_scratch_dir)
+    return []  # files live in cli_scratch_dir, removed with it
 
 
 def _write_module(created: list[Path], content: str) -> Path:
