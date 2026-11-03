@@ -2511,9 +2511,10 @@ def ensure_trace_egress_allowed(
     * ``TRAIGENT_OPTIMIZATION_ONLY=true`` denies outright;
     * the credential is the one the request carries: with ``headers`` (e.g.
       ``ObservabilityConfig.build_headers()``) it is ``X-API-Key``; without, ``api_key``.
-      A bearer-only request cannot be validated for ``optimization_only`` status, so it
-      FAILS CLOSED (one warning); with both, the API key is validated and a latched
-      bearer also denies, but the bearer itself is not independently validated;
+      Any request carrying an ``Authorization: Bearer`` credential, alone or alongside
+      an ``X-API-Key``, FAILS CLOSED (one warning): the backend authenticates the Bearer
+      first and the SDK cannot validate its tenant restriction. Only API-key-only
+      requests are validated;
     * a fresh process has no latch, so ``/keys/validate`` runs against the destination's
       own origin (explicit endpoint origin, else the configured cloud backend), once per
       key+origin per process, bounded by :data:`TRACE_PREFLIGHT_DEADLINE_S`; at most one
@@ -2534,18 +2535,18 @@ def ensure_trace_egress_allowed(
     except ValueError:
         return False  # invalid env value: fail closed
     key_text, bearer = _credential_headers(api_key, headers)
-    # KNOWN LIMIT (mixed credentials): with both an API key and a Bearer token only the
-    # API key is validated; the bearer's own policy is not (JWT takes auth precedence
-    # server-side). Current behaviour is kept deliberately; see
-    # test_mixed_bearer_and_api_key_validates_api_key_only.
-    if not key_text:
-        if bearer and not _warned_bearer_only:
+    # Any Bearer credential fails closed: the backend authenticates the JWT before the
+    # API key, and the SDK cannot validate the Bearer's tenant restriction, so a request
+    # carrying one (with or without an X-API-Key) cannot be checked for optimization_only.
+    if bearer:
+        if not _warned_bearer_only:
             _warned_bearer_only = True
             logger.warning(
-                "Traigent trace export disabled: the request carries only a Bearer "
-                "credential, whose optimization_only status cannot be validated "
-                "(fail closed); configure an API key (X-API-Key) to enable it"
+                "trace export to Traigent with a Bearer credential cannot be "
+                "checked for optimization_only; refusing"
             )
+        return False
+    if not key_text:
         return False
     base = _validation_base(endpoint)
     if base is None:

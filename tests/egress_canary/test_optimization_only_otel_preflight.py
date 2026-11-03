@@ -511,7 +511,10 @@ def test_bearer_only_config_fails_closed_with_warning(
         client = _legacy_client(api_key=None, jwt_token="header.payload.sig")
         assert client._post_batch_sync([{"trace_id": "t"}]) is None
     assert [r for r in cap.requests if _is_trace(r)] == []
-    assert "Bearer" in caplog.text and "cannot be validated" in caplog.text
+    assert (
+        "Bearer" in caplog.text
+        and "cannot be checked for optimization_only" in caplog.text
+    )
 
 
 def test_env_flag_after_construction_blocks_gate(
@@ -742,16 +745,27 @@ def test_transient_denial_does_not_permanently_disable_core_tracing(
         _teardown_provider(tracing)
 
 
-def test_mixed_bearer_and_api_key_validates_api_key_only(
-    monkeypatch: pytest.MonkeyPatch,
+def test_mixed_bearer_and_api_key_is_refused(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Documents current behaviour (review item 7, deliberately unchanged): with both
-    credentials only the API key is validated; the bearer's policy is not."""
+    """The backend authenticates Bearer first and the SDK cannot validate its tenant
+    restriction, so any Bearer (even with an X-API-Key) is refused without validating."""
+    seen = _patch_validation(monkeypatch)
+    monkeypatch.setattr(oo, "_warned_bearer_only", False)
+    with caplog.at_level("WARNING"):
+        assert not oo.ensure_trace_egress_allowed(
+            None,
+            "https://api.traigent.ai/x",
+            headers={"X-API-Key": FAKE_API_KEY, "Authorization": "Bearer a.b.c"},
+        )
+    assert seen == []
+    assert "with a Bearer credential cannot be checked" in caplog.text
+
+
+def test_api_key_only_headers_still_export(monkeypatch: pytest.MonkeyPatch) -> None:
     seen = _patch_validation(monkeypatch)
     assert oo.ensure_trace_egress_allowed(
-        None,
-        "https://api.traigent.ai/x",
-        headers={"X-API-Key": FAKE_API_KEY, "Authorization": "Bearer a.b.c"},
+        None, "https://api.traigent.ai/x", headers={"X-API-Key": FAKE_API_KEY}
     )
     assert len(seen) == 1
 
