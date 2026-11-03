@@ -2534,6 +2534,10 @@ def ensure_trace_egress_allowed(
     except ValueError:
         return False  # invalid env value: fail closed
     key_text, bearer = _credential_headers(api_key, headers)
+    # KNOWN LIMIT (mixed credentials): with both an API key and a Bearer token only the
+    # API key is validated; the bearer's own policy is not (JWT takes auth precedence
+    # server-side). Current behaviour is kept deliberately; see
+    # test_mixed_bearer_and_api_key_validates_api_key_only.
     if not key_text:
         if bearer and not _warned_bearer_only:
             _warned_bearer_only = True

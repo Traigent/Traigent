@@ -232,6 +232,9 @@ def _live_core_tracer(monkeypatch: pytest.MonkeyPatch) -> Any:
         def add_span_processor(self, _p: Any) -> None:
             pass
 
+        def get_tracer(self, *_a: Any, **_k: Any) -> Any:
+            return MagicMock()
+
         def shutdown(self) -> None:
             _Provider.shut = True
 
@@ -593,3 +596,161 @@ def test_installed_plugin_wrappers_respect_optimization_only(
     finally:
         monkeypatch.delitem(sys.modules, "traigent_tracing", raising=False)
         importlib.reload(tracing)
+
+
+# ---- round-3 review fixes (real OpenTelemetry SDK, no stubbed provider) -----------------
+
+
+def _real_core_tracer(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Embedded core tracing with the REAL SDK provider/BatchSpanProcessor/OTLP exporter."""
+    from traigent.core import tracing
+
+    if getattr(tracing, "_PLUGIN_AVAILABLE", False) or not tracing.OTEL_AVAILABLE:
+        pytest.skip("embedded tracing with real OpenTelemetry SDK not available")
+    for name, value in {
+        "TRACING_ENABLED": True,
+        "_initialized": False,
+        "_tracer": None,
+        "_provider": None,
+    }.items():
+        monkeypatch.setattr(tracing, name, value, raising=False)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", f"{BACKEND_URL}/otlp")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_HEADERS", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", raising=False)
+    monkeypatch.setattr(
+        "traigent.config.backend_config.BackendConfig.get_api_key",
+        classmethod(lambda cls: FAKE_API_KEY),
+    )
+    return tracing
+
+
+def _teardown_provider(tracing: Any) -> None:
+    provider = getattr(tracing, "_provider", None)
+    if provider is not None:
+        try:
+            provider.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _trace_posts(cap: Any) -> list[Any]:
+    return [r for r in cap.requests if r.path.endswith("/v1/traces")]
+
+
+def test_already_returned_tracer_does_not_export_after_latch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracing = _real_core_tracer(monkeypatch)
+    with capture_egress() as cap:
+        cap.backend.validate_response = {"valid": True, "optimization_only": False}
+        tracer = tracing.get_tracer()
+        assert tracer is not None
+        oo.reset_trace_gate()
+        cap.backend.validate_response = dict(RESTRICTED)
+        with tracer.start_as_current_span("late"):
+            pass
+        tracing._provider.force_flush(2000)
+        _teardown_provider(tracing)
+    assert _trace_posts(cap) == []
+    assert cap.guard_violations == []
+
+
+def test_unrestricted_core_tracer_still_exports_positive_control(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracing = _real_core_tracer(monkeypatch)
+    with capture_egress() as cap:
+        cap.backend.validate_response = {"valid": True, "optimization_only": False}
+        tracer = tracing.get_tracer()
+        with tracer.start_as_current_span("ok"):
+            pass
+        tracing._provider.force_flush(2000)
+        _teardown_provider(tracing)
+    assert len(_trace_posts(cap)) >= 1
+
+
+def test_restriction_discards_queued_spans_instead_of_draining(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracing = _real_core_tracer(monkeypatch)
+    with capture_egress() as cap:
+        cap.backend.validate_response = {"valid": True, "optimization_only": False}
+        tracer = tracing.get_tracer()
+        assert tracer is not None
+        with tracer.start_as_current_span("queued"):
+            pass  # sits in the BatchSpanProcessor queue
+        oo.reset_trace_gate()
+        cap.backend.validate_response = dict(RESTRICTED)
+        assert tracing.get_tracer() is None  # tears the provider down (shutdown drains)
+    assert _trace_posts(cap) == []
+    assert cap.guard_violations == []
+
+
+def test_otel_headers_key_is_the_validated_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracing = _real_core_tracer(monkeypatch)
+    other = "tk_other_restricted_probe_key"
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", f"x-api-key={other},foo=bar")
+    validated: list[str] = []
+    from traigent.cloud.auth import AuthManager
+
+    async def fake(self: Any, api_key: str) -> Any:
+        validated.append(api_key)
+        if api_key == other:
+            self._server_optimization_only = True
+        return None
+
+    monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", fake)
+    with capture_egress() as cap:
+        assert tracing.get_tracer() is None
+    assert other in validated and FAKE_API_KEY not in validated
+    assert _trace_posts(cap) == []
+
+
+def test_traces_headers_take_precedence_over_general_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracing = _real_core_tracer(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-api-key=general")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "X-API-Key=specific")
+    assert tracing._effective_trace_api_key() == "specific"
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS")
+    assert tracing._effective_trace_api_key() == "general"
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_HEADERS")
+    assert tracing._effective_trace_api_key() == FAKE_API_KEY
+
+
+def test_transient_denial_does_not_permanently_disable_core_tracing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracing = _real_core_tracer(monkeypatch)
+    from traigent.cloud.auth import AuthManager
+
+    answers = iter(["backend validation timed out", None])
+
+    async def fake(self: Any, api_key: str) -> Any:
+        return next(answers)
+
+    monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", fake)
+    now = _fake_clock(monkeypatch)
+    try:
+        assert tracing.get_tracer() is None
+        now[0] += 61
+        assert tracing.get_tracer() is not None  # recovered after the failure TTL
+    finally:
+        _teardown_provider(tracing)
+
+
+def test_mixed_bearer_and_api_key_validates_api_key_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Documents current behaviour (review item 7, deliberately unchanged): with both
+    credentials only the API key is validated; the bearer's policy is not."""
+    seen = _patch_validation(monkeypatch)
+    assert oo.ensure_trace_egress_allowed(
+        None,
+        "https://api.traigent.ai/x",
+        headers={"X-API-Key": FAKE_API_KEY, "Authorization": "Bearer a.b.c"},
+    )
+    assert len(seen) == 1

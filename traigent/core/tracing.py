@@ -55,27 +55,48 @@ def _plugin_version_ok() -> bool:
         return False
 
 
-def _optimization_only_blocks_export() -> bool:
+def _effective_trace_api_key() -> str | None:
+    """The X-API-Key the OTLP exporter will actually send.
+
+    OpenTelemetry reads OTEL_EXPORTER_OTLP_TRACES_HEADERS (else
+    OTEL_EXPORTER_OTLP_HEADERS) itself, independently of the SDK's configured key, so a
+    key in those headers wins over ``BackendConfig.get_api_key()``. Validate that one.
+    """
+    import os as _os
+    from urllib.parse import unquote as _unquote
+
+    from traigent.config.backend_config import BackendConfig
+
+    raw = _os.environ.get("OTEL_EXPORTER_OTLP_TRACES_HEADERS") or _os.environ.get(
+        "OTEL_EXPORTER_OTLP_HEADERS"
+    )
+    if raw:
+        for pair in raw.split(","):
+            name, sep, value = pair.partition("=")
+            if sep and _unquote(name).strip().lower() == "x-api-key":
+                return _unquote(value).strip()
+    key: str | None = BackendConfig.get_api_key()
+    return key
+
+
+def _optimization_only_blocks_export(endpoint: str | None = None) -> bool:
     """True when optimization_only forbids handing out / using a trace exporter.
 
-    Evaluated on EVERY tracer hand-out and span (not just at construction), so a
-    credential that latches later, or ``TRAIGENT_OPTIMIZATION_ONLY=true`` set after the
-    tracer was cached, stops trace bytes at send time. A non-Traigent collector is
-    untouched; with no OTLP endpoint configured only an explicit/env setting blocks.
-    Fails closed on any error.
+    Evaluated on EVERY tracer hand-out, span and exported batch (not just at
+    construction), so a credential that latches later, or
+    ``TRAIGENT_OPTIMIZATION_ONLY=true`` set after the tracer was cached, stops trace
+    bytes at send time. A non-Traigent collector is untouched; with no OTLP endpoint
+    configured only an explicit/env setting blocks. Fails closed on any error.
     """
     try:
         import os as _os
 
-        from traigent.config.backend_config import BackendConfig
         from traigent.utils import optimization_only_egress as _oo
 
-        endpoint = _os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+        endpoint = endpoint or _os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
         if not endpoint:
             return bool(_oo.env_setting())
-        return not _oo.ensure_trace_egress_allowed(
-            BackendConfig.get_api_key(), endpoint
-        )
+        return not _oo.ensure_trace_egress_allowed(_effective_trace_api_key(), endpoint)
     except Exception:  # noqa: BLE001 - fail closed
         return True
 
@@ -349,6 +370,32 @@ except ImportError:
         """Get the current test context."""
         return _test_context.copy()
 
+    class _GatedSpanExporter:
+        """Span exporter that re-checks optimization_only on every batch.
+
+        Any tracer already handed out keeps working through this exporter, so the gate
+        lives in the export path: when restricted the batch is dropped (reported as
+        SUCCESS, nothing sent). Shutdown/flush therefore discards queued spans instead
+        of draining them to Traigent.
+        """
+
+        def __init__(self, inner: Any, endpoint: str) -> None:
+            self._inner = inner
+            self._endpoint = endpoint
+
+        def export(self, spans: Any) -> Any:
+            from opentelemetry.sdk.trace.export import SpanExportResult
+
+            if _optimization_only_blocks_export(self._endpoint):
+                return SpanExportResult.SUCCESS
+            return self._inner.export(spans)
+
+        def shutdown(self) -> None:
+            self._inner.shutdown()
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            return bool(self._inner.force_flush(timeout_millis))
+
     def _initialize_tracer() -> Tracer | None:
         """Initialize the OpenTelemetry tracer if not already done."""
         global _tracer, _initialized, _provider
@@ -365,14 +412,16 @@ except ImportError:
         if not otlp_endpoint:
             return None
 
-        from traigent.config.backend_config import BackendConfig
         from traigent.utils import optimization_only_egress as oo_egress
 
-        # optimization_only: no trace bytes to Traigent (validates the key once in a
-        # fresh process; a non-Traigent collector is untouched).
+        # optimization_only: no trace bytes to Traigent (validates the key the exporter
+        # will actually send; a non-Traigent collector is untouched).
         if not oo_egress.ensure_trace_egress_allowed(
-            BackendConfig.get_api_key(), otlp_endpoint
+            _effective_trace_api_key(), otlp_endpoint
         ):
+            # A denial may be transient (validation failure has a 60 s TTL in the
+            # central gate): do not cache None, re-consult the gate on later calls.
+            _initialized = False
             return None
 
         try:
@@ -382,11 +431,14 @@ except ImportError:
             provider = TracerProvider(
                 resource=resource, id_generator=SecureIdGenerator()
             )
-            otlp_exporter = OTLPHttpSpanExporter(endpoint=f"{otlp_endpoint}/v1/traces")
+            otlp_exporter = _GatedSpanExporter(
+                OTLPHttpSpanExporter(endpoint=f"{otlp_endpoint}/v1/traces"),
+                otlp_endpoint,
+            )
             provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
             trace.set_tracer_provider(provider)
             _provider = provider
-            _tracer = trace.get_tracer("traigent.core", "1.0.0")
+            _tracer = provider.get_tracer("traigent.core", "1.0.0")
             return _tracer
         except Exception as e:
             import logging
