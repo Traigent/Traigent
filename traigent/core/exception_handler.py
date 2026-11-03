@@ -15,8 +15,8 @@ import sys
 from enum import Enum
 from typing import Protocol
 
-from traigent.utils.logging import get_logger
 from traigent.utils.console import _safe_print
+from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -65,6 +65,7 @@ _VENDOR_ERROR_PATTERNS: list[tuple[str, VendorErrorCategory]] = [
     ("insufficient_funds", VendorErrorCategory.INSUFFICIENT_FUNDS),
     ("insufficient funds", VendorErrorCategory.INSUFFICIENT_FUNDS),
     ("insufficient credits", VendorErrorCategory.INSUFFICIENT_FUNDS),
+    ("exceed your available credits", VendorErrorCategory.INSUFFICIENT_FUNDS),
     ("billing hard limit", VendorErrorCategory.INSUFFICIENT_FUNDS),
     ("exceeded your current billing", VendorErrorCategory.INSUFFICIENT_FUNDS),
     ("payment required", VendorErrorCategory.INSUFFICIENT_FUNDS),

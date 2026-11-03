@@ -619,6 +619,8 @@ def _untracked_detail_lines(
     if quota_refusal and detail:
         # Quota path: closed error code only, never backend message/raw body.
         lines.append(f"Backend error_code: {detail.safe_quota_error_code}")
+        if detail.quota_facts is not None and detail.quota_facts.describe():
+            lines.append(f"Quota: {detail.quota_facts.describe()}")
     elif detail and detail.error_code:
         # Closed vocabulary only; the backend message/raw body is never printed.
         lines.append(f"Backend error_code: {detail.safe_error_code}")
@@ -695,6 +697,18 @@ def _untracked_remedy_line(
         return (
             "Remedy: re-authenticate with `traigent auth login` or provide a "
             "valid, non-revoked API key."
+        )
+    if (
+        classification == SessionCreationFailureClassification.QUOTA_EXCEEDED
+        and result.failure_response is not None
+        and result.failure_response.quota_facts is not None
+        and result.failure_response.quota_facts.reset_at is not None
+    ):
+        return (
+            "Remedy: a plan quota/limit was reached (the backend is reachable). "
+            f"Wait until {result.failure_response.quota_facts.reset_text} for it "
+            "to reset, upgrade in the Traigent portal (Billing), or reduce the "
+            "requested trials/samples."
         )
     return _UNTRACKED_REMEDIES.get(classification, _UNTRACKED_REMEDY_DEFAULT)
 
@@ -3779,6 +3793,7 @@ class BackendSessionManager:
         completed: bool,
         report: dict[str, Any] | None,
         session_aggregation: dict[str, Any] | None,
+        optimization_outcome: str,
     ) -> dict[str, Any] | None:
         if hasattr(backend_client, "finalize_session_sync"):
             result: dict[str, Any] | None = backend_client.finalize_session_sync(
@@ -3786,6 +3801,7 @@ class BackendSessionManager:
                 completed,
                 certified_selection=report,
                 session_aggregation=session_aggregation,
+                optimization_outcome=optimization_outcome,
             )
         else:
             result = backend_client.finalize_session(
@@ -3793,8 +3809,25 @@ class BackendSessionManager:
                 completed,
                 certified_selection=report,
                 session_aggregation=session_aggregation,
+                optimization_outcome=optimization_outcome,
             )
         return result
+
+    @staticmethod
+    def finalize_outcome_for_status(
+        optimization_status: OptimizationStatus,
+    ) -> str:
+        """Wire ``optimization_outcome`` for a terminal SDK status (#2853).
+
+        Anything that is not COMPLETED or CANCELLED (FAILED, UNKNOWN, or a
+        non-terminal status handed to a finalize) is a failure: the same
+        reading the ``completed`` flag and the local-storage mirror use.
+        """
+        if optimization_status == OptimizationStatus.COMPLETED:
+            return "completed"
+        if optimization_status == OptimizationStatus.CANCELLED:
+            return "cancelled"
+        return "failed"
 
     @staticmethod
     def _log_finalize_retry(session_id: str, attempt: int, exc: BaseException) -> float:
@@ -3871,6 +3904,7 @@ class BackendSessionManager:
                     completed,
                     report,
                     session_aggregation,
+                    self.finalize_outcome_for_status(optimization_status),
                 )
 
                 if _finalize_acknowledged(result):

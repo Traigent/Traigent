@@ -172,7 +172,13 @@ class InvocationError(TraigentError):
 
 
 class EvaluationError(TraigentError):
-    """Error during function evaluation."""
+    """Error during function evaluation.
+
+    ``measured_spend`` carries the spend an evaluation measured before it
+    failed (cost keys only, #2852) so the failed trial still reports it;
+    ``row_metric`` is the evaluator-internal metrics object of the row whose
+    metric raised, used to meter that row. Both default to ``None``.
+    """
 
     def __init__(
         self,
@@ -184,6 +190,8 @@ class EvaluationError(TraigentError):
         super().__init__(message, details)
         self.config = config
         self.original_error = original_error
+        self.measured_spend: dict[str, Any] | None = None
+        self.row_metric: Any = None
 
 
 class OptimizationError(TraigentError):

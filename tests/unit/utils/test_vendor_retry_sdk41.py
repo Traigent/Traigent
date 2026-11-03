@@ -1393,3 +1393,16 @@ def test_owner_scope_resets_example_slot(mock_off):
         assert _flagged(trial)[0]
     finally:
         p.stop()
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_openrouter_inflight_credit_wording_is_terminal(status):
+    # Traigent#2877: out-of-credit wording on a 429/503 must not be retried.
+    class _Err(Exception):
+        status_code = status
+
+    msg = (
+        "APIError: This request would exceed your available credits given "
+        "your current in-flight requests."
+    )
+    assert classify_retryable(_Err(msg)) is None

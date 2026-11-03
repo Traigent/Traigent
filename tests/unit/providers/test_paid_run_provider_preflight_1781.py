@@ -34,6 +34,19 @@ def _orchestrator(config: dict, models: list[str]) -> OptimizationOrchestrator:
     return orch
 
 
+def _openrouter_get(limit_remaining, credits=(10, 1)):
+    """requests.get stand-in routing /key and /credits to separate bodies."""
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/credits"):
+            body = {"data": {"total_credits": credits[0], "total_usage": credits[1]}}
+        else:
+            body = {"data": {"limit": 10, "limit_remaining": limit_remaining}}
+        return SimpleNamespace(status_code=200, json=lambda: body)
+
+    return fake_get
+
+
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
     for name in (
@@ -141,7 +154,7 @@ class TestOpenRouter:
     def test_ok(self, monkeypatch):
         status, get = self._check(monkeypatch, 200)
         assert status.valid is True
-        assert get.call_args.args[0] == "https://openrouter.ai/api/v1/key"
+        assert get.call_args_list[0].args[0] == "https://openrouter.ai/api/v1/key"
 
     def test_invalid_key_fails_without_key_material(self, monkeypatch):
         status, _ = self._check(monkeypatch, 401)
@@ -214,9 +227,10 @@ class TestVertexAndFunds:
         assert _SECRET not in str(exc.value)
 
     def test_openrouter_with_headroom_is_available(self, monkeypatch):
-        status = self._openrouter(
-            monkeypatch, {"data": {"limit": 10, "limit_remaining": 4.2}}
-        )
+        monkeypatch.setenv("OPENROUTER_API_KEY", _SECRET)
+        # Key limit and account balance (#2877) both have headroom.
+        with patch("requests.get", side_effect=_openrouter_get(4.2)):
+            status = ProviderValidator()._check_openrouter()
         assert status.valid is True and status.funds == "available"
 
     @pytest.mark.parametrize(
@@ -281,9 +295,7 @@ class TestFundsNotVerifiedWarning:
 
     def test_openrouter_with_known_funds_not_listed(self, monkeypatch, caplog):
         monkeypatch.setenv("OPENROUTER_API_KEY", _SECRET)
-        body = {"data": {"limit": 10, "limit_remaining": 4.2}}
-        response = SimpleNamespace(status_code=200, json=lambda: body)
-        with patch("requests.get", return_value=response):
+        with patch("requests.get", side_effect=_openrouter_get(4.2)):
             with caplog.at_level("WARNING", logger=_VALIDATION):
                 preflight_run_providers(["openrouter/openai/gpt-4o"])
         assert self._funds_records(caplog) == []

@@ -6,9 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A scorer exception is a failed trial with its spend, not an "unpriced call" (#2852).** When an objective metric raises, the rows already ran: the failed trial now keeps the spend they measured instead of reporting none, so the run no longer aborts with `Cost extraction failed ... unpriced call` and the budget counts that spend.
+- **OpenRouter responses are priced at the requested id (#2854).** OpenRouter reports `response.model` without the `openrouter/` prefix, and some of those bare ids (`anthropic/claude-haiku-4.5`, `meta-llama/llama-3.3-70b-instruct`, `mistralai/mistral-small-3.2-24b-instruct`) have no price. A call requested through OpenRouter now falls back to the prefixed id, then the requested id, before the "Unknown model ... returning zero cost" warning fires, so a correctly priced run no longer sends users to custom pricing.
+- Model validation now rejects the Claude models Anthropic has retired: 3.5 Haiku, dashed 3.5 Sonnet, Sonnet 4, Opus 4 and Opus 4.1, including `-latest`, undated (`claude-opus-4-1`, `claude-opus-4-0`, `claude-sonnet-4-0`) and OpenRouter dotted spellings. They are also dropped from the shipped known-model lists (#2876).
+- OpenRouter funds preflight now also reads the account balance (`/api/v1/credits`) and reports the lower of it and the per-key limit; `unknown` is kept when either call fails. OpenRouter's "would exceed your available credits given your current in-flight requests" error is now classified as insufficient funds, not a retryable error (#2877).
+- `local_storage_path` now also relocates `incentive_state.json` and `.analytics_id` (they were written to `~/.traigent` on every local run), and `TRAIGENT_DISABLE_HINTS=1` (which now also skips the hint-path usage-stats update and its background analytics submission) no longer creates the hint state at all (#2874).
+
 ### Changed
 
 - Offline licence files now fail closed when the token has no expiry. A signed (or legacy unsigned) offline licence whose `exp` claim is missing or not a finite number is refused and the SDK runs at the free tier, the same as an expired licence. Reissue such licences with an `exp` claim. The grace period default (86400 s) is unchanged.
+
+- `custom_evaluator` now surfaces non-objective `ExampleResult.metrics` keys in `trial.metrics`, matching the tuple and `metric_functions` lanes; objectives and SDK-computed names are never overwritten (#2873).
+
+- A session-create quota refusal (HTTP 429/402 `quota_exceeded`) now reports the allowlisted resource name, limit, usage, requested units and reset time from the backend payload (all re-validated and re-rendered by the SDK; backend free text is still dropped), and suggests waiting until the reset time as well as upgrading (#2855).
+- A connected run that fails (or is cancelled) is no longer finalized as COMPLETED on the backend: the finalize request now carries a top-level `optimization_outcome` (`completed` / `failed` / `cancelled`). Deploy the Backend change first; an older Backend ignores the key. Local storage records `cancelled` as such (#2853).
 
 ## [0.32.0] - 2026-10-31
 

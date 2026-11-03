@@ -56,7 +56,11 @@ from traigent.utils.langchain_interceptor import (
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
 from traigent.utils.logging import get_logger
-from traigent.utils.response_model import infer_response_model
+from traigent.utils.response_model import (
+    infer_response_model,
+    resolve_pricing_model,
+)
+from traigent.utils.trial_costs import MEASURED_SPEND_KEYS
 
 logger = get_logger(__name__)
 _METADATA_PATCHES_ATTEMPTED = False
@@ -1836,11 +1840,9 @@ class LocalEvaluator(BaseEvaluator):
         is_agent_call: bool,
     ) -> str | None:
         """Model identity of one call: response, then its request, then config."""
-        return (
-            infer_response_model(response)
-            or requested_model
-            or (agent_model if is_agent_call else None)
-        )
+        return resolve_pricing_model(
+            infer_response_model(response), requested_model
+        ) or (agent_model if is_agent_call else None)
 
     @staticmethod
     def _price_one_call(
@@ -2585,15 +2587,26 @@ class LocalEvaluator(BaseEvaluator):
         metric_errors: list[dict[str, Any]] | None,
         captures: _CaptureOwnership | None,
     ) -> None:
-        produced_metric_keys = await self._apply_custom_metric_functions(
-            example_metric,
-            output,
-            example_obj,
-            config,
-            index,
-            metric_errors=metric_errors,
-            captures=captures,
-        )
+        detailed_row = _result_row(example_results, index) if self.detailed else None
+        try:
+            produced_metric_keys = await self._apply_custom_metric_functions(
+                example_metric,
+                output,
+                example_obj,
+                config,
+                index,
+                metric_errors=metric_errors,
+                captures=captures,
+            )
+        except EvaluationError:
+            # A judge that called an LLM and then raised still spent money:
+            # fold that spend into the row before the failure propagates, so
+            # the failed trial reports it instead of leaving the call
+            # unattributed (#2852).
+            self._fold_metric_function_llm_cost(
+                example_metric, example_result=detailed_row, captures=captures
+            )
+            raise
 
         # Fold LLM spend made *inside* a metric function / judge (e.g. an
         # LLM-as-judge calling litellm.completion) into this example's
@@ -2604,7 +2617,6 @@ class LocalEvaluator(BaseEvaluator):
         # (Traigent#2297). Left uncorrected, `total_cost` and the
         # permit-based cost enforcement in `core/cost_enforcement.py`
         # never see judge spend.
-        detailed_row = _result_row(example_results, index) if self.detailed else None
         self._fold_metric_function_llm_cost(
             example_metric, example_result=detailed_row, captures=captures
         )
@@ -2642,6 +2654,7 @@ class LocalEvaluator(BaseEvaluator):
         *,
         metric_errors: list[dict[str, Any]] | None = None,
         captures: _CaptureOwnership | None = None,
+        skip_metric_functions: bool = False,
     ) -> ExampleMetrics:
         """Process metrics for a single output.
 
@@ -2738,17 +2751,28 @@ class LocalEvaluator(BaseEvaluator):
         self._add_standard_metrics_to_custom(example_metric)
 
         # Apply custom metric functions
-        if self.metric_functions and index < len(dataset.examples):
-            await self._apply_row_metric_functions(
-                example_metric,
-                output,
-                dataset.examples[index],
-                config,
-                index,
-                example_results,
-                metric_errors,
-                captures,
-            )
+        if (
+            self.metric_functions
+            and index < len(dataset.examples)
+            and not skip_metric_functions
+        ):
+            try:
+                await self._apply_row_metric_functions(
+                    example_metric,
+                    output,
+                    dataset.examples[index],
+                    config,
+                    index,
+                    example_results,
+                    metric_errors,
+                    captures,
+                )
+            except EvaluationError as exc:
+                # The model call behind this row was already paid for. Hand
+                # the row's measured spend to evaluate() so the failed trial
+                # still reports it (#2852).
+                exc.row_metric = example_metric
+                raise
 
         # Emit boundary for this row: an unknown-cost row leaves with no numeric
         # cost in any channel (row metrics, custom metrics), only flag + floor.
@@ -3548,6 +3572,29 @@ class LocalEvaluator(BaseEvaluator):
             metric_errors=metric_errors,
         )
 
+    def _attach_measured_spend(
+        self,
+        failure: EvaluationError,
+        metrics_tracker: MetricsTracker,
+        captures: _CaptureOwnership | None,
+    ) -> None:
+        """Put the spend the failed evaluation measured on its exception.
+
+        The trial lifecycle copies it onto the failed ``TrialResult`` so the
+        spend counts against the run's budget. Unknown cost keeps its flag and
+        known floor (never a $0), exactly as for a successful trial.
+        """
+        self._account_unattributed_spend(metrics_tracker, captures)
+        spend = metrics_tracker.format_for_backend(
+            extra_reserved=self._evaluator_computable_metric_names(),
+        )
+        enforce_unknown_cost_invariant(
+            spend, sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only
+        )
+        failure.measured_spend = {
+            key: spend[key] for key in MEASURED_SPEND_KEYS if key in spend
+        }
+
     def _account_unattributed_spend(
         self,
         metrics_tracker: MetricsTracker,
@@ -3739,24 +3786,40 @@ class LocalEvaluator(BaseEvaluator):
         metric_errors: list[dict[str, Any]] = []
 
         # Track metrics for each example output using helper method
+        # An objective metric that raises fails the trial, but every example
+        # already ran: keep metering the remaining rows (without calling the
+        # failing metric again) so the failed trial reports what it spent.
+        deferred_failure: EvaluationError | None = None
         for i, output in enumerate(outputs):
-            example_metric = await self._await_with_sample_lease_cleanup(
-                self._process_single_output(
-                    output=output,
-                    index=i,
-                    config=config,
-                    dataset=dataset,
-                    errors=errors,
-                    example_results=example_results,
-                    all_captured_responses=all_captured_responses,
-                    progress_callback=progress_callback,
-                    metric_errors=metric_errors,
-                    captures=captures,
-                ),
-                sample_lease,
-                execution_budget_lease,
-            )
+            try:
+                example_metric = await self._await_with_sample_lease_cleanup(
+                    self._process_single_output(
+                        output=output,
+                        index=i,
+                        config=config,
+                        dataset=dataset,
+                        errors=errors,
+                        example_results=example_results,
+                        all_captured_responses=all_captured_responses,
+                        progress_callback=progress_callback,
+                        metric_errors=metric_errors,
+                        captures=captures,
+                        skip_metric_functions=deferred_failure is not None,
+                    ),
+                    sample_lease,
+                    execution_budget_lease,
+                )
+            except EvaluationError as exc:
+                failed_row = exc.row_metric
+                if failed_row is None or deferred_failure is not None:
+                    raise
+                deferred_failure = exc
+                example_metric = failed_row
             metrics_tracker.add_example_metrics(example_metric)
+
+        if deferred_failure is not None:
+            self._attach_measured_spend(deferred_failure, metrics_tracker, captures)
+            raise deferred_failure
 
         # Compute aggregated metrics (include built-ins even with custom functions)
         aggregated_metrics = self._compute_base_aggregates(

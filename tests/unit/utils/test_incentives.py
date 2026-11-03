@@ -1790,3 +1790,148 @@ class TestHintEligibilityEnvOptOut:
 
         assert _run(None).info.called
         assert not _run("1").info.called
+
+
+class TestLocalStoragePathKeepsHintStateOutOfHome:
+    """#2874: hint state and the analytics id follow ``local_storage_path``.
+
+    Every write is asserted against a throwaway HOME, so a regression shows up
+    as files under it rather than as a silent write to the developer's real home.
+    """
+
+    @pytest.fixture
+    def fake_home(self, tmp_path, monkeypatch) -> Path:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+        monkeypatch.delenv("TRAIGENT_RESULTS_FOLDER", raising=False)
+        monkeypatch.delenv("TRAIGENT_DISABLE_HINTS", raising=False)
+        monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+        return home
+
+    @staticmethod
+    def _config(project: Path) -> TraigentConfig:
+        return TraigentConfig(
+            execution_mode=ExecutionMode.LOCAL.value,
+            enable_usage_analytics=True,
+            local_storage_path=str(project / ".traigent"),
+        )
+
+    def test_show_upgrade_hint_with_config_writes_only_project(
+        self, tmp_path, fake_home
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        with patch("traigent.utils.incentives.collect_and_submit_analytics"):
+            show_upgrade_hint("session_complete", config=self._config(project))
+
+        assert list(fake_home.rglob("*")) == []
+        assert (project / ".traigent" / "incentive_state.json").exists()
+        assert (project / ".traigent" / ".analytics_id").exists()
+
+    def test_show_achievement_with_config_writes_only_project(
+        self, tmp_path, fake_home
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        show_achievement("first_optimization", config=self._config(project))
+
+        assert list(fake_home.rglob("*")) == []
+        assert (project / ".traigent" / "incentive_state.json").exists()
+
+    @pytest.mark.parametrize("call", ["hint", "achievement"])
+    def test_disable_hints_constructs_and_writes_nothing(
+        self, tmp_path, fake_home, monkeypatch, call
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_DISABLE_HINTS", "1")
+        project = tmp_path / "project"
+        project.mkdir()
+        config = self._config(project)
+
+        with patch.object(
+            IncentiveManager, "__init__", side_effect=AssertionError("constructed")
+        ):
+            if call == "hint":
+                show_upgrade_hint("session_complete", config=config)
+            else:
+                show_achievement("first_optimization", config=config)
+            # Env-only fallback (no config passed) must be silent too.
+            show_upgrade_hint("session_complete")
+
+        assert list(fake_home.rglob("*")) == []
+        assert list(project.rglob("*")) == []
+
+    def test_offline_run_with_local_storage_path_leaves_home_empty(
+        self, tmp_path, fake_home, monkeypatch
+    ) -> None:
+        """End to end: a real offline run, per-function path, nothing under HOME."""
+        import traigent
+        from traigent import Choices
+
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        monkeypatch.chdir(tmp_path)
+        project = tmp_path / "project"
+        project.mkdir()
+        data = tmp_path / "ds.jsonl"
+        data.write_text(json.dumps({"input": {"q": "hi"}, "output": "x"}) + "\n")
+
+        @traigent.optimize(
+            configuration_space={"m": Choices(["a", "b"])},
+            eval_dataset=str(data),
+            objectives=["accuracy"],
+            scoring_function=lambda o, e, *a, **k: 1.0,
+            offline=True,
+            local_storage_path=str(project / ".traigent"),
+        )
+        def f(q: str) -> str:
+            return traigent.get_config()["m"]
+
+        f.optimize_sync(max_trials=2, algorithm="grid")
+
+        assert list(fake_home.rglob("*")) == []
+        assert (project / ".traigent" / "incentive_state.json").exists()
+        assert (project / ".traigent" / ".analytics_id").exists()
+
+    def test_offline_run_disable_hints_writes_no_incentive_state(
+        self, tmp_path, fake_home, monkeypatch
+    ) -> None:
+        import traigent
+        from traigent import Choices
+
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+        monkeypatch.setenv("TRAIGENT_DISABLE_HINTS", "1")
+        monkeypatch.chdir(tmp_path)
+        project = tmp_path / "project"
+        project.mkdir()
+        data = tmp_path / "ds.jsonl"
+        data.write_text(json.dumps({"input": {"q": "hi"}, "output": "x"}) + "\n")
+
+        @traigent.optimize(
+            configuration_space={"m": Choices(["a", "b"])},
+            eval_dataset=str(data),
+            objectives=["accuracy"],
+            scoring_function=lambda o, e, *a, **k: 1.0,
+            offline=True,
+            local_storage_path=str(project / ".traigent"),
+        )
+        def f(q: str) -> str:
+            return traigent.get_config()["m"]
+
+        f.optimize_sync(max_trials=2, algorithm="grid")
+
+        assert list(fake_home.rglob("*")) == []
+        assert not (project / ".traigent" / "incentive_state.json").exists()
+
+    def test_results_folder_env_keeps_hint_state_in_project(
+        self, tmp_path, fake_home, monkeypatch
+    ) -> None:
+        folder = tmp_path / "project" / ".traigent"
+        monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(folder))
+        with patch("traigent.utils.incentives.collect_and_submit_analytics"):
+            show_upgrade_hint("session_complete")
+
+        assert list(fake_home.rglob("*")) == []
+        assert (folder / "incentive_state.json").exists()

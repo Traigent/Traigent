@@ -104,6 +104,7 @@ own audit.
 |---|---|---|
 | `./.traigent/optimization_logs/…` (cwd) | Run logs: `.json`, `.jsonl`, `.txt`, a `.gitignore`; atomic `*.json.tmp` + rename | `traigent/utils/optimization_logger.py:507,642,665-667,681,870` |
 | `~/.traigent/` | Usage records and local session storage, atomic write + rename | `traigent/cloud/billing.py:212`, `traigent/storage/local_storage.py:256,944`, `traigent/utils/secure_path.py:212` |
+| `local_storage_path` (per function), else `TRAIGENT_RESULTS_FOLDER`, else `~/.traigent/` | `incentive_state.json` (hint counters, no hint written when `TRAIGENT_DISABLE_HINTS` is set) and `.analytics_id` (anonymous random id) | `traigent/utils/incentives.py`, `traigent/utils/local_analytics.py` |
 | System temp dir | A lock/staging dir created through `huggingface_hub`'s `filelock` when counting Llama tokens, also with `HF_HUB_OFFLINE=1` | via `traigent/utils/cost_calculator.py:397` |
 | `site-packages/…/__pycache__` | Ordinary Python bytecode cache on first import | the import system |
 
