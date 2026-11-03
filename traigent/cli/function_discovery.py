@@ -20,27 +20,7 @@ logger = get_logger(__name__)
 console = Console()
 
 
-def discover_optimized_functions(
-    module_path: str,
-    function_filter: list[str] | None = None,
-    workspace_root: str | Path | None = None,
-) -> list[OptimizedFunction]:
-    """Discover all functions decorated with @traigent.optimize in a module.
-
-    Args:
-        module_path: Path to Python file containing optimizable functions
-        function_filter: Optional list of function names to include (None = all functions)
-        workspace_root: Optional user workspace root. Defaults to the caller's CWD.
-
-    Returns:
-        List of OptimizedFunction objects containing function metadata
-
-    Raises:
-        ImportError: If module cannot be loaded
-        ValueError: If module path is invalid
-    """
-    logger.info(f"Discovering optimized functions in {module_path}")
-
+def _resolve_module_path(module_path: str, workspace_root: str | Path | None) -> Path:
     workspace_base = (
         Path(workspace_root).expanduser().resolve()
         if workspace_root is not None
@@ -63,6 +43,55 @@ def discover_optimized_functions(
 
     if module_path_obj.suffix != ".py":
         raise ValueError(f"Module must be a Python file (.py): {module_path_obj}")
+    return module_path_obj
+
+
+def _load_user_module(module_path_obj: Path) -> Any:
+    # Import the module
+    spec = importlib.util.spec_from_file_location("user_module", module_path_obj)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Failed to load module spec from {module_path_obj}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _is_optimized_function(obj: Any) -> bool:
+    """Check if it's a regular function with optimize method OR an OptimizedFunction instance."""
+    if inspect.isfunction(obj) and hasattr(obj, "optimize"):
+        return True
+    if hasattr(obj, "__class__") and obj.__class__.__name__ == "OptimizedFunction":
+        return True
+    if hasattr(obj, "optimize") and callable(getattr(obj, "optimize", None)):
+        # Additional check to ensure this isn't just a module or other object
+        if hasattr(obj, "func") or callable(obj):
+            return True
+    return False
+
+
+def discover_optimized_functions(
+    module_path: str,
+    function_filter: list[str] | None = None,
+    workspace_root: str | Path | None = None,
+) -> list[OptimizedFunction]:
+    """Discover all functions decorated with @traigent.optimize in a module.
+
+    Args:
+        module_path: Path to Python file containing optimizable functions
+        function_filter: Optional list of function names to include (None = all functions)
+        workspace_root: Optional user workspace root. Defaults to the caller's CWD.
+
+    Returns:
+        List of OptimizedFunction objects containing function metadata
+
+    Raises:
+        ImportError: If module cannot be loaded
+        ValueError: If module path is invalid
+    """
+    logger.info(f"Discovering optimized functions in {module_path}")
+
+    module_path_obj = _resolve_module_path(module_path, workspace_root)
 
     # Load the Python file as a module
     parent_dir = module_path_obj.parent
@@ -72,12 +101,7 @@ def discover_optimized_functions(
 
     try:
         # Import the module
-        spec = importlib.util.spec_from_file_location("user_module", module_path_obj)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Failed to load module spec from {module_path_obj}")
-
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = _load_user_module(module_path_obj)
 
         # Find functions with optimize method (decorated with @traigent.optimize)
         for name, obj in inspect.getmembers(module):
@@ -85,22 +109,7 @@ def discover_optimized_functions(
             if name.startswith("_") or inspect.ismodule(obj):
                 continue
 
-            # Check if it's a regular function with optimize method OR an OptimizedFunction instance
-            is_optimized_function = False
-
-            if inspect.isfunction(obj) and hasattr(obj, "optimize"):
-                is_optimized_function = True
-            elif (
-                hasattr(obj, "__class__")
-                and obj.__class__.__name__ == "OptimizedFunction"
-            ):
-                is_optimized_function = True
-            elif hasattr(obj, "optimize") and callable(getattr(obj, "optimize", None)):
-                # Additional check to ensure this isn't just a module or other object
-                if hasattr(obj, "func") or callable(obj):
-                    is_optimized_function = True
-
-            if not is_optimized_function:
+            if not _is_optimized_function(obj):
                 continue
 
             # Apply function filter if provided

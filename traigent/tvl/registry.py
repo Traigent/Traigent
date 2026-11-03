@@ -295,6 +295,36 @@ class FileRegistryResolver:
         # No AND/OR found at depth 0, apply as simple filter
         return self._apply_simple_filter(items, filter_expr)
 
+    @staticmethod
+    def _top_level_positions(expr: str) -> list[bool]:
+        """Flag each character that sits outside quotes at parenthesis depth 0.
+
+        Quote and parenthesis characters themselves are never flagged.
+        """
+        flags: list[bool] = []
+        depth = 0
+        in_quote: str | None = None  # Track which quote char we're inside
+        for char in expr:
+            if char in ("'", '"') and in_quote is None:
+                in_quote = char
+                flags.append(False)
+            elif char == in_quote:
+                in_quote = None
+                flags.append(False)
+            elif in_quote is None and char in "()":
+                depth += 1 if char == "(" else -1
+                flags.append(False)
+            else:
+                flags.append(in_quote is None and depth == 0)
+        return flags
+
+    @staticmethod
+    def _is_word_bounded(expr: str, start: int, length: int) -> bool:
+        """Whether ``expr[start:start+length]`` is surrounded by whitespace/edges."""
+        before_ok = start == 0 or expr[start - 1].isspace()
+        after_ok = (start + length >= len(expr)) or expr[start + length].isspace()
+        return before_ok and after_ok
+
     def _split_at_depth_zero(self, expr: str, operator: str) -> list[str]:
         """Split expression by operator only when at parenthesis depth 0.
 
@@ -310,54 +340,26 @@ class FileRegistryResolver:
         """
         parts: list[str] = []
         current_part: list[str] = []
-        depth = 0
-        in_quote: str | None = None  # Track which quote char we're inside
+        top_level = self._top_level_positions(expr)
         i = 0
         expr_upper = expr.upper()
         op_len = len(operator)
 
         while i < len(expr):
-            char = expr[i]
-
-            # Handle quote state transitions
-            if char in ("'", '"') and in_quote is None:
-                in_quote = char
-                current_part.append(char)
-                i += 1
-            elif char == in_quote:
-                in_quote = None
-                current_part.append(char)
-                i += 1
-            # Only track parentheses when NOT inside quotes
-            elif in_quote is None and char == "(":
-                depth += 1
-                current_part.append(char)
-                i += 1
-            elif in_quote is None and char == ")":
-                depth -= 1
-                current_part.append(char)
-                i += 1
-            elif (
-                in_quote is None
-                and depth == 0
+            if (
+                top_level[i]
                 and expr_upper[i : i + op_len] == operator
+                and self._is_word_bounded(expr, i, op_len)
             ):
-                # Check if it's surrounded by whitespace (word boundary)
-                before_ok = i == 0 or expr[i - 1].isspace()
-                after_ok = (i + op_len >= len(expr)) or expr[i + op_len].isspace()
-                if before_ok and after_ok:
-                    # Found operator at depth 0, outside quotes
-                    parts.append("".join(current_part).strip())
-                    current_part = []
-                    i += op_len
-                    # Skip trailing whitespace
-                    while i < len(expr) and expr[i].isspace():
-                        i += 1
-                else:
-                    current_part.append(char)
+                # Found operator at depth 0, outside quotes
+                parts.append("".join(current_part).strip())
+                current_part = []
+                i += op_len
+                # Skip trailing whitespace
+                while i < len(expr) and expr[i].isspace():
                     i += 1
             else:
-                current_part.append(char)
+                current_part.append(expr[i])
                 i += 1
 
         # Add the last part
@@ -422,6 +424,16 @@ class FileRegistryResolver:
         return [i for i in items if i.get(field) in values]
 
     @staticmethod
+    def _unquote_comparison_value(value: str) -> str | None:
+        """Strip matching outer quotes; None when the quotes are unbalanced."""
+        if value[0] in {"'", '"'}:
+            quote = value[0]
+            if len(value) < 2 or not value.endswith(quote):
+                return None
+            return value[1:-1]
+        return value
+
+    @staticmethod
     def _parse_comparison_filter(filter_expr: str) -> tuple[str, str, str] | None:
         """Parse a comparison filter without regex backtracking risk."""
         expr = filter_expr.strip()
@@ -440,16 +452,15 @@ class FileRegistryResolver:
 
         remainder = expr[field_end:].lstrip()
         for op in (">=", "<=", ">", "<"):
-            if remainder.startswith(op):
-                value = remainder[len(op) :].strip()
-                if not value:
-                    return None
-                if value[0] in {"'", '"'}:
-                    quote = value[0]
-                    if len(value) < 2 or not value.endswith(quote):
-                        return None
-                    value = value[1:-1]
-                return field, op, value
+            if not remainder.startswith(op):
+                continue
+            value = remainder[len(op) :].strip()
+            if not value:
+                return None
+            unquoted = FileRegistryResolver._unquote_comparison_value(value)
+            if unquoted is None:
+                return None
+            return field, op, unquoted
 
         return None
 

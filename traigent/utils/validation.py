@@ -34,6 +34,9 @@ logger = get_logger(__name__)
 # thousand-line message; the summary error still states the true totals.
 MAX_REPORTED_DATASET_ROW_ERRORS = 20
 
+# Shared message for relative dataset paths with no base directory.
+_DATASET_BASE_REQUIRED_MSG = "Dataset base directory is required for a relative path"
+
 
 @dataclass
 class ValidationError:
@@ -105,37 +108,37 @@ class ValidationResult:
 
             raise ValidationException(full_message)
 
+    @staticmethod
+    def _format_issue_lines(issues: list[ValidationError]) -> list[str]:
+        lines: list[str] = []
+        for issue in issues:
+            lines.append(f"  • {issue.field}: {issue.message}")
+            if issue.suggestions:
+                lines.extend(f"    💡 {suggestion}" for suggestion in issue.suggestions)
+        return lines
+
     def get_feedback(self, include_warnings: bool = True) -> str:
         """Get user-friendly feedback message."""
-        lines = []
+        lines: list[str] = []
 
         # Add errors
         if self.errors:
             lines.append("❌ Validation Errors:")
-            for error in self.errors:
-                lines.append(f"  • {error.field}: {error.message}")
-                if error.suggestions:
-                    for suggestion in error.suggestions:
-                        lines.append(f"    💡 {suggestion}")
+            lines.extend(self._format_issue_lines(self.errors))
 
         # Add warnings
         if include_warnings and self.warnings:
             if lines:
                 lines.append("")
             lines.append("⚠️  Warnings:")
-            for warning in self.warnings:
-                lines.append(f"  • {warning.field}: {warning.message}")
-                if warning.suggestions:
-                    for suggestion in warning.suggestions:
-                        lines.append(f"    💡 {suggestion}")
+            lines.extend(self._format_issue_lines(self.warnings))
 
         # Add general suggestions
         if self.suggestions:
             if lines:
                 lines.append("")
             lines.append("💡 Suggestions:")
-            for suggestion in self.suggestions:
-                lines.append(f"  • {suggestion}")
+            lines.extend(f"  • {suggestion}" for suggestion in self.suggestions)
 
         # Add success message if valid
         if self.is_valid and not self.warnings:
@@ -895,254 +898,15 @@ class Validators:
         """
         result = ValidationResult()
 
-        from traigent.evaluators.base import (
-            Dataset,
-            EvaluationExample,
-            load_inline_dataset,
-        )
-
-        def resolve_dataset_path(
-            raw_path: Path, dataset_base: Path | None
-        ) -> Path | None:
-            if raw_path.is_absolute():
-                candidate = raw_path
-            else:
-                if dataset_base is None:
-                    result.add_error(
-                        "dataset",
-                        "Dataset base directory is required for a relative path",
-                        error_code="SECURITY_ERROR",
-                    )
-                    return None
-                candidate = dataset_base / raw_path
-
-            try:
-                return candidate.resolve(strict=True)
-            except FileNotFoundError:
-                # Keep the public validator's established NOT_FOUND result for a
-                # missing in-base target while strictly resolving existing paths.
-                return candidate.resolve()
-            except (OSError, RuntimeError) as exc:
-                result.add_error(
-                    "dataset",
-                    f"Dataset path cannot be resolved: {exc}",
-                    error_code="SECURITY_ERROR",
-                )
-                return None
+        from traigent.evaluators.base import Dataset
 
         if isinstance(dataset_path, Dataset):
             return result
 
-        dataset_base: Path | None = None
         if isinstance(dataset_path, list):
-            if all(
-                isinstance(item, (dict, EvaluationExample)) for item in dataset_path
-            ):
-                try:
-                    load_inline_dataset(dataset_path)
-                except ValidationException as exc:
-                    result.add_error(
-                        "dataset",
-                        str(exc),
-                        error_code="INVALID_FORMAT",
-                    )
-                return result
-
-            if not all(isinstance(item, (str, Path)) for item in dataset_path):
-                result.add_error(
-                    "dataset",
-                    "Dataset list entries must all be file paths or inline example objects",
-                    error_code="TYPE_ERROR",
-                )
-                return result
-
-            relative_paths = [
-                path for path in dataset_path if not Path(path).is_absolute()
-            ]
-            if relative_paths:
-                try:
-                    dataset_base = (
-                        Path(Path.cwd() if base_dir is None else base_dir)
-                        .expanduser()
-                        .resolve(strict=True)
-                    )
-                except (OSError, RuntimeError) as exc:
-                    result.add_error(
-                        "dataset",
-                        f"Dataset base directory cannot be resolved: {exc}",
-                        error_code="SECURITY_ERROR",
-                    )
-                    return result
-
-                if not dataset_base.is_dir():
-                    result.add_error(
-                        "dataset",
-                        f"Dataset base path is not a directory: {dataset_base}",
-                        error_code="SECURITY_ERROR",
-                    )
-                    return result
-
-            # Multiple datasets
-            for i, path in enumerate(dataset_path):
-                raw_path = Path(path)
-                if not raw_path.is_absolute():
-                    if dataset_base is None:
-                        result.add_error(
-                            "dataset",
-                            "Dataset base directory is required for a relative path",
-                            error_code="SECURITY_ERROR",
-                        )
-                        return result
-                    allowed_base = dataset_base
-                resolved_dataset_path = resolve_dataset_path(raw_path, dataset_base)
-                if resolved_dataset_path is None:
-                    return result
-                if raw_path.is_absolute():
-                    allowed_base = resolved_dataset_path.parent
-                path_result = Validators.validate_path(
-                    resolved_dataset_path,
-                    f"dataset[{i}]",
-                    must_exist=True,
-                    must_be_file=True,
-                    allowed_extensions=[".json", ".jsonl"],
-                    allowed_base_dirs=[allowed_base],
-                )
-                result.errors.extend(path_result.errors)
-                result.warnings.extend(path_result.warnings)
+            _validate_dataset_list(result, dataset_path, base_dir)
         elif isinstance(dataset_path, (str, Path)):
-            # Single dataset
-            raw_dataset_path = Path(dataset_path)
-            if not raw_dataset_path.is_absolute():
-                try:
-                    dataset_base = (
-                        Path(Path.cwd() if base_dir is None else base_dir)
-                        .expanduser()
-                        .resolve(strict=True)
-                    )
-                except (OSError, RuntimeError) as exc:
-                    result.add_error(
-                        "dataset",
-                        f"Dataset base directory cannot be resolved: {exc}",
-                        error_code="SECURITY_ERROR",
-                    )
-                    return result
-
-                if not dataset_base.is_dir():
-                    result.add_error(
-                        "dataset",
-                        f"Dataset base path is not a directory: {dataset_base}",
-                        error_code="SECURITY_ERROR",
-                    )
-                    return result
-
-            if not raw_dataset_path.is_absolute():
-                if dataset_base is None:
-                    result.add_error(
-                        "dataset",
-                        "Dataset base directory is required for a relative path",
-                        error_code="SECURITY_ERROR",
-                    )
-                    return result
-                allowed_base = dataset_base
-            resolved_dataset_path = resolve_dataset_path(raw_dataset_path, dataset_base)
-            if resolved_dataset_path is None:
-                return result
-            if raw_dataset_path.is_absolute():
-                allowed_base = resolved_dataset_path.parent
-            path_result = Validators.validate_path(
-                resolved_dataset_path,
-                "dataset",
-                must_exist=True,
-                must_be_file=True,
-                allowed_extensions=[".json", ".jsonl"],
-                allowed_base_dirs=[allowed_base],
-            )
-            result.errors.extend(path_result.errors)
-            result.warnings.extend(path_result.warnings)
-
-            # Try to validate content if path is valid
-            if path_result.is_valid:
-                try:
-                    # Use the RESOLVED absolute path (and its parent as base_dir)
-                    # so safe_open's containment guard does not re-join a relative
-                    # path onto its own parent (which doubled nested segments and
-                    # produced a spurious READ_ERROR for relative dataset paths).
-                    with safe_open(
-                        resolved_dataset_path,
-                        resolved_dataset_path.parent,
-                        mode="r",
-                        encoding="utf-8",
-                    ) as f:
-                        row_count = 0
-                        invalid_rows = 0
-
-                        def report_row_error(
-                            line_num: int, message: str, error_code: str
-                        ) -> None:
-                            """Record a row error, listing at most the first N."""
-                            nonlocal invalid_rows
-                            invalid_rows += 1
-                            if invalid_rows <= MAX_REPORTED_DATASET_ROW_ERRORS:
-                                result.add_error(
-                                    f"dataset:line{line_num}",
-                                    message,
-                                    error_code=error_code,
-                                )
-
-                        for line_num, line in enumerate(f, 1):
-                            text = line.strip()
-                            if not text:
-                                # Blank lines are skipped by Dataset.from_jsonl;
-                                # validation must agree with the runtime loader.
-                                continue
-                            row_count += 1
-
-                            try:
-                                data = json.loads(text)
-                            except json.JSONDecodeError:
-                                report_row_error(line_num, "Invalid JSON", "JSON_ERROR")
-                                continue
-
-                            if not isinstance(data, dict):
-                                report_row_error(
-                                    line_num,
-                                    f"Expected a JSON object, got {type(data).__name__}",
-                                    "INVALID_FORMAT",
-                                )
-                                continue
-
-                            if "input" not in data and "input_data" not in data:
-                                report_row_error(
-                                    line_num,
-                                    "Missing 'input' or 'input_data' field",
-                                    "INVALID_FORMAT",
-                                )
-
-                        result.metadata["dataset_rows_inspected"] = row_count
-                        result.metadata["dataset_invalid_rows"] = invalid_rows
-
-                        if invalid_rows > MAX_REPORTED_DATASET_ROW_ERRORS:
-                            result.add_error(
-                                "dataset",
-                                f"{invalid_rows} of {row_count} rows are invalid "
-                                f"(all rows were inspected; only the first "
-                                f"{MAX_REPORTED_DATASET_ROW_ERRORS} are listed above)",
-                                error_code="INVALID_FORMAT",
-                            )
-
-                        if row_count == 0:
-                            result.add_error(
-                                "dataset",
-                                "Dataset file is empty",
-                                error_code="EMPTY_FILE",
-                            )
-
-                except Exception as e:
-                    result.add_error(
-                        "dataset",
-                        f"Could not read dataset: {str(e)}",
-                        error_code="READ_ERROR",
-                    )
+            _validate_single_dataset(result, dataset_path, base_dir)
         else:
             result.add_error(
                 "dataset",
@@ -1151,6 +915,269 @@ class Validators:
             )
 
         return result
+
+
+# ===== Dataset validation helpers =====
+
+
+def _resolve_dataset_base(
+    result: ValidationResult, base_dir: str | Path | None
+) -> Path | None:
+    """Resolve the base directory for relative dataset paths.
+
+    Records a ``SECURITY_ERROR`` and returns ``None`` when it cannot be used.
+    """
+    try:
+        dataset_base = (
+            Path(Path.cwd() if base_dir is None else base_dir)
+            .expanduser()
+            .resolve(strict=True)
+        )
+    except (OSError, RuntimeError) as exc:
+        result.add_error(
+            "dataset",
+            f"Dataset base directory cannot be resolved: {exc}",
+            error_code="SECURITY_ERROR",
+        )
+        return None
+
+    if not dataset_base.is_dir():
+        result.add_error(
+            "dataset",
+            f"Dataset base path is not a directory: {dataset_base}",
+            error_code="SECURITY_ERROR",
+        )
+        return None
+    return dataset_base
+
+
+def _resolve_dataset_path(
+    result: ValidationResult, raw_path: Path, dataset_base: Path | None
+) -> Path | None:
+    if raw_path.is_absolute():
+        candidate = raw_path
+    else:
+        if dataset_base is None:
+            result.add_error(
+                "dataset",
+                _DATASET_BASE_REQUIRED_MSG,
+                error_code="SECURITY_ERROR",
+            )
+            return None
+        candidate = dataset_base / raw_path
+
+    try:
+        return candidate.resolve(strict=True)
+    except FileNotFoundError:
+        # Keep the public validator's established NOT_FOUND result for a
+        # missing in-base target while strictly resolving existing paths.
+        return candidate.resolve()
+    except (OSError, RuntimeError) as exc:
+        result.add_error(
+            "dataset",
+            f"Dataset path cannot be resolved: {exc}",
+            error_code="SECURITY_ERROR",
+        )
+        return None
+
+
+def _validate_dataset_file(
+    result: ValidationResult,
+    raw_path: Path,
+    dataset_base: Path | None,
+    field_name: str,
+) -> tuple[Path, ValidationResult] | None:
+    """Resolve one dataset path and merge its path-validation findings.
+
+    Returns ``None`` when the path could not be resolved (error already
+    recorded), otherwise the resolved path and its path-validation result.
+    """
+    # Keep the original sequence of is_absolute() calls on the path object:
+    # one before resolution, one inside resolution, one after.
+    allowed_base: Path | None = None
+    if not raw_path.is_absolute():
+        if dataset_base is None:
+            result.add_error(
+                "dataset",
+                _DATASET_BASE_REQUIRED_MSG,
+                error_code="SECURITY_ERROR",
+            )
+            return None
+        allowed_base = dataset_base
+    resolved = _resolve_dataset_path(result, raw_path, dataset_base)
+    if resolved is None:
+        return None
+    if raw_path.is_absolute():
+        allowed_base = resolved.parent
+    assert allowed_base is not None
+    path_result = Validators.validate_path(
+        resolved,
+        field_name,
+        must_exist=True,
+        must_be_file=True,
+        allowed_extensions=[".json", ".jsonl"],
+        allowed_base_dirs=[allowed_base],
+    )
+    result.errors.extend(path_result.errors)
+    result.warnings.extend(path_result.warnings)
+    return resolved, path_result
+
+
+def _validate_inline_examples(result: ValidationResult, examples: list[Any]) -> None:
+    from traigent.evaluators.base import load_inline_dataset
+
+    try:
+        load_inline_dataset(examples)
+    except ValidationException as exc:
+        result.add_error(
+            "dataset",
+            str(exc),
+            error_code="INVALID_FORMAT",
+        )
+
+
+def _validate_dataset_list(
+    result: ValidationResult,
+    dataset_path: list[Any],
+    base_dir: str | Path | None,
+) -> None:
+    from traigent.evaluators.base import EvaluationExample
+
+    if all(isinstance(item, (dict, EvaluationExample)) for item in dataset_path):
+        _validate_inline_examples(result, dataset_path)
+        return
+
+    if not all(isinstance(item, (str, Path)) for item in dataset_path):
+        result.add_error(
+            "dataset",
+            "Dataset list entries must all be file paths or inline example objects",
+            error_code="TYPE_ERROR",
+        )
+        return
+
+    dataset_base: Path | None = None
+    relative_paths = [path for path in dataset_path if not Path(path).is_absolute()]
+    if relative_paths:
+        dataset_base = _resolve_dataset_base(result, base_dir)
+        if dataset_base is None:
+            return
+
+    # Multiple datasets
+    for i, path in enumerate(dataset_path):
+        if (
+            _validate_dataset_file(result, Path(path), dataset_base, f"dataset[{i}]")
+            is None
+        ):
+            return
+
+
+def _validate_single_dataset(
+    result: ValidationResult,
+    dataset_path: str | Path,
+    base_dir: str | Path | None,
+) -> None:
+    raw_dataset_path = Path(dataset_path)
+    dataset_base: Path | None = None
+    if not raw_dataset_path.is_absolute():
+        dataset_base = _resolve_dataset_base(result, base_dir)
+        if dataset_base is None:
+            return
+
+    validated = _validate_dataset_file(
+        result, raw_dataset_path, dataset_base, "dataset"
+    )
+    if validated is None:
+        return
+    resolved_dataset_path, path_result = validated
+
+    # Try to validate content if path is valid
+    if path_result.is_valid:
+        _validate_dataset_content(result, resolved_dataset_path)
+
+
+def _validate_dataset_content(result: ValidationResult, dataset_file: Path) -> None:
+    try:
+        # Use the RESOLVED absolute path (and its parent as base_dir)
+        # so safe_open's containment guard does not re-join a relative
+        # path onto its own parent (which doubled nested segments and
+        # produced a spurious READ_ERROR for relative dataset paths).
+        with safe_open(
+            dataset_file,
+            dataset_file.parent,
+            mode="r",
+            encoding="utf-8",
+        ) as f:
+            row_count, invalid_rows = _scan_dataset_rows(result, f)
+
+            result.metadata["dataset_rows_inspected"] = row_count
+            result.metadata["dataset_invalid_rows"] = invalid_rows
+
+            if invalid_rows > MAX_REPORTED_DATASET_ROW_ERRORS:
+                result.add_error(
+                    "dataset",
+                    f"{invalid_rows} of {row_count} rows are invalid "
+                    f"(all rows were inspected; only the first "
+                    f"{MAX_REPORTED_DATASET_ROW_ERRORS} are listed above)",
+                    error_code="INVALID_FORMAT",
+                )
+
+            if row_count == 0:
+                result.add_error(
+                    "dataset",
+                    "Dataset file is empty",
+                    error_code="EMPTY_FILE",
+                )
+
+    except Exception as e:
+        result.add_error(
+            "dataset",
+            f"Could not read dataset: {str(e)}",
+            error_code="READ_ERROR",
+        )
+
+
+def _dataset_row_problem(text: str) -> tuple[str, str] | None:
+    """Return ``(message, error_code)`` for an invalid row, else ``None``."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return "Invalid JSON", "JSON_ERROR"
+
+    if not isinstance(data, dict):
+        return f"Expected a JSON object, got {type(data).__name__}", "INVALID_FORMAT"
+
+    if "input" not in data and "input_data" not in data:
+        return "Missing 'input' or 'input_data' field", "INVALID_FORMAT"
+    return None
+
+
+def _scan_dataset_rows(result: ValidationResult, lines: Any) -> tuple[int, int]:
+    """Inspect every row; list at most the first N row errors.
+
+    Returns ``(row_count, invalid_rows)``.
+    """
+    row_count = 0
+    invalid_rows = 0
+    for line_num, line in enumerate(lines, 1):
+        text = line.strip()
+        if not text:
+            # Blank lines are skipped by Dataset.from_jsonl;
+            # validation must agree with the runtime loader.
+            continue
+        row_count += 1
+
+        problem = _dataset_row_problem(text)
+        if problem is None:
+            continue
+        invalid_rows += 1
+        if invalid_rows <= MAX_REPORTED_DATASET_ROW_ERRORS:
+            message, error_code = problem
+            result.add_error(
+                f"dataset:line{line_num}",
+                message,
+                error_code=error_code,
+            )
+    return row_count, invalid_rows
 
 
 # ===== Metric Validation Functions =====
@@ -1325,6 +1352,32 @@ def _numeric_bounds_domain(
             )
 
 
+def _validate_default_dict_domain(
+    param_name: str,
+    value: Any,
+    param_values: dict[str, Any],
+) -> None:
+    """Check a default against a dict-style domain (choices or numeric bounds)."""
+    param_type = Validators._infer_param_type(param_values)
+    if param_type in {"categorical", "choice"}:
+        choices = param_values.get("choices") or param_values.get("values")
+        if isinstance(choices, (list, tuple)):
+            _validate_default_choice(param_name, value, choices)
+        return
+
+    if param_type in Validators._NUMERIC_TYPES:
+        low = param_values.get("low", param_values.get("min"))
+        high = param_values.get("high", param_values.get("max"))
+        _numeric_bounds_domain(
+            param_name,
+            value,
+            low,
+            high,
+            integer=param_type in {"int", "integer"},
+            step=None if param_values.get("log") else param_values.get("step"),
+        )
+
+
 def _validate_default_config_value(
     param_name: str,
     value: Any,
@@ -1344,24 +1397,7 @@ def _validate_default_config_value(
         return
 
     if isinstance(param_values, dict):
-        param_type = Validators._infer_param_type(param_values)
-        if param_type in {"categorical", "choice"}:
-            choices = param_values.get("choices") or param_values.get("values")
-            if isinstance(choices, (list, tuple)):
-                _validate_default_choice(param_name, value, choices)
-            return
-
-        if param_type in Validators._NUMERIC_TYPES:
-            low = param_values.get("low", param_values.get("min"))
-            high = param_values.get("high", param_values.get("max"))
-            _numeric_bounds_domain(
-                param_name,
-                value,
-                low,
-                high,
-                integer=param_type in {"int", "integer"},
-                step=None if param_values.get("log") else param_values.get("step"),
-            )
+        _validate_default_dict_domain(param_name, value, param_values)
 
 
 def _validate_default_config_against_config_space(
@@ -1411,35 +1447,38 @@ def validate_probability(value: float, name: str) -> None:
     result.raise_if_invalid()
 
 
+def _raise_api_value_error(result: ValidationResult) -> None:
+    """Raise the ValueError that API functions expect for a failed result."""
+    if not result.errors:
+        raise ValueError("Validation failed")
+    msg = result.errors[0].message
+    if "positive" in msg.lower():
+        raise ValueError("Must be positive") from None
+    if "invalid choice" in msg.lower():
+        raise ValueError("Must be one of")
+    if "expected dict" in msg.lower():
+        raise ValueError(f"Expected dict, got {msg.split('got ')[-1]}")
+    raise ValueError(msg)
+
+
 def validate_or_raise(result: ValidationResult) -> None:
     """Raise exception if validation failed (common_validators compatibility)."""
-    if not result.is_valid:
-        # Check if we need ValueError for backward compatibility (API functions)
-        import inspect
+    if result.is_valid:
+        return
+    # Check if we need ValueError for backward compatibility (API functions)
+    import inspect
 
-        frame = inspect.currentframe()
-        if (
-            frame
-            and frame.f_back
-            and frame.f_back.f_code.co_filename.endswith("api/functions.py")
-        ):
-            # API functions expect ValueError for backward compatibility
-            if result.errors:
-                first_error = result.errors[0]
-                msg = first_error.message
-                if "positive" in msg.lower():
-                    raise ValueError("Must be positive") from None
-                elif "invalid choice" in msg.lower():
-                    raise ValueError("Must be one of")
-                elif "expected dict" in msg.lower():
-                    raise ValueError(f"Expected dict, got {msg.split('got ')[-1]}")
-                else:
-                    raise ValueError(msg)
-            else:
-                raise ValueError("Validation failed")
-        else:
-            # Normal case - use ValidationError
-            result.raise_if_invalid()
+    frame = inspect.currentframe()
+    if (
+        frame
+        and frame.f_back
+        and frame.f_back.f_code.co_filename.endswith("api/functions.py")
+    ):
+        # API functions expect ValueError for backward compatibility
+        _raise_api_value_error(result)
+    else:
+        # Normal case - use ValidationError
+        result.raise_if_invalid()
 
 
 # ===== High-Level Validators =====

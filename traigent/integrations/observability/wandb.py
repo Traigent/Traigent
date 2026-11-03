@@ -22,19 +22,19 @@ except ImportError:
     class wandb:  # type: ignore[no-redef]
         @staticmethod
         def init(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when wandb is not installed: intentionally a no-op."""
 
         @staticmethod
         def log(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when wandb is not installed: intentionally a no-op."""
 
         @staticmethod
         def finish(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when wandb is not installed: intentionally a no-op."""
 
         @staticmethod
         def save(*args, **kwargs) -> None:
-            pass
+            """Stand-in used when wandb is not installed: intentionally a no-op."""
 
 
 from ...api.types import OptimizationResult, TrialResult
@@ -170,25 +170,12 @@ class TraigentWandBTracker:
         status_value = trial.status.value
         duration_value = float(trial.duration)
 
-        config_values: dict[str, Any] = {}
-        raw_config = getattr(trial, "config", None)
-        if isinstance(raw_config, Mapping):
-            config_values = dict(raw_config)
-        elif raw_config not in (None, {}):
-            logger.warning(
-                "Trial %s config is not a mapping; skipping config logging",
-                trial_id,
-            )
-
-        metric_values: dict[str, Any] = {}
-        raw_metrics = getattr(trial, "metrics", None)
-        if isinstance(raw_metrics, Mapping):
-            metric_values = dict(raw_metrics)
-        elif raw_metrics not in (None, {}):
-            logger.warning(
-                "Trial %s metrics is not a mapping; skipping metric logging",
-                trial_id,
-            )
+        config_values = self._mapping_or_warn(
+            trial_id, getattr(trial, "config", None), "config", "config"
+        )
+        metric_values = self._mapping_or_warn(
+            trial_id, getattr(trial, "metrics", None), "metrics", "metric"
+        )
 
         # Prepare trial data for logging
         trial_data = {
@@ -197,12 +184,9 @@ class TraigentWandBTracker:
         }
 
         for param_name, param_value in config_values.items():
-            if isinstance(param_value, (str, Number, bool)) or param_value is None:
-                trial_data[f"trial_{trial_number}/config/{param_name}"] = param_value
-            else:
-                trial_data[f"trial_{trial_number}/config/{param_name}"] = str(
-                    param_value
-                )
+            trial_data[f"trial_{trial_number}/config/{param_name}"] = (
+                self._loggable_param(param_value)
+            )
 
         for metric_name, metric_value in metric_values.items():
             if isinstance(metric_value, Number):
@@ -222,28 +206,13 @@ class TraigentWandBTracker:
 
         # Create trial artifact
         sanitized_config = {
-            name: (
-                value
-                if isinstance(value, (str, Number, bool)) or value is None
-                else str(value)
-            )
-            for name, value in config_values.items()
+            name: self._loggable_param(value) for name, value in config_values.items()
         }
         sanitized_metrics = {
             name: value
             for name, value in metric_values.items()
             if isinstance(value, Number)
         }
-
-        timestamp_attr = getattr(trial, "timestamp", None)
-        timestamp_iso = None
-        if timestamp_attr is not None:
-            iso_method = getattr(timestamp_attr, "isoformat", None)
-            if callable(iso_method):
-                try:
-                    timestamp_iso = iso_method()
-                except Exception:  # pragma: no cover - defensive
-                    timestamp_iso = None
 
         trial_artifact_data = {
             "trial_id": trial_id,
@@ -252,7 +221,7 @@ class TraigentWandBTracker:
             "metrics": sanitized_metrics,
             "duration": duration_value,
             "status": status_value,
-            "timestamp": timestamp_iso,
+            "timestamp": self._timestamp_iso(trial),
         }
 
         # Save trial as JSON artifact. Coerce trial_number through int() so
@@ -261,6 +230,7 @@ class TraigentWandBTracker:
         # the try block so a bad caller falls into the same graceful-failure
         # path as I/O / serialisation errors instead of crashing log_trial().
         artifact_written = False
+        trial_file: str | None = None
         try:
             trial_file = f"trial_{int(trial_number)}.json"
             with open(trial_file, "w", encoding="utf-8") as f:
@@ -274,14 +244,84 @@ class TraigentWandBTracker:
                 exc_info=False,
             )
 
-        if artifact_written:
+        if artifact_written and trial_file is not None:
             try:
                 wandb.save(trial_file)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Failed to save trial artifact to W&B: %s", exc, exc_info=False
                 )
-        Path(trial_file).unlink(missing_ok=True)
+        if trial_file is not None:
+            Path(trial_file).unlink(missing_ok=True)
+
+    @staticmethod
+    def _mapping_or_warn(
+        trial_id: Any, raw: Any, field_name: str, logging_noun: str
+    ) -> dict[str, Any]:
+        """Return ``raw`` as a dict, warning when it is a non-empty non-mapping."""
+        if isinstance(raw, Mapping):
+            return dict(raw)
+        if raw not in (None, {}):
+            logger.warning(
+                "Trial %s %s is not a mapping; skipping %s logging",
+                trial_id,
+                field_name,
+                logging_noun,
+            )
+        return {}
+
+    @staticmethod
+    def _loggable_param(value: Any) -> Any:
+        if isinstance(value, (str, Number, bool)) or value is None:
+            return value
+        return str(value)
+
+    @staticmethod
+    def _timestamp_iso(trial: Any) -> str | None:
+        timestamp_attr = getattr(trial, "timestamp", None)
+        if timestamp_attr is None:
+            return None
+        iso_method = getattr(timestamp_attr, "isoformat", None)
+        if not callable(iso_method):
+            return None
+        try:
+            return cast("str | None", iso_method())
+        except Exception:  # pragma: no cover - defensive
+            return None
+
+    @staticmethod
+    def _add_trial_statistics(
+        summary_data: dict[str, Any], result: OptimizationResult
+    ) -> None:
+        successful_trials = [
+            t
+            for t in result.trials
+            if hasattr(t, "status") and t.status.value == "completed"
+        ]
+        summary_data["optimization/successful_trials"] = len(successful_trials)
+        summary_data["optimization/success_rate"] = len(successful_trials) / len(
+            result.trials
+        )
+
+        # Calculate metric statistics
+        if not (successful_trials and result.best_metrics):
+            return
+        for metric_name in result.best_metrics.keys():
+            metric_values = [
+                t.metrics.get(metric_name, 0)
+                for t in successful_trials
+                if hasattr(t, "metrics") and metric_name in t.metrics
+            ]
+            if not metric_values:
+                continue
+            mean_val = sum(metric_values) / len(metric_values)
+            std_val = (
+                sum((x - mean_val) ** 2 for x in metric_values) / len(metric_values)
+            ) ** 0.5
+            summary_data[f"statistics/{metric_name}_mean"] = mean_val
+            summary_data[f"statistics/{metric_name}_std"] = std_val
+            summary_data[f"statistics/{metric_name}_min"] = min(metric_values)
+            summary_data[f"statistics/{metric_name}_max"] = max(metric_values)
 
     def log_optimization_result(
         self, result: OptimizationResult, dataset_path: str | None = None
@@ -314,38 +354,7 @@ class TraigentWandBTracker:
 
         # Calculate trial statistics
         if result.trials:
-            successful_trials = [
-                t
-                for t in result.trials
-                if hasattr(t, "status") and t.status.value == "completed"
-            ]
-            summary_data["optimization/successful_trials"] = len(successful_trials)
-            summary_data["optimization/success_rate"] = len(successful_trials) / len(
-                result.trials
-            )
-
-            # Calculate metric statistics
-            if successful_trials and result.best_metrics:
-                for metric_name in result.best_metrics.keys():
-                    metric_values = [
-                        t.metrics.get(metric_name, 0)
-                        for t in successful_trials
-                        if hasattr(t, "metrics") and metric_name in t.metrics
-                    ]
-                    if metric_values:
-                        mean_val = sum(metric_values) / len(metric_values)
-                        std_val = (
-                            sum((x - mean_val) ** 2 for x in metric_values)
-                            / len(metric_values)
-                        ) ** 0.5
-                        summary_data[f"statistics/{metric_name}_mean"] = mean_val
-                        summary_data[f"statistics/{metric_name}_std"] = std_val
-                        summary_data[f"statistics/{metric_name}_min"] = min(
-                            metric_values
-                        )
-                        summary_data[f"statistics/{metric_name}_max"] = max(
-                            metric_values
-                        )
+            self._add_trial_statistics(summary_data, result)
 
         # Log metadata
         if result.metadata:

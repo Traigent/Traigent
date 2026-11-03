@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/tvl_reactive_import_schema.json",
+  "title": "TvlReactiveImport",
+  "description": "Closed import receipt of a zero-native TVL Reactive Contracts import (TRAIG-101 monitor-roles amendment 2026-10-24): a contract with no native backend_v1 latency monitor creates no production requirement, so the import route returns this receipt instead of the legacy native requirement view. Tokens, digests, refs and closed enums only; never a name or free text.",
+  "definitions": {
+    "ReactiveImportReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receipt_kind",
+        "schema_version",
+        "contract_digest",
+        "policy_revision_ref",
+        "environment_ref",
+        "created",
+        "monitors"
+      ],
+      "properties": {
+        "receipt_kind": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "const": "reactive_import",
+          "description": "Discriminator of the oneOf: present only on the receipt, never on the legacy native response."
+        },
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "contract_digest": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+          "description": "Digest of the imported compiled contract."
+        },
+        "policy_revision_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/PolicyRevisionRef"
+        },
+        "environment_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Opaque environment token (hosted token). The customer-chosen environment name never crosses this contract; the portal resolves the name through the existing production-requirements API."
+        },
+        "created": {
+          "x-content-class": "closed_enum",
+          "type": "boolean",
+          "description": "true for HTTP 201 (a new import row: first import, new digest with the same semantics, or a policy edit); false for HTTP 200 (exact replay of an existing import)."
+        },
+        "monitors": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "./tvl_reactive_common_schema.json#/definitions/MonitorRoleEntry"
+          },
+          "description": "Every monitor of the contract as {monitor, role}. A zero-native contract has no native role."
+        }
+      },
+      "description": "Receipt of a zero-native reactive contract import."
+    }
+  }
+}

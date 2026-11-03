@@ -42,6 +42,40 @@ class PrivacyOperations:
         """
         self.client = client
 
+    def _store_active_session(
+        self, session_id: str, session: OptimizationSession
+    ) -> None:
+        with self.client._active_sessions_lock:
+            if len(self.client._active_sessions) >= self.client._max_active_sessions:
+                # Find and remove the oldest completed session
+                oldest_session_id = None
+                oldest_time: datetime = datetime.max
+
+                for sid, sess in list(self.client._active_sessions.items()):
+                    if sess.status in [
+                        OptimizationSessionStatus.COMPLETED,
+                        OptimizationSessionStatus.FAILED,
+                    ]:
+                        if sess.created_at < oldest_time:
+                            oldest_time = sess.created_at
+                            oldest_session_id = sid
+
+                # If no completed sessions, remove the oldest active one
+                if oldest_session_id is None and self.client._active_sessions:
+                    oldest_session_id = min(
+                        self.client._active_sessions.keys(),
+                        key=lambda s: self.client._active_sessions[s].created_at,
+                    )
+
+                if oldest_session_id:
+                    del self.client._active_sessions[oldest_session_id]
+                    logger.debug(
+                        "Removed session %s to stay within active session limit",
+                        oldest_session_id,
+                    )
+
+            self.client._active_sessions[session_id] = session
+
     async def create_privacy_optimization_session(
         self,
         function_name: str,
@@ -185,39 +219,7 @@ class PrivacyOperations:
                 optimization_strategy={"mode": "local_execution"},
             )
 
-            with self.client._active_sessions_lock:
-                if (
-                    len(self.client._active_sessions)
-                    >= self.client._max_active_sessions
-                ):
-                    # Find and remove the oldest completed session
-                    oldest_session_id = None
-                    oldest_time: datetime = datetime.max
-
-                    for sid, sess in list(self.client._active_sessions.items()):
-                        if sess.status in [
-                            OptimizationSessionStatus.COMPLETED,
-                            OptimizationSessionStatus.FAILED,
-                        ]:
-                            if sess.created_at < oldest_time:
-                                oldest_time = sess.created_at
-                                oldest_session_id = sid
-
-                    # If no completed sessions, remove the oldest active one
-                    if oldest_session_id is None and self.client._active_sessions:
-                        oldest_session_id = min(
-                            self.client._active_sessions.keys(),
-                            key=lambda s: self.client._active_sessions[s].created_at,
-                        )
-
-                    if oldest_session_id:
-                        del self.client._active_sessions[oldest_session_id]
-                        logger.debug(
-                            "Removed session %s to stay within active session limit",
-                            oldest_session_id,
-                        )
-
-                self.client._active_sessions[session_id] = session
+            PrivacyOperations._store_active_session(self, session_id, session)
 
             logger.info(
                 f"Created privacy session: {session_id} -> {experiment_id}/{experiment_run_id}"

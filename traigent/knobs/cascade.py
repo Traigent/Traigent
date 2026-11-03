@@ -198,20 +198,7 @@ class CascadePolicy:
                     f"but produced {len(samples)}"
                 )
             is_last = index == len(self.stages) - 1
-            if stage.key_fn is None:
-                vote = None
-                representative = samples[0] if samples else None
-            else:
-                keys = [stage.key_fn(sample) for sample in samples]
-                vote = vote_over(keys, len(samples))
-                representative = next(
-                    (
-                        sample
-                        for sample, key in zip(samples, keys, strict=False)
-                        if key == vote.top_key
-                    ),
-                    samples[0] if samples else None,
-                )
+            vote, representative = _stage_vote(stage, samples)
             stage_votes.append(vote)
             if is_last:
                 return CascadeStep(
@@ -242,3 +229,21 @@ class CascadePolicy:
                 stage_votes=tuple(stage_votes),
             )
         raise AssertionError("unreachable: the last stage always returns")
+
+
+def _stage_vote(stage: StageSpec, samples: list[Any]) -> tuple[VoteStats | None, Any]:
+    if stage.key_fn is None:
+        vote = None
+        representative = samples[0] if samples else None
+    else:
+        keys = [stage.key_fn(sample) for sample in samples]
+        vote = vote_over(keys, len(samples))
+        representative = next(
+            (
+                sample
+                for sample, key in zip(samples, keys, strict=False)
+                if key == vote.top_key
+            ),
+            samples[0] if samples else None,
+        )
+    return vote, representative

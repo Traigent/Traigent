@@ -273,30 +273,8 @@ class LocalExecutionAdapter(ExecutionAdapter):
         Supports dict with 'examples' key or Dataset from core evaluators.
         Raises ValueError with a clear message on schema errors.
         """
-        examples: list[dict[str, Any]] = []
         if isinstance(dataset, dict):
-            raw = dataset.get("examples")
-            if raw is None or not isinstance(raw, list):
-                raise ValueError(
-                    "dataset['examples'] must be a non-empty list"
-                ) from None
-            for idx, ex in enumerate(raw):
-                if not isinstance(ex, dict):
-                    raise ValueError(f"example at index {idx} must be a dict")
-                if "input" not in ex:
-                    raise ValueError(f"example at index {idx} missing 'input'")
-                meta = ex.get("metadata") or {}
-                if not isinstance(meta, dict):
-                    raise ValueError(f"example at index {idx} has non-dict 'metadata'")
-                examples.append(
-                    {
-                        "id": ex.get("id", idx),
-                        "input": ex["input"],
-                        "expected_output": ex.get("expected_output"),
-                        "metadata": meta,
-                    }
-                )
-            return examples
+            return self._normalize_dict_examples(dataset)
 
         # Lazy import Dataset to avoid hard dependency
         try:
@@ -305,21 +283,52 @@ class LocalExecutionAdapter(ExecutionAdapter):
             _Dataset = None  # type: ignore
 
         if _Dataset is not None and isinstance(dataset, _Dataset):
-            for idx, ex in enumerate(dataset.examples):
-                meta = ex.metadata or {}
-                if not isinstance(meta, dict):
-                    raise ValueError(f"example at index {idx} has non-dict metadata")
-                examples.append(
-                    {
-                        "id": meta.get("example_id", idx),
-                        "input": ex.input_data,
-                        "expected_output": ex.expected_output,
-                        "metadata": meta,
-                    }
-                )
-            return examples
+            return self._normalize_dataset_examples(dataset)
 
         raise TypeError("dataset must be a dict with 'examples' or a Dataset instance")
+
+    @staticmethod
+    def _normalize_dict_examples(dataset: dict[str, Any]) -> list[dict[str, Any]]:
+        """Validate and normalize the ``examples`` list of a dict dataset."""
+        raw = dataset.get("examples")
+        if raw is None or not isinstance(raw, list):
+            raise ValueError("dataset['examples'] must be a non-empty list") from None
+        examples: list[dict[str, Any]] = []
+        for idx, ex in enumerate(raw):
+            if not isinstance(ex, dict):
+                raise ValueError(f"example at index {idx} must be a dict")
+            if "input" not in ex:
+                raise ValueError(f"example at index {idx} missing 'input'")
+            meta = ex.get("metadata") or {}
+            if not isinstance(meta, dict):
+                raise ValueError(f"example at index {idx} has non-dict 'metadata'")
+            examples.append(
+                {
+                    "id": ex.get("id", idx),
+                    "input": ex["input"],
+                    "expected_output": ex.get("expected_output"),
+                    "metadata": meta,
+                }
+            )
+        return examples
+
+    @staticmethod
+    def _normalize_dataset_examples(dataset: Any) -> list[dict[str, Any]]:
+        """Normalize the examples of a ``Dataset`` instance."""
+        examples: list[dict[str, Any]] = []
+        for idx, ex in enumerate(dataset.examples):
+            meta = ex.metadata or {}
+            if not isinstance(meta, dict):
+                raise ValueError(f"example at index {idx} has non-dict metadata")
+            examples.append(
+                {
+                    "id": meta.get("example_id", idx),
+                    "input": ex.input_data,
+                    "expected_output": ex.expected_output,
+                    "metadata": meta,
+                }
+            )
+        return examples
 
     def _sanitize_agent_spec(self, agent_spec: dict[str, Any]) -> dict[str, Any]:
         """Redact potentially sensitive fields in agent_spec.

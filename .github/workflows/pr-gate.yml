@@ -513,7 +513,7 @@ jobs:
     # The tests in tests/unit/runtime that need the real TVL compiler skip via
     # importorskip when the `runtime-tvl` extra is absent, which is how the
     # `unit` job runs them. This job installs the extra and fails if any of them
-    # skips. tvl-spec is a public git pin, so no token is needed and fork PRs run
+    # skips. tvl-spec is a public PyPI pin (==1.4.0), so no token is needed and fork PRs run
     # it like `collection`.
     if: ${{ !cancelled() && needs.changes.outputs.runtime_tvl_changed == 'true' && needs.preflight.result == 'success' }}
     runs-on: ubuntu-latest
@@ -540,6 +540,9 @@ jobs:
           pytest tests/unit/runtime/test_real_compiler.py \
             tests/unit/runtime/test_canary.py \
             tests/unit/runtime/test_hosted_subset.py \
+            tests/unit/runtime/test_reactive_upload.py \
+            tests/unit/runtime/test_local_guards_compiler.py \
+            tests/unit/runtime/test_promotion_evidence.py \
             -q --tb=short -rs --junitxml=runtime-tvl-junit.xml
       - name: Fail if any runtime-tvl test was skipped
         # importorskip turns a missing extra into `skipped`, which pytest reports

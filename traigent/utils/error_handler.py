@@ -171,6 +171,11 @@ class OfflineModeError(TraigentError):
         )
 
 
+_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB = (
+    "https://github.com/Traigent/Traigent#troubleshooting"
+)
+
+
 class ErrorHandler:
     """Intelligent error handler that provides helpful fixes."""
 
@@ -267,7 +272,7 @@ class ErrorHandler:
             raise TraigentError(
                 message="API authentication failed",
                 fix="Check your API keys in .env file",
-                docs_link="https://github.com/Traigent/Traigent#troubleshooting",
+                docs_link=_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB,
             ) from error
 
     @classmethod
@@ -283,13 +288,13 @@ class ErrorHandler:
                 message="Cannot connect to Traigent backend",
                 fix="1. Start your Traigent backend service\n"
                 "   2. Or use offline mode: TRAIGENT_OFFLINE_MODE=true",
-                docs_link="https://github.com/Traigent/Traigent#troubleshooting",
+                docs_link=_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB,
             ) from error
         else:
             raise TraigentError(
                 message="Connection failed",
                 fix="Check your internet connection and firewall settings",
-                docs_link="https://github.com/Traigent/Traigent#troubleshooting",
+                docs_link=_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB,
             ) from error
 
     @classmethod
@@ -300,7 +305,7 @@ class ErrorHandler:
             fix="1. Check file permissions\n"
             "   2. Run in virtual environment\n"
             "   3. Use --user flag: pip install --user",
-            docs_link="https://github.com/Traigent/Traigent#troubleshooting",
+            docs_link=_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB,
         ) from error
 
     @classmethod
@@ -324,7 +329,7 @@ class ErrorHandler:
             "   2. Verify all dependencies: python scripts/verify_installation.py\n"
             "   3. Try mock mode: TRAIGENT_MOCK_LLM=true\n"
             "   4. Report issue: https://github.com/Traigent/Traigent/issues",
-            docs_link="https://github.com/Traigent/Traigent#troubleshooting",
+            docs_link=_HTTPS_GITHUB_COM_TRAIGENT_TRAIGENT_TROUB,
         ) from error
 
 

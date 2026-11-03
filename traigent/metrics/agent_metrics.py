@@ -292,6 +292,25 @@ def compute_per_agent_metrics(
     return result
 
 
+def _aggregate_metric_values(
+    result: dict[str, float],
+    name: str,
+    values: list[float],
+    aggregation: str,
+) -> None:
+    """Reduce one metric's values into ``result`` using ``aggregation``."""
+    if aggregation == "sum":
+        result[f"total_{name}"] = sum(values)
+    elif aggregation == "mean":
+        result[f"mean_{name}"] = sum(values) / len(values) if values else 0.0
+    elif aggregation == "max":
+        result[f"max_{name}"] = max(values) if values else 0.0
+    elif aggregation == "min":
+        result[f"min_{name}"] = min(values) if values else 0.0
+    else:
+        raise ValueError(f"Unknown aggregation method: {aggregation}")
+
+
 def aggregate_agent_metrics(
     per_agent_metrics: Mapping[str, Mapping[str, float]],
     *,
@@ -329,16 +348,7 @@ def aggregate_agent_metrics(
     # Aggregate
     result: dict[str, float] = {}
     for name, values in metric_values.items():
-        if aggregation == "sum":
-            result[f"total_{name}"] = sum(values)
-        elif aggregation == "mean":
-            result[f"mean_{name}"] = sum(values) / len(values) if values else 0.0
-        elif aggregation == "max":
-            result[f"max_{name}"] = max(values) if values else 0.0
-        elif aggregation == "min":
-            result[f"min_{name}"] = min(values) if values else 0.0
-        else:
-            raise ValueError(f"Unknown aggregation method: {aggregation}")
+        _aggregate_metric_values(result, name, values, aggregation)
 
     return result
 

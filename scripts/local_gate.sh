@@ -172,17 +172,20 @@ if ! skip schema-types; then
     # scripts/ci/schema-pin.txt is the single source of truth. If the checkout
     # is not at the pin, export the pinned commit to a temp dir (no mutation of
     # the checkout); if the pin is unreadable or absent, fail closed.
+    # Run schema-repo git calls without the hook-exported GIT_* variables, which
+    # would otherwise point git at THIS repo instead of the schema checkout.
+    schema_git=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES git)
     pin_sha="$(grep -oE '@[0-9a-f]{40}$' scripts/ci/schema-pin.txt 2>/dev/null | tr -d '@' | head -n1)"
     if [[ -z "$pin_sha" ]]; then
       echo "  ❌ cannot read the TraigentSchema pin from scripts/ci/schema-pin.txt"
       FAIL=1
       schema_repo=""
-    elif git -C "$schema_repo" cat-file -e "${pin_sha}^{commit}" 2>/dev/null; then
+    elif "${schema_git[@]}" -C "$schema_repo" cat-file -e "${pin_sha}^{commit}" 2>/dev/null; then
       # Always export: the generator reads working-tree files, so a dirty or
       # untracked checkout must never influence the verdict.
       schema_pin_dir="$(mktemp -d)"
       trap 'rm -rf "$schema_pin_dir"' EXIT
-      if git -C "$schema_repo" archive "$pin_sha" | tar -x -C "$schema_pin_dir"; then
+      if "${schema_git[@]}" -C "$schema_repo" archive "$pin_sha" | tar -x -C "$schema_pin_dir"; then
         echo "  • using TraigentSchema@${pin_sha:0:12} exported to a temp dir (checkout working tree is ignored)"
         schema_repo="$schema_pin_dir"
       else

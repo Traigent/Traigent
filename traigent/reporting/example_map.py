@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import UTC, datetime
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -99,6 +99,68 @@ def resolve_map_target(session: Mapping[str, Any], target: str | None = None) ->
     return "connected" if (session_meta or {}).get("backend_session") else "synced"
 
 
+def _check_measure_ids(measures: list[Any]) -> None:
+    """Refuse any measure whose example id is not one of the SDK's own shapes."""
+    for measure in measures:
+        raw = measure.get("example_id") if isinstance(measure, Mapping) else None
+        if not isinstance(raw, str) or _WIRE_ID_RE.fullmatch(raw) is None:
+            raise _malformed("a measure has an unrecognised example id")
+
+
+def _record_wire_row(
+    found: dict[str, int], wire_id: str, subset: list[int] | None
+) -> None:
+    """Map one wire id to its dataset row, refusing conflicting rows."""
+    match = _WIRE_ID_RE.fullmatch(wire_id)
+    position = int(match.group(1) or match.group(2)) if match else -1
+    if subset is not None:
+        if position >= len(subset):
+            raise _malformed("a measure position is outside its trial subset")
+        row = subset[position]
+    else:
+        row = position
+    if found.setdefault(wire_id, row) != row:
+        raise ValidationError(
+            "Run artifact maps one example id to different dataset rows "
+            "in different trials (reordered subsets); a map cannot "
+            "represent that"
+        )
+
+
+def _trial_wire_ids(
+    trial: Any, connected: bool, assume_full_dataset: bool
+) -> tuple[list[str], list[int] | None] | None:
+    """Validate one trial and return its wire ids and subset (``None`` = skip)."""
+    from traigent.cloud.sync_manager import SyncManager
+
+    if not isinstance(trial, Mapping):
+        raise _malformed("a trial is not an object")
+    metadata = trial.get("metadata")
+    if metadata is None:
+        return None
+    if not isinstance(metadata, Mapping):
+        raise _malformed("trial metadata is not an object")
+    measures = metadata.get("measures")
+    if measures is None:
+        return None
+    if not isinstance(measures, list):
+        raise _malformed("trial measures is not a list")
+    _check_measure_ids(measures)
+    if connected and _local_marker(metadata).get("privacy_mode") is True:
+        raise ValidationError(
+            "This run was submitted in privacy mode, so the portal has no "
+            "per-example ids; use --target synced only if it was later synced"
+        )
+    subset = _trial_subset(metadata, assume_full_dataset)
+    if connected:
+        return [m["example_id"] for m in measures], subset
+    if not SyncManager.upload_config_for_trial(trial.get("config"), metadata):
+        return None  # `traigent sync` skips trials with an empty config
+    return [
+        m["example_id"] for m in SyncManager._content_free_example_measures(metadata)
+    ], subset
+
+
 def wire_rows_from_session(
     session: Mapping[str, Any],
     target: str | None = None,
@@ -131,8 +193,6 @@ def wire_rows_from_session(
     that run never posted per-example ids. Sessions recorded before this field
     existed carry no such marker and behave as before.
     """
-    from traigent.cloud.sync_manager import SyncManager
-
     trials = session.get("trials")
     if not isinstance(trials, list):
         raise _malformed("'trials' is missing or not a list")
@@ -140,55 +200,12 @@ def wire_rows_from_session(
 
     found: dict[str, int] = {}
     for trial in trials:
-        if not isinstance(trial, Mapping):
-            raise _malformed("a trial is not an object")
-        metadata = trial.get("metadata")
-        if metadata is None:
+        resolved = _trial_wire_ids(trial, connected, assume_full_dataset)
+        if resolved is None:
             continue
-        if not isinstance(metadata, Mapping):
-            raise _malformed("trial metadata is not an object")
-        measures = metadata.get("measures")
-        if measures is None:
-            continue
-        if not isinstance(measures, list):
-            raise _malformed("trial measures is not a list")
-        for measure in measures:
-            raw = measure.get("example_id") if isinstance(measure, Mapping) else None
-            if not isinstance(raw, str) or _WIRE_ID_RE.fullmatch(raw) is None:
-                raise _malformed("a measure has an unrecognised example id")
-        if connected and _local_marker(metadata).get("privacy_mode") is True:
-            raise ValidationError(
-                "This run was submitted in privacy mode, so the portal has no "
-                "per-example ids; use --target synced only if it was later synced"
-            )
-        subset = _trial_subset(metadata, assume_full_dataset)
-        if not connected and not SyncManager.upload_config_for_trial(
-            trial.get("config"), metadata
-        ):
-            continue  # `traigent sync` skips trials with an empty config
-        ids = (
-            [m["example_id"] for m in measures]
-            if connected
-            else [
-                m["example_id"]
-                for m in SyncManager._content_free_example_measures(metadata)
-            ]
-        )
+        ids, subset = resolved
         for wire_id in ids:
-            match = _WIRE_ID_RE.fullmatch(wire_id)
-            position = int(match.group(1) or match.group(2)) if match else -1
-            if subset is not None:
-                if position >= len(subset):
-                    raise _malformed("a measure position is outside its trial subset")
-                row = subset[position]
-            else:
-                row = position
-            if found.setdefault(wire_id, row) != row:
-                raise ValidationError(
-                    "Run artifact maps one example id to different dataset rows "
-                    "in different trials (reordered subsets); a map cannot "
-                    "represent that"
-                )
+            _record_wire_row(found, wire_id, subset)
     if not found:
         raise ValidationError("Run artifact contains no per-example measures")
     return found

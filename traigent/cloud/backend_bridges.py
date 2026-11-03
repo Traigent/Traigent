@@ -660,6 +660,25 @@ Response:"""
 
         return {"model_parameters_id": str(uuid.uuid4()), **model_params}
 
+    def _config_param_candidate(
+        self, config_value: Any, allow_scalar_config: bool
+    ) -> tuple[bool, Any]:
+        if isinstance(config_value, (list, tuple, set)) and not config_value:
+            config_value = None
+
+        if config_value is not None:
+            candidate = self._first_config_value(config_value)
+            if candidate is not None:
+                config_is_sequence = isinstance(config_value, (list, tuple, set))
+                if (
+                    allow_scalar_config
+                    or config_is_sequence
+                    or isinstance(config_value, dict)
+                ):
+                    return True, candidate
+
+        return False, None
+
     def _extract_model_param(
         self,
         configuration_space: dict[str, Any],
@@ -684,19 +703,11 @@ Response:"""
                     return None
                 break
 
-        if isinstance(config_value, (list, tuple, set)) and not config_value:
-            config_value = None
-
-        if config_value is not None:
-            candidate = self._first_config_value(config_value)
-            if candidate is not None:
-                config_is_sequence = isinstance(config_value, (list, tuple, set))
-                if (
-                    allow_scalar_config
-                    or config_is_sequence
-                    or isinstance(config_value, dict)
-                ):
-                    return candidate
+        found, candidate = SDKBackendBridge._config_param_candidate(
+            self, config_value, allow_scalar_config
+        )
+        if found:
+            return candidate
 
         for candidate_key in keys_to_check:
             if candidate_key in agent_defaults:
@@ -818,6 +829,34 @@ Response:"""
 
         return measures
 
+    @staticmethod
+    def _add_example_characteristics(
+        characteristics: dict[str, Any], examples: Any
+    ) -> None:
+        """Add example count, sampled types and structural consistency."""
+        characteristics["example_count"] = len(examples)
+
+        # Sample first example to determine types
+        first_example = examples[0]
+        input_type: str | None = None
+        if hasattr(first_example, "input_data"):
+            input_type = type(first_example.input_data).__name__
+            characteristics["input_type"] = input_type
+
+        if hasattr(first_example, "expected_output"):
+            output_type = type(first_example.expected_output).__name__
+            characteristics["output_type"] = output_type
+
+        # Check if all examples have same structure (for consistency)
+        if len(examples) > 1:
+            # Sample a few examples to check consistency
+            sample_size = min(5, len(examples))
+            characteristics["structure_consistent"] = all(
+                type(examples[i].input_data).__name__ == input_type
+                for i in range(1, sample_size)
+                if hasattr(examples[i], "input_data")
+            )
+
     def _extract_dataset_characteristics(self, dataset: Dataset) -> dict[str, Any]:
         """Extract key characteristics from dataset for consistent hashing.
 
@@ -834,30 +873,7 @@ Response:"""
             characteristics["name"] = dataset.name
 
         if hasattr(dataset, "examples") and dataset.examples:
-            characteristics["example_count"] = len(dataset.examples)
-
-            # Sample first example to determine types
-            first_example = dataset.examples[0]
-            if hasattr(first_example, "input_data"):
-                input_type = type(first_example.input_data).__name__
-                characteristics["input_type"] = input_type
-
-            if hasattr(first_example, "expected_output"):
-                output_type = type(first_example.expected_output).__name__
-                characteristics["output_type"] = output_type
-
-            # Check if all examples have same structure (for consistency)
-            if len(dataset.examples) > 1:
-                # Sample a few examples to check consistency
-                sample_size = min(5, len(dataset.examples))
-                consistent = True
-                for i in range(1, sample_size):
-                    example = dataset.examples[i]
-                    if hasattr(example, "input_data"):
-                        if type(example.input_data).__name__ != input_type:
-                            consistent = False
-                            break
-                characteristics["structure_consistent"] = consistent
+            self._add_example_characteristics(characteristics, dataset.examples)
 
         # Add dataset metadata if available
         if hasattr(dataset, "metadata") and dataset.metadata:

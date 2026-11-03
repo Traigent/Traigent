@@ -288,6 +288,14 @@ def _validate_hybrid_base_url(base_url: str) -> str:
     except ValueError:
         host_ip = None
 
+    _validate_hybrid_host_ip(host_ip)
+
+    return candidate.rstrip("/")
+
+
+def _validate_hybrid_host_ip(
+    host_ip: ipaddress.IPv4Address | ipaddress.IPv6Address | None,
+) -> None:
     if host_ip is not None:
         if str(host_ip) in _METADATA_SERVICE_IPS:
             raise ValueError(
@@ -295,8 +303,6 @@ def _validate_hybrid_base_url(base_url: str) -> str:
             )
         if host_ip.is_link_local:
             raise ValueError("Hybrid transport base_url targets a link-local address")
-
-    return candidate.rstrip("/")
 
 
 def create_transport(

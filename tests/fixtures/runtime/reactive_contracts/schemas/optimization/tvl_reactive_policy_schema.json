@@ -1,0 +1,756 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/tvl_reactive_policy_schema.json",
+  "title": "TvlReactivePolicy",
+  "description": "Closed policy-read contract of the TVL 1.4 reactive layer (TRAIG-101 follow-up to S1): what a P-human portal read returns for the declared reactive policy of one agent. Registered under the same reviewed closed-contract expansion as the S1 routes (GNFR-PRIV-002(f); docs/tvl-reactive-contracts.md).",
+  "definitions": {
+    "GuardDeclaration": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "monitor",
+            "state"
+          ],
+          "properties": {
+            "monitor": {
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+            },
+            "state": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "episode_open"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rule",
+            "state"
+          ],
+          "properties": {
+            "rule": {
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+            },
+            "state": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "attempt_open"
+            }
+          }
+        }
+      ],
+      "description": "One declared guard of a rule: an episode_open guard over a monitor token, or an attempt_open guard over an optimize rule token of the same response. Tokens only."
+    },
+    "TriggerDeclaration": {
+      "description": "What a rule reacts to. A monitor trigger carries `hours` iff its event is episode_open_for or unknown_for; an outcome trigger names an optimize rule of the same response. Only supported triggers exist here: recovery_* and burn_breached are refused at import; unit_violation is accepted only as the trigger of a local action (block_action, halt_unit), which must carry on_check_error.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "monitor",
+            "event"
+          ],
+          "properties": {
+            "monitor": {
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+            },
+            "event": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "enum": [
+                "episode_opened",
+                "episode_continued",
+                "episode_open_for",
+                "episode_resolved",
+                "episode_withdrawn",
+                "stale",
+                "live_again",
+                "unknown_for",
+                "unit_violation"
+              ]
+            },
+            "hours": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000000,
+              "description": "Present iff event is episode_open_for or unknown_for."
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "event": {
+                    "x-content-class": "closed_enum",
+                    "enum": [
+                      "episode_open_for",
+                      "unknown_for"
+                    ]
+                  }
+                },
+                "required": [
+                  "event"
+                ]
+              },
+              "then": {
+                "required": [
+                  "hours"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "hours"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rule",
+            "event"
+          ],
+          "properties": {
+            "rule": {
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+            },
+            "event": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "enum": [
+                "optimize_no_candidate",
+                "optimize_failed",
+                "deploy_refused",
+                "deploy_failed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "RuleDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "response",
+        "rule",
+        "position",
+        "trigger",
+        "action",
+        "approval",
+        "executes",
+        "only_while",
+        "unless"
+      ],
+      "properties": {
+        "response": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Hosted token of the response that owns the rule."
+        },
+        "rule": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "position": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63,
+          "description": "Zero-based position of the rule within its response; rules are returned in declared order (responses in declared order, then position)."
+        },
+        "trigger": {
+          "$ref": "#/definitions/TriggerDeclaration"
+        },
+        "action": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "notify",
+            "open_next_step",
+            "optimize",
+            "block_action",
+            "halt_unit"
+          ],
+          "description": "Supported actions only; rollback, throttle, degrade and suspend are refused at import."
+        },
+        "approval": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "none",
+            "human"
+          ],
+          "description": "No `standing` approval exists in this contract. Approval is recorded per effect."
+        },
+        "deploy": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "never",
+            "if_promoted"
+          ],
+          "description": "Present iff action is optimize."
+        },
+        "executes": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "server",
+            "sdk_local"
+          ],
+          "description": "sdk_local iff action is block_action or halt_unit: the guard runs inside the customer process and Traigent neither executes nor observes it; every other action is server."
+        },
+        "only_while": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/definitions/GuardDeclaration"
+          }
+        },
+        "unless": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/definitions/GuardDeclaration"
+          }
+        },
+        "severity": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ],
+          "description": "Present only for action notify."
+        },
+        "on_check_error": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "block",
+            "allow"
+          ],
+          "description": "Present only for an sdk_local action."
+        },
+        "repeat_after_hours": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000,
+          "description": "Never on an outcome trigger."
+        },
+        "max_repeats": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "description": "Never on an outcome trigger."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "x-content-class": "closed_enum",
+                "enum": [
+                  "optimize"
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "deploy"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "deploy"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "x-content-class": "closed_enum",
+                "enum": [
+                  "block_action",
+                  "halt_unit"
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "executes": {
+                "x-content-class": "closed_enum",
+                "type": "string",
+                "const": "sdk_local"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "executes": {
+                "x-content-class": "closed_enum",
+                "type": "string",
+                "const": "server"
+              }
+            },
+            "not": {
+              "required": [
+                "on_check_error"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "x-content-class": "closed_enum",
+                "enum": [
+                  "notify"
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "severity"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "only_while": {
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "only_while"
+                ]
+              },
+              {
+                "properties": {
+                  "unless": {
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "unless"
+                ]
+              },
+              {
+                "properties": {
+                  "trigger": {
+                    "required": [
+                      "rule"
+                    ]
+                  }
+                },
+                "required": [
+                  "trigger"
+                ]
+              },
+              {
+                "properties": {
+                  "trigger": {
+                    "properties": {
+                      "event": {
+                        "const": "unknown_for"
+                      }
+                    },
+                    "required": [
+                      "event"
+                    ]
+                  }
+                },
+                "required": [
+                  "trigger"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "x-content-class": "closed_enum",
+                "const": "notify"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "x-content-class": "closed_enum",
+                "enum": [
+                  "optimize"
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "approval": {
+                "x-content-class": "closed_enum",
+                "const": "human"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "approval": {
+                "x-content-class": "closed_enum",
+                "const": "none"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "x-content-class": "closed_enum",
+                "enum": [
+                  "block_action",
+                  "halt_unit"
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "on_check_error"
+            ],
+            "properties": {
+              "trigger": {
+                "required": [
+                  "monitor",
+                  "event"
+                ],
+                "properties": {
+                  "event": {
+                    "x-content-class": "closed_enum",
+                    "const": "unit_violation"
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "trigger": {
+                "not": {
+                  "properties": {
+                    "event": {
+                      "const": "unit_violation"
+                    }
+                  },
+                  "required": [
+                    "event"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "trigger": {
+                "required": [
+                  "rule"
+                ]
+              }
+            },
+            "required": [
+              "trigger"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "repeat_after_hours"
+                  ]
+                },
+                {
+                  "required": [
+                    "max_repeats"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "max_repeats"
+            ]
+          },
+          "then": {
+            "required": [
+              "repeat_after_hours"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "repeat_after_hours"
+            ]
+          },
+          "then": {
+            "if": {
+              "properties": {
+                "action": {
+                  "x-content-class": "closed_enum",
+                  "enum": [
+                    "notify"
+                  ]
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "else": {
+              "required": [
+                "max_repeats"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "Declaration of one reactive rule as stored in the current policy revision. Identifiers are hosted tokens; no human-readable name exists on the wire. Conditional fields follow the action: deploy iff optimize; severity only on notify; on_check_error only on a local action; executes is sdk_local iff the action is block_action or halt_unit; an outcome trigger, an unknown_for trigger and any non-empty guard list are valid only with notify; a local action requires a unit_violation monitor trigger and on_check_error, and unit_violation is valid only for a local action; optimize requires approval human and every other supported action approval none; repeat fields are refused on an outcome trigger; max_repeats requires repeat_after_hours; a non-notify action with repeat_after_hours requires max_repeats."
+    },
+    "PromotionMonitorRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "monitor",
+        "requirement"
+      ],
+      "properties": {
+        "monitor": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Promotion-phase monitor token."
+        },
+        "requirement": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Requirement token the promotion monitor observes."
+        }
+      },
+      "description": "One promotion monitor a promotion gate consults."
+    },
+    "PromotionGateDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "response",
+        "rule",
+        "runtime_monitor",
+        "promotion_monitors",
+        "required_result"
+      ],
+      "properties": {
+        "response": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "rule": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "The optimize rule with deploy if_promoted that this gate guards."
+        },
+        "runtime_monitor": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Runtime monitor the optimize rule triggers on."
+        },
+        "promotion_monitors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/definitions/PromotionMonitorRequirement"
+          }
+        },
+        "required_result": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "const": "Promote"
+        }
+      },
+      "description": "Declared promotion gate of one optimize rule with deploy if_promoted, bound to the contract_digest returned beside it. It describes the gate only; candidate gate results remain occurrence-specific attempt records, and no current verdict is derivable from it."
+    },
+    "MonitorControlLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "monitor"
+      ],
+      "properties": {
+        "monitor": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "max_active_obligations": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000,
+          "description": "Declared limit only. Omitted when the contract declares none; never a fabricated zero or unlimited default. The compiler's lower bound is 1; the 1000000000 maximum is this contract's cap."
+        },
+        "max_tracked_correlations": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000,
+          "description": "Declared limit only. Same rules as max_active_obligations."
+        }
+      },
+      "description": "Declared monitor control caps. Distinct from the native statistical thresholds and window settings (which stay in production-status effective_profile) and from human grant ceilings."
+    },
+    "ReactivePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy_revision_ref",
+        "contract_digest",
+        "rules",
+        "promotion_gates",
+        "control_limits",
+        "monitors"
+      ],
+      "properties": {
+        "policy_revision_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/PolicyRevisionRef"
+        },
+        "contract_digest": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+          "description": "Digest of the current contract record the declarations and gates are bound to."
+        },
+        "rules": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/definitions/RuleDeclaration"
+          },
+          "description": "All rules in declared order. The importer caps every array at 64 entries, so 64 responses of 64 rules bound the flattened list. An installed policy with no rules has []."
+        },
+        "promotion_gates": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/definitions/PromotionGateDeclaration"
+          }
+        },
+        "control_limits": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/definitions/MonitorControlLimits"
+          }
+        },
+        "monitors": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "./tvl_reactive_common_schema.json#/definitions/MonitorRoleEntry"
+          },
+          "description": "Every monitor of the contract with its explicit closed role (native | customer | liveness | promotion). A zero-native contract has no native entry."
+        }
+      },
+      "description": "The current reactive policy of an agent: declarations only."
+    },
+    "PolicyReadResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "agent_ref",
+        "environments"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "agent_ref": {
+          "$ref": "../labels/label_common_schema.json#/definitions/AgentRef",
+          "description": "Server-issued opaque reference for the authorized agent, generated from the tenant and project of the authenticated request. The portal uses it unchanged for every reactive route and never constructs it."
+        },
+        "environments": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/definitions/EnvironmentPolicy"
+          },
+          "description": "One entry per environment that has been imported or declared for the agent; each environment_ref appears at most once (not expressible in JSON Schema, enforced by the Backend). Empty when the agent has no environment."
+        }
+      },
+      "description": "Closed response of the authoritative policy read (TRAIG-101): the declared rules (including rules that never fired and local guards), promotion gates and monitor control limits of an agent's current reactive policy in each environment. Declarations only: no human-readable names, no occurrence-specific records, no verdicts. Per-environment: a list of {environment_ref, policy|null} (TRAIG-101 env-scope amendment 2026-10-24)."
+    },
+    "EnvironmentPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment_ref",
+        "policy"
+      ],
+      "properties": {
+        "environment_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Opaque environment token (hosted token). The customer-chosen environment name never crosses this contract; the portal resolves the name through the existing production-requirements API."
+        },
+        "policy": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/ReactivePolicy"
+            }
+          ],
+          "description": "null: this environment has no current reactive policy."
+        }
+      },
+      "description": "The current reactive policy of one environment of the agent. Policy activation is scoped per (tenant, project, agent, environment); importing for one environment never supersedes another."
+    }
+  }
+}

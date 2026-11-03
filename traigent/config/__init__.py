@@ -7,9 +7,9 @@ This module provides flexible configuration injection strategies for optimized f
 
 from __future__ import annotations
 
+import warnings
 from importlib import import_module
 from typing import Any
-import warnings
 
 from traigent.config.context import (
     TrialContext,
@@ -27,10 +27,12 @@ from traigent.config.providers import (
 )
 from traigent.config.types import TraigentConfig
 
+_TRAIGENT_CONFIG_TYPES = "traigent.config.types"
+
 _DEPRECATED_EXPORT_MAP = {
-    "ExecutionIntent": ("traigent.config.types", "ExecutionIntent"),
-    "ExecutionMode": ("traigent.config.types", "ExecutionMode"),
-    "ResolvedExecutionPolicy": ("traigent.config.types", "ResolvedExecutionPolicy"),
+    "ExecutionIntent": (_TRAIGENT_CONFIG_TYPES, "ExecutionIntent"),
+    "ExecutionMode": (_TRAIGENT_CONFIG_TYPES, "ExecutionMode"),
+    "ResolvedExecutionPolicy": (_TRAIGENT_CONFIG_TYPES, "ResolvedExecutionPolicy"),
 }
 
 __all__ = [

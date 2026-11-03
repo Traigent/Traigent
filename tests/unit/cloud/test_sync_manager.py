@@ -108,7 +108,8 @@ def test_build_experiment_url_adds_encoded_context_query() -> None:
             tenant_id="tenant acme",
         )
         == "https://portal.traigent.ai/experiments/view/exp%2F123"
-        "?run_id=run%2F456&project_id=project%2Falpha&tenant_id=tenant%20acme"
+        "?run_id=run%2F456&project_id=project%2Falpha&projectId=project%2Falpha"
+        "&tenant_id=tenant%20acme"
     )
 
 
@@ -156,7 +157,7 @@ SCOPELESS_CREATE_PAYLOAD: dict[str, Any] = {
     "metadata": dict(_META),
 }
 PORTAL = "https://portal.traigent.ai"
-SCOPED_URL = f"{PORTAL}/experiments/view/e-1?run_id=r-1&project_id=p-1&tenant_id=t-1"
+SCOPED_URL = f"{PORTAL}/experiments/view/e-1?run_id=r-1&project_id=p-1&projectId=p-1&tenant_id=t-1"
 BARE_URL = f"{PORTAL}/experiments/view/e-1?run_id=r-1"
 
 
@@ -1018,7 +1019,7 @@ class TestSyncManager:
         assert (
             result["cloud_url"]
             == "https://portal.traigent.ai/experiments/view/experiment-id"
-            "?run_id=experiment-run-id&project_id=project%2Falpha&tenant_id=tenant%20acme"
+            "?run_id=experiment-run-id&project_id=project%2Falpha&projectId=project%2Falpha&tenant_id=tenant%20acme"
         )
 
         base = sync_manager.base_url
@@ -1592,7 +1593,7 @@ class TestSyncManager:
         assert (
             result["cloud_url"]
             == "https://portal.traigent.ai/experiments/view/experiment-id"
-            "?run_id=experiment-run-id&project_id=project%2Falpha&tenant_id=tenant%20acme"
+            "?run_id=experiment-run-id&project_id=project%2Falpha&projectId=project%2Falpha&tenant_id=tenant%20acme"
         )
 
         base = sync_manager.base_url

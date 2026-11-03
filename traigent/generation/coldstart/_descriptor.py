@@ -162,19 +162,23 @@ def _classify(annotation: Any) -> str:
 
     origin = typing.get_origin(annotation)
     if origin is not None:
-        if origin in _UNION_ORIGINS:
-            return _classify_union(typing.get_args(annotation))
-        if isinstance(origin, type) and origin in _ANNOTATION_KIND_BY_TYPE:
-            return _ANNOTATION_KIND_BY_TYPE[origin]
-        origin_name = getattr(origin, "__name__", "").lower()
-        for needle, kind in _TEXTUAL_KIND_HINTS:
-            if origin_name == needle:
-                return kind
-        return "unknown"
+        return _classify_origin(origin, annotation)
 
     if isinstance(annotation, str):
         return _classify_textual(annotation)
 
+    return "unknown"
+
+
+def _classify_origin(origin: Any, annotation: Any) -> str:
+    if origin in _UNION_ORIGINS:
+        return _classify_union(typing.get_args(annotation))
+    if isinstance(origin, type) and origin in _ANNOTATION_KIND_BY_TYPE:
+        return _ANNOTATION_KIND_BY_TYPE[origin]
+    origin_name = getattr(origin, "__name__", "").lower()
+    for needle, kind in _TEXTUAL_KIND_HINTS:
+        if origin_name == needle:
+            return kind
     return "unknown"
 
 

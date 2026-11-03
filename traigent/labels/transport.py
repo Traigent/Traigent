@@ -498,17 +498,24 @@ class LabelTransport:
             code = _negotiated_refusal_code(status, body)
             if code != SERVICE_UNAVAILABLE:
                 raise LabelTransportError(code, status)
-            delay = (
-                retry_after
-                if retry_after is not None
-                else _RETRY_BACKOFF_SECONDS[
-                    min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)
-                ]
+            delay, attempt = _label_retry_delay(
+                retry_after, attempt, deadline, code, status
             )
-            attempt += 1
-            if attempt >= _MAX_WRITE_ATTEMPTS or delay >= deadline - time.monotonic():
-                raise LabelTransportError(code, status)
             await _sleep(delay)
+
+
+def _label_retry_delay(
+    retry_after: float | None, attempt: int, deadline: float, code: str, status: int
+) -> tuple[float, int]:
+    delay = (
+        retry_after
+        if retry_after is not None
+        else _RETRY_BACKOFF_SECONDS[min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)]
+    )
+    attempt += 1
+    if attempt >= _MAX_WRITE_ATTEMPTS or delay >= deadline - time.monotonic():
+        raise LabelTransportError(code, status)
+    return delay, attempt
 
 
 # ------------------------------------------------------------------------ configuration
@@ -731,45 +738,58 @@ class LabelSender:
         }
         done: dict[str, int] = {}
         for object_ref, (purpose, text) in labels.items():
-            negotiated = token_store.is_enabled()
-            state = self._journal_state(object_ref) if negotiated else None
-            if existing.get(object_ref):
-                if state in (
-                    token_store.S1_PENDING_LABEL,
-                    token_store.S_LABEL_CONFLICT,
-                ):
-                    # a token whose label was never acknowledged to us already holds a
-                    # revision: a lost-ack write of ours and another writer's label look the
-                    # same, and without an approved reader they cannot be told apart. Never
-                    # skip silently (S1 would stay pending forever): closed unverified state.
-                    self._mark_conflict(object_ref)
-                    _raise_closed(LabelTransportError(LABEL_CONFLICT_UNVERIFIED))
-                continue
-            envelope = writer.seal(
-                text, purpose=purpose, object_ref=object_ref, base_revision=0
+            await LabelSender._send_one(
+                self, object_ref, purpose, text, writer, existing, done
             )
-            try:
-                ack = await self._transport.write_label(
-                    object_ref=object_ref,
-                    purpose=purpose,
-                    base_revision=0,
-                    epoch=writer.epoch,
-                    envelope=envelope,
-                )
-            except LabelTransportError as exc:
-                if exc.code == "stale_revision" and state in (
-                    token_store.S1_PENDING_LABEL,
-                    token_store.S_LABEL_CONFLICT,
-                ):
-                    self._mark_conflict(object_ref)
-                    _raise_closed(
-                        LabelTransportError(LABEL_CONFLICT_UNVERIFIED, exc.status)
-                    )
-                raise
-            done[object_ref] = 1
-            if state in (token_store.S1_PENDING_LABEL, token_store.S2_LABEL_ACKED):
-                self._mark_acked(object_ref, ack)
         return done
+
+    async def _send_one(
+        self,
+        object_ref: str,
+        purpose: str,
+        text: str,
+        writer: LabelWriter,
+        existing: dict[Any, Any],
+        done: dict[str, int],
+    ) -> None:
+        negotiated = token_store.is_enabled()
+        state = self._journal_state(object_ref) if negotiated else None
+        if existing.get(object_ref):
+            if state in (
+                token_store.S1_PENDING_LABEL,
+                token_store.S_LABEL_CONFLICT,
+            ):
+                # a token whose label was never acknowledged to us already holds a
+                # revision: a lost-ack write of ours and another writer's label look the
+                # same, and without an approved reader they cannot be told apart. Never
+                # skip silently (S1 would stay pending forever): closed unverified state.
+                self._mark_conflict(object_ref)
+                _raise_closed(LabelTransportError(LABEL_CONFLICT_UNVERIFIED))
+            return
+        envelope = writer.seal(
+            text, purpose=purpose, object_ref=object_ref, base_revision=0
+        )
+        try:
+            ack = await self._transport.write_label(
+                object_ref=object_ref,
+                purpose=purpose,
+                base_revision=0,
+                epoch=writer.epoch,
+                envelope=envelope,
+            )
+        except LabelTransportError as exc:
+            if exc.code == "stale_revision" and state in (
+                token_store.S1_PENDING_LABEL,
+                token_store.S_LABEL_CONFLICT,
+            ):
+                self._mark_conflict(object_ref)
+                _raise_closed(
+                    LabelTransportError(LABEL_CONFLICT_UNVERIFIED, exc.status)
+                )
+            raise
+        done[object_ref] = 1
+        if state in (token_store.S1_PENDING_LABEL, token_store.S2_LABEL_ACKED):
+            self._mark_acked(object_ref, ack)
 
     def _mark_acked(self, object_ref: str, ack: Mapping[str, Any]) -> None:
         revision = ack.get("revision")

@@ -331,49 +331,59 @@ class SessionManager:
         Returns:
             Number of sessions cleaned up
         """
-        count = 0
         now = datetime.now(UTC)
 
         if self.use_redis and self.redis_client:
-            # Redis handles expiration automatically
-            # This is just for manual cleanup if needed
-            cursor = 0
-            while True:
-                cursor, keys = self.redis_client.scan(
-                    cursor, match="session:*", count=100
-                )
-                for key in keys:
-                    try:
-                        data = self.redis_client.get(key)
-                        if data:
-                            session_data = json.loads(data)
-                            expires_at_str = session_data.get("expires_at")
-                            if expires_at_str and isinstance(expires_at_str, str):
-                                expires_at = datetime.fromisoformat(expires_at_str)
-                                if now > expires_at:
-                                    session_id = key.replace("session:", "")
-                                    self.revoke_session(session_id)
-                                    count += 1
-                    except Exception as e:
-                        logger.warning(f"Error cleaning up session {key}: {e}")
-
-                if cursor == 0:
-                    break
+            count = self._cleanup_expired_redis_sessions(self.redis_client, now)
         else:
-            # In-memory cleanup
-            expired = []
-            for session_id, session_data in self._sessions.items():
-                expires_at = datetime.fromisoformat(session_data["expires_at"])
-                if now > expires_at:
-                    expired.append(session_id)
-
-            for session_id in expired:
-                self.revoke_session(session_id)
-                count += 1
+            count = self._cleanup_expired_memory_sessions(now)
 
         if count > 0:
             logger.info(f"Cleaned up {count} expired sessions")
         return count
+
+    def _cleanup_expired_redis_sessions(self, client: Any, now: datetime) -> int:
+        """Manual sweep of Redis sessions (Redis TTL normally expires them)."""
+        count = 0
+        cursor = 0
+        while True:
+            cursor, keys = client.scan(cursor, match="session:*", count=100)
+            for key in keys:
+                try:
+                    if self._revoke_if_redis_session_expired(client, key, now):
+                        count += 1
+                except Exception as e:
+                    logger.warning(f"Error cleaning up session {key}: {e}")
+
+            if cursor == 0:
+                break
+        return count
+
+    def _revoke_if_redis_session_expired(
+        self, client: Any, key: Any, now: datetime
+    ) -> bool:
+        data = client.get(key)
+        if not data:
+            return False
+        session_data = json.loads(data)
+        expires_at_str = session_data.get("expires_at")
+        if not (expires_at_str and isinstance(expires_at_str, str)):
+            return False
+        if not now > datetime.fromisoformat(expires_at_str):
+            return False
+        self.revoke_session(key.replace("session:", ""))
+        return True
+
+    def _cleanup_expired_memory_sessions(self, now: datetime) -> int:
+        expired = []
+        for session_id, session_data in self._sessions.items():
+            expires_at = datetime.fromisoformat(session_data["expires_at"])
+            if now > expires_at:
+                expired.append(session_id)
+
+        for session_id in expired:
+            self.revoke_session(session_id)
+        return len(expired)
 
     # Private helper methods
 

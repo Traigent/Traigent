@@ -124,37 +124,49 @@ def _scalar(value: Any) -> tuple[bool, Any]:
     return False, None
 
 
+def _filter_list(value: Any) -> tuple[bool, Any]:
+    if not isinstance(value, (list, tuple)):
+        return False, None
+    items = []
+    for item in list(value)[:_MAX_LIST]:
+        ok, kept = _scalar(item)
+        if ok:
+            items.append(kept)
+    return True, items
+
+
+def _filter_map(value: Any, item_spec: _Spec) -> tuple[bool, Any]:
+    if not isinstance(value, Mapping):
+        return False, None
+    out: dict[str, Any] = {}
+    for key, item in list(value.items())[:_MAX_LIST]:
+        ok, kept = _filter(item, item_spec)
+        if ok and isinstance(key, str):
+            out[key[:_MAX_STR]] = kept
+    return True, out
+
+
+def _filter_dict(value: Any, spec: dict[str, _Spec]) -> tuple[bool, Any]:
+    if not isinstance(value, Mapping):
+        return False, None
+    nested: dict[str, Any] = {}
+    for key, sub in spec.items():
+        if key in value:
+            ok, kept = _filter(value[key], sub)
+            if ok:
+                nested[key] = kept
+    return True, nested
+
+
 def _filter(value: Any, spec: _Spec) -> tuple[bool, Any]:
     if spec is None:
         return _scalar(value)
     if spec == "list":
-        if not isinstance(value, (list, tuple)):
-            return False, None
-        items = []
-        for item in list(value)[:_MAX_LIST]:
-            ok, kept = _scalar(item)
-            if ok:
-                items.append(kept)
-        return True, items
+        return _filter_list(value)
     if isinstance(spec, tuple) and spec[0] == "map":
-        if not isinstance(value, Mapping):
-            return False, None
-        out: dict[str, Any] = {}
-        for key, item in list(value.items())[:_MAX_LIST]:
-            ok, kept = _filter(item, spec[1])
-            if ok and isinstance(key, str):
-                out[key[:_MAX_STR]] = kept
-        return True, out
+        return _filter_map(value, spec[1])
     if isinstance(spec, dict):
-        if not isinstance(value, Mapping):
-            return False, None
-        nested: dict[str, Any] = {}
-        for key, sub in spec.items():
-            if key in value:
-                ok, kept = _filter(value[key], sub)
-                if ok:
-                    nested[key] = kept
-        return True, nested
+        return _filter_dict(value, spec)
     return False, None
 
 

@@ -81,6 +81,93 @@ def _detect_from_file(
     return [], False, False
 
 
+def _scan_single_file(
+    detector: TunedVariableDetector, path: Path, function_name: str | None
+) -> list[DetectionResult]:
+    if path.suffix != ".py":
+        raise click.ClickException(f"Expected a .py file, got: {path}")
+    results, _, function_found = _detect_from_file(
+        detector, path, function_name, strict=True
+    )
+    if not function_found:
+        raise click.ClickException(
+            f"Function '{function_name}' not found in source. "
+            "Check the function name and try again."
+        )
+    return results
+
+
+def _is_skipped_source_path(py_file: Path, root: Path) -> bool:
+    """Skip common non-source directories.
+
+    The rule applies only to the components below the target: the user chose
+    the target itself (``..`` and ``/home/me/.work/agent`` are legitimate).
+    """
+    return any(
+        part.startswith((".", "_", "__pycache__", "venv", "node_modules"))
+        for part in py_file.relative_to(root).parts
+    )
+
+
+def _scan_directory(
+    detector: TunedVariableDetector, path: Path, function_name: str | None
+) -> list[DetectionResult]:
+    # Directory: scan all .py files recursively
+    py_files = sorted(path.rglob("*.py"))
+    if not py_files:
+        stderr.print(f"[yellow]No Python files found in {path}[/yellow]")
+        sys.exit(0)
+
+    results: list[DetectionResult] = []
+    scanned = parsed_any = found_any = 0
+    for py_file in py_files:
+        if _is_skipped_source_path(py_file, path):
+            continue
+        scanned += 1
+        file_results, parsed, found = _detect_from_file(
+            detector, py_file, function_name, strict=False
+        )
+        results.extend(file_results)
+        parsed_any += parsed
+        found_any += found
+
+    if scanned and not parsed_any:
+        raise click.ClickException(
+            "Could not parse any Python file in the target directory"
+        )
+    if function_name and scanned and not found_any:
+        raise click.ClickException(
+            f"Function '{function_name}' not found in source. "
+            "Check the function name and try again."
+        )
+    return results
+
+
+def _filter_by_confidence(
+    results: list[DetectionResult], min_confidence: str
+) -> list[DetectionResult]:
+    min_level = DetectionConfidence(min_confidence)
+    _order = {
+        DetectionConfidence.HIGH: 2,
+        DetectionConfidence.MEDIUM: 1,
+        DetectionConfidence.LOW: 0,
+    }
+    min_order = _order[min_level]
+    return [
+        DetectionResult(
+            function_name=r.function_name,
+            candidates=tuple(
+                c for c in r.candidates if _order[c.confidence] >= min_order
+            ),
+            warnings=r.warnings,
+            source_hash=r.source_hash,
+            detection_strategies_used=r.detection_strategies_used,
+        )
+        for r in results
+        if any(_order[c.confidence] >= min_order for c in r.candidates)
+    ]
+
+
 _CONFIDENCE_COLORS = {
     DetectionConfidence.HIGH: "green",
     DetectionConfidence.MEDIUM: "yellow",
@@ -131,75 +218,13 @@ def detect_tvars(
     all .py files are scanned recursively.
     """
     detector = TunedVariableDetector()
-    results: list[DetectionResult] = []
 
     if path.is_file():
-        if path.suffix != ".py":
-            raise click.ClickException(f"Expected a .py file, got: {path}")
-        results, _, function_found = _detect_from_file(
-            detector, path, function_name, strict=True
-        )
-        if not function_found:
-            raise click.ClickException(
-                f"Function '{function_name}' not found in source. "
-                "Check the function name and try again."
-            )
+        results = _scan_single_file(detector, path, function_name)
     else:
-        # Directory: scan all .py files recursively
-        py_files = sorted(path.rglob("*.py"))
-        if not py_files:
-            stderr.print(f"[yellow]No Python files found in {path}[/yellow]")
-            sys.exit(0)
+        results = _scan_directory(detector, path, function_name)
 
-        scanned = parsed_any = found_any = 0
-        for py_file in py_files:
-            # Skip common non-source directories. The rule applies only to the
-            # components below the target: the user chose the target itself
-            # (``..`` and ``/home/me/.work/agent`` are legitimate).
-            if any(
-                part.startswith((".", "_", "__pycache__", "venv", "node_modules"))
-                for part in py_file.relative_to(path).parts
-            ):
-                continue
-            scanned += 1
-            file_results, parsed, found = _detect_from_file(
-                detector, py_file, function_name, strict=False
-            )
-            results.extend(file_results)
-            parsed_any += parsed
-            found_any += found
-
-        if scanned and not parsed_any:
-            raise click.ClickException(
-                "Could not parse any Python file in the target directory"
-            )
-        if function_name and scanned and not found_any:
-            raise click.ClickException(
-                f"Function '{function_name}' not found in source. "
-                "Check the function name and try again."
-            )
-
-    # Filter by confidence
-    min_level = DetectionConfidence(min_confidence)
-    _order = {
-        DetectionConfidence.HIGH: 2,
-        DetectionConfidence.MEDIUM: 1,
-        DetectionConfidence.LOW: 0,
-    }
-    min_order = _order[min_level]
-    filtered_results = [
-        DetectionResult(
-            function_name=r.function_name,
-            candidates=tuple(
-                c for c in r.candidates if _order[c.confidence] >= min_order
-            ),
-            warnings=r.warnings,
-            source_hash=r.source_hash,
-            detection_strategies_used=r.detection_strategies_used,
-        )
-        for r in results
-        if any(_order[c.confidence] >= min_order for c in r.candidates)
-    ]
+    filtered_results = _filter_by_confidence(results, min_confidence)
 
     if output_json:
         _output_json(filtered_results)

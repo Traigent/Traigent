@@ -9,15 +9,16 @@ Extracted from AuthManager to follow Single Responsibility Principle.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
+from traigent.labels.transport_gate import gate_session
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import (
@@ -73,6 +74,14 @@ class TokenManager:
         self._set_credentials_fn: Any = None
         self._cache_credentials_fn: Any = None
         self._auth_lock: asyncio.Lock | None = None
+        # Latch-on-read hook (set by AuthManager); see APIKeyManager.read_guard.
+        self.read_guard: Any = None
+        self.guard_active: Any = None  # () -> bool; True when reads must be latched
+
+    def _guarding(self) -> bool:
+        return self.read_guard is not None and (
+            self.guard_active is None or bool(self.guard_active())
+        )
 
     def set_callbacks(
         self,
@@ -106,12 +115,22 @@ class TokenManager:
     @property
     def current_token(self) -> SecureToken | None:
         """Get current access token."""
-        return self._current_token
+        token = self._current_token
+        if token is not None and self._guarding():
+            value = getattr(token, "_value", None)
+            if value and not token.is_expired:
+                self.read_guard({"Authorization": f"Bearer {value}"})
+        return token
 
     @property
     def refresh_token_secure(self) -> SecureToken | None:
-        """Get current refresh token."""
-        return self._refresh_token_secure
+        """Get current refresh token (latched under its own scope on a flagged manager)."""
+        token = self._refresh_token_secure
+        if token is not None and self._guarding():
+            value = getattr(token, "_value", None)
+            if value and not token.is_expired:
+                self.read_guard({"Authorization": f"Bearer {value}"})
+        return token
 
     @property
     def refresh_task(self) -> asyncio.Task[None] | None:
@@ -153,34 +172,32 @@ class TokenManager:
             except ValueError:
                 logger.debug("Skipping secure storage for invalid access token format")
 
-        if refresh_token:
-            refresh_expires = token_data.get("refresh_expires_in")
-            if not refresh_expires:
-                refresh_expires = expires_in * 24
+        if not refresh_token:
+            self._refresh_token_secure = None
+            return
+
+        refresh_expires = token_data.get("refresh_expires_in")
+        if not refresh_expires:
+            refresh_expires = expires_in * 24
+        try:
+            self._refresh_token_secure = SecureToken(
+                _value=refresh_token,
+                _expires_at=time.time() + refresh_expires,
+            )
+        except ValueError:
+            # S3 fix: If SecureToken creation fails and we had a valid existing
+            # refresh token, restore it instead of losing it entirely
+            logger.debug("Skipping secure storage for invalid refresh token format")
+            if not (existing_refresh_token and refresh_token != existing_refresh_token):
+                return
             try:
                 self._refresh_token_secure = SecureToken(
-                    _value=refresh_token,
-                    _expires_at=time.time() + refresh_expires,
+                    _value=existing_refresh_token,
+                    _expires_at=time.time() + expires_in * 24,
                 )
+                logger.debug("Restored existing refresh token after new token failed")
             except ValueError:
-                # S3 fix: If SecureToken creation fails and we had a valid existing
-                # refresh token, restore it instead of losing it entirely
-                logger.debug("Skipping secure storage for invalid refresh token format")
-                if existing_refresh_token and refresh_token != existing_refresh_token:
-                    try:
-                        self._refresh_token_secure = SecureToken(
-                            _value=existing_refresh_token,
-                            _expires_at=time.time() + expires_in * 24,
-                        )
-                        logger.debug(
-                            "Restored existing refresh token after new token failed"
-                        )
-                    except ValueError:
-                        logger.warning(
-                            "Could not restore existing refresh token either"
-                        )
-        else:
-            self._refresh_token_secure = None
+                logger.warning("Could not restore existing refresh token either")
 
     def clear_tokens(self) -> None:
         """Clear secure token storage."""
@@ -369,28 +386,9 @@ class TokenManager:
                     headers={"Content-Type": "application/json"},
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as response:
-                    if response.status == 401:
-                        raise ValueError("Refresh token invalid or expired")
-                    if response.status == 429:
-                        await (
-                            response.text()
-                        )  # drain body; do not propagate upstream content
-                        raise RuntimeError("Token refresh failed with HTTP 429")
-                    if response.status != 200:
-                        await (
-                            response.text()
-                        )  # drain body; do not propagate upstream content
-                        raise RuntimeError(
-                            f"Token refresh failed with HTTP {response.status}"
-                        )
-                    data = await response.json()
-                    if not data.get("success"):
-                        raise ValueError(_GENERIC_REFRESH_ERROR)
-
-                    payload = data.get("data", {})
-                    if "refresh_token" not in payload or not payload["refresh_token"]:
-                        payload["refresh_token"] = refresh_token_value
-                    return payload
+                    return await TokenManager._parse_jwt_refresh_response(
+                        response, refresh_token_value
+                    )
 
         try:
             token_data = await client.execute_with_retry(
@@ -404,11 +402,13 @@ class TokenManager:
                     error_message="Token refresh returned no data",
                 )
 
-            self.store_tokens(token_data)
+            # Latch BEFORE committing: the callback refuses (raises) on a flagged manager
+            # that cannot latch, and then neither credentials nor the secure store change.
             updated_credentials = self.build_credentials_from_token_data(token_data)
 
             if self._set_credentials_fn:
                 self._set_credentials_fn(updated_credentials, AuthStatus.AUTHENTICATED)
+            self.store_tokens(token_data)
 
             if self.config.auto_refresh and updated_credentials.refresh_token:
                 self.schedule_refresh(updated_credentials)
@@ -445,9 +445,32 @@ class TokenManager:
                 error_message=_GENERIC_REFRESH_ERROR,
             )
 
+    @staticmethod
+    async def _parse_jwt_refresh_response(
+        response: Any, refresh_token_value: str
+    ) -> dict[str, Any]:
+        if response.status == 401:
+            raise ValueError("Refresh token invalid or expired")
+        if response.status == 429:
+            await response.text()  # drain body; do not propagate upstream content
+            raise RuntimeError("Token refresh failed with HTTP 429")
+        if response.status != 200:
+            await response.text()  # drain body; do not propagate upstream content
+            raise RuntimeError(f"Token refresh failed with HTTP {response.status}")
+        data = await response.json()
+        if not data.get("success"):
+            raise ValueError(_GENERIC_REFRESH_ERROR)
+
+        payload = data.get("data", {})
+        if "refresh_token" not in payload or not payload["refresh_token"]:
+            payload["refresh_token"] = refresh_token_value
+        return cast(dict[str, Any], payload)
+
     async def _build_oauth2_token_url(self) -> str:
+        from traigent.config.backend_config import BackendConfig
+
         cloud_base_url = await validate_cloud_base_url_async(
-            self.config.cloud_base_url,
+            self.config.cloud_base_url or BackendConfig.get_cloud_backend_url(),
             purpose="OAuth2 cloud_base_url",
         )
         return f"{cloud_base_url}/oauth/token"
@@ -459,10 +482,17 @@ class TokenManager:
     ) -> AuthResult:
         from traigent.cloud.auth import AuthResult, AuthStatus
 
-        credentials.jwt_token = token_data["access_token"]
-        if "refresh_token" in token_data:
-            credentials.refresh_token = token_data["refresh_token"]
-        credentials.expires_at = time.time() + token_data.get("expires_in", 3600)
+        # Build a fresh candidate: ``credentials`` aliases the manager's stored object, which
+        # must stay untouched unless the latch-aware setter accepts the new token.
+        candidate = dataclasses.replace(
+            credentials,
+            scopes=list(credentials.scopes),
+            metadata=dict(credentials.metadata),
+            jwt_token=token_data["access_token"],
+            refresh_token=token_data.get("refresh_token", credentials.refresh_token),
+            expires_at=time.time() + token_data.get("expires_in", 3600),
+        )
+        credentials = candidate
 
         if self._set_credentials_fn:
             self._set_credentials_fn(credentials, AuthStatus.AUTHENTICATED)
@@ -597,7 +627,26 @@ class TokenManager:
                 refresh_token = self._refresh_token_secure.get_value()
             except TokenExpiredError:
                 refresh_token = None
+            if refresh_token and self._guarding():
+                # handed out inside AuthCredentials: latch it like the guarded getter does
+                self.read_guard({"Authorization": f"Bearer {refresh_token}"})
 
+        metadata, api_key = TokenManager._credentials_metadata(
+            self, token_data, expires_at
+        )
+
+        return AuthCredentials(
+            mode=AuthMode.JWT_TOKEN,
+            jwt_token=token_data.get("access_token"),
+            refresh_token=refresh_token,
+            expires_at=expires_at,
+            metadata=metadata,
+            api_key=api_key,
+        )
+
+    def _credentials_metadata(
+        self, token_data: dict[str, Any], expires_at: float | None
+    ) -> tuple[dict[str, Any], Any]:
         metadata: dict[str, Any] = {}
         credentials = self._get_credentials_fn() if self._get_credentials_fn else None
         if credentials and credentials.metadata:
@@ -612,15 +661,7 @@ class TokenManager:
             if self._set_api_key_token:
                 self._set_api_key_token(api_key, source="cli", expires_at=expires_at_dt)
             metadata.setdefault("source", "cli")
-
-        return AuthCredentials(
-            mode=AuthMode.JWT_TOKEN,
-            jwt_token=token_data.get("access_token"),
-            refresh_token=refresh_token,
-            expires_at=expires_at,
-            metadata=metadata,
-            api_key=api_key,
-        )
+        return metadata, api_key
 
     def get_authorization_header(self) -> dict[str, str]:
         """Get authorization header from current token.
@@ -632,5 +673,8 @@ class TokenManager:
             TokenExpiredError: If token has expired
         """
         if self._current_token and not self._current_token.is_expired:
-            return cast(dict[str, str], self._current_token.get_header())
+            header = cast(dict[str, str], self._current_token.get_header())
+            if self._guarding():
+                self.read_guard(header)
+            return header
         return {}

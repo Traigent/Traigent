@@ -129,6 +129,32 @@ def _canonical(input_data: Any, expected_output: Any) -> str:
     return json.dumps(projected, sort_keys=True, ensure_ascii=False)
 
 
+def _trial_example_records(trial: Any) -> list[Any]:
+    """The trial's recorded per-example results, or ``[]`` when absent."""
+    metadata = getattr(trial, "metadata", None)
+    records = metadata.get("example_results") if isinstance(metadata, dict) else None
+    return records if isinstance(records, list) else []
+
+
+def _add_record_content(contents: dict[str, set[str] | None], record: Any) -> None:
+    """Fold one example record into ``contents`` (see ``_recorded_content``)."""
+    example_id = _field(record, "example_id")
+    if example_id is None:
+        return
+    key = str(example_id)
+    input_data = _field(record, "input_data")
+    if input_data is None:
+        contents[key] = None
+        return
+    seen = contents.setdefault(key, set())
+    if seen is None:
+        return
+    try:
+        seen.add(_canonical(input_data, _field(record, "expected_output")))
+    except TypeError:
+        contents[key] = None
+
+
 def _recorded_content(trials: Iterable[Any]) -> dict[str, set[str] | None]:
     """Map each example id to the canonical contents the run recorded for it.
 
@@ -138,29 +164,68 @@ def _recorded_content(trials: Iterable[Any]) -> dict[str, set[str] | None]:
     """
     contents: dict[str, set[str] | None] = {}
     for trial in trials:
-        metadata = getattr(trial, "metadata", None)
-        records = (
-            metadata.get("example_results") if isinstance(metadata, dict) else None
-        )
-        if not isinstance(records, list):
-            continue
-        for record in records:
-            example_id = _field(record, "example_id")
-            if example_id is None:
-                continue
-            key = str(example_id)
-            input_data = _field(record, "input_data")
-            if input_data is None:
-                contents[key] = None
-                continue
-            seen = contents.setdefault(key, set())
-            if seen is None:
-                continue
-            try:
-                seen.add(_canonical(input_data, _field(record, "expected_output")))
-            except TypeError:
-                contents[key] = None
+        for record in _trial_example_records(trial):
+            _add_record_content(contents, record)
     return contents
+
+
+def _validated_requested_ids(dataset: Any, example_ids: Sequence[str]) -> list[str]:
+    if not isinstance(dataset, Dataset):
+        raise TypeError(f"dataset must be a Dataset, got {type(dataset).__name__}")
+    if isinstance(example_ids, (str, bytes)):
+        raise TypeError("example_ids must be a sequence of ids, not a single string")
+    requested = list(dict.fromkeys(example_ids))
+    if not requested:
+        raise ValueError("example_ids is empty; nothing to select")
+    for eid in requested:
+        if not isinstance(eid, str):
+            raise TypeError(f"example ids must be strings, got {eid!r}")
+    return requested
+
+
+def _rows_by_content(dataset: Dataset) -> dict[str, list[int]]:
+    rows_by_content: dict[str, list[int]] = {}
+    for index, example in enumerate(dataset.examples):
+        try:
+            content = _canonical(example.input_data, example.expected_output)
+        except TypeError as exc:
+            raise ValueError(
+                f"Dataset row {index} has no canonical JSON form ({exc}); it "
+                "cannot be compared with the run's records"
+            ) from exc
+        rows_by_content.setdefault(content, []).append(index)
+    return rows_by_content
+
+
+def _classify_requested_ids(
+    requested: Sequence[str],
+    recorded: dict[str, set[str] | None],
+    rows_by_content: dict[str, list[int]],
+) -> tuple[dict[int, list[str]], list[str], list[str], list[str]]:
+    """Resolve each id to one dataset row, or file it as a failure kind.
+
+    Returns ``(ids_by_row, unverifiable, unresolved, ambiguous)``.
+    """
+    unverifiable: list[str] = []
+    unresolved: list[str] = []
+    ambiguous: list[str] = []
+    ids_by_row: dict[int, list[str]] = {}
+    for eid in requested:
+        contents = recorded.get(eid)
+        if not contents or len(contents) != 1:
+            unverifiable.append(eid)
+            continue
+        rows = rows_by_content.get(next(iter(contents)), [])
+        if not rows:
+            unresolved.append(eid)
+        elif len(rows) > 1:
+            ambiguous.append(eid)
+        else:
+            ids_by_row.setdefault(rows[0], []).append(eid)
+    for ids in ids_by_row.values():
+        if len(ids) > 1:
+            ambiguous.extend(ids)
+    return ids_by_row, unverifiable, unresolved, ambiguous
 
 
 def select_examples_by_id(
@@ -184,48 +249,14 @@ def select_examples_by_id(
         UnresolvedExampleIdError: When any id is unverifiable, unresolved or
             ambiguous.
     """
-    if not isinstance(dataset, Dataset):
-        raise TypeError(f"dataset must be a Dataset, got {type(dataset).__name__}")
-    if isinstance(example_ids, (str, bytes)):
-        raise TypeError("example_ids must be a sequence of ids, not a single string")
-    requested = list(dict.fromkeys(example_ids))
-    if not requested:
-        raise ValueError("example_ids is empty; nothing to select")
-    for eid in requested:
-        if not isinstance(eid, str):
-            raise TypeError(f"example ids must be strings, got {eid!r}")
+    requested = _validated_requested_ids(dataset, example_ids)
 
     recorded = _recorded_content(list(getattr(run, "trials", None) or []))
-    rows_by_content: dict[str, list[int]] = {}
-    for index, example in enumerate(dataset.examples):
-        try:
-            content = _canonical(example.input_data, example.expected_output)
-        except TypeError as exc:
-            raise ValueError(
-                f"Dataset row {index} has no canonical JSON form ({exc}); it "
-                "cannot be compared with the run's records"
-            ) from exc
-        rows_by_content.setdefault(content, []).append(index)
+    rows_by_content = _rows_by_content(dataset)
 
-    unverifiable: list[str] = []
-    unresolved: list[str] = []
-    ambiguous: list[str] = []
-    ids_by_row: dict[int, list[str]] = {}
-    for eid in requested:
-        contents = recorded.get(eid)
-        if not contents or len(contents) != 1:
-            unverifiable.append(eid)
-            continue
-        rows = rows_by_content.get(next(iter(contents)), [])
-        if not rows:
-            unresolved.append(eid)
-        elif len(rows) > 1:
-            ambiguous.append(eid)
-        else:
-            ids_by_row.setdefault(rows[0], []).append(eid)
-    for ids in ids_by_row.values():
-        if len(ids) > 1:
-            ambiguous.extend(ids)
+    ids_by_row, unverifiable, unresolved, ambiguous = _classify_requested_ids(
+        requested, recorded, rows_by_content
+    )
     if unverifiable or unresolved or ambiguous:
         raise UnresolvedExampleIdError(unresolved, ambiguous, unverifiable)
 

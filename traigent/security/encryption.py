@@ -611,6 +611,43 @@ class PIIDetector:
         return pseudonymized_text
 
 
+def _classification_score(
+    rules: dict[str, Any],
+    data: str,
+    metadata: dict[str, Any],
+    pii_matches: Any,
+    pii_ratio: float,
+) -> int:
+    score = 0
+
+    # PII threshold check
+    if pii_ratio >= rules.get("pii_threshold", 0):
+        score += 1
+
+    # Keyword matching
+    keywords = rules.get("keywords", [])
+    for keyword in keywords:
+        if keyword.lower() in data.lower():
+            score += 1
+
+    # File extension check
+    filename = metadata.get("filename", "")
+    file_extensions = rules.get("file_extensions", [])
+    if any(filename.endswith(ext) for ext in file_extensions):
+        score += 1
+
+    # Special conditions
+    if rules.get("contains_pii") and pii_matches:
+        score += 2
+
+    if rules.get("contains_sensitive"):
+        sensitive_keywords = ["password", "secret", "token", "key"]
+        if any(keyword in data.lower() for keyword in sensitive_keywords):
+            score += 2
+
+    return score
+
+
 class DataClassifier:
     """Classifies data based on content and metadata."""
 
@@ -667,32 +704,7 @@ class DataClassifier:
         scores = {}
 
         for classification, rules in self.classification_rules.items():
-            score = 0
-
-            # PII threshold check
-            if pii_ratio >= rules.get("pii_threshold", 0):
-                score += 1
-
-            # Keyword matching
-            keywords = rules.get("keywords", [])
-            for keyword in keywords:
-                if keyword.lower() in data.lower():
-                    score += 1
-
-            # File extension check
-            filename = metadata.get("filename", "")
-            file_extensions = rules.get("file_extensions", [])
-            if any(filename.endswith(ext) for ext in file_extensions):
-                score += 1
-
-            # Special conditions
-            if rules.get("contains_pii") and pii_matches:
-                score += 2
-
-            if rules.get("contains_sensitive"):
-                sensitive_keywords = ["password", "secret", "token", "key"]
-                if any(keyword in data.lower() for keyword in sensitive_keywords):
-                    score += 2
+            score = _classification_score(rules, data, metadata, pii_matches, pii_ratio)
 
             scores[classification] = score
 

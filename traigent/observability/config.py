@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import copy
+import math
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from traigent.cloud.url_security import validate_cloud_base_url
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import BackendConfig, EndpointNotConfiguredError
 from traigent.config.project import read_optional_project_env, scope_api_path
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 from traigent.identity.workload import resolve_environment
@@ -72,6 +73,23 @@ _OFFLINE_MODE_ENV_VARS = (
     "TRAIGENT_OFFLINE",
     "TRAIGENT_DISABLE_TELEMETRY",
 )
+
+
+# Sentinel for "the default factory could not resolve an endpoint" (strict
+# self-hosted mode with none configured). Never a valid URL.
+_ENDPOINT_UNRESOLVED = "\x00endpoint-unresolved"
+
+
+def _default_backend_origin() -> str:
+    """Resolve the backend origin, deferring the strict-mode failure.
+
+    ``ObservabilityConfig`` must construct with ``offline_mode=True`` and no
+    endpoint; ``__post_init__`` raises the endpoint error when it is needed.
+    """
+    try:
+        return BackendConfig.get_backend_url()
+    except EndpointNotConfiguredError:
+        return _ENDPOINT_UNRESOLVED
 
 
 def describe_offline_mode_cause() -> str:
@@ -400,6 +418,16 @@ def _read_default_execution_context() -> dict[str, str | None]:
     return context
 
 
+def _require_positive_up_to(name: str, value: float, maximum: float) -> None:
+    """Reject ``value`` unless it is greater than 0 and at most ``maximum``."""
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than 0")
+    if math.isnan(value):
+        raise ValueError(f"{name} must be a finite number")
+    if value > maximum:
+        raise ValueError(f"{name} must be less than or equal to {maximum}")
+
+
 @dataclass
 class ObservabilityConfig:
     """Configuration for SDK-side observability delivery.
@@ -433,7 +461,7 @@ class ObservabilityConfig:
     deliver more.
     """
 
-    backend_origin: str = field(default_factory=BackendConfig.get_backend_url)
+    backend_origin: str = field(default_factory=_default_backend_origin)
     api_key: str | None = field(default_factory=BackendConfig.get_api_key)
     jwt_token: str | None = field(
         default_factory=lambda: os.getenv("TRAIGENT_JWT_TOKEN")
@@ -474,10 +502,19 @@ class ObservabilityConfig:
     warn_on_undelivered_at_exit: bool = True
 
     def __post_init__(self) -> None:
-        self.backend_origin = validate_cloud_base_url(
-            self.backend_origin,
-            purpose="observability backend",
-        )
+        if self.backend_origin == _ENDPOINT_UNRESOLVED:
+            if not self.offline_mode:
+                # Not offline and no endpoint configured: raise the real error
+                # (EndpointNotConfiguredError in strict-endpoint mode).
+                self.backend_origin = BackendConfig.get_backend_url()
+            else:
+                # Offline never sends anything, so no endpoint is needed.
+                self.backend_origin = ""
+        if self.backend_origin or not self.offline_mode:
+            self.backend_origin = validate_cloud_base_url(
+                self.backend_origin,
+                purpose="observability backend",
+            )
         self.default_environment = resolve_environment(
             self.default_environment
         ).environment
@@ -488,42 +525,22 @@ class ObservabilityConfig:
             self.project_id.strip() or None if self.project_id is not None else None
         )
         self.api_path = scope_api_path(self.api_path, self.project_id)
-        if self.batch_size <= 0:
-            raise ValueError("batch_size must be greater than 0")
-        if self.batch_size > MAX_BATCH_SIZE:
-            raise ValueError(
-                f"batch_size must be less than or equal to {MAX_BATCH_SIZE}"
-            )
-        if self.max_buffer_age <= 0:
-            raise ValueError("max_buffer_age must be greater than 0")
-        if self.max_buffer_age > MAX_BUFFER_AGE_SECONDS:
-            raise ValueError(
-                f"max_buffer_age must be less than or equal to {MAX_BUFFER_AGE_SECONDS}"
-            )
-        if self.max_queue_size <= 0:
-            raise ValueError("max_queue_size must be greater than 0")
-        if self.max_queue_size > MAX_QUEUE_SIZE:
-            raise ValueError(
-                f"max_queue_size must be less than or equal to {MAX_QUEUE_SIZE}"
-            )
-        if self.max_batch_bytes <= 0:
-            raise ValueError("max_batch_bytes must be greater than 0")
-        if self.max_batch_bytes > MAX_BATCH_BYTES:
-            raise ValueError(
-                f"max_batch_bytes must be less than or equal to {MAX_BATCH_BYTES}"
-            )
-        if self.flush_timeout <= 0:
-            raise ValueError("flush_timeout must be greater than 0")
-        if self.flush_timeout > MAX_TIMEOUT_SECONDS:
-            raise ValueError(
-                f"flush_timeout must be less than or equal to {MAX_TIMEOUT_SECONDS}"
-            )
-        if self.request_timeout <= 0:
-            raise ValueError("request_timeout must be greater than 0")
-        if self.request_timeout > MAX_TIMEOUT_SECONDS:
-            raise ValueError(
-                f"request_timeout must be less than or equal to {MAX_TIMEOUT_SECONDS}"
-            )
+        _require_positive_up_to("batch_size", self.batch_size, MAX_BATCH_SIZE)
+        _require_positive_up_to(
+            "max_buffer_age", self.max_buffer_age, MAX_BUFFER_AGE_SECONDS
+        )
+        _require_positive_up_to("max_queue_size", self.max_queue_size, MAX_QUEUE_SIZE)
+        _require_positive_up_to(
+            "max_batch_bytes", self.max_batch_bytes, MAX_BATCH_BYTES
+        )
+        _require_positive_up_to(
+            "flush_timeout", self.flush_timeout, MAX_TIMEOUT_SECONDS
+        )
+        _require_positive_up_to(
+            "request_timeout", self.request_timeout, MAX_TIMEOUT_SECONDS
+        )
+        if not math.isfinite(self.per_trace_timeout):
+            raise ValueError("per_trace_timeout must be a finite number")
         if self.per_trace_timeout < 0:
             raise ValueError("per_trace_timeout must be greater than or equal to 0")
         constructor_content_mode = (

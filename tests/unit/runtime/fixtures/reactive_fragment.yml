@@ -1,0 +1,29 @@
+tvl_version: "1.4"
+requirements:
+  - { name: latency_2s, kind: rate_bound, unit: trace,
+      violation: { metric: wall_clock_latency_ms, exceeds: 2000 }, max_rate: 0.05 }
+monitors:
+  - { name: latency_2s_prod, requirement: latency_2s, phase: runtime, profile: backend_v1,
+      evidence: { source: backend_trace_metadata, deployment_environment: production },
+      window: { tumbling_hours: 6, grace_minutes: 30 },
+      decision: { method: clopper_pearson_exact_v1 } }
+  - { name: latency_2s_gate, requirement: latency_2s, phase: promotion,
+      evidence: { source: evaluation_set },
+      decision: { method: clopper_pearson_rational_v2, confidence: 0.95, false_alarm_budget: 0.05 } }
+responses:
+  - name: latency_repair
+    rules:
+      - { id: fix, trigger: { monitor: latency_2s_prod, event: episode_opened },
+          do: optimize, approval: human, deploy: if_promoted }
+      - { id: fix_found_nothing, trigger: { rule: fix, event: optimize_no_candidate },
+          do: notify, severity: critical }
+      - { id: fix_failed, trigger: { rule: fix, event: optimize_failed },
+          do: notify, severity: critical }
+      - { id: deploy_blocked, trigger: { rule: fix, event: deploy_refused },
+          do: notify, severity: warning }
+      - { id: deploy_broke, trigger: { rule: fix, event: deploy_failed },
+          do: notify, severity: warning }
+      - { id: undecided, trigger: { monitor: latency_2s_prod, event: unknown_for, hours: 12 },
+          do: notify, severity: warning, unless: [ { rule: fix, state: attempt_open } ] }
+      - { id: page_while_open, trigger: { monitor: latency_2s_prod, event: episode_opened },
+          do: notify, severity: critical, only_while: [ { rule: fix, state: attempt_open } ] }

@@ -18,25 +18,29 @@ from .audit import (
     SecurityMonitor,
 )
 
+_TRAIGENT_SECURITY_DEPLOYMENT = "traigent.security.deployment"
+_TRAIGENT_SECURITY_ENCRYPTION = "traigent.security.encryption"
+_TRAIGENT_SECURITY_TENANT = "traigent.security.tenant"
+
 _LAZY_EXPORTS = {
     "MultiFactorAuth": "traigent.security.auth",
-    "DeploymentManager": "traigent.security.deployment",
-    "SLAMonitor": "traigent.security.deployment",
-    "HealthChecker": "traigent.security.deployment",
-    "BackupManager": "traigent.security.deployment",
-    "EncryptionManager": "traigent.security.encryption",
-    "PIIDetector": "traigent.security.encryption",
-    "DataClassifier": "traigent.security.encryption",
-    "SecureStorage": "traigent.security.encryption",
-    "TenantManager": "traigent.security.tenant",
-    "TenantContext": "traigent.security.tenant",
-    "TenantIsolation": "traigent.security.tenant",
-    "BillingIntegration": "traigent.security.tenant",
-    "Tenant": "traigent.security.tenant",
-    "TenantQuotas": "traigent.security.tenant",
-    "TenantUsage": "traigent.security.tenant",
-    "TenantTier": "traigent.security.tenant",
-    "TenantStatus": "traigent.security.tenant",
+    "DeploymentManager": _TRAIGENT_SECURITY_DEPLOYMENT,
+    "SLAMonitor": _TRAIGENT_SECURITY_DEPLOYMENT,
+    "HealthChecker": _TRAIGENT_SECURITY_DEPLOYMENT,
+    "BackupManager": _TRAIGENT_SECURITY_DEPLOYMENT,
+    "EncryptionManager": _TRAIGENT_SECURITY_ENCRYPTION,
+    "PIIDetector": _TRAIGENT_SECURITY_ENCRYPTION,
+    "DataClassifier": _TRAIGENT_SECURITY_ENCRYPTION,
+    "SecureStorage": _TRAIGENT_SECURITY_ENCRYPTION,
+    "TenantManager": _TRAIGENT_SECURITY_TENANT,
+    "TenantContext": _TRAIGENT_SECURITY_TENANT,
+    "TenantIsolation": _TRAIGENT_SECURITY_TENANT,
+    "BillingIntegration": _TRAIGENT_SECURITY_TENANT,
+    "Tenant": _TRAIGENT_SECURITY_TENANT,
+    "TenantQuotas": _TRAIGENT_SECURITY_TENANT,
+    "TenantUsage": _TRAIGENT_SECURITY_TENANT,
+    "TenantTier": _TRAIGENT_SECURITY_TENANT,
+    "TenantStatus": _TRAIGENT_SECURITY_TENANT,
 }
 
 __all__ = [

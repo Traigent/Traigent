@@ -158,6 +158,27 @@ class OpenAIPlugin(LLMPlugin):
             )
         return errors
 
+    @staticmethod
+    def _convert_functions_to_tools(overridden: dict[str, Any]) -> None:
+        # Handle function/tool calling consistency
+        if "functions" in overridden and "tools" not in overridden:
+            # Convert functions to tools format for newer API
+            functions = overridden.pop("functions")
+            overridden["tools"] = [
+                {"type": "function", "function": f} for f in functions
+            ]
+            if "function_call" in overridden:
+                fc = overridden.pop("function_call")
+                if fc == "auto":
+                    overridden["tool_choice"] = "auto"
+                elif fc == "none":
+                    overridden["tool_choice"] = "none"
+                elif isinstance(fc, dict) and "name" in fc:
+                    overridden["tool_choice"] = {
+                        "type": "function",
+                        "function": {"name": fc["name"]},
+                    }
+
     def apply_overrides(self, kwargs: dict[str, Any], config) -> dict[str, Any]:
         """Apply OpenAI-specific overrides.
 
@@ -185,23 +206,6 @@ class OpenAIPlugin(LLMPlugin):
             if not messages or messages[0].get("role") != "system":
                 overridden["messages"] = [system_msg] + messages
 
-        # Handle function/tool calling consistency
-        if "functions" in overridden and "tools" not in overridden:
-            # Convert functions to tools format for newer API
-            functions = overridden.pop("functions")
-            overridden["tools"] = [
-                {"type": "function", "function": f} for f in functions
-            ]
-            if "function_call" in overridden:
-                fc = overridden.pop("function_call")
-                if fc == "auto":
-                    overridden["tool_choice"] = "auto"
-                elif fc == "none":
-                    overridden["tool_choice"] = "none"
-                elif isinstance(fc, dict) and "name" in fc:
-                    overridden["tool_choice"] = {
-                        "type": "function",
-                        "function": {"name": fc["name"]},
-                    }
+        OpenAIPlugin._convert_functions_to_tools(overridden)
 
         return overridden

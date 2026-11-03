@@ -231,6 +231,35 @@ class OptimizationStrategy:
             )
 
 
+def _evict_oldest_session_if_full(self: Any) -> None:
+    """Drop one cached session when the local session cache is at capacity."""
+    if len(self._active_sessions) >= self._max_active_sessions:
+        # Find and remove the oldest inactive session
+        oldest_session_id = None
+        oldest_time = float("inf")
+
+        for sid, sess in self._active_sessions.items():
+            if sess.status in [
+                OptimizationSessionStatus.COMPLETED,
+                OptimizationSessionStatus.FAILED,
+            ]:
+                if sess.created_at.timestamp() < oldest_time:
+                    oldest_time = sess.created_at.timestamp()
+                    oldest_session_id = sid
+
+        # If no inactive sessions, remove the oldest active one
+        if oldest_session_id is None:
+            oldest_session_id = min(
+                self._active_sessions.keys(),
+                key=lambda s: self._active_sessions[s].created_at.timestamp(),
+            )
+
+        del self._active_sessions[oldest_session_id]
+        logger.debug(
+            f"Removed session {oldest_session_id} to stay within active session limit"
+        )
+
+
 class RemoteOptimizationService(ABC):
     """Abstract interface for remote optimization services.
 
@@ -668,33 +697,7 @@ class RemoteOptimizationService(ABC):
                 session = await self.get_session(session_id)
 
                 # Enforce max sessions limit before adding
-                if len(self._active_sessions) >= self._max_active_sessions:
-                    # Find and remove the oldest inactive session
-                    oldest_session_id = None
-                    oldest_time = float("inf")
-
-                    for sid, sess in self._active_sessions.items():
-                        if sess.status in [
-                            OptimizationSessionStatus.COMPLETED,
-                            OptimizationSessionStatus.FAILED,
-                        ]:
-                            if sess.created_at.timestamp() < oldest_time:
-                                oldest_time = sess.created_at.timestamp()
-                                oldest_session_id = sid
-
-                    # If no inactive sessions, remove the oldest active one
-                    if oldest_session_id is None:
-                        oldest_session_id = min(
-                            self._active_sessions.keys(),
-                            key=lambda s: self._active_sessions[
-                                s
-                            ].created_at.timestamp(),
-                        )
-
-                    del self._active_sessions[oldest_session_id]
-                    logger.debug(
-                        f"Removed session {oldest_session_id} to stay within active session limit"
-                    )
+                _evict_oldest_session_if_full(self)
 
                 self._active_sessions[session_id] = session
                 return session
@@ -1138,6 +1141,19 @@ class MockRemoteService(RemoteOptimizationService):
             },
         )
 
+    @staticmethod
+    def _count_recent_improvements(trial_history: list[TrialResult]) -> int:
+        """Count how many of the last few trials improved on their predecessor."""
+        recent_improvements = 0
+        for i in range(1, min(5, len(trial_history))):
+            if trial_history[-i].metrics:
+                primary_obj = next(iter(trial_history[-i].metrics))
+                current_score = trial_history[-i].metrics.get(primary_obj, 0)
+                prev_score = trial_history[-i - 1].metrics.get(primary_obj, 0)
+                if current_score > prev_score:
+                    recent_improvements += 1
+        return recent_improvements
+
     def _determine_exploration_type(
         self, trial_history: list[TrialResult], strategy: OptimizationStrategy
     ) -> str:
@@ -1149,19 +1165,9 @@ class MockRemoteService(RemoteOptimizationService):
         elif trial_count < 15:
             # Mixed exploration/exploitation based on recent performance
             if trial_history:
-                recent_improvements = 0
-                for i in range(min(5, len(trial_history))):
-                    if i > 0 and trial_history[-i].metrics:
-                        primary_obj = next(iter(trial_history[-i].metrics))
-                        current_score = trial_history[-i].metrics.get(primary_obj, 0)
-                        prev_score = trial_history[-i - 1].metrics.get(primary_obj, 0)
-                        if current_score > prev_score:
-                            recent_improvements += 1
-
-                if recent_improvements >= 2:
+                if self._count_recent_improvements(trial_history) >= 2:
                     return "exploitation"  # We're on a good track
-                else:
-                    return "exploration"  # Need to explore more
+                return "exploration"  # Need to explore more
             return "exploration"
         else:
             # Later stages: focus on verification and refinement

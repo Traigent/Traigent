@@ -126,46 +126,20 @@ class MetricsComputer:
             )
 
         # Accuracy (exact match)
-        if "accuracy" in self.metrics and successful_pairs:
-            correct = sum(
-                1
-                for output, expected in successful_pairs
-                if _accuracy_matches_after_unwrap(output, expected)
-            )
-            computed_metrics["accuracy"] = correct / len(successful_pairs)
-        elif "accuracy" in self.metrics:
-            computed_metrics["accuracy"] = 0.0
+        if "accuracy" in self.metrics:
+            computed_metrics["accuracy"] = self._accuracy(successful_pairs)
 
         # Average execution time
         if "avg_execution_time" in self.metrics:
-            execution_times = [
-                r.execution_time for r in invocation_results if r.execution_time > 0
-            ]
-            computed_metrics["avg_execution_time"] = (
-                sum(execution_times) / len(execution_times) if execution_times else 0.0
+            computed_metrics["avg_execution_time"] = self._avg_execution_time(
+                invocation_results
             )
 
         # Average output length (for text outputs)
         if "avg_output_length" in self.metrics:
-            valid_outputs = [
-                r.output
-                for r in invocation_results
-                if r.is_successful and r.output is not None
-            ]
-            if valid_outputs:
-                lengths = []
-                for output in valid_outputs:
-                    if isinstance(output, str):
-                        lengths.append(len(output))
-                    elif hasattr(output, "__len__"):
-                        lengths.append(len(output))
-
-                if lengths:
-                    computed_metrics["avg_output_length"] = sum(lengths) / len(lengths)
-                else:
-                    computed_metrics["avg_output_length"] = 0.0
-            else:
-                computed_metrics["avg_output_length"] = 0.0
+            computed_metrics["avg_output_length"] = self._avg_output_length(
+                invocation_results
+            )
 
         custom_metrics = self.compute_custom_metrics(
             invocation_results, expected_outputs
@@ -200,6 +174,39 @@ class MetricsComputer:
             duration=duration,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _accuracy(successful_pairs: list[tuple[Any, Any]]) -> float:
+        if not successful_pairs:
+            return 0.0
+        correct = sum(
+            1
+            for output, expected in successful_pairs
+            if _accuracy_matches_after_unwrap(output, expected)
+        )
+        return correct / len(successful_pairs)
+
+    @staticmethod
+    def _avg_execution_time(invocation_results: list[InvocationResult]) -> float:
+        execution_times = [
+            r.execution_time for r in invocation_results if r.execution_time > 0
+        ]
+        return sum(execution_times) / len(execution_times) if execution_times else 0.0
+
+    @staticmethod
+    def _avg_output_length(invocation_results: list[InvocationResult]) -> float:
+        valid_outputs = [
+            r.output
+            for r in invocation_results
+            if r.is_successful and r.output is not None
+        ]
+        lengths = []
+        for output in valid_outputs:
+            if isinstance(output, str):
+                lengths.append(len(output))
+            elif hasattr(output, "__len__"):
+                lengths.append(len(output))
+        return sum(lengths) / len(lengths) if lengths else 0.0
 
     def add_custom_metric(
         self, name: str, compute_func: Callable[[dict[str, Any]], float]

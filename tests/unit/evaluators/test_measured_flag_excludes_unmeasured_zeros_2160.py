@@ -73,6 +73,8 @@ def _measured_and_unmeasured_example_metrics() -> list[ExampleMetrics]:
             response=ResponseMetrics(response_time_ms=200.0),
             cost=CostMetrics(input_cost=0.02),
             success=True,
+            accuracy_builtin=True,
+            custom_metrics={"accuracy": 1.0},
         ),
         ExampleMetrics(
             # The `output is None` shape: the call raised before producing
@@ -81,6 +83,7 @@ def _measured_and_unmeasured_example_metrics() -> list[ExampleMetrics]:
             success=False,
             error="boom - no output at all",
             measured=False,
+            accuracy_builtin=True,
         ),
     ]
 
@@ -207,10 +210,14 @@ def test_format_as_summary_stats_all_unmeasured_still_emits_builtin_keys():
     tracker = MetricsTracker()
     tracker.start_tracking()
     tracker.add_example_metrics(
-        ExampleMetrics(success=False, error="boom1", measured=False)
+        ExampleMetrics(
+            success=False, error="boom1", measured=False, accuracy_builtin=True
+        )
     )
     tracker.add_example_metrics(
-        ExampleMetrics(success=False, error="boom2", measured=False)
+        ExampleMetrics(
+            success=False, error="boom2", measured=False, accuracy_builtin=True
+        )
     )
     tracker.end_tracking()
 

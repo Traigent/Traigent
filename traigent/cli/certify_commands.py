@@ -19,6 +19,8 @@ if TYPE_CHECKING:
         TrustAnchorKeyV1,
     )
 
+CERTIFICATION_ELIGIBLE_FALSE = "certification_eligible=false"
+
 #: Stable refusal code for `--kind evaluator-quality` without
 #: `--development-integration` (see `_evaluator_quality_eligibility_policy`
 #: below for the disposition this pins).
@@ -312,6 +314,9 @@ def _anchor(payload: dict[str, Any], schema: SimpleNamespace) -> TrustAnchorKeyV
         raise click.UsageError("anchor is invalid") from exc
 
 
+_CONTEXT_IS_INVALID = "context is invalid"
+
+
 def _process_context(
     payload: dict[str, Any], anchor: TrustAnchorKeyV1, schema: SimpleNamespace
 ) -> ProcessRecordVerificationContext:
@@ -354,7 +359,7 @@ def _process_context(
             trust_anchor=None if allow_unchecked else anchor,
         )
     except (TypeError, ValueError) as exc:
-        raise click.UsageError("context is invalid") from exc
+        raise click.UsageError(_CONTEXT_IS_INVALID) from exc
 
 
 def _dataset_context(
@@ -383,7 +388,7 @@ def _dataset_context(
             require_leaf_lists=_required(payload, "require_leaf_lists"),
         )
     except (TypeError, ValueError) as exc:
-        raise click.UsageError("context is invalid") from exc
+        raise click.UsageError(_CONTEXT_IS_INVALID) from exc
 
 
 def _evaluator_quality_context(
@@ -401,7 +406,7 @@ def _evaluator_quality_context(
             trust_anchor=None if allow_unchecked else anchor,
         )
     except (TypeError, ValueError) as exc:
-        raise click.UsageError("context is invalid") from exc
+        raise click.UsageError(_CONTEXT_IS_INVALID) from exc
 
 
 def _agent_quality_context(
@@ -445,7 +450,7 @@ def _agent_quality_context(
     except schema.AgentQualityVerificationError:
         raise
     except (TypeError, ValueError) as exc:
-        raise click.UsageError("context is invalid") from exc
+        raise click.UsageError(_CONTEXT_IS_INVALID) from exc
 
 
 def _resolve_kind(kind: str | None, context_payload: dict[str, Any]) -> str:
@@ -503,6 +508,123 @@ def _check_context_anchor(payload: dict[str, Any], anchor: TrustAnchorKeyV1) -> 
 @click.group()
 def certify() -> None:
     """Verify public certificate artifacts offline."""
+
+
+def _require_posix_for_open_commitments() -> None:
+    from traigent.cloud import process_record_linkage as _prl
+
+    try:
+        _prl.require_posix_platform()
+    except _prl.CommitmentLinkageClientError as err:
+        click.echo(err.code)
+        raise click.exceptions.Exit(1) from None
+
+
+def _verify_quality_kind(
+    resolved_kind: str,
+    schema: Any,
+    bundle_payload: dict[str, Any],
+    context_payload: dict[str, Any],
+    anchor_value: Any,
+    trust_status_payload: Any,
+    *,
+    process_record: Path | None,
+    development_integration: bool,
+    as_json: bool,
+) -> bool:
+    """Run the evaluator-/agent-quality verifiers; False for other kinds."""
+    if resolved_kind == "evaluator-quality":
+        if process_record is not None:
+            raise click.UsageError(
+                "--kind evaluator-quality does not accept --process-record "
+                "(this CLI performs no relying-party composition step; see "
+                "EVALUATOR_QUALITY_POLICY_DISPOSITION's comment)"
+            )
+        _verify_evaluator_quality(
+            schema,
+            bundle_payload,
+            context_payload,
+            anchor_value,
+            trust_status_payload,
+            development_integration=development_integration,
+            as_json=as_json,
+        )
+        return True
+
+    if resolved_kind == "agent-quality":
+        if process_record is None:
+            raise click.UsageError("--kind agent-quality requires --process-record")
+        if development_integration:
+            raise click.UsageError(
+                "--kind agent-quality does not use --development-integration"
+            )
+        _verify_agent_quality(
+            schema,
+            bundle_payload,
+            context_payload,
+            _read_json(process_record, "process record"),
+            anchor_value,
+            trust_status_payload,
+            as_json=as_json,
+        )
+        return True
+    return False
+
+
+def _check_record_kind_context(
+    resolved_kind: str, context_payload: dict[str, Any]
+) -> None:
+    if resolved_kind == "dataset-record" and "process_context" not in context_payload:
+        raise click.UsageError("--kind dataset-record requires context.process_context")
+    if resolved_kind == "process-record" and "process_context" in context_payload:
+        raise click.UsageError(
+            "--kind process-record does not accept context.process_context "
+            "(that shape is dataset-record)"
+        )
+
+
+def _verify_record_certificate(
+    schema: Any,
+    resolved_kind: str,
+    bundle_payload: dict[str, Any],
+    context_payload: dict[str, Any],
+    anchor_value: Any,
+    trust_status_payload: Any,
+    *,
+    process_record: Path | None,
+) -> Any:
+    try:
+        if resolved_kind == "dataset-record":
+            if process_record is None:
+                raise click.UsageError(
+                    "dataset-record verification requires --process-record"
+                )
+            return schema.verify_dataset_record_certificate(
+                bundle_payload,
+                context=_dataset_context(context_payload, anchor_value, schema),
+                process_record_bundle=_read_json(process_record, "process record"),
+                leaf_lists=context_payload.get("leaf_lists"),
+            )
+        if (
+            context_payload.get("allow_unchecked_base_status") is True
+            and trust_status_payload is not None
+        ):
+            raise click.UsageError(
+                "--trust-status cannot be used with allow_unchecked_base_status=true"
+            )
+        return schema.verify_process_record_certificate(
+            bundle_payload,
+            context=_process_context(context_payload, anchor_value, schema),
+            trust_status=trust_status_payload,
+        )
+    except click.UsageError:
+        raise
+    except (
+        schema.ProcessRecordVerificationError,
+        schema.DatasetRecordVerificationError,
+    ) as exc:
+        click.echo(exc.code)
+        raise click.exceptions.Exit(1) from None
 
 
 @certify.command()
@@ -590,13 +712,7 @@ def verify(
 ) -> None:
     """Verify BUNDLE using independently supplied context and public anchor."""
     if open_commitments is not None:
-        from traigent.cloud import process_record_linkage as _prl
-
-        try:
-            _prl.require_posix_platform()
-        except _prl.CommitmentLinkageClientError as err:
-            click.echo(err.code)
-            raise click.exceptions.Exit(1) from None
+        _require_posix_for_open_commitments()
     schema = _load_certification_schema()
     bundle_payload = _read_json(bundle, "bundle")
     context_payload = _read_json(context_path, "context")
@@ -611,84 +727,30 @@ def verify(
     if open_commitments is not None and resolved_kind != "process-record":
         raise click.UsageError("--open-commitments requires --kind process-record")
 
-    if resolved_kind == "evaluator-quality":
-        if process_record is not None:
-            raise click.UsageError(
-                "--kind evaluator-quality does not accept --process-record "
-                "(this CLI performs no relying-party composition step; see "
-                "EVALUATOR_QUALITY_POLICY_DISPOSITION's comment)"
-            )
-        _verify_evaluator_quality(
-            schema,
-            bundle_payload,
-            context_payload,
-            anchor_value,
-            trust_status_payload,
-            development_integration=development_integration,
-            as_json=as_json,
-        )
+    if _verify_quality_kind(
+        resolved_kind,
+        schema,
+        bundle_payload,
+        context_payload,
+        anchor_value,
+        trust_status_payload,
+        process_record=process_record,
+        development_integration=development_integration,
+        as_json=as_json,
+    ):
         return
 
-    if resolved_kind == "agent-quality":
-        if process_record is None:
-            raise click.UsageError("--kind agent-quality requires --process-record")
-        if development_integration:
-            raise click.UsageError(
-                "--kind agent-quality does not use --development-integration"
-            )
-        _verify_agent_quality(
-            schema,
-            bundle_payload,
-            context_payload,
-            _read_json(process_record, "process record"),
-            anchor_value,
-            trust_status_payload,
-            as_json=as_json,
-        )
-        return
+    _check_record_kind_context(resolved_kind, context_payload)
 
-    if resolved_kind == "dataset-record" and "process_context" not in context_payload:
-        raise click.UsageError("--kind dataset-record requires context.process_context")
-    if resolved_kind == "process-record" and "process_context" in context_payload:
-        raise click.UsageError(
-            "--kind process-record does not accept context.process_context "
-            "(that shape is dataset-record)"
-        )
-
-    try:
-        if resolved_kind == "dataset-record":
-            if process_record is None:
-                raise click.UsageError(
-                    "dataset-record verification requires --process-record"
-                )
-            result = schema.verify_dataset_record_certificate(
-                bundle_payload,
-                context=_dataset_context(context_payload, anchor_value, schema),
-                process_record_bundle=_read_json(process_record, "process record"),
-                leaf_lists=context_payload.get("leaf_lists"),
-            )
-        else:
-            if (
-                context_payload.get("allow_unchecked_base_status") is True
-                and trust_status_payload is not None
-            ):
-                raise click.UsageError(
-                    "--trust-status cannot be used with "
-                    "allow_unchecked_base_status=true"
-                )
-            result = schema.verify_process_record_certificate(
-                bundle_payload,
-                context=_process_context(context_payload, anchor_value, schema),
-                trust_status=trust_status_payload,
-            )
-    except click.UsageError:
-        raise
-    except (
-        schema.ProcessRecordVerificationError,
-        schema.DatasetRecordVerificationError,
-    ) as exc:
-        click.echo(exc.code)
-        raise click.exceptions.Exit(1) from None
+    result = _verify_record_certificate(
+        schema,
+        resolved_kind,
+        bundle_payload,
+        context_payload,
+        anchor_value,
+        trust_status_payload,
+        process_record=process_record,
+    )
 
     if not result.valid:
         click.echo(result.code)
@@ -735,16 +797,57 @@ def _open_commitments(record_bundle: dict[str, Any], commitments_path: Path) -> 
         read_private_json,
     )
 
+    payload, linkage, raw_openings, fp_digests = _load_commitments_payload(
+        commitments_path,
+        read_private_json=read_private_json,
+        error_cls=CommitmentLinkageClientError,
+        bundle_schema=BUNDLE_SCHEMA,
+    )
+    context = _build_linkage_context(cl, record_bundle)
+
+    # Authenticate the sidecar against the verified record FIRST, so a forged
+    # or foreign sidecar is rejected even when no local fp/opening is present.
+    invalid: str | None = None
+    try:
+        cl.verify_commitment_linkage(linkage, context=context)
+    except cl.CommitmentLinkageError as err:
+        invalid = err.code
+    if invalid is not None:
+        click.echo(f"COMMITMENT_LINKAGE_INVALID {invalid}")
+        raise click.exceptions.Exit(1)
+
+    results: list[tuple[str, str]] = []
+    mismatch = False
+    for role in OPENING_ROLES:
+        outcome = _open_commitment_role(
+            cl, linkage, context, role, fp_digests.get(role), raw_openings.get(role)
+        )
+        mismatch = mismatch or outcome == cl.COMMITMENT_OPENED_MISMATCH
+        results.append((role, outcome))
+    for role, outcome in results:
+        click.echo(f"{role}: {outcome}")
+    click.echo(DISCLOSURE_LINE)
+    if mismatch:
+        raise click.exceptions.Exit(1)
+
+
+def _load_commitments_payload(
+    commitments_path: Path,
+    *,
+    read_private_json: Any,
+    error_cls: Any,
+    bundle_schema: Any,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     refused: str | None = None
     payload: dict[str, Any] = {}
     try:
         payload = read_private_json(commitments_path)
-    except CommitmentLinkageClientError as err:
+    except error_cls as err:
         refused = err.code
     if refused is not None:
         click.echo(f"COMMITMENT_BUNDLE_REFUSED {refused}")
         raise click.exceptions.Exit(1)
-    if payload.get("schema") != BUNDLE_SCHEMA:
+    if payload.get("schema") != bundle_schema:
         raise click.UsageError("commitments bundle has an unsupported schema")
     linkage = payload.get("commitment_linkage")
     if not isinstance(linkage, dict):
@@ -753,11 +856,14 @@ def _open_commitments(record_bundle: dict[str, Any], commitments_path: Path) -> 
     raw_openings = raw_openings if isinstance(raw_openings, dict) else {}
     fp_digests = payload.get("fp_digests")
     fp_digests = fp_digests if isinstance(fp_digests, dict) else {}
+    return payload, linkage, raw_openings, fp_digests
 
+
+def _build_linkage_context(cl: Any, record_bundle: dict[str, Any]) -> Any:
     try:
         manifest = record_bundle["unsigned_manifest"]
         issuer = record_bundle["verification_materials_v0"]["issuer"]
-        context = cl.CommitmentLinkageVerificationContext(
+        return cl.CommitmentLinkageVerificationContext(
             expected_process_record_digest=record_bundle["signature"][
                 "unsigned_manifest_digest"
             ],
@@ -776,48 +882,34 @@ def _open_commitments(record_bundle: dict[str, Any], commitments_path: Path) -> 
             "record bundle lacks the fields needed to open commitments"
         ) from None
 
+
+def _open_commitment_role(
+    cl: Any,
+    linkage: dict[str, Any],
+    context: Any,
+    role: str,
+    fp: Any,
+    opening_b64: Any,
+) -> Any:
     import base64
 
-    # Authenticate the sidecar against the verified record FIRST, so a forged
-    # or foreign sidecar is rejected even when no local fp/opening is present.
+    if not isinstance(fp, str) or not isinstance(opening_b64, str):
+        return cl.COMMITMENT_UNAVAILABLE
+    outcome = ""
     invalid: str | None = None
     try:
-        cl.verify_commitment_linkage(linkage, context=context)
+        opening = base64.b64decode(opening_b64, validate=True)
+        outcome = cl.verify_and_open_commitment(
+            linkage, context=context, role=role, fp_digest=fp, opening=opening
+        )
     except cl.CommitmentLinkageError as err:
         invalid = err.code
+    except ValueError:
+        invalid = "OPENING_SHAPE"
     if invalid is not None:
         click.echo(f"COMMITMENT_LINKAGE_INVALID {invalid}")
         raise click.exceptions.Exit(1)
-
-    results: list[tuple[str, str]] = []
-    mismatch = False
-    for role in OPENING_ROLES:
-        fp = fp_digests.get(role)
-        opening_b64 = raw_openings.get(role)
-        if not isinstance(fp, str) or not isinstance(opening_b64, str):
-            results.append((role, cl.COMMITMENT_UNAVAILABLE))
-            continue
-        outcome = ""
-        invalid = None
-        try:
-            opening = base64.b64decode(opening_b64, validate=True)
-            outcome = cl.verify_and_open_commitment(
-                linkage, context=context, role=role, fp_digest=fp, opening=opening
-            )
-        except cl.CommitmentLinkageError as err:
-            invalid = err.code
-        except ValueError:
-            invalid = "OPENING_SHAPE"
-        if invalid is not None:
-            click.echo(f"COMMITMENT_LINKAGE_INVALID {invalid}")
-            raise click.exceptions.Exit(1)
-        mismatch = mismatch or outcome == cl.COMMITMENT_OPENED_MISMATCH
-        results.append((role, outcome))
-    for role, outcome in results:
-        click.echo(f"{role}: {outcome}")
-    click.echo(DISCLOSURE_LINE)
-    if mismatch:
-        raise click.exceptions.Exit(1)
+    return outcome
 
 
 def _make_backend_client() -> Any:
@@ -939,7 +1031,7 @@ def _verify_evaluator_quality(
                 "code": EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY,
                 "certification_eligible": False,
             },
-            [EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY, "certification_eligible=false"],
+            [EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY, CERTIFICATION_ELIGIBLE_FALSE],
         )
         raise click.exceptions.Exit(1)
 
@@ -954,7 +1046,7 @@ def _verify_evaluator_quality(
         _emit_evaluator_quality(
             as_json,
             {"code": exc.code, "certification_eligible": False},
-            [exc.code, "certification_eligible=false"],
+            [exc.code, CERTIFICATION_ELIGIBLE_FALSE],
         )
         raise click.exceptions.Exit(1) from None
 
@@ -972,7 +1064,7 @@ def _verify_evaluator_quality(
         f"instrument_adequacy={result.instrument_adequacy}",
         f"overall_verdict={result.overall_verdict}",
         f"trust_status_evidence={result.trust_status_evidence}",
-        "certification_eligible=false",
+        CERTIFICATION_ELIGIBLE_FALSE,
     ]
     _emit_evaluator_quality(as_json, payload, lines)
     raise click.exceptions.Exit(3)
@@ -1039,14 +1131,14 @@ def _verify_agent_quality(
         _emit_agent_quality(
             as_json,
             {"code": exc.code, "certification_eligible": False},
-            [exc.code, "certification_eligible=false"],
+            [exc.code, CERTIFICATION_ELIGIBLE_FALSE],
         )
         raise click.exceptions.Exit(1) from None
     except schema.AgentQualityVerificationError as exc:
         _emit_agent_quality(
             as_json,
             {"code": exc.code, "certification_eligible": False},
-            [exc.code, "certification_eligible=false"],
+            [exc.code, CERTIFICATION_ELIGIBLE_FALSE],
         )
         raise click.exceptions.Exit(1) from None
 
@@ -1113,3 +1205,226 @@ def _emit_agent_quality(
     else:
         for line in lines:
             click.echo(line)
+
+
+# --- G1 client commands (keygen, pin, enroll, bind, abandon) ----------------
+#
+# All output is closed: fixed tokens, server-issued references and local paths.
+# Nothing from a Backend response body or a local exception message is echoed.
+
+
+def _g1_transport() -> Any:
+    """The authenticated, egress-gated Backend transport (replaced in tests)."""
+    from traigent.certification.transport import BackendG1Transport
+
+    return BackendG1Transport(_make_backend_client())
+
+
+def _g1_fail(message: str) -> Any:
+    click.echo(message)
+    raise click.exceptions.Exit(1)
+
+
+@certify.command("keygen")
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Key file to create (default: ~/.traigent/certification/keys/).",
+)
+def keygen_command(out_path: Path | None) -> None:
+    """Generate a client signing key; prints the file path and public key only."""
+    from traigent.certification.client_keys import ClientKeyError, generate_client_key
+
+    try:
+        key = generate_client_key(out_path)
+    except ClientKeyError as err:
+        _g1_fail(f"KEYGEN_REFUSED {err.code}")
+        return
+    click.echo(f"key_file={key.path}")
+    click.echo(f"public_key_der_b64={key.public_key_der_b64}")
+
+
+@certify.command("pin")
+@click.option(
+    "--from",
+    "source",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Trusted pin document (issuer key, trust ring, project ref, ...).",
+)
+@click.option(
+    "--pins",
+    "pins_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Pin file to write (default: ~/.traigent/certification/pins.json).",
+)
+def pin_command(source: Path, pins_path: Path | None) -> None:
+    """Install the trusted local pin file that also carries the project ref."""
+    from traigent.certification.pins import PinError, write_pins
+
+    try:
+        pins = write_pins(source, pins_path)
+    except PinError as err:
+        _g1_fail(err.code)
+        return
+    click.echo(f"PINNED project_ref={pins.project_ref}")
+
+
+@certify.command("enroll")
+@click.option(
+    "--key",
+    "key_path",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--pins",
+    "pins_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+)
+def enroll_command(key_path: Path, pins_path: Path | None) -> None:
+    """Enrol the client public key for the pinned project and pin its reference."""
+    from traigent.certification.client_keys import (
+        ClientKeyError,
+        enroll_client_key,
+        load_client_key,
+    )
+    from traigent.certification.pins import PinError, load_pins
+
+    try:
+        project_ref = load_pins(pins_path).project_ref
+        key = load_client_key(key_path)
+        ref = enroll_client_key(_g1_transport(), key, project_ref)
+    except PinError as err:
+        _g1_fail(err.code)
+        return
+    except ClientKeyError as err:
+        _g1_fail(f"ENROLL_REFUSED {err.code}")
+        return
+    click.echo(f"ENROLLED client_key_ref={ref}")
+
+
+@certify.command("bind")
+@click.argument("root")
+@click.option(
+    "--key", "key_path", required=True, type=click.Path(dir_okay=False, path_type=Path)
+)
+@click.option("--run-id", required=True)
+@click.option(
+    "--store-dir",
+    required=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Local snapshot store holding the tes1 snapshot.",
+)
+@click.option(
+    "--pins", "pins_path", type=click.Path(dir_okay=False, path_type=Path), default=None
+)
+@click.option(
+    "--evidence-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Local client-evidence directory (default: ~/.traigent/certification/evidence).",
+)
+@click.option("--sdk-ref", default=None, help="40-hex git SHA of this SDK build.")
+@click.option(
+    "--declared-mode",
+    type=click.Choice(["offline", "current_online"]),
+    default="current_online",
+    show_default=True,
+)
+def bind_command(
+    root: str,
+    key_path: Path,
+    run_id: str,
+    store_dir: Path,
+    pins_path: Path | None,
+    evidence_dir: Path | None,
+    sdk_ref: str | None,
+    declared_mode: str,
+) -> None:
+    """Bind retained client evidence (ROOT is sha256:...) and obtain the certificate."""
+    from traigent.certification import bind as bind_module
+    from traigent.certification.client_evidence import (
+        ClientEvidenceError,
+        LocalFileCustody,
+        reconstruct_and_compare,
+    )
+    from traigent.certification.client_keys import ClientKeyError, load_client_key
+    from traigent.certification.pins import PinError, load_pins
+    from traigent.snapshot.backends import LocalDirStore
+
+    # Local reconstruction first: a failure here makes no network call.
+    try:
+        evidence = reconstruct_and_compare(
+            root,
+            custody=LocalFileCustody(evidence_dir),
+            store=LocalDirStore(store_dir),
+        )
+    except ClientEvidenceError as err:
+        _g1_fail(f"BIND_REFUSED {err.code}")
+        return
+    except Exception:
+        _g1_fail("BIND_REFUSED EVIDENCE_STALE_OR_CORRUPT")
+        return
+    try:
+        transport = _g1_transport()
+        bind_module.check_g1_readiness(transport)
+        resolved_ref, sdk_version = bind_module.resolve_sdk_identity(sdk_ref)
+        pins = load_pins(pins_path)
+        key = load_client_key(key_path)
+        result = bind_module.bind_g1(
+            transport,
+            evidence,
+            key,
+            pins,
+            run_id=run_id,
+            sdk_ref=resolved_ref,
+            sdk_version=sdk_version,
+            declared_mode=declared_mode,
+        )
+    except bind_module.BindError as err:
+        click.echo(f"BIND_REFUSED {err.code}")
+        session_ref = getattr(err, "session_ref", None)
+        if session_ref:
+            click.echo(f"session_ref={session_ref}")
+        raise click.exceptions.Exit(1) from None
+    except (PinError, ClientKeyError) as err:
+        _g1_fail(f"BIND_REFUSED {err.code}")
+        return
+    click.echo(f"BOUND certificate_ref={result.certificate_ref or 'none'}")
+
+
+@certify.command("abandon")
+@click.argument("build_session_ref", required=False)
+@click.option(
+    "--run",
+    "run_id",
+    default=None,
+    help="Abandon this run's G1 intent when no build session exists yet.",
+)
+def abandon_command(build_session_ref: str | None, run_id: str | None) -> None:
+    """Abandon a build session (its bsn: reference), or a run's G1 intent with --run."""
+    from traigent.certification import bind as bind_module
+
+    if (build_session_ref is None) == (run_id is None):
+        _g1_fail("ABANDON_REFUSED")
+        return
+    try:
+        if run_id is not None:
+            bind_module.abandon_run(_g1_transport(), run_id)
+        elif build_session_ref is not None:
+            bind_module.abandon_session(_g1_transport(), build_session_ref)
+        else:
+            _g1_fail("ABANDON_REFUSED")
+            return
+    except bind_module.BindError as err:
+        _g1_fail(err.code)
+        return
+    if run_id is not None:
+        click.echo(f"ABANDONED run {run_id}")
+    else:
+        click.echo(f"ABANDONED {build_session_ref}")

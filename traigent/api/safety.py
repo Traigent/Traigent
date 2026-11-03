@@ -835,7 +835,7 @@ def _required_compliance_rate(threshold: SafetyThreshold) -> float:
     (their compliance-rate target is unchanged) while making a ``below(0.1)``
     gate require ~90% compliance instead of ~10%.
 
-    Decided (owner ruling on #2204): the compliance-rate target stays
+    Decided (see #2204): the compliance-rate target stays
     *derived* from ``threshold.value`` and ``threshold.operator``, rather than
     being a separate explicit parameter on ``.above()``/``.below()``. The rule:
     ``>=``/``>`` require a compliance rate of ``value``; ``<=``/``<`` require

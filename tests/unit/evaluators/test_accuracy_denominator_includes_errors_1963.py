@@ -386,6 +386,7 @@ def test_format_for_backend_counts_errored_accuracy_rows_as_zero():
             ExampleMetrics(
                 success=False,
                 error="downstream processing failed",
+                accuracy_builtin=True,
                 custom_metrics={"accuracy": accuracy},
             )
         )
@@ -400,13 +401,19 @@ def test_tracker_formatters_share_the_builtin_accuracy_denominator():
     """Backend and summary formats both count failed eligible rows as misses."""
     tracker = MetricsTracker()
     tracker.add_example_metrics(
-        ExampleMetrics(success=True, custom_metrics={"accuracy": 1.0})
+        ExampleMetrics(
+            success=True, accuracy_builtin=True, custom_metrics={"accuracy": 1.0}
+        )
     )
     tracker.add_example_metrics(
-        ExampleMetrics(success=False, error="downstream processing failed")
+        ExampleMetrics(
+            success=False, error="downstream processing failed", accuracy_builtin=True
+        )
     )
     tracker.add_example_metrics(
-        ExampleMetrics(success=False, error="downstream processing failed")
+        ExampleMetrics(
+            success=False, error="downstream processing failed", accuracy_builtin=True
+        )
     )
 
     backend = tracker.format_for_backend()

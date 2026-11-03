@@ -1241,13 +1241,7 @@ def check_constraints_conflict(
     all_violations: list[tuple[dict[str, Any], list[tuple[Constraint, str]]]] = []
 
     for config in sample_configs:
-        violations: list[tuple[Constraint, str]] = []
-
-        for constraint in constraints:
-            if not constraint.evaluate(config, var_names):
-                # Constraint violated - record it
-                explanation = constraint.explain(var_names)
-                violations.append((constraint, explanation))
+        violations = _collect_violations(constraints, config, var_names)
 
         # If this config satisfies all constraints, no conflict
         if not violations:
@@ -1265,25 +1259,44 @@ def check_constraints_conflict(
     # Report the config with the most violations for best diagnostics
     # (for mutually exclusive constraints, each config violates different ones)
     if all_violations and len(constraints) > 1:
-        # Find the config that violates the most constraints for best diagnostics
-        worst_config, _ = max(all_violations, key=lambda x: len(x[1]))
-
-        # For mutually exclusive constraints, aggregate all violated constraints
-        # across configs to show the full conflict
-        all_violated_constraints: dict[int, tuple[Constraint, str]] = {}
-        for _config, violations in all_violations:
-            for constraint, msg in violations:
-                cid = id(constraint)
-                if cid not in all_violated_constraints:
-                    all_violated_constraints[cid] = (constraint, msg)
-
-        return ConstraintConflict(
-            constraints=[v[0] for v in all_violated_constraints.values()],
-            config=worst_config,
-            messages=[v[1] for v in all_violated_constraints.values()],
-        )
+        return _build_conflict(all_violations)
 
     return None
+
+
+def _collect_violations(
+    constraints: list[Constraint],
+    config: dict[str, Any],
+    var_names: dict[int, str],
+) -> list[tuple[Constraint, str]]:
+    """Return ``(constraint, explanation)`` for each constraint ``config`` violates."""
+    violations: list[tuple[Constraint, str]] = []
+    for constraint in constraints:
+        if not constraint.evaluate(config, var_names):
+            # Constraint violated - record it
+            violations.append((constraint, constraint.explain(var_names)))
+    return violations
+
+
+def _build_conflict(
+    all_violations: list[tuple[dict[str, Any], list[tuple[Constraint, str]]]],
+) -> ConstraintConflict:
+    """Build a conflict report from per-config violations."""
+    # Find the config that violates the most constraints for best diagnostics
+    worst_config, _ = max(all_violations, key=lambda x: len(x[1]))
+
+    # For mutually exclusive constraints, aggregate all violated constraints
+    # across configs to show the full conflict
+    all_violated_constraints: dict[int, tuple[Constraint, str]] = {}
+    for _config, violations in all_violations:
+        for constraint, msg in violations:
+            all_violated_constraints.setdefault(id(constraint), (constraint, msg))
+
+    return ConstraintConflict(
+        constraints=[v[0] for v in all_violated_constraints.values()],
+        config=worst_config,
+        messages=[v[1] for v in all_violated_constraints.values()],
+    )
 
 
 def explain_constraint_violation(

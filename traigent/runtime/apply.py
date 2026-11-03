@@ -1,4 +1,4 @@
-"""``apply``: idempotent registration of a requirement (design section 4.2).
+"""``apply``: idempotent registration of a requirement.
 
 * kwargs requirements use the native create route (provenance ``api``) and need
   no TVL compiler; a TVL-fragment requirement is compiled to the hosted subset
@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -18,12 +19,12 @@ from typing import Any
 from traigent.runtime import manifest
 from traigent.runtime.client import RuntimeClient
 from traigent.runtime.model import (
-    _canonical_number,
     E_EXISTS,
     PROFILE_FIELDS,
     Receipt,
     RuntimeRequirement,
     RuntimeRequirementError,
+    _canonical_number,
     digest_of,
     normalise_environment,
 )
@@ -78,7 +79,33 @@ def profile_diff(
     return diff
 
 
+_REACTIVE_REF = re.compile(r"policyrevisionref_[0-9a-f]{32}")
+_DIGEST = re.compile(r"[0-9a-f]{64}")
+
+
 def _receipt(item: dict[str, Any], created: bool | None) -> Receipt:
+    if item.get("receipt_kind") == "reactive_import":
+        # Zero-native contract (201 new / 200 replay): no production requirement exists.
+        ref, digest = item.get("policy_revision_ref"), item.get("contract_digest")
+        if (
+            item.get("schema_version") != 1
+            or not isinstance(ref, str)
+            or not _REACTIVE_REF.fullmatch(ref)
+            or not isinstance(digest, str)
+            or not _DIGEST.fullmatch(digest)
+            or item.get("created") is not created
+        ):
+            raise RuntimeRequirementError("backend_error", "response")
+        return Receipt(
+            head_id="",
+            revision_id="",
+            revision_number=0,
+            provenance="tvl_spec",
+            status="reactive_import",
+            created=created,
+            policy_revision_ref=ref,
+            contract_digest=digest,
+        )
     try:
         return Receipt(
             head_id=str(item["head_id"]),
@@ -130,6 +157,33 @@ def current_head(
     if len(active) != 1:
         raise RuntimeRequirementError(E_EXISTS, "active_head")
     return active[0]
+
+
+def _resolve_apply_result(
+    item: dict[str, Any] | None,
+    status: int,
+    api: RuntimeClient,
+    requirement: RuntimeRequirement,
+    project_id: str,
+    agent: str,
+    route: str,
+) -> tuple[str, Receipt]:
+    if item is not None:
+        created = status == 201
+        outcome = "created" if created else "noop"
+        receipt = _receipt(item, created)
+    else:  # 409 requirement_exists
+        head = current_head(api, requirement, project_id, agent)
+        diff = profile_diff(requirement, head)
+        if diff:
+            raise ApplyConflict(diff)
+        if route == "tvl_import":
+            # Equal profile but not the identical import: provenance differs.
+            raise RuntimeRequirementError(E_EXISTS, "provenance")
+        receipt = _receipt(head, False)
+        outcome = "noop"
+
+    return outcome, receipt
 
 
 def apply_requirement(
@@ -191,20 +245,9 @@ def apply_requirement(
     else:
         status, item = api.import_tvl(body)
 
-    if item is not None:
-        created = status == 201
-        outcome = "created" if created else "noop"
-        receipt = _receipt(item, created)
-    else:  # 409 requirement_exists
-        head = current_head(api, requirement, project_id, agent)
-        diff = profile_diff(requirement, head)
-        if diff:
-            raise ApplyConflict(diff)
-        if route == "tvl_import":
-            # Equal profile but not the identical import: provenance differs.
-            raise RuntimeRequirementError(E_EXISTS, "provenance")
-        receipt = _receipt(head, False)
-        outcome = "noop"
+    outcome, receipt = _resolve_apply_result(
+        item, status, api, requirement, project_id, agent, route
+    )
 
     manifest.record_apply(
         state,

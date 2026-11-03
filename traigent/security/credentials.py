@@ -805,70 +805,17 @@ class EnhancedCredentialStore:
             raise ValueError("Credential value cannot be None")
         if len(value) == 0:
             raise ValueError("Credential value cannot be empty")
-        reference_length = 8
-        if len(value) < reference_length:
-            with self._lock:
-                self._access_metrics["short_value_blocked"] += 1
-            self._security_event(
-                "rejected_short_credential_value",
-                {
-                    "name": name,
-                    "length": len(value),
-                    "profile": flags.profile.value,
-                    "minimum_length": reference_length,
-                },
-            )
-            logger.warning(
-                "Rejecting short credential value for %s (length=%d) under profile %s",
-                name,
-                len(value),
-                flags.profile.value,
-            )
-            raise ValueError(
-                f"Credential value too short; minimum length is {reference_length} characters"
-            )
-
-        # Check for weak/placeholder secret values. Structured CLI payloads can
-        # include user metadata such as admin@dev.local; only secret-like fields
-        # should participate in this heuristic.
-        weak_field = _weak_credential_field(value)
-        if weak_field and (
-            not flags.allow_weak_credentials or not _is_test_credential_value(value)
-        ):
-            self._security_event(
-                "weak_credential_detected",
-                {"name": name, "field": weak_field},
-            )
-            if weak_field == "value":
-                raise SecurityError(
-                    "Credential value appears to be weak or a placeholder"
-                )
-            raise SecurityError(
-                f"Credential field '{weak_field}' appears to be weak or a placeholder"
-            )
+        self._reject_short_value(name, value, flags)
+        self._reject_weak_value(name, value, flags)
 
         # Encrypt the value
         ciphertext, nonce, associated_data = self._encrypt_value(value)
 
         # Create secure credential
         current_time = datetime.now(UTC)
-        explicit_expiration = _ensure_utc(expires_at)
-        if explicit_expiration and explicit_expiration < current_time:
-            self._security_event(
-                "credential_expiration_in_past",
-                {"name": name, "expires_at": explicit_expiration.isoformat()},
-            )
-        if explicit_expiration is not None:
-            expires_at_final = explicit_expiration
-        elif expires_in_days:
-            expires_at_final = current_time + timedelta(days=expires_in_days)
-        elif self.security_level == SecurityLevel.MAXIMUM:
-            # Force expiration for maximum security
-            expires_at_final = current_time + timedelta(
-                days=self.MAX_CREDENTIAL_AGE_DAYS
-            )
-        else:
-            expires_at_final = None
+        expires_at_final = self._resolve_expiration(
+            name, current_time, expires_at, expires_in_days
+        )
 
         with self._lock:
             self._credentials[name] = SecureCredential(
@@ -899,6 +846,77 @@ class EnhancedCredentialStore:
         )
 
         logger.info(f"Securely stored credential '{name}'")
+
+    def _reject_short_value(self, name: str, value: str, flags: Any) -> None:
+        """Deny values shorter than the minimum length (records the attempt)."""
+        reference_length = 8
+        if len(value) >= reference_length:
+            return
+        with self._lock:
+            self._access_metrics["short_value_blocked"] += 1
+        self._security_event(
+            "rejected_short_credential_value",
+            {
+                "name": name,
+                "length": len(value),
+                "profile": flags.profile.value,
+                "minimum_length": reference_length,
+            },
+        )
+        logger.warning(
+            "Rejecting short credential value for %s (length=%d) under profile %s",
+            name,
+            len(value),
+            flags.profile.value,
+        )
+        raise ValueError(
+            f"Credential value too short; minimum length is {reference_length} characters"
+        )
+
+    def _reject_weak_value(self, name: str, value: str, flags: Any) -> None:
+        """Deny weak/placeholder secret values.
+
+        Structured CLI payloads can include user metadata such as
+        admin@dev.local; only secret-like fields participate in this heuristic.
+        """
+        weak_field = _weak_credential_field(value)
+        if weak_field and (
+            not flags.allow_weak_credentials or not _is_test_credential_value(value)
+        ):
+            self._security_event(
+                "weak_credential_detected",
+                {"name": name, "field": weak_field},
+            )
+            if weak_field == "value":
+                raise SecurityError(
+                    "Credential value appears to be weak or a placeholder"
+                )
+            raise SecurityError(
+                f"Credential field '{weak_field}' appears to be weak or a placeholder"
+            )
+
+    def _resolve_expiration(
+        self,
+        name: str,
+        current_time: datetime,
+        expires_at: datetime | None,
+        expires_in_days: int | None,
+    ) -> datetime | None:
+        """Pick the stored expiry: explicit time, then days, then the level default."""
+        explicit_expiration = _ensure_utc(expires_at)
+        if explicit_expiration and explicit_expiration < current_time:
+            self._security_event(
+                "credential_expiration_in_past",
+                {"name": name, "expires_at": explicit_expiration.isoformat()},
+            )
+        if explicit_expiration is not None:
+            return explicit_expiration
+        if expires_in_days:
+            return current_time + timedelta(days=expires_in_days)
+        if self.security_level == SecurityLevel.MAXIMUM:
+            # Force expiration for maximum security
+            return current_time + timedelta(days=self.MAX_CREDENTIAL_AGE_DAYS)
+        return None
 
     def rotate_credential(self, name: str, new_value: str) -> None:
         """Rotate a credential with secure history tracking.

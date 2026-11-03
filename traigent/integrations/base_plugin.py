@@ -183,6 +183,65 @@ class IntegrationPlugin(ABC):
         """
         return self._parameter_mappings.copy()
 
+    @staticmethod
+    def _config_param_value(config: "TraigentConfig", param_name: str) -> Any:
+        """Read a parameter from direct attributes, then ``custom_params``."""
+        # Get value from both direct attributes and custom_params
+        value = None
+        if hasattr(config, param_name):
+            value = getattr(config, param_name)
+        if value is None and hasattr(config, "custom_params") and config.custom_params:
+            value = config.custom_params.get(param_name)
+        return value
+
+    @staticmethod
+    def _bound_error(
+        param_name: str, value: Any, bound: Any, below: bool
+    ) -> str | None:
+        """Error text when ``value`` crosses ``bound`` (or is not comparable)."""
+        if bound is None:
+            return None
+        try:
+            # The truth test stays inside the handler: some comparison results
+            # (e.g. pandas.NA) raise TypeError from bool().
+            if not (value < bound if below else value > bound):
+                return None
+        except TypeError:
+            # Cannot compare types - treat as invalid
+            return (
+                f"Parameter '{param_name}' value {value} has incompatible type "
+                "(expected numeric)"
+            )
+        direction = "below minimum" if below else "above maximum"
+        return f"Parameter '{param_name}' value {value} is {direction} {bound}"
+
+    def _rule_errors(
+        self, param_name: str, rule: ValidationRule, value: Any
+    ) -> list[str]:
+        """All rule violations for one present parameter value, in check order."""
+        errors: list[str] = []
+
+        # Validate min/max values (ensure comparable types)
+        for bound, below in ((rule.min_value, True), (rule.max_value, False)):
+            bound_error = self._bound_error(param_name, value, bound, below)
+            if bound_error is not None:
+                errors.append(bound_error)
+
+        # Validate allowed values
+        if rule.allowed_values is not None and value not in rule.allowed_values:
+            errors.append(
+                f"Parameter '{param_name}' value {value} not in allowed values: {rule.allowed_values}"
+            )
+
+        # Custom validation
+        if rule.custom_validator:
+            custom_method = getattr(self, rule.custom_validator, None)
+            if custom_method:
+                custom_errors = custom_method(param_name, value)
+                if custom_errors:
+                    errors.extend(custom_errors)
+        return errors
+
     def validate_config(self, config: "TraigentConfig") -> bool:
         """Validate a TraigentConfig against this plugin's rules.
 
@@ -195,19 +254,10 @@ class IntegrationPlugin(ABC):
         Raises:
             TraigentError: If validation fails with details
         """
-        errors = []
+        errors: list[str] = []
 
         for param_name, rule in self._validation_rules.items():
-            # Get value from both direct attributes and custom_params
-            value = None
-            if hasattr(config, param_name):
-                value = getattr(config, param_name)
-            if (
-                value is None
-                and hasattr(config, "custom_params")
-                and config.custom_params
-            ):
-                value = config.custom_params.get(param_name)
+            value = self._config_param_value(config, param_name)
 
             # Check required parameters
             if rule.required and value is None:
@@ -217,42 +267,7 @@ class IntegrationPlugin(ABC):
             if value is None:
                 continue
 
-            # Validate min/max values (ensure comparable types)
-            try:
-                if rule.min_value is not None and value < rule.min_value:
-                    errors.append(
-                        f"Parameter '{param_name}' value {value} is below minimum {rule.min_value}"
-                    )
-            except TypeError:
-                # Cannot compare types - treat as invalid
-                errors.append(
-                    f"Parameter '{param_name}' value {value} has incompatible type (expected numeric)"
-                )
-
-            try:
-                if rule.max_value is not None and value > rule.max_value:
-                    errors.append(
-                        f"Parameter '{param_name}' value {value} is above maximum {rule.max_value}"
-                    )
-            except TypeError:
-                # Cannot compare types - treat as invalid
-                errors.append(
-                    f"Parameter '{param_name}' value {value} has incompatible type (expected numeric)"
-                )
-
-            # Validate allowed values
-            if rule.allowed_values is not None and value not in rule.allowed_values:
-                errors.append(
-                    f"Parameter '{param_name}' value {value} not in allowed values: {rule.allowed_values}"
-                )
-
-            # Custom validation
-            if rule.custom_validator:
-                custom_method = getattr(self, rule.custom_validator, None)
-                if custom_method:
-                    custom_errors = custom_method(param_name, value)
-                    if custom_errors:
-                        errors.extend(custom_errors)
+            errors.extend(self._rule_errors(param_name, rule, value))
 
         if errors:
             raise TraigentError(
@@ -284,8 +299,30 @@ class IntegrationPlugin(ABC):
         # Apply parameter mappings
         overridden = kwargs.copy()
 
-        # Get all config values (both direct attributes and custom_params)
-        config_dict = {}
+        config_dict = self._collect_config_values(config_obj)
+        self._guard_system_prompt_params(config_dict)
+
+        # Apply mappings
+        mapped_params: set[str] = set()
+        for traigent_param, framework_param in self._parameter_mappings.items():
+            if traigent_param in config_dict:
+                # Only override if user didn't explicitly provide the framework parameter
+                if framework_param not in kwargs:
+                    overridden[framework_param] = config_dict[traigent_param]
+                mapped_params.add(traigent_param)
+
+        # Pass through custom_params that aren't in mappings (framework-native params)
+        if hasattr(config_obj, "custom_params") and config_obj.custom_params:
+            for param_name, value in config_obj.custom_params.items():
+                if param_name not in mapped_params and param_name not in overridden:
+                    overridden[param_name] = value
+
+        return overridden
+
+    @staticmethod
+    def _collect_config_values(config_obj: "TraigentConfig") -> dict[str, Any]:
+        """Collect direct config attributes and ``custom_params`` into one dict."""
+        config_dict: dict[str, Any] = {}
 
         # Add direct TraigentConfig attributes
         for attr in [
@@ -306,61 +343,64 @@ class IntegrationPlugin(ABC):
         # Add custom params
         if hasattr(config_obj, "custom_params") and config_obj.custom_params:
             config_dict.update(config_obj.custom_params)
+        return config_dict
 
-        # Guard system-prompt parameters (audit log + optional lock)
+    @staticmethod
+    def _guard_system_prompt_params(config_dict: dict[str, Any]) -> None:
+        """Guard system-prompt parameters (audit log + optional lock)."""
         lock_prompt = os.environ.get("TRAIGENT_LOCK_SYSTEM_PROMPT", "").lower() in (
             "true",
             "1",
             "yes",
         )
         prompt_params_in_config = _SYSTEM_PROMPT_PARAMS & config_dict.keys()
-        if prompt_params_in_config:
-            global _system_prompt_warning_emitted  # noqa: PLW0603
-            if not _system_prompt_warning_emitted:
-                logger.info(
-                    "System prompt parameter(s) %s included in optimization "
-                    "config space. Ensure all candidate values are trusted.",
-                    sorted(prompt_params_in_config),
+        if not prompt_params_in_config:
+            return
+
+        global _system_prompt_warning_emitted  # noqa: PLW0603
+        if not _system_prompt_warning_emitted:
+            logger.info(
+                "System prompt parameter(s) %s included in optimization "
+                "config space. Ensure all candidate values are trusted.",
+                sorted(prompt_params_in_config),
+            )
+            _system_prompt_warning_emitted = True
+
+        if lock_prompt:
+            for p in prompt_params_in_config:
+                logger.warning(
+                    "TRAIGENT_LOCK_SYSTEM_PROMPT is set — dropping "
+                    "optimizer-supplied '%s' parameter.",
+                    p,
                 )
-                _system_prompt_warning_emitted = True
+                del config_dict[p]
+            return
 
-            if lock_prompt:
-                for p in prompt_params_in_config:
-                    logger.warning(
-                        "TRAIGENT_LOCK_SYSTEM_PROMPT is set — dropping "
-                        "optimizer-supplied '%s' parameter.",
-                        p,
-                    )
-                    del config_dict[p]
-            else:
-                # Audit-log every time the optimizer changes a prompt param
-                for p in prompt_params_in_config:
-                    val = config_dict[p]
-                    truncated = (
-                        str(val)[:120] + "…" if len(str(val)) > 120 else str(val)
-                    )
-                    logger.warning(
-                        "Optimizer is modifying system prompt param '%s': %s",
-                        p,
-                        truncated,
-                    )
+        # Audit-log every time the optimizer changes a prompt param
+        for p in prompt_params_in_config:
+            val = config_dict[p]
+            truncated = str(val)[:120] + "…" if len(str(val)) > 120 else str(val)
+            logger.warning(
+                "Optimizer is modifying system prompt param '%s': %s",
+                p,
+                truncated,
+            )
 
-        # Apply mappings
-        mapped_params: set[str] = set()
-        for traigent_param, framework_param in self._parameter_mappings.items():
-            if traigent_param in config_dict:
-                # Only override if user didn't explicitly provide the framework parameter
-                if framework_param not in kwargs:
-                    overridden[framework_param] = config_dict[traigent_param]
-                mapped_params.add(traigent_param)
+    def _apply_validation_overrides(self, validation: Mapping[str, Any]) -> None:
+        for param_name, rule_data in validation.items():
+            if param_name not in self._validation_rules:
+                self._validation_rules[param_name] = ValidationRule()
 
-        # Pass through custom_params that aren't in mappings (framework-native params)
-        if hasattr(config_obj, "custom_params") and config_obj.custom_params:
-            for param_name, value in config_obj.custom_params.items():
-                if param_name not in mapped_params and param_name not in overridden:
-                    overridden[param_name] = value
+            self._apply_attribute_overrides(
+                self._validation_rules[param_name], rule_data
+            )
 
-        return overridden
+    @staticmethod
+    def _apply_attribute_overrides(target: Any, values: Mapping[str, Any]) -> None:
+        """Set each known attribute of ``target`` from ``values``."""
+        for key, value in values.items():
+            if hasattr(target, key):
+                setattr(target, key, value)
 
     def _load_config_overrides(self, config_path: Path) -> None:
         """Load configuration overrides from YAML or JSON file.
@@ -393,20 +433,11 @@ class IntegrationPlugin(ABC):
 
             # Override validation rules
             if "validation" in config_data:
-                for param_name, rule_data in config_data["validation"].items():
-                    if param_name not in self._validation_rules:
-                        self._validation_rules[param_name] = ValidationRule()
-
-                    rule = self._validation_rules[param_name]
-                    for key, value in rule_data.items():
-                        if hasattr(rule, key):
-                            setattr(rule, key, value)
+                self._apply_validation_overrides(config_data["validation"])
 
             # Override metadata if specified
             if "metadata" in config_data:
-                for key, value in config_data["metadata"].items():
-                    if hasattr(self.metadata, key):
-                        setattr(self.metadata, key, value)
+                self._apply_attribute_overrides(self.metadata, config_data["metadata"])
 
             logger.info(f"Loaded configuration overrides from {config_path}")
 

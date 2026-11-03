@@ -24,7 +24,7 @@ wandb>=0.15.0
 python-dotenv>=1.2.2
 
 # AWS Bedrock
-boto3>=1.28.0
+boto3>=1.35.2
 botocore>=1.31.0
 
 # Google Generative AI (Gemini)

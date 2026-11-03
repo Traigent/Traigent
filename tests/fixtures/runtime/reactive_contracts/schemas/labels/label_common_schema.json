@@ -1,0 +1,246 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/labels/label_common_schema.json",
+  "title": "Label Service Common Types",
+  "description": "Shared types for the label service (docs/labels-v0.md). Additive phase-2 contract of the content-less optimization design: opaque references, key and signature encodings, and the ref-keyed maps the optimization schemas reference. Every definition carries its x-content-class.",
+  "definitions": {
+    "SchemaVersion": {
+      "x-content-class": "closed_enum",
+      "type": "integer",
+      "const": 1,
+      "description": "Label contract version. Also the leading envelope version byte."
+    },
+    "Purpose": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "label",
+        "knob",
+        "choice",
+        "metric",
+        "template"
+      ],
+      "description": "What a label names. Bound into the envelope AAD, so a ciphertext cannot be replayed under another purpose."
+    },
+    "TenantRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^tenant_[0-9a-f]{32}$",
+      "maxLength": 39,
+      "description": "Server-issued opaque reference to a tenant: the tenant id, `tenant_<32 lowercase hex>` as the Backend issues it (`enterprise_tenant.py` default id)."
+    },
+    "ProjectRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^project_[0-9a-f]{32}$",
+      "maxLength": 40,
+      "description": "Server-issued opaque reference to a project (the key scope: one key pair per project per epoch): the project id, `project_<32 lowercase hex>` as the Backend issues it (`project.py` default id)."
+    },
+    "ObjectRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^(agent|agentbuild|choice|configurationversion|dataset|datasetversion|evaluationset|evaluator|evaluatorversion|head|knob|metric|run|searchspec|snapshot|template|trial)ref_[0-9a-f]{32}$",
+      "maxLength": 56,
+      "description": "Server-issued opaque reference to the object a label is attached to (a knob, choice, metric, template, dataset, dataset version, agent, agent build, evaluation set, evaluator, evaluator version, search spec, run, trial, configuration version, head or snapshot). The label service never learns what the object is called. Format `<kind>ref_<32 lowercase hex>` (a Backend-issued opaque reference, resolved only within the caller's tenant and project; it is distinct from, and stable per, the Backend primary key it maps to, and the Backend primary key is never sent in its place); the client may not rely on anything else about it. The kind is one of the closed set in the pattern. A dataset slice is addressed by its evaluationsetref_; a prompt by its templateref_."
+    },
+    "KnobRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^knobref_[0-9a-f]{32}$",
+      "maxLength": 40,
+      "description": "Server-issued opaque reference to a configuration knob; replaces the customer's knob name. Format `<kind>ref_<32 lowercase hex>` (a Backend-issued opaque reference, resolved only within the caller's tenant and project; it is distinct from, and stable per, the Backend primary key it maps to, and the Backend primary key is never sent in its place); the client may not rely on anything else about it."
+    },
+    "ChoiceRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^choiceref_[0-9a-f]{32}$",
+      "maxLength": 42,
+      "description": "Server-issued opaque reference to one categorical choice of a knob; replaces the customer's choice string. Format `<kind>ref_<32 lowercase hex>` (a Backend-issued opaque reference, resolved only within the caller's tenant and project; it is distinct from, and stable per, the Backend primary key it maps to, and the Backend primary key is never sent in its place); the client may not rely on anything else about it."
+    },
+    "MetricRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^metricref_[0-9a-f]{32}$",
+      "maxLength": 42,
+      "description": "Server-issued opaque reference to a metric; replaces the customer's metric name. Format `<kind>ref_<32 lowercase hex>` (a Backend-issued opaque reference, resolved only within the caller's tenant and project; it is distinct from, and stable per, the Backend primary key it maps to, and the Backend primary key is never sent in its place); the client may not rely on anything else about it."
+    },
+    "AgentRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^agentref_[0-9a-f]{32}$",
+      "maxLength": 41,
+      "description": "Server-issued opaque reference to an agent; replaces agent_key / agent_id labels. Format `<kind>ref_<32 lowercase hex>` (a Backend-issued opaque reference, resolved only within the caller's tenant and project; it is distinct from, and stable per, the Backend primary key it maps to, and the Backend primary key is never sent in its place); the client may not rely on anything else about it."
+    },
+    "DatasetRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^datasetref_[0-9a-f]{32}$",
+      "maxLength": 43,
+      "description": "Server-issued opaque reference to an evaluation dataset; replaces dataset_id labels. Format `<kind>ref_<32 lowercase hex>` (a Backend-issued opaque reference, resolved only within the caller's tenant and project; it is distinct from, and stable per, the Backend primary key it maps to, and the Backend primary key is never sent in its place); the client may not rely on anything else about it."
+    },
+    "EvaluationSetRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^evaluationsetref_[0-9a-f]{32}$",
+      "maxLength": 49,
+      "description": "Server-issued opaque reference to an evaluation set; replaces evaluation-set names. Format `<kind>ref_<32 lowercase hex>` (a Backend-issued opaque reference, resolved only within the caller's tenant and project; it is distinct from, and stable per, the Backend primary key it maps to, and the Backend primary key is never sent in its place); the client may not rely on anything else about it."
+    },
+    "EvaluatorRef": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^evaluatorref_[0-9a-f]{32}$",
+      "maxLength": 45,
+      "description": "Server-issued opaque reference to an evaluator; replaces evaluator_id labels. Format `<kind>ref_<32 lowercase hex>` (a Backend-issued opaque reference, resolved only within the caller's tenant and project; it is distinct from, and stable per, the Backend primary key it maps to, and the Backend primary key is never sent in its place); the client may not rely on anything else about it."
+    },
+    "KeyId": {
+      "x-content-class": "opaque_ref",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22}$",
+      "description": "First 16 bytes of SHA-256(raw public key), unpadded base64url (22 characters). Derived from the key, not chosen by anyone.",
+      "x-content-note": "derived key identifier, not customer content"
+    },
+    "PublicKey": {
+      "x-content-class": "key_material",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 43,
+      "maxLength": 43,
+      "description": "Raw 32-byte public key (X25519 or Ed25519), unpadded base64url.",
+      "x-content-note": "public key material, not customer content"
+    },
+    "Signature": {
+      "x-content-class": "key_material",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 86,
+      "maxLength": 86,
+      "description": "Ed25519 signature (64 bytes), unpadded base64url.",
+      "x-content-note": "signature over canonical binding bytes, not customer content"
+    },
+    "Enc": {
+      "x-content-class": "encrypted_blob",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 43,
+      "maxLength": 43,
+      "description": "HPKE encapsulated key `enc` (32 bytes for DHKEM(X25519)), unpadded base64url."
+    },
+    "Nonce12": {
+      "x-content-class": "key_material",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 16,
+      "maxLength": 16,
+      "description": "96-bit AES-GCM nonce, unpadded base64url.",
+      "x-content-note": "random nonce, not customer content"
+    },
+    "Salt": {
+      "x-content-class": "key_material",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 16,
+      "maxLength": 86,
+      "description": "Random or fixed public salt, unpadded base64url.",
+      "x-content-note": "public salt, not customer content"
+    },
+    "Epoch": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295,
+      "description": "Project key epoch (1-based, fits the 4-byte envelope epoch field). Epoch 0 is reserved for the recovery wrap of the tenant root key."
+    },
+    "Revision": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Object content revision. 0 means the object does not exist yet."
+    },
+    "Timestamp": {
+      "x-content-class": "timestamp",
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp, UTC."
+    },
+    "Count": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0,
+      "description": "Non-negative count."
+    },
+    "ConfigRefMap": {
+      "type": "object",
+      "maxProperties": 200,
+      "description": "A configuration expressed as knob_ref -> choice_ref | number | boolean. Replaces a config keyed by customer knob names. Keys and categorical values are opaque references; the customer-side token map lives in the label service as ciphertext.",
+      "propertyNames": {
+        "x-content-class": "opaque_ref",
+        "type": "string",
+        "pattern": "^knobref_[0-9a-f]{32}$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "$ref": "#/definitions/ChoiceRef"
+          },
+          {
+            "x-content-class": "number",
+            "type": "number"
+          },
+          {
+            "x-content-class": "closed_enum",
+            "type": "boolean"
+          }
+        ]
+      }
+    },
+    "MetricValueMap": {
+      "type": "object",
+      "maxProperties": 50,
+      "description": "Metric values keyed by metric_ref. Replaces a metrics map keyed by customer metric names.",
+      "propertyNames": {
+        "x-content-class": "opaque_ref",
+        "type": "string",
+        "pattern": "^metricref_[0-9a-f]{32}$"
+      },
+      "additionalProperties": {
+        "x-content-class": "number",
+        "type": [
+          "number",
+          "null"
+        ]
+      }
+    },
+    "KnobRefList": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/definitions/KnobRef"
+      }
+    },
+    "MetricRefList": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "$ref": "#/definitions/MetricRef"
+      }
+    },
+    "ChoiceRefMap": {
+      "type": "object",
+      "maxProperties": 200,
+      "description": "knob_ref -> the choice_refs declared for that knob (categorical choices).",
+      "propertyNames": {
+        "x-content-class": "opaque_ref",
+        "type": "string",
+        "pattern": "^knobref_[0-9a-f]{32}$"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "maxItems": 500,
+        "items": {
+          "$ref": "#/definitions/ChoiceRef"
+        }
+      }
+    }
+  }
+}

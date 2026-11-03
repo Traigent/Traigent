@@ -118,6 +118,42 @@ class GridSearchOptimizer(BaseOptimizer):
 
         logger.info(f"Generated grid with {len(self._grid_points)} combinations")
 
+    @staticmethod
+    def _discrete_values_for(param_name: str, param_def: Any) -> Sequence[Any]:
+        """Return the enumerable values of one parameter definition."""
+        if isinstance(param_def, list):
+            # Categorical parameter
+            return param_def
+        if isinstance(param_def, dict):
+            values = discrete_values_for_config_param(param_def)
+            if values is None:
+                raise OptimizationError(
+                    f"Grid search cannot optimize continuous parameter '{param_name}' "
+                    f"with range {param_def}. Grid search requires discrete values "
+                    "to enumerate. Options: (1) provide a step for the range, "
+                    "(2) use a list of discrete values, (3) use 'random' optimizer "
+                    "instead for continuous ranges"
+                )
+            return values
+        if isinstance(param_def, tuple) and len(param_def) == 2:
+            # Continuous parameter - not directly supported in basic grid search
+            low, high = param_def
+            # Suggest discrete values based on the range
+            if isinstance(low, int) and isinstance(high, int):
+                suggestion = f"[{low}, {(low + high) // 2}, {high}]"
+            else:
+                mid = (low + high) / 2
+                suggestion = f"[{low}, {mid:.2f}, {high}]"
+            raise OptimizationError(
+                f"Grid search cannot optimize continuous parameter '{param_name}' "
+                f"with range {param_def}. Grid search requires discrete values to enumerate. "
+                f"Options: "
+                f"(1) Use a list of discrete values: {suggestion}, "
+                f"(2) Use 'random' optimizer instead for continuous ranges"
+            )
+        # Single value (fixed parameter)
+        return [param_def]
+
     def _generate_grid(self) -> list[dict[str, Any]]:
         """Generate all possible parameter combinations.
 
@@ -131,43 +167,10 @@ class GridSearchOptimizer(BaseOptimizer):
             raise OptimizationError("No valid parameter combinations found")
 
         param_names = self._ordered_param_names.copy()
-        param_values: list[Sequence[Any]] = []
-        for param_name in param_names:
-            param_def = self.config_space[param_name]
-
-            if isinstance(param_def, list):
-                # Categorical parameter
-                param_values.append(param_def)
-            elif isinstance(param_def, dict):
-                values = discrete_values_for_config_param(param_def)
-                if values is None:
-                    raise OptimizationError(
-                        f"Grid search cannot optimize continuous parameter '{param_name}' "
-                        f"with range {param_def}. Grid search requires discrete values "
-                        "to enumerate. Options: (1) provide a step for the range, "
-                        "(2) use a list of discrete values, (3) use 'random' optimizer "
-                        "instead for continuous ranges"
-                    )
-                param_values.append(values)
-            elif isinstance(param_def, tuple) and len(param_def) == 2:
-                # Continuous parameter - not directly supported in basic grid search
-                low, high = param_def
-                # Suggest discrete values based on the range
-                if isinstance(low, int) and isinstance(high, int):
-                    suggestion = f"[{low}, {(low + high) // 2}, {high}]"
-                else:
-                    mid = (low + high) / 2
-                    suggestion = f"[{low}, {mid:.2f}, {high}]"
-                raise OptimizationError(
-                    f"Grid search cannot optimize continuous parameter '{param_name}' "
-                    f"with range {param_def}. Grid search requires discrete values to enumerate. "
-                    f"Options: "
-                    f"(1) Use a list of discrete values: {suggestion}, "
-                    f"(2) Use 'random' optimizer instead for continuous ranges"
-                )
-            else:
-                # Single value (fixed parameter)
-                param_values.append([param_def])
+        param_values: list[Sequence[Any]] = [
+            self._discrete_values_for(param_name, self.config_space[param_name])
+            for param_name in param_names
+        ]
 
         # Convert cartesian product to dictionaries without materializing a second
         # list of raw tuples.

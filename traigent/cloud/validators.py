@@ -221,6 +221,24 @@ def validate_measures_array(measures: Any) -> bool:
     )
 
 
+def _validate_summary_numeric_fields(summary_stats: dict[str, Any]) -> None:
+    # Validate execution_time if present
+    if "execution_time" in summary_stats:
+        exec_time = summary_stats["execution_time"]
+        if exec_time is not None and not isinstance(exec_time, (int, float)):
+            raise ValueError(
+                f"summary_stats.execution_time must be number or null, got {type(exec_time)}"
+            )
+
+    # Validate total_examples if present
+    if "total_examples" in summary_stats:
+        total = summary_stats["total_examples"]
+        if total is not None and not isinstance(total, int):
+            raise ValueError(
+                f"summary_stats.total_examples must be integer or null, got {type(total)}"
+            )
+
+
 def validate_summary_stats(summary_stats: Any) -> bool:
     """Validate summary_stats according to Traigent schema.
 
@@ -257,21 +275,7 @@ def validate_summary_stats(summary_stats: Any) -> bool:
             _validate_summary_metric_value(key, value) for key, value in metrics.items()
         )
 
-    # Validate execution_time if present
-    if "execution_time" in summary_stats:
-        exec_time = summary_stats["execution_time"]
-        if exec_time is not None and not isinstance(exec_time, (int, float)):
-            raise ValueError(
-                f"summary_stats.execution_time must be number or null, got {type(exec_time)}"
-            )
-
-    # Validate total_examples if present
-    if "total_examples" in summary_stats:
-        total = summary_stats["total_examples"]
-        if total is not None and not isinstance(total, int):
-            raise ValueError(
-                f"summary_stats.total_examples must be integer or null, got {type(total)}"
-            )
+    _validate_summary_numeric_fields(summary_stats)
 
     # metadata can be any object, so no validation needed beyond type check
     comparability_valid = True

@@ -487,7 +487,7 @@ class CostEstimator:
             # was seen); callers keep the "unmeasured" state visible via the
             # flag on the trial. Nothing reported at all stays unknown.
             floor = known_spend_lower_bound(metrics, trial_result.metadata)
-            return floor if floor > 0 else None
+            return _positive_spend_floor(floor)
         for key in ("total_cost", "cost"):
             if key in metrics:
                 try:
@@ -507,3 +507,7 @@ class CostEstimator:
 
         # Cost cannot be determined
         return None
+
+
+def _positive_spend_floor(floor: float) -> float | None:
+    return floor if floor > 0 else None

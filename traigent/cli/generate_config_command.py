@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -103,21 +104,8 @@ def generate_config(
         traigent generate-config my_agent.py -f answer_question -o python
     """
     from traigent.config_generator import generate_config as gen_config
-    from traigent.config_generator.pipeline import ALL_SUBSYSTEMS
 
-    # Parse subsystems
-    subsystems: frozenset[str] | None = None
-    if subsystems_str:
-        requested = frozenset(s.strip() for s in subsystems_str.split(","))
-        invalid = requested - ALL_SUBSYSTEMS
-        if invalid:
-            click.echo(
-                f"Unknown subsystems: {', '.join(sorted(invalid))}. "
-                f"Valid: {', '.join(sorted(ALL_SUBSYSTEMS))}",
-                err=True,
-            )
-            raise SystemExit(1)
-        subsystems = requested
+    subsystems = _parse_subsystems(subsystems_str)
 
     try:
         result = gen_config(
@@ -143,30 +131,56 @@ def generate_config(
 
     # --apply: insert/update decorator on the target function
     if apply_decorator:
-        if not function_name:
-            click.echo(
-                "Error: --apply requires --function/-f to specify which function "
-                "to decorate.",
-                err=True,
-            )
-            raise SystemExit(1)
-        from traigent.config_generator.apply import apply_config
-
-        modified = apply_config(
-            path,
-            result,
-            function_name,
-            backup=not no_backup,
-        )
-        click.echo(f"Applied @traigent.optimize() to {function_name} in {modified}")
-        if not no_backup:
-            click.echo(f"Backup saved to {path.with_suffix('.py.bak')}")
+        _apply_generated_config(path, result, function_name, no_backup)
         return
 
     # Format and display
     if json_detailed:
         output_format = "json-detailed"
+    _display_result(result, path, output_format)
 
+
+def _parse_subsystems(subsystems_str: str | None) -> frozenset[str] | None:
+    from traigent.config_generator.pipeline import ALL_SUBSYSTEMS
+
+    if not subsystems_str:
+        return None
+    requested = frozenset(s.strip() for s in subsystems_str.split(","))
+    invalid = requested - ALL_SUBSYSTEMS
+    if invalid:
+        click.echo(
+            f"Unknown subsystems: {', '.join(sorted(invalid))}. "
+            f"Valid: {', '.join(sorted(ALL_SUBSYSTEMS))}",
+            err=True,
+        )
+        raise SystemExit(1)
+    return requested
+
+
+def _apply_generated_config(
+    path: Path, result: Any, function_name: str | None, no_backup: bool
+) -> None:
+    if not function_name:
+        click.echo(
+            "Error: --apply requires --function/-f to specify which function "
+            "to decorate.",
+            err=True,
+        )
+        raise SystemExit(1)
+    from traigent.config_generator.apply import apply_config
+
+    modified = apply_config(
+        path,
+        result,
+        function_name,
+        backup=not no_backup,
+    )
+    click.echo(f"Applied @traigent.optimize() to {function_name} in {modified}")
+    if not no_backup:
+        click.echo(f"Backup saved to {path.with_suffix('.py.bak')}")
+
+
+def _display_result(result: Any, path: Path, output_format: str) -> None:
     if output_format == "python":
         _output_python(result)
     elif output_format == "json":

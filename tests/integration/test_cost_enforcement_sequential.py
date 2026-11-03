@@ -493,3 +493,128 @@ class TestMockModeIntegration:
             assert abs(enforcer._accumulated_cost - 0.05) < FLOAT_TOLERANCE
         finally:
             os.environ["TRAIGENT_MOCK_LLM"] = "false"
+
+
+class TestFinalWarningReceivesRealPartialCounts:
+    """The end-of-run warning is built from the trial's real example rows."""
+
+    @staticmethod
+    def _trial(rows: list[dict], attempted: int | None):
+        from datetime import UTC, datetime
+
+        from traigent.api.types import TrialResult, TrialStatus
+
+        metadata: dict = {"example_results": rows}
+        if attempted is not None:
+            metadata["examples_attempted"] = attempted
+        return TrialResult(
+            trial_id="t1",
+            config={},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metrics={"cost_unmeasured": 1.0, "cost_lower_bound": 0.02},
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _rows() -> list[dict]:
+        priced = {"total_cost": 0.01}
+        no_model_call = {"total_cost": 0.0}  # with_usage(value, total_cost=0)
+        return [
+            {"example_id": "a", "success": True, "metrics": priced},
+            {"example_id": "b", "success": True, "metrics": {}},
+            {"example_id": "c", "success": True, "metrics": no_model_call},
+            {"example_id": "d", "success": True, "metrics": {}},
+            {"example_id": "e", "success": True, "metrics": priced},
+        ]
+
+    def _final_message(
+        self, attempted: int | None, *, waived: bool = True, trial: object = None
+    ) -> str:
+        import asyncio
+        from types import SimpleNamespace
+
+        from traigent.core.optimized_function import OptimizedFunction
+        from traigent.core.orchestrator import OptimizationOrchestrator
+
+        enforcer = CostEnforcer(
+            CostEnforcerConfig(
+                limit=5.0, estimated_cost_per_trial=0.1, limit_explicit=False
+            )
+        )
+        if waived:
+            enforcer.waive_unknown_cost_trial_cap()
+        orch = SimpleNamespace(
+            cost_enforcer=enforcer,
+            execution_budget=None,
+            _extract_trial_cost=lambda t: 0.02,
+            _examples_of=lambda t: 5,
+        )
+        permit = enforcer.acquire_permit()
+        if trial is None:
+            trial = self._trial(self._rows(), attempted)
+        asyncio.run(
+            OptimizationOrchestrator._account_trial_spend(orch, trial, permit=permit)
+        )
+        result = SimpleNamespace(warnings=[], warning_codes=[], stop_reason=None)
+        OptimizedFunction._attach_unmeasured_cost_stop_warning(
+            SimpleNamespace(), result, orch
+        )
+        assert result.warning_codes == ["COST_UNMEASURED_TRIALS_RAN"]
+        (message,) = result.warnings
+        return message
+
+    def test_partial_counts_reach_final_warning(self) -> None:
+        message = self._final_message(attempted=5)
+        assert "cost could not be measured on 2 of 5 examples" in message
+        assert "traigent.with_usage(value, total_cost=0)" in message
+        assert "usage was captured" not in message
+
+    def test_unreadable_counts_give_neutral_final_warning(self) -> None:
+        message = self._final_message(attempted=None)
+        assert "could not be measured" in message
+        assert "usage was captured" not in message
+        assert "cost could not be measured on" not in message
+
+    def test_real_evaluator_trial_reaches_final_warning_with_real_counts(self) -> None:
+        """Drive LocalEvaluator and the real result factory (no hand-built
+        metadata): 2 no-model-call rows record a measured $0, 3 rows have no
+        measurable cost, and the final warning reports exactly that."""
+        import asyncio
+
+        from traigent.core.trial_result_factory import build_success_result
+        from traigent.evaluators.base import Dataset, EvaluationExample
+        from traigent.evaluators.local import LocalEvaluator
+
+        dataset = Dataset(
+            [EvaluationExample({"q": str(i)}, f"x{i}") for i in range(5)],
+            name="coverage",
+            description="five rows",
+        )
+
+        def func(input_data: dict) -> object:
+            q = int(input_data["q"])
+            if q in (0, 2):  # what traigent.with_usage(value, total_cost=0) returns
+                return {"text": f"x{q}", "__traigent_meta__": {"total_cost": 0.0}}
+            return f"x{q}"
+
+        evaluator = LocalEvaluator(
+            metrics=["accuracy", "cost"], detailed=True, execution_mode="local"
+        )
+        eval_result = asyncio.run(evaluator.evaluate(func, {}, dataset))
+        trial = build_success_result(
+            trial_id="real",
+            evaluation_config={},
+            eval_result=eval_result,
+            duration=1.0,
+            examples_attempted=5,
+            total_cost=None,
+            optuna_trial_id=None,
+        )
+        assert trial.metrics.get("cost_unmeasured") == 1.0
+
+        message = self._final_message(attempted=5, trial=trial)
+        assert "cost could not be measured on 3 of 5 examples" in message
+        assert "traigent.with_usage(value, total_cost=0)" in message
+        assert "usage was captured" not in message

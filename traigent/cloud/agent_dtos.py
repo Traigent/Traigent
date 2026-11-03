@@ -54,15 +54,28 @@ class AgentCostBreakdown:
             ValueError: If any validation check fails
         """
         errors: list[str] = []
+        errors.extend(self._identifier_errors())
+        errors.extend(self._token_errors())
+        errors.extend(self._cost_errors())
 
-        # Validate identifiers
+        if errors:
+            raise ValueError(
+                "AgentCostBreakdown validation failed:\n"
+                + "\n".join(f"  - {e}" for e in errors)
+            )
+
+    def _identifier_errors(self) -> list[str]:
+        errors: list[str] = []
         if not self.agent_id:
             errors.append("agent_id cannot be empty")
         if not self.agent_name:
             errors.append("agent_name cannot be empty")
         if not self.model_used:
             errors.append("model_used cannot be empty")
+        return errors
 
+    def _token_errors(self) -> list[str]:
+        errors: list[str] = []
         # Validate token counts (non-negative)
         if self.input_tokens < 0:
             errors.append(f"input_tokens cannot be negative: {self.input_tokens}")
@@ -79,7 +92,10 @@ class AgentCostBreakdown:
                 f"input_tokens ({self.input_tokens}) + "
                 f"output_tokens ({self.output_tokens}) = {expected_total_tokens}"
             )
+        return errors
 
+    def _cost_errors(self) -> list[str]:
+        errors: list[str] = []
         # Validate costs (non-negative, no NaN/Inf)
         for field_name, value in [
             ("input_cost", self.input_cost),
@@ -101,12 +117,7 @@ class AgentCostBreakdown:
                 f"input_cost ({self.input_cost:.8f}) + "
                 f"output_cost ({self.output_cost:.8f}) = {expected_total_cost:.8f}"
             )
-
-        if errors:
-            raise ValueError(
-                "AgentCostBreakdown validation failed:\n"
-                + "\n".join(f"  - {e}" for e in errors)
-            )
+        return errors
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.

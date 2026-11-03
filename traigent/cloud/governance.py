@@ -56,44 +56,61 @@ def promotion_policy_to_wire(policy: Any) -> dict[str, Any] | None:
     for key in _POLICY_WIRE_KEYS:
         if key not in source or source[key] is None:
             continue
-        value = source[key]
-        if key == "require_calibration":
-            enabled = bool(
-                getattr(value, "enabled", None)
-                or (isinstance(value, dict) and value.get("enabled"))
-            )
-            covered = getattr(value, "hash_covered_context", None)
-            if covered is None and isinstance(value, dict):
-                covered = value.get("hash_covered_context")
-            entry: dict[str, Any] = {"enabled": enabled}
-            if covered:
-                entry["hash_covered_context"] = [str(item) for item in covered]
-            wire[key] = entry
-        elif key == "chance_constraints":
-            serialized = [_chance_constraint_to_wire(item) for item in value]
-            serialized = [item for item in serialized if item]
-            if serialized:
-                wire[key] = serialized
-        elif key == "tie_breakers":
-            if isinstance(value, dict) and value:
-                wire[key] = {
-                    str(metric): {
-                        "strategy": str(
-                            getattr(rule, "strategy", None)
-                            or (
-                                rule.get("strategy") if isinstance(rule, dict) else rule
-                            )
-                        )
-                    }
-                    for metric, rule in value.items()
-                }
-        elif key == "min_effect":
-            if isinstance(value, dict) and value:
-                wire[key] = {str(metric): float(eps) for metric, eps in value.items()}
-        else:
-            wire[key] = value
+        _project_policy_key(wire, key, source[key])
 
     return wire or None
+
+
+def _project_policy_key(wire: dict[str, Any], key: str, value: Any) -> None:
+    """Project one contract-known promotion-policy key into ``wire``."""
+    projector = _POLICY_PROJECTORS.get(key)
+    if projector is None:
+        wire[key] = value
+        return
+    projected = projector(value)
+    if projected:
+        wire[key] = projected
+
+
+def _chance_constraints_to_wire(value: Any) -> list[dict[str, Any]]:
+    serialized = [_chance_constraint_to_wire(item) for item in value]
+    return [item for item in serialized if item]
+
+
+def _tie_breakers_to_wire(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict) and value:
+        return {
+            str(metric): {"strategy": _tie_breaker_strategy(rule)}
+            for metric, rule in value.items()
+        }
+    return None
+
+
+def _min_effect_to_wire(value: Any) -> dict[str, float] | None:
+    if isinstance(value, dict) and value:
+        return {str(metric): float(eps) for metric, eps in value.items()}
+    return None
+
+
+def _require_calibration_to_wire(value: Any) -> dict[str, Any]:
+    enabled = bool(
+        getattr(value, "enabled", None)
+        or (isinstance(value, dict) and value.get("enabled"))
+    )
+    covered = getattr(value, "hash_covered_context", None)
+    if covered is None and isinstance(value, dict):
+        covered = value.get("hash_covered_context")
+    entry: dict[str, Any] = {"enabled": enabled}
+    if covered:
+        entry["hash_covered_context"] = [str(item) for item in covered]
+    return entry
+
+
+def _tie_breaker_strategy(rule: Any) -> str:
+    return str(
+        getattr(rule, "strategy", None)
+        or (rule.get("strategy") if isinstance(rule, dict) else rule)
+    )
 
 
 def _chance_constraint_to_wire(constraint: Any) -> dict[str, Any] | None:
@@ -111,6 +128,15 @@ def _chance_constraint_to_wire(constraint: Any) -> dict[str, Any] | None:
         if value is not None:
             entry[field_name] = value
     return entry or None
+
+
+#: Keys with a dedicated projector; every other known key passes through verbatim.
+_POLICY_PROJECTORS: dict[str, Any] = {
+    "require_calibration": _require_calibration_to_wire,
+    "chance_constraints": _chance_constraints_to_wire,
+    "tie_breakers": _tie_breakers_to_wire,
+    "min_effect": _min_effect_to_wire,
+}
 
 
 def build_tvl_governance(config_space: Any) -> dict[str, Any] | None:
@@ -165,45 +191,35 @@ def tvl_governance_to_wire(governance: Any) -> dict[str, Any] | None:
         return None
 
     wire: dict[str, Any] = {}
-
-    cvars = governance.get("cvars")
-    if isinstance(cvars, list):
-        projected = [
-            {key: entry[key] for key in ("name", "type", "governed") if key in entry}
-            for entry in cvars
-            if isinstance(entry, dict)
-        ]
-        projected = [entry for entry in projected if entry.get("name")]
+    for wire_key, fields, required in _GOVERNANCE_PROJECTIONS:
+        projected = _project_governance_entries(
+            governance.get(wire_key), fields, required
+        )
         if projected:
-            wire["cvars"] = projected
-
-    certificates = governance.get("certificates")
-    if isinstance(certificates, list):
-        projected = [
-            {
-                key: entry[key]
-                for key in ("cvar_name", "decision", "freshness_hash")
-                if key in entry
-            }
-            for entry in certificates
-            if isinstance(entry, dict)
-        ]
-        projected = [entry for entry in projected if entry.get("cvar_name")]
-        if projected:
-            wire["certificates"] = projected
-
-    policies = governance.get("policies")
-    if isinstance(policies, list):
-        projected = [
-            {key: entry[key] for key in ("name", "strategy") if key in entry}
-            for entry in policies
-            if isinstance(entry, dict)
-        ]
-        projected = [entry for entry in projected if entry.get("name")]
-        if projected:
-            wire["policies"] = projected
+            wire[wire_key] = projected
 
     return wire or None
+
+
+#: (wire key, allowlisted entry fields, field that must be truthy for the entry to survive)
+_GOVERNANCE_PROJECTIONS = (
+    ("cvars", ("name", "type", "governed"), "name"),
+    ("certificates", ("cvar_name", "decision", "freshness_hash"), "cvar_name"),
+    ("policies", ("name", "strategy"), "name"),
+)
+
+
+def _project_governance_entries(
+    entries: Any, fields: tuple[str, ...], required: str
+) -> list[dict[str, Any]]:
+    if not isinstance(entries, list):
+        return []
+    projected = [
+        {key: entry[key] for key in fields if key in entry}
+        for entry in entries
+        if isinstance(entry, dict)
+    ]
+    return [entry for entry in projected if entry.get(required)]
 
 
 def build_certified_selection(

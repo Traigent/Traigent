@@ -444,42 +444,9 @@ class ProductionMCPClient:
         try:
 
             async def execute_tool_call():
-                """Internal function for tool execution with proper error handling."""
-                if not await self.is_connected() and not await self.connect():
-                    raise NetworkError(_MCP_CONNECT_ERROR) from None
-
-                if self._session is None:
-                    raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
-                self._stats["total_requests"] += 1
-
-                # Call tool via MCP
-                try:
-                    result = await self._session.call_tool(tool_name, arguments)
-
-                    response = MCPResponse(
-                        success=True,
-                        data=result.content[0].text if result.content else None,
-                        request_id=operation_id,
-                    )
-
-                    self._stats["successful_requests"] += 1
-                    logger.debug(f"MCP tool call successful: {tool_name}")
-                    return response
-
-                except ConnectionError as e:
-                    # Connection errors should be retryable
-                    raise NetworkError(f"MCP connection error: {e}") from None
-                except TimeoutError as e:
-                    # Timeout errors should be retryable
-                    raise NetworkError(f"MCP operation timeout: {e}") from None
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    # Other exceptions may not be retryable
-                    logger.error(
-                        "MCP tool call failed: %s - %s", tool_name, _safe_error_text(e)
-                    )
-                    raise
+                return await ProductionMCPClient._execute_tool_call(
+                    self, tool_name, arguments, operation_id
+                )
 
             # Use retry handler for robust tool execution
             try:
@@ -566,6 +533,46 @@ class ProductionMCPClient:
         finally:
             # Clean up operation tracking
             self._active_operations.pop(operation_id, None)
+
+    async def _execute_tool_call(
+        self, tool_name: str, arguments: dict[str, Any], operation_id: str
+    ) -> MCPResponse:
+        """Internal function for tool execution with proper error handling."""
+        if not await self.is_connected() and not await self.connect():
+            raise NetworkError(_MCP_CONNECT_ERROR) from None
+
+        if self._session is None:
+            raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
+        self._stats["total_requests"] += 1
+
+        # Call tool via MCP
+        try:
+            result = await self._session.call_tool(tool_name, arguments)
+
+            response = MCPResponse(
+                success=True,
+                data=result.content[0].text if result.content else None,
+                request_id=operation_id,
+            )
+
+            self._stats["successful_requests"] += 1
+            logger.debug(f"MCP tool call successful: {tool_name}")
+            return response
+
+        except ConnectionError as e:
+            # Connection errors should be retryable
+            raise NetworkError(f"MCP connection error: {e}") from None
+        except TimeoutError as e:
+            # Timeout errors should be retryable
+            raise NetworkError(f"MCP operation timeout: {e}") from None
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            # Other exceptions may not be retryable
+            logger.error(
+                "MCP tool call failed: %s - %s", tool_name, _safe_error_text(e)
+            )
+            raise
 
     async def list_resources(self) -> MCPResponse:
         """List available MCP resources.
@@ -907,55 +914,15 @@ class ProductionMCPClient:
         Raises:
             RuntimeError: If workflow creation fails
         """
-        if not isinstance(optimization_request, OptimizationRequest):
-            raise ValidationException(
-                "optimization_request must be an OptimizationRequest instance"
-            )
-        if optimization_request.agent_specification is None:
-            raise ValidationException(
-                "optimization_request.agent_specification is required"
-            )
-        if not isinstance(optimization_request.dataset, Dataset):
-            raise ValidationException("optimization_request.dataset must be a Dataset")
+        ProductionMCPClient._validate_workflow_request(optimization_request)
 
         try:
-            # Step 1: Create agent if needed
-            agent_response = await self.create_agent(
-                optimization_request.agent_specification
-            )
-            if not agent_response.success:
-                raise RuntimeError(
-                    f"Failed to create agent: {agent_response.error_message}"
-                )
-
-            _agent_raw = agent_response.data
-            agent_data = (
-                json.loads(_agent_raw)  # type: ignore[arg-type]
-                if isinstance(_agent_raw, str)
-                else (_agent_raw or {})
-            )
-            agent_id = (agent_data or {}).get("agent_id")
-            if not agent_id:
-                raise RuntimeError("Agent ID not returned from creation response")
-
-            # Step 2: Upload dataset
-            dataset_response = await self.upload_dataset(
-                optimization_request.dataset,
+            (
                 agent_id,
-                optimization_request.metadata.get("privacy_mode", False),
+                example_set_id,
+            ) = await ProductionMCPClient._create_workflow_inputs(
+                self, optimization_request
             )
-            if not dataset_response.success:
-                raise RuntimeError(
-                    f"Failed to upload dataset: {dataset_response.error_message}"
-                )
-
-            _dataset_raw = dataset_response.data
-            dataset_data = (
-                json.loads(_dataset_raw)  # type: ignore[arg-type]
-                if isinstance(_dataset_raw, str)
-                else (_dataset_raw or {})
-            )
-            example_set_id = (dataset_data or {}).get("example_set_id")
 
             # Step 3: Create experiment, threading through the real backend
             # IDs returned by create_agent / upload_dataset (the tracked fix).
@@ -1008,6 +975,63 @@ class ProductionMCPClient:
         except Exception as e:
             logger.exception(f"Failed to create optimization workflow: {e}")
             raise RuntimeError(f"Workflow creation failed: {e}") from None
+
+    async def _create_workflow_inputs(
+        self, optimization_request: OptimizationRequest
+    ) -> tuple[Any, Any]:
+        # Step 1: Create agent if needed
+        # Narrowed by _validate_workflow_request before this helper runs.
+        agent_response = await self.create_agent(
+            cast(AgentSpecification, optimization_request.agent_specification)
+        )
+        if not agent_response.success:
+            raise RuntimeError(
+                f"Failed to create agent: {agent_response.error_message}"
+            )
+
+        _agent_raw = agent_response.data
+        agent_data = (
+            json.loads(_agent_raw)  # type: ignore[arg-type]
+            if isinstance(_agent_raw, str)
+            else (_agent_raw or {})
+        )
+        agent_id = (agent_data or {}).get("agent_id")
+        if not agent_id:
+            raise RuntimeError("Agent ID not returned from creation response")
+
+        # Step 2: Upload dataset
+        dataset_response = await self.upload_dataset(
+            optimization_request.dataset,
+            agent_id,
+            optimization_request.metadata.get("privacy_mode", False),
+        )
+        if not dataset_response.success:
+            raise RuntimeError(
+                f"Failed to upload dataset: {dataset_response.error_message}"
+            )
+
+        _dataset_raw = dataset_response.data
+        dataset_data = (
+            json.loads(_dataset_raw)  # type: ignore[arg-type]
+            if isinstance(_dataset_raw, str)
+            else (_dataset_raw or {})
+        )
+        example_set_id = (dataset_data or {}).get("example_set_id")
+
+        return agent_id, example_set_id
+
+    @staticmethod
+    def _validate_workflow_request(optimization_request: OptimizationRequest) -> None:
+        if not isinstance(optimization_request, OptimizationRequest):
+            raise ValidationException(
+                "optimization_request must be an OptimizationRequest instance"
+            )
+        if optimization_request.agent_specification is None:
+            raise ValidationException(
+                "optimization_request.agent_specification is required"
+            )
+        if not isinstance(optimization_request.dataset, Dataset):
+            raise ValidationException("optimization_request.dataset must be a Dataset")
 
     # Fallback Operations
 

@@ -215,6 +215,17 @@ class SecureTokenBucket:
                 self._anomaly_score = max(0.0, self._anomaly_score - 0.01)
 
 
+def _aggregate_identifier_ip(self: Any, ip_address: str) -> str:
+    # Apply subnet aggregation if enabled
+    if self.config.subnet_aggregation:
+        # For IPv4, aggregate to /24
+        if "." in ip_address:
+            parts = ip_address.split(".")
+            if len(parts) == 4:
+                ip_address = f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
+    return ip_address
+
+
 class SecureRateLimiter:
     """Production-hardened rate limiter with enhanced security."""
 
@@ -286,13 +297,7 @@ class SecureRateLimiter:
 
         # Add components with type prefixes
         if ip_address:
-            # Apply subnet aggregation if enabled
-            if self.config.subnet_aggregation:
-                # For IPv4, aggregate to /24
-                if "." in ip_address:
-                    parts = ip_address.split(".")
-                    if len(parts) == 4:
-                        ip_address = f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
+            ip_address = _aggregate_identifier_ip(self, ip_address)
             components.append(f"ip:{ip_address}")
 
         if username:

@@ -35,15 +35,7 @@ logger = get_logger(__name__)
 _SECURE_RANDOM = SystemRandom()
 
 
-def _session_objective_orientation(name: str, metadata: dict[str, Any] | None) -> str:
-    """Resolve a session objective from its persisted declaration."""
-    metadata = metadata or {}
-    schema = metadata.get("objective_schema")
-    definitions: Any = []
-    if isinstance(schema, dict):
-        definitions = schema.get("objectives", [])
-    else:
-        definitions = getattr(schema, "objectives", [])
+def _declared_objective_orientation(name: str, definitions: Any) -> tuple[bool, str]:
     for definition in definitions or []:
         definition_name = getattr(definition, "name", None)
         orientation = getattr(definition, "orientation", None)
@@ -56,7 +48,23 @@ def _session_objective_orientation(name: str, metadata: dict[str, Any] | None) -
                     f"Objective {name!r} is target-banded and cannot be ranked "
                     "by this scalar session comparator."
                 )
-            return validate_objective_orientation(name, str(orientation))
+            return True, validate_objective_orientation(name, str(orientation))
+
+    return False, ""
+
+
+def _session_objective_orientation(name: str, metadata: dict[str, Any] | None) -> str:
+    """Resolve a session objective from its persisted declaration."""
+    metadata = metadata or {}
+    schema = metadata.get("objective_schema")
+    definitions: Any = []
+    if isinstance(schema, dict):
+        definitions = schema.get("objectives", [])
+    else:
+        definitions = getattr(schema, "objectives", [])
+    matched, orientation = _declared_objective_orientation(name, definitions)
+    if matched:
+        return orientation
 
     persisted = metadata.get("objective_orientations")
     if isinstance(persisted, dict) and name in persisted:

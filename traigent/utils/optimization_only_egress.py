@@ -1,8 +1,7 @@
 """SDK-side egress projector for ``optimization_only`` workspaces.
 
 A faithful, dependency-free port of the backend's closed metadata contract
-(TraigentBackend ``src/services/optimization_only_metadata_contract.py``,
-``METADATA_CONTRACT_VERSION = 1``, pinned at backend commit ``2d5cceda5``). For an
+(``METADATA_CONTRACT_VERSION = 1``). For an
 ``optimization_only`` tenant the server REBUILDS optimization-loop metadata from a closed
 per-phase schema and refuses trace / dataset / hosted-LLM operations. This module lets the
 SDK apply the same projection locally, at the last moment before a payload is handed to a
@@ -170,6 +169,14 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _is_finite(value: Any) -> bool:
+    """``math.isfinite`` that treats an int too large for a float as not finite."""
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def s_int(lo: int = 0, hi: int = 2**53) -> Spec:
     def spec(value: Any, _c: _Ctx, _d: int) -> Any:
         if (
@@ -185,7 +192,7 @@ def s_int(lo: int = 0, hi: int = 2**53) -> Spec:
 
 def s_num(lo: float = -MAX_NUM, hi: float = MAX_NUM) -> Spec:
     def spec(value: Any, _c: _Ctx, _d: int) -> Any:
-        if not _is_number(value) or not math.isfinite(value) or not lo <= value <= hi:
+        if not _is_number(value) or not _is_finite(value) or not lo <= value <= hi:
             raise _Drop
         return value
 
@@ -357,21 +364,32 @@ def s_metric_name(value: Any, ctx: _Ctx, depth: int) -> Any:
     return _metric_key(value, ctx, depth)
 
 
+def _closed_tree_scalar(value: Any) -> tuple[bool, Any]:
+    if value is None or isinstance(value, bool):
+        return True, value
+    if _is_number(value):
+        if not _is_finite(value) or abs(value) > MAX_NUM:
+            raise _Drop
+        return True, value
+    if isinstance(value, str):
+        if SHA256_RE.fullmatch(value) or ID_RE.fullmatch(value):
+            return True, value
+        raise _Drop
+    return False, None
+
+
+def _closed_tree_key_valid(key: Any) -> bool:
+    return isinstance(key, str) and ID_RE.fullmatch(key) is not None
+
+
 def s_closed_tree(value: Any, _c: _Ctx, depth: int) -> Any:
     """Generic closed-leaf tree (content identity): keys are identifiers; leaves are numbers,
     booleans, digests or identifiers. Any other string leaf is dropped."""
     if depth > MAX_DEPTH:
         raise _Drop
-    if value is None or isinstance(value, bool):
-        return value
-    if _is_number(value):
-        if not math.isfinite(value) or abs(value) > MAX_NUM:
-            raise _Drop
-        return value
-    if isinstance(value, str):
-        if SHA256_RE.fullmatch(value) or ID_RE.fullmatch(value):
-            return value
-        raise _Drop
+    scalar, result = _closed_tree_scalar(value)
+    if scalar:
+        return result
     if isinstance(value, (list, tuple)):
         out_list: list[Any] = []
         for item in list(value)[:MAX_LIST]:
@@ -380,21 +398,78 @@ def s_closed_tree(value: Any, _c: _Ctx, depth: int) -> Any:
             except _Drop:
                 continue
         return out_list
+    if not isinstance(value, dict):
+        raise _Drop
+    out: dict[str, Any] = {}
+    for key, item in list(value.items())[:MAX_LIST]:
+        if not _closed_tree_key_valid(key):
+            continue
+        try:
+            out[key] = s_closed_tree(item, _c, depth + 1)
+        except _Drop:
+            continue
+    return out
+
+
+def _closed_search_value(
+    value: Any, ctx: _Ctx, depth: int, extra: re.Pattern[str] | None
+) -> Any:
+    """Body of :func:`s_search_value`; ``extra`` is one more closed string shape to accept."""
+    if depth > MAX_DEPTH:
+        raise _Drop
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return s_num()(value, ctx, depth)
+    if isinstance(value, str):
+        if extra is not None and extra.fullmatch(value):
+            return value
+        return s_id(value, ctx, depth)
+    if isinstance(value, (list, tuple)):
+        if len(value) > MAX_LIST:
+            raise _Drop
+        return [_closed_search_value(item, ctx, depth + 1, extra) for item in value]
     if isinstance(value, dict):
-        out: dict[str, Any] = {}
-        for key, item in list(value.items())[:MAX_LIST]:
-            if not isinstance(key, str) or ID_RE.fullmatch(key) is None:
-                continue
-            try:
-                out[key] = s_closed_tree(item, _c, depth + 1)
-            except _Drop:
-                continue
-        return out
+        if len(value) > MAX_LIST:
+            raise _Drop
+        return {
+            s_id(key, ctx, depth): _closed_search_value(item, ctx, depth + 1, extra)
+            for key, item in value.items()
+        }
     raise _Drop
 
 
+def s_search_value(value: Any, ctx: _Ctx, depth: int) -> Any:
+    """Strict closed tree for the optimizer's search space and default config.
+
+    Accepts finite numbers, booleans, ``None`` and identifier strings, recursively through
+    lists and dicts whose keys are identifiers. Unlike :func:`s_closed_tree` nothing is
+    silently dropped or truncated: any other string (free text such as a prompt), an
+    over-long container, a non-identifier key or excess depth rejects the whole value.
+    """
+    return _closed_search_value(value, ctx, depth, None)
+
+
+#: The marker privacy mode writes in place of a redacted config value
+#: (``TrialOperations._redaction_marker``): it carries at most a length or a container type.
+_REDACTION_MARKER_RE = re.compile(
+    r"^\[REDACTED(?::(?:[0-9]{1,6} chars|list|dict|tuple|set))?\]$"
+)
+
+
+def s_config(value: Any, ctx: _Ctx, depth: int) -> Any:
+    """A trial's chosen configuration: a mapping held to the same closed value check as the
+    search space (the values it carries are the chosen search-space values), plus privacy
+    mode's content-free redaction marker. ``None`` is an absent config."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise _Drop
+    return _closed_search_value(value, ctx, depth, _REDACTION_MARKER_RE)
+
+
 # ---------------------------------------------------------------------------------------
-# Nested schemas matching what the Python SDK sends (design sections 2 and 3).
+# Nested schemas matching what the Python SDK sends.
 # ---------------------------------------------------------------------------------------
 
 _COMPARABILITY = s_obj(
@@ -593,6 +668,21 @@ _MEASURE_ROW = s_obj(
 )
 
 
+def _project_measure_row(item: Any, ctx: _Ctx, depth: int) -> Any:
+    row = _MEASURE_ROW(item, ctx, depth + 1)
+    if "example_id" not in row:
+        raise MetadataContractViolation
+    return row
+
+
+def _measures_dict_spec(value: Any, ctx: _Ctx, depth: int) -> Any:
+    if "metrics" in value:
+        return s_obj({"metrics": s_metric_map(), "execution_time": s_num(0)})(
+            value, ctx, depth
+        )
+    return s_metric_map()(value, ctx, depth)
+
+
 def _measures_spec(value: Any, ctx: _Ctx, depth: int) -> Any:
     """``measures``: a flat metrics map, or a list of per-example rows."""
     if isinstance(value, list):
@@ -607,17 +697,10 @@ def _measures_spec(value: Any, ctx: _Ctx, depth: int) -> Any:
                 except _Drop:
                     pass
                 continue
-            row = _MEASURE_ROW(item, ctx, depth + 1)
-            if "example_id" not in row:
-                raise MetadataContractViolation
-            rows.append(row)
+            rows.append(_project_measure_row(item, ctx, depth))
         return rows
     if isinstance(value, dict):
-        if "metrics" in value:
-            return s_obj({"metrics": s_metric_map(), "execution_time": s_num(0)})(
-                value, ctx, depth
-            )
-        return s_metric_map()(value, ctx, depth)
+        return _measures_dict_spec(value, ctx, depth)
     raise _Drop
 
 
@@ -641,13 +724,8 @@ def _json_size(value: Any) -> int:
         raise MetadataContractViolation from None
 
 
-def _size_ok(value: Any, limit: int, *, identity: bool = False) -> None:
-    """Bound the projected size. A content-identity object has its own, larger cap (sized for
-    2,000 inline members) applied wherever it appears; the remainder keeps ``limit``."""
-    if identity:
-        if _json_size(value) > MAX_IDENTITY_BYTES:
-            raise MetadataContractViolation
-        return
+def _without_content_identity(value: Any) -> Any:
+    """Copy ``value`` without its content-identity members, each checked against its own cap."""
     rest = value
     if isinstance(value, dict):
         rest = dict(value)
@@ -659,7 +737,19 @@ def _size_ok(value: Any, limit: int, *, identity: bool = False) -> None:
             if "content_identity" in holder:
                 if _json_size(holder.pop("content_identity")) > MAX_IDENTITY_BYTES:
                     raise MetadataContractViolation
-    if _json_size(rest) > limit:
+    return rest
+
+
+def _size_ok(value: Any, limit: int, *, identity: bool = False) -> None:
+    """Bound the projected size. A content-identity object has its own, larger cap (sized for
+    2,000 inline members) applied wherever it appears; the remainder keeps ``limit``."""
+    if identity:
+        if _json_size(value) > MAX_IDENTITY_BYTES:
+            raise MetadataContractViolation
+        return
+    stripped = _without_content_identity(value)
+    size = _json_size(stripped)
+    if size > limit:
         raise MetadataContractViolation
 
 
@@ -1048,7 +1138,41 @@ _DATASET_METADATA = s_obj(
 )
 
 
+def _s_empty_list(value: Any, _c: _Ctx, _d: int) -> Any:
+    """The legacy dataset's ``examples`` slot carries no rows: only ``[]`` is allowed."""
+    if value != [] or not isinstance(value, list):
+        raise _Drop
+    return []
+
+
+# Legacy ``POST /sessions`` dataset: label, size and the same closed metadata the typed
+# body allows. Rows, paths, descriptions and free-text metadata are not part of it.
+_LEGACY_DATASET = s_obj(
+    {
+        "name": s_tok("dn"),
+        "size": s_int(),
+        "metadata": s_null(_DATASET_METADATA),
+        "examples": _s_empty_list,
+    },
+    strict_keys=("metadata",),
+)
+
+
 _CONSTRAINT_EXPR_MAX = 512
+
+
+def _is_constraint_syntax(expr: str) -> bool:
+    """True when ``expr`` is one expression in the constraint DSL (the same translation and node
+    allowlist ``traigent.tvl.spec_loader`` compiles with). A sentence of words is not an
+    expression, so a prompt cannot ride in a constraint field."""
+    try:
+        from traigent.tvl import spec_loader
+
+        tree = ast.parse(spec_loader._translate_expression(expr).strip(), mode="eval")
+        spec_loader._validate_expression_ast(tree, "constraint")
+    except Exception:  # noqa: BLE001 - any parse/validation failure is a refusal
+        return False
+    return True
 
 
 def expression_is_closed(expr: Any) -> bool:
@@ -1059,6 +1183,8 @@ def expression_is_closed(expr: Any) -> bool:
         or not expr.strip()
         or len(expr) > _CONSTRAINT_EXPR_MAX
     ):
+        return False
+    if not _is_constraint_syntax(expr):
         return False
     try:
         for tok in tokenize.generate_tokens(io.StringIO(expr).readline):
@@ -1083,6 +1209,20 @@ _FSTRING_TOKENS = {
 _CONSTRAINT_EXPR_KEYS = ("require", "expr", "when", "then")
 
 
+def _project_constraint_entry(entry: Any, ctx: _Ctx) -> dict[str, Any]:
+    if not isinstance(entry, dict):
+        raise MetadataContractViolation
+    new_entry: dict[str, Any] = {}
+    if entry.get("id") is not None:
+        new_entry["id"] = _strict_id(entry["id"], ctx)
+    for key in _CONSTRAINT_EXPR_KEYS:
+        if key in entry and entry[key] is not None:
+            if not expression_is_closed(entry[key]):
+                raise MetadataContractViolation
+            new_entry[key] = entry[key]
+    return new_entry
+
+
 def _project_constraints(value: Any, ctx: _Ctx) -> Any:
     """Constraint definitions: ids validated, caller error messages dropped (the server
     generates ``"... constraint <id> violated"``), expressions comment-free with identifier-only
@@ -1100,17 +1240,7 @@ def _project_constraints(value: Any, ctx: _Ctx) -> Any:
             raise MetadataContractViolation
         cleaned: list[Any] = []
         for entry in entries:
-            if not isinstance(entry, dict):
-                raise MetadataContractViolation
-            new_entry: dict[str, Any] = {}
-            if entry.get("id") is not None:
-                new_entry["id"] = _strict_id(entry["id"], ctx)
-            for key in _CONSTRAINT_EXPR_KEYS:
-                if key in entry and entry[key] is not None:
-                    if not expression_is_closed(entry[key]):
-                        raise MetadataContractViolation
-                    new_entry[key] = entry[key]
-            cleaned.append(new_entry)
+            cleaned.append(_project_constraint_entry(entry, ctx))
         out[group] = cleaned
     return out
 
@@ -1122,12 +1252,18 @@ def _project_objectives(value: Any, ctx: _Ctx) -> Any:
     for name in declared_metric_names(value):
         if METRIC_KEY_RE.fullmatch(name) is None:
             raise MetadataContractViolation
+    if value is None:
+        return None
     if not isinstance(value, (list, dict)):
-        return value  # shape errors are the service's existing 400
+        raise MetadataContractViolation
     try:
-        return _OBJECTIVES(value, ctx, 0)
+        projected = _OBJECTIVES(value, ctx, 0)
     except _Drop:
         raise MetadataContractViolation from None
+    # An objective that the closed spec dropped as unfit (free text) refuses the request.
+    if not isinstance(projected, type(value)) or len(projected) != len(value):
+        raise MetadataContractViolation
+    return projected
 
 
 def _strict_id(value: Any, ctx: _Ctx) -> Any:
@@ -1171,6 +1307,200 @@ def _project_code_revision(out: dict[str, Any]) -> None:
         out["code_revision"] = token("cr", revision)
 
 
+def _project_search_fields(out: dict[str, Any], keys: Iterable[str], ctx: _Ctx) -> None:
+    """Refuse free text in the search space / default config.
+
+    Each present field must be a closed tree; ``warm_start_from`` must be an identifier.
+    Raises the closed :class:`MetadataContractViolation` without echoing key or value. The
+    size cap covers the whole value: a tunable named ``content_identity`` earns no exemption.
+    """
+    for key in keys:
+        if out.get(key) is None:
+            continue
+        spec = s_id if key == "warm_start_from" else s_search_value
+        _check_contract_version(out[key])
+        try:
+            projected = spec(out[key], ctx, 0)
+        except _Drop:
+            raise MetadataContractViolation from None
+        if _json_size(projected) > MAX_MEASURES_BYTES:
+            raise MetadataContractViolation
+        out[key] = projected
+
+
+# ---- top-level envelope: default-deny ---------------------------------------------------
+#: Closed specs for the top-level session-create keys that the generic projection did not
+#: already cover. Every spec refuses (never drops) a value that does not fit.
+def _s_exact_obj(fields: dict[str, Spec]) -> Spec:
+    """An object whose keys are all known and whose present values all fit: nothing is dropped,
+    so an unknown key or a malformed value refuses the whole object."""
+    inner = s_obj(fields, strict_keys=tuple(fields))
+
+    def spec(value: Any, ctx: _Ctx, depth: int) -> Any:
+        if not isinstance(value, dict) or any(key not in fields for key in value):
+            raise _Drop
+        return inner(value, ctx, depth)
+
+    return spec
+
+
+def _s_exact_list(item: Spec, max_len: int = 32) -> Spec:
+    def spec(value: Any, ctx: _Ctx, depth: int) -> Any:
+        if not isinstance(value, (list, tuple)) or len(value) > max_len:
+            raise _Drop
+        return [item(entry, ctx, depth + 1) for entry in value]
+
+    return spec
+
+
+_SMART_PRUNING = _s_exact_obj(
+    {
+        "label": s_enum("aggressive", "balanced", "conservative"),
+        "min_completed_trials": s_int(),
+        "warmup_steps": s_int(),
+        "epsilon": s_num(0),
+        "cost_threshold": s_num(0),
+        "confidence": s_num(0, 1),
+        "min_samples_per_config": s_int(),
+        "warmup_trials": s_int(),
+    },
+)
+_FP1_RE = re.compile(r"^fp1:[0-9a-f]{64}$")
+_s_fp1 = _s_regex(_FP1_RE)
+_ARTIFACT_FINGERPRINT_KEYS = ("dataset", "agent", "evaluator", "config_space")
+_ARTIFACT_FINGERPRINTS = _s_exact_obj(
+    {key: s_null(_s_fp1) for key in _ARTIFACT_FINGERPRINT_KEYS}
+)
+_ARTIFACT_VERSION = _s_exact_obj(
+    {"schema": s_id, "digest": s_null(s_digest), "state": s_id}
+)
+_ARTIFACT_VERSIONS = _s_exact_obj(
+    dict.fromkeys(_ARTIFACT_FINGERPRINT_KEYS, _ARTIFACT_VERSION)
+)
+_CONTENT_LESS_ENVIRONMENTS = ("production", "staging", "development", "test", "default")
+
+
+def _s_budget(value: Any, ctx: _Ctx, depth: int) -> Any:
+    """A run budget: identifier-named caps with finite non-negative number values."""
+    if not isinstance(value, dict) or len(value) > MAX_LIST:
+        raise _Drop
+    return {
+        s_id(key, ctx, depth): s_null(s_num(0))(item, ctx, depth + 1)
+        for key, item in value.items()
+    }
+
+
+_s_wire_id = s_null(s_id)
+
+
+def _s_true(value: Any, _c: _Ctx, _d: int) -> Any:
+    """The G1 intent flag: exactly boolean ``True`` (``session_g1_required_to_wire`` never
+    serializes ``False``); ``1``/``"true"``/``False`` refuse."""
+    if value is not True:
+        raise _Drop
+    return value
+
+
+#: G1 (snapshot co-sign) intent: a closed flag plus an optional integer deadline of 1-30 days,
+#: mirroring the Schema's ``snapshot_g1_deadline_days`` bounds. Nothing else about G1 crosses.
+_G1_ENVELOPE: dict[str, Spec | None] = {
+    "snapshot_g1_required": _s_true,
+    "snapshot_g1_deadline_days": s_int(1, 30),
+}
+
+
+def _enforce_g1_pairing(out: dict[str, Any]) -> None:
+    """A deadline is meaningful only with the flag (the Schema's if/then); refuse it alone."""
+    if "snapshot_g1_deadline_days" in out and "snapshot_g1_required" not in out:
+        raise MetadataContractViolation
+
+
+#: Typed ``POST /sessions`` top-level keys. Keys marked ``None`` are validated by dedicated
+#: code in :func:`project_session_create`; the rest by the spec shown. Any other key refuses.
+_TYPED_ENVELOPE: dict[str, Spec | None] = {
+    # dedicated handling in project_session_create
+    "function_name": None,
+    "agent_key": None,
+    "agent_id": None,
+    "dataset_id": None,
+    "evaluator_id": None,
+    "evaluator_definition_id": None,
+    "run_title": None,
+    "run_description": None,
+    "objectives": None,
+    "metadata": None,
+    "dataset_metadata": None,
+    "content_identity": None,
+    "code_revision": None,
+    "optimization_strategy": None,
+    "promotion_policy": None,
+    "tvl_governance": None,
+    "fingerprint_meta": None,
+    "task_type": None,
+    "constraints": None,
+    "configuration_space": None,
+    "search_space": None,
+    "default_config": None,
+    "warm_start_from": None,
+    # specs applied by the envelope check
+    "max_trials": s_null(s_int()),
+    "user_id": _s_wire_id,
+    "billing_tier": s_id,
+    "budget": _s_budget,
+    "smart_pruning": _SMART_PRUNING,
+    "artifact_fingerprints": _ARTIFACT_FINGERPRINTS,
+    "artifact_versions": _ARTIFACT_VERSIONS,
+    "identity_version": s_int(),
+    "agent_id_source": s_id,
+    "dataset_id_source": s_id,
+    "evaluator_id_source": s_id,
+    "evaluator_code_digest": s_sha,
+    "capabilities": _s_exact_list(s_id),
+    "environment": s_enum(*_CONTENT_LESS_ENVIRONMENTS),
+    "agent_ref": s_id,
+    "dataset_ref": s_id,
+    "evaluation_set_ref": s_id,
+    "evaluator_ref": s_id,
+    **_G1_ENVELOPE,
+}
+
+#: Legacy ``POST /sessions`` top-level keys (``None`` = dedicated handling).
+_LEGACY_ENVELOPE: dict[str, Spec | None] = {
+    "problem_statement": None,
+    "optimization_config": None,
+    "dataset": None,
+    "metadata": None,
+    "search_space": None,
+    "default_config": None,
+    "warm_start_from": None,
+    "evaluator_id": None,
+    "evaluator_definition_id": None,
+    "smart_pruning": _SMART_PRUNING,
+    "artifact_fingerprints": _ARTIFACT_FINGERPRINTS,
+    "fingerprint_meta": None,
+    **_G1_ENVELOPE,
+}
+
+
+def _enforce_envelope(
+    out: dict[str, Any], envelope: dict[str, Spec | None], ctx: _Ctx
+) -> None:
+    """Default-deny the top level: a key outside ``envelope`` refuses the whole request
+    (never silently dropped, so a producer that grows a field is noticed), and every
+    spec-checked key must fit its closed spec."""
+    for key in out:
+        if key not in envelope:
+            raise MetadataContractViolation
+    for key, spec in envelope.items():
+        if spec is None or key not in out:
+            continue
+        try:
+            out[key] = spec(out[key], ctx, 0)
+        except _Drop:
+            raise MetadataContractViolation from None
+    _enforce_g1_pairing(out)
+
+
 def _project_optional(out: dict[str, Any], key: str, spec: Spec, ctx: _Ctx) -> None:
     if key in out:
         out[key] = _optional(spec, out[key], ctx) if out[key] is not None else None
@@ -1186,6 +1516,7 @@ def project_session_create(data: dict[str, Any]) -> dict[str, Any]:
     out.pop(CONTRACT_VERSION_KEY, None)
     for key in ("run_title", "run_description"):  # free text: dropped
         out.pop(key, None)
+    _enforce_envelope(out, _TYPED_ENVELOPE, ctx)
     _tokenize_identity_fields(out, ctx)
     if "objectives" in out:
         out["objectives"] = _project_objectives(out["objectives"], ctx)
@@ -1201,13 +1532,19 @@ def project_session_create(data: dict[str, Any]) -> dict[str, Any]:
     _project_optional(out, "promotion_policy", _PROMOTION_POLICY, ctx)
     _project_optional(out, "tvl_governance", _TVL_GOVERNANCE, ctx)
     _project_optional(out, "fingerprint_meta", _FINGERPRINT_META, ctx)
-    if (
-        isinstance(out.get("task_type"), str)
-        and ID_RE.fullmatch(out["task_type"]) is None
-    ):
-        out.pop("task_type")
+    if "task_type" in out:
+        task_type = out["task_type"]
+        if not isinstance(task_type, str):
+            raise MetadataContractViolation  # a container or number is never a coarse hint
+        if ID_RE.fullmatch(task_type) is None:
+            out.pop("task_type")  # existing behaviour: a non-identifier hint is dropped
     if "constraints" in out:
         out["constraints"] = _project_constraints(out["constraints"], ctx)
+    _project_search_fields(
+        out,
+        ("configuration_space", "search_space", "default_config", "warm_start_from"),
+        ctx,
+    )
     return out
 
 
@@ -1219,26 +1556,28 @@ def project_legacy_session_create(data: dict[str, Any]) -> dict[str, Any]:
     _check_contract_version(data)
     out = dict(data)
     out.pop(CONTRACT_VERSION_KEY, None)
+    _enforce_envelope(out, _LEGACY_ENVELOPE, ctx)
+    _tokenize_identity_fields(out, ctx)
+    _project_optional(out, "fingerprint_meta", _FINGERPRINT_META, ctx)
     if "problem_statement" in out:  # free text; the field is required downstream
         out["problem_statement"] = DEFAULT_PROBLEM_STATEMENT
-    if isinstance(out.get("optimization_config"), dict):
+    if "optimization_config" in out:
         config = out["optimization_config"]
+        if not isinstance(config, dict):  # fail closed: no unprojected section
+            raise MetadataContractViolation
         for name in declared_metric_names(config.get("objectives")):
             if METRIC_KEY_RE.fullmatch(name) is None:
                 raise MetadataContractViolation
         ctx = _Ctx(declared_metric_names(config.get("objectives")))
         out["optimization_config"] = _run(_LEGACY_OPTIMIZATION_CONFIG, config, ctx)
-    if isinstance(out.get("dataset"), dict):
-        dataset = dict(out["dataset"])
-        if "name" in dataset:  # the envelope's label and description reach run metadata
-            try:
-                dataset["name"] = s_tok("dn")(dataset["name"], ctx, 0)
-            except _Drop:
-                dataset.pop("name")
-        dataset.pop("description", None)
-        out["dataset"] = dataset
+    if "dataset" in out:
+        # keep only allowlisted non-content fields; anything else is dropped
+        out["dataset"] = _run(_LEGACY_DATASET, out["dataset"], ctx)
     if "metadata" in out and out["metadata"] is not None:
         out["metadata"] = _run(_SESSION_METADATA, out["metadata"], ctx)
+    _project_search_fields(
+        out, ("search_space", "default_config", "warm_start_from"), ctx
+    )
     return out
 
 
@@ -1270,20 +1609,15 @@ _TRIAL_METADATA_FIELDS: dict[str, Spec] = {
     "provider": s_id,
     "llm_provider": s_id,
     "model_provider": s_id,
-    "config": lambda v, _c, _d: _plain_dict(v),
+    "config": s_config,
 }
-
-
-def _plain_dict(value: Any) -> dict[str, Any]:
-    """``config`` values are an explicitly allowed channel; only the shape is checked."""
-    if not isinstance(value, dict):
-        raise _Drop
-    return value
 
 
 def _trial_metadata_spec(ctx: _Ctx) -> Spec:
     """Fixed fields plus dynamic top-level numeric metric keys (declared/standard only)."""
-    fixed = s_obj(_TRIAL_METADATA_FIELDS, strict_keys=("trial_id", "trial_number"))
+    fixed = s_obj(
+        _TRIAL_METADATA_FIELDS, strict_keys=("trial_id", "trial_number", "config")
+    )
 
     def spec(value: Any, c: _Ctx, depth: int) -> Any:
         out = fixed(value, c, depth)
@@ -1437,7 +1771,7 @@ CONFIG_RUN_FIELDS = frozenset(
 def project_workflow_metadata(workflow_metadata: Any) -> Any:
     """Workflow / agent display names are free text: replaced by the (validated) ids."""
     if not isinstance(workflow_metadata, dict):
-        return workflow_metadata
+        raise MetadataContractViolation  # never a bare value in a rebuilt slot
     ctx = _Ctx()
     if workflow_metadata.get("workflow_id") is None:
         raise MetadataContractViolation
@@ -1456,7 +1790,7 @@ def project_workflow_metadata(workflow_metadata: Any) -> Any:
 
 def project_summary_stats(summary_stats: Any, declared: Iterable[str] = ()) -> Any:
     if not isinstance(summary_stats, dict):
-        return summary_stats  # the service's own shape validation answers
+        raise MetadataContractViolation  # never a bare value in a rebuilt slot
     return _run(_SUMMARY_STATS, summary_stats, _Ctx(declared))
 
 
@@ -1473,43 +1807,72 @@ def project_error_message(error_message: Any) -> str | None:
     return _error_code(error_message)
 
 
+def _project_unless_none(project: Callable[[Any], Any], value: Any) -> Any:
+    """``None`` stays ``None``; anything else is projected."""
+    return None if value is None else project(value)
+
+
+def _project_run_timestamp(value: Any, ctx: _Ctx) -> Any:
+    """A run's start/end time: ``None`` passes through, an unprojectable value refuses."""
+    if value is None:
+        return None
+    try:
+        return s_ts(value, ctx, 0)
+    except _Drop:
+        raise MetadataContractViolation from None
+
+
+def _project_configuration_run_remaining(
+    key: str, value: Any, out: dict[str, Any], ctx: _Ctx, declared: Iterable[str]
+) -> None:
+    if key == "summary_stats":
+        out[key] = _project_unless_none(
+            lambda v: project_summary_stats(v, declared), value
+        )
+    elif key == "workflow_metadata":
+        out[key] = _project_unless_none(project_workflow_metadata, value)
+    elif key in ("metadata", "run_metadata"):
+        out[key] = _project_unless_none(
+            lambda v: project_trial_metadata(v, declared), value
+        )
+    elif key == "error_message":
+        out[key] = _error_code(value)
+    else:  # start_time / end_time
+        out[key] = _project_run_timestamp(value, ctx)
+
+
+def _project_configuration_run_item(
+    key: str, value: Any, out: dict[str, Any], ctx: _Ctx, declared: Iterable[str]
+) -> None:
+    if key in ("experiment_parameters", "status"):
+        spec = s_config if key == "experiment_parameters" else s_id
+        try:
+            out[key] = spec(value, ctx, 0)
+        except _Drop:
+            raise MetadataContractViolation from None
+    elif key == "measures":
+        out[key] = project_measures(value, declared) if value is not None else None
+    else:
+        _project_configuration_run_remaining(key, value, out, ctx, declared)
+
+
 def project_configuration_run(
     data: dict[str, Any], declared: Iterable[str] = ()
 ) -> dict[str, Any]:
     """Create/update body for a configuration run. Only the model's client-writable fields are
-    kept; every other key (including identity/tenant columns) is dropped."""
+    allowed; any other key (including identity/tenant columns) refuses. ``experiment_parameters``
+    (the chosen configuration) is held to the closed search-space check."""
     ctx = _Ctx(declared)
     if not isinstance(data, dict):
         raise MetadataContractViolation
     _check_contract_version(data)
     out: dict[str, Any] = {}
+    if any(key not in CONFIG_RUN_FIELDS for key in data if key != CONTRACT_VERSION_KEY):
+        raise MetadataContractViolation  # default-deny: an unknown member refuses
     for key, value in data.items():
-        if key not in CONFIG_RUN_FIELDS:
+        if key == CONTRACT_VERSION_KEY:
             continue
-        if key == "experiment_parameters" or key == "status":
-            out[key] = value
-        elif key == "measures":
-            out[key] = project_measures(value, declared) if value is not None else None
-        elif key == "summary_stats":
-            out[key] = (
-                project_summary_stats(value, declared) if value is not None else None
-            )
-        elif key == "workflow_metadata":
-            out[key] = project_workflow_metadata(value) if value is not None else None
-        elif key in ("metadata", "run_metadata"):
-            out[key] = (
-                project_trial_metadata(value, declared) if value is not None else None
-            )
-        elif key == "error_message":
-            out[key] = _error_code(value)
-        else:  # start_time / end_time
-            if value is None:
-                out[key] = None
-            else:
-                try:
-                    out[key] = s_ts(value, ctx, 0)
-                except _Drop:
-                    raise MetadataContractViolation from None
+        _project_configuration_run_item(key, value, out, ctx, declared)
     return out
 
 
@@ -1567,6 +1930,52 @@ _RUN_METADATA = s_obj(
 )
 
 
+#: Top-level keys of ``POST /experiments/<id>/runs`` (``name``/``description`` are free text:
+#: dropped). Any other key refuses.
+_PARENT_RUN_ENVELOPE: dict[str, Spec | None] = {
+    "name": None,
+    "description": None,
+    "id": None,
+    "run_id": None,
+    "metadata": None,
+    "experiment_data": None,
+}
+_EXPERIMENT_DATA_KEYS = frozenset(
+    {
+        "name",
+        "description",
+        "id",
+        "run_id",
+        "agent_id",
+        "benchmark_id",
+        "measures",
+        "metadata",
+    }
+)
+
+
+def _project_parent_experiment_data(experiment_data: Any, ctx: _Ctx) -> Any:
+    if not isinstance(experiment_data, dict) or any(
+        key not in _EXPERIMENT_DATA_KEYS for key in experiment_data
+    ):
+        raise MetadataContractViolation
+    experiment_data = dict(experiment_data)
+    for key in ("name", "description"):
+        experiment_data.pop(key, None)
+    for key in ("id", "run_id", "agent_id", "benchmark_id"):
+        if experiment_data.get(key) is not None:
+            experiment_data[key] = _strict_id(experiment_data[key], ctx)
+    if "measures" in experiment_data:
+        experiment_data["measures"] = _project_measure_list(
+            experiment_data["measures"], ctx
+        )
+    if experiment_data.get("metadata") is not None:
+        experiment_data["metadata"] = _run(
+            _RUN_METADATA, experiment_data["metadata"], ctx
+        )
+    return experiment_data
+
+
 def project_parent_run_create(payload: dict[str, Any]) -> dict[str, Any]:
     """``POST /experiments/<id>/runs`` body: name/description dropped, metadata rebuilt."""
     if not isinstance(payload, dict):
@@ -1575,6 +1984,7 @@ def project_parent_run_create(payload: dict[str, Any]) -> dict[str, Any]:
     _check_contract_version(payload)
     out = dict(payload)
     out.pop(CONTRACT_VERSION_KEY, None)
+    _enforce_envelope(out, _PARENT_RUN_ENVELOPE, ctx)
     for key in ("name", "description"):
         out.pop(key, None)
     for key in ("id", "run_id"):
@@ -1582,24 +1992,10 @@ def project_parent_run_create(payload: dict[str, Any]) -> dict[str, Any]:
             out[key] = _strict_id(out[key], ctx)
     if out.get("metadata") is not None:
         out["metadata"] = _run(_RUN_METADATA, out["metadata"], ctx)
-    experiment_data = out.get("experiment_data")
-    if isinstance(experiment_data, dict):
-        experiment_data = dict(experiment_data)
-        for key in ("id", "run_id"):
-            if experiment_data.get(key) is not None:
-                experiment_data[key] = _strict_id(experiment_data[key], ctx)
-        for key in ("agent_id", "benchmark_id"):
-            if experiment_data.get(key) is not None:
-                experiment_data[key] = _strict_id(experiment_data[key], ctx)
-        if "measures" in experiment_data:
-            experiment_data["measures"] = _project_measure_list(
-                experiment_data["measures"], ctx
-            )
-        if experiment_data.get("metadata") is not None:
-            experiment_data["metadata"] = _run(
-                _RUN_METADATA, experiment_data["metadata"], ctx
-            )
-        out["experiment_data"] = experiment_data
+    if "experiment_data" in out and out["experiment_data"] is not None:
+        out["experiment_data"] = _project_parent_experiment_data(
+            out["experiment_data"], ctx
+        )
     return out
 
 
@@ -1892,6 +2288,21 @@ def note_response(status: int | None, body: Any, scope: str | None = None) -> bo
     return False
 
 
+def note_key_validation(body: Any, scope: str | None = None) -> bool:
+    """Latch the mode on for ``scope`` when a 2xx ``/keys/validate`` body says so.
+
+    Only the exact field ``optimization_only`` holding the JSON boolean ``true`` counts
+    (``"true"``, ``1`` and absent/false do nothing). It never un-latches and ignores any
+    explicit client setting, like the closed 403 latch. Returns True when latched.
+    """
+    if scope is None or not isinstance(body, dict):
+        return False
+    if body.get("valid") is not True or body.get("optimization_only") is not True:
+        return False
+    latch_on(scope)
+    return True
+
+
 # ---- per-session declared objectives (objective-aware metric rules need them) -----------
 
 _MAX_TRACKED_SESSIONS = 1024
@@ -2015,7 +2426,7 @@ def _closed_passthrough(value: Any) -> Any:
     if value is None or isinstance(value, bool):
         return value
     if _is_number(value):
-        if not math.isfinite(value) or abs(value) > MAX_NUM:
+        if not _is_finite(value) or abs(value) > MAX_NUM:
             raise _Drop
         return value
     if isinstance(value, str) and ID_RE.fullmatch(value):
@@ -2049,7 +2460,43 @@ _RESULT_FREEFORM_KEYS = (
     "metadata",
     "error_message",
 )
-_RESULT_KEPT_KEYS = frozenset({"config"})
+_s_wire_scalar_id = s_null(s_id)
+
+#: Top-level keys of a ``POST /sessions/<id>/results`` body (trial registration, trial result,
+#: privacy-mode summary submission, content-less session import). ``None`` = dedicated handling
+#: in :func:`_project_trial_body`. Any other key refuses the whole request. Producers:
+#: ``TrialOperations.register_trial_start`` / ``submit_trial_result_via_session`` /
+#: ``submit_summary_stats``, ``TraigentCloudClient._serialize_trial_result`` and the
+#: ``sync_manager`` session import.
+_RESULT_ENVELOPE: dict[str, Spec | None] = {
+    "trial_id": None,
+    "metrics": None,
+    "measures": None,
+    "summary_stats": None,
+    "metadata": None,
+    "error_message": None,
+    "config": s_config,
+    "session_id": _s_wire_scalar_id,
+    "status": _s_wire_scalar_id,
+    "duration": s_null(s_num(0)),
+    "cost_floor_usd": s_null(s_num(0)),
+}
+
+#: Top-level keys of one optimizer-direct metric submission
+#: (``OptimizerDirectClient.submit_metrics``).
+_OPTIMIZER_METRICS_ENVELOPE: dict[str, Spec | None] = {
+    "trial_id": None,
+    "metrics": None,
+    "metadata": None,
+    "execution_time": s_null(s_num(0)),
+}
+
+#: Top-level keys of a ``next-trial`` body (``NextTrialRequest``).
+_NEXT_TRIAL_ENVELOPE: dict[str, Spec | None] = {
+    "session_id": _s_wire_scalar_id,
+    "previous_results": None,
+    "request_metadata": None,
+}
 
 
 def project_session_create_auto(data: dict[str, Any]) -> dict[str, Any]:
@@ -2067,16 +2514,22 @@ def project_session_create_auto(data: dict[str, Any]) -> dict[str, Any]:
     raise MetadataContractViolation
 
 
-def project_results_payload(
-    payload: dict[str, Any], declared: Iterable[str] = ()
+def _project_trial_body(
+    payload: Any, declared: Iterable[str], envelope: dict[str, Spec | None]
 ) -> dict[str, Any]:
-    """A ``POST /sessions/<id>/results`` body (trial result, summary submission)."""
+    """Default-deny a trial-shaped body: the top level must be inside ``envelope`` (an unknown
+    key refuses, never dropped), spec-checked keys must fit their closed spec, and the
+    free-form parts are rebuilt by :func:`project_trial_result`."""
     if not isinstance(payload, dict):
         raise MetadataContractViolation
     declared = tuple(declared)
+    ctx = _Ctx(declared)
     _check_contract_version(payload)
     out = dict(payload)
     out.pop(CONTRACT_VERSION_KEY, None)
+    _enforce_envelope(out, envelope, ctx)
+    if out.get("metrics") is not None and not isinstance(out["metrics"], dict):
+        raise MetadataContractViolation  # never a bare value in the metrics slot
     projected = project_trial_result(
         metrics=out.get("metrics"),
         measures=out.get("measures"),
@@ -2089,19 +2542,22 @@ def project_results_payload(
         if key in out:
             out[key] = projected[key]
     if out.get("trial_id") is not None:
-        out["trial_id"] = _strict_id(out["trial_id"], _Ctx(declared))
-    for key in list(out):
-        if (
-            key in _RESULT_FREEFORM_KEYS
-            or key in _RESULT_KEPT_KEYS
-            or key == "trial_id"
-        ):
-            continue
-        try:
-            out[key] = _closed_passthrough(out[key])
-        except _Drop:
-            del out[key]
+        out["trial_id"] = _strict_id(out["trial_id"], ctx)
     return out
+
+
+def project_results_payload(
+    payload: dict[str, Any], declared: Iterable[str] = ()
+) -> dict[str, Any]:
+    """A ``POST /sessions/<id>/results`` body (trial result, summary submission)."""
+    return _project_trial_body(payload, declared, _RESULT_ENVELOPE)
+
+
+def project_optimizer_metrics_payload(
+    payload: dict[str, Any], declared: Iterable[str] = ()
+) -> dict[str, Any]:
+    """One optimizer-direct metric submission."""
+    return _project_trial_body(payload, declared, _OPTIMIZER_METRICS_ENVELOPE)
 
 
 def project_next_trial_payload(
@@ -2110,7 +2566,11 @@ def project_next_trial_payload(
     """``next-trial`` body: ``previous_results`` are results; request metadata is closed."""
     if not isinstance(payload, dict):
         raise MetadataContractViolation
+    ctx = _Ctx(tuple(declared))
+    _check_contract_version(payload)
     out = dict(payload)
+    out.pop(CONTRACT_VERSION_KEY, None)
+    _enforce_envelope(out, _NEXT_TRIAL_ENVELOPE, ctx)
     previous = out.get("previous_results")
     if previous is not None:
         if not isinstance(previous, list):
@@ -2123,22 +2583,10 @@ def project_next_trial_payload(
             out["request_metadata"] = s_closed_tree(out["request_metadata"], _Ctx(), 0)
         except _Drop:
             raise MetadataContractViolation from None
-    for key in list(out):
-        if key in ("previous_results", "request_metadata"):
-            continue
-        try:
-            out[key] = _closed_passthrough(out[key])
-        except _Drop:
-            del out[key]
     return out
 
 
-def project_finalize_payload(data: Any) -> dict[str, Any]:
-    """Finalize body: the backend's projection (``project_session_finalize``) plus an SDK-side
-    closure the backend does not apply: ``certified_selection`` and ``session_aggregation``
-    keep only identifier/digest/number leaves (the backend leaves them unprojected), and
-    any other top-level member is kept only if it is a closed scalar."""
-    out = project_session_finalize(data)
+def _project_finalize_selections(out: dict[str, Any]) -> None:
     for key in ("certified_selection", "session_aggregation"):
         if out.get(key) is not None:
             if not isinstance(out[key], dict):
@@ -2147,6 +2595,15 @@ def project_finalize_payload(data: Any) -> dict[str, Any]:
                 out[key] = s_closed_tree(out[key], _Ctx(), 0)
             except _Drop:
                 raise MetadataContractViolation from None
+
+
+def project_finalize_payload(data: Any) -> dict[str, Any]:
+    """Finalize body: the backend's projection (``project_session_finalize``) plus an SDK-side
+    closure the backend does not apply: ``certified_selection`` and ``session_aggregation``
+    keep only identifier/digest/number leaves (the backend leaves them unprojected), and
+    any other top-level member is kept only if it is a closed scalar."""
+    out = project_session_finalize(data)
+    _project_finalize_selections(out)
     if out.get("request_metadata") is not None:
         # free-form like ``metadata``: the backend empties finalize metadata, so do the same
         if not isinstance(out["request_metadata"], dict):
@@ -2185,21 +2642,7 @@ def project_closed_scalars(
     return out
 
 
-def _strict_closed(value: Any, depth: int = 0) -> None:
-    """Raise ``_Drop`` unless every key is identifier-shaped and every string leaf is an
-    identifier or digest (numbers, booleans and null are closed)."""
-    if depth > MAX_DEPTH + 8:
-        raise _Drop
-    if value is None or isinstance(value, bool):
-        return
-    if _is_number(value):
-        if not math.isfinite(value):
-            raise _Drop
-        return
-    if isinstance(value, str):
-        if ID_RE.fullmatch(value) or SHA256_RE.fullmatch(value):
-            return
-        raise _Drop
+def _strict_closed_collection(value: Any, depth: int) -> None:
     if isinstance(value, (list, tuple)):
         for item in value:
             _strict_closed(item, depth + 1)
@@ -2211,6 +2654,24 @@ def _strict_closed(value: Any, depth: int = 0) -> None:
             _strict_closed(item, depth + 1)
         return
     raise _Drop
+
+
+def _strict_closed(value: Any, depth: int = 0) -> None:
+    """Raise ``_Drop`` unless every key is identifier-shaped and every string leaf is an
+    identifier or digest (numbers, booleans and null are closed)."""
+    if depth > MAX_DEPTH + 8:
+        raise _Drop
+    if value is None or isinstance(value, bool):
+        return
+    if _is_number(value):
+        if not _is_finite(value):
+            raise _Drop
+        return
+    if isinstance(value, str):
+        if ID_RE.fullmatch(value) or SHA256_RE.fullmatch(value):
+            return
+        raise _Drop
+    _strict_closed_collection(value, depth)
 
 
 def is_closed_value(value: Any) -> bool:
@@ -2258,7 +2719,7 @@ def assert_closed_ids(
 
 
 # ---- Director request allowlists (port of backend src/services/director/validation.py) ----
-# Pinned at backend 2d5cceda5. ``None`` marks a leaf, a dict an object, a one-element list an
+# ``None`` marks a leaf, a dict an object, a one-element list an
 # array of objects. The backend REJECTS (400) any key not listed, at every depth; it never
 # drops one. The SDK therefore refuses locally. ``RESULT_ALLOWLIST`` is the closed-bridge
 # ``report.result`` shape (src/services/director/closed_bridge.py).
@@ -2291,6 +2752,22 @@ DIRECTOR_TURN_ALLOWLIST: Mapping[str, Any] = {
 _DIRECTOR_TURN_PATH_RE = re.compile(r"^/api/v1/director/sessions/[^/]+/turn/?$")
 
 
+def _director_value_conforms(value: Any, spec: Any) -> bool:
+    if spec is None:
+        if not is_closed_value(value):
+            return False
+    elif isinstance(spec, Mapping):
+        if not _director_conforms(value, spec):
+            return False
+    elif isinstance(spec, list):
+        if not isinstance(value, list):
+            return False
+        if not all(_director_conforms(item, spec[0]) for item in value):
+            return False
+
+    return True
+
+
 def _director_conforms(payload: Any, allowed: Mapping[str, Any]) -> bool:
     if not isinstance(payload, Mapping) or set(payload) - set(allowed):
         return False
@@ -2298,17 +2775,8 @@ def _director_conforms(payload: Any, allowed: Mapping[str, Any]) -> bool:
         if key not in payload or payload[key] is None:
             continue
         value = payload[key]
-        if spec is None:
-            if not is_closed_value(value):
-                return False
-        elif isinstance(spec, Mapping):
-            if not _director_conforms(value, spec):
-                return False
-        elif isinstance(spec, list):
-            if not isinstance(value, list):
-                return False
-            if not all(_director_conforms(item, spec[0]) for item in value):
-                return False
+        if not _director_value_conforms(value, spec):
+            return False
     return True
 
 
@@ -2330,6 +2798,12 @@ def assert_director_request(
         raise OptimizationOnlyRefusal("director_request")
 
 
+def _project_best_config_ids(spec: dict[str, Any]) -> None:
+    for key in ("schema_version", "config_id", "function_ref", "environment"):
+        if spec.get(key) is not None:
+            spec[key] = _strict_id(spec[key], _Ctx())
+
+
 def project_best_config_payload(payload: Any) -> dict[str, Any]:
     """A best-config publish body ``{"spec": ..., "environment"?}``.
 
@@ -2345,9 +2819,7 @@ def project_best_config_payload(payload: Any) -> dict[str, Any]:
     if out.get("environment") is not None:
         out["environment"] = _strict_id(out["environment"], _Ctx())
     spec = dict(out["spec"])
-    for key in ("schema_version", "config_id", "function_ref", "environment"):
-        if spec.get(key) is not None:
-            spec[key] = _strict_id(spec[key], _Ctx())
+    _project_best_config_ids(spec)
     if "provenance" in spec and spec["provenance"] is not None:
         try:
             spec["provenance"] = s_closed_tree(spec["provenance"], _Ctx(), 0)
@@ -2650,29 +3122,13 @@ def enforce_outgoing(
     return canonical_json_bytes(parsed)
 
 
-def _judge_outgoing(
-    method: str,
-    url: Any,
-    headers: Any,
-    body: Any,
-    *,
-    explicit: bool | Policy | None = None,
-    api_prefixes: Iterable[str] = (),
-) -> Any:
-    """Transport backstop for one request (FINAL url/headers/body).
+def _judge_query(query: str, parse_qsl: Any) -> None:
+    for key, value in parse_qsl(query, keep_blank_values=True):
+        if ID_RE.fullmatch(key) is None or (value and ID_RE.fullmatch(value) is None):
+            raise OptimizationOnlyRefusal("query_not_closed")
 
-    Mode inactive for the request's credential: returns at once. Mode active: DEFAULT-DENY.
-    The path must be free of dot segments and percent-encoded separators, every segment must
-    be identifier-shaped once decoded, and the route (after the client's API base) must be in
-    :data:`ALLOWED_ROUTES`. A body route passes only if its JSON body is a fixed point of its
-    phase projector (Director bodies must match their allowlist, auth bodies carry credential
-    fields only); query values must be identifier-shaped. Anything else raises
-    :class:`OptimizationOnlyRefusal` before a byte is sent.
-    """
-    headers_scope = credential_scope(url, headers) if scope_required(None) else None
-    base = explicit.explicit if isinstance(explicit, Policy) else explicit
-    if not is_active(Policy(base, headers_scope)):
-        return _INACTIVE
+
+def _judge_route(method: str, url: Any, api_prefixes: Iterable[str]) -> Any:
     from urllib.parse import parse_qsl, unquote
 
     parts = urlsplit(str(url))
@@ -2704,18 +3160,38 @@ def _judge_outgoing(
     for segment in tail.split("/"):
         if segment and ID_RE.fullmatch(unquote(segment)) is None:
             raise OptimizationOnlyRefusal("path_parameter_not_closed")
-    for key, value in parse_qsl(parts.query, keep_blank_values=True):
-        if ID_RE.fullmatch(key) is None or (value and ID_RE.fullmatch(value) is None):
-            raise OptimizationOnlyRefusal("query_not_closed")
-    has_body = body is not None and body != b"" and body != ""
-    if route.kind == "read":
-        if has_body:
-            raise OptimizationOnlyRefusal("body_not_allowed")
-        return None
-    if route.kind == "auth":
-        if not _auth_body_ok(tail, body):
-            raise OptimizationOnlyRefusal("auth_body_not_closed")
-        return None
+    _judge_query(parts.query, parse_qsl)
+    return route, tail
+
+
+def _judge_optimizer_metrics(route: Any, tail: str, parsed: Any) -> Any:
+    segs = tail.rstrip("/").split("/")
+    session_id = segs[-2] if segs[-1] == "batch" else segs[-1]
+    if isinstance(parsed, dict) and "submissions" in parsed:
+        if set(parsed) != {"submissions"} or not isinstance(
+            parsed["submissions"], list
+        ):
+            raise OptimizationOnlyRefusal("body_not_projected")
+        items = parsed["submissions"]
+    else:
+        items = [parsed]
+    if not all(_is_fixed_point(route.phase, item, session_id) for item in items):
+        raise OptimizationOnlyRefusal("body_not_projected")
+    return parsed
+
+
+def _judge_director_body(tail: str, parsed: Any) -> Any:
+    allowed = (
+        DIRECTOR_CREATE_ALLOWLIST
+        if tail.rstrip("/").endswith("/director/sessions")
+        else DIRECTOR_TURN_ALLOWLIST
+    )
+    if not _director_conforms(parsed, allowed):
+        raise OptimizationOnlyRefusal("director_request")
+    return parsed
+
+
+def _judge_route_body(route: Any, tail: str, body: Any) -> Any:
     if body is UNREADABLE_BODY:
         raise OptimizationOnlyRefusal("body_unreadable")
     parsed = body
@@ -2725,38 +3201,55 @@ def _judge_outgoing(
         except ValueError:
             raise OptimizationOnlyRefusal("body_not_json") from None
     if route.kind == "director":
-        allowed = (
-            DIRECTOR_CREATE_ALLOWLIST
-            if tail.rstrip("/").endswith("/director/sessions")
-            else DIRECTOR_TURN_ALLOWLIST
-        )
-        if not _director_conforms(parsed, allowed):
-            raise OptimizationOnlyRefusal("director_request")
-        return parsed
+        return _judge_director_body(tail, parsed)
     if route.phase is None:
         return parsed
     if not isinstance(parsed, (dict, list)):
         raise OptimizationOnlyRefusal("body_missing")
     session_id = session_id_from_url(tail)
     if route.phase == PHASE_OPTIMIZER_METRICS:
-        segs = tail.rstrip("/").split("/")
-        session_id = segs[-2] if segs[-1] == "batch" else segs[-1]
-        if isinstance(parsed, dict) and "submissions" in parsed:
-            if set(parsed) != {"submissions"} or not isinstance(
-                parsed["submissions"], list
-            ):
-                raise OptimizationOnlyRefusal("body_not_projected")
-            items = parsed["submissions"]
-        else:
-            items = [parsed]
-        if not all(_is_fixed_point(route.phase, item, session_id) for item in items):
-            raise OptimizationOnlyRefusal("body_not_projected")
-        return parsed
+        return _judge_optimizer_metrics(route, tail, parsed)
     if not _is_fixed_point(route.phase, parsed, session_id):
         raise OptimizationOnlyRefusal("body_not_projected")
     if route.phase == PHASE_SESSION_CREATE_AUTO and _payload_embeds_examples(parsed):
         raise OptimizationOnlyRefusal("embedded_examples")
     return parsed
+
+
+def _judge_outgoing(
+    method: str,
+    url: Any,
+    headers: Any,
+    body: Any,
+    *,
+    explicit: bool | Policy | None = None,
+    api_prefixes: Iterable[str] = (),
+) -> Any:
+    """Transport backstop for one request (FINAL url/headers/body).
+
+    Mode inactive for the request's credential: returns at once. Mode active: DEFAULT-DENY.
+    The path must be free of dot segments and percent-encoded separators, every segment must
+    be identifier-shaped once decoded, and the route (after the client's API base) must be in
+    :data:`ALLOWED_ROUTES`. A body route passes only if its JSON body is a fixed point of its
+    phase projector (Director bodies must match their allowlist, auth bodies carry credential
+    fields only); query values must be identifier-shaped. Anything else raises
+    :class:`OptimizationOnlyRefusal` before a byte is sent.
+    """
+    headers_scope = credential_scope(url, headers) if scope_required(None) else None
+    base = explicit.explicit if isinstance(explicit, Policy) else explicit
+    if not is_active(Policy(base, headers_scope)):
+        return _INACTIVE
+    route, tail = _judge_route(method, url, api_prefixes)
+    has_body = body is not None and body != b"" and body != ""
+    if route.kind == "read":
+        if has_body:
+            raise OptimizationOnlyRefusal("body_not_allowed")
+        return None
+    if route.kind == "auth":
+        if not _auth_body_ok(tail, body):
+            raise OptimizationOnlyRefusal("auth_body_not_closed")
+        return None
+    return _judge_route_body(route, tail, body)
 
 
 def explicit_of(client: Any) -> bool | None:
@@ -2795,7 +3288,7 @@ _PROJECTORS: dict[str, Callable[[Any, tuple[str, ...]], Any]] = {
     PHASE_SESSION_CREATE_LEGACY: lambda p, d: project_legacy_session_create(p),
     PHASE_RESULTS: lambda p, d: project_results_payload(p, d),
     PHASE_SUMMARY_SUBMISSION: lambda p, d: project_results_payload(p, d),
-    PHASE_OPTIMIZER_METRICS: lambda p, d: project_results_payload(p, d),
+    PHASE_OPTIMIZER_METRICS: lambda p, d: project_optimizer_metrics_payload(p, d),
     PHASE_NEXT_TRIAL: lambda p, d: project_next_trial_payload(p, d),
     PHASE_FINALIZE: lambda p, d: project_finalize_payload(p),
     PHASE_CONFIGURATION_RUN: lambda p, d: project_configuration_run(p, d),
@@ -2810,6 +3303,36 @@ _PROJECTORS: dict[str, Callable[[Any, tuple[str, ...]], Any]] = {
 PHASES = frozenset(_PROJECTORS) | {PHASE_SESSION_CREATE_AUTO}
 
 
+_SESSION_CREATE_PHASES = frozenset(
+    {PHASE_SESSION_CREATE, PHASE_SESSION_CREATE_AUTO, PHASE_SESSION_CREATE_LEGACY}
+)
+
+
+_RESULT_WIRE_PHASES = frozenset(
+    {
+        PHASE_RESULTS,
+        PHASE_SUMMARY_SUBMISSION,
+        PHASE_OPTIMIZER_METRICS,
+        PHASE_NEXT_TRIAL,
+        PHASE_CONFIGURATION_RUN,
+    }
+)
+
+
+def _canonical_wire(payload: Any, *, allow_nan: bool = False) -> Any:
+    """The payload as the transport will serialize it: plain ``str``/``int``/``float``/``bool``/
+    ``None``/``list``/``dict`` only. A ``str`` or ``dict`` subclass with an overridden
+    ``__eq__``/``__hash__``/``keys``/``__iter__`` is judged by what it WRITES, not by what it
+    claims to be, so a check can never pass a value that serializes to something else.
+    NaN/infinity and unserializable values refuse, unless ``allow_nan``: the result phases
+    keep their rule that a non-finite metric is dropped (not refused), and every projector
+    spec rejects a non-finite number, so none can reach the wire."""
+    try:
+        return json.loads(json.dumps(payload, allow_nan=allow_nan))
+    except (TypeError, ValueError, RecursionError):
+        raise MetadataContractViolation from None
+
+
 def project_for_phase(
     phase: str,
     payload: Any,
@@ -2820,7 +3343,14 @@ def project_for_phase(
     """Project ``payload`` for ``phase`` unconditionally. Returns a new object; the input is
     never mutated. Raises :class:`MetadataContractViolation` for a payload the server would
     refuse, and ``ValueError`` for an unknown phase (an unclassified send must not happen)."""
-    detached = copy.deepcopy(payload)
+    # Session-create and parent-run bodies are judged in their wire form (NaN refuses); the
+    # result-shaped phases too, with NaN tolerated so a non-finite metric is dropped.
+    if phase in _SESSION_CREATE_PHASES or phase == PHASE_PARENT_RUN:
+        detached = _canonical_wire(payload)
+    elif phase in _RESULT_WIRE_PHASES:
+        detached = _canonical_wire(payload, allow_nan=True)
+    else:
+        detached = copy.deepcopy(payload)
     if phase == PHASE_SESSION_CREATE_AUTO:
         return project_session_create_auto(detached)
     projector = _PROJECTORS.get(phase)

@@ -22,6 +22,7 @@ __all__ = [
     "row_has_measured_cost",
     "row_reports_zero_provider_attempts",
     "trial_cost_unknown",
+    "unmeasured_example_coverage",
     "unmeasured_example_ids",
 ]
 
@@ -180,8 +181,28 @@ def trial_cost_unknown(
     return measured == 0 and zero_attempts == 0
 
 
+def _example_row_fields(row: Any) -> tuple[Any, Any, Any]:
+    """Read ``(metrics, example_id, success)`` from a mapping or object row."""
+    if isinstance(row, Mapping):
+        return row.get("metrics"), row.get("example_id"), row.get("success", True)
+    return (
+        getattr(row, "metrics", None),
+        getattr(row, "example_id", None),
+        getattr(row, "success", True),
+    )
+
+
+def _example_cost_unmeasured(metrics: Mapping[str, Any], ok: Any) -> bool:
+    """Per-row rule shared with :func:`trial_cost_unknown`."""
+    flagged = is_cost_unmeasured(metrics)
+    no_cost = not row_has_measured_cost(metrics) and not (
+        not bool(ok) and row_reports_zero_provider_attempts(metrics)
+    )
+    return flagged or no_cost
+
+
 def unmeasured_example_ids(example_results: Any, limit: int = 5) -> list[str]:
-    """Ids (or ``#index``) of the examples whose usage was not captured.
+    """Ids (or ``#index``) of the examples whose cost could not be measured.
 
     Uses the same per-row rule as :func:`trial_cost_unknown`: a row flagged
     ``cost_unmeasured``, or a row with no measured cost (a failed row that
@@ -195,27 +216,45 @@ def unmeasured_example_ids(example_results: Any, limit: int = 5) -> list[str]:
         return []
     found: list[str] = []
     for index, row in enumerate(example_results):
-        if isinstance(row, Mapping):
-            metrics, example_id, ok = (
-                row.get("metrics"),
-                row.get("example_id"),
-                row.get("success", True),
-            )
-        else:
-            metrics = getattr(row, "metrics", None)
-            example_id = getattr(row, "example_id", None)
-            ok = getattr(row, "success", True)
+        metrics, example_id, ok = _example_row_fields(row)
         if not isinstance(metrics, Mapping):
             continue
-        flagged = is_cost_unmeasured(metrics)
-        no_cost = not row_has_measured_cost(metrics) and not (
-            not bool(ok) and row_reports_zero_provider_attempts(metrics)
-        )
-        if flagged or no_cost:
+        if _example_cost_unmeasured(metrics, ok):
             found.append(str(example_id) if example_id else f"#{index}")
             if len(found) >= limit:
                 break
     return found
+
+
+def unmeasured_example_coverage(
+    example_results: Any, attempted: Any
+) -> tuple[int, int] | None:
+    """Complete ``(missing, attempted)`` example counts for one trial, or None.
+
+    Counts example *attempts* (not distinct ids) with the same per-row rule as
+    :func:`unmeasured_example_ids`, over every row, never a truncated id list.
+    ``attempted`` is the trial's own attempted-example count; the counts are
+    returned only when the readable rows account for exactly that many
+    attempts. Otherwise (rows absent, redacted, partial, or unreadable) the
+    coverage is unknown and ``None`` is returned: a count is never guessed.
+    """
+    if (
+        isinstance(attempted, bool)
+        or not isinstance(attempted, int)
+        or attempted <= 0
+        or not isinstance(example_results, Sequence)
+        or isinstance(example_results, (str, bytes, bytearray))
+        or len(example_results) != attempted
+    ):
+        return None
+    missing = 0
+    for row in example_results:
+        metrics, _example_id, ok = _example_row_fields(row)
+        if not isinstance(metrics, Mapping):
+            return None
+        if _example_cost_unmeasured(metrics, ok):
+            missing += 1
+    return missing, attempted
 
 
 def extract_trial_cost_metric(*sources: Any) -> float | None:
@@ -234,6 +273,31 @@ def extract_trial_cost_metric(*sources: Any) -> float | None:
             if cost is not None:
                 return cost
     return None
+
+
+def _collect_known_spend(
+    cost_mapping: Mapping[str, Any], bounds: list[float], costs_seen: list[float]
+) -> None:
+    bound = coerce_finite_cost(cost_mapping.get("cost_lower_bound"))
+    if bound is not None and bound >= 0:
+        bounds.append(bound)
+    # Every alias counts, even when another alias reports zero.
+    costs = extract_trial_cost_fields(cost_mapping)
+    aliases = [
+        *(costs.get(field) for field in TRIAL_COST_FIELDS),
+        *(cost_mapping.get(field) for field in TRIAL_COST_FIELDS),
+        cost_mapping.get("total_example_cost"),
+    ]
+    for alias in aliases:
+        cost = coerce_finite_cost(alias)
+        if cost is not None and cost >= 0:
+            costs_seen.append(cost)
+    parts = [
+        coerce_finite_cost(cost_mapping.get("input_cost")),
+        coerce_finite_cost(cost_mapping.get("output_cost")),
+    ]
+    if all(part is not None and part >= 0 for part in parts):
+        costs_seen.append(sum(p for p in parts if p is not None))
 
 
 def known_spend_lower_bound(*sources: Any) -> float:
@@ -258,28 +322,7 @@ def known_spend_lower_bound(*sources: Any) -> float:
     costs_seen: list[float] = []
     for source in sources:
         for cost_mapping in _iter_cost_mappings(source):
-            bound = coerce_finite_cost(cost_mapping.get("cost_lower_bound"))
-            if bound is not None and bound >= 0:
-                bounds.append(bound)
-            # Every alias counts, not only the first one found: ``{"cost": 0,
-            # "total_cost": 0.4}`` reports 0.4, and a zero alias must not
-            # mask it.
-            costs = extract_trial_cost_fields(cost_mapping)
-            aliases = [
-                *(costs.get(field) for field in TRIAL_COST_FIELDS),
-                *(cost_mapping.get(field) for field in TRIAL_COST_FIELDS),
-                cost_mapping.get("total_example_cost"),
-            ]
-            for alias in aliases:
-                cost = coerce_finite_cost(alias)
-                if cost is not None and cost >= 0:
-                    costs_seen.append(cost)
-            parts = [
-                coerce_finite_cost(cost_mapping.get("input_cost")),
-                coerce_finite_cost(cost_mapping.get("output_cost")),
-            ]
-            if all(part is not None and part >= 0 for part in parts):
-                costs_seen.append(sum(p for p in parts if p is not None))
+            _collect_known_spend(cost_mapping, bounds, costs_seen)
     candidates = bounds + costs_seen
     return max(candidates) if candidates else 0.0
 

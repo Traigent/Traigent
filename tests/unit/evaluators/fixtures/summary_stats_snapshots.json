@@ -1,0 +1,1365 @@
+{
+ "empty": {
+  "metrics": {
+   "accuracy": {
+    "count": 0,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "input_tokens": {
+    "count": 0,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "output_tokens": {
+    "count": 0,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_tokens": {
+    "count": 0,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "response_time_ms": {
+    "count": 0,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": null
+  },
+  "execution_time": "T",
+  "total_examples": 0,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "single_with_tps_and_custom": {
+  "metrics": {
+   "accuracy": {
+    "count": 1,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 1,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 1,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 1,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 1,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "output_cost": {
+    "count": 1,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "tokens_per_second": {
+    "count": 1,
+    "mean": 40.0,
+    "std": 0.0,
+    "min": 40.0,
+    "25%": 40.0,
+    "50%": 40.0,
+    "75%": 40.0,
+    "max": 40.0
+   },
+   "f1": {
+    "count": 1,
+    "mean": 0.5,
+    "std": 0.0,
+    "min": 0.5,
+    "25%": 0.5,
+    "50%": 0.5,
+    "75%": 0.5,
+    "max": 0.5
+   }
+  },
+  "execution_time": "T",
+  "total_examples": 1,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "measured_plus_unmeasured_row": {
+  "metrics": {
+   "accuracy": {
+    "count": 2,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 1,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 1,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 1,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 1,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "output_cost": {
+    "count": 1,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   }
+  },
+  "execution_time": "T",
+  "total_examples": 2,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "cost_unmeasured_with_known_floor": {
+  "metrics": {
+   "accuracy": {
+    "count": 2,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 2,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 2,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 2,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 2,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "output_cost": {
+    "count": 1,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "cost_unmeasured": 1.0,
+   "cost_lower_bound": 0.07
+  },
+  "execution_time": "T",
+  "total_examples": 2,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "unpriced_adds_floor": {
+  "metrics": {
+   "accuracy": {
+    "count": 2,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 2,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 2,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 2,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 2,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "output_cost": {
+    "count": 1,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "cost_unmeasured": 1.0,
+   "cost_lower_bound": 0.05
+  },
+  "execution_time": "T",
+  "total_examples": 2,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "no_cost_measured_nullifies": {
+  "metrics": {
+   "accuracy": {
+    "count": 2,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 2,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 2,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 2,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 2,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": null,
+   "output_cost": null,
+   "total_cost": null,
+   "cost_unmeasured": 1.0,
+   "cost_lower_bound": 0.01
+  },
+  "execution_time": "T",
+  "total_examples": 2,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "all_rows_unmeasured": {
+  "metrics": {
+   "accuracy": {
+    "count": 1,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 0,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "output_tokens": {
+    "count": 0,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_tokens": {
+    "count": 0,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "response_time_ms": {
+    "count": 0,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "input_cost": null,
+   "output_cost": null,
+   "total_cost": null,
+   "cost_unmeasured": 1.0
+  },
+  "execution_time": "T",
+  "total_examples": 1,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "unattributed_spend": {
+  "metrics": {
+   "accuracy": {
+    "count": 1,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 1,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 1,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 1,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 1,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "output_cost": {
+    "count": 1,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "cost_unmeasured": 1.0,
+   "cost_lower_bound": 0.09000000000000001
+  },
+  "execution_time": "T",
+  "total_examples": 1,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "unattributed_zero_floor": {
+  "metrics": {
+   "accuracy": {
+    "count": 1,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 1,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 1,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 1,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 1,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "output_cost": {
+    "count": 1,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 1,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "cost_unmeasured": 1.0,
+   "cost_lower_bound": 0.02
+  },
+  "execution_time": "T",
+  "total_examples": 1,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "partial_custom_metric_defaults_zero": {
+  "metrics": {
+   "accuracy": {
+    "count": 3,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 3,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 3,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 3,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 3,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 3,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "output_cost": {
+    "count": 3,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 3,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "g": {
+    "count": 3,
+    "mean": 0.6666666666666666,
+    "std": 1.1547005383792515,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 1.0,
+    "max": 2
+   },
+   "f1": {
+    "count": 3,
+    "mean": 0.3333333333333333,
+    "std": 0.30550504633038933,
+    "min": 0.0,
+    "25%": 0.2,
+    "50%": 0.4,
+    "75%": 0.5,
+    "max": 0.6
+   }
+  },
+  "execution_time": "T",
+  "total_examples": 3,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "user_evaluation_cost_missing_rows_skipped": {
+  "metrics": {
+   "accuracy": {
+    "count": 2,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 2,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 2,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 2,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 2,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 2,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "output_cost": {
+    "count": 2,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 2,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "evaluation_cost": {
+    "count": 1,
+    "mean": 0.5,
+    "std": 0.0,
+    "min": 0.5,
+    "25%": 0.5,
+    "50%": 0.5,
+    "75%": 0.5,
+    "max": 0.5
+   }
+  },
+  "execution_time": "T",
+  "total_examples": 2,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "sdk_evaluation_cost_default_zero": {
+  "metrics": {
+   "accuracy": {
+    "count": 2,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 2,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 2,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 2,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 2,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 2,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "output_cost": {
+    "count": 2,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 2,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "evaluation_cost": {
+    "count": 2,
+    "mean": 0.25,
+    "std": 0.3535533905932738,
+    "min": 0.0,
+    "25%": 0.125,
+    "50%": 0.25,
+    "75%": 0.375,
+    "max": 0.5
+   }
+  },
+  "execution_time": "T",
+  "total_examples": 2,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "mixed_sdk_and_user_evaluation_cost": {
+  "metrics": {
+   "accuracy": {
+    "count": 2,
+    "mean": 1.0,
+    "std": 0.0,
+    "min": 1.0,
+    "25%": 1.0,
+    "50%": 1.0,
+    "75%": 1.0,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 2,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 2,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 2,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 2,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 2,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "output_cost": {
+    "count": 2,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 2,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "evaluation_cost": {
+    "count": 1,
+    "mean": 0.25,
+    "std": 0.0,
+    "min": 0.25,
+    "25%": 0.25,
+    "50%": 0.25,
+    "75%": 0.25,
+    "max": 0.25
+   }
+  },
+  "execution_time": "T",
+  "total_examples": 2,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "user_supplied_accuracy": {
+  "metrics": {
+   "accuracy": {
+    "count": 2,
+    "mean": 0.125,
+    "std": 0.1767766952966369,
+    "min": 0.0,
+    "25%": 0.0625,
+    "50%": 0.125,
+    "75%": 0.1875,
+    "max": 0.25
+   },
+   "input_tokens": {
+    "count": 2,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 2,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 2,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 2,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 2,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   },
+   "output_cost": {
+    "count": 2,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 2,
+    "mean": 0.02,
+    "std": 0.0,
+    "min": 0.02,
+    "25%": 0.02,
+    "50%": 0.02,
+    "75%": 0.02,
+    "max": 0.02
+   }
+  },
+  "execution_time": "T",
+  "total_examples": 2,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ },
+ "errored_but_measured": {
+  "metrics": {
+   "accuracy": {
+    "count": 2,
+    "mean": 0.5,
+    "std": 0.7071067811865476,
+    "min": 0.0,
+    "25%": 0.25,
+    "50%": 0.5,
+    "75%": 0.75,
+    "max": 1.0
+   },
+   "input_tokens": {
+    "count": 2,
+    "mean": 100,
+    "std": 0.0,
+    "min": 100,
+    "25%": 100.0,
+    "50%": 100.0,
+    "75%": 100.0,
+    "max": 100
+   },
+   "output_tokens": {
+    "count": 2,
+    "mean": 50,
+    "std": 0.0,
+    "min": 50,
+    "25%": 50.0,
+    "50%": 50.0,
+    "75%": 50.0,
+    "max": 50
+   },
+   "total_tokens": {
+    "count": 2,
+    "mean": 150,
+    "std": 0.0,
+    "min": 150,
+    "25%": 150.0,
+    "50%": 150.0,
+    "75%": 150.0,
+    "max": 150
+   },
+   "response_time_ms": {
+    "count": 2,
+    "mean": 200.0,
+    "std": 0.0,
+    "min": 200.0,
+    "25%": 200.0,
+    "50%": 200.0,
+    "75%": 200.0,
+    "max": 200.0
+   },
+   "input_cost": {
+    "count": 2,
+    "mean": 0.03,
+    "std": 0.01414213562373095,
+    "min": 0.02,
+    "25%": 0.025,
+    "50%": 0.03,
+    "75%": 0.034999999999999996,
+    "max": 0.04
+   },
+   "output_cost": {
+    "count": 2,
+    "mean": 0.0,
+    "std": 0.0,
+    "min": 0.0,
+    "25%": 0.0,
+    "50%": 0.0,
+    "75%": 0.0,
+    "max": 0.0
+   },
+   "total_cost": {
+    "count": 2,
+    "mean": 0.03,
+    "std": 0.01414213562373095,
+    "min": 0.02,
+    "25%": 0.025,
+    "50%": 0.03,
+    "75%": 0.034999999999999996,
+    "max": 0.04
+   }
+  },
+  "execution_time": "T",
+  "total_examples": 2,
+  "metadata": {
+   "sdk_version": "V",
+   "aggregation_method": "pandas.describe",
+   "timestamp": "TS"
+  }
+ }
+}

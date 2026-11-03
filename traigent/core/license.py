@@ -40,6 +40,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -649,10 +650,22 @@ class LicenseValidator:
             logger.warning("License payload contained unknown enum value: %s", exc)
             return None
 
+        # Fail closed: an offline licence must carry a finite numeric expiry.
+        # A missing or malformed ``exp`` would otherwise make it valid forever.
+        # bool is an int subclass, so reject it explicitly. Log no payload data.
+        exp = payload.get("exp")
+        if (
+            isinstance(exp, bool)
+            or not isinstance(exp, (int, float))
+            or not math.isfinite(exp)
+        ):
+            logger.warning("Offline license rejected: missing or invalid expiry")
+            return None
+
         return LicenseInfo(
             tier=tier,
             features=features,
-            expires_at=payload.get("exp"),
+            expires_at=exp,
             organization=payload.get("org"),
             validated_at=time.time(),
             validation_source=validation_source,

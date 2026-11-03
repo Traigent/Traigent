@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -724,6 +724,35 @@ def _select_best_single_trial(
             if _primary_scores_tied(score, best_score)
         ]
 
+    best_trial = _choose_tied_trial(
+        tied_trials,
+        successful_trials,
+        tie_breakers,
+        primary_objective,
+        band_target,
+        objective_order,
+        objective_orientations,
+    )
+
+    return SelectionResult(
+        best_config=best_trial.config or {},
+        best_score=coerce_finite_objective_score(
+            best_trial.get_metric(primary_objective)
+        ),
+        session_summary={"ranking": ranking_summary},
+        best_trial_id=best_trial.trial_id,
+    )
+
+
+def _choose_tied_trial(
+    tied_trials: list[TrialResult],
+    successful_trials: list[TrialResult],
+    tie_breakers: dict[str, TieBreaker],
+    primary_objective: str,
+    band_target: float | None,
+    objective_order: Iterable[str] | None,
+    objective_orientations: dict[str, str] | None,
+) -> TrialResult:
     # Apply tie-breaker if there are ties.
     if len(tied_trials) > 1:
         best_trial = apply_tie_breaker(
@@ -741,14 +770,7 @@ def _select_best_single_trial(
     else:
         best_trial = tied_trials[0] if tied_trials else successful_trials[0]
 
-    return SelectionResult(
-        best_config=best_trial.config or {},
-        best_score=coerce_finite_objective_score(
-            best_trial.get_metric(primary_objective)
-        ),
-        session_summary={"ranking": ranking_summary},
-        best_trial_id=best_trial.trial_id,
-    )
+    return best_trial
 
 
 def _aggregate_trials(
@@ -1085,46 +1107,18 @@ def _select_best_aggregated(
             },
             reason_code=NO_RANKING_ELIGIBLE_TRIALS,
         )
-    if band_target is not None:
-        best_deviation = min(
-            abs(score_value - band_target) for score_value in all_scores
-        )
-        tied_entries = [
-            entry
-            for entry in aggregated.values()
-            if math.isfinite(score_value := score(entry))
-            and _primary_scores_tied(abs(score_value - band_target), best_deviation)
-        ]
-    else:
-        best_score_val = min(all_scores) if minimization else max(all_scores)
+    tied_entries = _find_tied_aggregated_entries(
+        aggregated, all_scores, score, band_target, minimization
+    )
 
-        # Find all entries within the conservative primary-score tie tolerance.
-        tied_entries = [
-            entry
-            for entry in aggregated.values()
-            if _primary_scores_tied(
-                score_value := score(entry),
-                best_score_val,
-            )
-            and math.isfinite(score_value)
-        ]
-
-    # Apply tie-breaking for aggregated entries
-    if len(tied_entries) > 1:
-        best_entry = _apply_aggregated_tie_breaker(
-            tied_entries,
-            tie_breakers,
-            primary_objective,
-            band_target,
-            objective_order,
-            objective_orientations,
-        )
-        if not tie_breakers and not _declared_secondary_objectives(
-            primary_objective, objective_order
-        ):
-            best_entry = tied_entries[0]
-    else:
-        best_entry = tied_entries[0]
+    best_entry = _choose_tied_aggregated_entry(
+        tied_entries,
+        tie_breakers,
+        primary_objective,
+        band_target,
+        objective_order,
+        objective_orientations,
+    )
 
     best_metrics = _compute_mean_metrics(best_entry)
     sanitized_metrics = _sanitize_mean_metrics(best_metrics)
@@ -1149,6 +1143,68 @@ def _select_best_aggregated(
         session_summary=session_summary,
         best_trial_id=(best_entry.get("trial_ids") or [None])[0],
     )
+
+
+def _choose_tied_aggregated_entry(
+    tied_entries: list[dict[str, Any]],
+    tie_breakers: dict[str, TieBreaker],
+    primary_objective: str,
+    band_target: float | None,
+    objective_order: Iterable[str] | None,
+    objective_orientations: dict[str, str] | None,
+) -> dict[str, Any]:
+    # Apply tie-breaking for aggregated entries
+    if len(tied_entries) > 1:
+        best_entry = _apply_aggregated_tie_breaker(
+            tied_entries,
+            tie_breakers,
+            primary_objective,
+            band_target,
+            objective_order,
+            objective_orientations,
+        )
+        if not tie_breakers and not _declared_secondary_objectives(
+            primary_objective, objective_order
+        ):
+            best_entry = tied_entries[0]
+    else:
+        best_entry = tied_entries[0]
+
+    return best_entry
+
+
+def _find_tied_aggregated_entries(
+    aggregated: dict[str, dict[str, Any]],
+    all_scores: list[float],
+    score: Callable[[dict[str, Any]], float],
+    band_target: float | None,
+    minimization: bool,
+) -> list[dict[str, Any]]:
+    if band_target is not None:
+        best_deviation = min(
+            abs(score_value - band_target) for score_value in all_scores
+        )
+        tied_entries = [
+            entry
+            for entry in aggregated.values()
+            if math.isfinite(score_value := score(entry))
+            and _primary_scores_tied(abs(score_value - band_target), best_deviation)
+        ]
+    else:
+        best_score_val = min(all_scores) if minimization else max(all_scores)
+
+        # Find all entries within the conservative primary-score tie tolerance.
+        tied_entries = [
+            entry
+            for entry in aggregated.values()
+            if _primary_scores_tied(
+                score_value := score(entry),
+                best_score_val,
+            )
+            and math.isfinite(score_value)
+        ]
+
+    return tied_entries
 
 
 def _mark_weighted_selection_unavailable(
@@ -1347,28 +1403,9 @@ def select_best_configuration(
             reason_code=NO_RANKING_ELIGIBLE_TRIALS,
         )
 
-    eligible_trials: list[TrialResult] = []
-    excluded_count = 0
-    unknown_count = 0
-    # When a cost objective drives the ranking (primary or weighted), a trial
-    # whose cost is flagged unmeasured has no value to rank on: it is excluded
-    # exactly as the Pareto front excludes it (Traigent#2517).
-    cost_ranked = _cost_objective_in_play(
-        primary_objective, resolve_result_selection_schema(objective_schema)
+    eligible_trials, excluded_count, unknown_count = _partition_ranking_trials(
+        successful_trials, primary_objective, comparability_mode, objective_schema
     )
-    for trial in successful_trials:
-        eligible, unknown, _codes = _is_ranking_eligible(
-            trial, primary_objective, comparability_mode
-        )
-        if eligible and cost_ranked and _cost_flagged(trial.metrics):
-            excluded_count += 1
-            continue
-        if eligible:
-            eligible_trials.append(trial)
-            continue
-        excluded_count += 1
-        if unknown:
-            unknown_count += 1
 
     ranking_summary = _build_ranking_summary(
         total_input_trials=len(trial_list),
@@ -1487,3 +1524,35 @@ def select_best_configuration(
             objective_orientations,
         )
     return aggregated_result
+
+
+def _partition_ranking_trials(
+    successful_trials: list[TrialResult],
+    primary_objective: str,
+    comparability_mode: ComparabilityMode,
+    objective_schema: ObjectiveSchema | None,
+) -> tuple[list[TrialResult], int, int]:
+    eligible_trials: list[TrialResult] = []
+    excluded_count = 0
+    unknown_count = 0
+    # When a cost objective drives the ranking (primary or weighted), a trial
+    # whose cost is flagged unmeasured has no value to rank on: it is excluded
+    # exactly as the Pareto front excludes it (Traigent#2517).
+    cost_ranked = _cost_objective_in_play(
+        primary_objective, resolve_result_selection_schema(objective_schema)
+    )
+    for trial in successful_trials:
+        eligible, unknown, _codes = _is_ranking_eligible(
+            trial, primary_objective, comparability_mode
+        )
+        if eligible and cost_ranked and _cost_flagged(trial.metrics):
+            excluded_count += 1
+            continue
+        if eligible:
+            eligible_trials.append(trial)
+            continue
+        excluded_count += 1
+        if unknown:
+            unknown_count += 1
+
+    return eligible_trials, excluded_count, unknown_count

@@ -27,7 +27,7 @@ QUOTA_ERROR_CODES = frozenset(
 # Closed vocabulary of backend refusals that are definitive answers from a
 # reachable backend (e.g. HTTP 503 for a session shape the backend will not
 # create). Never connectivity, never retried on the legacy contract, and the
-# code (only) may be rendered (SDK-52).
+# code (only) may be rendered.
 CLOSED_REFUSAL_CODES = frozenset(
     {
         "typed_storage_mapping_unavailable",
@@ -210,7 +210,7 @@ class SessionCreationFailureDetail:
 
     @property
     def is_closed_refusal(self) -> bool:
-        """True when the backend refused with a closed refusal code (SDK-52).
+        """True when the backend refused with a closed refusal code.
 
         Read only from the structured ``error_code`` field; message text is
         never consulted. A closed refusal is a reachable-backend answer, never a

@@ -59,12 +59,7 @@ class Parameter:
     def __post_init__(self) -> None:
         """Validate parameter configuration after initialization."""
         if self.type == ParameterType.FLOAT:
-            if not isinstance(self.bounds, tuple) or len(self.bounds) != 2:
-                raise ValueError(
-                    f"Float parameter {self.name} must have tuple bounds (min, max)"
-                )
-            if not all(isinstance(x, (int, float)) for x in self.bounds):
-                raise ValueError(f"Float parameter {self.name} bounds must be numeric")
+            Parameter._validate_float_bounds(self)
 
         elif self.type == ParameterType.INTEGER:
             if not isinstance(self.bounds, tuple) or len(self.bounds) != 2:
@@ -86,6 +81,14 @@ class Parameter:
             # Boolean parameters don't need bounds - always [True, False]
             if self.bounds is None:
                 self.bounds: list[Any] = [True, False]
+
+    def _validate_float_bounds(self) -> None:
+        if not isinstance(self.bounds, tuple) or len(self.bounds) != 2:
+            raise ValueError(
+                f"Float parameter {self.name} must have tuple bounds (min, max)"
+            )
+        if not all(isinstance(x, (int, float)) for x in self.bounds):
+            raise ValueError(f"Float parameter {self.name} bounds must be numeric")
 
     def validate_value(self, value: Any) -> bool:
         """Check if a value is valid for this parameter.
@@ -228,11 +231,8 @@ class ConfigurationSpace:
         if missing:
             return False
 
-        # Check each parameter value is valid
-        for param in self.parameters:
-            if param.name in config:
-                if not param.validate_value(config[param.name]):
-                    return False
+        if not ConfigurationSpace._parameters_valid(self, config):
+            return False
 
         # Check constraints if any
         if self.constraints:
@@ -244,6 +244,15 @@ class ConfigurationSpace:
                     logger.debug(
                         f"Constraint check raised exception (treating as invalid): {e}"
                     )
+                    return False
+
+        return True
+
+    def _parameters_valid(self, config: dict[str, Any]) -> bool:
+        # Check each parameter value is valid
+        for param in self.parameters:
+            if param.name in config:
+                if not param.validate_value(config[param.name]):
                     return False
 
         return True

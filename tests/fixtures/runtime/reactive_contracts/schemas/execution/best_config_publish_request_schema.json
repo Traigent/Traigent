@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/execution/best_config_publish_request_schema.json",
+  "title": "Publish Cloud Best Config Request",
+  "description": "Request body for publishing a canonical best config to backend cloud storage. Request validation beyond the JSON Schema: a NaN or Infinity number anywhere in the spec, a spec nested deeper than 16 levels, and any object (at any depth of the spec) holding two keys that are equal after Unicode NFC are refused before anything is persisted. What a refusal says: the NFC collision check's own message is fixed and names no key; protected path: every refusal is the closed head_body_invalid 400; legacy path: the legacy validation 400, whose text may include field paths (for example the path of a non-finite number, or unknown top-level keys reported by schema validation, which runs before collision detection), so no blanket promise is made that a legacy refusal omits keys. The NFC-collision refusal applies to a NEW publish only: the frozen legacy spec_hash rule (best_config_schema.json x-traigent-spec-hash) keeps last-wins so already-stored specs still verify and roll back.",
+  "type": "object",
+  "required": [
+    "spec"
+  ],
+  "properties": {
+    "spec": {
+      "$ref": "../optimization/best_config_schema.json"
+    },
+    "environment": {
+      "$ref": "../optimization/best_config_schema.json#/definitions/best_config_environment",
+      "description": "Optional explicit deployment environment. If provided it must match spec.environment."
+    },
+    "metadata": {
+      "x-content-class": "legacy_content",
+      "x-content-key-class": "legacy_content",
+      "x-content-note": "INV B1 (LEAK): metadata (free-form object, up to 64 keys)",
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "x-content-class": "legacy_content",
+        "x-content-note": "INV B1 (LEAK): metadata (free-form object, up to 64 keys): keys",
+        "not": {
+          "enum": [
+            "tenant_id",
+            "project_id",
+            "promoted_by",
+            "published_by",
+            "published_by_user_id",
+            "published_by_api_key_id"
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

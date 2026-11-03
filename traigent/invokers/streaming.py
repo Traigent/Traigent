@@ -18,6 +18,10 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _is_sync_iterable_response(response: Any) -> bool:
+    return hasattr(response, "__iter__") and not isinstance(response, (str, bytes))
+
+
 class StreamingInvoker(LocalInvoker):
     """Streaming function invocation strategy.
 
@@ -223,14 +227,9 @@ class StreamingInvoker(LocalInvoker):
                 metadata: dict[str, Any] = {
                     "elapsed_time": time.time() - start_time,
                 }
-                if chunk_usage is not None:
-                    if chunk_content == "":
-                        stream_usage = chunk_usage
-                    else:
-                        stream_usage = self._merge_usage_metadata(
-                            stream_usage, chunk_usage
-                        )
-                    metadata["usage"] = stream_usage
+                stream_usage = StreamingInvoker._update_stream_usage(
+                    self, chunk_usage, chunk_content, stream_usage, metadata
+                )
 
                 chunk = StreamingChunk(
                     content=chunk_content,
@@ -283,6 +282,30 @@ class StreamingInvoker(LocalInvoker):
                 metadata={"error": error_msg, "exception_type": type(e).__name__},
             )
 
+    def _update_stream_usage(
+        self,
+        chunk_usage: dict[str, int] | None,
+        chunk_content: str,
+        stream_usage: dict[str, int] | None,
+        metadata: dict[str, Any],
+    ) -> dict[str, int] | None:
+        if chunk_usage is not None:
+            if chunk_content == "":
+                stream_usage = chunk_usage
+            else:
+                stream_usage = self._merge_usage_metadata(stream_usage, chunk_usage)
+            metadata["usage"] = stream_usage
+        return stream_usage
+
+    async def _next_response_chunk(self, async_iter: Any) -> Any:
+        try:
+            if self.chunk_timeout:
+                async with asyncio.timeout(self.chunk_timeout):
+                    return await async_iter.__anext__()
+            return await async_iter.__anext__()
+        except TimeoutError as e:
+            raise InvocationError(f"Chunk timeout after {self.chunk_timeout}s") from e
+
     async def _iterate_response(self, response: Any) -> AsyncIterator[Any]:
         """Iterate over response, handling both sync and async iterators.
 
@@ -297,40 +320,37 @@ class StreamingInvoker(LocalInvoker):
             async_iter = response.__aiter__()
             while True:
                 try:
-                    if self.chunk_timeout:
-                        async with asyncio.timeout(self.chunk_timeout):
-                            chunk = await async_iter.__anext__()
-                    else:
-                        chunk = await async_iter.__anext__()
+                    chunk = await StreamingInvoker._next_response_chunk(
+                        self, async_iter
+                    )
                 except StopAsyncIteration:
                     break
-                except TimeoutError as e:
-                    raise InvocationError(
-                        f"Chunk timeout after {self.chunk_timeout}s"
-                    ) from e
                 yield chunk
+            return
 
         # Handle sync iterators (wrap in async)
-        elif hasattr(response, "__iter__") and not isinstance(response, (str, bytes)):
+        if _is_sync_iterable_response(response):
             for chunk in response:
                 yield chunk
                 # Allow other tasks to run
                 await asyncio.sleep(0)
+            return
 
         # Handle generators
-        elif inspect.isgenerator(response):
+        if inspect.isgenerator(response):
             for chunk in response:
                 yield chunk
                 await asyncio.sleep(0)
+            return
 
         # Handle async generators
-        elif inspect.isasyncgen(response):
+        if inspect.isasyncgen(response):
             async for chunk in response:
                 yield chunk
+            return
 
         # Single value - yield as one chunk
-        else:
-            yield response
+        yield response
 
     async def invoke(
         self,

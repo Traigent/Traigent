@@ -43,6 +43,10 @@ Honesty contract (mirrors the SDK's cost-accounting discipline):
 The budget is thread-safe (``threading.RLock``); ``debit_trial`` is a plain sync
 method called from inside the orchestrator's async state-lock and **never raises into
 the hot path** — exhaustion is a graceful stop, the same contract as ``CostEnforcer``.
+
+``max_budget_debit_usd`` is a separate, explicit local allocation ledger. Only the
+caller's provider-call door reserves and settles it; it never supplies actual
+cost, changes cost policy, or extends the established serializable snapshot.
 """
 
 from __future__ import annotations
@@ -50,7 +54,8 @@ from __future__ import annotations
 import math
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Literal
 
 from traigent.core.sample_budget import (
@@ -59,7 +64,7 @@ from traigent.core.sample_budget import (
     SampleBudgetLease,
     SampleBudgetManager,
 )
-from traigent.utils.exceptions import ConfigurationError
+from traigent.utils.exceptions import ConfigurationError, TrialPrunedError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -71,6 +76,87 @@ _DIM_COST = "cost"
 _DIM_EXAMPLES = "examples"
 _DIM_DEADLINE = "deadline"
 _DIM_UNTRACKED_COST = "untracked_cost"
+
+
+class BudgetDebitExceeded(TrialPrunedError):
+    """A caller-owned allocation refused a call before provider invocation.
+
+    Uses the evaluator's early-stop protocol to retain partial example results.
+    Amounts and the local ledger are deliberately absent from the error message.
+    """
+
+    def __init__(self, budget: ExecutionBudget) -> None:
+        super().__init__("Conservative execution allowance cannot fund this call.")
+        self.budget = budget
+
+
+@dataclass(frozen=True, slots=True)
+class BudgetDebitSnapshot:
+    """Local allocation view; never actual cost or result/wire metadata.
+
+    An aggregate exceeding float range is shown as infinity; the internal
+    allocation and admission comparisons retain exact rational amounts.
+    """
+
+    max_budget_debit_usd: float | None
+    consumed_budget_debit_usd: float
+    reserved_budget_debit_usd: float
+    remaining_budget_debit_usd: float
+    overrun_budget_debit_usd: float
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class BudgetDebitLease:
+    """Single-use reservation owned by one budget and one provider-call door.
+
+    Settle in ``finally`` to retain the allowance on failure or cancellation.
+    ``release_debit`` is only for an unplaced or proven nonbillable request.
+    """
+
+    _budget: ExecutionBudget = field(repr=False)
+    reserved_debit_usd: float
+    _closed: bool = field(default=False, init=False, repr=False)
+
+    def settle_debit(self, amount: float | None = None) -> None:
+        """Consume the reservation, or an explicitly supplied settlement."""
+        self._budget.settle_debit(self, amount)
+
+    def release_debit(self) -> None:
+        """Release a reservation after the caller proves no billable work."""
+        self._budget.release_debit(self)
+
+    def __enter__(self) -> BudgetDebitLease:
+        self._budget._enter_debit_context(self)
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> Literal[False]:
+        self._budget._finish_debit_context(self)
+        return False
+
+
+def _debit_amount(value: object, name: str, *, allow_zero: bool = False) -> Fraction:
+    """Validate finite nominal amounts without changing actual-cost validation."""
+    try:
+        numeric = (
+            float(value)
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else float("nan")
+        )
+    except OverflowError:
+        numeric = float("inf")
+    if not math.isfinite(numeric) or numeric < 0 or (numeric == 0 and not allow_zero):
+        qualifier = "nonnegative" if allow_zero else "positive"
+        raise ConfigurationError(f"{name} must be a finite {qualifier} number.")
+    # Exact rational strings avoid binary rounding or ambient Decimal precision
+    # admitting extra calls at a boundary. This is allocation, not a price map.
+    return Fraction(str(value))
+
+
+def _debit_float(value: Fraction) -> float:
+    try:
+        return float(value)
+    except OverflowError:
+        return float("inf")
 
 
 class _ExecutionBudgetSampleManager(SampleBudgetManager):
@@ -201,7 +287,7 @@ class ExecutionBudget:
     """A cumulative cost/examples/time cap shared across ``optimize()`` calls.
 
     Experimental (issue #1980). At least one of ``max_cost_usd`` / ``max_examples`` /
-    ``deadline_seconds`` must be set; any value ``<= 0`` raises
+    ``deadline_seconds`` / ``max_budget_debit_usd`` must be set; any value ``<= 0`` raises
     :class:`ConfigurationError` at construction.
 
     Attach it explicitly per call — ``evaluator.evaluate(..., budget=b)`` /
@@ -210,6 +296,10 @@ class ExecutionBudget:
     baseline, search, and holdout. Using it as a context manager starts the
     wall-clock deadline on ``__enter__`` and freezes a final snapshot on
     ``__exit__``; it never registers an ambient/implicit budget.
+
+    ``max_budget_debit_usd`` opts into caller-owned allocation reservations, not
+    provider pricing or an actual-USD guarantee. Read them with ``debit_snapshot``;
+    the existing ``snapshot`` remains the separate observed-cost/examples/time view.
     """
 
     def __init__(
@@ -219,6 +309,7 @@ class ExecutionBudget:
         max_examples: int | None = None,
         deadline_seconds: float | None = None,
         enforce_untracked_cost: bool = False,
+        max_budget_debit_usd: float | None = None,
     ) -> None:
         self.max_cost_usd = _validate_positive(max_cost_usd, "max_cost_usd")
         validated_examples = _validate_positive(max_examples, "max_examples")
@@ -227,15 +318,21 @@ class ExecutionBudget:
         )
         self.deadline_seconds = _validate_positive(deadline_seconds, "deadline_seconds")
         self.enforce_untracked_cost = bool(enforce_untracked_cost)
+        self._max_budget_debit = (
+            None
+            if max_budget_debit_usd is None
+            else _debit_amount(max_budget_debit_usd, "max_budget_debit_usd")
+        )
 
         if (
             self.max_cost_usd is None
             and self.max_examples is None
             and self.deadline_seconds is None
+            and self._max_budget_debit is None
         ):
             raise ConfigurationError(
                 "ExecutionBudget requires at least one of max_cost_usd, "
-                "max_examples, or deadline_seconds."
+                "max_examples, deadline_seconds, or max_budget_debit_usd."
             )
 
         self._lock = threading.RLock()
@@ -247,6 +344,123 @@ class ExecutionBudget:
         self._untracked_trials: int = 0
         self._external_untracked: bool = False
         self._final_snapshot: ExecutionBudgetSnapshot | None = None
+        self._consumed_budget_debit = Fraction(0)
+        self._debit_leases: dict[BudgetDebitLease, Fraction] = {}
+
+    # -- caller-owned allocation (local only, separate from actual cost) -------
+
+    def reserve_debit(self, amount: float) -> BudgetDebitLease:
+        """Atomically reserve an explicit allowance before calling a provider.
+
+        No SDK engine path calls this automatically. A denied reservation changes
+        no state, so a later phase may still fund a smaller call. The lock is
+        released before returning the lease and never spans provider execution.
+        """
+        debit = _debit_amount(amount, "reservation")
+        with self._lock:
+            if self._max_budget_debit is None:
+                raise ConfigurationError(
+                    "reserve_debit requires explicit max_budget_debit_usd."
+                )
+            committed = self._consumed_budget_debit + sum(
+                self._debit_leases.values(), Fraction(0)
+            )
+            if committed + debit > self._max_budget_debit:
+                raise BudgetDebitExceeded(self)
+            lease = BudgetDebitLease(self, float(debit))
+            self._debit_leases[lease] = debit
+            return lease
+
+    def _owned_debit_locked(self, lease: BudgetDebitLease) -> Fraction:
+        if not isinstance(lease, BudgetDebitLease) or lease not in self._debit_leases:
+            raise ValueError("Debit lease is foreign or already closed.")
+        return self._debit_leases[lease]
+
+    def _enter_debit_context(self, lease: BudgetDebitLease) -> None:
+        with self._lock:
+            self._owned_debit_locked(lease)
+
+    def _finish_debit_context(self, lease: BudgetDebitLease) -> None:
+        """Automatically settle only an open, issued lease; never close twice."""
+        with self._lock:
+            if not isinstance(lease, BudgetDebitLease) or lease._budget is not self:
+                raise ValueError("Debit lease is foreign or already closed.")
+            if lease._closed:
+                return
+            # The RLock keeps the check and settlement atomic with explicit
+            # settlement/release; it spans cleanup only, never provider work.
+            self.settle_debit(lease)
+
+    def settle_debit(
+        self, lease: BudgetDebitLease, amount: float | None = None
+    ) -> None:
+        """Close a lease once; retain its reservation when no amount is known.
+
+        A larger trustworthy settlement is recorded without clamping. It is an
+        allocation overrun, never an observation of provider cost by this method.
+        """
+        settlement = (
+            None
+            if amount is None
+            else _debit_amount(amount, "settlement", allow_zero=True)
+        )
+        with self._lock:
+            reserved = self._owned_debit_locked(lease)
+            self._consumed_budget_debit += (
+                reserved if settlement is None else settlement
+            )
+            del self._debit_leases[lease]
+            object.__setattr__(lease, "_closed", True)
+
+    def release_debit(self, lease: BudgetDebitLease) -> None:
+        """Close an unplaced or caller-proven nonbillable reservation once."""
+        with self._lock:
+            self._owned_debit_locked(lease)
+            del self._debit_leases[lease]
+            object.__setattr__(lease, "_closed", True)
+
+    def debit_snapshot(self) -> BudgetDebitSnapshot:
+        """Read local allocation state without extending ``snapshot()`` or wire data."""
+        with self._lock:
+            reserved = sum(self._debit_leases.values(), Fraction(0))
+            remaining = (
+                float("inf")
+                if self._max_budget_debit is None
+                else float(
+                    max(
+                        self._max_budget_debit - self._consumed_budget_debit - reserved,
+                        Fraction(0),
+                    )
+                )
+            )
+            overrun = (
+                Fraction(0)
+                if self._max_budget_debit is None
+                else max(
+                    self._consumed_budget_debit - self._max_budget_debit, Fraction(0)
+                )
+            )
+            return BudgetDebitSnapshot(
+                max_budget_debit_usd=(
+                    None
+                    if self._max_budget_debit is None
+                    else float(self._max_budget_debit)
+                ),
+                consumed_budget_debit_usd=_debit_float(self._consumed_budget_debit),
+                reserved_budget_debit_usd=float(reserved),
+                remaining_budget_debit_usd=remaining,
+                overrun_budget_debit_usd=_debit_float(overrun),
+            )
+
+    @property
+    def debit_exhausted(self) -> bool:
+        """Whether settled and in-flight allowances leave no funded allocation."""
+        with self._lock:
+            return self._max_budget_debit is not None and (
+                self._consumed_budget_debit
+                + sum(self._debit_leases.values(), Fraction(0))
+                >= self._max_budget_debit
+            )
 
     # -- clock / run lifecycle -------------------------------------------------
 
@@ -518,4 +732,10 @@ class ExecutionBudget:
         )
 
 
-__all__ = ["ExecutionBudget", "ExecutionBudgetSnapshot"]
+__all__ = [
+    "BudgetDebitExceeded",
+    "BudgetDebitLease",
+    "BudgetDebitSnapshot",
+    "ExecutionBudget",
+    "ExecutionBudgetSnapshot",
+]

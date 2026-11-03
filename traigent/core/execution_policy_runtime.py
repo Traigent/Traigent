@@ -246,7 +246,7 @@ def fallback_reason_from_session_result(result: SessionCreationResult) -> str:
         result.failure_response is not None
         and result.failure_response.is_closed_refusal
     ):
-        # Closed refusal (SDK-52): name only the closed code, never connectivity.
+        # Closed refusal: name only the closed code, never connectivity.
         return f"backend refused the session: {result.failure_response.safe_error_code}"
     parts: list[str] = []
     if result.failure_reason is not None:
@@ -369,7 +369,7 @@ def session_failure_is_connectivity(result: SessionCreationResult) -> bool:
         return False
     if detail is not None and detail.is_closed_refusal:
         # A closed backend refusal (e.g. 503 with a closed code) is a
-        # reachable-backend answer, never connectivity (SDK-52).
+        # reachable-backend answer, never connectivity.
         return False
     status = detail.status_code if detail else None
     if status in HARD_FAILURE_STATUSES:

@@ -1,0 +1,308 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/tvl_reactive_stage_schema.json",
+  "title": "TvlReactiveStage",
+  "description": "Evaluation-batch staging and producer watermarks (TRAIG-101 plan 4.3, 5.3). POST .../evaluations/{instant}/stage stages facts for one evaluation instant; POST .../evaluations/{instant}/complete records a producer watermark or slot completion.",
+  "definitions": {
+    "EvaluationStageRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "stage_key",
+        "policy_revision_ref",
+        "environment",
+        "producer_kind"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "stage_key": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/IdempotencyKey",
+          "description": "Idempotency key of this batch (one stored receipt per tenant, project, agent and key)."
+        },
+        "policy_revision_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/PolicyRevisionRef"
+        },
+        "environment": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Environment token of the compiled contract; must match the policy revision's environment."
+        },
+        "producer_kind": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "customer_monitor",
+            "optimization_reporter"
+          ],
+          "description": "Who is posting. Native-monitor facts are written by the Backend only: posting them is 403 fact_source_not_permitted."
+        },
+        "revisions": {
+          "type": "array",
+          "items": {
+            "$ref": "./tvl_reactive_facts_schema.json#/definitions/RevisionFact"
+          },
+          "maxItems": 32
+        },
+        "windows": {
+          "type": "array",
+          "items": {
+            "$ref": "./tvl_reactive_facts_schema.json#/definitions/WindowFact"
+          },
+          "maxItems": 256
+        },
+        "episodes": {
+          "type": "array",
+          "items": {
+            "$ref": "./tvl_reactive_facts_schema.json#/definitions/EpisodeFact"
+          },
+          "maxItems": 256
+        },
+        "liveness": {
+          "type": "array",
+          "items": {
+            "$ref": "./tvl_reactive_facts_schema.json#/definitions/LivenessFact"
+          },
+          "maxItems": 64
+        },
+        "optimizations": {
+          "type": "array",
+          "items": {
+            "$ref": "./tvl_reactive_facts_schema.json#/definitions/OptimizationFact"
+          },
+          "maxItems": 256
+        }
+      },
+      "description": "Facts for one staged evaluation (instant in the path). Facts are staged idempotently; a gap or regression of instants is 409 batch_out_of_order or instant_not_increasing; prerequisite facts after Freeze are 409 evaluation_inputs_frozen and any fact after Seal is 409 instant_sealed. Per-category order is preserved. Unknown keys are refused without echo."
+    },
+    "EvaluationStageReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "stage_key",
+        "phase",
+        "accepted",
+        "replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "stage_key": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/IdempotencyKey"
+        },
+        "phase": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "collect",
+            "freeze",
+            "authority",
+            "seal"
+          ],
+          "description": "Evaluation phase after this call."
+        },
+        "accepted": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "revisions",
+            "windows",
+            "episodes",
+            "liveness",
+            "optimizations"
+          ],
+          "properties": {
+            "revisions": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 256
+            },
+            "windows": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 256
+            },
+            "episodes": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 256
+            },
+            "liveness": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 256
+            },
+            "optimizations": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 256
+            }
+          },
+          "description": "Facts accepted from this batch, per category."
+        },
+        "replayed": {
+          "x-content-class": "closed_enum",
+          "type": "boolean",
+          "description": "True when the stored receipt of an earlier identical call is returned."
+        }
+      },
+      "description": "Receipt of a staged batch."
+    },
+    "EvaluationCompleteRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "complete_key",
+        "policy_revision_ref",
+        "environment",
+        "producer_kind",
+        "disposition"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "complete_key": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/IdempotencyKey"
+        },
+        "policy_revision_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/PolicyRevisionRef"
+        },
+        "environment": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "producer_kind": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "customer_monitor",
+            "optimization_reporter"
+          ]
+        },
+        "monitor": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken",
+          "description": "Customer monitor token; required for customer_monitor, forbidden for optimization_reporter."
+        },
+        "completed_through_end": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Hours",
+          "description": "Producer watermark: the producer has posted every fact through this window end (customer_monitor only)."
+        },
+        "disposition": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "complete",
+            "defer"
+          ],
+          "description": "`defer` ends an optimization reporter's participation in this evaluation without closing any attempt or recording an outcome."
+        }
+      },
+      "description": "Producer watermark / slot completion for one evaluation. Native completion is evaluator-owned and cannot be posted.",
+      "oneOf": [
+        {
+          "properties": {
+            "producer_kind": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "customer_monitor"
+            },
+            "disposition": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "complete"
+            }
+          },
+          "required": [
+            "producer_kind",
+            "monitor",
+            "completed_through_end",
+            "disposition"
+          ]
+        },
+        {
+          "properties": {
+            "producer_kind": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "optimization_reporter"
+            },
+            "disposition": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "enum": [
+                "complete",
+                "defer"
+              ]
+            }
+          },
+          "required": [
+            "producer_kind",
+            "disposition"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "monitor"
+                ]
+              },
+              {
+                "required": [
+                  "completed_through_end"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "EvaluationCompleteReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "complete_key",
+        "phase",
+        "producers_missing",
+        "replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "complete_key": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/IdempotencyKey"
+        },
+        "phase": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "collect",
+            "freeze",
+            "authority",
+            "seal"
+          ]
+        },
+        "producers_missing": {
+          "x-content-class": "closed_enum",
+          "type": "boolean",
+          "description": "Some required customer producer has not completed; metadata only, it never rewrites a guard."
+        },
+        "replayed": {
+          "x-content-class": "closed_enum",
+          "type": "boolean"
+        }
+      },
+      "description": "Receipt of a producer completion."
+    }
+  }
+}

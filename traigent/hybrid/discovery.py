@@ -200,23 +200,31 @@ class ConfigSpaceDiscovery:
         # {"hard": ["params.a > 0"], "soft": ["params.b < 2"]}.
         legacy_rules: list[dict[str, Any]] = []
         for group_name, group_entries in constraints.items():
-            if not isinstance(group_entries, list):
-                continue
-            for index, entry in enumerate(group_entries):
-                if isinstance(entry, str):
-                    legacy_rules.append(
-                        {
-                            "id": f"{group_name}_{index}",
-                            "type": "expression",
-                            "rule": entry,
-                            "error_message": (
-                                f"{group_name} constraint {index} violated"
-                            ),
-                        }
-                    )
-                elif isinstance(entry, dict):
-                    legacy_rules.append(entry)
+            if isinstance(group_entries, list):
+                legacy_rules.extend(
+                    ConfigSpaceDiscovery._legacy_group_rules(group_name, group_entries)
+                )
         return legacy_rules if legacy_rules else constraints
+
+    @staticmethod
+    def _legacy_group_rules(
+        group_name: Any, group_entries: list[Any]
+    ) -> list[dict[str, Any]]:
+        """Rules for one legacy constraint group (text entries get generated ids)."""
+        rules: list[dict[str, Any]] = []
+        for index, entry in enumerate(group_entries):
+            if isinstance(entry, str):
+                rules.append(
+                    {
+                        "id": f"{group_name}_{index}",
+                        "type": "expression",
+                        "rule": entry,
+                        "error_message": f"{group_name} constraint {index} violated",
+                    }
+                )
+            elif isinstance(entry, dict):
+                rules.append(entry)
+        return rules
 
     async def build_optimization_spec(self) -> dict[str, Any]:
         """Build optimizer-compatible spec from discovered config-space metadata."""

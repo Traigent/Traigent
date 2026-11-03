@@ -25,7 +25,7 @@ from .scenario import FAKE_API_KEY, ScenarioResult, run_scenario
 
 pytestmark = pytest.mark.backend_online
 
-SECRET = "Bearer s3cr3t-token-value-9f8e7d"
+SECRET = "Bearer s3cr3t-token-value-9f8e7d"  # pragma: allowlist secret
 SECRET_HEADERS = {
     "Authorization": SECRET,
     "X-API-Key": "uk_" + "z" * 43,
@@ -272,7 +272,9 @@ def test_detector_finds_base64_of_the_digest(algo: str) -> None:
 
 
 def test_report_never_renders_raw_exception_text(tmp_path: Path) -> None:
-    secret = "Bearer abcdef0123456789SECRETTOKEN uk_" + "b" * 43
+    secret = (
+        "Bearer abcdef0123456789SECRETTOKEN uk_" + "b" * 43
+    )  # pragma: allowlist secret
     result = run_scenario(tmp_path, trials=2, direct_paths=False)
     result.optimization_error = f"RuntimeError: auth failed with {secret}"
     result.offline_error = f"ValueError: api_key=hunter2hunter2 {secret}"
@@ -443,6 +445,8 @@ def test_anchor_paths_are_module_constants_and_real_files() -> None:
 def _repo_with_ref(tmp_path: Path, files: dict[str, str]) -> Path:
     import subprocess
 
+    from tests._git_isolation import scrubbed_git_env
+
     tmp_path.mkdir(parents=True, exist_ok=True)
 
     def git(*a: str) -> str:
@@ -452,6 +456,7 @@ def _repo_with_ref(tmp_path: Path, files: dict[str, str]) -> Path:
             text=True,
             check=True,
             timeout=30,
+            env=scrubbed_git_env(),
         ).stdout
 
     git("init", "-q")
@@ -480,6 +485,8 @@ def test_anchor_absent_vs_present_vs_corrupt(tmp_path: Path) -> None:
     absent = _repo_with_ref(tmp_path / "absent", {"other.txt": "x"})
     assert pins.load_anchor(absent) is None  # cleanly absent: first introduction
 
+    from tests._git_isolation import scrubbed_git_env
+
     # Corrupt the tree object: ls-tree must fail closed, not report "absent".
     tree = subprocess.run(  # noqa: S603
         ["git", "-C", str(present), "rev-parse", "origin/develop^{tree}"],  # noqa: S607
@@ -487,6 +494,7 @@ def test_anchor_absent_vs_present_vs_corrupt(tmp_path: Path) -> None:
         text=True,
         check=True,
         timeout=30,
+        env=scrubbed_git_env(),
     ).stdout.strip()
     obj = present / ".git" / "objects" / tree[:2] / tree[2:]
     obj.chmod(0o644)

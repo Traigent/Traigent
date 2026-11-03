@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from traigent.cloud.api_operations import ApiOperations
-
 from traigent.config.backend_config import BackendConfig
 from traigent.core.orchestrator import OptimizationOrchestrator
 
@@ -34,7 +33,7 @@ def test_orchestrator_cloud_url_includes_session_context(monkeypatch) -> None:
     assert result.experiment_run_id == "run/456"
     assert (
         result.cloud_url == "https://portal.traigent.ai/experiments/view/exp%2F123"
-        "?run_id=run%2F456&project_id=project%2Falpha&tenant_id=tenant%20acme"
+        "?run_id=run%2F456&project_id=project%2Falpha&projectId=project%2Falpha&tenant_id=tenant%20acme"
     )
 
 
@@ -67,8 +66,8 @@ _SCOPELESS = {"session_id": "s-1", "status": "created", "metadata": dict(_META)}
 @pytest.mark.parametrize(
     ("payload", "expected_query"),
     [
-        (_SCOPED, "?run_id=r-1&project_id=p-1&tenant_id=t-1"),
-        (_LEGACY, "?run_id=r-1&project_id=p-1&tenant_id=t-1"),
+        (_SCOPED, "?run_id=r-1&project_id=p-1&projectId=p-1&tenant_id=t-1"),
+        (_LEGACY, "?run_id=r-1&project_id=p-1&projectId=p-1&tenant_id=t-1"),
         (_SCOPELESS, "?run_id=r-1"),
         (dict(_SCOPED, project_id="", tenant_id=None), "?run_id=r-1"),
     ],

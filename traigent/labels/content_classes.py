@@ -156,14 +156,24 @@ class _Walker:
         if isinstance(value, dict):
             self._object(value, node, path, depth, composed)
         elif isinstance(value, list):
-            items = node.get("i")
-            for item in value:
-                if isinstance(items, dict):
-                    self.walk(item, items, path + ("[]",), depth + 1)
-                elif not composed:
-                    self.record(path + ("[]",), "unclassified")
+            _Walker._walk_list(self, value, node, path, depth, composed)
         elif not (composed and "c" not in node):
             self._leaf(value, node, path)
+
+    def _walk_list(
+        self,
+        value: list[Any],
+        node: dict[str, Any],
+        path: tuple[str, ...],
+        depth: int,
+        composed: bool,
+    ) -> None:
+        items = node.get("i")
+        for item in value:
+            if isinstance(items, dict):
+                self.walk(item, items, path + ("[]",), depth + 1)
+            elif not composed:
+                self.record(path + ("[]",), "unclassified")
 
     def _alternatives(
         self, value: Any, branches: list[Any], path: tuple[str, ...], depth: int
@@ -197,23 +207,39 @@ class _Walker:
             if k in props:
                 self.walk(v, props[k], path + (k,), depth + 1)
                 continue
-            matched = next((s for p, s in patterns.items() if re.search(p, k)), None)
-            if matched is not None or isinstance(extra, dict):
-                self.record(path + ("{key}",), key_class or "unclassified")
-                self.walk(
-                    v,
-                    matched if matched is not None else extra,
-                    path + ("{}",),
-                    depth + 1,
-                )
-            elif extra is False:
-                if not composed:
-                    self.record(path + ("{unknown}",), "violation")
-            elif composed and extra is None:
-                continue
-            else:
-                self.record(path + ("{key}",), key_class or "unclassified")
-                self.record(path + ("{}",), node.get("c") or "unclassified")
+            _Walker._object_extra(
+                self, k, v, node, path, depth, composed, patterns, extra, key_class
+            )
+
+    def _object_extra(
+        self,
+        k: str,
+        v: Any,
+        node: Any,
+        path: tuple[str, ...],
+        depth: int,
+        composed: bool,
+        patterns: Any,
+        extra: Any,
+        key_class: Any,
+    ) -> None:
+        matched = next((s for p, s in patterns.items() if re.search(p, k)), None)
+        if matched is not None or isinstance(extra, dict):
+            self.record(path + ("{key}",), key_class or "unclassified")
+            self.walk(
+                v,
+                matched if matched is not None else extra,
+                path + ("{}",),
+                depth + 1,
+            )
+        elif extra is False:
+            if not composed:
+                self.record(path + ("{unknown}",), "violation")
+        elif composed and extra is None:
+            return
+        else:
+            self.record(path + ("{key}",), key_class or "unclassified")
+            self.record(path + ("{}",), node.get("c") or "unclassified")
 
     def _leaf(self, value: Any, node: dict[str, Any], path: tuple[str, ...]) -> None:
         cls = node.get("c")
@@ -267,6 +293,16 @@ def classify_request(
             w.record(("path", name), "legacy_content")
         else:
             w.walk(value, node, ("path", name))
+    _classify_query(w, route, query)
+    if has_body:
+        if route["body"] is None:
+            w.record(("body",), "violation")  # a body on a route that declares none
+        else:
+            w.walk(body, route["body"], ("body",))
+    return route["template"], Counter(w.findings.values())
+
+
+def _classify_query(w: _Walker, route: Any, query: str) -> None:
     for name, value in parse_qsl(query, keep_blank_values=True):
         node = route["query"].get(name)
         if node is None:
@@ -276,9 +312,3 @@ def classify_request(
                 w.walk(part, node.get("i", {}), ("query", name, "[]"))
         else:
             w.walk(value, node, ("query", name))
-    if has_body:
-        if route["body"] is None:
-            w.record(("body",), "violation")  # a body on a route that declares none
-        else:
-            w.walk(body, route["body"], ("body",))
-    return route["template"], Counter(w.findings.values())

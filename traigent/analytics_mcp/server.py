@@ -22,9 +22,13 @@ Security posture:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from traigent.analytics_mcp.tools import (
+    agent_decision_answer_tool,
+    agent_decision_ensure_tool,
+    agent_decision_latest_tool,
     analytics_compare_runs_tool,
     analytics_get_correlation_matrix_tool,
     analytics_get_example_insights_tool,
@@ -54,6 +58,7 @@ from traigent.analytics_mcp.tools import (
     observability_search_traces_tool,
 )
 from traigent.cloud.analytics_client import (
+    AGENT_DECISION_ANSWERS,
     DIRECTOR_INTENTS,
     DIRECTOR_REPORT_STATUSES,
     DIRECTOR_WORKFLOW_KINDS,
@@ -592,12 +597,96 @@ def create_server() -> Any:
     async def director_state(session_id: str) -> dict[str, Any]:
         return await director_state_tool(session_id)
 
+    @server.tool(
+        description=(
+            "Ask whether Traigent has a question for the human about an agent "
+            "(closed host-prompt decision). Requires agent_id; project_id is "
+            "optional and, when given, selects the project and adds a "
+            "project-qualified agent_url. Returns {decision: null} when nothing "
+            "applies, or the OPEN decision with its fixed prompt (question and "
+            "options). Show that question and exactly those options to the "
+            "human with the host's own question UI, then post their choice "
+            "with agent_decision_answer. Never answer for the human. Backend "
+            "auth required."
+        )
+    )
+    async def agent_decision_ensure(
+        agent_id: str, project_id: str | None = None
+    ) -> dict[str, Any]:
+        return await agent_decision_ensure_tool(agent_id, project_id)
+
+    @server.tool(
+        description=(
+            "Read the latest host-prompt decision for an agent in any status "
+            "(read-only). Requires agent_id; project_id is optional. After a "
+            "YES, execution_ref and next_action say what to do next: "
+            "RUN_PREFLIGHT means run the dry run and cost estimate and get "
+            "explicit paid-run approval. Backend auth required."
+        )
+    )
+    async def agent_decision_latest(
+        agent_id: str, project_id: str | None = None
+    ) -> dict[str, Any]:
+        return await agent_decision_latest_tool(agent_id, project_id)
+
+    @server.tool(
+        description=(
+            "Post the human's closed answer to a host-prompt decision. Send "
+            f"exactly the option the human chose ({', '.join(AGENT_DECISION_ANSWERS)}); "
+            "never choose for the human. YES means prepare/preflight the "
+            "baseline evaluation -- it never authorises spend. Echo "
+            "options_version, policy_version and basis_digest from the "
+            "decision. retry_nonce is generated and returned when omitted; "
+            "reuse it only to retry the same attempt. On RATE_LIMITED, an "
+            "HTTP 503 or a network failure, wait retry_after_seconds (when "
+            "given) and retry with the returned retry_nonce; never change "
+            "the answer on a retry. No free text is accepted. Backend auth "
+            "required."
+        )
+    )
+    async def agent_decision_answer(
+        decision_id: str,
+        answer: str,
+        options_version: str,
+        policy_version: str,
+        basis_digest: str,
+        retry_nonce: str | None = None,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await agent_decision_answer_tool(
+            decision_id,
+            answer,
+            options_version,
+            policy_version,
+            basis_digest,
+            retry_nonce,
+            project_id,
+        )
+
+    _quiet_http_loggers()
     return server
+
+
+_HTTP_LOGGERS = ("httpx", "httpcore")
+
+
+def _quiet_http_loggers() -> None:
+    """Keep HTTP client loggers at WARNING or above.
+
+    ``httpx`` logs every request URL at INFO, and request URLs here carry agent and decision
+    ids. This holds regardless of the root logger level or ``TRAIGENT_LOG_LEVEL``.
+    """
+    for name in _HTTP_LOGGERS:
+        logger = logging.getLogger(name)
+        if logger.getEffectiveLevel() < logging.WARNING:
+            logger.setLevel(logging.WARNING)
 
 
 def run_stdio_server() -> None:
     """Run the Traigent analytics MCP server over stdio."""
-    create_server().run("stdio")
+    server = create_server()
+    _quiet_http_loggers()  # after the MCP runtime has configured logging
+    server.run("stdio")
 
 
 def main() -> None:

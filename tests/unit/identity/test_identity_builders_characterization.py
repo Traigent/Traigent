@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from tests._git_isolation import scrubbed_git_env
 from traigent.evaluators.local import LocalEvaluator
 from traigent.identity import agent_build
 from traigent.identity.agent_build import (
@@ -377,6 +378,7 @@ def _git(cwd: Path, *args: str) -> None:
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-C", str(cwd), *args],
         check=True,
         capture_output=True,
+        env=scrubbed_git_env(),
     )
 
 

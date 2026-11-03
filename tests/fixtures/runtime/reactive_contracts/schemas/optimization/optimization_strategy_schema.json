@@ -1,0 +1,287 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/optimization_strategy_schema.json",
+  "title": "Optimization Strategy Schema",
+  "description": "Canonical optimization strategy selection and capability mapping for public algorithm names.",
+  "allOf": [
+    {
+      "$ref": "#/definitions/OptimizationStrategyConfig"
+    }
+  ],
+  "x-traigent-optimization-capabilities": {
+    "auto": {
+      "canonical_algorithm": "auto",
+      "implementation_status": "supported",
+      "execution_mode": "cloud",
+      "description": "Cloud-first automatic strategy selection with local fallback. execution_mode is capability metadata; the public request selectors are algorithm/offline (and hybrid_api_options for an external evaluator)."
+    },
+    "grid": {
+      "canonical_algorithm": "grid",
+      "implementation_status": "supported",
+      "execution_mode": "local",
+      "description": "Client-side exhaustive grid search (local mode)."
+    },
+    "random": {
+      "canonical_algorithm": "random",
+      "implementation_status": "supported",
+      "execution_mode": "local",
+      "description": "Client-side random search (local mode)."
+    },
+    "bayesian": {
+      "canonical_algorithm": "tpe",
+      "implementation_status": "supported",
+      "execution_mode": "cloud",
+      "alias_for": "tpe",
+      "description": "Smart Bayesian-style search using TPE (cloud mode)."
+    },
+    "tpe": {
+      "canonical_algorithm": "tpe",
+      "implementation_status": "supported",
+      "execution_mode": "cloud",
+      "description": "Smart TPE search (cloud mode)."
+    },
+    "hyperband": {
+      "canonical_algorithm": "hyperband",
+      "implementation_status": "planned",
+      "execution_mode": "cloud",
+      "description": "Planned early-pruning search; not currently executable in cloud mode."
+    },
+    "frontier_scout": {
+      "canonical_algorithm": "frontier_scout",
+      "implementation_status": "planned",
+      "execution_mode": "cloud",
+      "description": "Planned Pareto-frontier exploration; not currently available as a selectable algorithm."
+    }
+  },
+  "definitions": {
+    "AdvertisedOptimizationAlgorithmName": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "description": "All algorithm names that may appear in public capability metadata.",
+      "enum": [
+        "auto",
+        "grid",
+        "random",
+        "bayesian",
+        "tpe",
+        "hyperband",
+        "frontier_scout"
+      ]
+    },
+    "SupportedOptimizationStrategyName": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "description": "Algorithm names accepted for new optimization_strategy requests.",
+      "enum": [
+        "auto",
+        "grid",
+        "random",
+        "bayesian",
+        "tpe",
+        "hyperband",
+        "frontier_scout"
+      ]
+    },
+    "OptimizationImplementationStatus": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "description": "'supported' = currently executable; 'planned' = advertised in the vocabulary but not yet available.",
+      "enum": [
+        "supported",
+        "planned"
+      ]
+    },
+    "OptimizationCapabilityExecutionMode": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "description": "Canonical execution-mode capability metadata for an algorithm (Traigent#2271: legacy execution_mode request selector and its edge_analytics/hybrid/hybrid_api values are removed). 'local' = client-side orchestration (grid, random algorithms) with no backend egress. 'cloud' = backend-driven trial suggestion (auto, bayesian/tpe, hyperband, frontier_scout). An external evaluator is a separate, orthogonal concern selected via hybrid_api_options, not an execution_mode value.",
+      "enum": [
+        "local",
+        "cloud"
+      ]
+    },
+    "OptimizationCapability": {
+      "type": "object",
+      "required": [
+        "canonical_algorithm",
+        "implementation_status",
+        "execution_mode"
+      ],
+      "properties": {
+        "canonical_algorithm": {
+          "$ref": "#/definitions/AdvertisedOptimizationAlgorithmName"
+        },
+        "implementation_status": {
+          "$ref": "#/definitions/OptimizationImplementationStatus"
+        },
+        "execution_mode": {
+          "$ref": "#/definitions/OptimizationCapabilityExecutionMode",
+          "description": "Canonical execution-mode metadata for the algorithm capability (local or cloud)."
+        },
+        "alias_for": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "tpe"
+          ]
+        },
+        "deprecated": {
+          "x-content-class": "closed_enum",
+          "type": "boolean"
+        },
+        "description": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP S1,S3,S5,O2,H1: not inventoried (free string): description",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "OptimizationStrategyConfig": {
+      "description": "Optimization strategy requested by SDK direct tuning clients.",
+      "oneOf": [
+        {
+          "$ref": "#/definitions/SupportedOptimizationStrategyName"
+        },
+        {
+          "x-content-class": "legacy_content",
+          "x-content-key-class": "legacy_content",
+          "x-content-note": "INV-GAP (implicit-open, reclassified by review): object accepts properties it does not declare (additionalProperties omitted or true); extra names and values are unclassified",
+          "type": "object",
+          "required": [
+            "algorithm"
+          ],
+          "properties": {
+            "algorithm": {
+              "$ref": "#/definitions/SupportedOptimizationStrategyName",
+              "default": "auto",
+              "description": "Public SDK optimization algorithm selector. auto lets Traigent choose cloud-first automatic execution with local fallback."
+            },
+            "offline": {
+              "x-content-class": "closed_enum",
+              "type": "boolean",
+              "default": false,
+              "description": "force fully-local execution with no backend egress."
+            },
+            "hybrid_api_options": {
+              "$ref": "https://schemas.traigent.ai/optimization/hybrid_api_options_schema.json",
+              "description": "Optional external evaluator configuration. Meaningful only when an external evaluator is configured."
+            },
+            "seed": {
+              "x-content-class": "number",
+              "type": "integer"
+            },
+            "sampler": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "enum": [
+                "tpe",
+                "random"
+              ]
+            },
+            "max_trials": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 1
+            },
+            "startup_trials": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0
+            },
+            "n_startup_trials": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0
+            },
+            "random_seed": {
+              "x-content-class": "number",
+              "type": "integer"
+            },
+            "tracking_mode": {
+              "x-content-class": "legacy_content",
+              "x-content-note": "INV-GAP S1,S3,S5,O2,H1: not inventoried (free string): tracking_mode",
+              "type": "string"
+            },
+            "parameters": {
+              "x-content-key-class": "legacy_content",
+              "x-content-class": "legacy_content",
+              "x-content-note": "INV-GAP S1,S3,S5,O2,H1: not inventoried (free object/array): parameters",
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        {
+          "x-content-class": "legacy_content",
+          "x-content-key-class": "legacy_content",
+          "x-content-note": "INV-GAP (implicit-open, reclassified by review): object accepts properties it does not declare (additionalProperties omitted or true); extra names and values are unclassified",
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "$ref": "#/definitions/SupportedOptimizationStrategyName"
+            },
+            "offline": {
+              "x-content-class": "closed_enum",
+              "type": "boolean",
+              "default": false,
+              "description": "force fully-local execution with no backend egress."
+            },
+            "hybrid_api_options": {
+              "$ref": "https://schemas.traigent.ai/optimization/hybrid_api_options_schema.json",
+              "description": "Optional external evaluator configuration. Meaningful only when an external evaluator is configured."
+            },
+            "seed": {
+              "x-content-class": "number",
+              "type": "integer"
+            },
+            "sampler": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "enum": [
+                "tpe",
+                "random"
+              ]
+            },
+            "max_trials": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 1
+            },
+            "startup_trials": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0
+            },
+            "n_startup_trials": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0
+            },
+            "random_seed": {
+              "x-content-class": "number",
+              "type": "integer"
+            },
+            "tracking_mode": {
+              "x-content-class": "legacy_content",
+              "x-content-note": "INV-GAP S1,S3,S5,O2,H1: not inventoried (free string): tracking_mode",
+              "type": "string"
+            },
+            "parameters": {
+              "x-content-key-class": "legacy_content",
+              "x-content-class": "legacy_content",
+              "x-content-note": "INV-GAP S1,S3,S5,O2,H1: not inventoried (free object/array): parameters",
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    }
+  }
+}

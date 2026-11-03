@@ -689,6 +689,67 @@ def verification_gate(
     )
 
 
+def _validate_moe_experts(experts: Any) -> None:
+    if (
+        not isinstance(experts, tuple)
+        or len(experts) < 2
+        or any(not isinstance(expert, str) or not expert for expert in experts)
+    ):
+        raise ValueError(
+            "committee_arity: moe requires at least two non-empty expert stage names"
+        )
+    if len(set(experts)) != len(experts):
+        raise ValueError("duplicate_stage: moe experts must be distinct")
+
+
+def _moe_vote_aggregate(
+    judge_stage: str | None,
+    judge_tuned_params: tuple[str, ...],
+    accept_threshold: str | None,
+) -> AggregateDecl:
+    if judge_stage is not None:
+        raise ValueError(
+            "aggregate_argument_mismatch: aggregate='vote' forbids judge_stage"
+        )
+    if judge_tuned_params:
+        raise ValueError(
+            "aggregate_argument_mismatch: aggregate='vote' forbids judge_tuned_params"
+        )
+    return AggregateDecl(
+        kind=AggregateKind.MAJORITY_VOTE,
+        accept=(
+            AcceptDecl(stat=StatKind.VOTE_MARGIN, threshold=accept_threshold)
+            if accept_threshold is not None
+            else None
+        ),
+    )
+
+
+def _moe_judge_aggregate(
+    experts: tuple[str, ...],
+    judge_stage: str | None,
+    judge_tuned_params: tuple[str, ...],
+    accept_threshold: str | None,
+) -> AggregateDecl:
+    if not isinstance(judge_stage, str) or not judge_stage:
+        raise ValueError(
+            "aggregate_argument_mismatch: aggregate='judge' requires judge_stage"
+        )
+    if judge_stage in experts:
+        raise ValueError(
+            "duplicate_stage: aggregate='judge' judge_stage must be distinct"
+        )
+    if accept_threshold is not None:
+        raise ValueError(
+            "aggregate_argument_mismatch: aggregate='judge' does not support "
+            "accept_threshold"
+        )
+    return AggregateDecl(
+        kind=AggregateKind.JUDGE_MAX,
+        judge=StageArm(judge_stage, judge_tuned_params),
+    )
+
+
 def moe(
     name: str,
     *,
@@ -715,16 +776,7 @@ def moe(
       all experts run once per item.
     - ``depends_on`` covers all expert ``tuned_params``.
     """
-    if (
-        not isinstance(experts, tuple)
-        or len(experts) < 2
-        or any(not isinstance(expert, str) or not expert for expert in experts)
-    ):
-        raise ValueError(
-            "committee_arity: moe requires at least two non-empty expert stage names"
-        )
-    if len(set(experts)) != len(experts):
-        raise ValueError("duplicate_stage: moe experts must be distinct")
+    _validate_moe_experts(experts)
 
     if aggregate not in {"vote", "judge"}:
         raise ValueError("invalid_aggregate: moe aggregate must be 'vote' or 'judge'")
@@ -739,40 +791,12 @@ def moe(
         )
 
     if aggregate == "vote":
-        if judge_stage is not None:
-            raise ValueError(
-                "aggregate_argument_mismatch: aggregate='vote' forbids judge_stage"
-            )
-        if judge_tuned_params:
-            raise ValueError(
-                "aggregate_argument_mismatch: aggregate='vote' forbids "
-                "judge_tuned_params"
-            )
-        aggregate_decl = AggregateDecl(
-            kind=AggregateKind.MAJORITY_VOTE,
-            accept=(
-                AcceptDecl(stat=StatKind.VOTE_MARGIN, threshold=accept_threshold)
-                if accept_threshold is not None
-                else None
-            ),
+        aggregate_decl = _moe_vote_aggregate(
+            judge_stage, judge_tuned_params, accept_threshold
         )
     else:
-        if not isinstance(judge_stage, str) or not judge_stage:
-            raise ValueError(
-                "aggregate_argument_mismatch: aggregate='judge' requires judge_stage"
-            )
-        if judge_stage in experts:
-            raise ValueError(
-                "duplicate_stage: aggregate='judge' judge_stage must be distinct"
-            )
-        if accept_threshold is not None:
-            raise ValueError(
-                "aggregate_argument_mismatch: aggregate='judge' does not support "
-                "accept_threshold"
-            )
-        aggregate_decl = AggregateDecl(
-            kind=AggregateKind.JUDGE_MAX,
-            judge=StageArm(judge_stage, judge_tuned_params),
+        aggregate_decl = _moe_judge_aggregate(
+            experts, judge_stage, judge_tuned_params, accept_threshold
         )
 
     params = {

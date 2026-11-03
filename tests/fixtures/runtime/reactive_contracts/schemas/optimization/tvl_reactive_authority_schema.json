@@ -1,0 +1,1159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/tvl_reactive_authority_schema.json",
+  "title": "TvlReactiveAuthority",
+  "description": "Human approval grants, reservations, start authorization, effect outcome facts, cancel and the attempt read model of the TVL 1.4 reactive layer (TRAIG-101 plan 4.2, 5.3, 7). Authority is created only by the principal named for each record; ingestion facts merely report.",
+  "definitions": {
+    "HeartbeatRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "heartbeat_key",
+        "reservation_ref",
+        "reservation_generation"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "heartbeat_key": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/IdempotencyKey"
+        },
+        "reservation_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/ReservationRef"
+        },
+        "reservation_generation": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Generation"
+        }
+      },
+      "description": "Lease renewal. The lease of an effect is its reservation: before start it is the reservation expiry, after start it is renewed by heartbeats bound to the EXISTING reservation and its generation (no new reservation, no second start). A holder that stops renewing becomes `lapsed`; a stale generation is 409 reservation_generation_stale. The SDK also cancels a run whose lease it lost."
+    },
+    "HeartbeatReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "attempt_ref",
+        "lease_expires_at",
+        "replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "attempt_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptRef"
+        },
+        "lease_expires_at": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp"
+        },
+        "replayed": {
+          "x-content-class": "closed_enum",
+          "type": "boolean"
+        }
+      },
+      "description": "Receipt of a lease renewal."
+    },
+    "ApprovalContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "attempt_ref",
+        "policy_revision_ref",
+        "effect",
+        "state",
+        "contract_digest"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "attempt_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptRef"
+        },
+        "policy_revision_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/PolicyRevisionRef"
+        },
+        "effect": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Effect",
+          "description": "The effect a grant would authorize next."
+        },
+        "state": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptState"
+        },
+        "contract_digest": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+          "description": "Digest of the CURRENT contract; the grant must bind it."
+        },
+        "candidate_fingerprint": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+          "description": "Deploy only: fingerprint of the promotable candidate."
+        },
+        "gate_result_digest": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+          "description": "Deploy only: digest of the promotion gate result under the current contract digest."
+        },
+        "optimization_start_generation": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Generation",
+          "description": "Deploy only: agent-head generation captured when optimization started."
+        },
+        "current_head_generation": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Generation",
+          "description": "Deploy only: agent-head generation now; the grant binds THIS value as expected_head_generation."
+        },
+        "head_moved_since_optimization_start": {
+          "x-content-class": "closed_enum",
+          "type": "boolean",
+          "description": "Deploy only: the two generations differ (the approver is shown both)."
+        }
+      },
+      "description": "Everything a portal approver needs to build a grant for one attempt. P-human only; read-only; closed fields.",
+      "oneOf": [
+        {
+          "properties": {
+            "effect": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "optimize"
+            }
+          },
+          "required": [
+            "effect"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "candidate_fingerprint"
+                ]
+              },
+              {
+                "required": [
+                  "gate_result_digest"
+                ]
+              },
+              {
+                "required": [
+                  "optimization_start_generation"
+                ]
+              },
+              {
+                "required": [
+                  "current_head_generation"
+                ]
+              },
+              {
+                "required": [
+                  "head_moved_since_optimization_start"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "effect": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "deploy"
+            }
+          },
+          "required": [
+            "effect",
+            "candidate_fingerprint",
+            "gate_result_digest",
+            "optimization_start_generation",
+            "current_head_generation",
+            "head_moved_since_optimization_start"
+          ]
+        }
+      ]
+    },
+    "GrantCreateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "grant_key",
+        "attempt_ref",
+        "effect",
+        "decision",
+        "contract_digest"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "grant_key": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/IdempotencyKey"
+        },
+        "attempt_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptRef"
+        },
+        "effect": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Effect"
+        },
+        "decision": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "granted",
+            "declined"
+          ]
+        },
+        "contract_digest": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+          "description": "Digest of the CURRENT contract the human approved against."
+        },
+        "duration_hours": {
+          "x-content-class": "closed_enum",
+          "type": "integer",
+          "enum": [
+            1,
+            4,
+            24
+          ],
+          "description": "Grant lifetime in hours; the server clock sets the expiry."
+        },
+        "ceiling": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "max_trials",
+            "max_cost_micro_usd"
+          ],
+          "properties": {
+            "max_trials": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            },
+            "max_cost_micro_usd": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000000000
+            }
+          },
+          "description": "Optimize ceiling bound into the grant (trials and cost in millionths of a US dollar)."
+        },
+        "deploy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "candidate_fingerprint",
+            "gate_result_digest",
+            "expected_head_generation"
+          ],
+          "properties": {
+            "candidate_fingerprint": {
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest"
+            },
+            "gate_result_digest": {
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest"
+            },
+            "expected_head_generation": {
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/Generation",
+              "description": "Agent-head generation READ AT APPROVAL time; a head move after approval refuses the deploy."
+            }
+          },
+          "description": "Deploy bindings of a grant."
+        }
+      },
+      "description": "Create a human approval decision for one effect of one attempt. P-human only (a session of a user with agent write access); an SDK API key is 403 forbidden. Binds policy revision, rule, scope, occurrence, effect, contract digest, ceiling or deploy bindings and expiry. Standing grants do not exist.",
+      "oneOf": [
+        {
+          "properties": {
+            "decision": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "granted"
+            },
+            "effect": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "optimize"
+            }
+          },
+          "required": [
+            "decision",
+            "effect",
+            "duration_hours",
+            "ceiling"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "deploy"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "decision": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "granted"
+            },
+            "effect": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "deploy"
+            }
+          },
+          "required": [
+            "decision",
+            "effect",
+            "duration_hours",
+            "deploy"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "ceiling"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "decision": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "declined"
+            }
+          },
+          "required": [
+            "decision"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "duration_hours"
+                ]
+              },
+              {
+                "required": [
+                  "ceiling"
+                ]
+              },
+              {
+                "required": [
+                  "deploy"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "Grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "grant_ref",
+        "attempt_ref",
+        "policy_revision_ref",
+        "effect",
+        "state",
+        "contract_digest",
+        "decided_by",
+        "decided_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "grant_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/GrantRef"
+        },
+        "attempt_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptRef"
+        },
+        "policy_revision_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/PolicyRevisionRef"
+        },
+        "effect": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Effect"
+        },
+        "state": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "granted",
+            "declined",
+            "expired",
+            "revoked"
+          ]
+        },
+        "contract_digest": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest"
+        },
+        "ceiling": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "max_trials",
+            "max_cost_micro_usd"
+          ],
+          "properties": {
+            "max_trials": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            },
+            "max_cost_micro_usd": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000000000
+            }
+          },
+          "description": "Optimize ceiling bound into the grant (trials and cost in millionths of a US dollar)."
+        },
+        "deploy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "candidate_fingerprint",
+            "gate_result_digest",
+            "expected_head_generation"
+          ],
+          "properties": {
+            "candidate_fingerprint": {
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest"
+            },
+            "gate_result_digest": {
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest"
+            },
+            "expected_head_generation": {
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/Generation",
+              "description": "Agent-head generation READ AT APPROVAL time; a head move after approval refuses the deploy."
+            }
+          },
+          "description": "Deploy bindings of a grant."
+        },
+        "head_moved_since_optimization_start": {
+          "x-content-class": "closed_enum",
+          "type": "boolean",
+          "description": "Deploy grants only: the head generation at approval differs from the one captured at optimization start (shown to the approver)."
+        },
+        "decided_by": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/UserRef"
+        },
+        "decided_at": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp"
+        },
+        "expires_at": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp"
+        }
+      },
+      "description": "A recorded human approval grant (create response and read model). The `approval` fact in the evaluation history is generated from this row."
+    },
+    "ReservationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "reservation_key",
+        "grant_ref"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "reservation_key": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/IdempotencyKey"
+        },
+        "grant_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/GrantRef"
+        }
+      },
+      "description": "Reserve an attempt's next effect against a valid grant (P-ingest, atomic compare-and-set; a free attempt only)."
+    },
+    "Reservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "reservation_ref",
+        "attempt_ref",
+        "grant_ref",
+        "effect",
+        "generation",
+        "state",
+        "expires_at",
+        "replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "reservation_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/ReservationRef"
+        },
+        "attempt_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptRef"
+        },
+        "grant_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/GrantRef"
+        },
+        "effect": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Effect"
+        },
+        "generation": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Generation",
+          "description": "Server-issued reservation generation, required by start and results."
+        },
+        "state": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "pending"
+          ]
+        },
+        "expires_at": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp"
+        },
+        "replayed": {
+          "x-content-class": "closed_enum",
+          "type": "boolean"
+        }
+      },
+      "description": "A pending reservation. A reservation that expires before start means nothing started and simply frees."
+    },
+    "StartRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "start_key",
+        "reservation_ref",
+        "reservation_generation"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "start_key": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/IdempotencyKey"
+        },
+        "reservation_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/ReservationRef"
+        },
+        "reservation_generation": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Generation"
+        }
+      },
+      "description": "Start authorization. The SDK launches the external run ONLY after this returns 201. Checks reservation generation, grant validity at server time, frozen scope and revision and live eligibility. No second start on an occurrence."
+    },
+    "StartReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "attempt_ref",
+        "effect",
+        "fact",
+        "started_at",
+        "lease_expires_at",
+        "replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "attempt_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptRef"
+        },
+        "effect": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Effect"
+        },
+        "fact": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "started",
+            "deploy_started"
+          ],
+          "description": "The authority fact appended by this start."
+        },
+        "started_at": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp"
+        },
+        "lease_expires_at": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp",
+          "description": "Server-vouched deadline of the post-start lease of this effect; the SDK uses it until its first heartbeat (which renews it). It replaces the pre-start reservation expiry."
+        },
+        "replayed": {
+          "x-content-class": "closed_enum",
+          "type": "boolean",
+          "description": "An accepted retry returns the original receipt; it never authorizes another start."
+        }
+      },
+      "description": "Receipt of an accepted start."
+    },
+    "EffectOutcomeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "result_key",
+        "reservation_ref",
+        "reservation_generation",
+        "fact"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "result_key": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/IdempotencyKey"
+        },
+        "reservation_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/ReservationRef"
+        },
+        "reservation_generation": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Generation"
+        },
+        "fact": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "finished",
+            "deploy_result",
+            "authority"
+          ],
+          "description": "Effect outcome fact kind."
+        },
+        "completion": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "normal",
+            "error",
+            "cancelled",
+            "cost_limit"
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "./tvl_reactive_facts_schema.json#/definitions/Candidate"
+          },
+          "maxItems": 64
+        },
+        "checks": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "passed",
+            "refused",
+            "unreachable"
+          ]
+        },
+        "write": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "failed",
+            "not_attempted"
+          ]
+        },
+        "retries_exhausted": {
+          "x-content-class": "closed_enum",
+          "type": "boolean"
+        },
+        "state": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "reachable",
+            "unreachable"
+          ]
+        },
+        "publish_result_key": {
+          "$ref": "../execution/best_config_deploy_schema.json#/definitions/DeployIdempotencyKey",
+          "description": "The deploy publish-result key. Required when write is succeeded or failed: the Backend accepts write=succeeded only if the durable publish-result record is succeeded, and write=failed with retries_exhausted=true only if head-lock finalization returned cancelled (a tombstone). A lost publish response therefore cannot become deploy_failed."
+        }
+      },
+      "description": "Effect outcome facts reported by the reservation holder: optimization finished, deploy result, or authority reachability.",
+      "oneOf": [
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "finished"
+            }
+          },
+          "required": [
+            "fact",
+            "completion",
+            "candidates"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "checks"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              },
+              {
+                "required": [
+                  "retries_exhausted"
+                ]
+              },
+              {
+                "required": [
+                  "state"
+                ]
+              },
+              {
+                "required": [
+                  "publish_result_key"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "deploy_result"
+            },
+            "checks": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "passed"
+            },
+            "write": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "succeeded"
+            },
+            "retries_exhausted": {
+              "x-content-class": "closed_enum",
+              "type": "boolean",
+              "const": false
+            }
+          },
+          "required": [
+            "fact",
+            "checks",
+            "write",
+            "retries_exhausted",
+            "publish_result_key"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "completion"
+                ]
+              },
+              {
+                "required": [
+                  "candidates"
+                ]
+              },
+              {
+                "required": [
+                  "state"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "deploy_result"
+            },
+            "checks": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "passed"
+            },
+            "write": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "failed"
+            },
+            "retries_exhausted": {
+              "x-content-class": "closed_enum",
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "fact",
+            "checks",
+            "write",
+            "retries_exhausted",
+            "publish_result_key"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "completion"
+                ]
+              },
+              {
+                "required": [
+                  "candidates"
+                ]
+              },
+              {
+                "required": [
+                  "state"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "deploy_result"
+            },
+            "checks": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "enum": [
+                "refused",
+                "unreachable"
+              ]
+            },
+            "write": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "not_attempted"
+            },
+            "retries_exhausted": {
+              "x-content-class": "closed_enum",
+              "type": "boolean",
+              "const": false
+            }
+          },
+          "required": [
+            "fact",
+            "checks",
+            "write",
+            "retries_exhausted"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "completion"
+                ]
+              },
+              {
+                "required": [
+                  "candidates"
+                ]
+              },
+              {
+                "required": [
+                  "state"
+                ]
+              },
+              {
+                "required": [
+                  "publish_result_key"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "fact": {
+              "x-content-class": "closed_enum",
+              "type": "string",
+              "const": "authority"
+            }
+          },
+          "required": [
+            "fact",
+            "state"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "completion"
+                ]
+              },
+              {
+                "required": [
+                  "candidates"
+                ]
+              },
+              {
+                "required": [
+                  "checks"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              },
+              {
+                "required": [
+                  "retries_exhausted"
+                ]
+              },
+              {
+                "required": [
+                  "publish_result_key"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "EffectOutcomeReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "attempt_ref",
+        "recorded",
+        "annotation",
+        "replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "attempt_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptRef"
+        },
+        "recorded": {
+          "x-content-class": "closed_enum",
+          "type": "boolean"
+        },
+        "annotation": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "none",
+            "late_result"
+          ],
+          "description": "`late_result`: a genuine result after a human cancel is stored as an annotation and creates no outcome."
+        },
+        "replayed": {
+          "x-content-class": "closed_enum",
+          "type": "boolean"
+        }
+      },
+      "description": "Receipt of an outcome fact. Late facts are ignored only for truly terminal attempts."
+    },
+    "CancelRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "cancel_key",
+        "effect",
+        "confirmation"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "cancel_key": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/IdempotencyKey"
+        },
+        "effect": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "const": "optimize",
+          "description": "Cancel applies to OPTIMIZATION attempts only; a lapsed deployment recovers through deploy finalize and a deploy_result outcome."
+        },
+        "confirmation": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "const": "process_gone",
+          "description": "The human confirms the external process is gone."
+        }
+      },
+      "description": "Human cancel of a lapsed started OPTIMIZATION: appends finished{completion: cancelled, candidates: []} on the SAME occurrence (optimize_failed). Refused 409 attempt_not_open for any other state, including a deploy that has started: the reference trace rejects an optimization `finished` once optimization is finished. A lapsed deployment recovers via POST .../publish-results/{key}/finalize and then a deploy_result outcome (cancelled tombstone -> write failed, retries_exhausted; committed success -> write succeeded). P-human only."
+    },
+    "CancelReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "attempt_ref",
+        "effect",
+        "completion",
+        "replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "attempt_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptRef"
+        },
+        "effect": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "const": "optimize"
+        },
+        "completion": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "const": "cancelled"
+        },
+        "replayed": {
+          "x-content-class": "closed_enum",
+          "type": "boolean"
+        }
+      },
+      "description": "Receipt of a human cancel."
+    },
+    "Attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "attempt_ref",
+        "policy_revision_ref",
+        "response",
+        "rule",
+        "scope",
+        "occurrence",
+        "effect",
+        "state",
+        "optimize_outcome",
+        "deploy_outcome",
+        "lapsed",
+        "opened_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "attempt_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptRef"
+        },
+        "policy_revision_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/PolicyRevisionRef"
+        },
+        "response": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "rule": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "scope": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/HostedToken"
+        },
+        "occurrence": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Occurrence"
+        },
+        "effect": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Effect",
+          "description": "The next or current effect."
+        },
+        "state": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/AttemptState"
+        },
+        "optimize_outcome": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "none",
+            "optimize_no_candidate",
+            "optimize_failed",
+            "promoted"
+          ]
+        },
+        "deploy_outcome": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "none",
+            "deployed",
+            "deploy_refused",
+            "deploy_failed"
+          ],
+          "description": "`deployed` means the agent head was promoted."
+        },
+        "lapsed": {
+          "x-content-class": "closed_enum",
+          "type": "boolean",
+          "description": "Started effect without heartbeat; the attempt stays open until its own result or a human cancel."
+        },
+        "grant_ref": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/GrantRef"
+        },
+        "opened_at": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/Timestamp"
+        }
+      },
+      "description": "Read model of one attempt: the ref humans and the SDK use to create grants and reservations."
+    },
+    "AttemptPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "items",
+        "next_after"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./tvl_reactive_common_schema.json#/definitions/SchemaVersion"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Attempt"
+          },
+          "maxItems": 100
+        },
+        "next_after": {
+          "x-content-class": "number",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "description": "A page of attempts, newest first; `next_after` is null on the last page."
+    }
+  }
+}

@@ -44,6 +44,44 @@ def clear_dataset_registry_cache() -> None:
     _CACHE_MTIME = None
 
 
+def _parse_registry_entry(key: Any, value: Any) -> DatasetRegistryEntry:
+    """Validate and convert one raw registry item into an entry."""
+    if not isinstance(key, str) or not key:
+        raise ValidationError("Dataset identifiers must be non-empty strings")
+
+    if isinstance(value, str):
+        return DatasetRegistryEntry(name=key, path=value)
+
+    if not isinstance(value, dict):
+        raise ValidationError(
+            f"Dataset '{key}' entry must be either a string path or an object"
+        )
+
+    path_value = value.get("path")
+    if not isinstance(path_value, str) or not path_value:
+        raise ValidationError(f"Dataset '{key}' must define a non-empty 'path'")
+
+    display_name = value.get("name")
+    if display_name is not None and not isinstance(display_name, str):
+        raise ValidationError(f"Dataset '{key}' field 'name' must be a string")
+
+    description = value.get("description")
+    if description is not None and not isinstance(description, str):
+        raise ValidationError(f"Dataset '{key}' field 'description' must be a string")
+
+    metadata = value.get("metadata")
+    if metadata is not None and not isinstance(metadata, dict):
+        raise ValidationError(f"Dataset '{key}' field 'metadata' must be an object")
+    metadata_dict = dict(metadata) if metadata is not None else None
+
+    return DatasetRegistryEntry(
+        name=display_name or key,
+        path=path_value,
+        description=description,
+        metadata=metadata_dict,
+    )
+
+
 def _load_registry() -> Mapping[str, DatasetRegistryEntry]:
     """Load the dataset registry from disk if configured."""
 
@@ -94,49 +132,7 @@ def _load_registry() -> Mapping[str, DatasetRegistryEntry]:
     parsed: dict[str, DatasetRegistryEntry] = {}
 
     for key, value in datasets_obj.items():
-        if not isinstance(key, str) or not key:
-            raise ValidationError("Dataset identifiers must be non-empty strings")
-
-        if isinstance(value, str):
-            entry = DatasetRegistryEntry(name=key, path=value)
-            parsed[key] = entry
-            continue
-
-        if not isinstance(value, dict):
-            raise ValidationError(
-                f"Dataset '{key}' entry must be either a string path or an object"
-            )
-
-        path_value = value.get("path")
-        if not isinstance(path_value, str) or not path_value:
-            raise ValidationError(f"Dataset '{key}' must define a non-empty 'path'")
-
-        display_name = value.get("name")
-        if display_name is not None and not isinstance(display_name, str):
-            raise ValidationError(f"Dataset '{key}' field 'name' must be a string")
-
-        description = value.get("description")
-        if description is not None and not isinstance(description, str):
-            raise ValidationError(
-                f"Dataset '{key}' field 'description' must be a string"
-            )
-
-        metadata = value.get("metadata")
-        if metadata is not None:
-            if not isinstance(metadata, dict):
-                raise ValidationError(
-                    f"Dataset '{key}' field 'metadata' must be an object"
-                )
-            metadata_dict = dict(metadata)
-        else:
-            metadata_dict = None
-
-        parsed[key] = DatasetRegistryEntry(
-            name=display_name or key,
-            path=path_value,
-            description=description,
-            metadata=metadata_dict,
-        )
+        parsed[key] = _parse_registry_entry(key, value)
 
     _CACHE = parsed
     _CACHE_SOURCE = resolved_path

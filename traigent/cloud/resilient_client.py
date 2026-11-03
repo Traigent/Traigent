@@ -206,10 +206,7 @@ class ResilientClient:
             if retry_after is not None:
                 try:
                     server_delay = float(retry_after)
-                    if not math.isfinite(server_delay):
-                        raise ValueError("Retry-After must be finite")
-                    delay = min(max(server_delay, 0.0), self.max_delay)
-                    logger.debug("Using server-provided Retry-After: %ss", delay)
+                    delay = ResilientClient._structured_retry_delay(self, server_delay)
                 except (TypeError, ValueError) as exc:
                     logger.debug(
                         "Ignoring invalid Retry-After %r: %s", retry_after, exc
@@ -227,15 +224,15 @@ class ResilientClient:
                         match = re.search(
                             r"retry-after[:\s]+(\d+)", error_str, re.IGNORECASE
                         )
-                        if match:
-                            server_delay = int(match.group(1))
-                            delay = min(server_delay, self.max_delay)
-                            logger.debug(
-                                "Using server-provided retry-after: %ss", delay
-                            )
+                        delay = ResilientClient._delay_from_retry_match(
+                            self, match, delay
+                        )
                     except Exception as exc:
                         logger.debug("Could not parse retry-after header: %s", exc)
 
+        return ResilientClient._add_retry_jitter(self, delay)
+
+    def _add_retry_jitter(self, delay: float) -> float:
         # Add jitter to prevent thundering herd
         if self.jitter_factor > 0:
             jitter: float = secrets.SystemRandom().uniform(
@@ -243,6 +240,20 @@ class ResilientClient:
             )
             delay += jitter
 
+        return delay
+
+    def _structured_retry_delay(self, server_delay: float) -> float:
+        if not math.isfinite(server_delay):
+            raise ValueError("Retry-After must be finite")
+        delay = min(max(server_delay, 0.0), self.max_delay)
+        logger.debug("Using server-provided Retry-After: %ss", delay)
+        return delay
+
+    def _delay_from_retry_match(self, match: Any, delay: float) -> float:
+        if match:
+            server_delay = int(match.group(1))
+            delay = min(server_delay, self.max_delay)
+            logger.debug("Using server-provided retry-after: %ss", delay)
         return delay
 
     def _record_attempt_start(self, attempt: int, op_name: str, op_hash: str) -> None:
@@ -407,6 +418,63 @@ _AMBIGUOUS_NO_RETRY_MESSAGE = (
 )
 
 
+async def _execute_backend_request_once(
+    send_once: Callable[[], Awaitable[dict[str, Any]]], unsafe_unkeyed: bool
+) -> dict[str, Any]:
+    try:
+        return await send_once()
+    except RetryableError as exc:
+        # 429 means the server refused before processing: safe to replay.
+        if not unsafe_unkeyed or str(exc) == _RATE_LIMITED_MESSAGE:
+            raise
+        raise NonRetryableError(_AMBIGUOUS_NO_RETRY_MESSAGE) from None
+    except NonRetryableError:
+        raise
+    except Exception:
+        if not unsafe_unkeyed:
+            raise
+        # Ambiguous failure (timeout/reset/...): the server may have
+        # processed the request, so never replay a non-idempotent call
+        # that carries no Idempotency-Key (#1975). Fixed text only.
+        raise NonRetryableError(_AMBIGUOUS_NO_RETRY_MESSAGE) from None
+
+
+def _raise_for_retryable_status(status: int) -> None:
+    if status >= 500:
+        raise RetryableError(f"Server error: HTTP {status}")
+    if status == 408:
+        # 408 Request Timeout is transient (#1968) and retryable,
+        # matching backend_client's _SYNC_BACKEND_TRANSIENT_STATUSES
+        # ({408, 429, 5xx}); do not surface it as a permanent 4xx
+        # client error via the status >= 400 catch-all below.
+        raise RetryableError(f"Transient error: HTTP {status}")
+
+
+def _raise_for_client_status(status: int) -> None:
+    if status in {401, 403}:
+        raise NonRetryableError("Authentication failed")
+    if status >= 400:
+        raise NonRetryableError(f"Client error: HTTP {status}")
+
+
+def _require_aiohttp() -> Any:
+    try:
+        import aiohttp
+    except ImportError as exc:  # pragma: no cover - environment specific
+        raise RuntimeError(
+            "aiohttp is required for resilient backend requests"
+        ) from exc
+
+    return aiohttp
+
+
+def _is_unsafe_unkeyed(method: str, headers: dict[str, str] | None) -> bool:
+    return method.upper() in _NON_IDEMPOTENT_METHODS and not any(
+        str(name).lower() == "idempotency-key" and str(value).strip()
+        for name, value in (headers or {}).items()
+    )
+
+
 # Example usage wrapper for backend operations
 async def resilient_backend_request(
     client: ResilientClient,
@@ -440,36 +508,13 @@ async def resilient_backend_request(
     raise_if_cloud_egress_disabled("resilient backend request", no_egress=no_egress)
 
     # An empty or whitespace-only value is no key: the server cannot dedupe on it.
-    unsafe_unkeyed = method.upper() in _NON_IDEMPOTENT_METHODS and not any(
-        str(name).lower() == "idempotency-key" and str(value).strip()
-        for name, value in (headers or {}).items()
-    )
+    unsafe_unkeyed = _is_unsafe_unkeyed(method, headers)
 
     async def make_request() -> dict[str, Any]:
-        try:
-            return await _send_once()
-        except RetryableError as exc:
-            # 429 means the server refused before processing: safe to replay.
-            if not unsafe_unkeyed or str(exc) == _RATE_LIMITED_MESSAGE:
-                raise
-            raise NonRetryableError(_AMBIGUOUS_NO_RETRY_MESSAGE) from None
-        except NonRetryableError:
-            raise
-        except Exception:
-            if not unsafe_unkeyed:
-                raise
-            # Ambiguous failure (timeout/reset/...): the server may have
-            # processed the request, so never replay a non-idempotent call
-            # that carries no Idempotency-Key (#1975). Fixed text only.
-            raise NonRetryableError(_AMBIGUOUS_NO_RETRY_MESSAGE) from None
+        return await _execute_backend_request_once(_send_once, unsafe_unkeyed)
 
     async def _send_once() -> dict[str, Any]:
-        try:
-            import aiohttp
-        except ImportError as exc:  # pragma: no cover - environment specific
-            raise RuntimeError(
-                "aiohttp is required for resilient backend requests"
-            ) from exc
+        aiohttp = _require_aiohttp()
 
         request_timeout = aiohttp.ClientTimeout(total=timeout)
 
@@ -489,14 +534,7 @@ async def resilient_backend_request(
             ) as response:
                 status = response.status
 
-                if status >= 500:
-                    raise RetryableError(f"Server error: HTTP {status}")
-                if status == 408:
-                    # 408 Request Timeout is transient (#1968) and retryable,
-                    # matching backend_client's _SYNC_BACKEND_TRANSIENT_STATUSES
-                    # ({408, 429, 5xx}); do not surface it as a permanent 4xx
-                    # client error via the status >= 400 catch-all below.
-                    raise RetryableError(f"Transient error: HTTP {status}")
+                _raise_for_retryable_status(status)
                 if status == 429:
                     retry_after_header = response.headers.get("Retry-After")
                     retry_after_value = None
@@ -511,10 +549,7 @@ async def resilient_backend_request(
                     raise RetryableError(
                         _RATE_LIMITED_MESSAGE, retry_after_value
                     ) from None
-                if status in {401, 403}:
-                    raise NonRetryableError("Authentication failed")
-                if status >= 400:
-                    raise NonRetryableError(f"Client error: HTTP {status}")
+                _raise_for_client_status(status)
 
                 try:
                     payload = await response.json()

@@ -239,26 +239,9 @@ class MemoryEfficientBatchProcessor:
                 if progress_callback:
                     progress_callback(progress)
 
-                # Memory management with monitoring
-                if (batch_idx + 1) % self.gc_frequency == 0:
-                    # Check memory usage before cleanup
-                    current_memory_mb = self._get_memory_usage_mb()
-
-                    # Force garbage collection if memory is high
-                    if current_memory_mb > self.max_memory_mb * 0.8:
-                        logger.warning(
-                            f"High memory usage: {current_memory_mb:.1f}MB, forcing GC"
-                        )
-                        gc.collect()
-
-                        # Check if memory cleanup was effective
-                        after_cleanup_mb = self._get_memory_usage_mb()
-                        if after_cleanup_mb > self.max_memory_mb:
-                            logger.error(
-                                f"Memory limit exceeded: {after_cleanup_mb:.1f}MB > {self.max_memory_mb}MB"
-                            )
-
-                    await asyncio.sleep(0)  # Allow other tasks to run
+                await MemoryEfficientBatchProcessor._manage_batch_memory(
+                    self, batch_idx
+                )
 
                 yield batch_results, progress
 
@@ -296,6 +279,28 @@ class MemoryEfficientBatchProcessor:
         )
         stats.memory_usage_mb = self._get_memory_usage_mb()
         logger.info(f"Batch processing completed: {stats}")
+
+    async def _manage_batch_memory(self, batch_idx: int) -> None:
+        # Memory management with monitoring
+        if (batch_idx + 1) % self.gc_frequency == 0:
+            # Check memory usage before cleanup
+            current_memory_mb = self._get_memory_usage_mb()
+
+            # Force garbage collection if memory is high
+            if current_memory_mb > self.max_memory_mb * 0.8:
+                logger.warning(
+                    f"High memory usage: {current_memory_mb:.1f}MB, forcing GC"
+                )
+                gc.collect()
+
+                # Check if memory cleanup was effective
+                after_cleanup_mb = self._get_memory_usage_mb()
+                if after_cleanup_mb > self.max_memory_mb:
+                    logger.error(
+                        f"Memory limit exceeded: {after_cleanup_mb:.1f}MB > {self.max_memory_mb}MB"
+                    )
+
+            await asyncio.sleep(0)  # Allow other tasks to run
 
     def _get_memory_usage_mb(self) -> float:
         """Get current memory usage in MB."""
@@ -461,6 +466,64 @@ class PartialResultsManager:
         return len(self.completed_indices) >= total_items
 
 
+async def _process_missing_items(
+    items: list[Any],
+    processor_func: Callable[..., Any],
+    results_manager: PartialResultsManager,
+    adaptive_sizer: AdaptiveBatchSizer,
+    total_items: int,
+    all_results: list[InvocationResult | None],
+) -> bool:
+    """Process missing items with batch recovery logic."""
+    missing_indices = results_manager.get_missing_indices(total_items)
+
+    if not missing_indices:
+        return True  # No missing items, success
+
+    logger.info(f"Processing {len(missing_indices)} missing items")
+
+    # Process missing items in batches
+    batch_size = adaptive_sizer.get_next_batch_size(len(missing_indices))
+
+    for i in range(0, len(missing_indices), batch_size):
+        batch_indices = missing_indices[i : i + batch_size]
+        batch_items = [items[idx] for idx in batch_indices]
+
+        try:
+            batch_start = time.time()
+            batch_results = await processor_func(batch_items)
+            batch_duration = time.time() - batch_start
+
+            # Update results
+            for j, result in enumerate(batch_results):
+                original_index = batch_indices[j]
+                all_results[original_index] = result
+
+            results_manager.add_results(batch_results, batch_indices[0])
+
+            # Update adaptive sizing
+            successful_count = sum(1 for r in batch_results if r.is_successful)
+            error_rate = 1.0 - (successful_count / len(batch_results))
+            throughput = (
+                len(batch_results) / batch_duration if batch_duration > 0 else 0
+            )
+
+            adaptive_sizer.update_performance(
+                batch_size=len(batch_results),
+                throughput=throughput,
+                memory_usage_mb=0.0,  # Would measure actual memory
+                error_rate=error_rate,
+            )
+
+        except Exception as e:
+            logger.warning(f"Batch processing failed: {e}")
+            # Re-raise to trigger retry handler
+            raise
+
+    # Check if we achieved completion after this round
+    return results_manager.is_complete(total_items)
+
+
 async def process_with_retry_and_recovery(
     items: list[Any],
     processor_func: Callable[..., Any],
@@ -487,55 +550,15 @@ async def process_with_retry_and_recovery(
     )
     retry_handler = RetryHandler(retry_config)
 
-    async def process_missing_items():
-        """Process missing items with batch recovery logic."""
-        missing_indices = results_manager.get_missing_indices(total_items)
-
-        if not missing_indices:
-            return True  # No missing items, success
-
-        logger.info(f"Processing {len(missing_indices)} missing items")
-
-        # Process missing items in batches
-        batch_size = adaptive_sizer.get_next_batch_size(len(missing_indices))
-
-        for i in range(0, len(missing_indices), batch_size):
-            batch_indices = missing_indices[i : i + batch_size]
-            batch_items = [items[idx] for idx in batch_indices]
-
-            try:
-                batch_start = time.time()
-                batch_results = await processor_func(batch_items)
-                batch_duration = time.time() - batch_start
-
-                # Update results
-                for j, result in enumerate(batch_results):
-                    original_index = batch_indices[j]
-                    all_results[original_index] = result
-
-                results_manager.add_results(batch_results, batch_indices[0])
-
-                # Update adaptive sizing
-                successful_count = sum(1 for r in batch_results if r.is_successful)
-                error_rate = 1.0 - (successful_count / len(batch_results))
-                throughput = (
-                    len(batch_results) / batch_duration if batch_duration > 0 else 0
-                )
-
-                adaptive_sizer.update_performance(
-                    batch_size=len(batch_results),
-                    throughput=throughput,
-                    memory_usage_mb=0.0,  # Would measure actual memory
-                    error_rate=error_rate,
-                )
-
-            except Exception as e:
-                logger.warning(f"Batch processing failed: {e}")
-                # Re-raise to trigger retry handler
-                raise
-
-        # Check if we achieved completion after this round
-        return results_manager.is_complete(total_items)
+    async def process_missing_items() -> bool:
+        return await _process_missing_items(
+            items,
+            processor_func,
+            results_manager,
+            adaptive_sizer,
+            total_items,
+            all_results,
+        )
 
     # Use retry handler for the entire processing operation
     try:

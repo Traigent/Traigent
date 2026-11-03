@@ -37,6 +37,8 @@ SCRIPT = REPO_ROOT / "scripts" / "ci" / "check_required_gate.py"
 sys.path.insert(0, str(SCRIPT.parent))
 import check_required_gate as gate  # noqa: E402  (path insert must precede this)
 
+from tests._git_isolation import scrubbed_git_env  # noqa: E402
+
 
 def _needs(**results: str) -> dict[str, dict[str, str]]:
     """Build a `needs` context map from job=result kwargs (no outputs)."""
@@ -459,6 +461,7 @@ class TestMergeQueueTopologyReplay:
             capture_output=True,
             text=True,
             check=False,
+            env=scrubbed_git_env(),
         )
         assert completed.returncode == 0, completed.stderr
         return completed.stdout.strip()

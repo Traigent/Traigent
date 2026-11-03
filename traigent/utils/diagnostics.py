@@ -332,6 +332,14 @@ class DiagnosticReport:
             },
         }
 
+    @staticmethod
+    def _print_entries(title: str, entries: list[Any], with_fix: bool = False) -> None:
+        _safe_print(f"\n{title} ({len(entries)}):")
+        for entry in entries:
+            _safe_print(f"  [{entry['category']}] {entry['message']}")
+            if with_fix and entry["fix"]:
+                _safe_print(f"     💡 Fix: {entry['fix']}")
+
     def print_report(self) -> None:
         """Print formatted report to console."""
         _safe_print("\n" + "=" * 60)
@@ -345,21 +353,13 @@ class DiagnosticReport:
         _safe_print(f"  Platform: {self.platform}")
 
         if self.successes:
-            _safe_print(f"\n✅ Successes ({len(self.successes)}):")
-            for success in self.successes:
-                _safe_print(f"  [{success['category']}] {success['message']}")
+            self._print_entries("✅ Successes", self.successes)
 
         if self.warnings:
-            _safe_print(f"\n⚠️  Warnings ({len(self.warnings)}):")
-            for warning in self.warnings:
-                _safe_print(f"  [{warning['category']}] {warning['message']}")
+            self._print_entries("⚠️  Warnings", self.warnings)
 
         if self.issues:
-            _safe_print(f"\n❌ Issues ({len(self.issues)}):")
-            for issue in self.issues:
-                _safe_print(f"  [{issue['category']}] {issue['message']}")
-                if issue["fix"]:
-                    _safe_print(f"     💡 Fix: {issue['fix']}")
+            self._print_entries("❌ Issues", self.issues, with_fix=True)
 
         if self.recommendations:
             _safe_print("\n💡 Recommendations:")

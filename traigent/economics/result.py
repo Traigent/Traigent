@@ -133,24 +133,7 @@ class TelemetryIngestResult:
         if not isinstance(body, dict):
             raise EconomicsResponseError("ingest response was not a JSON object")
 
-        if body.get("contract") != CONTRACT_ID:
-            raise EconomicsResponseError("ingest response names a different contract")
-        if body.get("contract_version") != CONTRACT_VERSION:
-            raise EconomicsResponseError(
-                "ingest response names a different contract version"
-            )
-
-        replayed = body.get("replayed")
-        if not isinstance(replayed, bool):
-            raise EconomicsResponseError(
-                "ingest response replayed flag is missing or non-boolean"
-            )
-        if replayed != _STATUS_REPLAYED[http_status]:
-            # A 200 that says replayed=false (or a 201/422 that says true) would
-            # lie about whether state was written.
-            raise EconomicsResponseError(
-                "ingest response status and replayed flag disagree"
-            )
+        replayed = _check_envelope(body, http_status)
 
         batch_id = body.get("batch_id")
         key = body.get("idempotency_key")
@@ -167,21 +150,9 @@ class TelemetryIngestResult:
         if not isinstance(received_at, str) or not received_at:
             raise EconomicsResponseError("ingest response received_at is missing")
 
-        submitted, accepted, duplicate, rejected = _parse_counts(body.get("counts"))
-        if submitted != expected_submitted:
-            raise EconomicsResponseError(
-                "ingest response submitted count does not match the batch"
-            )
-        if accepted + duplicate + rejected != submitted:
-            raise EconomicsResponseError("ingest response counts do not reconcile")
-        if http_status == 422 and not (submitted > 0 and rejected == submitted):
-            raise EconomicsResponseError("422 response is not an all-rejected batch")
-        # All-rejected is the 422 status contract, never a fresh 201. (A 200 may
-        # legitimately be all-rejected: it replays a prior 422 ingest.)
-        if http_status == 201 and submitted > 0 and rejected == submitted:
-            raise EconomicsResponseError(
-                "all-rejected batch must be reported as 422, not a fresh 201"
-            )
+        submitted, accepted, duplicate, rejected = _check_counts(
+            body.get("counts"), http_status, expected_submitted
+        )
 
         rejections = _parse_rejections(
             body.get("rejections"),
@@ -204,6 +175,51 @@ class TelemetryIngestResult:
             rejected=rejected,
             rejections=rejections,
         )
+
+
+def _check_envelope(body: dict[str, Any], http_status: int) -> bool:
+    """Check contract identity, version and the replayed flag; return the flag."""
+    if body.get("contract") != CONTRACT_ID:
+        raise EconomicsResponseError("ingest response names a different contract")
+    if body.get("contract_version") != CONTRACT_VERSION:
+        raise EconomicsResponseError(
+            "ingest response names a different contract version"
+        )
+
+    replayed = body.get("replayed")
+    if not isinstance(replayed, bool):
+        raise EconomicsResponseError(
+            "ingest response replayed flag is missing or non-boolean"
+        )
+    if replayed != _STATUS_REPLAYED[http_status]:
+        # A 200 that says replayed=false (or a 201/422 that says true) would
+        # lie about whether state was written.
+        raise EconomicsResponseError(
+            "ingest response status and replayed flag disagree"
+        )
+    return replayed
+
+
+def _check_counts(
+    counts: Any, http_status: int, expected_submitted: int
+) -> tuple[int, int, int, int]:
+    """Parse the counts and reconcile them with the request and the status."""
+    submitted, accepted, duplicate, rejected = _parse_counts(counts)
+    if submitted != expected_submitted:
+        raise EconomicsResponseError(
+            "ingest response submitted count does not match the batch"
+        )
+    if accepted + duplicate + rejected != submitted:
+        raise EconomicsResponseError("ingest response counts do not reconcile")
+    if http_status == 422 and not (submitted > 0 and rejected == submitted):
+        raise EconomicsResponseError("422 response is not an all-rejected batch")
+    # All-rejected is the 422 status contract, never a fresh 201. (A 200 may
+    # legitimately be all-rejected: it replays a prior 422 ingest.)
+    if http_status == 201 and submitted > 0 and rejected == submitted:
+        raise EconomicsResponseError(
+            "all-rejected batch must be reported as 422, not a fresh 201"
+        )
+    return submitted, accepted, duplicate, rejected
 
 
 def _parse_counts(counts: Any) -> tuple[int, int, int, int]:
@@ -234,57 +250,66 @@ def _parse_rejections(
     parsed: list[Rejection] = []
     seen_indices: set[int] = set()
     for item in raw:
-        if not isinstance(item, dict):
-            raise EconomicsResponseError("ingest response rejection is not an object")
-        index = item.get("event_index")
-        if (
-            not isinstance(index, int)
-            or isinstance(index, bool)
-            or not (0 <= index < submitted)
-        ):
-            raise EconomicsResponseError(
-                "ingest response rejection event_index is out of range"
-            )
-        # A stage may reject an event once; two rejections for one index is a
-        # malformed disposition, not two failures of the same event.
-        if index in seen_indices:
-            raise EconomicsResponseError(
-                "ingest response has duplicate rejection event_index"
-            )
-        seen_indices.add(index)
-        reason = item.get("reason")
-        if reason not in REJECTION_REASONS:
-            raise EconomicsResponseError(
-                "ingest response rejection names an unknown reason"
-            )
-        event_id = item.get("event_id")
-        if event_id is not None and not isinstance(event_id, str):
-            raise EconomicsResponseError(
-                "ingest response rejection event_id is not a string"
-            )
-        # When the backend echoes the rejected event_id, it must be the event WE
-        # submitted at that index — otherwise the rejection addresses something
-        # other than our batch.
-        if (
-            event_id is not None
-            and index < len(expected_event_ids)
-            and event_id != expected_event_ids[index]
-        ):
-            raise EconomicsResponseError(
-                "ingest response rejection event_id does not match the request "
-                "event at that index"
-            )
-        # Validate `detail`'s shape exactly as before (a non-string still fails
-        # closed), then DISCARD it — see the Rejection docstring. It is never
-        # copied into the public result, so no user_content value can leak through
-        # a field, repr, or log line downstream.
-        detail = item.get("detail")
-        if detail is not None and not isinstance(detail, str):
-            raise EconomicsResponseError(
-                "ingest response rejection detail is not a string"
-            )
-        parsed.append(Rejection(event_index=index, reason=reason, event_id=event_id))
+        parsed.append(
+            _parse_rejection(item, submitted, expected_event_ids, seen_indices)
+        )
     return tuple(parsed)
+
+
+def _parse_rejection(
+    item: Any,
+    submitted: int,
+    expected_event_ids: tuple[str, ...],
+    seen_indices: set[int],
+) -> Rejection:
+    if not isinstance(item, dict):
+        raise EconomicsResponseError("ingest response rejection is not an object")
+    index = item.get("event_index")
+    if (
+        not isinstance(index, int)
+        or isinstance(index, bool)
+        or not (0 <= index < submitted)
+    ):
+        raise EconomicsResponseError(
+            "ingest response rejection event_index is out of range"
+        )
+    # A stage may reject an event once; two rejections for one index is a
+    # malformed disposition, not two failures of the same event.
+    if index in seen_indices:
+        raise EconomicsResponseError(
+            "ingest response has duplicate rejection event_index"
+        )
+    seen_indices.add(index)
+    reason = item.get("reason")
+    if reason not in REJECTION_REASONS:
+        raise EconomicsResponseError(
+            "ingest response rejection names an unknown reason"
+        )
+    event_id = item.get("event_id")
+    if event_id is not None and not isinstance(event_id, str):
+        raise EconomicsResponseError(
+            "ingest response rejection event_id is not a string"
+        )
+    # When the backend echoes the rejected event_id, it must be the event WE
+    # submitted at that index — otherwise the rejection addresses something
+    # other than our batch.
+    if (
+        event_id is not None
+        and index < len(expected_event_ids)
+        and event_id != expected_event_ids[index]
+    ):
+        raise EconomicsResponseError(
+            "ingest response rejection event_id does not match the request "
+            "event at that index"
+        )
+    # Validate `detail`'s shape exactly as before (a non-string still fails
+    # closed), then DISCARD it — see the Rejection docstring. It is never
+    # copied into the public result, so no user_content value can leak through
+    # a field, repr, or log line downstream.
+    detail = item.get("detail")
+    if detail is not None and not isinstance(detail, str):
+        raise EconomicsResponseError("ingest response rejection detail is not a string")
+    return Rejection(event_index=index, reason=reason, event_id=event_id)
 
 
 __all__ = ["Rejection", "TelemetryIngestResult"]

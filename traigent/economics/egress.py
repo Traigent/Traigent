@@ -65,34 +65,7 @@ def enforce_characterization_egress(characterization: Mapping[str, Any]) -> None
     seen_fields: set[str] = set()
 
     for report in reports:
-        if not isinstance(report, Mapping):
-            raise EgressPolicyError("each field report must be an object")
-
-        field = report.get("field")
-        if not isinstance(field, str) or field not in CHARACTERIZATION_FIELD_NAMES:
-            # Never echo an unknown/foreign field verbatim: it could be a
-            # content-shaped string. Name the rule, not the value.
-            raise EgressPolicyError(
-                "a field report names a field outside the characterization allowlist"
-            )
-
-        # Duplicate / contradictory reports fail locally. Two reports for one
-        # field — even with differing provenance or sharing outcome — are a
-        # contradiction the schema's uniqueItems cannot catch; refuse here.
-        if field in seen_fields:
-            raise EgressPolicyError(
-                f"field '{field}' has more than one field report "
-                "(duplicate or contradictory reports are rejected locally)"
-            )
-        seen_fields.add(field)
-
-        sharing = report.get("sharing_outcome")
-        if sharing not in SHARING_OUTCOMES:
-            raise EgressPolicyError(
-                f"field '{field}' has an invalid or missing sharing_outcome"
-            )
-
-        _check_provenance_and_evidence(field, report)
+        field, sharing = _check_field_report(report, seen_fields)
 
         if sharing == "shared":
             shared_fields.add(field)
@@ -100,6 +73,39 @@ def enforce_characterization_egress(characterization: Mapping[str, Any]) -> None
             withheld_fields.add(field)
 
     _check_present_iff_shared(present, shared_fields, withheld_fields)
+
+
+def _check_field_report(report: Any, seen_fields: set[str]) -> tuple[str, Any]:
+    """Validate one field report, returning its ``(field, sharing_outcome)``."""
+    if not isinstance(report, Mapping):
+        raise EgressPolicyError("each field report must be an object")
+
+    field = report.get("field")
+    if not isinstance(field, str) or field not in CHARACTERIZATION_FIELD_NAMES:
+        # Never echo an unknown/foreign field verbatim: it could be a
+        # content-shaped string. Name the rule, not the value.
+        raise EgressPolicyError(
+            "a field report names a field outside the characterization allowlist"
+        )
+
+    # Duplicate / contradictory reports fail locally. Two reports for one
+    # field — even with differing provenance or sharing outcome — are a
+    # contradiction the schema's uniqueItems cannot catch; refuse here.
+    if field in seen_fields:
+        raise EgressPolicyError(
+            f"field '{field}' has more than one field report "
+            "(duplicate or contradictory reports are rejected locally)"
+        )
+    seen_fields.add(field)
+
+    sharing = report.get("sharing_outcome")
+    if sharing not in SHARING_OUTCOMES:
+        raise EgressPolicyError(
+            f"field '{field}' has an invalid or missing sharing_outcome"
+        )
+
+    _check_provenance_and_evidence(field, report)
+    return field, sharing
 
 
 def _present_field_names(characterization: Mapping[str, Any]) -> set[str]:
@@ -166,6 +172,12 @@ def _check_provenance_and_evidence(field: str, report: Mapping[str, Any]) -> Non
             f"field '{field}' carries an evidence pointer without provided evidence"
         )
 
+    _check_withheld_evidence(field, sharing, has_pointer, has_status, evidence_status)
+
+
+def _check_withheld_evidence(
+    field: str, sharing: Any, has_pointer: bool, has_status: bool, evidence_status: Any
+) -> None:
     # Withheld means withheld: a withheld field cannot egress its evidence.
     if sharing == "withheld_by_policy":
         if has_pointer:

@@ -768,3 +768,40 @@ async def test_finalize_api_failure_log_carries_class_never_exception_text(
     assert result is None
     assert sentinel not in caplog.text
     assert "_TransportError" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_finalize_strict_mode_missing_endpoint_fails_closed(monkeypatch):
+    """Strict self-hosted mode: a missing endpoint raises, never degrades to None."""
+    from traigent.config.backend_config import EndpointNotConfiguredError
+
+    class _GateContext:
+        async def __aenter__(self):
+            return SimpleNamespace()
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+    def _no_endpoint():
+        raise EndpointNotConfiguredError("no endpoint configured")
+
+    monkeypatch.setattr(
+        "traigent.cloud.session_operations.aiohttp.ClientSession",
+        lambda **kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.session_operations.gate_session",
+        lambda session, origins=None: _GateContext(),
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.session_operations.BackendConfig.get_backend_api_url",
+        staticmethod(_no_endpoint),
+    )
+
+    client = FakeClient()
+    client.backend_config = SimpleNamespace(api_base_url=None)
+    client.auth_manager.augment_headers = AsyncMock(return_value={})
+    ops = SessionOperations(client)
+
+    with pytest.raises(EndpointNotConfiguredError):
+        await ops._finalize_session_via_api("session-1", "run-1")

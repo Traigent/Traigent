@@ -62,6 +62,49 @@ def _wire_submission(submission: dict[str, Any]) -> dict[str, Any]:
     return {**submission, "metadata": filter_wire_metadata(submission["metadata"])}
 
 
+def _group_metrics_by_session(metric_buffer: list[Any]) -> dict[str, list[Any]]:
+    # Group by session
+    sessions: dict[str, list[Any]] = {}
+    for session_id, submission in metric_buffer:
+        if session_id not in sessions:
+            sessions[session_id] = []
+        sessions[session_id].append(submission)
+
+    return sessions
+
+
+def _flush_response(
+    results: list[dict[str, Any]],
+    errors: list[Any],
+    retained: list[Any],
+    dropped: int,
+    abandoned: int,
+) -> dict[str, Any]:
+    # Return appropriate response
+    if not errors:
+        if len(results) == 1:
+            return results[0]
+        else:
+            return {
+                "status": "batch_flushed",
+                "sessions_processed": len(results),
+                "results": results,
+            }
+    else:
+        return {
+            "status": "partial_success",
+            "successful": len(results),
+            "failed": len(errors),
+            "results": results,
+            "errors": errors,
+            # #1922: so a caller can tell "will be retried on the next
+            # flush" from "gone for good".
+            "retained_for_retry": len(retained),
+            "dropped_over_cap": dropped,
+            "abandoned_permanent": abandoned,
+        }
+
+
 class OptimizerDirectClient:
     """Direct client for optimizer metric submission in hybrid mode."""
 
@@ -306,6 +349,45 @@ class OptimizerDirectClient:
             if self._metric_buffer:
                 await self._flush_buffer()
 
+    def _retain_failed_metrics(self, retry_sessions: set[str]) -> tuple[list[Any], int]:
+        # Replace, never clear: accepted submissions are dropped, retryable
+        # ones stay. Filtering the ORIGINAL buffer rather than the grouped
+        # `sessions` dict preserves chronological order, which the retention
+        # cap below depends on. Safe to rebuild wholesale because every caller
+        # of _flush_buffer holds _buffer_lock and asyncio.Lock is not
+        # reentrant, so no submit_metrics() append can interleave with the
+        # awaits above.
+        retained = [
+            entry for entry in self._metric_buffer if entry[0] in retry_sessions
+        ]
+
+        dropped = 0
+        if len(retained) > self._max_retained_metrics:
+            dropped = len(retained) - self._max_retained_metrics
+            # Oldest first: the newest signal is the most useful to the
+            # optimizer, and an unbounded buffer against a backend that stays
+            # down would grow until the process died. Logged at ERROR because
+            # this IS metric loss -- bounded, but never silent.
+            retained = retained[dropped:]
+            logger.error(
+                "Optimizer metric buffer exceeded its %d-entry retention cap "
+                "after repeated submission failures; discarded the %d oldest "
+                "buffered metrics. The optimizer's view of this run is now "
+                "incomplete.",
+                self._max_retained_metrics,
+                dropped,
+            )
+        self._metric_buffer[:] = retained
+        # Retained entries must not re-arm the size-based flush trigger in
+        # submit_metrics: a buffer left at batch_size would make EVERY
+        # subsequent trial synchronously re-POST a growing payload while
+        # holding the lock, turning one unreachable backend into a per-trial
+        # blocking call. New arrivals are counted against batch_size; the
+        # retained backlog rides the periodic flush instead.
+        self._retained_count = len(retained)
+
+        return retained, dropped
+
     async def _flush_buffer(self) -> dict[str, Any]:
         """Flush metric buffer to optimizer.
 
@@ -315,12 +397,7 @@ class OptimizerDirectClient:
         if not self._metric_buffer:
             return {"status": "no_metrics", "message": "No metrics to flush"}
 
-        # Group by session
-        sessions: dict[str, list[Any]] = {}
-        for session_id, submission in self._metric_buffer:
-            if session_id not in sessions:
-                sessions[session_id] = []
-            sessions[session_id].append(submission)
+        sessions = _group_metrics_by_session(self._metric_buffer)
 
         # Submit each session's metrics
         results = []
@@ -373,65 +450,11 @@ class OptimizerDirectClient:
                     # only grows on retry.
                     abandoned += len(submissions)
 
-        # Replace, never clear: accepted submissions are dropped, retryable
-        # ones stay. Filtering the ORIGINAL buffer rather than the grouped
-        # `sessions` dict preserves chronological order, which the retention
-        # cap below depends on. Safe to rebuild wholesale because every caller
-        # of _flush_buffer holds _buffer_lock and asyncio.Lock is not
-        # reentrant, so no submit_metrics() append can interleave with the
-        # awaits above.
-        retained = [
-            entry for entry in self._metric_buffer if entry[0] in retry_sessions
-        ]
+        retained, dropped = OptimizerDirectClient._retain_failed_metrics(
+            self, retry_sessions
+        )
 
-        dropped = 0
-        if len(retained) > self._max_retained_metrics:
-            dropped = len(retained) - self._max_retained_metrics
-            # Oldest first: the newest signal is the most useful to the
-            # optimizer, and an unbounded buffer against a backend that stays
-            # down would grow until the process died. Logged at ERROR because
-            # this IS metric loss -- bounded, but never silent.
-            retained = retained[dropped:]
-            logger.error(
-                "Optimizer metric buffer exceeded its %d-entry retention cap "
-                "after repeated submission failures; discarded the %d oldest "
-                "buffered metrics. The optimizer's view of this run is now "
-                "incomplete.",
-                self._max_retained_metrics,
-                dropped,
-            )
-        self._metric_buffer[:] = retained
-        # Retained entries must not re-arm the size-based flush trigger in
-        # submit_metrics: a buffer left at batch_size would make EVERY
-        # subsequent trial synchronously re-POST a growing payload while
-        # holding the lock, turning one unreachable backend into a per-trial
-        # blocking call. New arrivals are counted against batch_size; the
-        # retained backlog rides the periodic flush instead.
-        self._retained_count = len(retained)
-
-        # Return appropriate response
-        if not errors:
-            if len(results) == 1:
-                return results[0]
-            else:
-                return {
-                    "status": "batch_flushed",
-                    "sessions_processed": len(results),
-                    "results": results,
-                }
-        else:
-            return {
-                "status": "partial_success",
-                "successful": len(results),
-                "failed": len(errors),
-                "results": results,
-                "errors": errors,
-                # #1922: so a caller can tell "will be retried on the next
-                # flush" from "gone for good".
-                "retained_for_retry": len(retained),
-                "dropped_over_cap": dropped,
-                "abandoned_permanent": abandoned,
-            }
+        return _flush_response(results, errors, retained, dropped, abandoned)
 
     async def _submit_single(
         self, session_id: str, submission: dict[str, Any]

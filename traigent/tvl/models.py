@@ -833,6 +833,64 @@ def _float_grid(lo: float, hi: float, step: float, label: str) -> list[float]:
     return values
 
 
+def _validated_range_bounds(label: str, rng: Any) -> tuple[Any, Any]:
+    if not (isinstance(rng, list) and len(rng) == 2):
+        raise ValueError(f"{label} range must be [min, max]")
+    lo_raw, hi_raw = rng
+    if any(isinstance(b, bool) or not isinstance(b, (int, float)) for b in rng):
+        raise ValueError(f"{label} range bounds must be numbers")
+    if not all(math.isfinite(b) for b in rng):
+        raise ValueError(f"{label} range bounds must be finite")
+    return lo_raw, hi_raw
+
+
+def _is_valid_resolution(resolution: Any) -> bool:
+    return not (
+        isinstance(resolution, bool)
+        or not isinstance(resolution, (int, float))
+        or not math.isfinite(resolution)
+        or resolution <= 0
+    )
+
+
+def _resolution_grid_values(
+    label: str, lo_raw: Any, hi_raw: Any, resolution: Any
+) -> list[Any]:
+    if not _is_valid_resolution(resolution):
+        raise ValueError(f"{label} resolution must be a positive number")
+    if hi_raw < lo_raw:
+        raise ValueError(f"{label} range min must not exceed max")
+    vals = _float_grid(float(lo_raw), float(hi_raw), float(resolution), label)
+    if (
+        isinstance(lo_raw, int)
+        and isinstance(hi_raw, int)
+        and (isinstance(resolution, int) or float(resolution).is_integer())
+    ):
+        return [int(v) for v in vals]
+    return vals
+
+
+def _integer_range_values(label: str, lo_raw: Any, hi_raw: Any) -> list[Any]:
+    if isinstance(lo_raw, float) or isinstance(hi_raw, float):
+        raise ValueError(
+            f"{label} has a float range but no 'resolution'; add a "
+            "resolution to enumerate grid points"
+        )
+    if hi_raw < lo_raw:
+        raise ValueError(f"{label} range min must not exceed max")
+    if hi_raw - lo_raw + 1 > _MAX_TUPLE_PRODUCT:
+        raise ValueError(f"{label} range enumerates too many grid points")
+    return list(range(int(lo_raw), int(hi_raw) + 1))
+
+
+def _range_component_values(label: str, comp: dict[str, Any]) -> list[Any]:
+    lo_raw, hi_raw = _validated_range_bounds(label, comp["range"])
+    resolution = comp.get("resolution")
+    if resolution is not None:
+        return _resolution_grid_values(label, lo_raw, hi_raw, resolution)
+    return _integer_range_values(label, lo_raw, hi_raw)
+
+
 def _tuple_component_values(name: str, idx: int, comp: Any) -> list[Any]:
     """Resolve one canonical tuple component into its finite domain values."""
     label = f"TVAR '{name}' tuple component {idx}"
@@ -852,43 +910,7 @@ def _tuple_component_values(name: str, idx: int, comp: Any) -> list[Any]:
             "tuple components"
         )
     if "range" in comp:
-        rng = comp["range"]
-        if not (isinstance(rng, list) and len(rng) == 2):
-            raise ValueError(f"{label} range must be [min, max]")
-        lo_raw, hi_raw = rng
-        if any(isinstance(b, bool) or not isinstance(b, (int, float)) for b in rng):
-            raise ValueError(f"{label} range bounds must be numbers")
-        if not all(math.isfinite(b) for b in rng):
-            raise ValueError(f"{label} range bounds must be finite")
-        resolution = comp.get("resolution")
-        if resolution is not None:
-            if (
-                isinstance(resolution, bool)
-                or not isinstance(resolution, (int, float))
-                or not math.isfinite(resolution)
-                or resolution <= 0
-            ):
-                raise ValueError(f"{label} resolution must be a positive number")
-            if hi_raw < lo_raw:
-                raise ValueError(f"{label} range min must not exceed max")
-            vals = _float_grid(float(lo_raw), float(hi_raw), float(resolution), label)
-            if (
-                isinstance(lo_raw, int)
-                and isinstance(hi_raw, int)
-                and (isinstance(resolution, int) or float(resolution).is_integer())
-            ):
-                return [int(v) for v in vals]
-            return vals
-        if isinstance(lo_raw, float) or isinstance(hi_raw, float):
-            raise ValueError(
-                f"{label} has a float range but no 'resolution'; add a "
-                "resolution to enumerate grid points"
-            )
-        if hi_raw < lo_raw:
-            raise ValueError(f"{label} range min must not exceed max")
-        if hi_raw - lo_raw + 1 > _MAX_TUPLE_PRODUCT:
-            raise ValueError(f"{label} range enumerates too many grid points")
-        return list(range(int(lo_raw), int(hi_raw) + 1))
+        return _range_component_values(label, comp)
     raise ValueError(f"{label} must define one of values, set, range, or components")
 
 

@@ -1,0 +1,197 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/best_config_v2_schema.json",
+  "title": "Traigent Best Config v2",
+  "description": "Canonical promoted runtime configuration selected by an optimization run. v2 differs from v1 in one respect only: every EVENT TIMESTAMP is removed from provenance. v1 carried published_at, exported_at and created_at, all minted at the moment of an action, which made an otherwise identical republished config look new and forced the integrity digest to exclude provenance in order to keep republishing idempotent. Removing the volatility at source is strictly better than excluding evidence from the digest: provenance now contains only stable facts, so spec_hash covers the complete spec with no exclusion list. Publication time belongs to server-owned version metadata; export time belongs to the repo-manifest envelope. v1 remains packaged and readable so the migration can read both.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "config_id",
+    "environment",
+    "function_ref",
+    "config"
+  ],
+  "properties": {
+    "schema_version": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "const": "traigent.best_config.v2"
+    },
+    "config_id": {
+      "$ref": "#/definitions/config_id"
+    },
+    "function_ref": {
+      "$ref": "#/definitions/nullable_function_ref"
+    },
+    "environment": {
+      "$ref": "#/definitions/best_config_environment"
+    },
+    "config_refs": {
+      "$ref": "../labels/label_common_schema.json#/definitions/ConfigRefMap",
+      "description": "Content-less promoted configuration as knob_ref -> choice_ref|number (phase 2, additive). Does not participate in config_hash, which stays defined over `config`; the content-less hash definition is a P3 decision."
+    },
+    "config": {
+      "x-content-key-class": "legacy_content",
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV B1-5 (LEAK): config",
+      "description": "The promoted configuration exactly as published. config_hash is computed over this object BEFORE any allowlist filtering or default merging, so the digest is stable regardless of what a particular runtime chooses to apply. Values are customer content and are never normalized.",
+      "type": "object",
+      "maxProperties": 512,
+      "additionalProperties": true
+    },
+    "provenance": {
+      "description": "Stable evidence about where this configuration came from. Event timestamps are deliberately absent - see the schema description. Because nothing here is volatile, provenance is covered by spec_hash rather than excluded from it, and a genuinely new optimization_id correctly produces a new version.",
+      "type": "object",
+      "maxProperties": 128,
+      "properties": {
+        "algorithm": {
+          "$ref": "./optimization_strategy_schema.json#/definitions/SupportedOptimizationStrategyName"
+        },
+        "optimization_id": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV B1-6 (OPEN): optimization_id",
+          "type": "string",
+          "maxLength": 512
+        },
+        "source": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV B1-6 (OPEN): source",
+          "type": "string",
+          "maxLength": 512
+        },
+        "source_optimization_id": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV B1-6 (OPEN): source_optimization_id",
+          "type": "string",
+          "maxLength": 512
+        },
+        "source_session_id": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV B1-6 (OPEN): source_session_id",
+          "type": "string",
+          "maxLength": 512
+        },
+        "traigent_version": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV B1-6 (OPEN): traigent_version",
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "validation": {
+      "x-content-key-class": "legacy_content",
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP B1,B2: not inventoried (free object/array): validation",
+      "description": "Validation evidence, including any guaranteed-selection result. Covered by spec_hash in full: v1 stripped guaranteed-selection claims here because the certificate contained spec_hash, which was circular. v2 rebinds the certificate to config_hash plus identity, so nothing needs stripping.",
+      "type": "object",
+      "maxProperties": 128,
+      "properties": {
+        "winner_stability": {
+          "$ref": "#/definitions/winner_stability"
+        }
+      },
+      "additionalProperties": true
+    },
+    "forward_compat": {
+      "x-content-class": "closed_enum",
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "best_config_environment": {
+      "x-content-class": "closed_enum",
+      "description": "The deployment environment this configuration was published under. Required and non-null: v2 is a new, unconsumed envelope, so there is no existing-row backward-compatibility reason to allow an implicit default. No implicit default; consumers MUST NOT synthesize one when a caller omits it -- an omitted environment is a validation error, not 'default'.",
+      "type": "string",
+      "enum": [
+        "default",
+        "dev",
+        "development",
+        "test",
+        "staging",
+        "prod",
+        "production"
+      ]
+    },
+    "config_id": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV B1-2 (OPEN): config_id",
+      "description": "Stable, caller-chosen identity for the configuration. Deriving it from a function name couples identity to code, so a rename orphans history; callers SHOULD set it explicitly. The single normative definition: every other schema that names a config_id (certificate_subject_schema.json, best_config_manifest_v2_schema.json) $refs this rather than repeating the pattern, so the constraint cannot drift between them.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "not": {
+        "pattern": "[/\\\\\\u0000]"
+      }
+    },
+    "function_ref": {
+      "x-content-class": "code_identifier",
+      "description": "The single normative definition of a function reference. Every other schema that names a function_ref (certificate_subject_schema.json) $refs this rather than repeating the pattern, so the constraint cannot drift between them. Use nullable_function_ref, not this definition directly, wherever the member itself is required-but-nullable (best_config_v2's own function_ref property and certificate_subject's).",
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*(\\.(<locals>|[A-Za-z_][A-Za-z0-9_]*))*$"
+    },
+    "winner_stability": {
+      "description": "Post-selection rerun of the winning configuration on the same evaluation set; measured evidence only — carries no stability guarantee. The single normative definition: best_config_schema.json (v1) $refs this rather than repeating the shape, so the constraint cannot drift between envelopes. All members are optional; a producer records what it measured and nothing more. Pairwise per-example comparisons between replicates are clustered/dependent — every replicate re-runs the same frozen example set, so pairs do not add independent replications. This block must not feed contrast selection or any noise floor; its consumer is the S2 verdict path — absent stability evidence, the affected metric verdict is INDETERMINATE (a single execution may still be reported descriptively). Supported claim wording (verbatim, C3/C5): 'On the frozen example set and recorded execution environment, this selected configuration was run three times. The aggregate scores had mean M, sample SD S, and range A–B; per-example agreement under tolerance T was X/Y.' Required NON-claim, rendered in the same visual block as any use of these numbers (verbatim, C3/C5): 'Three reruns are a descriptive stability check, not a reproducibility rate, confidence interval, guarantee about future runs, or evidence that this configuration is better than alternatives. Pairwise per-example comparisons are dependent and do not add independent replications.'",
+      "type": "object",
+      "properties": {
+        "reps": {
+          "x-content-class": "number",
+          "description": "Number of post-selection rerun replicates actually executed. The count is a cost choice, not an evidence-derived default; no replicate count establishes stability.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "mean": {
+          "x-content-class": "number",
+          "description": "Mean primary-objective score across the rerun replicates.",
+          "type": "number"
+        },
+        "std": {
+          "x-content-class": "number",
+          "description": "Sample standard deviation of the primary-objective score across the rerun replicates. Always shown when >= 2 replicates were measured — never suppressed for small replicate counts (undefined for a single replicate, hence optional); small-sample values are descriptive only.",
+          "type": "number",
+          "minimum": 0
+        },
+        "scores": {
+          "description": "Per-replicate primary-objective scores, in execution order.",
+          "type": "array",
+          "items": {
+            "x-content-class": "number",
+            "type": "number"
+          },
+          "maxItems": 1000
+        },
+        "config_hash": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP: was digest; contract has no digest pattern, so the value is not provably content-free",
+          "description": "Hash of the exact configuration the rerun executed, binding the measurement to the promoted config.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "evaluated_at": {
+          "x-content-class": "timestamp",
+          "description": "When the rerun completed.",
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "nullable_function_ref": {
+      "description": "function_ref, required as a member but explicitly nullable: a config need not be bound to a function. null is a deliberate assertion that there is no function binding, distinct from the field being absent, so a config or certificate subject can never be silently under-specified about its function binding. The single normative definition of the required-but-nullable shape: best_config_v2_schema.json's own function_ref property and certificate_subject_schema.json's function_ref property both $ref this exact definition, so 'a certificate can bind to a function_ref value the config envelope itself would reject' is syntactically impossible rather than merely policed by convention.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/function_ref"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

@@ -95,40 +95,30 @@ def compile_effectuation(
     return application
 
 
-def _iter_declared_knobs(config: Any) -> list[Any]:
-    if config is None:
-        return []
+_KNOB_SECTION_KEYS = ("knobs", "tvars", "recommendations", "configuration_space")
 
-    if isinstance(config, Mapping):
-        if _looks_like_single_knob(config):
-            return [dict(config)]
 
-        section_knobs: list[Any] = []
-        for section_key in (
-            "knobs",
-            "tvars",
-            "recommendations",
-            "configuration_space",
-        ):
-            if section_key in config and config[section_key] is not None:
-                section_knobs.extend(_iter_declared_knobs(config[section_key]))
-        if section_knobs:
-            return section_knobs
+def _iter_mapping_knobs(config: Mapping[str, Any]) -> list[Any]:
+    if _looks_like_single_knob(config):
+        return [dict(config)]
 
-        return [
-            knob
-            for name, value in config.items()
-            if (knob := _knob_from_flat_entry(name, value)) is not None
-        ]
+    section_knobs: list[Any] = []
+    for section_key in _KNOB_SECTION_KEYS:
+        if section_key in config and config[section_key] is not None:
+            section_knobs.extend(_iter_declared_knobs(config[section_key]))
+    if section_knobs:
+        return section_knobs
 
-    if isinstance(config, Sequence) and not isinstance(config, (str, bytes)):
-        knobs: list[Any] = []
-        for item in config:
-            knobs.extend(_iter_declared_knobs(item))
-        return knobs
+    return [
+        knob
+        for name, value in config.items()
+        if (knob := _knob_from_flat_entry(name, value)) is not None
+    ]
 
+
+def _iter_object_knobs(config: Any) -> list[Any]:
     object_knobs: list[Any] = []
-    for attr_name in ("knobs", "tvars", "recommendations", "configuration_space"):
+    for attr_name in _KNOB_SECTION_KEYS:
         if hasattr(config, attr_name):
             object_knobs.extend(_iter_declared_knobs(getattr(config, attr_name)))
     if object_knobs:
@@ -138,6 +128,22 @@ def _iter_declared_knobs(config: Any) -> list[Any]:
         return [config]
 
     return []
+
+
+def _iter_declared_knobs(config: Any) -> list[Any]:
+    if config is None:
+        return []
+
+    if isinstance(config, Mapping):
+        return _iter_mapping_knobs(config)
+
+    if isinstance(config, Sequence) and not isinstance(config, (str, bytes)):
+        knobs: list[Any] = []
+        for item in config:
+            knobs.extend(_iter_declared_knobs(item))
+        return knobs
+
+    return _iter_object_knobs(config)
 
 
 def _looks_like_single_knob(value: Mapping[str, Any]) -> bool:

@@ -2586,3 +2586,57 @@ class TestContentLessPrincipal:
             content_less_session.principal_for_headers(None, {"X-API-Key": _KEY_A})
             is None
         )
+
+
+class TestStrictModeMissingEndpointFailsClosed:
+    """Strict self-hosted mode: run-status/measures updates raise, not return False."""
+
+    def setup_method(self):
+        from traigent.config.backend_config import EndpointNotConfiguredError
+
+        self._exc = EndpointNotConfiguredError
+        mock_client = Mock()
+        mock_client.auth_manager = Mock()
+        mock_client.auth_manager.augment_headers = AsyncMock(
+            return_value={"Content-Type": _JSON_CONTENT_TYPE}
+        )
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.api_base_url = None
+        self.ops = ApiOperations(mock_client)
+
+    def _patches(self):
+        exc = self._exc
+
+        def _no_endpoint():
+            raise exc("no endpoint configured")
+
+        session_cm = AsyncMock(
+            __aenter__=AsyncMock(return_value=AsyncMock()), __aexit__=AsyncMock()
+        )
+        return (
+            patch("traigent.cloud.api_operations.aiohttp"),
+            patch(
+                "traigent.cloud.api_operations.gate_session",
+                Mock(return_value=session_cm),
+            ),
+            patch(
+                "traigent.cloud.api_operations.BackendConfig.get_backend_api_url",
+                staticmethod(_no_endpoint),
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_config_run_status_raises(self):
+        p1, p2, p3 = self._patches()
+        with p1, p2, p3:
+            with pytest.raises(self._exc):
+                await self.ops.update_config_run_status("config_123", "COMPLETED")
+
+    @pytest.mark.asyncio
+    async def test_update_config_run_measures_raises(self):
+        p1, p2, p3 = self._patches()
+        with p1, p2, p3:
+            with pytest.raises(self._exc):
+                await self.ops.update_config_run_measures(
+                    "config_123", {"accuracy": 0.9}
+                )

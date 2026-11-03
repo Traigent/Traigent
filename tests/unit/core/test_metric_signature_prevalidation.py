@@ -208,3 +208,189 @@ def test_kwargs_scorer_passes() -> None:
 def test_no_metric_functions_is_a_noop() -> None:
     """No metric_functions/scoring_function configured -> nothing to validate."""
     validate_metric_function_bindability({}, objectives=["accuracy"])
+
+
+def test_extra_required_positional_param_raises_for_objective() -> None:
+    """``(output, expected, threshold)`` must not silently get the usage dict."""
+
+    def accuracy(output: str, expected: str, threshold: float) -> float:
+        raise AssertionError("must never be invoked by this test")
+
+    with pytest.raises(ValidationError, match="positional parameter 3") as excinfo:
+        validate_metric_function_bindability(
+            {"cust_metric_zq": accuracy}, ["cust_metric_zq"]
+        )
+    # Customer-chosen metric and parameter names are content: never echoed.
+    assert "cust_metric_zq" not in str(excinfo.value)
+    assert "threshold" not in str(excinfo.value)
+
+
+def test_extra_required_positional_param_warns_for_non_objective(caplog) -> None:
+    def helper(output: str, expected: str, threshold: float) -> float:
+        raise AssertionError("must never be invoked by this test")
+
+    with caplog.at_level(logging.WARNING):
+        validate_metric_function_bindability({"helper": helper}, ["accuracy"])
+    assert "positional parameter 3" in caplog.text
+    assert "threshold" not in caplog.text
+    assert "helper" not in caplog.text
+
+
+def test_extra_param_with_default_and_all_positional_names_still_bind() -> None:
+    def with_default(output: str, expected: str, threshold: float = 0.5) -> float:
+        return 1.0
+
+    def all_positional(a: object, b: object, c: object) -> float:
+        return 1.0
+
+    validate_metric_function_bindability(
+        {"accuracy": with_default, "other": all_positional}, ["accuracy", "other"]
+    )
+
+
+def test_alias_named_third_param_with_custom_second_is_accepted() -> None:
+    """Runtime binds llm_metrics by position; this must not be rejected."""
+
+    def scorer(output: str, gold: str, llm_metrics: dict) -> float:
+        return 1.0
+
+    def scorer_kw(output: str, gold: str, llm_metrics: dict, **kwargs: object) -> float:
+        return 1.0
+
+    validate_metric_function_bindability(
+        {"accuracy": scorer, "other": scorer_kw}, ["accuracy", "other"]
+    )
+
+
+def test_stray_third_param_with_var_kwargs_is_flagged() -> None:
+    def scorer(output: str, gold: str, threshold: float, **kwargs: object) -> float:
+        return 1.0
+
+    with pytest.raises(ValidationError, match="positional parameter 3"):
+        validate_metric_function_bindability({"accuracy": scorer}, ["accuracy"])
+
+
+def test_positional_only_defaulted_usage_param_is_accepted() -> None:
+    def with_default(output, expected, usage=None, /) -> float:  # noqa: ANN001
+        return 1.0
+
+    validate_metric_function_bindability({"accuracy": with_default}, ["accuracy"])
+
+
+def test_positional_only_required_usage_param_is_accepted_or_flagged_consistently() -> (
+    None
+):
+    """Required positional-only third param binds positional_3; with a
+    recognized name present it is flagged because it is not an llm alias."""
+
+    def required(output, expected, usage, /) -> float:  # noqa: ANN001
+        return 1.0
+
+    # Names output/expected are recognized, `usage` is not an alias: flagged.
+    with pytest.raises(ValidationError, match="positional parameter 3"):
+        validate_metric_function_bindability({"accuracy": required}, ["accuracy"])
+
+
+def test_collector_named_like_recognized_param_does_not_count() -> None:
+    """A **metadata / *config collector must not make (a, b, c) 'mixed'."""
+
+    def kw_collector(a, b, c, **metadata) -> float:  # noqa: ANN001
+        return float(a == b and c["total_tokens"] == 2)
+
+    def star_collector(a, b, c, *config) -> float:  # noqa: ANN001
+        return 1.0
+
+    validate_metric_function_bindability(
+        {"accuracy": kw_collector, "other": star_collector}, ["accuracy", "other"]
+    )
+
+
+def _s_stray(output, expected, threshold):  # noqa: ANN001
+    return 1.0
+
+
+def _s_alias3(output, gold, llm_metrics):  # noqa: ANN001
+    return 1.0
+
+
+def _s_alias3_kw(output, gold, llm_metrics, **kw):  # noqa: ANN001
+    return 1.0
+
+
+def _s_posonly_default(output, expected, usage=None, /):  # noqa: ANN001
+    return 1.0
+
+
+def _s_posonly_required(output, expected, usage, /):  # noqa: ANN001
+    return 1.0
+
+
+def _s_all_positional(a, b, c):  # noqa: ANN001
+    return 1.0
+
+
+def _s_collector_kw(a, b, c, **metadata):  # noqa: ANN001
+    return 1.0
+
+
+def _s_collector_star(a, b, c, *config):  # noqa: ANN001
+    return 1.0
+
+
+def _s_kwonly_optional(a, b, c, *, config=None):  # noqa: ANN001
+    return 1.0
+
+
+def _s_kwargs_only(**kwargs):  # noqa: ANN003
+    return 1.0
+
+
+def _s_recognized_names(output, expected):  # noqa: ANN001
+    return 1.0
+
+
+def _s_recognized_with_metrics(output, expected, metrics):  # noqa: ANN001
+    return 1.0
+
+
+def _s_stray_with_kwargs(output, expected, threshold, **kw):  # noqa: ANN001
+    return 1.0
+
+
+def _s_stray_default(output, expected, threshold=0.5):  # noqa: ANN001
+    return 1.0
+
+
+def _s_stray_with_optional_recognized(output, expected, threshold, *, config=None):  # noqa: ANN001
+    return 1.0
+
+
+@pytest.mark.parametrize(
+    ("scorer", "rejected"),
+    [
+        (_s_stray, True),
+        (_s_stray_with_kwargs, True),
+        (_s_posonly_required, True),
+        (_s_stray_with_optional_recognized, True),
+        (_s_alias3, False),
+        (_s_alias3_kw, False),
+        (_s_posonly_default, False),
+        (_s_all_positional, False),
+        (_s_collector_kw, False),
+        (_s_collector_star, False),
+        (_s_kwonly_optional, False),
+        (_s_kwargs_only, False),
+        (_s_recognized_names, False),
+        (_s_recognized_with_metrics, False),
+        (_s_stray_default, False),
+    ],
+)
+def test_prevalidation_rejects_iff_usage_dict_feeds_required_stray(
+    scorer, rejected
+) -> None:
+    """Rejection tracks the real runtime binder, not a re-derived heuristic."""
+    if rejected:
+        with pytest.raises(ValidationError, match="positional parameter"):
+            validate_metric_function_bindability({"accuracy": scorer}, ["accuracy"])
+    else:
+        validate_metric_function_bindability({"accuracy": scorer}, ["accuracy"])

@@ -6,9 +6,9 @@ This package intentionally uses lazy exports so submodule imports such as
 
 from __future__ import annotations
 
+import warnings
 from importlib import import_module
 from typing import Any
-import warnings
 
 __all__ = [
     "optimize",
@@ -48,49 +48,54 @@ __all__ = [
     "ExternalServiceEvaluator",
 ]
 
+_TRAIGENT_API_DECORATORS = "traigent.api.decorators"
+_TRAIGENT_API_FUNCTIONS = "traigent.api.functions"
+_TRAIGENT_API_TYPES = "traigent.api.types"
+_TRAIGENT_API_SAFETY = "traigent.api.safety"
+
 _EXPORT_MAP = {
-    "optimize": ("traigent.api.decorators", "optimize"),
-    "configure": ("traigent.api.functions", "configure"),
-    "configure_for_budget": ("traigent.api.functions", "configure_for_budget"),
-    "override_config": ("traigent.api.functions", "override_config"),
-    "set_strategy": ("traigent.api.functions", "set_strategy"),
-    "get_available_strategies": ("traigent.api.functions", "get_available_strategies"),
-    "get_version_info": ("traigent.api.functions", "get_version_info"),
-    "OptimizationResult": ("traigent.api.types", "OptimizationResult"),
-    "PresetSelection": ("traigent.api.types", "PresetSelection"),
-    "TrialError": ("traigent.api.types", "TrialError"),
-    "TrialResult": ("traigent.api.types", "TrialResult"),
-    "serialize_trials": ("traigent.api.types", "serialize_trials"),
-    "SensitivityAnalysis": ("traigent.api.types", "SensitivityAnalysis"),
-    "ConfigurationComparison": ("traigent.api.types", "ConfigurationComparison"),
-    "ParetoFront": ("traigent.api.types", "ParetoFront"),
-    "OptimizationStatus": ("traigent.api.types", "OptimizationStatus"),
-    "StopReason": ("traigent.api.types", "StopReason"),
-    "StrategyConfig": ("traigent.api.types", "StrategyConfig"),
-    "faithfulness": ("traigent.api.safety", "faithfulness"),
-    "answer_relevancy": ("traigent.api.safety", "answer_relevancy"),
-    "context_precision": ("traigent.api.safety", "context_precision"),
-    "context_recall": ("traigent.api.safety", "context_recall"),
-    "answer_similarity": ("traigent.api.safety", "answer_similarity"),
-    "hallucination_rate": ("traigent.api.safety", "hallucination_rate"),
-    "toxicity_score": ("traigent.api.safety", "toxicity_score"),
-    "bias_score": ("traigent.api.safety", "bias_score"),
-    "safety_score": ("traigent.api.safety", "safety_score"),
-    "custom_safety": ("traigent.api.safety", "custom_safety"),
-    "SafetyConstraint": ("traigent.api.safety", "SafetyConstraint"),
-    "CompoundSafetyConstraint": ("traigent.api.safety", "CompoundSafetyConstraint"),
-    "SafetyThreshold": ("traigent.api.safety", "SafetyThreshold"),
-    "SafetyValidator": ("traigent.api.safety", "SafetyValidator"),
+    "optimize": (_TRAIGENT_API_DECORATORS, "optimize"),
+    "configure": (_TRAIGENT_API_FUNCTIONS, "configure"),
+    "configure_for_budget": (_TRAIGENT_API_FUNCTIONS, "configure_for_budget"),
+    "override_config": (_TRAIGENT_API_FUNCTIONS, "override_config"),
+    "set_strategy": (_TRAIGENT_API_FUNCTIONS, "set_strategy"),
+    "get_available_strategies": (_TRAIGENT_API_FUNCTIONS, "get_available_strategies"),
+    "get_version_info": (_TRAIGENT_API_FUNCTIONS, "get_version_info"),
+    "OptimizationResult": (_TRAIGENT_API_TYPES, "OptimizationResult"),
+    "PresetSelection": (_TRAIGENT_API_TYPES, "PresetSelection"),
+    "TrialError": (_TRAIGENT_API_TYPES, "TrialError"),
+    "TrialResult": (_TRAIGENT_API_TYPES, "TrialResult"),
+    "serialize_trials": (_TRAIGENT_API_TYPES, "serialize_trials"),
+    "SensitivityAnalysis": (_TRAIGENT_API_TYPES, "SensitivityAnalysis"),
+    "ConfigurationComparison": (_TRAIGENT_API_TYPES, "ConfigurationComparison"),
+    "ParetoFront": (_TRAIGENT_API_TYPES, "ParetoFront"),
+    "OptimizationStatus": (_TRAIGENT_API_TYPES, "OptimizationStatus"),
+    "StopReason": (_TRAIGENT_API_TYPES, "StopReason"),
+    "StrategyConfig": (_TRAIGENT_API_TYPES, "StrategyConfig"),
+    "faithfulness": (_TRAIGENT_API_SAFETY, "faithfulness"),
+    "answer_relevancy": (_TRAIGENT_API_SAFETY, "answer_relevancy"),
+    "context_precision": (_TRAIGENT_API_SAFETY, "context_precision"),
+    "context_recall": (_TRAIGENT_API_SAFETY, "context_recall"),
+    "answer_similarity": (_TRAIGENT_API_SAFETY, "answer_similarity"),
+    "hallucination_rate": (_TRAIGENT_API_SAFETY, "hallucination_rate"),
+    "toxicity_score": (_TRAIGENT_API_SAFETY, "toxicity_score"),
+    "bias_score": (_TRAIGENT_API_SAFETY, "bias_score"),
+    "safety_score": (_TRAIGENT_API_SAFETY, "safety_score"),
+    "custom_safety": (_TRAIGENT_API_SAFETY, "custom_safety"),
+    "SafetyConstraint": (_TRAIGENT_API_SAFETY, "SafetyConstraint"),
+    "CompoundSafetyConstraint": (_TRAIGENT_API_SAFETY, "CompoundSafetyConstraint"),
+    "SafetyThreshold": (_TRAIGENT_API_SAFETY, "SafetyThreshold"),
+    "SafetyValidator": (_TRAIGENT_API_SAFETY, "SafetyValidator"),
     "get_available_safety_presets": (
-        "traigent.api.safety",
+        _TRAIGENT_API_SAFETY,
         "get_available_safety_presets",
     ),
     "TextDocument": ("traigent.api.parameter_ranges", "TextDocument"),
     "ExternalServiceEvaluator": (
-        "traigent.api.decorators",
+        _TRAIGENT_API_DECORATORS,
         "ExternalServiceEvaluator",
     ),
-    "HybridAPIOptions": ("traigent.api.decorators", "HybridAPIOptions"),
+    "HybridAPIOptions": (_TRAIGENT_API_DECORATORS, "HybridAPIOptions"),
 }
 
 _DEPRECATED_EXPORTS = {"HybridAPIOptions"}

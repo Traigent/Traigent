@@ -284,6 +284,28 @@ def session_task_type_to_wire(session_request: Any) -> dict[str, str]:
     return {"task_type": cleaned} if cleaned else {}
 
 
+def session_g1_required_to_wire(session_request: Any) -> dict[str, Any]:
+    """The closed G1 intent flag for the run-registration request.
+
+    Exactly ``{"snapshot_g1_required": True}`` when the request declares G1
+    intent, else ``{}`` (the key is absent, never ``False``). A boolean only:
+    nothing from the snapshot, the manifest or the client evidence crosses.
+    Without it the Backend issues the plain certificate at run completion and a
+    later ``certify bind`` can never upgrade it. Shared by both session-create
+    serializers so neither can drop the flag.
+
+    ``snapshot_g1_deadline_days`` (a plain integer 1-30) rides along only with
+    the flag and only when set; omitted otherwise (the Backend default applies).
+    """
+    if getattr(session_request, "snapshot_g1_required", False) is True:
+        wire: dict[str, Any] = {"snapshot_g1_required": True}
+        days = getattr(session_request, "snapshot_g1_deadline_days", None)
+        if isinstance(days, int) and not isinstance(days, bool) and 1 <= days <= 30:
+            wire["snapshot_g1_deadline_days"] = days
+        return wire
+    return {}
+
+
 DATASET_ID_MAX_LENGTH = 255
 
 # Placeholder values other SDK code paths fall back to when the caller never
@@ -579,24 +601,8 @@ def session_identity_v2_to_wire(session_request: Any) -> dict[str, Any]:
     )
     dataset = session_dataset_identity_to_wire(session_request)
     dataset_id = dataset.get("dataset_id")
-    artifact_fingerprints = (
-        artifact_fingerprints_to_wire(
-            getattr(session_request, "artifact_fingerprints", None)
-        )
-        or {}
-    )
-    artifact_versions = {
-        key: _artifact_version_from_fp1(artifact_fingerprints.get(key))
-        for key in _IDENTITY_ARTIFACT_KEYS
-    }
-    evaluator_id = getattr(session_request, "evaluator_id", None)
-    if not isinstance(evaluator_id, str) or not evaluator_id.strip():
-        evaluator_id = getattr(session_request, "evaluator_definition_id", None)
-    evaluator_id = (
-        evaluator_id.strip()
-        if isinstance(evaluator_id, str) and evaluator_id.strip()
-        else None
-    )
+    artifact_versions = _artifact_versions_to_wire(session_request)
+    evaluator_id = _declared_evaluator_id(session_request)
     evaluator_id_source = getattr(session_request, "evaluator_id_source", None)
     if evaluator_id_source is None:
         evaluator_id_source = "registered" if evaluator_id is not None else "unknown"
@@ -613,19 +619,56 @@ def session_identity_v2_to_wire(session_request: Any) -> dict[str, Any]:
     if evaluator_id is not None:
         identity["evaluator_id"] = evaluator_id
     else:
-        # Code evaluator identity (TraigentSchema evaluator_code_digest): typed
-        # v2 shape only, and only INSTEAD of every evaluator id alias -- an id
-        # could carry a customer label next to a code identity. evaluator_id_source
-        # is then "unknown" (set above), which the schema allows.
-        code_digest = getattr(session_request, "evaluator_code_digest", None)
-        if (
-            isinstance(code_digest, str)
-            and EVALUATOR_CODE_DIGEST_RE.fullmatch(code_digest)
-            and evaluator_id_source == "unknown"
-            and not getattr(session_request, "evaluator_ref", None)
-        ):
-            identity["evaluator_code_digest"] = code_digest
+        _add_evaluator_code_digest(identity, session_request, evaluator_id_source)
     return identity
+
+
+def _artifact_versions_to_wire(
+    session_request: Any,
+) -> dict[str, dict[str, str | None]]:
+    """The four identity-v2 artifact slots derived from the sanitized fingerprints."""
+    artifact_fingerprints = (
+        artifact_fingerprints_to_wire(
+            getattr(session_request, "artifact_fingerprints", None)
+        )
+        or {}
+    )
+    return {
+        key: _artifact_version_from_fp1(artifact_fingerprints.get(key))
+        for key in _IDENTITY_ARTIFACT_KEYS
+    }
+
+
+def _declared_evaluator_id(session_request: Any) -> str | None:
+    """The stripped evaluator id, falling back to the definition-id spelling."""
+    evaluator_id = getattr(session_request, "evaluator_id", None)
+    if not isinstance(evaluator_id, str) or not evaluator_id.strip():
+        evaluator_id = getattr(session_request, "evaluator_definition_id", None)
+    return (
+        evaluator_id.strip()
+        if isinstance(evaluator_id, str) and evaluator_id.strip()
+        else None
+    )
+
+
+def _add_evaluator_code_digest(
+    identity: dict[str, Any], session_request: Any, evaluator_id_source: Any
+) -> None:
+    """Add the code digest to ``identity`` when no evaluator id alias exists.
+
+    Code evaluator identity (TraigentSchema evaluator_code_digest): typed v2
+    shape only, and only INSTEAD of every evaluator id alias -- an id could
+    carry a customer label next to a code identity. ``evaluator_id_source`` is
+    then "unknown" (set by the caller), which the schema allows.
+    """
+    code_digest = getattr(session_request, "evaluator_code_digest", None)
+    if (
+        isinstance(code_digest, str)
+        and EVALUATOR_CODE_DIGEST_RE.fullmatch(code_digest)
+        and evaluator_id_source == "unknown"
+        and not getattr(session_request, "evaluator_ref", None)
+    ):
+        identity["evaluator_code_digest"] = code_digest
 
 
 @dataclass
@@ -701,9 +744,31 @@ class SessionCreationRequest:
     # ``sha256:<64 hex>``); see ``effective_evaluator_code_identity``. Identifies,
     # never validates. Typed/v2 shape only; content-less drops it.
     evaluator_code_digest: str | None = None
+    #: G1 intent (``ExecutionOptions.snapshot_store``, online run, readiness
+    #: available). Serialized by ``session_g1_required_to_wire`` as the closed
+    #: boolean ``snapshot_g1_required``; never anything else about the snapshot.
+    snapshot_g1_required: bool = False
+    #: Optional co-sign deadline (days, 1-30) sent only with the flag above.
+    snapshot_g1_deadline_days: int | None = None
 
     def __post_init__(self) -> None:
         """Handle default values and alternative parameter names."""
+        SessionCreationRequest._normalize_evaluator_fields(self)
+        self.dataset_id = normalize_declared_dataset_id(self.dataset_id)
+        if self.function_name is None:
+            self.function_name = "test_function"
+        if self.configuration_space is None:
+            self.configuration_space: dict[str, Any] = {}
+        if self.objectives is None:
+            self.objectives: list[Any] = []
+        if self.dataset_metadata is None:
+            self.dataset_metadata: dict[str, Any] = {"size": 100, "type": "test"}
+        self.smart_pruning = normalize_smart_pruning_options(self.smart_pruning)
+        # Ensure max_trials is never None
+        if self.max_trials is None:
+            self.max_trials = 10
+
+    def _normalize_evaluator_ids(self) -> None:
         normalized_evaluator_ids: dict[str, str | None] = {}
         for field_name, value in {
             "evaluator_id": self.evaluator_id,
@@ -728,6 +793,9 @@ class SessionCreationRequest:
         self.evaluator_definition_id = normalized_evaluator_ids[
             "evaluator_definition_id"
         ]
+
+    def _normalize_evaluator_fields(self) -> None:
+        SessionCreationRequest._normalize_evaluator_ids(self)
         if self.evaluator_id_source is not None and self.evaluator_id_source not in {
             "registered",
             "declared",
@@ -754,19 +822,6 @@ class SessionCreationRequest:
             and EVALUATOR_CODE_DIGEST_RE.fullmatch(self.evaluator_code_digest)
         ):
             raise ValueError("evaluator_code_digest must be sha256:<64 lowercase hex>")
-        self.dataset_id = normalize_declared_dataset_id(self.dataset_id)
-        if self.function_name is None:
-            self.function_name = "test_function"
-        if self.configuration_space is None:
-            self.configuration_space: dict[str, Any] = {}
-        if self.objectives is None:
-            self.objectives: list[Any] = []
-        if self.dataset_metadata is None:
-            self.dataset_metadata: dict[str, Any] = {"size": 100, "type": "test"}
-        self.smart_pruning = normalize_smart_pruning_options(self.smart_pruning)
-        # Ensure max_trials is never None
-        if self.max_trials is None:
-            self.max_trials = 10
 
 
 @dataclass

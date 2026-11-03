@@ -2041,6 +2041,16 @@ class TestCallbackManagerTimeoutAndIsolation:
                 manager.on_trial_start(0, {"model": "gpt-4"})
         assert manager.callback_failures == []
 
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_callback_interrupt_without_timeout_propagates(
+        self, mock_callback: MagicMock, interrupt: type[BaseException]
+    ) -> None:
+        mock_callback.on_trial_start.side_effect = interrupt()
+        manager = CallbackManager(callbacks=[mock_callback], timeout=0)
+        with pytest.raises(interrupt):
+            manager.on_trial_start(0, {"model": "gpt-4"})
+        assert manager.callback_failures == []
+
     def test_baseexception_after_timeout_is_recorded(
         self, mock_callback: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:

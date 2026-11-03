@@ -74,6 +74,19 @@ def _default_score(result: Any) -> float | None:
     return None
 
 
+def _validate_loop_inputs(
+    is_rewrite: bool, prompt_param: str | None, seed_resolver: SeedResolver | None
+) -> None:
+    if is_rewrite and not prompt_param:
+        raise ValueError("prompt_param is required for prompt_rewrite guided loops")
+    if not is_rewrite and seed_resolver is None:
+        raise ValueError("seed_resolver is required for benchmark_guide guided loops")
+
+
+def _is_better_score(score: float | None, best_score: float | None) -> bool:
+    return best_score is None or (score is not None and score > best_score)
+
+
 class GuidanceLoop:
     """Orchestrates guided rewrite/synthesis rounds around an optimize callable."""
 
@@ -162,12 +175,7 @@ class GuidanceLoop:
         weak_examples: Sequence[WeakExample] = (),
     ) -> GuidanceLoopResult:
         is_rewrite = plan_kind is PlanKind.PROMPT_REWRITE
-        if is_rewrite and not prompt_param:
-            raise ValueError("prompt_param is required for prompt_rewrite guided loops")
-        if not is_rewrite and seed_resolver is None:
-            raise ValueError(
-                "seed_resolver is required for benchmark_guide guided loops"
-            )
+        _validate_loop_inputs(is_rewrite, prompt_param, seed_resolver)
 
         rounds_n = (
             self._prompt_options.rounds if is_rewrite else self._growth_options.rounds
@@ -217,7 +225,7 @@ class GuidanceLoop:
                 GuidanceRoundResult(r, result, added_candidates, added_examples)
             )
             score = self._score_of(result)
-            if best_score is None or (score is not None and score > best_score):
+            if _is_better_score(score, best_score):
                 best, best_score = result, score
 
         return GuidanceLoopResult(

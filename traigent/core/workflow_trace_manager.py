@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import threading
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 if TYPE_CHECKING:
@@ -41,6 +42,119 @@ def _is_trace_ingestion_auth_rejection(error: str | None) -> bool:
         "forbidden",
     )
     return any(marker in normalized for marker in auth_markers)
+
+
+@dataclass
+class _IngestTotals:
+    """Running span counts across the per-config-run ingestion requests."""
+
+    sent: int = 0
+    ingested: int = 0
+    unconfirmed: int = 0
+    duplicates: int = 0
+    shortfall: int = 0
+    graph_id: Any = None
+
+
+def _record_ingest_response(
+    totals: _IngestTotals, response: Any, spans: list, config_run_id: str
+) -> None:
+    """Fold one ingestion response into ``totals`` (logging failures)."""
+    if response.success:
+        totals.sent += len(spans)
+        # getattr: a custom tracker may return a response object
+        # without these fields or with non-count values; treat
+        # that as "count not reported" rather than guessing.
+        reported = getattr(response, "spans_ingested", None)
+        if getattr(response, "spans_ingested_reported", False) is True and _is_count(
+            reported
+        ):
+            if reported > len(spans):
+                logger.warning(
+                    "Backend reported %d workflow spans ingested for "
+                    "config_run %s but only %d were sent; counting %d.",
+                    reported,
+                    config_run_id,
+                    len(spans),
+                    len(spans),
+                )
+            # Clamp so an over-report in one group cannot hide a
+            # shortfall in another.
+            ingested = min(reported, len(spans))
+            shortfall = len(spans) - ingested
+            duplicates = getattr(response, "skipped_duplicates", 0)
+            totals.ingested += ingested
+            totals.shortfall += shortfall
+            totals.duplicates += min(
+                duplicates if _is_count(duplicates) else 0, shortfall
+            )
+        else:
+            totals.unconfirmed += len(spans)
+        if response.graph_id:
+            totals.graph_id = response.graph_id
+    # Auth rejections are expected in local/edge mode — log at DEBUG only
+    elif _is_trace_ingestion_auth_rejection(response.error):
+        logger.debug(
+            "Trace ingestion auth rejected for config_run %s",
+            config_run_id,
+        )
+    else:
+        logger.warning(
+            "Failed to submit spans for config_run %s: %s",
+            config_run_id,
+            response.error,
+        )
+
+
+def _log_submission_summary(totals: _IngestTotals, trace_id: str) -> None:
+    graph_msg = f", graph_id={totals.graph_id}" if totals.graph_id else ""
+    unconfirmed_msg = (
+        f"; {totals.unconfirmed} more submitted with the ingested count unconfirmed"
+        if totals.unconfirmed
+        else ""
+    )
+    total_dropped = totals.shortfall - totals.duplicates
+    if total_dropped > 0:
+        logger.warning(
+            "Backend ingested %d of %d workflow spans for trace %s...%s "
+            "(%d skipped as duplicate span ids, %d not ingested for an "
+            "unreported reason%s); the workflow traces view will be "
+            "missing those spans.",
+            totals.ingested,
+            totals.sent - totals.unconfirmed,
+            trace_id[:8],
+            graph_msg,
+            totals.duplicates,
+            total_dropped,
+            unconfirmed_msg,
+        )
+    elif totals.shortfall > 0:
+        logger.warning(
+            "Backend ingested %d of %d workflow spans for trace %s...%s; "
+            "%d skipped as duplicate span ids (already stored, or "
+            "repeated within the batch)%s.",
+            totals.ingested,
+            totals.sent - totals.unconfirmed,
+            trace_id[:8],
+            graph_msg,
+            totals.duplicates,
+            unconfirmed_msg,
+        )
+    elif totals.unconfirmed > 0:
+        logger.info(
+            "Submitted %d workflow spans for trace %s...%s (backend did "
+            "not report how many were ingested for %d of them; count "
+            "unconfirmed)",
+            totals.sent,
+            trace_id[:8],
+            graph_msg,
+            totals.unconfirmed,
+        )
+    elif totals.sent > 0:
+        logger.info(
+            f"Submitted {totals.sent} workflow spans "
+            f"for trace {trace_id[:8]}...{graph_msg}"
+        )
 
 
 class WorkflowTraceManager:
@@ -218,50 +332,13 @@ class WorkflowTraceManager:
             collected_spans = list(self._collected_spans)
 
         if not collected_spans:
-            if not trials_executed:
-                # #2060: a run that never executed a trial (e.g. a shared
-                # ExecutionBudget exhausted pre-batch) legitimately has zero
-                # spans — nothing about span wiring failed, so this is not
-                # the wiring-fault signal below. Keep it at DEBUG.
-                logger.debug(
-                    "Workflow tracing is enabled but the run executed zero "
-                    "trials; no workflow spans were collected. Nothing will "
-                    "appear in the workflow traces view."
-                )
-                return
-
-            # Run-level invariant: tracing was configured (a tracker exists),
-            # trials actually executed, yet the whole run produced zero
-            # spans. That is almost always a wiring fault — a sync agent
-            # function losing workflow_trace_context across the thread
-            # boundary, or add_agent_span never being reached — not a
-            # legitimately empty run. DEBUG hides it until someone reads the
-            # backend and finds nothing.
-            logger.warning(
-                "Workflow tracing is enabled but no workflow spans were collected "
-                "for this run; nothing will appear in the workflow traces view. "
-                "Check that add_agent_span() is reached and that its SpanResult "
-                "receipt reports accepted=True."
-            )
+            self._log_no_spans_collected(trials_executed)
             return
 
         # Skip trace submission when running in offline mode or with mock sessions
         # Mock IDs (mock_session_, mock_exp_, mock_run_, mock-session-) don't exist
         # in the backend database, so trace ingestion would fail with 404
-        if is_backend_offline():
-            logger.debug("Skipping workflow trace submission: backend is offline")
-            with self._lock:
-                self._collected_spans = []
-            return
-
-        # Check if session_id is a mock ID (created when backend was unavailable)
-        if session_id and (
-            session_id.startswith("mock_session_")
-            or session_id.startswith("mock-session-")
-        ):
-            logger.debug(
-                f"Skipping workflow trace submission: mock session '{session_id}'"
-            )
+        if self._should_skip_submission(session_id):
             with self._lock:
                 self._collected_spans = []
             return
@@ -278,12 +355,7 @@ class WorkflowTraceManager:
 
             # Submit each group separately. Count only what the backend
             # confirms it ingested; never assume len(spans) landed (#2578).
-            total_sent = 0
-            total_ingested = 0
-            total_unconfirmed = 0
-            total_duplicates = 0
-            total_shortfall = 0
-            graph_id = None
+            totals = _IngestTotals()
             for idx, (config_run_id, spans) in enumerate(spans_by_config_run.items()):
                 # Only include graph in first request
                 include_graph = graph if idx == 0 else None
@@ -294,101 +366,9 @@ class WorkflowTraceManager:
                     trace_id=trace_id,
                     configuration_run_id=config_run_id,
                 )
+                _record_ingest_response(totals, response, spans, config_run_id)
 
-                if response.success:
-                    total_sent += len(spans)
-                    # getattr: a custom tracker may return a response object
-                    # without these fields or with non-count values; treat
-                    # that as "count not reported" rather than guessing.
-                    reported = getattr(response, "spans_ingested", None)
-                    if getattr(
-                        response, "spans_ingested_reported", False
-                    ) is True and _is_count(reported):
-                        if reported > len(spans):
-                            logger.warning(
-                                "Backend reported %d workflow spans ingested for "
-                                "config_run %s but only %d were sent; counting %d.",
-                                reported,
-                                config_run_id,
-                                len(spans),
-                                len(spans),
-                            )
-                        # Clamp so an over-report in one group cannot hide a
-                        # shortfall in another.
-                        ingested = min(reported, len(spans))
-                        shortfall = len(spans) - ingested
-                        duplicates = getattr(response, "skipped_duplicates", 0)
-                        total_ingested += ingested
-                        total_shortfall += shortfall
-                        total_duplicates += min(
-                            duplicates if _is_count(duplicates) else 0, shortfall
-                        )
-                    else:
-                        total_unconfirmed += len(spans)
-                    if response.graph_id:
-                        graph_id = response.graph_id
-                # Auth rejections are expected in local/edge mode — log at DEBUG only
-                elif _is_trace_ingestion_auth_rejection(response.error):
-                    logger.debug(
-                        "Trace ingestion auth rejected for config_run %s",
-                        config_run_id,
-                    )
-                else:
-                    logger.warning(
-                        "Failed to submit spans for config_run %s: %s",
-                        config_run_id,
-                        response.error,
-                    )
-
-            graph_msg = f", graph_id={graph_id}" if graph_id else ""
-            unconfirmed_msg = (
-                f"; {total_unconfirmed} more submitted with the ingested count "
-                "unconfirmed"
-                if total_unconfirmed
-                else ""
-            )
-            total_dropped = total_shortfall - total_duplicates
-            if total_dropped > 0:
-                logger.warning(
-                    "Backend ingested %d of %d workflow spans for trace %s...%s "
-                    "(%d skipped as duplicate span ids, %d not ingested for an "
-                    "unreported reason%s); the workflow traces view will be "
-                    "missing those spans.",
-                    total_ingested,
-                    total_sent - total_unconfirmed,
-                    trace_id[:8],
-                    graph_msg,
-                    total_duplicates,
-                    total_dropped,
-                    unconfirmed_msg,
-                )
-            elif total_shortfall > 0:
-                logger.warning(
-                    "Backend ingested %d of %d workflow spans for trace %s...%s; "
-                    "%d skipped as duplicate span ids (already stored, or "
-                    "repeated within the batch)%s.",
-                    total_ingested,
-                    total_sent - total_unconfirmed,
-                    trace_id[:8],
-                    graph_msg,
-                    total_duplicates,
-                    unconfirmed_msg,
-                )
-            elif total_unconfirmed > 0:
-                logger.info(
-                    "Submitted %d workflow spans for trace %s...%s (backend did "
-                    "not report how many were ingested for %d of them; count "
-                    "unconfirmed)",
-                    total_sent,
-                    trace_id[:8],
-                    graph_msg,
-                    total_unconfirmed,
-                )
-            elif total_sent > 0:
-                logger.info(
-                    f"Submitted {total_sent} workflow spans "
-                    f"for trace {trace_id[:8]}...{graph_msg}"
-                )
+            _log_submission_summary(totals, trace_id)
 
         except Exception as exc:
             logger.warning(f"Workflow trace submission failed: {exc}")
@@ -396,6 +376,51 @@ class WorkflowTraceManager:
             # Clear collected spans after submission attempt
             with self._lock:
                 self._collected_spans = []
+
+    @staticmethod
+    def _log_no_spans_collected(trials_executed: bool) -> None:
+        if not trials_executed:
+            # #2060: a run that never executed a trial (e.g. a shared
+            # ExecutionBudget exhausted pre-batch) legitimately has zero
+            # spans — nothing about span wiring failed, so this is not
+            # the wiring-fault signal below. Keep it at DEBUG.
+            logger.debug(
+                "Workflow tracing is enabled but the run executed zero "
+                "trials; no workflow spans were collected. Nothing will "
+                "appear in the workflow traces view."
+            )
+            return
+
+        # Run-level invariant: tracing was configured (a tracker exists),
+        # trials actually executed, yet the whole run produced zero
+        # spans. That is almost always a wiring fault — a sync agent
+        # function losing workflow_trace_context across the thread
+        # boundary, or add_agent_span never being reached — not a
+        # legitimately empty run. DEBUG hides it until someone reads the
+        # backend and finds nothing.
+        logger.warning(
+            "Workflow tracing is enabled but no workflow spans were collected "
+            "for this run; nothing will appear in the workflow traces view. "
+            "Check that add_agent_span() is reached and that its SpanResult "
+            "receipt reports accepted=True."
+        )
+
+    @staticmethod
+    def _should_skip_submission(session_id: str | None) -> bool:
+        if is_backend_offline():
+            logger.debug("Skipping workflow trace submission: backend is offline")
+            return True
+
+        # Check if session_id is a mock ID (created when backend was unavailable)
+        if session_id and (
+            session_id.startswith("mock_session_")
+            or session_id.startswith("mock-session-")
+        ):
+            logger.debug(
+                f"Skipping workflow trace submission: mock session '{session_id}'"
+            )
+            return True
+        return False
 
     def _group_spans_by_config_run(
         self, spans: list[SpanPayload] | None = None

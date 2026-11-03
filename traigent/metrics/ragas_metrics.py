@@ -295,27 +295,25 @@ def _extract_candidate(
     return None
 
 
+def _context_item_text(item: Any) -> str:
+    """Render one context item as text (``text``/``content`` of mappings)."""
+    if isinstance(item, str):
+        return item
+    if isinstance(item, Mapping):
+        if "text" in item and item["text"]:
+            return str(item["text"])
+        if "content" in item and item["content"]:
+            return str(item["content"])
+    return str(item)
+
+
 def _normalise_contexts(value: Any) -> list[str] | None:
     if value is None:
         return None
     if isinstance(value, str):
         return [value]
     if isinstance(value, (list, tuple)):
-        items = []
-        for item in value:
-            if item is None:
-                continue
-            if isinstance(item, str):
-                items.append(item)
-            elif isinstance(item, Mapping):
-                if "text" in item and item["text"]:
-                    items.append(str(item["text"]))
-                elif "content" in item and item["content"]:
-                    items.append(str(item["content"]))
-                else:
-                    items.append(str(item))
-            else:
-                items.append(str(item))
+        items = [_context_item_text(item) for item in value if item is not None]
         return items or None
     if isinstance(value, Mapping):
         return _normalise_contexts(list(value.values()))
@@ -331,6 +329,65 @@ def _determine_column_keys(
     return DEFAULT_COLUMN_CANDIDATES.get(key, ())
 
 
+def _sample_sources(
+    result: ExampleResult, dataset_example: Any | None
+) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
+    """Return (metadata sources, input sources) for one example row."""
+    metadata_sources: list[Mapping[str, Any]] = []
+    if result.metadata:
+        metadata_sources.append(result.metadata)
+    if dataset_example is not None:
+        example_metadata = getattr(dataset_example, "metadata", None)
+        if example_metadata:
+            metadata_sources.append(example_metadata)
+    input_sources: list[Mapping[str, Any]] = []
+    if isinstance(result.input_data, Mapping):
+        input_sources.append(result.input_data)
+    if dataset_example is not None:
+        dataset_input = getattr(dataset_example, "input_data", None)
+        if isinstance(dataset_input, Mapping):
+            input_sources.append(dataset_input)
+    return metadata_sources, input_sources
+
+
+def _sample_reference(
+    result: ExampleResult,
+    config: RagasConfig,
+    metadata_sources: list[Mapping[str, Any]],
+    input_sources: list[Mapping[str, Any]],
+) -> Any | None:
+    """A mapped ``reference`` column wins; expected_output is the fallback."""
+    reference = None
+    if config.column_map and "reference" in config.column_map:
+        reference_keys = _determine_column_keys(config.column_map, "reference")
+        reference = _extract_candidate(
+            [*metadata_sources, *input_sources], reference_keys
+        )
+    if reference is None:
+        reference = result.expected_output
+    return reference
+
+
+def _sample_user_input(
+    result: ExampleResult,
+    config: RagasConfig,
+    input_sources: list[Mapping[str, Any]],
+    reference: Any | None,
+) -> Any | None:
+    user_input_keys = _determine_column_keys(config.column_map, "user_input")
+    user_input = _extract_candidate(input_sources, user_input_keys)
+    if user_input is None and hasattr(result, "input_data"):
+        user_input = str(result.input_data)
+    if user_input is None and reference is not None:
+        user_input = str(reference)
+    return user_input
+
+
+def _sample_is_incomplete(fields: Mapping[str, Any], required: set[str]) -> bool:
+    """True when any required column is missing (None or empty list)."""
+    return any(fields.get(col) is None or fields.get(col) == [] for col in required)
+
+
 def _prepare_samples(
     example_results: Sequence[ExampleResult],
     *,
@@ -342,20 +399,12 @@ def _prepare_samples(
     samples: list[SingleTurnSample] = []
 
     for index, result in enumerate(example_results):
-        metadata_sources: list[Mapping[str, Any]] = []
-        if result.metadata:
-            metadata_sources.append(result.metadata)
-        if dataset_examples is not None and index < len(dataset_examples):
-            example_metadata = getattr(dataset_examples[index], "metadata", None)
-            if example_metadata:
-                metadata_sources.append(example_metadata)
-        input_sources: list[Mapping[str, Any]] = []
-        if isinstance(result.input_data, Mapping):
-            input_sources.append(result.input_data)
-        if dataset_examples is not None and index < len(dataset_examples):
-            dataset_input = getattr(dataset_examples[index], "input_data", None)
-            if isinstance(dataset_input, Mapping):
-                input_sources.append(dataset_input)
+        dataset_example = (
+            dataset_examples[index]
+            if dataset_examples is not None and index < len(dataset_examples)
+            else None
+        )
+        metadata_sources, input_sources = _sample_sources(result, dataset_example)
 
         response = result.actual_output
         if response is None and outputs is not None and index < len(outputs):
@@ -363,24 +412,10 @@ def _prepare_samples(
         if response is None:
             continue
 
-        # A mapped ``reference`` column wins; expected_output is the fallback
-        # (and the only source when the column is unmapped). A missing reference
-        # drops the row only when the selected metrics require it (#2472).
-        reference = None
-        if config.column_map and "reference" in config.column_map:
-            reference_keys = _determine_column_keys(config.column_map, "reference")
-            reference = _extract_candidate(
-                [*metadata_sources, *input_sources], reference_keys
-            )
-        if reference is None:
-            reference = result.expected_output
-
-        user_input_keys = _determine_column_keys(config.column_map, "user_input")
-        user_input = _extract_candidate(input_sources, user_input_keys)
-        if user_input is None and hasattr(result, "input_data"):
-            user_input = str(result.input_data)
-        if user_input is None and reference is not None:
-            user_input = str(reference)
+        # A missing reference drops the row only when the selected metrics
+        # require it (#2472).
+        reference = _sample_reference(result, config, metadata_sources, input_sources)
+        user_input = _sample_user_input(result, config, input_sources, reference)
 
         contexts_keys = _determine_column_keys(config.column_map, "retrieved_contexts")
         contexts_raw = _extract_candidate(metadata_sources, contexts_keys)
@@ -402,11 +437,7 @@ def _prepare_samples(
             "reference_contexts": reference_contexts,
         }
 
-        if any(
-            col in required_columns
-            and (fields.get(col) is None or fields.get(col) == [])
-            for col in required_columns
-        ):
+        if _sample_is_incomplete(fields, required_columns):
             continue
 
         samples.append(
@@ -491,26 +522,9 @@ def compute_ragas_metrics(
     config = layer_over_global_defaults(config)
 
     example_results = list(example_results)
-    if (not example_results) and dataset_examples is not None:
-        example_results = []
-        for idx, example in enumerate(dataset_examples):
-            expected = getattr(example, "expected_output", None)
-            actual = None
-            if outputs is not None and idx < len(outputs):
-                actual = outputs[idx]
-            example_results.append(
-                ExampleResult(
-                    example_id=f"example_{idx}",
-                    input_data=getattr(example, "input_data", {}) or {},
-                    expected_output=expected,
-                    actual_output=actual,
-                    metrics={},
-                    execution_time=0.0,
-                    success=(actual is not None),
-                    error_message=None if (actual is not None) else "output missing",
-                    metadata=getattr(example, "metadata", {}) or {},
-                )
-            )
+    example_results = _synthesize_missing_results(
+        example_results, dataset_examples, outputs
+    )
 
     metrics: list[Metric] = []
     required_columns: set[str] = set()
@@ -537,13 +551,7 @@ def compute_ragas_metrics(
 
     # Rows the agent never answered (but that have a reference) are failures
     # of the configuration under test, not rows to drop from the mean (#2677).
-    failed_rows = 0
-    for index, result in enumerate(example_results):
-        response = result.actual_output
-        if response is None and outputs is not None and index < len(outputs):
-            response = outputs[index]
-        if response is None and result.expected_output is not None:
-            failed_rows += 1
+    failed_rows = _count_failed_rows(example_results, outputs)
 
     dataset = EvaluationDataset(samples)
 
@@ -568,42 +576,95 @@ def compute_ragas_metrics(
     )
     aggregated: dict[str, float] = {}
     for metric in metrics:
-        values = np.asarray(result[metric.name], dtype=float)
-        defined = values[~np.isnan(values)]
-        # Agent-failed rows already contribute a defined 0.0, so they are
-        # scored; only rows RAGAS left undefined are unscored (#2677).
-        rows_total = len(values) + failed_rows
-        rows_scored = len(defined) + failed_rows
-        if len(defined) == 0:
-            raise RagasConfigurationError(
-                f"ragas metric '{metric.name}' has no defined judge score on any answered row; "
-                "refusing to report NaN as an objective value."
-            )
-        if rows_scored < rows_total:
-            logger.warning(
-                "ragas metric %r: %d of %d rows scored (%d undefined, %d agent "
-                "failures counted as 0.0)",
-                metric.name,
-                rows_scored,
-                rows_total,
-                len(values) - len(defined),
-                failed_rows,
-            )
-        if rows_total and rows_scored / rows_total < floor:
-            raise RagasCoverageError(
-                f"ragas metric '{metric.name}' scored {rows_scored} of "
-                f"{rows_total} rows, below the minimum scored share of {floor:g}; "
-                "failing the trial instead of averaging the remaining rows."
-            )
-        # Scoring is unchanged (#2677): agent-failed rows contribute 0.0 and
-        # rows RAGAS left undefined are excluded from the mean; the coverage
-        # keys and the floor below are what make the exclusion visible.
-        aggregated[metric.name] = float(defined.sum() / rows_scored)
-        scored_key, total_key = ragas_coverage_keys(metric.name)
-        aggregated[scored_key] = int(rows_scored)  # type: ignore[assignment]
-        aggregated[total_key] = int(rows_total)  # type: ignore[assignment]
+        _aggregate_ragas_metric(metric, result, failed_rows, floor, aggregated)
 
     return aggregated
+
+
+def _synthesize_missing_results(
+    example_results: list[ExampleResult],
+    dataset_examples: Sequence[Any] | None,
+    outputs: Sequence[Any] | None,
+) -> list[ExampleResult]:
+    if (not example_results) and dataset_examples is not None:
+        example_results = []
+        for idx, example in enumerate(dataset_examples):
+            expected = getattr(example, "expected_output", None)
+            actual = None
+            if outputs is not None and idx < len(outputs):
+                actual = outputs[idx]
+            example_results.append(
+                ExampleResult(
+                    example_id=f"example_{idx}",
+                    input_data=getattr(example, "input_data", {}) or {},
+                    expected_output=expected,
+                    actual_output=actual,
+                    metrics={},
+                    execution_time=0.0,
+                    success=(actual is not None),
+                    error_message=None if (actual is not None) else "output missing",
+                    metadata=getattr(example, "metadata", {}) or {},
+                )
+            )
+
+    return example_results
+
+
+def _count_failed_rows(
+    example_results: Sequence[ExampleResult], outputs: Sequence[Any] | None
+) -> int:
+    failed_rows = 0
+    for index, result in enumerate(example_results):
+        response = result.actual_output
+        if response is None and outputs is not None and index < len(outputs):
+            response = outputs[index]
+        if response is None and result.expected_output is not None:
+            failed_rows += 1
+
+    return failed_rows
+
+
+def _aggregate_ragas_metric(
+    metric: Metric,
+    result: Any,
+    failed_rows: int,
+    floor: float,
+    aggregated: dict[str, float],
+) -> None:
+    values = np.asarray(result[metric.name], dtype=float)
+    defined = values[~np.isnan(values)]
+    # Agent-failed rows already contribute a defined 0.0, so they are
+    # scored; only rows RAGAS left undefined are unscored (#2677).
+    rows_total = len(values) + failed_rows
+    rows_scored = len(defined) + failed_rows
+    if len(defined) == 0:
+        raise RagasConfigurationError(
+            f"ragas metric '{metric.name}' has no defined judge score on any answered row; "
+            "refusing to report NaN as an objective value."
+        )
+    if rows_scored < rows_total:
+        logger.warning(
+            "ragas metric %r: %d of %d rows scored (%d undefined, %d agent "
+            "failures counted as 0.0)",
+            metric.name,
+            rows_scored,
+            rows_total,
+            len(values) - len(defined),
+            failed_rows,
+        )
+    if rows_total and rows_scored / rows_total < floor:
+        raise RagasCoverageError(
+            f"ragas metric '{metric.name}' scored {rows_scored} of "
+            f"{rows_total} rows, below the minimum scored share of {floor:g}; "
+            "failing the trial instead of averaging the remaining rows."
+        )
+    # Scoring is unchanged (#2677): agent-failed rows contribute 0.0 and
+    # rows RAGAS left undefined are excluded from the mean; the coverage
+    # keys and the floor below are what make the exclusion visible.
+    aggregated[metric.name] = float(defined.sum() / rows_scored)
+    scored_key, total_key = ragas_coverage_keys(metric.name)
+    aggregated[scored_key] = int(rows_scored)  # type: ignore[assignment]
+    aggregated[total_key] = int(rows_total)  # type: ignore[assignment]
 
 
 __all__ = [

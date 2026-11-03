@@ -510,8 +510,8 @@ class ExperimentDTO:
     optimization_runs_count: int | None = None
     experiment_run: ExperimentListRunSummaryDTO | dict[str, Any] | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for API submission."""
+    def _check_dataset_aliases(self) -> None:
+        """Reject conflicting dataset, evaluation set and benchmark ids."""
         explicit_dataset_aliases = [
             value for value in (self.dataset_id, self.benchmark_id) if value is not None
         ]
@@ -522,7 +522,10 @@ class ExperimentDTO:
                 "Conflicting dataset aliases supplied for ExperimentDTO; "
                 "dataset_id, evaluation_set_id, and benchmark_id must match"
             )
-        resolved_dataset_id = (
+
+    def _resolved_dataset_id(self) -> str | None:
+        """The dataset id every alias field is serialized as."""
+        return (
             self.dataset_id
             or self.benchmark_id
             or (
@@ -532,10 +535,37 @@ class ExperimentDTO:
             )
             or self.evaluation_set_id
         )
-        has_explicit_legacy_dataset_reference = (
+
+    def _has_explicit_legacy_dataset_reference(self) -> bool:
+        """True when the caller supplied any dataset alias explicitly."""
+        return (
             self.dataset_id is not None
             or self.benchmark_id is not None
             or self.evaluation_set_id != "local-evalset-001"
+        )
+
+    def _add_optional_fields(self, result: dict[str, Any]) -> None:
+        """Add the optional fields that have values."""
+        if self.status is not None:
+            result["status"] = self.status
+        if self.configuration_runs_count is not None:
+            result["configuration_runs_count"] = int(self.configuration_runs_count)
+        if self.total_examples is not None:
+            result["total_examples"] = int(self.total_examples)
+        if self.optimization_runs_count is not None:
+            result["optimization_runs_count"] = int(self.optimization_runs_count)
+        if self.experiment_run is not None:
+            if isinstance(self.experiment_run, ExperimentListRunSummaryDTO):
+                result["experiment_run"] = self.experiment_run.to_dict()
+            else:
+                result["experiment_run"] = self.experiment_run
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for API submission."""
+        self._check_dataset_aliases()
+        resolved_dataset_id = self._resolved_dataset_id()
+        has_explicit_legacy_dataset_reference = (
+            self._has_explicit_legacy_dataset_reference()
         )
         result: dict[str, Any] = {
             "id": self.id,
@@ -559,19 +589,7 @@ class ExperimentDTO:
         # Include optional fields only if they have values
         if has_explicit_legacy_dataset_reference and resolved_dataset_id is not None:
             result["benchmark_id"] = resolved_dataset_id
-        if self.status is not None:
-            result["status"] = self.status
-        if self.configuration_runs_count is not None:
-            result["configuration_runs_count"] = int(self.configuration_runs_count)
-        if self.total_examples is not None:
-            result["total_examples"] = int(self.total_examples)
-        if self.optimization_runs_count is not None:
-            result["optimization_runs_count"] = int(self.optimization_runs_count)
-        if self.experiment_run is not None:
-            if isinstance(self.experiment_run, ExperimentListRunSummaryDTO):
-                result["experiment_run"] = self.experiment_run.to_dict()
-            else:
-                result["experiment_run"] = self.experiment_run
+        self._add_optional_fields(result)
 
         return result
 

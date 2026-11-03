@@ -611,6 +611,13 @@ class LangfuseClient:
             partial = True
         return rows, partial
 
+    def _raise_v2_not_found(self, page_no: int, asynchronous: bool) -> None:
+        if page_no == 0 and not self._v2_confirmed:
+            raise _V2Unavailable()
+        if asynchronous:
+            raise aiohttp.ClientError("404 from v2 observations")
+        raise requests.exceptions.HTTPError("404 from v2 observations")
+
     def _fetch_observations_v2(
         self,
         trace_id: str,
@@ -647,9 +654,7 @@ class LangfuseClient:
                     timeout=self.timeout,
                 )
                 if response.status_code == 404:
-                    if page_no == 0 and not self._v2_confirmed:
-                        raise _V2Unavailable()
-                    raise requests.exceptions.HTTPError("404 from v2 observations")
+                    LangfuseClient._raise_v2_not_found(self, page_no, False)
                 response.raise_for_status()
                 page, cursor = self._v2_page(response.json())
             except requests.exceptions.RequestException:
@@ -696,9 +701,7 @@ class LangfuseClient:
                         timeout=aiohttp.ClientTimeout(total=self.timeout),
                     ) as response:
                         if response.status == 404:
-                            if page_no == 0 and not self._v2_confirmed:
-                                raise _V2Unavailable()
-                            raise aiohttp.ClientError("404 from v2 observations")
+                            LangfuseClient._raise_v2_not_found(self, page_no, True)
                         response.raise_for_status()
                         page, cursor = self._v2_page(await response.json())
                 except (TimeoutError, aiohttp.ClientError):
@@ -732,24 +735,7 @@ class LangfuseClient:
         return value
 
     @staticmethod
-    def _trace_from_observation_rows(
-        trace_id: str,
-        rows: list[dict[str, Any]],
-        partial: bool,
-        *,
-        include_io: bool = False,
-    ) -> dict[str, Any] | None:
-        """Rebuild a v1-shaped trace dict from v2 observation rows.
-
-        v4 has no trace objects; trace-level fields come from the root
-        observation (``isRootObservation`` true, else ``parentObservationId``
-        present and null; explicit logical roots win; the earliest
-        ``startTime`` wins, ties broken by ``id``). With no root, root-derived fields stay
-        unset instead of borrowing a child's. Returns None when the trace has no
-        observations (same as a v1 404).
-        """
-        if not rows:
-            return None
+    def _trace_root(trace_id: str, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
         roots = _root_rows(rows)
         root: dict[str, Any] | None = None
         if roots:
@@ -768,6 +754,28 @@ class LangfuseClient:
                 )
         else:
             logger.warning(f"Trace {trace_id} has no root observation.")
+        return root
+
+    @staticmethod
+    def _trace_from_observation_rows(
+        trace_id: str,
+        rows: list[dict[str, Any]],
+        partial: bool,
+        *,
+        include_io: bool = False,
+    ) -> dict[str, Any] | None:
+        """Rebuild a v1-shaped trace dict from v2 observation rows.
+
+        v4 has no trace objects; trace-level fields come from the root
+        observation (``isRootObservation`` true, else ``parentObservationId``
+        present and null; explicit logical roots win; the earliest
+        ``startTime`` wins, ties broken by ``id``). With no root, root-derived fields stay
+        unset instead of borrowing a child's. Returns None when the trace has no
+        observations (same as a v1 404).
+        """
+        if not rows:
+            return None
+        root = LangfuseClient._trace_root(trace_id, rows)
         trace: dict[str, Any] = {
             "id": trace_id,
             "name": (root.get("traceName") or root.get("name")) if root else None,
@@ -1345,23 +1353,22 @@ class LangfuseClient:
 
             # Per-agent attribution
             agent_id = obs.get_agent_identifier()
-            if agent_id:
-                # Sanitize for MeasuresDict compatibility
-                safe_agent = (
-                    agent_id.replace(".", "_").replace("-", "_").replace(" ", "_")
-                )
+            if not agent_id:
+                continue
+            # Sanitize for MeasuresDict compatibility
+            safe_agent = agent_id.replace(".", "_").replace("-", "_").replace(" ", "_")
 
-                per_agent_costs[safe_agent] = (
-                    per_agent_costs.get(safe_agent, 0.0) + obs.cost
-                )
-                if obs_unpriced:
-                    unmeasured_agents.add(safe_agent)
-                per_agent_latencies[safe_agent] = (
-                    per_agent_latencies.get(safe_agent, 0.0) + obs.latency_ms
-                )
-                per_agent_tokens[safe_agent] = (
-                    per_agent_tokens.get(safe_agent, 0) + obs.total_tokens
-                )
+            per_agent_costs[safe_agent] = (
+                per_agent_costs.get(safe_agent, 0.0) + obs.cost
+            )
+            if obs_unpriced:
+                unmeasured_agents.add(safe_agent)
+            per_agent_latencies[safe_agent] = (
+                per_agent_latencies.get(safe_agent, 0.0) + obs.latency_ms
+            )
+            per_agent_tokens[safe_agent] = (
+                per_agent_tokens.get(safe_agent, 0) + obs.total_tokens
+            )
 
         # An agent with an unpriced LLM call has no cost to report (#2517).
         for safe_agent in unmeasured_agents:

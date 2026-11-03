@@ -322,14 +322,31 @@ def watch_cmd(
     default=None,
     help="Cost ceiling for the optimize run.",
 )
+@click.option(
+    "--agent-ref",
+    default=None,
+    help=(
+        "Hosted agent ref (agentref_...): run the attempt a person granted in the "
+        "portal (reserve, start, run, report) instead of the local approval prompt."
+    ),
+)
+@click.option(
+    "--attempt-ref",
+    default=None,
+    help="With --agent-ref: the attempt to run (default: the one approved attempt).",
+)
 def respond_cmd(
     file_path: Path,
     function: str,
     project_id: str | None,
     agent_id: str | None,
     max_fix_cost_usd: float | None,
+    agent_ref: str | None,
+    attempt_ref: str | None,
 ) -> None:
     """Start a human-approved fix (an optimize run) for an open breach. Never deploys."""
+    if attempt_ref is not None and agent_ref is None:
+        raise click.UsageError("--attempt-ref requires --agent-ref")
 
     def confirm(facts: dict[str, Any]) -> bool:
         click.echo("Open breach, restore requested:")
@@ -355,6 +372,8 @@ def respond_cmd(
                 interactive=_interactive(),
                 max_fix_cost_usd=max_fix_cost_usd,
                 state_dir=_state_dir(),
+                agent_ref=agent_ref,
+                attempt_ref=attempt_ref,
             )
         )
     except RuntimeRequirementError as exc:

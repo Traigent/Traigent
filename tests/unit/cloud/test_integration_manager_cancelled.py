@@ -84,13 +84,12 @@ async def test_start_optimization_integration_propagates_cancelled_error():
 
 
 # ---------------------------------------------------------------------------
-# _start_edge_analytics_integration()
+# _start_local_integration()
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_start_edge_analytics_integration_propagates_cancelled_error():
-    """CancelledError in _start_edge_analytics_integration() must propagate."""
+def test_start_local_integration_propagates_cancelled_error():
+    """CancelledError in _start_local_integration() must propagate."""
     mgr = _make_manager()
     request = MagicMock()
 
@@ -100,7 +99,7 @@ async def test_start_edge_analytics_integration_propagates_cancelled_error():
         side_effect=asyncio.CancelledError,
     ):
         with pytest.raises(asyncio.CancelledError):
-            await mgr._start_edge_analytics_integration(request, "test_integration")
+            mgr._start_local_integration(request, "test_integration")
 
 
 # ---------------------------------------------------------------------------

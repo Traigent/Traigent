@@ -89,6 +89,31 @@ class KeyMaterial(_Checked):
         unb64u(value)
 
 
+def _check_module_identifier(
+    cls: type[CodeIdentifier],
+    module_name: str,
+    qualname: str,
+    root: Path | None,
+    search_paths: list[Path] | None,
+) -> None:
+    """Locate the module source statically and require ``qualname`` to be defined."""
+    if search_paths is not None:
+        search = [Path(p) for p in search_paths]
+    elif root is not None:
+        search = [root]
+    else:
+        search = [Path(p or ".") for p in sys.path]
+    source = cls._find_source(module_name, [p.resolve() for p in search])
+    if source is None:
+        raise ContentClassError("code identifier module source not found")
+    try:
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError) as exc:
+        raise ContentClassError("code identifier source is unreadable") from exc
+    if not cls._defines(tree, qualname):
+        raise ContentClassError("code identifier does not name local code")
+
+
 class CodeIdentifier(_Checked):
     """A code identifier verified against local code WITHOUT importing or running it.
 
@@ -147,21 +172,7 @@ class CodeIdentifier(_Checked):
         match = _CODE_ID.match(identifier)
         if match:
             module_name, qualname = match.groups()
-            if search_paths is not None:
-                search = [Path(p) for p in search_paths]
-            elif root is not None:
-                search = [root]
-            else:
-                search = [Path(p or ".") for p in sys.path]
-            source = cls._find_source(module_name, [p.resolve() for p in search])
-            if source is None:
-                raise ContentClassError("code identifier module source not found")
-            try:
-                tree = ast.parse(source.read_text(encoding="utf-8"))
-            except (OSError, SyntaxError, ValueError) as exc:
-                raise ContentClassError("code identifier source is unreadable") from exc
-            if not cls._defines(tree, qualname):
-                raise ContentClassError("code identifier does not name local code")
+            _check_module_identifier(cls, module_name, qualname, root, search_paths)
             return cls(identifier)
         base = (root or Path.cwd()).resolve()
         target = (base / identifier).resolve()

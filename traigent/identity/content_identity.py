@@ -464,6 +464,20 @@ def _require_digest(value: Any, what: str) -> None:
         raise ContentIdentityError(f"{what} must be a sha256:<64 hex> digest")
 
 
+def _validate_agent_assets(manifest: Mapping[str, Any]) -> None:
+    assets = manifest.get("asset_digests")
+    if type(assets) is not dict or sorted(assets) != sorted(AGENT_ASSET_CATEGORIES):
+        raise ContentIdentityError(
+            "asset_digests must have exactly the categories "
+            f"{list(AGENT_ASSET_CATEGORIES)}"
+        )
+    for category in AGENT_ASSET_CATEGORIES:
+        if type(assets[category]) is not dict:
+            raise ContentIdentityError(f"asset_digests.{category} must be a map")
+        for digest in assets[category].values():
+            _require_digest(digest, f"asset_digests.{category} value")
+
+
 def compute_agent_build_digest(
     manifest: Mapping[str, Any], *, certifiable: bool = False
 ) -> str:
@@ -497,17 +511,7 @@ def compute_agent_build_digest(
             raise ContentIdentityError(
                 "agent build manifest with a dirty code_revision needs source_digest"
             )
-    assets = manifest.get("asset_digests")
-    if type(assets) is not dict or sorted(assets) != sorted(AGENT_ASSET_CATEGORIES):
-        raise ContentIdentityError(
-            "asset_digests must have exactly the categories "
-            f"{list(AGENT_ASSET_CATEGORIES)}"
-        )
-    for category in AGENT_ASSET_CATEGORIES:
-        if type(assets[category]) is not dict:
-            raise ContentIdentityError(f"asset_digests.{category} must be a map")
-        for digest in assets[category].values():
-            _require_digest(digest, f"asset_digests.{category} value")
+    _validate_agent_assets(manifest)
     _require_digest(manifest.get("applied_config_digest"), "applied_config_digest")
     runtime = manifest.get("runtime")
     if (
@@ -529,6 +533,33 @@ def compute_agent_build_digest(
 
 
 EVALUATOR_ORIENTATIONS = ("maximize", "minimize")
+
+
+def _validate_evaluator_objectives(manifest: Mapping[str, Any]) -> None:
+    objectives = manifest.get("objectives")
+    if type(objectives) is not list or not objectives:
+        raise ContentIdentityError("objectives must be a non-empty list")
+    names: list[str] = []
+    for objective in objectives:
+        if type(objective) is not dict:
+            raise ContentIdentityError("each objective must be an object")
+        name = objective.get("name")
+        if not isinstance(name, str) or not _OBJECTIVE_NAME_RE.fullmatch(name):
+            raise ContentIdentityError(
+                "objective name must fully match [a-zA-Z_][a-zA-Z0-9_.-]{0,127}"
+            )
+        if objective.get("orientation") not in EVALUATOR_ORIENTATIONS:
+            raise ContentIdentityError(
+                "objective orientation must be maximize or minimize"
+            )
+        weight = objective.get("weight")
+        if type(weight) not in (int, float):
+            raise ContentIdentityError("objective weight must be a number")
+        names.append(name)
+    if names != sorted(set(names)):
+        raise ContentIdentityError(
+            "objectives must be sorted by name with unique names"
+        )
 
 
 def compute_evaluator_version_digest(manifest: Mapping[str, Any]) -> str:
@@ -566,30 +597,7 @@ def compute_evaluator_version_digest(manifest: Mapping[str, Any]) -> str:
                 "judge must be null or an object with a model id"
             )
         _require_digest(judge.get("config_digest"), "judge.config_digest")
-    objectives = manifest.get("objectives")
-    if type(objectives) is not list or not objectives:
-        raise ContentIdentityError("objectives must be a non-empty list")
-    names: list[str] = []
-    for objective in objectives:
-        if type(objective) is not dict:
-            raise ContentIdentityError("each objective must be an object")
-        name = objective.get("name")
-        if not isinstance(name, str) or not _OBJECTIVE_NAME_RE.fullmatch(name):
-            raise ContentIdentityError(
-                "objective name must fully match [a-zA-Z_][a-zA-Z0-9_.-]{0,127}"
-            )
-        if objective.get("orientation") not in EVALUATOR_ORIENTATIONS:
-            raise ContentIdentityError(
-                "objective orientation must be maximize or minimize"
-            )
-        weight = objective.get("weight")
-        if type(weight) not in (int, float):
-            raise ContentIdentityError("objective weight must be a number")
-        names.append(name)
-    if names != sorted(set(names)):
-        raise ContentIdentityError(
-            "objectives must be sorted by name with unique names"
-        )
+    _validate_evaluator_objectives(manifest)
     if type(manifest.get("dependency_versions")) is not dict:
         raise ContentIdentityError(
             "dependency_versions must be a map (empty means none)"
@@ -863,6 +871,33 @@ def build_inclusion_proof(
     )
 
 
+def _advance_inclusion_index(fn: int, sn: int) -> tuple[int, int]:
+    while not fn & 1 and fn != 0:
+        fn >>= 1
+        sn >>= 1
+    return fn, sn
+
+
+def _verify_inclusion_path(
+    proof: InclusionProof, path: list[bytes], root_hash: str
+) -> bool:
+    fn = proof.leaf_index
+    sn = proof.tree_size - 1
+    r = _leaf_hash(multiset_leaf_data(proof.member))
+    for p in path:
+        if sn == 0:
+            return False
+        if fn & 1 or fn == sn:
+            r = _node_hash(p, r)
+            if not fn & 1:
+                fn, sn = _advance_inclusion_index(fn, sn)
+        else:
+            r = _node_hash(r, p)
+        fn >>= 1
+        sn >>= 1
+    return sn == 0 and hmac.compare_digest(r, bytes.fromhex(root_hash))
+
+
 def verify_inclusion_proof(proof: InclusionProof) -> bool:
     """RFC 9162 section 2.1.3.2 verification. Needs no key. Never raises on a bad proof."""
     root_match = _ROOT_RE.fullmatch(proof.root) if isinstance(proof.root, str) else None
@@ -878,23 +913,7 @@ def verify_inclusion_proof(proof: InclusionProof) -> bool:
             return False
         path.append(bytes.fromhex(node))
 
-    fn = proof.leaf_index
-    sn = proof.tree_size - 1
-    r = _leaf_hash(multiset_leaf_data(proof.member))
-    for p in path:
-        if sn == 0:
-            return False
-        if fn & 1 or fn == sn:
-            r = _node_hash(p, r)
-            if not fn & 1:
-                while not fn & 1 and fn != 0:
-                    fn >>= 1
-                    sn >>= 1
-        else:
-            r = _node_hash(r, p)
-        fn >>= 1
-        sn >>= 1
-    return sn == 0 and hmac.compare_digest(r, bytes.fromhex(root_match.group(2)))
+    return _verify_inclusion_path(proof, path, root_match.group(2))
 
 
 # --------------------------------------------------------------------------

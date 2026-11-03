@@ -37,21 +37,12 @@ def normalize_smart_pruning_options(
     elif isinstance(value, Mapping):
         try:
             model = SmartPruningOptions.model_validate(dict(value))
-        except PydanticValidationError as exc:
-            extra_keys = sorted(
-                str(error["loc"][0])
-                for error in exc.errors()
-                if error.get("type") == "extra_forbidden" and error.get("loc")
-            )
-            extra_message = (
-                f" contains unsupported key(s): {', '.join(extra_keys)};"
-                if extra_keys
-                else ""
-            )
+        except PydanticValidationError:
+            # Closed message: the offending key names and values are customer-chosen and
+            # Pydantic's text echoes them, so neither the message nor __cause__ carries them.
             raise ValueError(
-                f"{field_name}{extra_message} "
-                f"does not match smart_pruning_schema.json: {exc}"
-            ) from exc
+                f"{field_name} does not match smart_pruning_schema.json"
+            ) from None
     else:
         raise TypeError(
             f"{field_name} must be a mapping or SmartPruningOptions, "

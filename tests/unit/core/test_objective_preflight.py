@@ -46,3 +46,60 @@ def test_hostile_objective_name_is_not_echoed(caplog):
     assert caplog.records
     assert "forged" not in text and "alice" not in text.lower()
     assert "\n" not in text
+
+
+def _scalar(output, expected) -> float:
+    return 1.0
+
+
+def test_misnamed_metric_key_warns_without_echoing_names(caplog):
+    # objectives=["accuracy"], metric_functions={"acc": f}: the user's scorer is
+    # silently ignored and the built-in accuracy is used instead.
+    _warn(caplog, ["accuracy"], {"acc": _scalar})
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "built-in objective 'accuracy'" in text
+    assert "may not be scored" in text
+    assert "'acc'" not in text  # customer-chosen keys are never echoed
+
+
+def test_informational_metric_next_to_objective_does_not_warn(caplog):
+    _warn(
+        caplog,
+        ["accuracy"],
+        {"accuracy": lambda **_: 1.0, "brevity": lambda **_: 1.0},
+    )
+    assert not caplog.records
+
+
+def test_unrelated_extra_metric_key_does_not_warn(caplog):
+    _warn(caplog, ["accuracy"], {"brevity": lambda **_: 1.0})
+    assert not caplog.records
+
+
+def test_mapping_returning_scorer_does_not_warn(caplog):
+    _warn(caplog, ["accuracy"], {"acc": lambda **_: {"accuracy": 1.0}})
+
+    def typed(output, expected) -> dict:
+        return {"accuracy": 1.0}
+
+    _warn(caplog, ["accuracy"], {"acc": typed})
+    assert not caplog.records
+
+
+def test_scoring_function_already_supplying_objective_does_not_warn(caplog):
+    _warn(
+        caplog,
+        ["accuracy"],
+        {"acc": lambda output, expected: 1.0},
+        lambda output, expected: 1.0,
+    )
+    assert not caplog.records
+
+
+def test_unannotated_scorer_may_return_mapping_so_no_warning(caplog):
+    _warn(
+        caplog,
+        ["accuracy"],
+        {"accuracy_bundle": lambda output, expected: {"accuracy": 0.9}},
+    )
+    assert not caplog.records

@@ -734,9 +734,14 @@ class TestDecodeLicenseToken:
             assert validator._decode_license_token("one.two") is None
             assert validator._decode_license_token("one.two.three.four") is None
 
-    def test_valid_token_no_expiry(self):
-        """Test a signed valid token without expiry is accepted."""
-        payload = {"tier": "enterprise", "features": ["cloud_execution"], "org": "Acme"}
+    def test_valid_token_with_expiry(self):
+        """Test a signed valid token with an expiry is accepted."""
+        payload = {
+            "exp": time.time() + 86400,
+            "tier": "enterprise",
+            "features": ["cloud_execution"],
+            "org": "Acme",
+        }
         private_key = TestValidateOfflineLicense._rsa_private_key()
         token = TestValidateOfflineLicense._create_rs256_token(payload, private_key)
 
@@ -759,7 +764,12 @@ class TestDecodeLicenseToken:
 
     def test_valid_es256_token_is_accepted(self):
         """Test a valid ES256 token exercises the ECDSA verification branch."""
-        payload = {"tier": "pro", "features": ["parallel_execution"], "org": "Acme"}
+        payload = {
+            "exp": time.time() + 86400,
+            "tier": "pro",
+            "features": ["parallel_execution"],
+            "org": "Acme",
+        }
         private_key = TestValidateOfflineLicense._ec_private_key()
         token = TestValidateOfflineLicense._create_es256_token(payload, private_key)
 
@@ -930,7 +940,12 @@ class TestDecodeLicenseToken:
 
     def test_public_key_file_configuration_is_used(self):
         """Test signed offline licenses can be verified from a public-key file."""
-        payload = {"tier": "pro", "features": ["parallel_execution"], "org": "FileCorp"}
+        payload = {
+            "exp": time.time() + 86400,
+            "tier": "pro",
+            "features": ["parallel_execution"],
+            "org": "FileCorp",
+        }
         private_key = TestValidateOfflineLicense._rsa_private_key()
         token = TestValidateOfflineLicense._create_rs256_token(payload, private_key)
 
@@ -972,7 +987,7 @@ class TestDecodeLicenseToken:
 
     def test_valid_token_defaults_to_free(self):
         """Test explicitly allowed legacy token with no tier defaults to free."""
-        payload = {"features": []}
+        payload = {"exp": time.time() + 86400, "features": []}
         token = TestValidateOfflineLicense._create_token(payload)
 
         with patch.dict(
@@ -1041,7 +1056,12 @@ class TestDecodeLicenseToken:
             os.environ, {"TRAIGENT_ALLOW_UNSIGNED_LICENSE": "true"}, clear=True
         ):
             for extra in ["", "x", "xx", "xxx"]:
-                payload = {"tier": "free", "features": [], "extra": extra}
+                payload = {
+                    "exp": time.time() + 86400,
+                    "tier": "free",
+                    "features": [],
+                    "extra": extra,
+                }
                 token = TestValidateOfflineLicense._create_token(payload)
                 validator = LicenseValidator()
                 result = validator._decode_license_token(token)

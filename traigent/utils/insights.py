@@ -185,22 +185,31 @@ def _analyze_performance_summary(
 
     # Add multi-objective analysis if applicable
     if len(objectives) > 1:
-        multi_obj_analysis = {}
-        for obj in objectives:
-            obj_scores = [t.metrics.get(obj, 0.0) for t in trials]
-            if obj_scores:
-                multi_obj_analysis[obj] = {
-                    "best": max(obj_scores),
-                    "average": statistics.mean(obj_scores),
-                    "improvement": (
-                        (max(obj_scores) - min(obj_scores)) / min(obj_scores)
-                        if min(obj_scores) > 0
-                        else 0.0
-                    ),
-                }
-        summary["multi_objective_analysis"] = multi_obj_analysis
+        summary["multi_objective_analysis"] = _summarize_multi_objective_scores(
+            trials, objectives
+        )
 
     return summary
+
+
+def _summarize_multi_objective_scores(
+    trials: list[TrialResult], objectives: list[str]
+) -> dict[str, dict[str, float]]:
+    """Summarize the supplied objective scores in their existing iteration order."""
+    multi_obj_analysis = {}
+    for obj in objectives:
+        obj_scores = [t.metrics.get(obj, 0.0) for t in trials]
+        if obj_scores:
+            multi_obj_analysis[obj] = {
+                "best": max(obj_scores),
+                "average": statistics.mean(obj_scores),
+                "improvement": (
+                    (max(obj_scores) - min(obj_scores)) / min(obj_scores)
+                    if min(obj_scores) > 0
+                    else 0.0
+                ),
+            }
+    return multi_obj_analysis
 
 
 def _analyze_parameter_importance(
@@ -220,39 +229,51 @@ def _analyze_parameter_importance(
 
     # Analyze each parameter
     for param in all_params:
-        param_values = []
-        param_scores = []
-
-        for trial in trials:
-            if param in trial.config:
-                param_values.append(trial.config[param])
-                param_scores.append(trial.metrics.get(primary_objective, 0.0))
-
-        if param_values and param_scores:
-            # Find best value for this parameter
-            best_idx = param_scores.index(max(param_scores))
-            best_value = param_values[best_idx]
-
-            # Calculate performance impact (association-style measure)
-            performance_impact = _calculate_parameter_impact(param_values, param_scores)
-
-            if performance_impact > 0.1:
-                optimization_priority = "high"
-            elif performance_impact > 0.05:
-                optimization_priority = "medium"
-            else:
-                optimization_priority = "low"
-
-            parameter_analysis[param] = {
-                "best_value": best_value,
-                "performance_impact": performance_impact,
-                "value_distribution": _analyze_value_distribution(
-                    param_values, param_scores
-                ),
-                "optimization_priority": optimization_priority,
-            }
+        analysis = _analyze_single_parameter_importance(
+            param, trials, primary_objective
+        )
+        if analysis is not None:
+            parameter_analysis[param] = analysis
 
     return parameter_analysis
+
+
+def _analyze_single_parameter_importance(
+    param: str, trials: list[TrialResult], primary_objective: str
+) -> dict[str, Any] | None:
+    param_values = []
+    param_scores = []
+
+    for trial in trials:
+        if param in trial.config:
+            param_values.append(trial.config[param])
+            param_scores.append(trial.metrics.get(primary_objective, 0.0))
+
+    if param_values and param_scores:
+        # Find best value for this parameter
+        best_idx = param_scores.index(max(param_scores))
+        best_value = param_values[best_idx]
+
+        # Calculate performance impact (association-style measure)
+        performance_impact = _calculate_parameter_impact(param_values, param_scores)
+
+        if performance_impact > 0.1:
+            optimization_priority = "high"
+        elif performance_impact > 0.05:
+            optimization_priority = "medium"
+        else:
+            optimization_priority = "low"
+
+        return {
+            "best_value": best_value,
+            "performance_impact": performance_impact,
+            "value_distribution": _analyze_value_distribution(
+                param_values, param_scores
+            ),
+            "optimization_priority": optimization_priority,
+        }
+
+    return None
 
 
 def _generate_recommendations(

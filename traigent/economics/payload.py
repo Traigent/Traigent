@@ -146,28 +146,7 @@ def build_telemetry_request(
         EconomicsTelemetryContractError: On a malformed batch shape.
         EgressPolicyError: On a characterization egress violation.
     """
-    if not isinstance(events, Sequence) or isinstance(events, (str, bytes)):
-        raise EconomicsTelemetryContractError("events must be a sequence")
-    event_list = list(events)
-    if not event_list:
-        raise EconomicsTelemetryContractError(
-            "a telemetry batch requires at least one event"
-        )
-    if len(event_list) > MAX_BATCH_EVENTS:
-        raise EconomicsTelemetryContractError(
-            f"a telemetry batch cannot exceed {MAX_BATCH_EVENTS} events"
-        )
-
-    normalized: list[dict[str, Any]] = []
-    for index, event in enumerate(event_list):
-        if not isinstance(event, Mapping):
-            raise EconomicsTelemetryContractError(f"event {index} must be an object")
-        copied = _json_roundtrip(event, index)
-        if copied.get("event_type") == "run_economics":
-            # Egress enforcement runs on the settled characterization BEFORE the
-            # batch can be built, so a withheld value can never be transmitted.
-            enforce_characterization_egress(copied.get("characterization") or {})
-        normalized.append(copied)
+    normalized = _normalize_events(events)
 
     body: dict[str, Any] = {
         "contract": CONTRACT_ID,
@@ -190,6 +169,33 @@ def build_telemetry_request(
     # The key lives in the body AND is sent in the header; the two must match.
     body["idempotency_key"] = key
     return body
+
+
+def _normalize_events(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Validate the batch shape and return the JSON-roundtripped event copies."""
+    if not isinstance(events, Sequence) or isinstance(events, (str, bytes)):
+        raise EconomicsTelemetryContractError("events must be a sequence")
+    event_list = list(events)
+    if not event_list:
+        raise EconomicsTelemetryContractError(
+            "a telemetry batch requires at least one event"
+        )
+    if len(event_list) > MAX_BATCH_EVENTS:
+        raise EconomicsTelemetryContractError(
+            f"a telemetry batch cannot exceed {MAX_BATCH_EVENTS} events"
+        )
+
+    normalized: list[dict[str, Any]] = []
+    for index, event in enumerate(event_list):
+        if not isinstance(event, Mapping):
+            raise EconomicsTelemetryContractError(f"event {index} must be an object")
+        copied = _json_roundtrip(event, index)
+        if copied.get("event_type") == "run_economics":
+            # Egress enforcement runs on the settled characterization BEFORE the
+            # batch can be built, so a withheld value can never be transmitted.
+            enforce_characterization_egress(copied.get("characterization") or {})
+        normalized.append(copied)
+    return normalized
 
 
 def canonical_json(value: Any) -> str:
