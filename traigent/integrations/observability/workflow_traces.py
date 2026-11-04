@@ -1016,7 +1016,14 @@ class WorkflowTracesClient:
                     json=request_payload,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    allow_redirects=False,
                 ) as response:
+                    # never follow a redirect: the Location is not a validated origin
+                    if 300 <= response.status < 400:
+                        return TraceIngestionResponse(
+                            success=False,
+                            error=f"Redirect refused ({response.status})",
+                        )
                     # Auth failures: instance-scoped dedup at DEBUG
                     if response.status in (401, 403):
                         if not self._auth_ingestion_error_logged:

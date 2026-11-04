@@ -2458,6 +2458,10 @@ def _run_validator(
         finally:
             loop.close()
         box["restricted"] = bool(getattr(manager, "_server_optimization_only", False))
+        # Unrestricted only on an explicit boolean false; absent/malformed is a refusal.
+        box["unrestricted"] = (
+            getattr(manager, "_key_validation_unrestricted", False) is True
+        )
     except BaseException as exc:  # noqa: BLE001 - fail closed on anything
         box["exception"] = type(exc).__name__
     finally:
@@ -2613,8 +2617,16 @@ def ensure_trace_egress_allowed(
             "(fail closed)"
         )
         status = "failed"
+    elif entry.box.get("restricted"):
+        status = "restricted"
+    elif entry.box.get("unrestricted") is True:
+        status = "ok"
     else:
-        status = "restricted" if entry.box.get("restricted") else "ok"
+        logger.warning(
+            "Traigent trace export disabled: key validation did not carry an "
+            "explicit optimization_only=false (fail closed)"
+        )
+        status = "failed"
     latched = _latched()
     allowed = status == "ok" and not latched
     definitive = allowed or status == "restricted" or latched
