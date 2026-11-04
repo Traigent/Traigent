@@ -7066,6 +7066,1138 @@
       "unit": {
         "among": null
       }
+    },
+    {
+      "cites": [
+        "FS Def 12.6",
+        "RFC0003 \u00a76.3"
+      ],
+      "id": "precedence/ref-less-revocation-revokes-nothing",
+      "local": {
+        "customer_monitors": [
+          "mon_g"
+        ],
+        "declarations": {
+          "monitors": [
+            {
+              "applies_to": "agent",
+              "decision": {
+                "method": "exact_count_v1",
+                "min_samples": 1
+              },
+              "episode": {
+                "closure_max_age_hours": 48,
+                "closure_windows": 1
+              },
+              "evidence": {
+                "attribution": "agent_key_exact_v1",
+                "deployment_environment": "production",
+                "resolution": "terminal_status_v1",
+                "source": "customer_side"
+              },
+              "name": "mon_g",
+              "phase": "runtime",
+              "requirement": "req_g",
+              "single_producer": false,
+              "window": {
+                "grace_minutes": 60,
+                "tumbling_hours": 24
+              }
+            }
+          ],
+          "requirements": [
+            {
+              "kind": "zero_tolerance",
+              "name": "req_g",
+              "unit": "invocation",
+              "violation": {
+                "a": {
+                  "event": "authorization_granted"
+                },
+                "b": {
+                  "event": "tool_call",
+                  "tool": "payments.charge"
+                },
+                "correlate_by": "unit",
+                "mode": "single_use",
+                "pattern": "precedence"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "name": "guards",
+              "rules": []
+            }
+          ]
+        },
+        "document": "module",
+        "format": "tvl-runtime-local/1",
+        "guards": [
+          {
+            "action": "block_action",
+            "monitor": "mon_g",
+            "on_check_error": "block",
+            "response": "guards",
+            "rule_id": "g"
+          }
+        ],
+        "harness_monitors": [],
+        "tvl_version": "1.3"
+      },
+      "note": "A revocation without a ref never matches (History.lean r.ref != none): the ref-less grant still authorizes the charge. See legalPrecedence in the public tvl proofs/TVL/Runtime/History.lean.",
+      "steps": [
+        {
+          "event": {
+            "producer": "sdk",
+            "sequence": 0,
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "producer": "sdk",
+            "sequence": 1,
+            "type": "authorization_revoked"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "producer": "sdk",
+            "sequence": 2,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "no_violation",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        }
+      ],
+      "unit": {}
+    },
+    {
+      "cites": [
+        "FS Def 12.6",
+        "RFC0003 \u00a76.3"
+      ],
+      "id": "precedence/reusable-grant-revoked-between-uses",
+      "local": {
+        "customer_monitors": [
+          "mon_g"
+        ],
+        "declarations": {
+          "monitors": [
+            {
+              "applies_to": "agent",
+              "decision": {
+                "method": "exact_count_v1",
+                "min_samples": 1
+              },
+              "episode": {
+                "closure_max_age_hours": 48,
+                "closure_windows": 1
+              },
+              "evidence": {
+                "attribution": "agent_key_exact_v1",
+                "deployment_environment": "production",
+                "resolution": "terminal_status_v1",
+                "source": "customer_side"
+              },
+              "name": "mon_g",
+              "phase": "runtime",
+              "requirement": "req_g",
+              "single_producer": false,
+              "window": {
+                "grace_minutes": 60,
+                "tumbling_hours": 24
+              }
+            }
+          ],
+          "requirements": [
+            {
+              "kind": "zero_tolerance",
+              "name": "req_g",
+              "unit": "invocation",
+              "violation": {
+                "a": {
+                  "event": "authorization_granted",
+                  "ref": "pay"
+                },
+                "b": {
+                  "event": "tool_call",
+                  "tool": "payments.charge"
+                },
+                "correlate_by": "correlation_id",
+                "mode": "reusable",
+                "pattern": "precedence"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "name": "guards",
+              "rules": []
+            }
+          ]
+        },
+        "document": "module",
+        "format": "tvl-runtime-local/1",
+        "guards": [
+          {
+            "action": "block_action",
+            "monitor": "mon_g",
+            "on_check_error": "block",
+            "response": "guards",
+            "rule_id": "g"
+          }
+        ],
+        "harness_monitors": [],
+        "tvl_version": "1.3"
+      },
+      "note": "Reusable: the grant authorizes every charge until its revocation, none after it.",
+      "steps": [
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "ref": "pay",
+            "sequence": 0,
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 1,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "no_violation",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 2,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "no_violation",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "ref": "pay",
+            "sequence": 3,
+            "type": "authorization_revoked"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 4,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "violation_established",
+            "unit_unresolved": false,
+            "verdict": "block"
+          }
+        }
+      ],
+      "unit": {}
+    },
+    {
+      "cites": [
+        "FS Def 12.6",
+        "RFC0003 \u00a76.3"
+      ],
+      "id": "precedence/revocation-before-first-use-blocks-single-use",
+      "local": {
+        "customer_monitors": [
+          "mon_g"
+        ],
+        "declarations": {
+          "monitors": [
+            {
+              "applies_to": "agent",
+              "decision": {
+                "method": "exact_count_v1",
+                "min_samples": 1
+              },
+              "episode": {
+                "closure_max_age_hours": 48,
+                "closure_windows": 1
+              },
+              "evidence": {
+                "attribution": "agent_key_exact_v1",
+                "deployment_environment": "production",
+                "resolution": "terminal_status_v1",
+                "source": "customer_side"
+              },
+              "name": "mon_g",
+              "phase": "runtime",
+              "requirement": "req_g",
+              "single_producer": false,
+              "window": {
+                "grace_minutes": 60,
+                "tumbling_hours": 24
+              }
+            }
+          ],
+          "requirements": [
+            {
+              "kind": "zero_tolerance",
+              "name": "req_g",
+              "unit": "invocation",
+              "violation": {
+                "a": {
+                  "event": "authorization_granted",
+                  "ref": "pay"
+                },
+                "b": {
+                  "event": "tool_call",
+                  "tool": "payments.charge"
+                },
+                "correlate_by": "correlation_id",
+                "mode": "single_use",
+                "pattern": "precedence"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "name": "guards",
+              "rules": []
+            }
+          ]
+        },
+        "document": "module",
+        "format": "tvl-runtime-local/1",
+        "guards": [
+          {
+            "action": "block_action",
+            "monitor": "mon_g",
+            "on_check_error": "block",
+            "response": "guards",
+            "rule_id": "g"
+          }
+        ],
+        "harness_monitors": [],
+        "tvl_version": "1.3"
+      },
+      "note": "Revocation before any use: the only grant is gone, so the charge has no authorization.",
+      "steps": [
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "ref": "pay",
+            "sequence": 0,
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "ref": "pay",
+            "sequence": 1,
+            "type": "authorization_revoked"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 2,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "violation_established",
+            "unit_unresolved": false,
+            "verdict": "block"
+          }
+        }
+      ],
+      "unit": {}
+    },
+    {
+      "cites": [
+        "FS Def 12.6",
+        "RFC0003 \u00a76.3"
+      ],
+      "id": "precedence/revocation-under-another-key-keeps-the-grant",
+      "local": {
+        "customer_monitors": [
+          "mon_g"
+        ],
+        "declarations": {
+          "monitors": [
+            {
+              "applies_to": "agent",
+              "decision": {
+                "method": "exact_count_v1",
+                "min_samples": 1
+              },
+              "episode": {
+                "closure_max_age_hours": 48,
+                "closure_windows": 1
+              },
+              "evidence": {
+                "attribution": "agent_key_exact_v1",
+                "deployment_environment": "production",
+                "resolution": "terminal_status_v1",
+                "source": "customer_side"
+              },
+              "name": "mon_g",
+              "phase": "runtime",
+              "requirement": "req_g",
+              "single_producer": false,
+              "window": {
+                "grace_minutes": 60,
+                "tumbling_hours": 24
+              }
+            }
+          ],
+          "requirements": [
+            {
+              "kind": "zero_tolerance",
+              "name": "req_g",
+              "unit": "invocation",
+              "violation": {
+                "a": {
+                  "event": "authorization_granted",
+                  "ref": "pay"
+                },
+                "b": {
+                  "event": "tool_call",
+                  "tool": "payments.charge"
+                },
+                "correlate_by": "correlation_id",
+                "mode": "single_use",
+                "pattern": "precedence"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "name": "guards",
+              "rules": []
+            }
+          ]
+        },
+        "document": "module",
+        "format": "tvl-runtime-local/1",
+        "guards": [
+          {
+            "action": "block_action",
+            "monitor": "mon_g",
+            "on_check_error": "block",
+            "response": "guards",
+            "rule_id": "g"
+          }
+        ],
+        "harness_monitors": [],
+        "tvl_version": "1.3"
+      },
+      "note": "A revocation under correlation c2 does not revoke the grant under c1.",
+      "steps": [
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "ref": "pay",
+            "sequence": 0,
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c2",
+            "producer": "sdk",
+            "ref": "pay",
+            "sequence": 1,
+            "type": "authorization_revoked"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 2,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "no_violation",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 3,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "violation_established",
+            "unit_unresolved": false,
+            "verdict": "block"
+          }
+        }
+      ],
+      "unit": {}
+    },
+    {
+      "cites": [
+        "FS Def 12.6",
+        "RFC0003 \u00a76.3"
+      ],
+      "id": "precedence/tool-call-id-mismatch-does-not-authorize",
+      "local": {
+        "customer_monitors": [
+          "mon_g"
+        ],
+        "declarations": {
+          "monitors": [
+            {
+              "applies_to": "agent",
+              "decision": {
+                "method": "exact_count_v1",
+                "min_samples": 1
+              },
+              "episode": {
+                "closure_max_age_hours": 48,
+                "closure_windows": 1
+              },
+              "evidence": {
+                "attribution": "agent_key_exact_v1",
+                "deployment_environment": "production",
+                "resolution": "terminal_status_v1",
+                "source": "customer_side"
+              },
+              "name": "mon_g",
+              "phase": "runtime",
+              "requirement": "req_g",
+              "single_producer": false,
+              "window": {
+                "grace_minutes": 60,
+                "tumbling_hours": 24
+              }
+            }
+          ],
+          "requirements": [
+            {
+              "kind": "zero_tolerance",
+              "name": "req_g",
+              "unit": "invocation",
+              "violation": {
+                "a": {
+                  "event": "authorization_granted"
+                },
+                "b": {
+                  "event": "tool_call",
+                  "tool": "payments.charge"
+                },
+                "correlate_by": "tool_call_id",
+                "mode": "single_use",
+                "pattern": "precedence"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "name": "guards",
+              "rules": []
+            }
+          ]
+        },
+        "document": "module",
+        "format": "tvl-runtime-local/1",
+        "guards": [
+          {
+            "action": "block_action",
+            "monitor": "mon_g",
+            "on_check_error": "block",
+            "response": "guards",
+            "rule_id": "g"
+          }
+        ],
+        "harness_monitors": [],
+        "tvl_version": "1.3"
+      },
+      "note": "correlate_by tool_call_id: a grant stamped k1 authorizes only the call stamped k1.",
+      "steps": [
+        {
+          "event": {
+            "producer": "sdk",
+            "sequence": 0,
+            "tool_call_id": "k1",
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "producer": "sdk",
+            "sequence": 1,
+            "tool": "payments.charge",
+            "tool_call_id": "k2",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "violation_established",
+            "unit_unresolved": false,
+            "verdict": "block"
+          }
+        },
+        {
+          "event": {
+            "producer": "sdk",
+            "sequence": 2,
+            "tool": "payments.charge",
+            "tool_call_id": "k1",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "no_violation",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "producer": "sdk",
+            "sequence": 3,
+            "tool": "payments.charge",
+            "tool_call_id": "k1",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "violation_established",
+            "unit_unresolved": false,
+            "verdict": "block"
+          }
+        }
+      ],
+      "unit": {}
+    },
+    {
+      "cites": [
+        "FS Def 12.6",
+        "RFC0003 \u00a76.3"
+      ],
+      "id": "precedence/grant-without-the-key-authorizes-nothing",
+      "local": {
+        "customer_monitors": [
+          "mon_g"
+        ],
+        "declarations": {
+          "monitors": [
+            {
+              "applies_to": "agent",
+              "decision": {
+                "method": "exact_count_v1",
+                "min_samples": 1
+              },
+              "episode": {
+                "closure_max_age_hours": 48,
+                "closure_windows": 1
+              },
+              "evidence": {
+                "attribution": "agent_key_exact_v1",
+                "deployment_environment": "production",
+                "resolution": "terminal_status_v1",
+                "source": "customer_side"
+              },
+              "name": "mon_g",
+              "phase": "runtime",
+              "requirement": "req_g",
+              "single_producer": false,
+              "window": {
+                "grace_minutes": 60,
+                "tumbling_hours": 24
+              }
+            }
+          ],
+          "requirements": [
+            {
+              "kind": "zero_tolerance",
+              "name": "req_g",
+              "unit": "invocation",
+              "violation": {
+                "a": {
+                  "event": "authorization_granted"
+                },
+                "b": {
+                  "event": "tool_call",
+                  "tool": "payments.charge"
+                },
+                "correlate_by": "correlation_id",
+                "mode": "single_use",
+                "pattern": "precedence"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "name": "guards",
+              "rules": []
+            }
+          ]
+        },
+        "document": "module",
+        "format": "tvl-runtime-local/1",
+        "guards": [
+          {
+            "action": "block_action",
+            "monitor": "mon_g",
+            "on_check_error": "block",
+            "response": "guards",
+            "rule_id": "g"
+          }
+        ],
+        "harness_monitors": [],
+        "tvl_version": "1.3"
+      },
+      "note": "correlate_by correlation_id: a grant lacking the key matches nothing, so the keyed charge is unauthorized (a decided violation: the charge's key is present).",
+      "steps": [
+        {
+          "event": {
+            "producer": "sdk",
+            "sequence": 0,
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 1,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "violation_established",
+            "unit_unresolved": false,
+            "verdict": "block"
+          }
+        }
+      ],
+      "unit": {}
+    },
+    {
+      "cites": [
+        "FS Def 12.6",
+        "RFC0003 \u00a76.3"
+      ],
+      "id": "precedence/single-use-keys-are-independent",
+      "local": {
+        "customer_monitors": [
+          "mon_g"
+        ],
+        "declarations": {
+          "monitors": [
+            {
+              "applies_to": "agent",
+              "decision": {
+                "method": "exact_count_v1",
+                "min_samples": 1
+              },
+              "episode": {
+                "closure_max_age_hours": 48,
+                "closure_windows": 1
+              },
+              "evidence": {
+                "attribution": "agent_key_exact_v1",
+                "deployment_environment": "production",
+                "resolution": "terminal_status_v1",
+                "source": "customer_side"
+              },
+              "name": "mon_g",
+              "phase": "runtime",
+              "requirement": "req_g",
+              "single_producer": false,
+              "window": {
+                "grace_minutes": 60,
+                "tumbling_hours": 24
+              }
+            }
+          ],
+          "requirements": [
+            {
+              "kind": "zero_tolerance",
+              "name": "req_g",
+              "unit": "invocation",
+              "violation": {
+                "a": {
+                  "event": "authorization_granted"
+                },
+                "b": {
+                  "event": "tool_call",
+                  "tool": "payments.charge"
+                },
+                "correlate_by": "correlation_id",
+                "mode": "single_use",
+                "pattern": "precedence"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "name": "guards",
+              "rules": []
+            }
+          ]
+        },
+        "document": "module",
+        "format": "tvl-runtime-local/1",
+        "guards": [
+          {
+            "action": "block_action",
+            "monitor": "mon_g",
+            "on_check_error": "block",
+            "response": "guards",
+            "rule_id": "g"
+          }
+        ],
+        "harness_monitors": [],
+        "tvl_version": "1.3"
+      },
+      "note": "Two grants under different keys: each authorizes one charge under its own key only.",
+      "steps": [
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 0,
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c2",
+            "producer": "sdk",
+            "sequence": 1,
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 2,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "no_violation",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c2",
+            "producer": "sdk",
+            "sequence": 3,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "no_violation",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c1",
+            "producer": "sdk",
+            "sequence": 4,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "violation_established",
+            "unit_unresolved": false,
+            "verdict": "block"
+          }
+        },
+        {
+          "event": {
+            "correlation_id": "c2",
+            "producer": "sdk",
+            "sequence": 5,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "violation_established",
+            "unit_unresolved": false,
+            "verdict": "block"
+          }
+        }
+      ],
+      "unit": {}
+    },
+    {
+      "cites": [
+        "FS Def 12.6",
+        "RFC0003 \u00a76.3"
+      ],
+      "id": "precedence/revoked-grant-leaves-the-other-grant-for-the-next-charge",
+      "local": {
+        "customer_monitors": [
+          "mon_g"
+        ],
+        "declarations": {
+          "monitors": [
+            {
+              "applies_to": "agent",
+              "decision": {
+                "method": "exact_count_v1",
+                "min_samples": 1
+              },
+              "episode": {
+                "closure_max_age_hours": 48,
+                "closure_windows": 1
+              },
+              "evidence": {
+                "attribution": "agent_key_exact_v1",
+                "deployment_environment": "production",
+                "resolution": "terminal_status_v1",
+                "source": "customer_side"
+              },
+              "name": "mon_g",
+              "phase": "runtime",
+              "requirement": "req_g",
+              "single_producer": false,
+              "window": {
+                "grace_minutes": 60,
+                "tumbling_hours": 24
+              }
+            }
+          ],
+          "requirements": [
+            {
+              "kind": "zero_tolerance",
+              "name": "req_g",
+              "unit": "invocation",
+              "violation": {
+                "a": {
+                  "event": "authorization_granted"
+                },
+                "b": {
+                  "event": "tool_call",
+                  "tool": "payments.charge"
+                },
+                "correlate_by": "unit",
+                "mode": "single_use",
+                "pattern": "precedence"
+              }
+            }
+          ],
+          "responses": [
+            {
+              "name": "guards",
+              "rules": []
+            }
+          ]
+        },
+        "document": "module",
+        "format": "tvl-runtime-local/1",
+        "guards": [
+          {
+            "action": "block_action",
+            "monitor": "mon_g",
+            "on_check_error": "block",
+            "response": "guards",
+            "rule_id": "g"
+          }
+        ],
+        "harness_monitors": [],
+        "tvl_version": "1.3"
+      },
+      "note": "g(a) revoked, g(b) not: the first charge spends g(b), the second has nothing left.",
+      "steps": [
+        {
+          "event": {
+            "producer": "sdk",
+            "ref": "a",
+            "sequence": 0,
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "producer": "sdk",
+            "ref": "b",
+            "sequence": 1,
+            "type": "authorization_granted"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "producer": "sdk",
+            "ref": "a",
+            "sequence": 2,
+            "type": "authorization_revoked"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "not_relevant",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "producer": "sdk",
+            "sequence": 3,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "no_violation",
+            "unit_unresolved": false,
+            "verdict": "allow"
+          }
+        },
+        {
+          "event": {
+            "producer": "sdk",
+            "sequence": 4,
+            "tool": "payments.charge",
+            "type": "tool_call"
+          },
+          "expect": {
+            "cause": null,
+            "reason": "violation_established",
+            "unit_unresolved": false,
+            "verdict": "block"
+          }
+        }
+      ],
+      "unit": {}
     }
   ],
   "decision_fields": [
