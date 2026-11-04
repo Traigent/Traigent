@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Documentation: a guide, "Block destructive tool calls with local guards" (`docs/guides/local-guards.md`), and a runnable example (`examples/advanced/local-guards/`) for `LocalGuardSet`, `guarded` and `LocalGuardError` from `traigent.runtime`.
+
 ### Fixed
 
 - A blank or whitespace-only `TRAIGENT_RUN_COST_LIMIT` now means "unset": the default limit applies silently instead of logging a misleading "Invalid TRAIGENT_RUN_COST_LIMIT=''" warning. Non-blank unparseable values still warn.

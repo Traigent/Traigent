@@ -66,6 +66,7 @@ nav:
       - Developer Guides:
           - Execution Modes: guides/execution-modes.md
           - Evaluation: guides/evaluation.md
+          - Local Guards (Block Destructive Tool Calls): guides/local-guards.md
           - JS Bridge: guides/js-bridge.md
           - LLM Plugin Migration: guides/llm_plugin_migration_guide.md
           - Parallel Configuration: guides/parallel-configuration.md
