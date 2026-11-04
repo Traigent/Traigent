@@ -10,11 +10,28 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
+import pytest
 from click.testing import CliRunner
 
 from traigent.cli.main import cli
 
-_MODULES_DIR = Path(__file__).resolve().parent / "temp_modules"
+
+class _FixtureNotApplied:
+    """Placeholder that fails loudly if used before the fixture rebinds it."""
+
+    def _fail(self, *args: object, **kwargs: object) -> None:
+        raise RuntimeError("cli_scratch_dir fixture not applied")
+
+    __truediv__ = mkdir = _fail
+
+
+_MODULES_DIR: Path | _FixtureNotApplied = _FixtureNotApplied()  # set per test
+
+
+@pytest.fixture(autouse=True)
+def _scratch(cli_scratch_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys.modules[__name__], "_MODULES_DIR", cli_scratch_dir)
+
 
 _RESULT_CLASS = (
     "class FakeTrial:\n"
@@ -56,8 +73,6 @@ def _cleanup(path: Path) -> None:
     sys.modules.pop("user_module", None)
     if path.exists():
         path.unlink()
-    if _MODULES_DIR.exists() and not any(_MODULES_DIR.iterdir()):
-        _MODULES_DIR.rmdir()
 
 
 def _run(result_expr: str, plain: Callable[[str], str]):

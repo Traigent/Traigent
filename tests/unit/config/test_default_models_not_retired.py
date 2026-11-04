@@ -51,3 +51,122 @@ def test_choices_model_gemini_and_case_insensitive_provider(monkeypatch) -> None
         models = Choices.model(provider=provider, tier="balanced").to_list()
         assert models, provider
         assert not any(m.startswith("gpt-") for m in models), (provider, models)
+
+
+def test_choices_model_unknown_provider_raises_naming_supported(monkeypatch) -> None:
+    import pytest
+
+    from traigent.api.parameter_ranges import Choices
+
+    monkeypatch.delenv("TRAIGENT_MODELS_ANTROPIC_FAST", raising=False)
+    with pytest.raises(ValueError) as excinfo:
+        Choices.model(provider="antropic", tier="fast")
+    message = str(excinfo.value)
+    for supported in ("openai", "anthropic", "gemini"):
+        assert supported in message
+    assert "TRAIGENT_MODELS_ANTROPIC_FAST" in message
+
+
+def test_embedding_model_is_case_insensitive_and_never_falls_back() -> None:
+    import pytest
+
+    from traigent.api.parameter_ranges import Choices
+
+    assert (
+        Choices.embedding_model(provider="OpenAI").to_list()
+        == Choices.embedding_model(provider="openai").to_list()
+    )
+    assert Choices.embedding_model().to_list()  # provider=None keeps common set
+    for provider in ("gemini", "Anthropic", "antropic"):
+        with pytest.raises(ValueError, match="openai"):
+            Choices.embedding_model(provider=provider)
+
+
+def test_pricing_report_lists_no_retired_models() -> None:
+    from traigent.analytics.intelligence import CostOptimizationAI
+
+    report = CostOptimizationAI().fetch_current_pricing(["openai", "anthropic"])
+    listed = [m for models in report.values() for m in models]
+    assert listed
+    assert not [m for m in listed if is_retired_model(m)], listed
+    # The cloud bridge default is pinned in tests/unit/cloud/test_backend_bridges.py.
+
+
+def test_pricing_report_models_have_nonzero_prices() -> None:
+    """A pricing-data drop for a reported model must not be silent."""
+    from traigent.analytics.intelligence import CostOptimizationAI
+    from traigent.utils.cost_calculator import get_model_pricing_per_1k
+
+    for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-4o"):
+        input_price, output_price = get_model_pricing_per_1k(model)
+        assert input_price > 0 and output_price > 0, model
+
+    report = CostOptimizationAI().fetch_current_pricing(["openai"])["openai"]
+    for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-4o"):
+        assert model in report, (model, sorted(report))
+        assert report[model]["input"] > 0 and report[model]["output"] > 0, model
+
+
+def test_choices_model_rejects_non_string_provider_and_quotes_input() -> None:
+    import pytest
+
+    from traigent.api.parameter_ranges import Choices
+
+    for call in (Choices.model, Choices.embedding_model):
+        with pytest.raises(ValueError, match="provider must be a string"):
+            call(provider=5)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=r"'x\\nTRAIGENT_FAKE'"):
+        Choices.embedding_model(provider="x\nTRAIGENT_FAKE")
+    with pytest.raises(ValueError, match=r"TRAIGENT_MODELS_ZZ_FAST'"):
+        Choices.model(provider="zz", tier="fast")
+
+
+def test_choices_empty_provider_raises_but_none_is_default(monkeypatch) -> None:
+    import pytest
+
+    from traigent.api.parameter_ranges import Choices
+
+    for tier in ("FAST", "BALANCED", "QUALITY"):
+        monkeypatch.delenv(f"TRAIGENT_MODELS_DEFAULT_{tier}", raising=False)
+    assert Choices.model(provider=None).to_list()
+    assert Choices.embedding_model(provider=None).to_list()
+    with pytest.raises(ValueError, match="Unknown provider ''"):
+        Choices.model(provider="")
+    with pytest.raises(ValueError, match="provider ''"):
+        Choices.embedding_model(provider="")
+
+
+def test_choices_model_unknown_tier_is_not_blamed_on_provider(monkeypatch) -> None:
+    import pytest
+
+    from traigent.api.parameter_ranges import Choices
+
+    monkeypatch.delenv("TRAIGENT_MODELS_OPENAI_BOGUS", raising=False)
+    with pytest.raises(ValueError) as excinfo:
+        Choices.model(provider="openai", tier="bogus")  # type: ignore[arg-type]
+    message = str(excinfo.value)
+    assert "Unknown tier 'bogus'" in message
+    for tier in ("fast", "balanced", "quality"):
+        assert tier in message
+    assert "provider" not in message.lower().replace("explicit model list", "")
+    with pytest.raises(ValueError, match="Unknown provider 'nope'"):
+        Choices.model(provider="nope", tier="fast")
+
+
+def test_choices_model_non_string_tier_raises_value_error() -> None:
+    import pytest
+
+    from traigent.api.parameter_ranges import Choices
+
+    with pytest.raises(ValueError, match="tier must be a string"):
+        Choices.model(provider="openai", tier=3)  # type: ignore[arg-type]
+
+
+def test_empty_provider_error_has_no_malformed_env_hint() -> None:
+    import pytest
+
+    from traigent.api.parameter_ranges import Choices
+
+    with pytest.raises(ValueError) as excinfo:
+        Choices.model(provider="")
+    assert "TRAIGENT_MODELS__" not in str(excinfo.value)

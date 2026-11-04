@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
     from traigent.storage.local_storage import LocalStorageManager
 
-from traigent.config.backend_config import get_no_credentials_hint
+from traigent.config.backend_config import PRICING_URL, get_no_credentials_hint
 from traigent.core.execution_policy_runtime import (
     RESULT_SOURCES,
     SOURCE_CLOUD_BRAIN,
@@ -664,7 +664,8 @@ _UNTRACKED_REMEDIES: dict[SessionCreationFailureClassification, str] = {
     SessionCreationFailureClassification.QUOTA_EXCEEDED: (
         "Remedy: a plan quota/limit was reached (the backend is reachable). "
         "Review usage and upgrade in the Traigent portal (Billing), or reduce "
-        "the requested trials/samples."
+        "the requested trials/samples. "
+        f"Plans: {PRICING_URL}"
     ),
     SessionCreationFailureClassification.BACKEND_REFUSED: (
         "Remedy: the backend is reachable and refused this session (closed "

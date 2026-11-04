@@ -51,6 +51,7 @@ EPSILON = 1e-10
 # =============================================================================
 
 # Default LLM model for optimization
+# revisit 2027-01-14: DEFAULT_MODEL gpt-4o-mini is scheduled for shutdown
 DEFAULT_MODEL = "gpt-4o-mini"
 
 # Default prompt style for optimization

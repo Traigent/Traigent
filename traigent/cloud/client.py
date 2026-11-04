@@ -34,7 +34,7 @@ if AIOHTTP_AVAILABLE:
 else:  # pragma: no cover - minimal environments without aiohttp
     _REAL_AIOHTTP_CLIENT_SESSION = None
 
-from traigent.config.backend_config import BackendConfig
+from traigent.config.backend_config import PRICING_URL, BackendConfig
 from traigent.core.session_types import (
     QuotaRefusalFacts,
     SessionCreationFailureDetail,
@@ -2820,7 +2820,7 @@ class SessionQuotaRefusedError(CloudServiceError):
             f"Plan quota/limit reached ({status}, error_code={error_code}"
             f"{facts_part}). "
             "Session creation was refused by the Traigent backend; the run was "
-            f"stopped. {remedy}"
+            f"stopped. {remedy} Plans: {PRICING_URL}"
         )
         self.status_code = status_code
         self.error_code = error_code
