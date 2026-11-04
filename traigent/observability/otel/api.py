@@ -213,7 +213,9 @@ def _snapshot_destination(
     return key, base
 
 
-def _preflight_allows_export(api_key: str | None, endpoint: str | None) -> bool:
+def _preflight_allows_export(
+    api_key: str | None, endpoint: str | None, offline: bool
+) -> bool:
     """Run the central trace-egress gate BEFORE taking ``_lock`` (it may wait up to its
     deadline; the worker it waits on never touches ``_lock``, so this cannot deadlock,
     but holding ``_lock`` that long would stall shutdown()/init() on other threads).
@@ -221,9 +223,9 @@ def _preflight_allows_export(api_key: str | None, endpoint: str | None) -> bool:
     Returns False only when Traigent must not receive spans. Configuration errors are
     left for the guarded section below to raise in their usual order.
     """
+    if offline:
+        return True  # already offline: no exporter will be built
     try:
-        if _init_is_offline(api_key, endpoint):
-            return True  # already offline: no exporter will be built
         key = api_key if api_key is not None else BackendConfig.get_api_key()
         if not key or not key.strip():
             return True  # _init_api_key raises the usual error below
@@ -318,9 +320,17 @@ def init(
     """
     global _handle, _last_handle
     snap_key, snap_base = _snapshot_destination(api_key, endpoint)
+    # Read the offline state ONCE and carry the decision through: a second read could
+    # flip to online between the preflight (which skips validation when offline) and
+    # the exporter build, giving an exporter built with an unvalidated key.
+    try:
+        offline_once = _init_is_offline(api_key, endpoint)
+    except Exception:  # noqa: BLE001 - config errors surface later, in order
+        offline_once = False
     export_allowed = _preflight_allows_export(
         snap_key if snap_key is not None else api_key,
         snap_base if snap_key is not None else endpoint,
+        offline_once,
     )
     with _lock:
         if _handle is not None:
@@ -330,7 +340,7 @@ def init(
         ContentPolicy(mode, allowed_span_names)
         rate = _resolve_rate(sample_rate)
         # optimization_only workspaces refuse trace ingest: never build an exporter.
-        offline = _init_is_offline(api_key, endpoint) or not export_allowed
+        offline = offline_once or not export_allowed
         if tracer_provider is not None and not hasattr(
             tracer_provider, "add_span_processor"
         ):
@@ -385,6 +395,8 @@ def init(
             # ``403 optimization_only`` seen for it (by any SDK client) stops them
             oo_scope = oo_egress.credential_scope(url, headers)
             exporter.oo_scope = oo_scope
+            # the exact credential/origin the gate validated, re-checked before each POST
+            exporter.egress_credential = (key.strip(), url)
             processor.oo_scope = oo_scope
             provider.add_span_processor(processor)
         if set_global:

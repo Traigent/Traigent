@@ -267,6 +267,12 @@ def test_core_tracing_env_exporter_not_built(monkeypatch: pytest.MonkeyPatch) ->
 # ---- round-2 review fixes -------------------------------------------------------------
 
 
+def _mark_unrestricted(manager: Any, result: Any) -> None:
+    """Model the backend's explicit ``optimization_only: false`` for a fake validator."""
+    if result is None and not manager._server_optimization_only:
+        manager._key_validation_unrestricted = True
+
+
 def _patch_validation(
     monkeypatch: pytest.MonkeyPatch, answer: Any = None, restricted_for: Any = ()
 ) -> list[str]:
@@ -280,7 +286,9 @@ def _patch_validation(
         seen.append(base)
         if base in restricted_for:
             self._server_optimization_only = True
-        return answer
+        result = answer
+        _mark_unrestricted(self, result)
+        return result
 
     monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", fake)
     return seen
@@ -369,7 +377,9 @@ def test_recovery_after_failure_window_allows_export(
     from traigent.cloud.auth import AuthManager
 
     async def fake(self: Any, api_key: str) -> Any:
-        return next(answers)
+        result = next(answers)
+        _mark_unrestricted(self, result)
+        return result
 
     monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", fake)
     now = _fake_clock(monkeypatch)
@@ -702,7 +712,9 @@ def test_otel_headers_key_is_the_validated_credential(
         validated.append(api_key)
         if api_key == other:
             self._server_optimization_only = True
-        return None
+        result = None
+        _mark_unrestricted(self, result)
+        return result
 
     monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", fake)
     with capture_egress() as cap:
@@ -733,7 +745,9 @@ def test_transient_denial_does_not_permanently_disable_core_tracing(
     answers = iter(["backend validation timed out", None])
 
     async def fake(self: Any, api_key: str) -> Any:
-        return next(answers)
+        result = next(answers)
+        _mark_unrestricted(self, result)
+        return result
 
     monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", fake)
     now = _fake_clock(monkeypatch)
@@ -785,7 +799,9 @@ def _per_key_validation(
         validated.append(api_key)
         if api_key in restricted:
             self._server_optimization_only = True
-        return None
+        result = None
+        _mark_unrestricted(self, result)
+        return result
 
     monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", fake)
     return validated
@@ -954,7 +970,9 @@ def _race_on_validation(monkeypatch: pytest.MonkeyPatch, switch: Any) -> list[st
             switch()
         elif api_key == KEY_R:
             self._server_optimization_only = True
-        return None
+        result = None
+        _mark_unrestricted(self, result)
+        return result
 
     monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", fake)
     return validated
@@ -1139,3 +1157,120 @@ def test_previously_returned_plugin_tracer_does_not_export_after_latch(
             p.shutdown()
     assert _trace_posts(cap) == []
     assert cap.guard_violations == []
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"valid": True},
+        {"valid": True, "optimization_only": None},
+        {"valid": True, "optimization_only": "false"},
+        {"valid": True, "optimization_only": 0},
+    ],
+    ids=["absent", "null", "string", "int"],
+)
+def test_validation_without_explicit_false_flag_fails_closed(
+    response: dict[str, Any],
+) -> None:
+    """Only an explicit JSON boolean false counts as unrestricted (P1 fail-open)."""
+    with capture_egress() as cap:
+        cap.backend.validate_response = response
+        _emit()
+    _assert_no_trace_egress(cap)
+
+
+def test_offline_flip_between_reads_never_builds_unvalidated_exporter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The offline state is read once: offline at the preflight stays offline."""
+    import traigent.observability.otel.api as otel_api
+
+    calls = {"n": 0}
+
+    def flipping() -> bool:
+        calls["n"] += 1
+        return calls["n"] == 1  # offline on the first read, online afterwards
+
+    monkeypatch.setattr(otel_api, "is_backend_offline", flipping)
+    with capture_egress() as cap:
+        cap.backend.validate_response = dict(RESTRICTED)
+        _emit()
+    assert [r for r in cap.requests if _is_trace(r)] == []
+    assert cap.guard_violations == []
+
+
+def test_send_time_preflight_revalidates_the_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with capture_egress() as cap:
+        cap.backend.validate_response = {"valid": True, "optimization_only": False}
+        handle = otel.init(
+            api_key=FAKE_API_KEY, schedule_delay_s=0.05, exit_flush=False
+        )
+        monkeypatch.setattr(oo, "ensure_trace_egress_allowed", lambda *a, **k: False)
+        with handle.tracer.start_as_current_span("x"):
+            pass
+        otel.flush(2)
+        otel.shutdown()
+    assert [
+        r for r in cap.requests if "/otlp" in r.path or "/v1/traces" in r.path
+    ] == []
+
+
+def test_async_workflow_ingest_never_follows_a_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import traigent.integrations.observability.workflow_traces as wt
+
+    sent: list[str] = []
+
+    class _Resp:
+        status = 307
+        headers = {"Location": "https://elsewhere.invalid/ingest"}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def json(self) -> dict[str, Any]:
+            return {"success": True}
+
+        async def __aenter__(self) -> _Resp:
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+    class _Session:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Session:
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+        def post(self, url: str, **kwargs: Any) -> _Resp:
+            sent.append(url)
+            if kwargs.get("allow_redirects", True):  # aiohttp's default follows
+                sent.append(_Resp.headers["Location"])
+            return _Resp()
+
+    class _FakeAiohttp:
+        ClientSession = _Session
+        ClientError = Exception
+
+        @staticmethod
+        def ClientTimeout(**k: Any) -> Any:  # noqa: N802
+            return None
+
+    monkeypatch.setattr(wt, "aiohttp", _FakeAiohttp)
+    monkeypatch.setattr(wt, "AIOHTTP_AVAILABLE", True)
+    monkeypatch.setattr(oo, "ensure_trace_egress_allowed", lambda *a, **k: True)
+    monkeypatch.setattr(oo, "is_active", lambda *a, **k: False)
+    graph = wt.WorkflowGraphPayload(experiment_id="e", nodes=[], edges=[])
+    client = wt.WorkflowTracesClient(BACKEND_URL, FAKE_API_KEY)
+    result = asyncio.run(client.ingest_traces_async(graph=graph))
+    assert len(sent) == 1
+    assert result.success is False
+    assert "Redirect refused" in (result.error or "")
