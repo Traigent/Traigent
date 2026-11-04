@@ -14,8 +14,12 @@ with "/" in the branch written ``%2F``. A GitHub Enterprise store leads with its
 percent-encoded API URL as a third segment
 (``github+v2://https%3A%2F%2Fghe.example.com%2Fapi%2Fv3/owner/repo@branch``); the
 default ``https://api.github.com`` is omitted, so github.com locators are unchanged.
-``file://`` paths are percent-decoded (the store escapes ``%``, ``?`` and ``#``); a
-plain path is taken literally and may contain ``?`` or ``#``. Credentials are never
+A ``file://`` path and a plain path are both taken literally (never
+percent-decoded) and may contain ``?`` or ``#``; ``LocalDirStore`` emits the plain
+path for such names. The API URL in a GitHub Enterprise locator is only honoured when
+it exactly equals the operator-configured ``TRAIGENT_GITHUB_API_URL`` (a locator can
+never redirect ``GITHUB_TOKEN`` to a host the operator did not name); otherwise the
+open is refused with ``SNAPSHOT_LOCATOR_API_URL_NOT_CONFIGURED``. Credentials are never
 part of a locator: userinfo, a query or a fragment is refused for every URL scheme
 (including inside a decoded GitHub API URL) before any credential lookup; each backend finds them through the vendor's standard chain or
 environment (boto3, google-auth ADC, azure-identity, ``GITHUB_TOKEN``).
@@ -24,11 +28,13 @@ Failures carry a closed code only; the offending value is never echoed.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
 __all__ = ["LocatorErrorCode", "SnapshotLocatorError", "open_store_from_locator"]
 
+_GITHUB_API_URL_ENV = "TRAIGENT_GITHUB_API_URL"
 _SCHEMES = ("s3", "gs", "azblob", "github", "github+v2", "file")
 _EXTRA_HINT = {
     "s3": "pip install 'traigent[snapshot-s3]'",
@@ -43,6 +49,7 @@ class LocatorErrorCode:
     MISSING_EXTRA = "SNAPSHOT_LOCATOR_MISSING_EXTRA"
     CREDENTIALS_IN_LOCATOR = "SNAPSHOT_LOCATOR_CREDENTIALS_NOT_ALLOWED"
     AMBIGUOUS_BRANCH = "SNAPSHOT_LOCATOR_AMBIGUOUS_BRANCH"
+    API_URL_NOT_CONFIGURED = "SNAPSHOT_LOCATOR_API_URL_NOT_CONFIGURED"
     STORE_UNAVAILABLE = "SNAPSHOT_LOCATOR_STORE_UNAVAILABLE"
 
 
@@ -98,10 +105,8 @@ def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False)
         raise SnapshotLocatorError(LocatorErrorCode.MALFORMED) from None
     if "://" not in locator:
         scheme, rest = "file", locator
-        has_scheme = False
         _refuse_credential_syntax(scheme, rest, False)
     else:
-        has_scheme = True
         scheme, _, rest = locator.partition("://")
         scheme = scheme.lower()
         if scheme not in _SCHEMES:
@@ -111,7 +116,7 @@ def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False)
         if scheme == "file":
             if not rest:
                 raise ValueError
-            return LocalDirStore(unquote(rest) if has_scheme else rest)
+            return LocalDirStore(rest)
         if scheme in ("s3", "gs"):
             bucket, prefix = _split_path(rest)
             cls = S3Store if scheme == "s3" else GCSStore
@@ -156,6 +161,11 @@ def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False)
         if parts.username or parts.password or parts.query or parts.fragment:
             raise SnapshotLocatorError(
                 LocatorErrorCode.CREDENTIALS_IN_LOCATOR
+            ) from None
+        configured = os.environ.get(_GITHUB_API_URL_ENV, "").strip().rstrip("/")
+        if not configured or api_url.rstrip("/") != configured:
+            raise SnapshotLocatorError(
+                LocatorErrorCode.API_URL_NOT_CONFIGURED
             ) from None
         return GitHubStore(
             "/".join(segments[1:]),

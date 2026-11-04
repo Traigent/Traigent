@@ -256,7 +256,12 @@ def test_azure_extra_provides_default_credential() -> None:
 _GHE = "https://ghe.example.com/api/v3"
 
 
-def test_ghe_locator_round_trips_with_api_url() -> None:
+@pytest.fixture
+def ghe_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRAIGENT_GITHUB_API_URL", _GHE)
+
+
+def test_ghe_locator_round_trips_with_api_url(ghe_configured: None) -> None:
     original = GitHubStore("owner/repo", "feature/x", "snaps", api_url=_GHE)
     loc = original.locator()
     assert loc.startswith("github+v2://https%3A%2F%2Fghe.example.com%2Fapi%2Fv3/")
@@ -283,24 +288,81 @@ def test_github_com_locator_unchanged_and_default_api() -> None:
         "github+v2://SECRET@https%3A%2F%2Fghe.example.com/owner/repo@main",
     ],
 )
-def test_ghe_locator_credentials_refused(bad: str) -> None:
+def test_ghe_locator_credentials_refused(bad: str, ghe_configured: None) -> None:
     with pytest.raises(SnapshotLocatorError) as info:
         open_store_from_locator(bad)
     assert info.value.code == LocatorErrorCode.CREDENTIALS_IN_LOCATOR
     assert "SECRET" not in str(info.value)
 
 
-@pytest.mark.parametrize("name", ["a?b", "a#b", "100%", "a%3Fb", "x?y#z%"])
-def test_local_dir_with_url_special_chars_round_trips(
-    tmp_path: Path, name: str
+def test_ghe_locator_refused_when_endpoint_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("TRAIGENT_GITHUB_API_URL", raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", "TOKEN-SECRET")
+
+    def no_request(*a: Any, **k: Any) -> None:
+        raise AssertionError("no request may be made")
+
+    monkeypatch.setattr("requests.Session.request", no_request)
+    loc = GitHubStore("owner/repo", "main", api_url=_GHE).locator()
+    with pytest.raises(SnapshotLocatorError) as info:
+        open_store_from_locator(loc)
+    assert info.value.code == LocatorErrorCode.API_URL_NOT_CONFIGURED
+    assert "ghe.example.com" not in str(info.value)
+
+
+def test_ghe_locator_refused_on_host_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_GITHUB_API_URL", "https://other.example.com/api/v3")
+    loc = GitHubStore("owner/repo", "main", api_url=_GHE).locator()
+    with pytest.raises(SnapshotLocatorError) as info:
+        open_store_from_locator(loc)
+    assert info.value.code == LocatorErrorCode.API_URL_NOT_CONFIGURED
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://ghe.example.com/api%3Ftoken%3DSECRET",
+        "https://ghe.example.com/other",
+        "https://ghe.example.com/api/v3/x",
+        "https://ghe.example.com/%61pi/v3",
+    ],
+)
+def test_github_store_rejects_odd_api_url(url: str) -> None:
+    with pytest.raises(Exception) as info:
+        GitHubStore("owner/repo", "main", api_url=url)
+    assert "UNSAFE_DESTINATION" in str(getattr(info.value, "code", info.value)).upper()
+
+
+def test_ghe_locator_with_odd_api_url_refused_at_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    odd = "https://ghe.example.com/api%3Ftoken%3DSECRET"
+    monkeypatch.setenv("TRAIGENT_GITHUB_API_URL", odd)
+    loc = (
+        "github+v2://https%3A%2F%2Fghe.example.com%2Fapi%253Ftoken%253DSECRET/o/r@main"
+    )
+    with pytest.raises(SnapshotLocatorError) as info:
+        open_store_from_locator(loc)
+    assert info.value.code == LocatorErrorCode.STORE_UNAVAILABLE
+    assert "SECRET" not in str(info.value)
+
+
+@pytest.mark.parametrize("name", ["a?b", "a#b", "x?y#z", "100%", "a%3Fb"])
+def test_local_dir_special_names_round_trip(tmp_path: Path, name: str) -> None:
     store = LocalDirStore(tmp_path / name)
-    loc = store.locator()
-    assert "?" not in loc and "#" not in loc
-    reopened = open_store_from_locator(loc)
+    reopened = open_store_from_locator(store.locator())
     assert isinstance(reopened, LocalDirStore)
-    assert reopened.locator() == loc
     assert reopened._root == (tmp_path / name).resolve()
+
+
+def test_old_file_locator_is_literal_not_decoded(tmp_path: Path) -> None:
+    store = open_store_from_locator(f"file://{tmp_path}/a%2Fb")
+    assert store._root == (tmp_path / "a%2Fb").resolve()
+    assert (tmp_path / "a%2Fb").is_dir()
 
 
 def test_plain_path_and_raw_file_locator_accept_query_chars(tmp_path: Path) -> None:

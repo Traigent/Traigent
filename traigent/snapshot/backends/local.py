@@ -52,12 +52,12 @@ class LocalDirStore:
         return self.locator()
 
     def locator(self) -> str:
-        # "%", "?" and "#" are escaped so a directory name holding them round-trips
-        # through the URL-form locator (the opener unquotes file:// paths).
-        escaped = (
-            str(self._root).replace("%", "%25").replace("?", "%3F").replace("#", "%23")
-        )
-        return f"file://{escaped}"
+        # A name with "?" or "#" cannot be a URL-form locator, so it is emitted as the
+        # plain absolute path, which the opener takes literally (no decoding).
+        root = str(self._root)
+        if "?" in root or "#" in root:
+            return root
+        return f"file://{root}"
 
     def _path(self, key: str) -> Path:
         validate_key(key)

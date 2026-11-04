@@ -23,6 +23,8 @@ __all__ = ["GitHubStore"]
 
 _BACKEND = "github"
 _DEFAULT_API_URL = "https://api.github.com"
+# GitHub.com / GHE Cloud have no path; GHES serves the API under /api/v3.
+_API_PATH_RE = re.compile(r"(/api/v3)?/?")
 _REPO_RE = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}")
 _BRANCH_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*")
 _ENV_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
@@ -128,7 +130,14 @@ class GitHubStore:
             api_url, allow_insecure_local=allow_insecure_local, backend=_BACKEND
         )
         parts = urlsplit(api_url)
-        if parts.username or parts.password or parts.query or parts.fragment:
+        if (
+            parts.username
+            or parts.password
+            or parts.query
+            or parts.fragment
+            or "%" in api_url
+            or _API_PATH_RE.fullmatch(parts.path) is None
+        ):
             raise _error(SnapshotErrorCode.UNSAFE_DESTINATION) from None
         self._repo = repo
         self._branch = branch
