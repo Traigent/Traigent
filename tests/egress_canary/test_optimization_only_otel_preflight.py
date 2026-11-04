@@ -1194,7 +1194,23 @@ def test_offline_flip_between_reads_never_builds_unvalidated_exporter(
     monkeypatch.setattr(otel_api, "is_backend_offline", flipping)
     with capture_egress() as cap:
         cap.backend.validate_response = dict(RESTRICTED)
-        _emit()
+        handle = otel.init(
+            api_key=FAKE_API_KEY, schedule_delay_s=0.05, exit_flush=False
+        )
+        try:
+            # the offline decision is carried through: nothing was built at all
+            assert handle.exporter is None
+            assert handle.processor is None
+            assert not getattr(
+                getattr(handle.provider, "_active_span_processor", None),
+                "_span_processors",
+                (),
+            )
+            with handle.tracer.start_as_current_span("x"):
+                pass
+            otel.flush(2)
+        finally:
+            otel.shutdown()
     assert [r for r in cap.requests if _is_trace(r)] == []
     assert cap.guard_violations == []
 
@@ -1202,16 +1218,37 @@ def test_offline_flip_between_reads_never_builds_unvalidated_exporter(
 def test_send_time_preflight_revalidates_the_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Each export re-checks the gate for the credential/origin the transport sends."""
+    real = oo.ensure_trace_egress_allowed
+    seen: list[tuple[Any, Any]] = []
+    deny = {"on": False}
+
+    def spy(api_key: Any, endpoint: Any = None, **kw: Any) -> bool:
+        if deny["on"]:
+            seen.append((api_key, endpoint))
+            return False
+        return real(api_key, endpoint, **kw)
+
     with capture_egress() as cap:
         cap.backend.validate_response = {"valid": True, "optimization_only": False}
         handle = otel.init(
             api_key=FAKE_API_KEY, schedule_delay_s=0.05, exit_flush=False
         )
-        monkeypatch.setattr(oo, "ensure_trace_egress_allowed", lambda *a, **k: False)
-        with handle.tracer.start_as_current_span("x"):
-            pass
-        otel.flush(2)
-        otel.shutdown()
+        try:
+            transport = handle.exporter._transport
+            sent_key = transport._headers["X-API-Key"]
+            sent_url = transport._url
+            monkeypatch.setattr(oo, "ensure_trace_egress_allowed", spy)
+            deny["on"] = True
+            with handle.tracer.start_as_current_span("x"):
+                pass
+            otel.flush(2)
+        finally:
+            otel.shutdown()
+    assert seen, "exporter never re-checked the gate at send time"
+    for key, endpoint in seen:
+        assert key == sent_key
+        assert oo.normalised_origin(endpoint) == oo.normalised_origin(sent_url)
     assert [
         r for r in cap.requests if "/otlp" in r.path or "/v1/traces" in r.path
     ] == []
