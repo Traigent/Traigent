@@ -81,8 +81,8 @@ class TestGitHubStoreConformance(StoreConformance):
         store._session.always = FakeResponse(500, CANARY.encode())
 
     def test_locator_format(self) -> None:
-        assert make(prefix="a/b/")[0].locator() == f"github://{OWNER_REPO}@main/a/b"
-        assert make(prefix="")[0].locator() == f"github://{OWNER_REPO}@main"
+        assert make(prefix="a/b/")[0].locator() == f"github+v2://{OWNER_REPO}@main/a/b"
+        assert make(prefix="")[0].locator() == f"github+v2://{OWNER_REPO}@main"
 
     def test_put_has_explicit_branch_and_no_sha(self) -> None:
         store, session, _ = make()
@@ -188,14 +188,18 @@ class TestDestinationSafety:
         store = GitHubStore(
             OWNER_REPO, "main", api_url="https://ghe.example.com/api/v3"
         )
-        assert store.locator() == f"github://{OWNER_REPO}@main"
+        assert store.locator() == (
+            f"github+v2://https%3A%2F%2Fghe.example.com%2Fapi%2Fv3/{OWNER_REPO}@main"
+        )
         local = GitHubStore(
             OWNER_REPO,
             "main",
             api_url="http://127.0.0.1:8080",
             allow_insecure_local=True,
         )
-        assert local.locator() == f"github://{OWNER_REPO}@main"
+        assert local.locator() == (
+            f"github+v2://http%3A%2F%2F127.0.0.1%3A8080/{OWNER_REPO}@main"
+        )
 
     def test_credentials_in_api_url_refused(self) -> None:
         assert code_of(

@@ -24,6 +24,7 @@ from traigent.snapshot import (
     publish_snapshot,
 )
 from traigent.snapshot.backends import LocalDirStore
+from traigent.snapshot.locator import LocatorErrorCode, SnapshotLocatorError
 
 _FIXTURE: dict[str, Any] = json.loads(
     (
@@ -341,4 +342,149 @@ def test_abandon_with_a_malformed_session_ref_makes_no_request(
     assert result.exit_code == 1
     assert "ABANDON_REFUSED" in result.output
     assert "../x" not in result.output
+    assert backend.requests == []
+
+
+def _bind_args_with(
+    setup: dict[str, Any], key: Path, pins: Path, *store: str
+) -> list[str]:
+    args = _bind_args(setup, key, pins)
+    at = args.index("--store-dir")
+    return args[:at] + list(store) + args[at + 2 :]
+
+
+def test_bind_store_locator_reaches_same_path_as_store_dir(
+    tmp_path: Path,
+    backend: FakeG1Backend,
+    pins_file: Path,
+    evidence_setup: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key_path = _keygen(tmp_path)
+    seen: list[Any] = []
+
+    def stub(transport: Any, evidence: Any, *a: Any, **k: Any) -> BindResult:
+        seen.append(evidence.root)
+        return BindResult("bsn:" + "a" * 43, "cert:" + "c" * 43, "n")
+
+    monkeypatch.setattr(bind_module, "bind_g1", stub)
+    opened: list[str] = []
+    real = LocalDirStore(evidence_setup["store_dir"])
+
+    def fake_open(locator: str, **_kw: Any) -> Any:
+        opened.append(locator)
+        return real
+
+    monkeypatch.setattr("traigent.snapshot.locator.open_store_from_locator", fake_open)
+    by_dir = CliRunner().invoke(
+        certify, _bind_args(evidence_setup, key_path, pins_file)
+    )
+    by_loc = CliRunner().invoke(
+        certify,
+        _bind_args_with(evidence_setup, key_path, pins_file, "--store", "s3://b/p"),
+    )
+    assert by_dir.exit_code == 0 and by_loc.exit_code == 0, by_loc.output
+    assert by_loc.output == by_dir.output
+    assert opened == ["s3://b/p"]
+    assert seen[0] == seen[1] == evidence_setup["evidence"].root
+
+
+def test_bind_requires_exactly_one_store_option(
+    tmp_path: Path,
+    backend: FakeG1Backend,
+    pins_file: Path,
+    evidence_setup: dict[str, Any],
+) -> None:
+    key_path = _keygen(tmp_path)
+    neither = CliRunner().invoke(
+        certify, _bind_args_with(evidence_setup, key_path, pins_file)
+    )
+    both = CliRunner().invoke(
+        certify,
+        _bind_args_with(
+            evidence_setup,
+            key_path,
+            pins_file,
+            "--store-dir",
+            str(evidence_setup["store_dir"]),
+            "--store",
+            str(evidence_setup["store_dir"]),
+        ),
+    )
+    for result in (neither, both):
+        assert result.exit_code == 1
+        assert "STORE_OPTION_EXACTLY_ONE" in result.output
+    assert backend.requests == []
+
+
+def test_bind_unknown_scheme_refused_without_echo(
+    tmp_path: Path,
+    backend: FakeG1Backend,
+    pins_file: Path,
+    evidence_setup: dict[str, Any],
+) -> None:
+    key_path = _keygen(tmp_path)
+    result = CliRunner().invoke(
+        certify,
+        _bind_args_with(
+            evidence_setup, key_path, pins_file, "--store", "ftp://SECRETHOST/x"
+        ),
+    )
+    assert result.exit_code == 1
+    assert "SNAPSHOT_LOCATOR_UNKNOWN_SCHEME" in result.output
+    assert "SECRETHOST" not in result.output
+    assert backend.requests == []
+
+
+def test_bind_insecure_local_flag_defaults_off_and_passes_through(
+    tmp_path: Path,
+    backend: FakeG1Backend,
+    pins_file: Path,
+    evidence_setup: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key_path = _keygen(tmp_path)
+    flags: list[bool] = []
+
+    def fake_open(locator: str, *, allow_insecure_local: bool = False) -> Any:
+        flags.append(allow_insecure_local)
+        raise SnapshotLocatorError(LocatorErrorCode.MALFORMED)
+
+    monkeypatch.setattr("traigent.snapshot.locator.open_store_from_locator", fake_open)
+    CliRunner().invoke(
+        certify,
+        _bind_args_with(evidence_setup, key_path, pins_file, "--store", "s3://b"),
+    )
+    CliRunner().invoke(
+        certify,
+        _bind_args_with(
+            evidence_setup,
+            key_path,
+            pins_file,
+            "--store",
+            "s3://b",
+            "--allow-insecure-local",
+        ),
+    )
+    assert flags == [False, True]
+
+
+@pytest.mark.parametrize("option", ["--store-dir", "--store"])
+def test_bind_store_constructor_failure_is_bounded_refusal(
+    tmp_path: Path,
+    backend: FakeG1Backend,
+    pins_file: Path,
+    evidence_setup: dict[str, Any],
+    option: str,
+) -> None:
+    key_path = _keygen(tmp_path)
+    blocker = tmp_path / "SECRETFILE"
+    blocker.write_text("x")
+    target = str(blocker / "sub")
+    args = _bind_args_with(evidence_setup, key_path, pins_file, option, target)
+    result = CliRunner().invoke(certify, args)
+    assert result.exit_code == 1
+    assert "BIND_REFUSED" in result.output
+    assert "SECRETFILE" not in result.output
+    assert "Traceback" not in result.output
     assert backend.requests == []
