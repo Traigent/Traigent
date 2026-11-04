@@ -17,7 +17,7 @@ from __future__ import annotations
 import sys
 import xml.etree.ElementTree as ET  # noqa: S405 - parsing pytest's own output
 
-CLASS_PREFIX = "tests.unit.runtime."
+CLASS_PREFIXES = ("tests.unit.runtime.", "tests.examples.")
 
 # The exact skip reason of tests/unit/runtime/conftest.py::backend_parse_import
 # (tests/ci checks the two stay identical).
@@ -159,7 +159,9 @@ REQUIRED = (
 
 def _key(case: ET.Element) -> tuple[str, str]:
     classname = case.get("classname") or ""
-    module = classname.removeprefix(CLASS_PREFIX)
+    module = classname
+    for prefix in CLASS_PREFIXES:
+        module = module.removeprefix(prefix)
     return module, case.get("name") or ""
 
 

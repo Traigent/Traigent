@@ -1,0 +1,50 @@
+{
+ "format": "tvl-token-map/1",
+ "tokens": [
+  {
+   "namespace": "environment",
+   "local": "production",
+   "hosted": "tk_local_00"
+  },
+  {
+   "namespace": "module",
+   "local": "examples.runtime13.delete_needs_approval",
+   "hosted": "tk_local_01"
+  },
+  {
+   "namespace": "monitor",
+   "local": "delete_guard_live_check",
+   "hosted": "tk_local_02"
+  },
+  {
+   "namespace": "monitor",
+   "local": "delete_needs_approval_prod",
+   "hosted": "tk_local_03"
+  },
+  {
+   "namespace": "requirement",
+   "local": "delete_guard_live",
+   "hosted": "tk_local_04"
+  },
+  {
+   "namespace": "requirement",
+   "local": "delete_needs_approval",
+   "hosted": "tk_local_05"
+  },
+  {
+   "namespace": "response",
+   "local": "delete_guard",
+   "hosted": "tk_local_06"
+  },
+  {
+   "namespace": "rule",
+   "local": "block_delete",
+   "hosted": "tk_local_07"
+  },
+  {
+   "namespace": "selector_ref",
+   "local": "destructive_change",
+   "hosted": "tk_local_08"
+  }
+ ]
+}
