@@ -22,6 +22,7 @@ from traigent.snapshot.store import CreateResult, require_secure_endpoint, valid
 __all__ = ["GitHubStore"]
 
 _BACKEND = "github"
+_DEFAULT_API_URL = "https://api.github.com"
 _REPO_RE = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}")
 _BRANCH_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*")
 _ENV_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
@@ -98,7 +99,7 @@ class GitHubStore:
         prefix: str = "",
         *,
         token_env: str = "GITHUB_TOKEN",
-        api_url: str = "https://api.github.com",
+        api_url: str = _DEFAULT_API_URL,
         allow_public: bool = False,
         allow_insecure_local: bool = False,
         session: Any = None,
@@ -153,7 +154,15 @@ class GitHubStore:
 
     def locator(self) -> str:
         # "/" inside a branch is %2F so the locator parses unambiguously.
-        base = f"github+v2://{self._repo}@{self._branch.replace('/', '%2F')}"
+        # A non-default API endpoint (GitHub Enterprise) leads as one percent-encoded
+        # segment so reopening the locator talks to the same service. The endpoint
+        # carries no credentials (the constructor refuses userinfo/query/fragment).
+        host = (
+            ""
+            if self._api_url == _DEFAULT_API_URL
+            else quote(self._api_url, safe="") + "/"
+        )
+        base = f"github+v2://{host}{self._repo}@{self._branch.replace('/', '%2F')}"
         return f"{base}/{self._prefix}" if self._prefix else base
 
     def _path(self, key: str) -> str:

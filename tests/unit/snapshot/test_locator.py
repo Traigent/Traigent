@@ -118,7 +118,6 @@ def test_missing_extra_names_the_pip_extra(monkeypatch: pytest.MonkeyPatch) -> N
         "github://owner/repo@main/p?token=SECRET",
         "github://user" + ":SECRET" + "@owner/repo@main",
         "file://user@host/SECRET",
-        "/tmp/SECRET?x",
     ],
 )
 def test_credential_syntax_refused_before_credential_lookup(
@@ -252,3 +251,60 @@ def test_azure_extra_provides_default_credential() -> None:
         "optional-dependencies"
     ]["snapshot-azure"]
     assert any(e.startswith("azure-identity") for e in extras)
+
+
+_GHE = "https://ghe.example.com/api/v3"
+
+
+def test_ghe_locator_round_trips_with_api_url() -> None:
+    original = GitHubStore("owner/repo", "feature/x", "snaps", api_url=_GHE)
+    loc = original.locator()
+    assert loc.startswith("github+v2://https%3A%2F%2Fghe.example.com%2Fapi%2Fv3/")
+    reopened = open_store_from_locator(loc)
+    assert isinstance(reopened, GitHubStore)
+    assert reopened._api_url == _GHE
+    assert reopened.locator() == loc
+
+
+def test_github_com_locator_unchanged_and_default_api() -> None:
+    store = GitHubStore("owner/repo", "main", "p")
+    assert store.locator() == "github+v2://owner/repo@main/p"
+    assert open_store_from_locator(store.locator())._api_url == (
+        "https://api.github.com"
+    )
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "github+v2://https%3A%2F%2Fuser%3ASECRET%40ghe.example.com/owner/repo@main",
+        "github+v2://https%3A%2F%2Fghe.example.com%3Ftoken%3DSECRET/owner/repo@main",
+        "github+v2://https://user" + ":SECRET" + "@ghe.example.com/owner/repo@main",
+        "github+v2://SECRET@https%3A%2F%2Fghe.example.com/owner/repo@main",
+    ],
+)
+def test_ghe_locator_credentials_refused(bad: str) -> None:
+    with pytest.raises(SnapshotLocatorError) as info:
+        open_store_from_locator(bad)
+    assert info.value.code == LocatorErrorCode.CREDENTIALS_IN_LOCATOR
+    assert "SECRET" not in str(info.value)
+
+
+@pytest.mark.parametrize("name", ["a?b", "a#b", "100%", "a%3Fb", "x?y#z%"])
+def test_local_dir_with_url_special_chars_round_trips(
+    tmp_path: Path, name: str
+) -> None:
+    store = LocalDirStore(tmp_path / name)
+    loc = store.locator()
+    assert "?" not in loc and "#" not in loc
+    reopened = open_store_from_locator(loc)
+    assert isinstance(reopened, LocalDirStore)
+    assert reopened.locator() == loc
+    assert reopened._root == (tmp_path / name).resolve()
+
+
+def test_plain_path_and_raw_file_locator_accept_query_chars(tmp_path: Path) -> None:
+    plain = tmp_path / "q?x#y"
+    assert open_store_from_locator(str(plain))._root == plain.resolve()
+    raw = tmp_path / "r?x#y"
+    assert open_store_from_locator(f"file://{raw}")._root == raw.resolve()

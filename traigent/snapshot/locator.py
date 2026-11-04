@@ -10,9 +10,14 @@ also accepted). GitHub grammar: the branch is percent-encoded with no raw "/" (a
 without a prefix; with a prefix it cannot be told apart from an old locator whose
 branch held a raw "/" (``@feature/fix/snaps``), so it is refused with
 ``SNAPSHOT_LOCATOR_AMBIGUOUS_BRANCH`` and the user re-issues it as ``github+v2://``
-with "/" in the branch written ``%2F``. Credentials are never part of a locator:
-userinfo, a query or a fragment is refused for every scheme before any credential
-lookup; each backend finds them through the vendor's standard chain or
+with "/" in the branch written ``%2F``. A GitHub Enterprise store leads with its
+percent-encoded API URL as a third segment
+(``github+v2://https%3A%2F%2Fghe.example.com%2Fapi%2Fv3/owner/repo@branch``); the
+default ``https://api.github.com`` is omitted, so github.com locators are unchanged.
+``file://`` paths are percent-decoded (the store escapes ``%``, ``?`` and ``#``); a
+plain path is taken literally and may contain ``?`` or ``#``. Credentials are never
+part of a locator: userinfo, a query or a fragment is refused for every URL scheme
+(including inside a decoded GitHub API URL) before any credential lookup; each backend finds them through the vendor's standard chain or
 environment (boto3, google-auth ADC, azure-identity, ``GITHUB_TOKEN``).
 Failures carry a closed code only; the offending value is never echoed.
 """
@@ -57,11 +62,20 @@ def _split_path(rest: str) -> tuple[str, str]:
 
 def _refuse_credential_syntax(scheme: str, rest: str, has_scheme: bool) -> None:
     """Locators are credential-free: no userinfo, query or fragment, any scheme."""
+    if scheme == "file":
+        # A filesystem path (plain or file://) has no URL query/fragment/userinfo:
+        # "?" and "#" are legal characters of a directory name.
+        if has_scheme and "@" in rest.partition("/")[0]:
+            raise SnapshotLocatorError(
+                LocatorErrorCode.CREDENTIALS_IN_LOCATOR
+            ) from None
+        return
     if "?" in rest or "#" in rest:
         raise SnapshotLocatorError(LocatorErrorCode.CREDENTIALS_IN_LOCATOR) from None
     if has_scheme and not scheme.startswith("github") and "@" in rest.partition("/")[0]:
         raise SnapshotLocatorError(LocatorErrorCode.CREDENTIALS_IN_LOCATOR) from None
-    if scheme.startswith("github") and ":" in rest.partition("/")[0]:
+    head, slash, _ = rest.partition("/")
+    if scheme.startswith("github") and (":" in head or (slash and "@" in head)):
         raise SnapshotLocatorError(LocatorErrorCode.CREDENTIALS_IN_LOCATOR) from None
 
 
@@ -84,8 +98,10 @@ def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False)
         raise SnapshotLocatorError(LocatorErrorCode.MALFORMED) from None
     if "://" not in locator:
         scheme, rest = "file", locator
+        has_scheme = False
         _refuse_credential_syntax(scheme, rest, False)
     else:
+        has_scheme = True
         scheme, _, rest = locator.partition("://")
         scheme = scheme.lower()
         if scheme not in _SCHEMES:
@@ -95,7 +111,7 @@ def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False)
         if scheme == "file":
             if not rest:
                 raise ValueError
-            return LocalDirStore(rest)
+            return LocalDirStore(unquote(rest) if has_scheme else rest)
         if scheme in ("s3", "gs"):
             bucket, prefix = _split_path(rest)
             cls = S3Store if scheme == "s3" else GCSStore
@@ -130,7 +146,24 @@ def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False)
         branch = branch.replace("%2F", "/").replace("%2f", "/")
         if not repo or not branch or "%" in branch:
             raise ValueError
-        return GitHubStore(repo, branch, prefix)
+        segments = repo.split("/")
+        if len(segments) == 2:
+            return GitHubStore(repo, branch, prefix)
+        if len(segments) != 3:
+            raise ValueError
+        api_url = unquote(segments[0])
+        parts = urlsplit(api_url)
+        if parts.username or parts.password or parts.query or parts.fragment:
+            raise SnapshotLocatorError(
+                LocatorErrorCode.CREDENTIALS_IN_LOCATOR
+            ) from None
+        return GitHubStore(
+            "/".join(segments[1:]),
+            branch,
+            prefix,
+            api_url=api_url,
+            allow_insecure_local=allow_insecure_local,
+        )
     except SnapshotLocatorError:
         raise
     except ImportError:
