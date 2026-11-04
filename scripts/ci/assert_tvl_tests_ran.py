@@ -17,7 +17,8 @@ from __future__ import annotations
 import sys
 import xml.etree.ElementTree as ET  # noqa: S405 - parsing pytest's own output
 
-CLASS_PREFIXES = ("tests.unit.runtime.", "tests.examples.")
+RUNTIME = "tests.unit.runtime."
+EXAMPLES = "tests.examples."
 
 # The exact skip reason of tests/unit/runtime/conftest.py::backend_parse_import
 # (tests/ci checks the two stay identical).
@@ -30,14 +31,14 @@ BACKEND_SKIP_REASON = (
 # id AND exact reason (a reason that merely mentions the variable is not enough).
 ALLOWED_SKIPS = {
     (
-        "test_canary",
+        RUNTIME + "test_canary",
         "test_tvl_route_is_accepted_by_the_real_backend_parser",
     ): BACKEND_SKIP_REASON,
 }
 
 # Compiler testcases that must be present AND passed, by exact id: every declared
 # parameter is listed explicitly. No total count: adding tests must not break CI.
-REQUIRED = (
+_RUNTIME_REQUIRED = (
     ("test_real_compiler", "test_token_map_format_is_the_compilers_contract"),
     ("test_real_compiler", "test_real_compiler_resolves_tokens[decorator]"),
     ("test_real_compiler", "test_real_compiler_resolves_tokens[fragment]"),
@@ -156,13 +157,17 @@ REQUIRED = (
     ),
 )
 
+# Full dotted classnames: a case in one namespace never stands in for another.
+REQUIRED = tuple((RUNTIME + module, name) for module, name in _RUNTIME_REQUIRED) + (
+    (
+        EXAMPLES + "test_local_guards_example",
+        "test_local_guards_example_blocks_unapproved_deletes",
+    ),
+)
+
 
 def _key(case: ET.Element) -> tuple[str, str]:
-    classname = case.get("classname") or ""
-    module = classname
-    for prefix in CLASS_PREFIXES:
-        module = module.removeprefix(prefix)
-    return module, case.get("name") or ""
+    return case.get("classname") or "", case.get("name") or ""
 
 
 def main(path: str) -> int:
