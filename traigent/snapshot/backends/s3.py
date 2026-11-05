@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from typing import Any
@@ -15,6 +16,18 @@ __all__ = ["S3Store"]
 _BACKEND = "s3"
 _BUCKET_RE = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
 _MAX_PUT_BYTES = 5 * 1024**3  # single PutObject limit
+# Optional server-side encryption for buckets whose policy denies unencrypted PutObject.
+# Off unless asked for; env names let the CLI / locator route (credential-free) opt in.
+_SSE_ENV = "TRAIGENT_SNAPSHOT_S3_SSE"
+_KMS_KEY_ENV = "TRAIGENT_SNAPSHOT_S3_KMS_KEY_ID"
+_SSE_VALUES = frozenset({"AES256", "aws:kms", "aws:kms:dsse"})
+# A KMS key id, key ARN, alias name or alias ARN (never echoed or logged).
+_KMS_KEY_RE = re.compile(
+    r"(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r"|mrk-[0-9a-f]{32}"
+    r"|alias/[A-Za-z0-9/_-]{1,256}"
+    r"|arn:aws[a-z-]*:kms:[a-z0-9-]{1,32}:[0-9]{12}:(?:key/[A-Za-z0-9-]{1,64}|alias/[A-Za-z0-9/_-]{1,256}))"
+)
 _AWS_SUFFIXES = (".amazonaws.com", ".amazonaws.com.cn")
 # Existing object (create_if_absent): read it and compare. 409 is a transient
 # conflict, but the answer is still "look at what is there".
@@ -69,6 +82,28 @@ def _translate(error: BaseException) -> SnapshotStoreError:
     return _error(SnapshotErrorCode.BACKEND_UNAVAILABLE)
 
 
+def _resolve_sse(
+    sse: str | None, kms_key_id: str | None
+) -> tuple[str | None, str | None]:
+    """Validated ``(ServerSideEncryption, SSEKMSKeyId)``; ``(None, None)`` = unchanged default."""
+    if sse is None:
+        sse = os.environ.get(_SSE_ENV) or None
+    if kms_key_id is None:
+        kms_key_id = os.environ.get(_KMS_KEY_ENV) or None
+    if sse is None:
+        if kms_key_id is not None:
+            raise ValueError("an SSE KMS key id needs server-side encryption set")
+        return None, None
+    if not isinstance(sse, str) or sse not in _SSE_VALUES:
+        raise ValueError("unsupported S3 server-side encryption")
+    if kms_key_id is not None:
+        if sse == "AES256":
+            raise ValueError("an SSE KMS key id needs an aws:kms mode")
+        if not isinstance(kms_key_id, str) or _KMS_KEY_RE.fullmatch(kms_key_id) is None:
+            raise ValueError("invalid SSE KMS key id")
+    return sse, kms_key_id
+
+
 class S3Store:
     """Snapshot objects under ``s3://<bucket>/<prefix>``.
 
@@ -77,7 +112,14 @@ class S3Store:
     ``client``) is probed once before the first write and refused with
     ``UNSUPPORTED_BACKEND`` if it accepts a second unconditional create.
 
-    Credentials stay inside the boto3 client; ``repr`` is the locator.
+    Server-side encryption is off by default. ``server_side_encryption``
+    (``"AES256"``, ``"aws:kms"`` or ``"aws:kms:dsse"``) and ``sse_kms_key_id``
+    (with a KMS mode only) are sent on every put; when omitted they are read
+    from ``TRAIGENT_SNAPSHOT_S3_SSE`` / ``TRAIGENT_SNAPSHOT_S3_KMS_KEY_ID``.
+    Invalid values raise ``ValueError`` without echoing them.
+
+    Credentials stay inside the boto3 client; ``repr`` is the locator and never
+    contains the KMS key id.
     """
 
     max_object_bytes: int | None = _MAX_PUT_BYTES
@@ -90,6 +132,8 @@ class S3Store:
         client: Any = None,
         session: Any = None,
         allow_insecure_local: bool = False,
+        server_side_encryption: str | None = None,
+        sse_kms_key_id: str | None = None,
     ) -> None:
         if not isinstance(bucket, str) or _BUCKET_RE.fullmatch(bucket) is None:
             raise ValueError("invalid S3 bucket name")
@@ -98,6 +142,9 @@ class S3Store:
             validate_key(clean)  # same rules as keys: no "..", no empty segments
         self._bucket = bucket
         self._prefix = clean
+        self._sse, self._kms_key_id = _resolve_sse(
+            server_side_encryption, sse_kms_key_id
+        )
         self._client = client if client is not None else self._make_client(session)
         self._custom_endpoint = False
         self._probed = False
@@ -146,8 +193,13 @@ class S3Store:
         return f"{self._prefix}/{key}" if self._prefix else key
 
     def _put(self, full_key: str, data: bytes) -> None:
+        extra: dict[str, str] = {}
+        if self._sse is not None:
+            extra["ServerSideEncryption"] = self._sse
+            if self._kms_key_id is not None:
+                extra["SSEKMSKeyId"] = self._kms_key_id
         self._client.put_object(
-            Bucket=self._bucket, Key=full_key, Body=data, IfNoneMatch="*"
+            Bucket=self._bucket, Key=full_key, Body=data, IfNoneMatch="*", **extra
         )
 
     def _probe(self) -> None:
