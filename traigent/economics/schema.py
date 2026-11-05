@@ -76,7 +76,7 @@ _FINGERPRINT_FILES = (
 #: the installed pin is in scripts/ci/schema-pin.txt). Content-identical to
 #: the prior pin (4b3373925cee6bd57071980285c58044165c90a4) — the digest was
 #: recomputed and did not change. Recomputed again at 7104839ae6d748e852b1cb584312cf86d1f0f2db
-#: (= PyPI traigent-schema 7.0.0, tag v7.0.0): unchanged. See module docstring for how to recompute when
+#: (= PyPI traigent-schema 7.0.0, tag v7.0.0): unchanged. Recomputed at 7ab078d55cbe38e2b4cefcf3ce3dbfe2dea5cfe7 (= PyPI traigent-schema 7.1.0): unchanged. See module docstring for how to recompute when
 #: the exact Git pin changes.
 EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT = (
     "1bed4a1a68f7641b7468f6f85ad8d122f8552213e5fb358aec345fc7ef4e5565"
