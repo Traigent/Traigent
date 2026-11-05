@@ -8,7 +8,9 @@ out of band by ``traigent certify pin --from <file>`` (the file comes from the
 customer's own trust channel) and is never fetched from the Backend call being
 verified. A missing or incomplete pin refuses with ``PIN_MISSING``.
 
-Only ed25519 issuers are accepted for now; ``ecdsa_p256_sha256`` is refused.
+Issuer keys may be ed25519 or ECDSA P-256 (``ecdsa_p256_sha256``), the two values of the
+Schema ``SignatureAlgorithmV0`` vocabulary. The pinned key type must match the pinned
+algorithm; anything else is refused ``PIN_INVALID``.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 __all__ = [
     "PIN_FIELDS",
@@ -47,7 +49,7 @@ PIN_FIELDS: Final = (
 )
 _PROJECT_REF_RE = re.compile(r"[A-Za-z0-9_.-]{1,128}")
 _REF_RE = re.compile(r"[a-z][a-z0-9_.-]{1,63}:[A-Za-z0-9_-]{8,128}")
-_SUPPORTED_ISSUER_ALGORITHM: Final = "ed25519"
+_SUPPORTED_ISSUER_ALGORITHMS: Final = frozenset({"ed25519", "ecdsa_p256_sha256"})
 
 
 class PinError(Exception):
@@ -68,7 +70,7 @@ class PinError(Exception):
 class Pins:
     project_ref: str
     issuer_algorithm: str
-    issuer_public_key: ed25519.Ed25519PublicKey
+    issuer_public_key: ed25519.Ed25519PublicKey | ec.EllipticCurvePublicKey
     issuer_key_ref: str
     trust_ring_ref: str
     compiler_register_versions: tuple[tuple[str, str], ...]
@@ -83,12 +85,17 @@ def default_pin_path() -> Path:
 
 def _validate_pin_values(
     values: dict[str, Any],
-) -> tuple[str, tuple[tuple[str, str], ...], ed25519.Ed25519PublicKey]:
+) -> tuple[
+    str,
+    tuple[tuple[str, str], ...],
+    ed25519.Ed25519PublicKey | ec.EllipticCurvePublicKey,
+]:
     """Validate pin field values; raises ValueError/TypeError/KeyError/IndexError."""
     project_ref = values["project_ref"]
     if type(project_ref) is not str or not _PROJECT_REF_RE.fullmatch(project_ref):
         raise ValueError
-    if values["issuer_algorithm"] != _SUPPORTED_ISSUER_ALGORITHM:
+    algorithm = values["issuer_algorithm"]
+    if type(algorithm) is not str or algorithm not in _SUPPORTED_ISSUER_ALGORITHMS:
         raise ValueError
     for name in ("issuer_key_ref", "trust_ring_ref"):
         if type(values[name]) is not str or not _REF_RE.fullmatch(values[name]):
@@ -106,7 +113,12 @@ def _validate_pin_values(
     public = serialization.load_der_public_key(
         base64.b64decode(values["issuer_public_key_der_b64"], validate=True)
     )
-    if not isinstance(public, ed25519.Ed25519PublicKey):
+    if algorithm == "ed25519":
+        if not isinstance(public, ed25519.Ed25519PublicKey):
+            raise ValueError
+    elif not isinstance(public, ec.EllipticCurvePublicKey) or not isinstance(
+        public.curve, ec.SECP256R1
+    ):
         raise ValueError
     return project_ref, registers, public
 
