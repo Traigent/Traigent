@@ -57,7 +57,7 @@ dependencies = [
     # the verifier fails closed unless the installed non-claim catalog is the one
     # the certificate was issued against. Exact pin on purpose (normal PyPI
     # requirement, never a direct URL); keep in step with scripts/ci/schema-pin.txt.
-    "traigent-schema==7.0.0",
+    "traigent-schema==7.1.0",
 ]
 
 [project.optional-dependencies]

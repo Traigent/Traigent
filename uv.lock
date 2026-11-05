@@ -6104,7 +6104,7 @@ requires-dist = [
     { name = "traigent", extras = ["bayesian", "analytics"], marker = "extra == 'ml'" },
     { name = "traigent", extras = ["integrations", "analytics", "bayesian", "visualization", "hybrid", "pydanticai"], marker = "extra == 'recommended'" },
     { name = "traigent", extras = ["security"], marker = "extra == 'cloud'" },
-    { name = "traigent-schema", specifier = "==7.0.0" },
+    { name = "traigent-schema", specifier = "==7.1.0" },
     { name = "tvl-spec", marker = "extra == 'runtime-tvl'", specifier = "==1.4.0" },
     { name = "types-bleach", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
@@ -6117,7 +6117,7 @@ provides-extras = ["analytics", "runtime-tvl", "bayesian", "integrations", "pyda
 
 [[package]]
 name = "traigent-schema"
-version = "7.0.0"
+version = "7.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
@@ -6125,9 +6125,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "referencing" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/56/4e/5915993374e90424a1aea3d1844f5e2b1bd1b7bf163d855d42e22457f6f4/traigent_schema-7.0.0.tar.gz", hash = "sha256:a447e85015214a1d9e6de450d305dc0290db59c5bbabb2a770ef15275aeb544a", size = 871436, upload-time = "2026-10-22T18:39:45.948Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/88/890a4f68f12b4e26fa01749abc2b2d94db6cae04f288206e24c833870902/traigent_schema-7.1.0.tar.gz", hash = "sha256:4d2525b4dc634b3445aa8a33955efdf24ce25ad96c841c9474a3ec925d5a947b", size = 937381, upload-time = "2026-11-03T23:04:14.927Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/ca/3eebc7792cb065da8ace104dbe435416098c2b4f8b3f5307e43fea6d606d/traigent_schema-7.0.0-py3-none-any.whl", hash = "sha256:1a8f7f6841f65a909ee434895a69c96e14bec1318f5222a1c3fe07f010d1fc64", size = 1155704, upload-time = "2026-10-22T18:39:44.3Z" },
+    { url = "https://files.pythonhosted.org/packages/48/9d/14bb304681956a7f67e5f3b53ba109d5378f4e45a6f44e3a0155d15e022c/traigent_schema-7.1.0-py3-none-any.whl", hash = "sha256:3f37f6a20e8c9b05090d1ce31e371b73ccad0b01504bb87e324045603a422f98", size = 1250461, upload-time = "2026-11-03T23:04:13.197Z" },
 ]
 
 [[package]]

@@ -76,8 +76,11 @@ EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY = "EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY
 # verifier_revision UNCHANGED (recomputed); agent-quality verifier_revision changed
 # because the agent-quality non-claim catalog wording changed ("measured" -> "reported
 # by the customer", same catalog version 1.0.0, new digest).
+# Pin moved to 7ab078d (= PyPI traigent-schema 7.1.0, adds the private_online declared
+# mode): evaluator-quality verifier_revision UNCHANGED (recomputed); agent-quality
+# verifier_revision re-recorded (recomputed on the installed 7.1.0 wheel).
 EVALUATOR_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "7104839ae6d748e852b1cb584312cf86d1f0f2db",
+    "schema_pin": "7ab078d55cbe38e2b4cefcf3ce3dbfe2dea5cfe7",
     "verifier_revision": "887114f799459df27269463cb73e1bc1ff9c4a948d73dddb83db4b88cc3e831f",
     "reviewed_by": "maintainers",
     "date": "2026-10-20",
@@ -154,10 +157,10 @@ def evaluator_quality_verifier_revision(files: list[Path] | None = None) -> str:
 # the verifier module (behaviour-preserving). Owner card
 # feature-pick-2026-10-20-sdk-verifier-revision-rerecord, answered A.
 AGENT_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "7104839ae6d748e852b1cb584312cf86d1f0f2db",
-    "verifier_revision": "37d4c5e891283f85a8b17be385b81ae1eef0c980092fb0a2b2555b0627be24b1",
+    "schema_pin": "7ab078d55cbe38e2b4cefcf3ce3dbfe2dea5cfe7",
+    "verifier_revision": "040fed5ce6aafd805f6d2edf1c8d52b5c7ebf026cefc543a5af1bbe4363f9a80",
     "reviewed_by": "maintainers",
-    "date": "2026-10-23",
+    "date": "2026-11-05",
 }
 
 
