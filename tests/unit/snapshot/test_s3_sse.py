@@ -41,7 +41,7 @@ def test_kms_encryption_and_key_are_sent() -> None:
     assert _ALIAS not in repr(store)
 
 
-def test_kms_without_key_id_uses_bucket_default_key() -> None:
+def test_kms_without_key_id_omits_sse_kms_key_id_header() -> None:
     client = FakeS3Client()
     S3Store("bucket", client=client, server_side_encryption="aws:kms").create_if_absent(
         "k", b"x"

@@ -116,7 +116,10 @@ class S3Store:
     (``"AES256"``, ``"aws:kms"`` or ``"aws:kms:dsse"``) and ``sse_kms_key_id``
     (with a KMS mode only) are sent on every put; when omitted they are read
     from ``TRAIGENT_SNAPSHOT_S3_SSE`` / ``TRAIGENT_SNAPSHOT_S3_KMS_KEY_ID``.
-    Invalid values raise ``ValueError`` without echoing them.
+    Invalid values raise ``ValueError`` without echoing them. With ``aws:kms``
+    and no key id, S3 uses the AWS-managed ``aws/s3`` key, not the bucket's
+    default key. Pass the key id (or set ``TRAIGENT_SNAPSHOT_S3_KMS_KEY_ID``)
+    when your bucket policy requires a specific customer-managed key.
 
     Credentials stay inside the boto3 client; ``repr`` is the locator and never
     contains the KMS key id.
