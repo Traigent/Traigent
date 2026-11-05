@@ -1353,9 +1353,13 @@ def enroll_command(key_path: Path, pins_path: Path | None) -> None:
 @click.option("--sdk-ref", default=None, help="40-hex git SHA of this SDK build.")
 @click.option(
     "--declared-mode",
-    type=click.Choice(["offline", "current_online"]),
-    default="current_online",
-    show_default=True,
+    type=click.Choice(["offline", "current_online", "private_online"]),
+    default=None,
+    help=(
+        "Data-flow mode to bind; it must equal the mode the server recorded for the run. "
+        "Default: current_online. A run created with privacy mode on (the SDK default) is "
+        "recorded private_online and needs --declared-mode private_online."
+    ),
 )
 def bind_command(
     root: str,
@@ -1367,7 +1371,7 @@ def bind_command(
     pins_path: Path | None,
     evidence_dir: Path | None,
     sdk_ref: str | None,
-    declared_mode: str,
+    declared_mode: str | None,
 ) -> None:
     """Bind retained client evidence (ROOT is sha256:...) and obtain the certificate."""
     from traigent.certification import bind as bind_module
@@ -1410,6 +1414,8 @@ def bind_command(
     except Exception:
         _g1_fail("BIND_REFUSED EVIDENCE_STALE_OR_CORRUPT")
         return
+    mode_defaulted = declared_mode is None
+    effective_mode = declared_mode or "current_online"
     try:
         transport = _g1_transport()
         bind_module.check_g1_readiness(transport)
@@ -1424,10 +1430,16 @@ def bind_command(
             run_id=run_id,
             sdk_ref=resolved_ref,
             sdk_version=sdk_version,
-            declared_mode=declared_mode,
+            declared_mode=effective_mode,
         )
     except bind_module.BindError as err:
         click.echo(f"BIND_REFUSED {err.code}")
+        if err.code == "PREPARE_REFUSED" and mode_defaulted:
+            click.echo(
+                "hint: no --declared-mode was given, so current_online was bound. "
+                "A run created with privacy mode on is recorded private_online by the "
+                "server; retry with --declared-mode private_online."
+            )
         session_ref = getattr(err, "session_ref", None)
         if session_ref:
             click.echo(f"session_ref={session_ref}")

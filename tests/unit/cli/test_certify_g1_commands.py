@@ -488,3 +488,73 @@ def test_bind_store_constructor_failure_is_bounded_refusal(
     assert "SECRETFILE" not in result.output
     assert "Traceback" not in result.output
     assert backend.requests == []
+
+
+def test_bind_accepts_private_online_declared_mode(
+    tmp_path: Path,
+    backend: FakeG1Backend,
+    pins_file: Path,
+    evidence_setup: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key_path = _keygen(tmp_path)
+    seen: dict[str, Any] = {}
+
+    def stub(transport: Any, evidence: Any, *a: Any, **kwargs: Any) -> BindResult:
+        seen.update(kwargs)
+        return BindResult("bsn:" + "a" * 43, "cert:" + "c" * 43, "n")
+
+    monkeypatch.setattr(bind_module, "bind_g1", stub)
+    result = CliRunner().invoke(
+        certify,
+        _bind_args(evidence_setup, key_path, pins_file)
+        + ["--declared-mode", "private_online"],
+    )
+    assert result.exit_code == 0, result.output
+    assert seen["declared_mode"] == "private_online"
+
+
+def test_bind_default_mode_stays_current_online_and_refusal_hints(
+    tmp_path: Path,
+    backend: FakeG1Backend,
+    pins_file: Path,
+    evidence_setup: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key_path = _keygen(tmp_path)
+    seen: dict[str, Any] = {}
+
+    def refuse(transport: Any, evidence: Any, *a: Any, **kwargs: Any) -> BindResult:
+        seen.update(kwargs)
+        raise bind_module.BindError("PREPARE_REFUSED", "bsn:" + "a" * 43)
+
+    monkeypatch.setattr(bind_module, "bind_g1", refuse)
+    result = CliRunner().invoke(
+        certify, _bind_args(evidence_setup, key_path, pins_file)
+    )
+    assert result.exit_code == 1
+    assert seen["declared_mode"] == "current_online"
+    assert "BIND_REFUSED PREPARE_REFUSED" in result.output
+    assert "--declared-mode private_online" in result.output
+
+
+def test_bind_explicit_mode_refusal_has_no_hint(
+    tmp_path: Path,
+    backend: FakeG1Backend,
+    pins_file: Path,
+    evidence_setup: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key_path = _keygen(tmp_path)
+
+    def refuse(*a: Any, **k: Any) -> BindResult:
+        raise bind_module.BindError("PREPARE_REFUSED", "bsn:" + "a" * 43)
+
+    monkeypatch.setattr(bind_module, "bind_g1", refuse)
+    result = CliRunner().invoke(
+        certify,
+        _bind_args(evidence_setup, key_path, pins_file)
+        + ["--declared-mode", "current_online"],
+    )
+    assert result.exit_code == 1
+    assert "hint:" not in result.output
