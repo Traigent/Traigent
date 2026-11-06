@@ -3680,6 +3680,55 @@ class LocalEvaluator(BaseEvaluator):
                         sdk_evaluation_cost=metrics_tracker.sdk_evaluation_cost_only,
                     )
 
+    async def _process_outputs_into_tracker(
+        self,
+        outputs: list[Any],
+        *,
+        config: dict[str, Any],
+        dataset: Dataset,
+        errors: list[Any],
+        example_results: list[Any],
+        all_captured_responses: list[Any],
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        metric_errors: list[dict[str, Any]],
+        captures: Any,
+        metrics_tracker: MetricsTracker,
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: Any,
+    ) -> None:
+        """Meter every output row; re-raise a deferred objective failure last."""
+        deferred_failure: EvaluationError | None = None
+        for i, output in enumerate(outputs):
+            try:
+                example_metric = await self._await_with_sample_lease_cleanup(
+                    self._process_single_output(
+                        output=output,
+                        index=i,
+                        config=config,
+                        dataset=dataset,
+                        errors=errors,
+                        example_results=example_results,
+                        all_captured_responses=all_captured_responses,
+                        progress_callback=progress_callback,
+                        metric_errors=metric_errors,
+                        captures=captures,
+                        skip_metric_functions=deferred_failure is not None,
+                    ),
+                    sample_lease,
+                    execution_budget_lease,
+                )
+            except EvaluationError as exc:
+                failed_row = exc.row_metric
+                if failed_row is None or deferred_failure is not None:
+                    raise
+                deferred_failure = exc
+                example_metric = failed_row
+            metrics_tracker.add_example_metrics(example_metric)
+
+        if deferred_failure is not None:
+            self._attach_measured_spend(deferred_failure, metrics_tracker, captures)
+            raise deferred_failure
+
     async def _evaluate_within_capture_scope(
         self,
         func: Callable[..., Any],
@@ -3789,37 +3838,20 @@ class LocalEvaluator(BaseEvaluator):
         # An objective metric that raises fails the trial, but every example
         # already ran: keep metering the remaining rows (without calling the
         # failing metric again) so the failed trial reports what it spent.
-        deferred_failure: EvaluationError | None = None
-        for i, output in enumerate(outputs):
-            try:
-                example_metric = await self._await_with_sample_lease_cleanup(
-                    self._process_single_output(
-                        output=output,
-                        index=i,
-                        config=config,
-                        dataset=dataset,
-                        errors=errors,
-                        example_results=example_results,
-                        all_captured_responses=all_captured_responses,
-                        progress_callback=progress_callback,
-                        metric_errors=metric_errors,
-                        captures=captures,
-                        skip_metric_functions=deferred_failure is not None,
-                    ),
-                    sample_lease,
-                    execution_budget_lease,
-                )
-            except EvaluationError as exc:
-                failed_row = exc.row_metric
-                if failed_row is None or deferred_failure is not None:
-                    raise
-                deferred_failure = exc
-                example_metric = failed_row
-            metrics_tracker.add_example_metrics(example_metric)
-
-        if deferred_failure is not None:
-            self._attach_measured_spend(deferred_failure, metrics_tracker, captures)
-            raise deferred_failure
+        await self._process_outputs_into_tracker(
+            outputs,
+            config=config,
+            dataset=dataset,
+            errors=errors,
+            example_results=example_results,
+            all_captured_responses=all_captured_responses,
+            progress_callback=progress_callback,
+            metric_errors=metric_errors,
+            captures=captures,
+            metrics_tracker=metrics_tracker,
+            sample_lease=sample_lease,
+            execution_budget_lease=execution_budget_lease,
+        )
 
         # Compute aggregated metrics (include built-ins even with custom functions)
         aggregated_metrics = self._compute_base_aggregates(

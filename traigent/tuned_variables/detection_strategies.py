@@ -232,6 +232,25 @@ def _bracket_float(value: float) -> tuple[float, float]:
     return low, high
 
 
+def _suggest_float_range(value: float) -> SuggestedRange | None:
+    if value < 0:
+        return None  # no sensible 0.5x-2x bracket; skip rather than reverse
+    if value == 0:
+        return SuggestedRange(range_type="Range", kwargs={"low": 0.0, "high": 1.0})
+    low, high = _bracket_float(value)
+    return SuggestedRange(range_type="Range", kwargs={"low": low, "high": high})
+
+
+def _suggest_int_range(value: int) -> SuggestedRange | None:
+    if value <= 0:
+        # 0 is typically an explicit "off"; negatives have no 0.5x-2x
+        # bracket. Skip instead of emitting a reversed IntRange (#2799).
+        return None
+    low = max(1, value // 2)
+    high = max(low + 1, value * 2)
+    return SuggestedRange(range_type="IntRange", kwargs={"low": low, "high": high})
+
+
 def _suggest_range(
     canonical_name: str | None, candidate_type: CandidateType, value: Any
 ) -> SuggestedRange | None:
@@ -245,21 +264,10 @@ def _suggest_range(
 
     # Fallback heuristics based on value type
     if candidate_type == CandidateType.NUMERIC_CONTINUOUS and isinstance(value, float):
-        if value < 0:
-            return None  # no sensible 0.5x-2x bracket; skip rather than reverse
-        if value == 0:
-            return SuggestedRange(range_type="Range", kwargs={"low": 0.0, "high": 1.0})
-        low, high = _bracket_float(value)
-        return SuggestedRange(range_type="Range", kwargs={"low": low, "high": high})
+        return _suggest_float_range(value)
 
     if candidate_type == CandidateType.NUMERIC_INTEGER and isinstance(value, int):
-        if value <= 0:
-            # 0 is typically an explicit "off"; negatives have no 0.5x-2x
-            # bracket. Skip instead of emitting a reversed IntRange (#2799).
-            return None
-        low = max(1, value // 2)
-        high = max(low + 1, value * 2)
-        return SuggestedRange(range_type="IntRange", kwargs={"low": low, "high": high})
+        return _suggest_int_range(value)
 
     if candidate_type == CandidateType.CATEGORICAL and isinstance(value, str):
         return SuggestedRange(range_type="Choices", kwargs={"values": [value]})

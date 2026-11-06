@@ -896,6 +896,21 @@ class OptimizationOrchestrator:
         return tuple(dict.fromkeys(candidates))
 
     @staticmethod
+    def _positive_int_candidates(definition: Any) -> list[int]:
+        """Positive ints in one cap definition (a scalar, sequence or range dict)."""
+        if isinstance(definition, dict):
+            definition = definition.get("values", definition.get("high"))
+        raw = (
+            definition
+            if isinstance(definition, Sequence)
+            and not isinstance(definition, (str, bytes, bytearray))
+            else (definition,)
+        )
+        return [
+            v for v in raw if isinstance(v, int) and not isinstance(v, bool) and v > 0
+        ]
+
+    @staticmethod
     def _extract_max_output_tokens_with_key(
         config_space: dict[str, Any] | None,
     ) -> tuple[int, str] | None:
@@ -909,19 +924,11 @@ class OptimizationOrchestrator:
             return None
         best: tuple[int, str] | None = None
         for key in OUTPUT_TOKEN_CAP_KEYS:
-            definition = config_space.get(key)
-            if isinstance(definition, dict):
-                definition = definition.get("values", definition.get("high"))
-            raw = (
-                definition
-                if isinstance(definition, Sequence)
-                and not isinstance(definition, (str, bytes, bytearray))
-                else (definition,)
-            )
-            for v in raw:
-                if isinstance(v, int) and not isinstance(v, bool) and v > 0:
-                    if best is None or v > best[0]:
-                        best = (v, key)
+            for v in OptimizationOrchestrator._positive_int_candidates(
+                config_space.get(key)
+            ):
+                if best is None or v > best[0]:
+                    best = (v, key)
         return best
 
     @staticmethod
