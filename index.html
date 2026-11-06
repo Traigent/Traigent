@@ -1693,6 +1693,34 @@
   
   
     <li class="md-nav__item">
+      <a href="guides/local-guards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="guides/js-bridge/" class="md-nav__link">
         
   
@@ -3806,8 +3834,11 @@ and <a href="examples/QUICK_REFERENCE/">Quick Reference</a> for runnable example
 </ol>
 <h2 id="mock-mode-no-api-keys">🧪 Mock Mode (No API Keys)<a class="headerlink" href="#mock-mode-no-api-keys" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Enable: <code>TRAIGENT_MOCK_LLM=true</code> (no API keys needed)</li>
-<li>Benefits: realistic scores, zero cost, quick iteration</li>
+<li>Enable: call <code>traigent.testing.enable_mock_mode_for_quickstart()</code> in your code
+  (no API keys needed). The bundled example scripts below read the deprecated
+  <code>TRAIGENT_MOCK_LLM=true</code> variable themselves as their own switch.</li>
+<li>Benefits: realistic scores, free simulated calls, quick iteration (the pre-run
+  cost estimate still applies)</li>
 <li>Example:</li>
 <li><code>TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py</code></li>
 <li>Or copy a command from the Examples Navigator "Run" icon</li>

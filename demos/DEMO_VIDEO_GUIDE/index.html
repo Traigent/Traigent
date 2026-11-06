@@ -1488,6 +1488,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../guides/local-guards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../guides/js-bridge/" class="md-nav__link">
         
   
@@ -4072,13 +4100,17 @@ cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 <span class="s">@traigent.optimize(</span>
 <span class="s">    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},</span>
 <span class="s">    objectives=["accuracy"],</span>
+<span class="s">)</span>
+<span class="s">def my_agent(query: str) -&gt; str:</span>
+<span class="s">    ...</span>
+
+<span class="s"># Callbacks are a call-time argument of .optimize(), not a decorator option</span>
+<span class="s">await my_agent.optimize(</span>
 <span class="s">    callbacks=[</span>
 <span class="s">        ProgressBarCallback(width=50),</span>
 <span class="s">        StatisticsCallback()</span>
 <span class="s">    ]</span>
 <span class="s">)</span>
-<span class="s">def my_agent(query: str) -&gt; str:</span>
-<span class="s">    ...</span>
 <span class="s">PYTHON</span>
 sleep<span class="w"> </span><span class="m">3</span>
 
@@ -4135,12 +4167,11 @@ cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 <span class="s">        slack.post(f"Done! Best: {result.best_config}")</span>
 
 <span class="s"># Use it</span>
-<span class="s">@traigent.optimize(</span>
-<span class="s">    configuration_space={...},</span>
-<span class="s">    callbacks=[SlackNotificationCallback()]</span>
-<span class="s">)</span>
+<span class="s">@traigent.optimize(configuration_space={...})</span>
 <span class="s">def my_agent(query: str) -&gt; str:</span>
 <span class="s">    ...</span>
+
+<span class="s">await my_agent.optimize(callbacks=[SlackNotificationCallback()])</span>
 <span class="s">PYTHON</span>
 sleep<span class="w"> </span><span class="m">3</span>
 
@@ -4154,11 +4185,10 @@ cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 
 <span class="s">@traigent.optimize(</span>
 <span class="s">    configuration_space={"model": [...], "temperature": [...]},</span>
-<span class="s">    callbacks=[stats_callback]</span>
 <span class="s">)</span>
 <span class="s">def agent(q): ...</span>
 
-<span class="s">await agent.optimize()</span>
+<span class="s">await agent.optimize(callbacks=[stats_callback])</span>
 
 <span class="s"># Get parameter importance analysis</span>
 <span class="s">importance = stats_callback.get_parameter_importance()</span>

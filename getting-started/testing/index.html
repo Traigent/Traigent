@@ -1890,6 +1890,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../guides/local-guards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../guides/js-bridge/" class="md-nav__link">
         
   
@@ -4098,16 +4126,16 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 <h3 id="run-tests">Run Tests<a class="headerlink" href="#run-tests" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Run all tests through the legacy shell fixture path</span>
 <span class="c1"># (may emit DeprecationWarning; prefer enable_mock_mode_for_quickstart() in code)</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest
+<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest
 
 <span class="c1"># Run with coverage through the same legacy shell fixture path</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>--cov<span class="o">=</span>traigent<span class="w"> </span>--cov-report<span class="o">=</span>html
+<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>--cov<span class="o">=</span>traigent<span class="w"> </span>--cov-report<span class="o">=</span>html
 
 <span class="c1"># Run all unit tests with repo-default ignores</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>tests/unit<span class="w"> </span>-q<span class="w"> </span>--tb<span class="o">=</span>short
+<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>tests/unit<span class="w"> </span>-q<span class="w"> </span>--tb<span class="o">=</span>short
 
 <span class="c1"># Run tests matching a pattern</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>-k<span class="w"> </span><span class="s2">"test_optimization"</span><span class="w"> </span>-v
+<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>-k<span class="w"> </span><span class="s2">"test_optimization"</span><span class="w"> </span>-v
 </code></pre></div>
 <h2 id="failing-a-provider-call-on-purpose">Failing a Provider Call on Purpose<a class="headerlink" href="#failing-a-provider-call-on-purpose" title="Permanent link">&para;</a></h2>
 <p><code>traigent.testing.inject_vendor_failures</code> makes provider calls (made through
@@ -4204,18 +4232,30 @@ pytest<span class="w"> </span>--cov<span class="o">=</span>traigent<span class="
 <span class="n">enable_mock_mode_for_quickstart</span><span class="p">()</span>
 </code></pre></div>
 <p>For shell-only fixtures and older scripts, the legacy env var still works outside production, but direct user-set activation emits <code>DeprecationWarning</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>pytest<span class="w"> </span>tests/
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>python<span class="w"> </span>examples/core/rag-optimization/run.py
+<div class="highlight"><pre><span></span><code><span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>pytest<span class="w"> </span>tests/
+<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>python<span class="w"> </span>examples/core/rag-optimization/run.py
 </code></pre></div>
+<p>If the pre-run cost preflight refuses a simulated run (estimated cost over the
+limit or an unpriced model), add <code>ENVIRONMENT=development
+TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true</code>; an unset <code>ENVIRONMENT</code> counts as
+production, where the exemption does not apply.</p>
 <p><strong>Mock Mode Features:</strong>
-- No API keys required when optimized functions use LiteLLM or LangChain.
-- Fast execution — LiteLLM and LangChain LLM calls are intercepted and replaced
-  with canned responses so those trials don't hit the provider network.
+- No API keys required when optimized functions call LiteLLM <code>completion</code>/
+  <code>acompletion</code> or the LangChain <code>ChatOpenAI</code>, <code>ChatAnthropic</code> or <code>langchain_aws</code>
+  Bedrock chat classes.
+- Fast execution — those calls are intercepted and replaced with canned
+  responses so those trials don't hit the provider network. Embeddings
+  (<code>litellm.embedding</code>, LangChain <code>Embeddings</code>) and other chat classes (for
+  example <code>ChatGoogleGenerativeAI</code>) are not mocked.
 - Raw SDK calls such as <code>openai.chat.completions.create(...)</code> and
-  <code>anthropic.messages.create(...)</code> are not intercepted by mock mode.
-- Cost approval still runs in mock mode. Use <code>cost_approved=True</code> in code or
-  <code>TRAIGENT_COST_APPROVED=true</code> in shell dry runs; there is no separate
-  <code>dry_run</code> flag.
+  <code>anthropic.messages.create(...)</code> are not intercepted by mock mode. A request to
+  a known provider host over httpx, aiohttp, requests, botocore (boto3) or gRPC
+  is blocked with an error; other transports and unlisted hosts are not blocked.
+- The pre-run cost estimate still runs in mock mode. For a dry run use a smaller
+  dataset slice, or <code>TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true</code> with
+  <code>ENVIRONMENT=development</code>; do not use <code>cost_approved=True</code> /
+  <code>TRAIGENT_COST_APPROVED=true</code>, which also approves the later real run. There
+  is no separate <code>dry_run</code> flag.
 - Evaluator scoring is unchanged — your <code>metric_functions</code>, custom
   evaluator, or the built-in <code>LocalEvaluator</code> accuracy calculator runs
   the same scoring logic in both mock and real modes. There is no
@@ -4243,10 +4283,10 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 </code></pre></div>
 <h3 id="2-run-tests-before-committing">2. Run Tests Before Committing<a class="headerlink" href="#2-run-tests-before-committing" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Run all tests through the legacy shell fixture path</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest
+<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest
 
 <span class="c1"># Run with coverage through the same legacy shell fixture path</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>--cov<span class="o">=</span>traigent<span class="w"> </span>--cov-report<span class="o">=</span>term-missing
+<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>--cov<span class="o">=</span>traigent<span class="w"> </span>--cov-report<span class="o">=</span>term-missing
 
 <span class="c1"># Run linters</span>
 ruff<span class="w"> </span>check<span class="w"> </span>traigent/

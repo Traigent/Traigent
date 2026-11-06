@@ -1498,6 +1498,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../guides/local-guards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../guides/js-bridge/" class="md-nav__link">
         
   
@@ -3700,7 +3728,7 @@ requires <code>boto3&gt;=1.35.2</code>, the first release whose <code>PutObject<
 <tr>
 <td><code>GitHubStore(repo, branch, prefix)</code></td>
 <td>none (uses <code>requests</code>)</td>
-<td><code>github://&lt;owner&gt;/&lt;repo&gt;@&lt;branch&gt;/&lt;prefix&gt;</code></td>
+<td><code>github+v2://&lt;owner&gt;/&lt;repo&gt;@&lt;branch&gt;[/&lt;prefix&gt;]</code> (a <code>/</code> in the branch is <code>%2F</code>, e.g. <code>github+v2://acme/agents@feature%2Ffix/snapshots</code>)</td>
 <td>Contents API <code>PUT</code> without <code>sha</code></td>
 </tr>
 </tbody>

@@ -1201,6 +1201,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit codes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#device-login" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1575,6 +1586,34 @@
     
   
     Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/local-guards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Guards (Block Destructive Tool Calls)
   
 
     
@@ -3432,6 +3471,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit codes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#device-login" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3520,6 +3570,77 @@ the next setup steps.</p>
 </ul>
 <p>In non-interactive mode, onboarding prints a plan and JSON block instead of
 starting login by default. Use <code>--login</code> to run device login after the plan.</p>
+<h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
+<p>These exit codes cover these four commands only. They are pre-1.0 and may
+change in a minor release. They are pinned by
+<code>tests/unit/cli/test_documented_exit_codes.py</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Exit</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>traigent quickstart</code></td>
+<td>0</td>
+<td>Mock demo finished; plumbing check passed</td>
+</tr>
+<tr>
+<td><code>traigent quickstart</code></td>
+<td>1</td>
+<td>No trial succeeded, so no best configuration was found</td>
+</tr>
+<tr>
+<td><code>traigent validate</code></td>
+<td>0</td>
+<td>Dataset passed validation</td>
+</tr>
+<tr>
+<td><code>traigent validate</code></td>
+<td>1</td>
+<td>Dataset path or content failed validation</td>
+</tr>
+<tr>
+<td><code>traigent validate</code></td>
+<td>2</td>
+<td>Usage error, such as a dataset path that does not exist</td>
+</tr>
+<tr>
+<td><code>traigent check</code></td>
+<td>0</td>
+<td>All checked functions improve on defaults, <code>--dry-run</code> completed, or nothing was found with <code>--allow-empty</code></td>
+</tr>
+<tr>
+<td><code>traigent check</code></td>
+<td>1</td>
+<td>No optimizable function found, the module path does not exist (reported as 1, not 2), or a function did not improve on its defaults</td>
+</tr>
+<tr>
+<td><code>traigent check</code></td>
+<td>2</td>
+<td>Usage error, such as a missing <code>MODULE_PATH</code> argument</td>
+</tr>
+<tr>
+<td><code>traigent optimize</code></td>
+<td>0</td>
+<td>Every optimizable function in the file was optimized</td>
+</tr>
+<tr>
+<td><code>traigent optimize</code></td>
+<td>1</td>
+<td>File failed to load, no decorated function was found, or an optimization failed</td>
+</tr>
+<tr>
+<td><code>traigent optimize</code></td>
+<td>2</td>
+<td>Usage error, such as a file path that does not exist</td>
+</tr>
+</tbody>
+</table>
+<p>In general, any other failure exits 1; usage errors exit 2 (click's default).</p>
 <h2 id="device-login">Device Login<a class="headerlink" href="#device-login" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>traigent<span class="w"> </span>auth<span class="w"> </span>device-login
 traigent<span class="w"> </span>auth<span class="w"> </span>device-login<span class="w"> </span>--write-env

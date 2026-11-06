@@ -1482,6 +1482,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../guides/local-guards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../guides/js-bridge/" class="md-nav__link">
         
   
@@ -3616,6 +3644,11 @@ own audit.</p>
 <td><code>traigent/cloud/billing.py:212</code>, <code>traigent/storage/local_storage.py:256,944</code>, <code>traigent/utils/secure_path.py:212</code></td>
 </tr>
 <tr>
+<td><code>local_storage_path</code> (per function), else <code>TRAIGENT_RESULTS_FOLDER</code>, else <code>~/.traigent/</code></td>
+<td><code>incentive_state.json</code> (hint counters, no hint written when <code>TRAIGENT_DISABLE_HINTS</code> is set) and <code>.analytics_id</code> (anonymous random id)</td>
+<td><code>traigent/utils/incentives.py</code>, <code>traigent/utils/local_analytics.py</code></td>
+</tr>
+<tr>
 <td>System temp dir</td>
 <td>A lock/staging dir created through <code>huggingface_hub</code>'s <code>filelock</code> when counting Llama tokens, also with <code>HF_HUB_OFFLINE=1</code></td>
 <td>via <code>traigent/utils/cost_calculator.py:397</code></td>
@@ -3665,9 +3698,9 @@ source is unavailable (frozen, obfuscated, or zipped apps) it fails with a
   the running process (<code>ctypes.dlopen(None)</code>), triggered by litellm [R]. The SDK
   uses <code>ctypes.memset</code> to zero its own credential buffer
   (<code>traigent/security/credentials.py:250-255</code>) [S]; no other library is loaded.</li>
-<li>User modules by path: <code>traigent/cli/main.py:259-266</code> and
-  <code>traigent/cli/function_discovery.py:75-80</code> (the <code>traigent</code> CLI imports the script
-  you name), <code>traigent/mcp/tools.py:559-571</code> (MCP tool, same), and
+<li>User modules by path: <code>traigent/utils/module_loading.py</code> (<code>load_user_module</code>, the one loader the
+  <code>traigent</code> CLI via <code>traigent/cli/function_discovery.py</code> and the MCP tool
+  <code>traigent/mcp/tools.py</code> use to import the script you name), and
   <code>traigent/integrations/plugin_registry.py:457-463</code> (plugins from a trusted
   directory). Each registers in <code>sys.modules</code>; none writes the file it runs [S].</li>
 <li><code>importlib.reload</code> is never called; <code>traigent/api/decorators.py:533</code> only

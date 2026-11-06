@@ -14,7 +14,7 @@
         <link rel="prev" href="../execution-modes/">
       
       
-        <link rel="next" href="../js-bridge/">
+        <link rel="next" href="../local-guards/">
       
       
         
@@ -1851,6 +1851,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../local-guards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -4190,6 +4218,7 @@ with an explicit error and log at ERROR level. The contract is
 <span class="k">def</span><span class="w"> </span><span class="nf">strict_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
+<p>Keys in <code>ExampleResult.metrics</code> that are not objectives (here <code>exact_match</code> and <code>length_score</code>) are averaged over the successful rows and appear in <code>trial.metrics</code>, the same as keys returned through the <code>(output, metrics)</code> tuple or a non-objective <code>metric_functions</code> entry. They are diagnostics only: they do not change the score or the ranking. Names the SDK computes itself (such as <code>cost</code>, <code>success_rate</code>, or your objectives) are never overwritten, and the total is capped at 50 keys by dropping user keys first.</p>
 <h4 id="failure-semantics-custom_evaluator-vs-metric_functions">Failure semantics: <code>custom_evaluator</code> vs <code>metric_functions</code><a class="headerlink" href="#failure-semantics-custom_evaluator-vs-metric_functions" title="Permanent link">&para;</a></h4>
 <table>
 <thead>
@@ -4396,8 +4425,9 @@ Best accuracy: 0.00
 </li>
 <li>
 <p><strong>Enable Debug Mode</strong>
-   <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">debug_evaluation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># Print detailed eval info</span>
+   <div class="highlight"><pre><span></span><code><span class="n">traigent</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="n">logging_level</span><span class="o">=</span><span class="s2">"DEBUG"</span><span class="p">)</span>  <span class="c1"># Print detailed eval info</span>
+
+<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data.jsonl"</span>
 <span class="p">)</span>
 </code></pre></div></p>
@@ -4416,9 +4446,13 @@ Best accuracy: 0.00
 <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">random_seed</span><span class="o">=</span><span class="mi">42</span><span class="p">,</span>  <span class="c1"># Deterministic optimization</span>
     <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data.jsonl"</span>
 <span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="c1"># The seed is a call-time argument of .optimize(), not a decorator option</span>
+<span class="c1"># (it reaches the random-search optimizer).</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize_sync</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">"random"</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">random_seed</span><span class="o">=</span><span class="mi">42</span><span class="p">)</span>
 </code></pre></div></p>
 </li>
 <li>
@@ -4514,12 +4548,9 @@ Best accuracy: 0.00
         <span class="s2">"total_cost"</span><span class="p">:</span> <span class="n">cost_metric</span><span class="p">,</span>
     <span class="p">},</span>
 
-    <span class="c1"># Enable debugging during development</span>
-    <span class="n">debug_evaluation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-
     <span class="c1"># Set reasonable limits</span>
     <span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
-    <span class="n">timeout_per_trial</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span>  <span class="c1"># seconds</span>
+    <span class="n">example_timeout</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span>  <span class="c1"># seconds allowed per evaluated example</span>
 
     <span class="c1"># Enable parallel processing</span>
     <span class="n">parallel_config</span><span class="o">=</span><span class="p">{</span>

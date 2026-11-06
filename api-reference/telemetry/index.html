@@ -1488,6 +1488,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../guides/local-guards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../guides/js-bridge/" class="md-nav__link">
         
   
@@ -4476,7 +4504,9 @@ paraphrase it.</p>
 <h2 id="data-retention">Data Retention<a class="headerlink" href="#data-retention" title="Permanent link">&para;</a></h2>
 <p><strong>No-egress runs</strong>:
 - All data is stored <strong>locally</strong> on your machine
-- Data is kept in <code>~/.traigent/</code> or your specified <code>local_storage_path</code>
+- Data is kept in <code>~/.traigent/</code>, your specified <code>local_storage_path</code>, or <code>TRAIGENT_RESULTS_FOLDER</code>;
+  that includes <code>incentive_state.json</code> (hint counters) and <code>.analytics_id</code> (anonymous id).
+  <code>TRAIGENT_DISABLE_HINTS=1</code> writes no <code>incentive_state.json</code> at all (and skips the hint-path usage-stats update and its background analytics submission)
 - You control retention - delete files as needed
 - No data is sent to the Traigent backend</p>
 <p><strong>Portal-backed runs</strong>:
@@ -4542,7 +4572,8 @@ backend concern.</p>
 │   └── ...
 └── .locks/
 </code></pre></div>
-<p>You can customize the storage location:</p>
+<p><code>incentive_state.json</code> and <code>.analytics_id</code> are written next to <code>sessions/</code>, in the same
+folder. You can customize the storage location:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">local_storage_path</span><span class="o">=</span><span class="s2">"./my_optimizations"</span><span class="p">,</span>
     <span class="o">...</span>

@@ -1595,6 +1595,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../guides/local-guards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../guides/js-bridge/" class="md-nav__link">
         
   
@@ -3503,11 +3531,13 @@
 
 <span class="n">enable_mock_mode_for_quickstart</span><span class="p">()</span>
 </code></pre></div>
-<p>For a genuinely free dry run outside the bundled scripts, combine mock mode
-with <code>cost_approved=True</code> in code or <code>TRAIGENT_COST_APPROVED=true</code> in the shell.
-Mock mode intercepts LiteLLM and LangChain calls only; raw
-<code>openai.chat.completions.create(...)</code> and <code>anthropic.messages.create(...)</code>
-calls can still hit real provider APIs.</p>
+<p>For a dry run outside the bundled scripts, simulated calls cost nothing, but
+the pre-run cost estimate still applies and can refuse a large dataset. Use a
+smaller dataset slice, or set <code>TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true</code> together
+with an explicit non-production environment such as <code>ENVIRONMENT=development</code>
+(an unset environment counts as production). Do not use <code>cost_approved=True</code> or
+<code>TRAIGENT_COST_APPROVED=true</code> for a dry run: approval also covers the later real
+run. Mock mode simulates only LiteLLM <code>completion</code>/<code>acompletion</code> and the LangChain <code>ChatOpenAI</code>, <code>ChatAnthropic</code> and <code>langchain_aws</code> Bedrock chat classes; embeddings and other chat classes (for example <code>ChatGoogleGenerativeAI</code>) are not mocked. A raw <code>openai</code>/<code>anthropic</code> call to a known provider host is blocked with an error when it goes through httpx, aiohttp, requests, botocore (boto3) or gRPC; a call over any other transport, or to a host not on the list, is not blocked and can be real.</p>
 <p>The legacy <code>TRAIGENT_MOCK_LLM=true</code> env var remains available outside production for shell fixtures and backwards compatibility, but direct user-set activation emits <code>DeprecationWarning</code>.</p>
 <h2 id="steps">Steps<a class="headerlink" href="#steps" title="Permanent link">&para;</a></h2>
 <table>

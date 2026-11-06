@@ -1634,6 +1634,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../guides/local-guards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../guides/js-bridge/" class="md-nav__link">
         
   
@@ -3596,9 +3624,11 @@ your provider may still bill you, use one explicit approval:</p>
 <li>or create the XDG cost approval token (<code>approved</code> or <code>approved:&lt;limit&gt;</code>).</li>
 </ul>
 <p>Approved runs still emit the unpriced-model warning. Mock LLM quickstart mode
-does not skip this model-pricing preflight (raw provider calls can still be real
-under the mock flag); pass <code>cost_approved=True</code> or set <code>TRAIGENT_COST_APPROVED=true</code>
-for a keyless demo that uses unpriced model names.</p>
+does not skip this model-pricing preflight (a raw provider call over an
+unguarded transport or to an unlisted host can still be real under the mock
+flag). For a keyless demo that uses unpriced model names, use the mock exemption
+described under "Mock Mode and the Cost Preflight" below rather than approval:
+approval also covers the later real run.</p>
 <p>To fail before any trial starts, enable strict cost accounting:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_STRICT_COST_ACCOUNTING</span><span class="o">=</span><span class="nb">true</span>
 </code></pre></div>
