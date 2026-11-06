@@ -15,7 +15,7 @@ import re
 import sqlite3
 import sys
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol, TypeGuard
 
 from traigent.utils.console import _safe_print
 from traigent.utils.logging import get_logger
@@ -185,31 +185,54 @@ _AWS_CREDENTIAL_ERROR_CODES = frozenset(
 )
 
 
+def _is_plain_int(value: Any) -> TypeGuard[int]:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _botocore_http_status(response: dict[str, Any]) -> tuple[bool, int | None]:
+    """Read a botocore-shaped response; returns ``(decided, status)``.
+
+    ``decided`` is True when the response settles the answer, including the
+    "no status" verdict for a 401/403 that is not a credential error.
+    """
+    # botocore ClientError: response["ResponseMetadata"]["HTTPStatusCode"]
+    meta = response.get("ResponseMetadata")
+    value = meta.get("HTTPStatusCode") if isinstance(meta, dict) else None
+    error = response.get("Error")
+    code = error.get("Code") if isinstance(error, dict) else None
+    if not _is_plain_int(value):
+        return False, None
+    # A 401/403 from AWS is a verdict on the credentials only for the
+    # credential error codes; AccessDenied on S3 etc. is the user's IAM.
+    if value in (401, 403) and code not in _AWS_CREDENTIAL_ERROR_CODES:
+        return True, None
+    if 100 <= value <= 599:
+        return True, value
+    return False, None
+
+
+def _attribute_http_status(source: Any) -> int | None:
+    for attr in ("status_code", "status", "http_status", "code"):
+        value = getattr(source, attr, None)
+        if _is_plain_int(value) and 100 <= value <= 599:
+            return value
+    return None
+
+
 def http_status_of(exc: BaseException) -> int | None:
     """Structured HTTP status carried by ``exc`` or its ``response``, if any."""
     response = getattr(exc, "response", None)
     if isinstance(response, dict):
-        # botocore ClientError: response["ResponseMetadata"]["HTTPStatusCode"]
-        meta = response.get("ResponseMetadata")
-        value = meta.get("HTTPStatusCode") if isinstance(meta, dict) else None
-        error = response.get("Error")
-        code = error.get("Code") if isinstance(error, dict) else None
-        if isinstance(value, int) and not isinstance(value, bool):
-            # A 401/403 from AWS is a verdict on the credentials only for the
-            # credential error codes; AccessDenied on S3 etc. is the user's IAM.
-            if value in (401, 403) and code not in _AWS_CREDENTIAL_ERROR_CODES:
-                return None
-            if 100 <= value <= 599:
-                return value
+        decided, status = _botocore_http_status(response)
+        if decided:
+            return status
         response = None
     for source in (exc, response):
         if source is None:
             continue
-        for attr in ("status_code", "status", "http_status", "code"):
-            value = getattr(source, attr, None)
-            if isinstance(value, int) and not isinstance(value, bool):
-                if 100 <= value <= 599:
-                    return value
+        status = _attribute_http_status(source)
+        if status is not None:
+            return status
     return None
 
 
@@ -265,21 +288,8 @@ def _quota_category_from_text(msg: str) -> VendorErrorCategory | None:
     return None
 
 
-def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
-    """Classify an exception as a vendor-pausable error category.
-
-    Order: known Traigent exception types, then a structured HTTP status, then
-    (for non-local errors only) message pattern matching. Builtin/stdlib/user
-    exceptions and text that carries a local-error marker (``PermissionError:``,
-    ``[Errno 13]``, ``OperationalError:``) are never pattern matched, so a
-    missing file or a SQL column named ``quota_used`` is not a provider outage.
-
-    Args:
-        exc: The exception to classify.
-
-    Returns:
-        VendorErrorCategory if the error is vendor-pausable, None otherwise.
-    """
+def _typed_vendor_category(exc: Exception) -> VendorErrorCategory | None:
+    """Category for the known Traigent exception types, else ``None``."""
     from traigent.utils.exceptions import (
         InsufficientFundsError,
         QuotaExceededError,
@@ -295,23 +305,48 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
         return VendorErrorCategory.QUOTA_EXHAUSTED
     if isinstance(exc, ServiceUnavailableError):
         return VendorErrorCategory.SERVICE_UNAVAILABLE
+    return None
 
-    status = http_status_of(exc)
-    if (
-        status is not None
-        and status in _STATUS_CATEGORIES
+
+def _status_is_vendor_signal(exc: Exception, status: int) -> bool:
+    return (
+        status in _STATUS_CATEGORIES
         # 401/403 from a non-provider library are the user's own service, not a
         # verdict on the provider key; 402/429/503 are transport-level facts.
         and (status not in (401, 403) or _is_provider_sdk_exception(exc))
-    ):
-        if status in (402, 429):
-            # A 429/402 can be a plain rate limit or an exhausted account; the
-            # latter is fatal for the whole run, so wording decides first.
-            return (
-                _quota_category_from_text(str(exc).lower())
-                or _STATUS_CATEGORIES[status]
-            )
-        return _STATUS_CATEGORIES[status]
+    )
+
+
+def _category_from_status(exc: Exception, status: int) -> VendorErrorCategory:
+    if status in (402, 429):
+        # A 429/402 can be a plain rate limit or an exhausted account; the
+        # latter is fatal for the whole run, so wording decides first.
+        return _quota_category_from_text(str(exc).lower()) or _STATUS_CATEGORIES[status]
+    return _STATUS_CATEGORIES[status]
+
+
+def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
+    """Classify an exception as a vendor-pausable error category.
+
+    Order: known Traigent exception types, then a structured HTTP status, then
+    (for non-local errors only) message pattern matching. Builtin/stdlib/user
+    exceptions and text that carries a local-error marker (``PermissionError:``,
+    ``[Errno 13]``, ``OperationalError:``) are never pattern matched, so a
+    missing file or a SQL column named ``quota_used`` is not a provider outage.
+
+    Args:
+        exc: The exception to classify.
+
+    Returns:
+        VendorErrorCategory if the error is vendor-pausable, None otherwise.
+    """
+    typed = _typed_vendor_category(exc)
+    if typed is not None:
+        return typed
+
+    status = http_status_of(exc)
+    if status is not None and _status_is_vendor_signal(exc, status):
+        return _category_from_status(exc, status)
 
     if _is_local_exception(exc):
         return None

@@ -872,9 +872,10 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
         # Never substitute an OpenAI model for an unknown provider or tier
         # (#2650); the caller must choose explicitly. The empty string is not
         # None: only None selects the cross-provider default set.
-        known_providers = sorted({p for p, _ in fallbacks if p})
-        known_tiers = sorted({t for _, t in fallbacks})
-        if provider_key not in {p for p, _ in fallbacks}:
+        fallback_keys = list(fallbacks)
+        known_providers = sorted({p for p, _ in fallback_keys if p})
+        known_tiers = sorted({t for _, t in fallback_keys})
+        if provider_key not in {p for p, _ in fallback_keys}:
             override = (
                 f" Set {env_key!r} to provide an explicit model list."
                 if provider

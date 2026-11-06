@@ -3014,6 +3014,24 @@ async def _run_validations(
     return results, passed, failed
 
 
+def _report_check_dry_run(discovered_functions: list[Any]) -> None:
+    """Print the dry-run verdict for ``traigent check``; exit 1 if it would be blocked."""
+    import sys
+
+    from traigent.cli.function_discovery import classify_discovered_functions
+
+    blocking_issues, _ = classify_discovered_functions(discovered_functions)
+    if blocking_issues:
+        console.print(
+            f"\n[red]❌ Dry run found {len(blocking_issues)} blocking "
+            "issue(s); the real run would be BLOCKED[/red]"
+        )
+        sys.exit(1)
+    console.print(
+        f"\n[green]✅ Dry run completed - found {len(discovered_functions)} function(s) ready for validation[/green]"
+    )
+
+
 @cli.command()
 @click.argument("module_path", type=str)
 @click.option("--functions", help="Comma-separated function names to check")
@@ -3134,16 +3152,7 @@ def check(
                 sys.exit(1)
 
         if dry_run:
-            blocking_issues, _ = classify_discovered_functions(discovered_functions)
-            if blocking_issues:
-                console.print(
-                    f"\n[red]❌ Dry run found {len(blocking_issues)} blocking "
-                    "issue(s); the real run would be BLOCKED[/red]"
-                )
-                sys.exit(1)
-            console.print(
-                f"\n[green]✅ Dry run completed - found {len(discovered_functions)} function(s) ready for validation[/green]"
-            )
+            _report_check_dry_run(discovered_functions)
             return
 
         console.print(

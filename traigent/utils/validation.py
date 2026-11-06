@@ -160,6 +160,21 @@ def _non_finite_numbers(values: Any) -> list[Any]:
     ]
 
 
+def _non_finite_in_definition(definition: Any) -> list[Any]:
+    """Non-finite numbers in one config-space definition (tuple/list/dict form)."""
+    if isinstance(definition, (tuple, list)):
+        return _non_finite_numbers(definition)
+    bad: list[Any] = []
+    if isinstance(definition, dict):
+        for field_name in ("low", "high", "min", "max", "step", "default"):
+            bad.extend(_non_finite_numbers([definition.get(field_name)]))
+        for field_name in ("values", "choices"):
+            seq = definition.get(field_name)
+            if isinstance(seq, (tuple, list)):
+                bad.extend(_non_finite_numbers(seq))
+    return bad
+
+
 def ensure_finite_config_space(config_space: Any) -> None:
     """Raise ValueError when a raw config space holds NaN/inf (#2822).
 
@@ -170,16 +185,7 @@ def ensure_finite_config_space(config_space: Any) -> None:
     if not isinstance(config_space, dict):
         return
     for name, definition in config_space.items():
-        bad: list[Any] = []
-        if isinstance(definition, (tuple, list)):
-            bad = _non_finite_numbers(definition)
-        elif isinstance(definition, dict):
-            for field_name in ("low", "high", "min", "max", "step", "default"):
-                bad.extend(_non_finite_numbers([definition.get(field_name)]))
-            for field_name in ("values", "choices"):
-                seq = definition.get(field_name)
-                if isinstance(seq, (tuple, list)):
-                    bad.extend(_non_finite_numbers(seq))
+        bad = _non_finite_in_definition(definition)
         if bad:
             raise ValueError(
                 f"Configuration space parameter {name!r} must be finite, got {bad[0]!r}"

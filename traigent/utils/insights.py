@@ -159,6 +159,40 @@ def get_optimization_insights(results: OptimizationResult) -> dict[str, Any]:
     }
 
 
+def _cost_analysis_for_trial(
+    trial: TrialResult, primary_objective: str, minimize: bool
+) -> dict[str, Any] | None:
+    """Cost-per-query analysis for one trial, or ``None`` when it has no cost."""
+    if is_cost_unmeasured(trial.metrics) or not any(
+        k in trial.metrics for k in ("cost", "cost_per_1k", "total_cost")
+    ):
+        return None
+    cost_per_query = next(
+        (
+            value
+            for value in (
+                trial.metrics.get("cost_per_1k"),
+                trial.metrics.get("cost"),
+                trial.metrics.get("total_cost"),
+            )
+            if value
+        ),
+        None,
+    )
+    if cost_per_query is None and any(
+        trial.metrics.get(k) == 0 for k in ("cost_per_1k", "cost", "total_cost")
+    ):
+        cost_per_query = 0.0  # a measured zero, not an absent cost
+    if cost_per_query is None:
+        return None
+    return {
+        "cost_per_query": cost_per_query,
+        "cost_efficiency": (
+            None if minimize else _calculate_cost_efficiency(trial, primary_objective)
+        ),
+    }
+
+
 def _analyze_top_configurations(
     trials: list[TrialResult],
     objectives: list[str],
@@ -203,34 +237,9 @@ def _analyze_top_configurations(
         # reports a non-zero cost-per-query (#1423).
         # A trial flagged ``cost_unmeasured`` has no cost: no cost analysis is
         # reported for it, never a ``cost_per_query`` of 0.0 (#2517).
-        if not is_cost_unmeasured(trial.metrics) and any(
-            k in trial.metrics for k in ("cost", "cost_per_1k", "total_cost")
-        ):
-            cost_per_query = next(
-                (
-                    value
-                    for value in (
-                        trial.metrics.get("cost_per_1k"),
-                        trial.metrics.get("cost"),
-                        trial.metrics.get("total_cost"),
-                    )
-                    if value
-                ),
-                None,
-            )
-            if cost_per_query is None and any(
-                trial.metrics.get(k) == 0 for k in ("cost_per_1k", "cost", "total_cost")
-            ):
-                cost_per_query = 0.0  # a measured zero, not an absent cost
-            if cost_per_query is not None:
-                config_analysis["cost_analysis"] = {
-                    "cost_per_query": cost_per_query,
-                    "cost_efficiency": (
-                        None
-                        if minimize
-                        else _calculate_cost_efficiency(trial, primary_objective)
-                    ),
-                }
+        cost_analysis = _cost_analysis_for_trial(trial, primary_objective, minimize)
+        if cost_analysis is not None:
+            config_analysis["cost_analysis"] = cost_analysis
 
         top_configurations.append(config_analysis)
 
@@ -458,7 +467,8 @@ def _generate_recommendations(
             if _is_minimize(
                 orientations, performance_summary.get("primary_objective", "")
             ):
-                perf_diff = -perf_diff  # positive = best is better
+                # Negate so a positive value always means best is better.
+                perf_diff = -perf_diff
 
             if (
                 cost_diff > 0 and perf_diff < 0.05
