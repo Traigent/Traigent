@@ -1098,6 +1098,25 @@ _LEGACY_OPTIMIZATION_CONFIG = s_obj(
     }
 )
 
+# The SDK's own identity (a code identifier, not content: GNFR-PRIV-003), exactly the shapes the
+# Backend accepts in session metadata: lowercase 40-hex commit and three numeric components.
+_SDK_IDENTITY_FIELDS = s_obj(
+    {
+        "sdk_ref": _s_regex(re.compile(r"[a-f0-9]{40}")),
+        "sdk_version": _s_regex(re.compile(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}")),
+    },
+    strict_keys=("sdk_ref", "sdk_version"),
+)
+
+
+def _s_sdk_identity(value: Any, ctx: _Ctx, depth: int) -> Any:
+    """Both fields are required whenever the object is present: a partial identity is dropped."""
+    out = _SDK_IDENTITY_FIELDS(value, ctx, depth)
+    if set(out) != {"sdk_ref", "sdk_version"}:
+        raise _Drop
+    return out
+
+
 _SESSION_METADATA = s_obj(
     {
         "optimization_id": s_id,
@@ -1121,6 +1140,7 @@ _SESSION_METADATA = s_obj(
         "execution_mode": s_id,
         "data_flow_mode": s_enum("offline", "current_online"),
         "sdk_version": s_ver,
+        "sdk_identity": _s_sdk_identity,
         "content_identity": _CONTENT_IDENTITY,
     },
     strict_keys=("function_name", "privacy_mode"),

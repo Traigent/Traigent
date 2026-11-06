@@ -172,6 +172,22 @@ def _status_from_exception(exc: BaseException) -> int | None:
     return None
 
 
+def _declared_sdk_identity() -> dict[str, str] | None:
+    """``{"sdk_ref", "sdk_version"}`` of this SDK build, or None when it cannot be resolved.
+
+    The certification minter refuses ``SDK_IDENTITY_UNAVAILABLE`` without it. The ref
+    comes from ``TRAIGENT_SDK_REF`` or the pip VCS record; an unresolvable identity is
+    omitted (a local checkout has no recorded commit), never invented.
+    """
+    from traigent.certification.bind import BindError, resolve_sdk_identity
+
+    try:
+        sdk_ref, sdk_version = resolve_sdk_identity()
+    except BindError:
+        return None
+    return {"sdk_ref": sdk_ref, "sdk_version": sdk_version}
+
+
 def _log_safe_http_status(exc: BaseException) -> int | None:
     """Numeric HTTP status from exception attributes only, never message text."""
     response = getattr(exc, "response", None)
@@ -2098,6 +2114,9 @@ class BackendSessionManager:
             )
         if warm_start_from:
             session_metadata["warm_start_from"] = warm_start_from
+        sdk_identity = _declared_sdk_identity()
+        if sdk_identity is not None:
+            session_metadata["sdk_identity"] = sdk_identity
         return session_metadata
 
     @staticmethod
