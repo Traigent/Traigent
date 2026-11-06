@@ -443,6 +443,49 @@ def _uses_mangled_names(code: types.CodeType) -> bool:
     )
 
 
+def _find_function_code(code_obj: types.CodeType, func: Callable[..., Any]) -> Any:
+    """Return the compiled function body for *func* from a compiled module."""
+    # The compiled code is a module, we need the function inside it
+    for const in code_obj.co_consts:
+        if isinstance(const, types.CodeType) and const.co_name == func.__name__:
+            return const
+    raise ConfigurationError(f"Cannot find function {func.__name__} in compiled code")
+
+
+def _rebuild_function(
+    func: Callable[..., Any], func_code: types.CodeType
+) -> tuple[Any, bool]:
+    """Create a function from *func_code* with *func*'s globals, defaults, closure.
+
+    When functions are defined inside other functions or methods, they might
+    have closures; the compiled code might not expect the same closure, so a
+    closure mismatch retries without one. Returns ``(new_func,
+    closure_stripped)``.
+    """
+    try:
+        new_func = types.FunctionType(
+            func_code,
+            func.__globals__,  # Use original globals
+            func.__name__,  # Keep same name
+            func.__defaults__,  # Keep default arguments
+            func.__closure__,  # Keep closure
+        )
+    except ValueError as e:
+        if "closure" not in str(e):
+            raise
+        new_func = types.FunctionType(
+            func_code,
+            func.__globals__,
+            func.__name__,
+            func.__defaults__,
+            None,  # No closure
+        )
+        # The rewrite cannot see the original free variables, so it
+        # may be analysed but must not be executed (#2841).
+        return new_func, bool(func.__closure__)
+    return new_func, False
+
+
 class _UserFunctionError(Exception):
     """Internal carrier for an exception raised by the USER's own callable.
 
@@ -468,35 +511,35 @@ _PROVIDER_SDK_ROOTS = frozenset(
 _BEDROCK_MODEL_ERROR_CODES = frozenset({"ResourceNotFoundException"})
 
 
+def _bedrock_error_code(exc: BaseException) -> Any:
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return None
+    return (response or {}).get("Error", {}).get("Code")
+
+
+def _class_signals_model_not_found(cls: type, exc: BaseException) -> bool:
+    """True if one class in *exc*'s MRO identifies an unknown-model (404) error."""
+    root = cls.__module__.split(".", 1)[0]
+    if cls.__name__ == "NotFoundError" and root in _PROVIDER_SDK_ROOTS:
+        return True
+    # Gemini (google-generativeai / google-api-core)
+    if cls.__module__ == "google.api_core.exceptions" and cls.__name__ == "NotFound":
+        return True
+    # Gemini (google-genai): ClientError carrying the HTTP status
+    if cls.__module__ == "google.genai.errors" and getattr(exc, "code", None) == 404:
+        return True
+    # Bedrock (botocore): ClientError with an error code
+    return (
+        cls.__module__ == "botocore.exceptions"
+        and cls.__name__ == "ClientError"
+        and _bedrock_error_code(exc) in _BEDROCK_MODEL_ERROR_CODES
+    )
+
+
 def _is_provider_model_not_found(exc: BaseException) -> bool:
     """True for a provider SDK's typed "unknown model" (HTTP 404) error."""
-    for cls in type(exc).__mro__:
-        root = cls.__module__.split(".", 1)[0]
-        if cls.__name__ == "NotFoundError" and root in _PROVIDER_SDK_ROOTS:
-            return True
-        # Gemini (google-generativeai / google-api-core)
-        if (
-            cls.__module__ == "google.api_core.exceptions"
-            and cls.__name__ == "NotFound"
-        ):
-            return True
-        # Gemini (google-genai): ClientError carrying the HTTP status
-        if (
-            cls.__module__ == "google.genai.errors"
-            and getattr(exc, "code", None) == 404
-        ):
-            return True
-        # Bedrock (botocore): ClientError with an error code
-        if cls.__module__ == "botocore.exceptions" and cls.__name__ == "ClientError":
-            response = getattr(exc, "response", None)
-            code = (
-                (response or {}).get("Error", {}).get("Code")
-                if isinstance(response, dict)
-                else None
-            )
-            if code in _BEDROCK_MODEL_ERROR_CODES:
-                return True
-    return False
+    return any(_class_signals_model_not_found(cls, exc) for cls in type(exc).__mro__)
 
 
 def _merge_context_config(
@@ -831,6 +874,23 @@ class SeamlessParameterProvider(ConfigurationProvider):
             self._stats["fallback_triggers"]["no_injection"].append(
                 sorted(active_config.keys())
             )
+        self._report_no_injectable_targets(func, active_config)
+        # Only reached when we are not failing closed (warning-only opt-out,
+        # or an empty config): safe to cache the unvaried pass-through.
+        with self._cache_lock:
+            self._compiled_cache[cache_key] = func
+            self._cache_access_count[cache_key] = 1
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            error_handler(exc)
+            raise  # pragma: no cover - handler always raises
+
+    @staticmethod
+    def _report_no_injectable_targets(
+        func: Callable[..., Any], active_config: dict[str, Any]
+    ) -> None:
+        """Warn, or fail closed, when no assignment or parameter matched a config key."""
         if active_config:
             config_keys = sorted(active_config.keys())
             if is_seamless_no_targets_allowed():
@@ -866,16 +926,6 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 "configuration",
                 func.__name__,
             )
-        # Only reached when we are not failing closed (warning-only opt-out,
-        # or an empty config): safe to cache the unvaried pass-through.
-        with self._cache_lock:
-            self._compiled_cache[cache_key] = func
-            self._cache_access_count[cache_key] = 1
-        try:
-            return func(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001
-            error_handler(exc)
-            raise  # pragma: no cover - handler always raises
 
     def _seamless_fallback(
         self,
@@ -1013,44 +1063,8 @@ class SeamlessParameterProvider(ConfigurationProvider):
         if code_obj is None:
             raise ConfigurationError(f"Compilation returned None for {func.__name__}")
 
-        # Extract the function code object from the module code
-        # The compiled code is a module, we need the function inside it
-        for const in code_obj.co_consts:
-            if isinstance(const, types.CodeType) and const.co_name == func.__name__:
-                func_code = const
-                break
-        else:
-            raise ConfigurationError(
-                f"Cannot find function {func.__name__} in compiled code"
-            )
-
-        # Create new function with the transformed code
-        # Note: When functions are defined inside other functions or methods,
-        # they might have closures. The compiled code might not expect the same
-        # closure, so we need to handle this carefully.
-        closure_stripped = False
-        try:
-            new_func = types.FunctionType(
-                func_code,
-                func.__globals__,  # Use original globals
-                func.__name__,  # Keep same name
-                func.__defaults__,  # Keep default arguments
-                func.__closure__,  # Keep closure
-            )
-        except ValueError as e:
-            if "closure" in str(e):
-                new_func = types.FunctionType(
-                    func_code,
-                    func.__globals__,
-                    func.__name__,
-                    func.__defaults__,
-                    None,  # No closure
-                )
-                # The rewrite cannot see the original free variables, so it
-                # may be analysed but must not be executed (#2841).
-                closure_stripped = bool(func.__closure__)
-            else:
-                raise
+        func_code = _find_function_code(code_obj, func)
+        new_func, closure_stripped = _rebuild_function(func, func_code)
 
         # Copy function attributes
         new_func.__dict__.update(func.__dict__)

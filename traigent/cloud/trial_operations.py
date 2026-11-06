@@ -1099,6 +1099,20 @@ class TrialOperations:
         # the backend as degraded (BE #1194 per-worker storage).
         return None if error_result is True else error_result
 
+    def _log_submission_debug(self, trial_id: str, result_data: dict[str, Any]) -> None:
+        """Debug-log the shape (and a redacted preview) of a result submission."""
+        logger.debug(f"📤 Submission data for trial {trial_id}:")
+        logger.debug(f"   Has measures: {'measures' in result_data}")
+        logger.debug(f"   Has summary_stats: {'summary_stats' in result_data}")
+        logger.debug(f"   Top-level keys: {list(result_data.keys())}")
+
+        if logger.isEnabledFor(10):  # DEBUG level
+            redacted_data = self._redact_sensitive_fields(result_data)
+            payload_json = json.dumps(redacted_data, indent=2, default=str)
+            logger.debug(
+                f"🔍 Redacted payload (first 1000 chars): {payload_json[:1000]}"
+            )
+
     async def submit_trial_result_via_session(
         self,
         session_id: str,
@@ -1214,17 +1228,7 @@ class TrialOperations:
                     error_message
                 )
 
-            logger.debug(f"📤 Submission data for trial {trial_id}:")
-            logger.debug(f"   Has measures: {'measures' in result_data}")
-            logger.debug(f"   Has summary_stats: {'summary_stats' in result_data}")
-            logger.debug(f"   Top-level keys: {list(result_data.keys())}")
-
-            if logger.isEnabledFor(10):  # DEBUG level
-                redacted_data = self._redact_sensitive_fields(result_data)
-                payload_json = json.dumps(redacted_data, indent=2, default=str)
-                logger.debug(
-                    f"🔍 Redacted payload (first 1000 chars): {payload_json[:1000]}"
-                )
+            self._log_submission_debug(trial_id, result_data)
 
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
