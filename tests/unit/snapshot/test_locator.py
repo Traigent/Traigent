@@ -176,6 +176,26 @@ def test_github_other_percent_escapes_refused(bad: str) -> None:
     assert info.value.code == LocatorErrorCode.MALFORMED
 
 
+@pytest.mark.parametrize(
+    "host", ["localhost:10000", "[::1]:10000", "127.0.0.1:10000", "localhost"]
+)
+def test_azblob_loopback_hosts_allow_plain_http_only_when_opted_in(
+    recorders: None, host: str
+) -> None:
+    locator = f"azblob://{host}/cont"
+    assert open_store_from_locator(locator).args[0] == f"https://{host}"
+    opted = open_store_from_locator(locator, allow_insecure_local=True)
+    assert opted.args[0] == f"http://{host}"
+
+
+@pytest.mark.parametrize("host", ["acct.blob.core.windows.net", "localhost.evil.com"])
+def test_azblob_non_loopback_hosts_stay_https_even_when_opted_in(
+    recorders: None, host: str
+) -> None:
+    opted = open_store_from_locator(f"azblob://{host}/cont", allow_insecure_local=True)
+    assert opted.args[0] == f"https://{host}"
+
+
 def test_secure_by_default_and_opt_in(recorders: None) -> None:
     default = open_store_from_locator("azblob://127.0.0.1:10000/cont")
     assert default.args[0] == "https://127.0.0.1:10000"
