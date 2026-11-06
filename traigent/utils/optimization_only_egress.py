@@ -1103,7 +1103,7 @@ _LEGACY_OPTIMIZATION_CONFIG = s_obj(
 _SDK_IDENTITY_FIELDS = s_obj(
     {
         "sdk_ref": _s_regex(re.compile(r"[a-f0-9]{40}")),
-        "sdk_version": _s_regex(re.compile(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}")),
+        "sdk_version": _s_regex(re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}", re.ASCII)),
     },
     strict_keys=("sdk_ref", "sdk_version"),
 )

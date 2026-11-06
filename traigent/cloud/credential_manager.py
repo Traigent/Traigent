@@ -337,12 +337,14 @@ class CredentialManager:
             # Locked store. Only a failure when an encrypted file would be left
             # behind; a store that was never configured has nothing to delete.
             if (Path.home() / ".traigent" / "secure_credentials.enc").exists():
-                logger.error("Could not confirm secure CLI credential deletion: %s", e)
+                logger.exception(
+                    "Could not confirm secure CLI credential deletion: %s", e
+                )
                 success = False
             else:
                 logger.debug("Secure credential store not configured: %s", e)
         except OSError as e:
-            logger.error("Could not confirm secure CLI credential deletion: %s", e)
+            logger.exception("Could not confirm secure CLI credential deletion: %s", e)
             success = False
 
         return success

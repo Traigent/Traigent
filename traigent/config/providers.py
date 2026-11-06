@@ -416,12 +416,26 @@ class SeamlessNoInjectableTargetsError(ConfigurationError):
 _CLOSURE_STRIPPED_ATTR = "__traigent_closure_stripped__"
 
 
-_MANGLED_NAME = re.compile(r"^_\w+?__\w*(?<!__)$")
+_WORD_NAME = re.compile(r"\w+")
+
+
+def _is_mangled_name(name: str) -> bool:
+    """True for ``_Class__attr``: a leading ``_``, an inner ``__``, no trailing ``__``.
+
+    Linear-time equivalent of ``^_\\w+?__\\w*(?<!__)$`` (that pattern backtracks
+    super-linearly on long names).
+    """
+    return (
+        name.startswith("_")
+        and _WORD_NAME.fullmatch(name) is not None
+        and name.find("__", 2) != -1
+        and not name.endswith("__")
+    )
 
 
 def _uses_mangled_names(code: types.CodeType) -> bool:
     """True if *code* (or a nested code object) references ``_Class__name``."""
-    if any(_MANGLED_NAME.match(name) for name in code.co_names):
+    if any(_is_mangled_name(name) for name in code.co_names):
         return True
     return any(
         isinstance(const, types.CodeType) and _uses_mangled_names(const)
