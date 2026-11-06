@@ -467,9 +467,8 @@ def _generate_recommendations(
             if _is_minimize(
                 orientations, performance_summary.get("primary_objective", "")
             ):
-                perf_diff = (
-                    -perf_diff
-                )  # so a positive value always means best is better
+                # Negate so a positive value always means best is better.
+                perf_diff = -perf_diff
 
             if (
                 cost_diff > 0 and perf_diff < 0.05
