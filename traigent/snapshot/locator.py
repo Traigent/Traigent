@@ -86,32 +86,31 @@ def _refuse_credential_syntax(scheme: str, rest: str, has_scheme: bool) -> None:
         raise SnapshotLocatorError(LocatorErrorCode.CREDENTIALS_IN_LOCATOR) from None
 
 
+def _split_locator(locator: str) -> tuple[str, str]:
+    """Split a locator into ``(scheme, rest)`` and refuse credential syntax."""
+    if not isinstance(locator, str) or not locator:
+        raise SnapshotLocatorError(LocatorErrorCode.MALFORMED) from None
+    if "://" not in locator:
+        _refuse_credential_syntax("file", locator, False)
+        return "file", locator
+    scheme, _, rest = locator.partition("://")
+    scheme = scheme.lower()
+    if scheme not in _SCHEMES:
+        raise SnapshotLocatorError(LocatorErrorCode.UNKNOWN_SCHEME) from None
+    _refuse_credential_syntax(scheme, rest, True)
+    return scheme, rest
+
+
 def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False) -> Any:
     """Return the snapshot store a locator names, or raise ``SnapshotLocatorError``.
 
     Transport is secure by default; ``allow_insecure_local=True`` (explicit opt-in,
     local emulators only) lets loopback endpoints use plain HTTP.
     """
-    from traigent.snapshot.backends import (
-        AzureBlobStore,
-        GCSStore,
-        GitHubStore,
-        LocalDirStore,
-        S3Store,
-    )
+    from traigent.snapshot.backends import GCSStore, LocalDirStore, S3Store
     from traigent.snapshot.errors import SnapshotStoreError
 
-    if not isinstance(locator, str) or not locator:
-        raise SnapshotLocatorError(LocatorErrorCode.MALFORMED) from None
-    if "://" not in locator:
-        scheme, rest = "file", locator
-        _refuse_credential_syntax(scheme, rest, False)
-    else:
-        scheme, _, rest = locator.partition("://")
-        scheme = scheme.lower()
-        if scheme not in _SCHEMES:
-            raise SnapshotLocatorError(LocatorErrorCode.UNKNOWN_SCHEME) from None
-        _refuse_credential_syntax(scheme, rest, True)
+    scheme, rest = _split_locator(locator)
     try:
         if scheme == "file":
             if not rest:
@@ -122,58 +121,8 @@ def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False)
             cls = S3Store if scheme == "s3" else GCSStore
             return cls(bucket, prefix, allow_insecure_local=allow_insecure_local)
         if scheme == "azblob":
-            host, tail = _split_path(rest)
-            container, _, prefix = tail.partition("/")
-            if not host or not container:
-                raise ValueError
-            loopback = (urlsplit(f"http://{host}").hostname or "") in (
-                "127.0.0.1",
-                "localhost",
-                "::1",
-            )
-            plain = allow_insecure_local and loopback
-            account_url = f"{'http' if plain else 'https'}://{host}"
-            return AzureBlobStore.from_account(
-                account_url,
-                container,
-                _azure_credential(),
-                prefix,
-                allow_insecure_local=allow_insecure_local,
-            )
-        # github+v2://owner/repo@branch[/prefix]; github://owner/repo@branch only
-        owner_repo_branch, prefix = _split_path_github(rest)
-        if scheme == "github" and prefix:
-            raise SnapshotLocatorError(
-                LocatorErrorCode.AMBIGUOUS_BRANCH,
-                "use github+v2:// and write '/' in the branch as %2F",
-            ) from None
-        repo, _, branch = owner_repo_branch.rpartition("@")
-        branch = branch.replace("%2F", "/").replace("%2f", "/")
-        if not repo or not branch or "%" in branch:
-            raise ValueError
-        segments = repo.split("/")
-        if len(segments) == 2:
-            return GitHubStore(repo, branch, prefix)
-        if len(segments) != 3:
-            raise ValueError
-        api_url = unquote(segments[0])
-        parts = urlsplit(api_url)
-        if parts.username or parts.password or parts.query or parts.fragment:
-            raise SnapshotLocatorError(
-                LocatorErrorCode.CREDENTIALS_IN_LOCATOR
-            ) from None
-        configured = os.environ.get(_GITHUB_API_URL_ENV, "").strip().rstrip("/")
-        if not configured or api_url.rstrip("/") != configured:
-            raise SnapshotLocatorError(
-                LocatorErrorCode.API_URL_NOT_CONFIGURED
-            ) from None
-        return GitHubStore(
-            "/".join(segments[1:]),
-            branch,
-            prefix,
-            api_url=api_url,
-            allow_insecure_local=allow_insecure_local,
-        )
+            return _open_azblob(rest, allow_insecure_local)
+        return _open_github(scheme, rest, allow_insecure_local)
     except SnapshotLocatorError:
         raise
     except ImportError:
@@ -186,6 +135,65 @@ def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False)
         raise SnapshotLocatorError(
             LocatorErrorCode.STORE_UNAVAILABLE, f"code={err.code.value}"
         ) from None
+
+
+def _open_azblob(rest: str, allow_insecure_local: bool) -> Any:
+    from traigent.snapshot.backends import AzureBlobStore
+
+    host, tail = _split_path(rest)
+    container, _, prefix = tail.partition("/")
+    if not host or not container:
+        raise ValueError
+    # Parse the authority only; a bare "//host" yields the same hostname.
+    loopback = (urlsplit(f"//{host}").hostname or "") in (
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    )
+    plain = allow_insecure_local and loopback
+    account_url = f"{'http' if plain else 'https'}://{host}"
+    return AzureBlobStore.from_account(
+        account_url,
+        container,
+        _azure_credential(),
+        prefix,
+        allow_insecure_local=allow_insecure_local,
+    )
+
+
+def _open_github(scheme: str, rest: str, allow_insecure_local: bool) -> Any:
+    from traigent.snapshot.backends import GitHubStore
+
+    # github+v2://owner/repo@branch[/prefix]; github://owner/repo@branch only
+    owner_repo_branch, prefix = _split_path_github(rest)
+    if scheme == "github" and prefix:
+        raise SnapshotLocatorError(
+            LocatorErrorCode.AMBIGUOUS_BRANCH,
+            "use github+v2:// and write '/' in the branch as %2F",
+        ) from None
+    repo, _, branch = owner_repo_branch.rpartition("@")
+    branch = branch.replace("%2F", "/").replace("%2f", "/")
+    if not repo or not branch or "%" in branch:
+        raise ValueError
+    segments = repo.split("/")
+    if len(segments) == 2:
+        return GitHubStore(repo, branch, prefix)
+    if len(segments) != 3:
+        raise ValueError
+    api_url = unquote(segments[0])
+    parts = urlsplit(api_url)
+    if parts.username or parts.password or parts.query or parts.fragment:
+        raise SnapshotLocatorError(LocatorErrorCode.CREDENTIALS_IN_LOCATOR) from None
+    configured = os.environ.get(_GITHUB_API_URL_ENV, "").strip().rstrip("/")
+    if not configured or api_url.rstrip("/") != configured:
+        raise SnapshotLocatorError(LocatorErrorCode.API_URL_NOT_CONFIGURED) from None
+    return GitHubStore(
+        "/".join(segments[1:]),
+        branch,
+        prefix,
+        api_url=api_url,
+        allow_insecure_local=allow_insecure_local,
+    )
 
 
 def _split_path_github(rest: str) -> tuple[str, str]:

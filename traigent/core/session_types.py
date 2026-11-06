@@ -401,6 +401,28 @@ class SessionCreationHTTPError(Exception):
         self.detail = detail
 
 
+def _legacy_suggestion(
+    data: dict[str, Any], trial: Any, trial_id: str
+) -> dict[str, Any]:
+    """Synthesize the typed ``suggestion`` for a legacy ``next-trial`` reply."""
+    configuration = trial.get("configuration") if isinstance(trial, dict) else None
+    return {
+        "trial_id": trial_id,
+        "session_id": data.get("session_id") or "",
+        "trial_number": (trial or {}).get("trial_number", 0),
+        "config": dict(configuration) if isinstance(configuration, dict) else {},
+        "dataset_subset": {
+            "indices": [],
+            "selection_strategy": "full_dataset",
+            "confidence_level": 1.0,
+            "estimated_representativeness": 1.0,
+            "metadata": {"legacy_contract": True},
+        },
+        "exploration_type": "exploration",
+        "metadata": {"legacy_contract": True},
+    }
+
+
 def normalize_next_trial_payload(data: Any) -> Any:
     """View a ``next-trial`` reply in the typed shape, whichever contract sent it.
 
@@ -431,22 +453,7 @@ def normalize_next_trial_payload(data: Any) -> Any:
     if has_next and isinstance(trial, dict):
         trial_id = trial.get("trial_id") or data.get("configuration_run_id")
     if isinstance(trial_id, str) and trial_id:
-        configuration = trial.get("configuration") if isinstance(trial, dict) else None
-        out["suggestion"] = {
-            "trial_id": trial_id,
-            "session_id": data.get("session_id") or "",
-            "trial_number": (trial or {}).get("trial_number", 0),
-            "config": dict(configuration) if isinstance(configuration, dict) else {},
-            "dataset_subset": {
-                "indices": [],
-                "selection_strategy": "full_dataset",
-                "confidence_level": 1.0,
-                "estimated_representativeness": 1.0,
-                "metadata": {"legacy_contract": True},
-            },
-            "exploration_type": "exploration",
-            "metadata": {"legacy_contract": True},
-        }
+        out["suggestion"] = _legacy_suggestion(data, trial, trial_id)
         out["should_continue"] = True
         return out
     # has_next false is a definitive "no more trials"; has_next true without a

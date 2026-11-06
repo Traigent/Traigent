@@ -5725,6 +5725,23 @@ class SimpleScoringEvaluator(BaseEvaluator):
 
         return infer_response_model(response)
 
+    def _call_pricing_model(self, response: Any, config_model: Any) -> Any:
+        """Model to price one captured call at: its own, else the configured one."""
+        config_model_id = config_model if isinstance(config_model, str) else None
+        return (
+            resolve_pricing_model(
+                self._model_of_captured_response(response), config_model_id
+            )
+            or config_model
+        )
+
+    @staticmethod
+    def _call_metrics_unmeasured(call_metrics: Any) -> bool:
+        return bool(
+            getattr(call_metrics, "measured", True) is False
+            or getattr(call_metrics.cost, "unmeasured", False)
+        )
+
     def _accumulate_captured_calls(
         self,
         captured_responses: list[Any],
@@ -5738,13 +5755,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         any_unmeasured = False
         first_metrics = None
         for position, response in enumerate(captured_responses):
-            config_model_id = config_model if isinstance(config_model, str) else None
-            call_model = (
-                resolve_pricing_model(
-                    self._model_of_captured_response(response), config_model_id
-                )
-                or config_model
-            )
+            call_model = self._call_pricing_model(response, config_model)
             call_metrics = self._extract_llm_metrics(
                 response=response,
                 model_name=call_model,
@@ -5756,9 +5767,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 continue
             if first_metrics is None:
                 first_metrics = call_metrics
-            if getattr(call_metrics, "measured", True) is False or getattr(
-                call_metrics.cost, "unmeasured", False
-            ):
+            if self._call_metrics_unmeasured(call_metrics):
                 any_unmeasured = True
                 unmeasured_known += getattr(call_metrics.cost, "known_cost", 0.0)
                 continue

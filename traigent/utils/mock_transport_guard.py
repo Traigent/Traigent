@@ -270,7 +270,8 @@ def _guard_call(url_of: Any, *args: Any, **kwargs: Any) -> None:
         return
     try:
         url = url_of(*args, **kwargs)
-    except Exception as exc:  # noqa: BLE001 - fail closed, whatever the shape
+    # Fail closed, whatever the shape of the call.
+    except Exception as exc:  # noqa: BLE001
         raise MockModeTransportBlockedError(
             "Traigent mock mode blocked a request because the guard could not "
             "determine its destination host. Mock mode promises no real LLM "

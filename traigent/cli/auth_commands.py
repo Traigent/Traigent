@@ -2456,37 +2456,45 @@ def _looks_edge_blocked(
     return _classify_403(body_preview, headers) == "edge_blocked"
 
 
+def _key_check_from_ok_body(body: str) -> KeyCheckResult:
+    """Map the body of a 200 ``/keys/validate`` reply onto the tri-state."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return KeyCheckResult(KeyCheckState.INDETERMINATE, reason="unreadable reply")
+    if isinstance(data, dict):
+        if data.get("valid") is True:
+            payload = data.get("data")
+            return KeyCheckResult(
+                KeyCheckState.VALID,
+                metadata=dict(payload) if isinstance(payload, dict) else {},
+            )
+        if data.get("valid") is False:
+            return KeyCheckResult(KeyCheckState.REJECTED)
+    return KeyCheckResult(KeyCheckState.INDETERMINATE, reason="unexpected reply")
+
+
+def _key_check_from_unauthorized_body(body: str) -> KeyCheckResult:
+    """Map a 401 ``/keys/validate`` reply onto the tri-state."""
+    # Deleting stored credentials needs evidence that Traigent itself said
+    # no: a proxy/SSO/captive-portal 401 (HTML, edge headers) says nothing
+    # about the key.
+    # Body evidence only: the production host sits behind Cloudflare, which
+    # stamps edge headers on every response, so a header cannot outrank a
+    # Traigent-shaped body.
+    if _is_traigent_error_body(body) and _body_says_key_invalid(body):
+        return KeyCheckResult(KeyCheckState.REJECTED)
+    return KeyCheckResult(KeyCheckState.INDETERMINATE, reason="HTTP 401")
+
+
 def _key_check_from_response(
     status: int, body: str, headers: Mapping[str, str] | None = None
 ) -> KeyCheckResult:
     """Map a ``/keys/validate`` reply onto the tri-state (#2832)."""
     if status == 200:
-        try:
-            data = json.loads(body)
-        except ValueError:
-            return KeyCheckResult(
-                KeyCheckState.INDETERMINATE, reason="unreadable reply"
-            )
-        if isinstance(data, dict):
-            if data.get("valid") is True:
-                payload = data.get("data")
-                return KeyCheckResult(
-                    KeyCheckState.VALID,
-                    metadata=dict(payload) if isinstance(payload, dict) else {},
-                )
-            if data.get("valid") is False:
-                return KeyCheckResult(KeyCheckState.REJECTED)
-        return KeyCheckResult(KeyCheckState.INDETERMINATE, reason="unexpected reply")
+        return _key_check_from_ok_body(body)
     if status == 401:
-        # Deleting stored credentials needs evidence that Traigent itself said
-        # no: a proxy/SSO/captive-portal 401 (HTML, edge headers) says nothing
-        # about the key.
-        # Body evidence only: the production host sits behind Cloudflare, which
-        # stamps edge headers on every response, so a header cannot outrank a
-        # Traigent-shaped body.
-        if _is_traigent_error_body(body) and _body_says_key_invalid(body):
-            return KeyCheckResult(KeyCheckState.REJECTED)
-        return KeyCheckResult(KeyCheckState.INDETERMINATE, reason="HTTP 401")
+        return _key_check_from_unauthorized_body(body)
     if status == 403 and _classify_403(body, headers) == "authorization":
         return KeyCheckResult(KeyCheckState.REJECTED)
     # 429, 5xx, edge-blocked/indeterminate 403, 400/404 ...: not a verdict on the key.

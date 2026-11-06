@@ -97,12 +97,7 @@ def _validate_pin_values(
     algorithm = values["issuer_algorithm"]
     if type(algorithm) is not str or algorithm not in _SUPPORTED_ISSUER_ALGORITHMS:
         raise ValueError
-    for name in ("issuer_key_ref", "trust_ring_ref"):
-        if type(values[name]) is not str or not _REF_RE.fullmatch(values[name]):
-            raise ValueError
-    for name in ("g1_verifier_id", "g1_verifier_version", "disclosure_profile_id"):
-        if type(values[name]) is not str or not values[name]:
-            raise ValueError
+    _validate_text_pins(values)
     registers = tuple(
         (str(row[0]), str(row[1])) for row in values["compiler_register_versions"]
     )
@@ -113,6 +108,22 @@ def _validate_pin_values(
     public = serialization.load_der_public_key(
         base64.b64decode(values["issuer_public_key_der_b64"], validate=True)
     )
+    _check_issuer_key_type(algorithm, public)
+    return project_ref, registers, public
+
+
+def _validate_text_pins(values: dict[str, Any]) -> None:
+    """Reject malformed reference / identifier pin fields (raises ValueError)."""
+    for name in ("issuer_key_ref", "trust_ring_ref"):
+        if type(values[name]) is not str or not _REF_RE.fullmatch(values[name]):
+            raise ValueError
+    for name in ("g1_verifier_id", "g1_verifier_version", "disclosure_profile_id"):
+        if type(values[name]) is not str or not values[name]:
+            raise ValueError
+
+
+def _check_issuer_key_type(algorithm: str, public: Any) -> None:
+    """Require the loaded public key to match the pinned algorithm."""
     if algorithm == "ed25519":
         if not isinstance(public, ed25519.Ed25519PublicKey):
             raise ValueError
@@ -120,7 +131,6 @@ def _validate_pin_values(
         public.curve, ec.SECP256R1
     ):
         raise ValueError
-    return project_ref, registers, public
 
 
 def _parse(document: Any) -> Pins:
