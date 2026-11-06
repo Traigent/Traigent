@@ -644,6 +644,35 @@ def _cleanup_synced_sessions(sync_manager: SyncManager, result: dict[str, Any]) 
         )
 
 
+def _resolve_sync_api_key(api_key: str | None, dry_run: bool) -> str | None:
+    """Return the API key (argument, else environment); exit 1 if needed and absent."""
+    # Get API key from environment if not provided
+    if not api_key:
+        from traigent.config.backend_config import BackendConfig
+
+        api_key = BackendConfig.get_api_key()
+
+    # Check for API key before creating SyncManager
+    if not api_key and not dry_run:
+        click.echo(
+            "❌ API key required for portal sync. Use --api-key or set TRAIGENT_API_KEY environment variable.",
+            err=True,
+        )
+        click.echo(
+            "💡 Configure a key with `traigent auth login` or export TRAIGENT_API_KEY."
+        )
+        sys.exit(1)
+    return api_key
+
+
+def _echo_portal_benefits() -> None:
+    click.echo("\n🎯 Available in the Traigent portal:")
+    click.echo("   • Cross-function optimization insights")
+    click.echo("   • Performance trend analysis")
+    click.echo("   • Team collaboration features")
+    click.echo("   • Advanced visualization dashboard")
+
+
 @local_commands.command(name="sync")
 @click.option("--api-key", help="API key for portal sync")
 @click.option("--session-id", help="Sync specific session (if not provided, syncs all)")
@@ -666,22 +695,7 @@ def sync_to_cloud(
             click.echo("Offline is enabled; portal sync is disabled.", err=True)
             sys.exit(1)
 
-        # Get API key from environment if not provided
-        if not api_key:
-            from traigent.config.backend_config import BackendConfig
-
-            api_key = BackendConfig.get_api_key()
-
-        # Check for API key before creating SyncManager
-        if not api_key and not dry_run:
-            click.echo(
-                "❌ API key required for portal sync. Use --api-key or set TRAIGENT_API_KEY environment variable.",
-                err=True,
-            )
-            click.echo(
-                "💡 Configure a key with `traigent auth login` or export TRAIGENT_API_KEY."
-            )
-            sys.exit(1)
+        api_key = _resolve_sync_api_key(api_key, dry_run)
 
         sync_manager = SyncManager(config, api_key)
 
@@ -714,11 +728,7 @@ def sync_to_cloud(
         # Show portal analytics preview
         if not dry_run and status["sync_eligible"] > 0:
             sync_manager.get_cloud_analytics_preview()
-            click.echo("\n🎯 Available in the Traigent portal:")
-            click.echo("   • Cross-function optimization insights")
-            click.echo("   • Performance trend analysis")
-            click.echo("   • Team collaboration features")
-            click.echo("   • Advanced visualization dashboard")
+            _echo_portal_benefits()
 
     except Exception as e:
         click.echo(f"Error syncing to portal: {e}", err=True)

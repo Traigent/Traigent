@@ -505,36 +505,11 @@ class OptimizationValidator:
         improvement_details = {}
         for metric in objectives:
             if metric in baseline_metrics and metric in optimized_metrics:
-                baseline_val = baseline_metrics[metric]
-                optimized_val = optimized_metrics[metric]
-
-                maximize = maximize_config.get(metric, True)
-                if baseline_val != 0:
-                    improvement_pct = (
-                        (optimized_val - baseline_val) / abs(baseline_val)
-                    ) * 100
-                    # Adjust sign based on maximize/minimize preference
-                    if not maximize:  # If minimizing, flip sign
-                        improvement_pct = -improvement_pct
-                    improvement_details[metric] = improvement_pct
-                else:
-                    # A relative change from zero is unbounded: any strictly
-                    # better value is an unbounded improvement and any worse
-                    # value an unbounded regression. Never report it as 0.0%
-                    # (#2803); the report shows the absolute delta instead.
-                    # (Assumes unit-scale metrics such as 0-1 scores: the
-                    # absolute delta is compared with the percent threshold
-                    # read as a fraction.)
-                    delta = optimized_val - baseline_val
-                    if not maximize:
-                        delta = -delta
-                    if abs(delta) > self.threshold:
-                        improvement_details[metric] = math.copysign(math.inf, delta)
-                    else:
-                        # A change smaller than the threshold, read as an
-                        # absolute fraction, is noise: report it in percentage
-                        # points so it cannot pass the gate on its own.
-                        improvement_details[metric] = delta * 100
+                improvement_details[metric] = self._metric_improvement(
+                    baseline_metrics[metric],
+                    optimized_metrics[metric],
+                    maximize_config.get(metric, True),
+                )
 
         # Check threshold requirement: must be better in ALL metrics AND >threshold in ≥1 metric
         is_superior = self._check_superior_criteria(
@@ -546,6 +521,33 @@ class OptimizationValidator:
         logger.info(f"Is superior: {is_superior}")
 
         return is_superior, improvement_details
+
+    def _metric_improvement(
+        self, baseline_val: float, optimized_val: float, maximize: bool
+    ) -> float:
+        """Improvement of one metric: percent, or an absolute/inf fallback from zero."""
+        if baseline_val != 0:
+            improvement_pct = ((optimized_val - baseline_val) / abs(baseline_val)) * 100
+            # Adjust sign based on maximize/minimize preference
+            if not maximize:  # If minimizing, flip sign
+                improvement_pct = -improvement_pct
+            return improvement_pct
+        # A relative change from zero is unbounded: any strictly
+        # better value is an unbounded improvement and any worse
+        # value an unbounded regression. Never report it as 0.0%
+        # (#2803); the report shows the absolute delta instead.
+        # (Assumes unit-scale metrics such as 0-1 scores: the
+        # absolute delta is compared with the percent threshold
+        # read as a fraction.)
+        delta = optimized_val - baseline_val
+        if not maximize:
+            delta = -delta
+        if abs(delta) > self.threshold:
+            return math.copysign(math.inf, delta)
+        # A change smaller than the threshold, read as an
+        # absolute fraction, is noise: report it in percentage
+        # points so it cannot pass the gate on its own.
+        return delta * 100
 
     @staticmethod
     def _objective_orientations(func_info: OptimizedFunction) -> dict[str, str]:
