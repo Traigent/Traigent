@@ -86,6 +86,21 @@ def _refuse_credential_syntax(scheme: str, rest: str, has_scheme: bool) -> None:
         raise SnapshotLocatorError(LocatorErrorCode.CREDENTIALS_IN_LOCATOR) from None
 
 
+def _split_locator(locator: str) -> tuple[str, str]:
+    """Split a locator into ``(scheme, rest)`` and refuse credential syntax."""
+    if not isinstance(locator, str) or not locator:
+        raise SnapshotLocatorError(LocatorErrorCode.MALFORMED) from None
+    if "://" not in locator:
+        _refuse_credential_syntax("file", locator, False)
+        return "file", locator
+    scheme, _, rest = locator.partition("://")
+    scheme = scheme.lower()
+    if scheme not in _SCHEMES:
+        raise SnapshotLocatorError(LocatorErrorCode.UNKNOWN_SCHEME) from None
+    _refuse_credential_syntax(scheme, rest, True)
+    return scheme, rest
+
+
 def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False) -> Any:
     """Return the snapshot store a locator names, or raise ``SnapshotLocatorError``.
 
@@ -95,17 +110,7 @@ def open_store_from_locator(locator: str, *, allow_insecure_local: bool = False)
     from traigent.snapshot.backends import GCSStore, LocalDirStore, S3Store
     from traigent.snapshot.errors import SnapshotStoreError
 
-    if not isinstance(locator, str) or not locator:
-        raise SnapshotLocatorError(LocatorErrorCode.MALFORMED) from None
-    if "://" not in locator:
-        scheme, rest = "file", locator
-        _refuse_credential_syntax(scheme, rest, False)
-    else:
-        scheme, _, rest = locator.partition("://")
-        scheme = scheme.lower()
-        if scheme not in _SCHEMES:
-            raise SnapshotLocatorError(LocatorErrorCode.UNKNOWN_SCHEME) from None
-        _refuse_credential_syntax(scheme, rest, True)
+    scheme, rest = _split_locator(locator)
     try:
         if scheme == "file":
             if not rest:
