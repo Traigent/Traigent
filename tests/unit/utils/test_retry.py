@@ -589,3 +589,53 @@ class TestRetryIntegration:
         assert elapsed >= 0.25  # Allow some tolerance
         assert result.success is False
         assert result.attempts == 3
+
+
+class TestRetryHandlerFixes:
+    """Tests for sync exception raising and async circuit breaker integration."""
+
+    def test_execute_raises_error_on_exhaustion(self):
+        """Test that sync execute() raises error on exhaustion rather than returning None."""
+        config = RetryConfig(max_attempts=2, initial_delay=0.001)
+        handler = RetryHandler(config)
+
+        def failing():
+            raise ConnectionError("service is down")
+
+        with pytest.raises(ConnectionError, match="service is down"):
+            handler.execute(failing)
+
+    def test_execute_raises_non_retryable_error(self):
+        """Test that sync execute() raises immediately on non-retryable error."""
+        config = RetryConfig(max_attempts=3, retry_on_exception=(ConnectionError,))
+        handler = RetryHandler(config)
+
+        def invalid_arg():
+            raise ValueError("bad parameter")
+
+        with pytest.raises(ValueError, match="bad parameter"):
+            handler.execute(invalid_arg)
+
+    @pytest.mark.asyncio
+    async def test_execute_async_with_circuit_breaker(self):
+        """Test that async execution properly updates circuit breaker state."""
+        config = RetryConfig(
+            max_attempts=1,
+            enable_circuit_breaker=True,
+            failure_threshold=2,
+            recovery_timeout=60.0,
+        )
+        handler = RetryHandler(config)
+
+        async def failing_async():
+            raise ConnectionError("server error")
+
+        for _ in range(2):
+            with pytest.raises(ConnectionError):
+                await handler.execute_async(failing_async)
+
+        assert handler.circuit_breaker.state == CircuitBreakerState.OPEN
+
+        # Next call should be rejected by open circuit breaker
+        with pytest.raises(ServiceUnavailableError, match="Circuit breaker is OPEN"):
+            await handler.execute_async(failing_async)
