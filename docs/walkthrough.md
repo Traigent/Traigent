@@ -12,11 +12,13 @@ from traigent.testing import enable_mock_mode_for_quickstart
 enable_mock_mode_for_quickstart()
 ```
 
-For a genuinely free dry run outside the bundled scripts, combine mock mode
-with `cost_approved=True` in code or `TRAIGENT_COST_APPROVED=true` in the shell.
-Mock mode intercepts LiteLLM and LangChain calls only; raw
-`openai.chat.completions.create(...)` and `anthropic.messages.create(...)`
-calls can still hit real provider APIs.
+For a dry run outside the bundled scripts, simulated calls cost nothing, but
+the pre-run cost estimate still applies and can refuse a large dataset. Use a
+smaller dataset slice, or set `TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true` together
+with an explicit non-production environment such as `ENVIRONMENT=development`
+(an unset environment counts as production). Do not use `cost_approved=True` or
+`TRAIGENT_COST_APPROVED=true` for a dry run: approval also covers the later real
+run. Mock mode simulates only LiteLLM `completion`/`acompletion` and the LangChain `ChatOpenAI`, `ChatAnthropic` and `langchain_aws` Bedrock chat classes; embeddings and other chat classes (for example `ChatGoogleGenerativeAI`) are not mocked. A raw `openai`/`anthropic` call to a known provider host is blocked with an error when it goes through httpx, aiohttp, requests, botocore (boto3) or gRPC; a call over any other transport, or to a host not on the list, is not blocked and can be real.
 
 The legacy `TRAIGENT_MOCK_LLM=true` env var remains available outside production for shell fixtures and backwards compatibility, but direct user-set activation emits `DeprecationWarning`.
 

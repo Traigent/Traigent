@@ -38,7 +38,7 @@ from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 os.environ.setdefault("TRAIGENT_OFFLINE_MODE", "true")
 
-traigent.initialize(offline=True, minimal_logging=True)
+traigent.initialize(minimal_logging=True)
 
 DATASETS = Path(__file__).parent.parent / "datasets"
 

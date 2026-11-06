@@ -29,7 +29,11 @@ from traigent.evaluators.base import (
     aggregate_measured_metric,
     failed_row_metrics,
 )
-from traigent.evaluators.metrics_tracker import RESERVED_METRIC_KEYS
+from traigent.evaluators.metrics_tracker import (
+    RESERVED_METRIC_KEYS,
+    aggregate_user_custom_metrics,
+    enforce_user_metric_ceiling,
+)
 from traigent.identity.examples import result_identity_fields
 from traigent.utils.example_id import stamp_row_index
 from traigent.utils.exceptions import EvaluationError
@@ -281,9 +285,12 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         config_model: str | None = config.get("model")
         if not response:
             return config_model
-        from traigent.utils.response_model import infer_response_model
+        from traigent.utils.response_model import (
+            infer_response_model,
+            resolve_pricing_model,
+        )
 
-        return infer_response_model(response) or config_model
+        return resolve_pricing_model(infer_response_model(response), config_model)
 
     def _reconstruct_original_prompt(self, example: Any) -> list[dict[str, str]]:
         """Reconstruct original prompt from example input.
@@ -545,6 +552,39 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             else:
                 aggregated[metric] = 0.0
         return aggregated
+
+    def _surface_user_metrics(
+        self,
+        aggregated: dict[str, Any],
+        all_metrics: list[dict[str, Any]],
+        example_results: list[ExampleResult],
+    ) -> None:
+        """Surface non-objective ``ExampleResult.metrics`` keys on the trial (#2873).
+
+        Same shared helper and semantics as the tuple lane
+        (``SimpleScoringEvaluator``): mean over successful rows, reserved and
+        evaluator-computable names (and the objectives themselves) are never
+        overwritten, and user keys alone are truncated at the measures ceiling.
+        Objectives are aggregated above; this adds keys without touching them,
+        so the trial score is unchanged.
+        """
+        reserved = self._evaluator_computable_metric_names() | frozenset(self.metrics)
+        successful_rows = [
+            row
+            for row, result in zip(all_metrics, example_results, strict=False)
+            if row and result.success
+        ]
+        aggregate_user_custom_metrics(
+            aggregated,
+            successful_rows,
+            context="custom-evaluator trial aggregation",
+            extra_reserved=reserved,
+        )
+        enforce_user_metric_ceiling(
+            aggregated,
+            context="custom-evaluator trial aggregation",
+            extra_reserved=reserved,
+        )
 
     def _resolve_unmeasured_cost_objectives(
         self, aggregated: dict[str, Any], all_metrics: list[dict[str, Any]]
@@ -1034,6 +1074,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             # contract is exactly "None instead of 0.0 for a missing metric".
             aggregated_metrics.update(cast(dict[str, float], llm_agg))
             self._resolve_unmeasured_cost_objectives(aggregated_metrics, all_metrics)
+
+        self._surface_user_metrics(aggregated_metrics, all_metrics, example_results)
 
         # Log results
         success_count = sum(1 for result in example_results if result.success)

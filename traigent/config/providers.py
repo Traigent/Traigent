@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
 import textwrap
 import types
 from collections import defaultdict
@@ -409,6 +410,138 @@ class SeamlessNoInjectableTargetsError(ConfigurationError):
     """
 
 
+# Marks an AST rewrite that must be analysed but never executed: it was rebuilt
+# without the original closure, or it references class-private (name-mangled)
+# attributes that only the original compilation inside the class resolves.
+_CLOSURE_STRIPPED_ATTR = "__traigent_closure_stripped__"
+
+
+_WORD_NAME = re.compile(r"\w+")
+
+
+def _is_mangled_name(name: str) -> bool:
+    """True for ``_Class__attr``: a leading ``_``, an inner ``__``, no trailing ``__``.
+
+    Linear-time equivalent of ``^_\\w+?__\\w*(?<!__)$`` (that pattern backtracks
+    super-linearly on long names).
+    """
+    return (
+        name.startswith("_")
+        and _WORD_NAME.fullmatch(name) is not None
+        and name.find("__", 2) != -1
+        and not name.endswith("__")
+    )
+
+
+def _uses_mangled_names(code: types.CodeType) -> bool:
+    """True if *code* (or a nested code object) references ``_Class__name``."""
+    if any(_is_mangled_name(name) for name in code.co_names):
+        return True
+    return any(
+        isinstance(const, types.CodeType) and _uses_mangled_names(const)
+        for const in code.co_consts
+    )
+
+
+def _find_function_code(code_obj: types.CodeType, func: Callable[..., Any]) -> Any:
+    """Return the compiled function body for *func* from a compiled module."""
+    # The compiled code is a module, we need the function inside it
+    for const in code_obj.co_consts:
+        if isinstance(const, types.CodeType) and const.co_name == func.__name__:
+            return const
+    raise ConfigurationError(f"Cannot find function {func.__name__} in compiled code")
+
+
+def _rebuild_function(
+    func: Callable[..., Any], func_code: types.CodeType
+) -> tuple[Any, bool]:
+    """Create a function from *func_code* with *func*'s globals, defaults, closure.
+
+    When functions are defined inside other functions or methods, they might
+    have closures; the compiled code might not expect the same closure, so a
+    closure mismatch retries without one. Returns ``(new_func,
+    closure_stripped)``.
+    """
+    try:
+        new_func = types.FunctionType(
+            func_code,
+            func.__globals__,  # Use original globals
+            func.__name__,  # Keep same name
+            func.__defaults__,  # Keep default arguments
+            func.__closure__,  # Keep closure
+        )
+    except ValueError as e:
+        if "closure" not in str(e):
+            raise
+        new_func = types.FunctionType(
+            func_code,
+            func.__globals__,
+            func.__name__,
+            func.__defaults__,
+            None,  # No closure
+        )
+        # The rewrite cannot see the original free variables, so it
+        # may be analysed but must not be executed (#2841).
+        return new_func, bool(func.__closure__)
+    return new_func, False
+
+
+class _UserFunctionError(Exception):
+    """Internal carrier for an exception raised by the USER's own callable.
+
+    ``_seamless_run`` treats any other exception as "the AST transform / shim
+    construction failed" and falls back to a second execution. An exception
+    raised while executing the user function is not that, so it is carried
+    out of the transform-and-fallback ladder in this wrapper and re-raised
+    unchanged by ``_seamless_run`` (#2841).
+    """
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+# Provider SDKs signal an unknown model id with a typed 404 error. These are
+# matched by class identity (module root + name), never by message text, so a
+# user function's own ``ValueError("does not exist")`` is not reclassified.
+_PROVIDER_SDK_ROOTS = frozenset(
+    {"openai", "anthropic", "litellm", "cohere", "mistralai"}
+)
+# Bedrock reports an unknown/unavailable model id as a botocore ClientError.
+_BEDROCK_MODEL_ERROR_CODES = frozenset({"ResourceNotFoundException"})
+
+
+def _bedrock_error_code(exc: BaseException) -> Any:
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return None
+    return (response or {}).get("Error", {}).get("Code")
+
+
+def _class_signals_model_not_found(cls: type, exc: BaseException) -> bool:
+    """True if one class in *exc*'s MRO identifies an unknown-model (404) error."""
+    root = cls.__module__.split(".", 1)[0]
+    if cls.__name__ == "NotFoundError" and root in _PROVIDER_SDK_ROOTS:
+        return True
+    # Gemini (google-generativeai / google-api-core)
+    if cls.__module__ == "google.api_core.exceptions" and cls.__name__ == "NotFound":
+        return True
+    # Gemini (google-genai): ClientError carrying the HTTP status
+    if cls.__module__ == "google.genai.errors" and getattr(exc, "code", None) == 404:
+        return True
+    # Bedrock (botocore): ClientError with an error code
+    return (
+        cls.__module__ == "botocore.exceptions"
+        and cls.__name__ == "ClientError"
+        and _bedrock_error_code(exc) in _BEDROCK_MODEL_ERROR_CODES
+    )
+
+
+def _is_provider_model_not_found(exc: BaseException) -> bool:
+    """True for a provider SDK's typed "unknown model" (HTTP 404) error."""
+    return any(_class_signals_model_not_found(cls, exc) for cls in type(exc).__mro__)
+
+
 def _merge_context_config(
     active_config: dict[str, Any],
     current_config: TraigentConfig | dict[str, Any],
@@ -620,44 +753,67 @@ class SeamlessParameterProvider(ConfigurationProvider):
         """
 
         def _handle_injection_error(exc: Exception) -> None:
-            error_text = str(exc).lower()
+            # Only called for exceptions raised by the user's own callable.
+            # Re-raise them unchanged (wrapped in the internal carrier so the
+            # transform-failure fallback does not re-execute the function),
+            # except for a typed "unknown model" signal, which is a
+            # configuration problem rather than a bug in user code (#2841).
             model_value = active_config.get("model")
-            config_error_markers = [
-                "model_not_found",
-                "model not found",
-                "invalid model",
-                "does not exist",
-            ]
-            if isinstance(exc, ConfigurationError) or any(
-                marker in error_text for marker in config_error_markers
-            ):
-                raise ConfigurationError(
+            if _is_provider_model_not_found(exc):
+                error: BaseException = ConfigurationError(
                     "Failed to execute with injected configuration"
                     + (f" (model='{model_value}')" if model_value is not None else "")
                     + f": {exc}"
-                ) from exc
-            raise
+                )
+                error.__cause__ = exc
+            else:
+                error = exc
+            raise _UserFunctionError(error)
 
         cache_key = self._get_cache_key(func, active_config)
 
         # Fast path: return cached transformation
-        cached_func = self._lookup_cached(cache_key, func.__name__)
-        if cached_func is not None:
-            return cached_func(*args, **kwargs)
-
-        # Transform the function
+        user_error: BaseException
         try:
-            return self._seamless_transform_and_run(
-                func, active_config, args, kwargs, cache_key, _handle_injection_error
-            )
-        except SeamlessNoInjectableTargetsError:
-            # Fail closed: do not fall back to a runtime shim, which would
-            # silently no-op the same way and defeat the point of this check.
-            raise
-        except Exception as e:  # noqa: BLE001
-            return self._seamless_fallback(
-                func, active_config, args, kwargs, cache_key, e, _handle_injection_error
-            )
+            cached_func = self._lookup_cached(cache_key, func.__name__)
+            if cached_func is not None:
+                try:
+                    return cached_func(*args, **kwargs)
+                except Exception as exc:  # noqa: BLE001
+                    _handle_injection_error(exc)
+                    raise  # pragma: no cover - handler always raises
+
+            # Transform the function
+            try:
+                return self._seamless_transform_and_run(
+                    func,
+                    active_config,
+                    args,
+                    kwargs,
+                    cache_key,
+                    _handle_injection_error,
+                )
+            except (SeamlessNoInjectableTargetsError, _UserFunctionError):
+                # SeamlessNoInjectableTargetsError: fail closed, do not fall
+                # back to a runtime shim, which would silently no-op the same
+                # way and defeat the point of this check. _UserFunctionError:
+                # the user's own function raised; it must not run twice.
+                raise
+            except Exception as e:  # noqa: BLE001
+                return self._seamless_fallback(
+                    func,
+                    active_config,
+                    args,
+                    kwargs,
+                    cache_key,
+                    e,
+                    _handle_injection_error,
+                )
+        except _UserFunctionError as carrier:
+            user_error = carrier.error
+        # Raised outside the ``except`` block so the carrier does not become
+        # the user error's implicit ``__context__``.
+        raise user_error
 
     def _seamless_transform_and_run(
         self,
@@ -694,6 +850,13 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 return result
 
         if modified_vars:
+            if getattr(transformed_func, _CLOSURE_STRIPPED_ATTR, False):
+                # Executing it would raise NameError for a free variable, which
+                # is indistinguishable from an error in the user's function. Let
+                # the runtime-shim fallback, which keeps the closure, take over.
+                raise RuntimeError(
+                    f"AST rewrite of {func.__name__!r} cannot preserve its closure"
+                )
             ok, result = self._execute_and_cache(
                 transformed_func,
                 args,
@@ -711,6 +874,23 @@ class SeamlessParameterProvider(ConfigurationProvider):
             self._stats["fallback_triggers"]["no_injection"].append(
                 sorted(active_config.keys())
             )
+        self._report_no_injectable_targets(func, active_config)
+        # Only reached when we are not failing closed (warning-only opt-out,
+        # or an empty config): safe to cache the unvaried pass-through.
+        with self._cache_lock:
+            self._compiled_cache[cache_key] = func
+            self._cache_access_count[cache_key] = 1
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            error_handler(exc)
+            raise  # pragma: no cover - handler always raises
+
+    @staticmethod
+    def _report_no_injectable_targets(
+        func: Callable[..., Any], active_config: dict[str, Any]
+    ) -> None:
+        """Warn, or fail closed, when no assignment or parameter matched a config key."""
         if active_config:
             config_keys = sorted(active_config.keys())
             if is_seamless_no_targets_allowed():
@@ -746,12 +926,6 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 "configuration",
                 func.__name__,
             )
-        # Only reached when we are not failing closed (warning-only opt-out,
-        # or an empty config): safe to cache the unvaried pass-through.
-        with self._cache_lock:
-            self._compiled_cache[cache_key] = func
-            self._cache_access_count[cache_key] = 1
-        return func(*args, **kwargs)
 
     def _seamless_fallback(
         self,
@@ -889,47 +1063,16 @@ class SeamlessParameterProvider(ConfigurationProvider):
         if code_obj is None:
             raise ConfigurationError(f"Compilation returned None for {func.__name__}")
 
-        # Extract the function code object from the module code
-        # The compiled code is a module, we need the function inside it
-        for const in code_obj.co_consts:
-            if isinstance(const, types.CodeType) and const.co_name == func.__name__:
-                func_code = const
-                break
-        else:
-            raise ConfigurationError(
-                f"Cannot find function {func.__name__} in compiled code"
-            )
-
-        # Create new function with the transformed code
-        # Note: When functions are defined inside other functions or methods,
-        # they might have closures. The compiled code might not expect the same
-        # closure, so we need to handle this carefully.
-        try:
-            new_func = types.FunctionType(
-                func_code,
-                func.__globals__,  # Use original globals
-                func.__name__,  # Keep same name
-                func.__defaults__,  # Keep default arguments
-                func.__closure__,  # Keep closure
-            )
-        except ValueError as e:
-            # If there's a closure mismatch, try without closure
-            if "closure" in str(e):
-                new_func = types.FunctionType(
-                    func_code,
-                    func.__globals__,
-                    func.__name__,
-                    func.__defaults__,
-                    None,  # No closure
-                )
-            else:
-                raise
+        func_code = _find_function_code(code_obj, func)
+        new_func, closure_stripped = _rebuild_function(func, func_code)
 
         # Copy function attributes
         new_func.__dict__.update(func.__dict__)
         new_func.__doc__ = func.__doc__
         new_func.__annotations__ = func.__annotations__
         new_func.__module__ = func.__module__
+        if closure_stripped or _uses_mangled_names(func.__code__):
+            setattr(new_func, _CLOSURE_STRIPPED_ATTR, True)
 
         return new_func, transformer.get_modified_variables()
 

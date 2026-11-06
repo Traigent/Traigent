@@ -27,6 +27,15 @@ CREDENTIALS_FILE = TRAIGENT_CONFIG_DIR / "credentials.json"
 SECURE_CLI_CREDENTIAL_NAME = "cli_credentials"
 
 
+def _log_secure_deletion_unconfirmed(error_type: str) -> None:
+    """Log a failed secure-credential deletion by exception type only.
+
+    Neither the message nor a traceback is logged: a secure-store error can
+    carry values from the decrypted store.
+    """
+    logger.error("Could not confirm secure CLI credential deletion: %s", error_type)
+
+
 class CredentialManager:
     """Manages authentication credentials for Traigent SDK."""
 
@@ -327,5 +336,22 @@ class CredentialManager:
             except Exception as e:
                 logger.error(f"Failed to delete credentials file: {e}")
                 success = False
+
+        # The encrypted CLI credential is the one ``traigent auth login`` writes
+        # and ``is_authenticated`` reads; leaving it behind made this method
+        # report success while the user stayed logged in (#2833).
+        try:
+            get_secure_credential_store().delete_secure(SECURE_CLI_CREDENTIAL_NAME)
+        except SecurityError as e:
+            # Locked store. Only a failure when an encrypted file would be left
+            # behind; a store that was never configured has nothing to delete.
+            if (Path.home() / ".traigent" / "secure_credentials.enc").exists():
+                _log_secure_deletion_unconfirmed(type(e).__name__)
+                success = False
+            else:
+                logger.debug("Secure credential store not configured: %s", e)
+        except OSError as e:
+            _log_secure_deletion_unconfirmed(type(e).__name__)
+            success = False
 
         return success

@@ -21,8 +21,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
+from traigent.config.backend_config import PRICING_URL
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
+from traigent.utils.money import format_usd
 
 logger = get_logger(__name__)
 
@@ -539,7 +541,7 @@ class BillingManager:
             return {
                 "allowed": False,
                 "reason": f"Trials limit exceeded (max: {plan.max_trials_per_optimization})",
-                "suggested_action": "Reduce trials count or upgrade plan",
+                "suggested_action": f"Reduce trials count or upgrade plan ({PRICING_URL})",
             }
 
         # Check dataset size limits
@@ -547,7 +549,7 @@ class BillingManager:
             return {
                 "allowed": False,
                 "reason": f"Dataset size limit exceeded (max: {plan.max_dataset_size})",
-                "suggested_action": "Reduce dataset size or upgrade plan",
+                "suggested_action": f"Reduce dataset size or upgrade plan ({PRICING_URL})",
             }
 
         # Check monthly credit limits
@@ -560,7 +562,9 @@ class BillingManager:
             return {
                 "allowed": False,
                 "reason": f"Monthly credit limit would be exceeded (limit: {plan.monthly_credits})",
-                "suggested_action": "Wait for next billing cycle or upgrade plan",
+                "suggested_action": (
+                    f"Wait for next billing cycle or upgrade plan ({PRICING_URL})"
+                ),
             }
 
         return {
@@ -653,7 +657,7 @@ class BillingManager:
                 f"the backend billing portal and be reflected in the "
                 f"user's authenticated state — the SDK has no authority "
                 f"to grant itself a higher tier. Re-authenticate after "
-                f"completing the upgrade in the portal."
+                f"completing the upgrade in the portal. Plans: {PRICING_URL}"
             )
 
         # Downgrade or no-op: allowed.
@@ -1341,8 +1345,8 @@ class CostTracker:
         if self._total_cost > self.config.cost_alert_threshold:
             self._stats["alerts_triggered"] += 1
             logger.warning(
-                f"Cost alert: Total costs (${self._total_cost:.2f}) "
-                f"exceeded threshold (${self.config.cost_alert_threshold:.2f})"
+                f"Cost alert: Total costs ({format_usd(self._total_cost)}) "
+                f"exceeded threshold ({format_usd(self.config.cost_alert_threshold)})"
             )
 
     def get_statistics(self) -> dict[str, Any]:

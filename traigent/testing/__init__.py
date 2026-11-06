@@ -80,13 +80,20 @@ def log_raw_client_scope_caveat() -> None:
     if _scope_logged:
         return
     _scope_logged = True
+    from traigent.utils.mock_transport_guard import (
+        GUARDED_TRANSPORTS,
+        MOCK_SCOPE_SUMMARY,
+    )
+
     _logger.warning(
-        "[traigent.testing] mock interception scope: LiteLLM and "
-        "LangChain calls are mocked. Raw "
+        "[traigent.testing] mock interception scope: %s Raw "
         "openai.chat.completions.create(...) and anthropic.messages.create(...) "
-        "calls are NOT intercepted (no canned response), but any HTTP request "
-        "to a known LLM provider host is blocked with an error while mock "
-        "mode is on, so no real provider call is made."
+        "calls are NOT intercepted (no canned response), but a request to a "
+        "known LLM provider host is blocked with an error while mock mode is "
+        "on when it is sent through %s. Calls through other transports, or to "
+        "hosts not on the list, are not blocked and can be real.",
+        MOCK_SCOPE_SUMMARY,
+        GUARDED_TRANSPORTS,
     )
 
 

@@ -340,9 +340,13 @@ def _revocation_index(
     """Index of the first revocation of a grant before position ``upto`` (or ``None``).
 
     An ``authorization_revoked(ref)`` revokes every earlier ``authorization_granted``
-    with the same ``ref`` and correlation key.
+    with the same ``ref`` and correlation key.  A ``ref`` is required on both events: a
+    revocation without one revokes nothing, and a grant without one is never revoked
+    (``History.lean`` ``legalPrecedence``: ``r.ref = (assign e).ref ∧ r.ref ≠ none``).
     """
     grant = timeline[grant_index]
+    if grant.get("ref") is None:
+        return None
     grant_key = _key(grant, corr)
     for index in range(grant_index + 1, upto):
         event = timeline[index]

@@ -43,7 +43,7 @@ _BACKEND_OPTIMIZATION_STRATEGIES: dict[str, dict[str, str]] = {
     "optuna_random": {"algorithm": "optuna", "sampler": "random"},
 }
 
-CONNECTIVITY_STATUSES = frozenset({500, 502, 503, 504})
+CONNECTIVITY_STATUSES = frozenset({408, 500, 502, 503, 504})
 HARD_FAILURE_STATUSES = frozenset({400, 401, 402, 403, 404, 405, 409, 415, 422, 429})
 
 CONNECTIVITY_PATTERNS = (

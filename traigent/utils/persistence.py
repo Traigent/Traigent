@@ -538,6 +538,10 @@ class PersistenceManager:
             if temp_path.exists():
                 temp_path.unlink()
 
+    def result_exists(self, name: str) -> bool:
+        """Return True if a result named ``name`` is already saved."""
+        return self._resolve_path(self.base_dir / name).is_dir()
+
     def save_result(self, result: OptimizationResult, name: str | None = None) -> str:
         """Save optimization result to disk.
 

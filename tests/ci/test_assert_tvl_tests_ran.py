@@ -21,7 +21,7 @@ BACKEND_REASON = guard.BACKEND_SKIP_REASON
 
 
 def _case(module: str, name: str, outcome: str = "pass", reason: str = "") -> str:
-    cls = f"tests.unit.runtime.{module}"
+    cls = module if module.startswith("tests.") else f"tests.unit.runtime.{module}"
     if outcome == "skip":
         return (
             f'<testcase classname="{cls}" name="{name}">'
@@ -36,7 +36,11 @@ def _required_passing() -> list[str]:
     return [_case(m, n) for m, n in guard.REQUIRED]
 
 
-BACKEND_CASE = ("test_canary", "test_tvl_route_is_accepted_by_the_real_backend_parser")
+BACKEND_CASE = (
+    "tests.unit.runtime.test_canary",
+    "test_tvl_route_is_accepted_by_the_real_backend_parser",
+)
+EXAMPLE_CASE = guard.REQUIRED[-1]
 
 
 def _run(tmp_path: Path, cases: list[str]) -> int:
@@ -108,7 +112,7 @@ def test_adding_unrelated_passing_tests_does_not_break_the_guard(
 
 def test_required_names_and_parameter_ids_exist_in_the_test_files() -> None:
     for module, name in (*guard.REQUIRED, BACKEND_CASE):
-        text = (REPO_ROOT / "tests" / "unit" / "runtime" / f"{module}.py").read_text()
+        text = (REPO_ROOT / Path(*module.split(".")).with_suffix(".py")).read_text()
         base, _, param = name.partition("[")
         assert re.search(rf"^def {base}\(", text, re.M), (module, name)
         if param:
@@ -117,7 +121,8 @@ def test_required_names_and_parameter_ids_exist_in_the_test_files() -> None:
 
 def _declared_parameter_ids(module: str, func: str) -> set[str]:
     """Ids of the @pytest.mark.parametrize decorator on ``func``, read via ast."""
-    tree = ast.parse((REPO_ROOT / "tests/unit/runtime" / f"{module}.py").read_text())
+    path = REPO_ROOT / Path(*module.split(".")).with_suffix(".py")
+    tree = ast.parse(path.read_text())
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == func:
             for deco in node.decorator_list:
@@ -133,11 +138,11 @@ def _declared_parameter_ids(module: str, func: str) -> set[str]:
 
 def test_declared_parameters_are_all_required() -> None:
     func = "test_real_compiler_resolves_tokens"
-    declared = _declared_parameter_ids("test_real_compiler", func)
+    declared = _declared_parameter_ids("tests.unit.runtime.test_real_compiler", func)
     required = {
         n[len(func) + 1 : -1]
         for m, n in guard.REQUIRED
-        if m == "test_real_compiler" and n.startswith(func + "[")
+        if m == "tests.unit.runtime.test_real_compiler" and n.startswith(func + "[")
     }
     assert declared and declared == required
 
@@ -162,6 +167,27 @@ def test_reason_that_only_mentions_the_variable_is_red(tmp_path: Path) -> None:
 def test_missing_parameter_case_is_red(tmp_path: Path) -> None:
     cases = [c for c in _required_passing() if "resolves_tokens[fragment]" not in c]
     assert len(cases) == len(guard.REQUIRED) - 1
+    assert _run(tmp_path, cases) == 1
+
+
+def test_missing_example_case_is_red(tmp_path: Path) -> None:
+    cases = [c for c in _required_passing() if EXAMPLE_CASE[1] not in c]
+    assert len(cases) == len(guard.REQUIRED) - 1
+    assert _run(tmp_path, cases) == 1
+
+
+def test_skipped_example_case_with_the_allowed_reason_is_red(tmp_path: Path) -> None:
+    ns = "tests.examples.test_canary"
+    cases = _required_passing() + [_case(ns, BACKEND_CASE[1], "skip", BACKEND_REASON)]
+    assert _run(tmp_path, cases) == 1
+
+
+def test_example_case_cannot_stand_in_for_a_missing_runtime_case(
+    tmp_path: Path,
+) -> None:
+    missing = guard.REQUIRED[0]
+    cases = [c for c in _required_passing() if missing[1] not in c]
+    cases.append(_case("tests.examples." + missing[0].rsplit(".", 1)[1], missing[1]))
     assert _run(tmp_path, cases) == 1
 
 

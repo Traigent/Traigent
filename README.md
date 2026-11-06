@@ -312,8 +312,9 @@ Cost estimates, budgets, limits, alerts, and thresholds are best-effort software
 provider-side billing guarantees. Actual billing is determined by your LLM/cloud providers, and you
 remain responsible for provider charges. The legacy `TRAIGENT_MOCK_LLM=true` env var is supported
 only for backwards-compatible local scripts and is disabled when `ENVIRONMENT=production`.
-Mock mode does not skip the cost-approval or pricing preflights (pre-approve a keyless demo
-with `TRAIGENT_COST_APPROVED=true`); direct provider calls made outside the integration/interceptor
+Mock mode does not skip the cost-approval or pricing preflights (for a keyless demo use a smaller
+dataset slice, or `TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT=true` with `ENVIRONMENT=development`; avoid
+`TRAIGENT_COST_APPROVED=true`, which also approves the later real run); direct provider calls made outside the integration/interceptor
 path should be stubbed explicitly for a guaranteed $0 rehearsal. See [DISCLAIMER.md](https://github.com/Traigent/Traigent/blob/main/DISCLAIMER.md)
 for details.
 

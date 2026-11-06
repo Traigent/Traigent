@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
+from traigent.core.exception_handler import is_provider_api_key_failure
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
@@ -54,6 +55,7 @@ from traigent.utils.langchain_interceptor import (
 )
 from traigent.utils.logging import get_logger
 from traigent.utils.removed_params import reject_removed_mock_parameters
+from traigent.utils.response_model import resolve_pricing_model
 from traigent.utils.trial_costs import (
     is_cost_unmeasured,
     known_spend_lower_bound,
@@ -3009,8 +3011,7 @@ class BaseEvaluator(ABC):
         Raises:
             APIKeyError: If the error appears to be API key related
         """
-        api_key_tokens = ("api key", "api_key", "authentication", "openai_api_key")
-        if any(token in str(error).lower() for token in api_key_tokens):
+        if is_provider_api_key_failure(error):
             raise APIKeyError.from_provider_error(error) from error
 
     async def _execute_function(
@@ -5724,6 +5725,23 @@ class SimpleScoringEvaluator(BaseEvaluator):
 
         return infer_response_model(response)
 
+    def _call_pricing_model(self, response: Any, config_model: Any) -> Any:
+        """Model to price one captured call at: its own, else the configured one."""
+        config_model_id = config_model if isinstance(config_model, str) else None
+        return (
+            resolve_pricing_model(
+                self._model_of_captured_response(response), config_model_id
+            )
+            or config_model
+        )
+
+    @staticmethod
+    def _call_metrics_unmeasured(call_metrics: Any) -> bool:
+        return bool(
+            getattr(call_metrics, "measured", True) is False
+            or getattr(call_metrics.cost, "unmeasured", False)
+        )
+
     def _accumulate_captured_calls(
         self,
         captured_responses: list[Any],
@@ -5737,7 +5755,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         any_unmeasured = False
         first_metrics = None
         for position, response in enumerate(captured_responses):
-            call_model = self._model_of_captured_response(response) or config_model
+            call_model = self._call_pricing_model(response, config_model)
             call_metrics = self._extract_llm_metrics(
                 response=response,
                 model_name=call_model,
@@ -5749,9 +5767,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 continue
             if first_metrics is None:
                 first_metrics = call_metrics
-            if getattr(call_metrics, "measured", True) is False or getattr(
-                call_metrics.cost, "unmeasured", False
-            ):
+            if self._call_metrics_unmeasured(call_metrics):
                 any_unmeasured = True
                 unmeasured_known += getattr(call_metrics.cost, "known_cost", 0.0)
                 continue

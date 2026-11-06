@@ -52,7 +52,12 @@ class LocalDirStore:
         return self.locator()
 
     def locator(self) -> str:
-        return f"file://{self._root}"
+        # A name with "?" or "#" cannot be a URL-form locator, so it is emitted as the
+        # plain absolute path, which the opener takes literally (no decoding).
+        root = str(self._root)
+        if "?" in root or "#" in root:
+            return root
+        return f"file://{root}"
 
     def _path(self, key: str) -> Path:
         validate_key(key)

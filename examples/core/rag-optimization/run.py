@@ -101,7 +101,7 @@ DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "rag-optimization
 if MOCK:
     # Redirect home to repo-local to avoid sandbox home write
     os.environ.setdefault("HOME", str(BASE))
-    traigent.initialize(offline=True)
+    traigent.initialize()
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 PROMPT_PATH = BASE / "prompt.txt"
 CONTEXT_PATH = DATA_ROOT / "context_documents.jsonl"

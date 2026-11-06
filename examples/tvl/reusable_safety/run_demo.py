@@ -615,7 +615,7 @@ def _run_single_qa_trial(
         base_accuracy = {
             "gpt-4.1": 0.94,
             "gpt-4.1-mini": 0.88,
-            "claude-3-5-sonnet-latest": 0.92,
+            "claude-sonnet-4-6": 0.92,
             "claude-haiku-4-5-20251001": 0.82,
         }.get(model, 0.85)
 
@@ -642,7 +642,7 @@ def _run_single_qa_trial(
         base_latency = {
             "gpt-4.1": 180,
             "gpt-4.1-mini": 120,
-            "claude-3-5-sonnet-latest": 200,
+            "claude-sonnet-4-6": 200,
             "claude-haiku-4-5-20251001": 80,
         }.get(model, 100)
         latency = (
@@ -653,7 +653,7 @@ def _run_single_qa_trial(
         cost = {
             "gpt-4.1": 0.015,
             "gpt-4.1-mini": 0.003,
-            "claude-3-5-sonnet-latest": 0.012,
+            "claude-sonnet-4-6": 0.012,
             "claude-haiku-4-5-20251001": 0.001,
         }.get(model, 0.002)
 
@@ -846,7 +846,7 @@ def _run_single_support_trial(
         base_latency = {
             "gpt-4.1": 180,
             "gpt-4.1-mini": 100,
-            "claude-3-5-sonnet-latest": 160,
+            "claude-sonnet-4-6": 160,
             "claude-haiku-4-5-20251001": 60,
         }.get(model, 100)
 
@@ -855,7 +855,7 @@ def _run_single_support_trial(
         cost = {
             "gpt-4.1": 0.012,
             "gpt-4.1-mini": 0.002,
-            "claude-3-5-sonnet-latest": 0.010,
+            "claude-sonnet-4-6": 0.010,
             "claude-haiku-4-5-20251001": 0.0008,
         }.get(model, 0.002)
 
@@ -863,7 +863,7 @@ def _run_single_support_trial(
         resolution = {
             "gpt-4.1": 0.92,
             "gpt-4.1-mini": 0.86,
-            "claude-3-5-sonnet-latest": 0.90,
+            "claude-sonnet-4-6": 0.90,
             "claude-haiku-4-5-20251001": 0.80,
         }.get(model, 0.85) + random.uniform(-0.03, 0.03)
 
@@ -931,7 +931,7 @@ def simulate_qa_agent_optimization() -> OptimizationResult:
                 "use_reranking": True,
             },
             {
-                "model": "claude-3-5-sonnet-latest",
+                "model": "claude-sonnet-4-6",
                 "temperature": 0.2,
                 "retrieval_k": 5,
                 "chunk_size": 512,
@@ -991,7 +991,7 @@ def simulate_qa_agent_optimization() -> OptimizationResult:
                 "use_reranking": True,
             },
             {
-                "model": "claude-3-5-sonnet-latest",
+                "model": "claude-sonnet-4-6",
                 "temperature": 0.1,
                 "retrieval_k": 7,
                 "chunk_size": 1024,
@@ -1122,7 +1122,7 @@ def simulate_support_agent_optimization() -> OptimizationResult:
                 "canned_threshold": 0.75,
             },
             {
-                "model": "claude-3-5-sonnet-latest",
+                "model": "claude-sonnet-4-6",
                 "temperature": 0.3,
                 "use_streaming": True,
                 "response_style": "friendly",

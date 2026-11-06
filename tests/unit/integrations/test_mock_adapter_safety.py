@@ -136,7 +136,9 @@ def test_activation_is_idempotent_and_logs_once(
         r
         for r in caplog.records
         if "mock interception scope" in r.getMessage()
-        and "LiteLLM and LangChain calls are mocked" in r.getMessage()
+        and "ChatOpenAI" in r.getMessage()
+        and "Embeddings" in r.getMessage()
+        and "not mocked" in r.getMessage()
         and "openai.chat.completions.create" in r.getMessage()
         and "anthropic.messages.create" in r.getMessage()
     ]

@@ -199,7 +199,9 @@ class LocalAnalytics:
                 "avg_trials_per_session": round(avg_trials_per_session, 2),
                 "avg_config_space_size": round(avg_config_space_size, 2),
                 "avg_improvement_percent": (
-                    round(avg_improvement * 100, 2) if avg_improvement else None
+                    round(avg_improvement * 100, 2)
+                    if avg_improvement is not None
+                    else None
                 ),
                 # Time-based metrics
                 "sessions_last_30_days": len(recent_sessions),

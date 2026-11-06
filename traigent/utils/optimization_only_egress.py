@@ -1098,6 +1098,25 @@ _LEGACY_OPTIMIZATION_CONFIG = s_obj(
     }
 )
 
+# The SDK's own identity (a code identifier, not content: GNFR-PRIV-003), exactly the shapes the
+# Backend accepts in session metadata: lowercase 40-hex commit and three numeric components.
+_SDK_IDENTITY_FIELDS = s_obj(
+    {
+        "sdk_ref": _s_regex(re.compile(r"[a-f0-9]{40}")),
+        "sdk_version": _s_regex(re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}", re.ASCII)),
+    },
+    strict_keys=("sdk_ref", "sdk_version"),
+)
+
+
+def _s_sdk_identity(value: Any, ctx: _Ctx, depth: int) -> Any:
+    """Both fields are required whenever the object is present: a partial identity is dropped."""
+    out = _SDK_IDENTITY_FIELDS(value, ctx, depth)
+    if set(out) != {"sdk_ref", "sdk_version"}:
+        raise _Drop
+    return out
+
+
 _SESSION_METADATA = s_obj(
     {
         "optimization_id": s_id,
@@ -1121,6 +1140,7 @@ _SESSION_METADATA = s_obj(
         "execution_mode": s_id,
         "data_flow_mode": s_enum("offline", "current_online"),
         "sdk_version": s_ver,
+        "sdk_identity": _s_sdk_identity,
         "content_identity": _CONTENT_IDENTITY,
     },
     strict_keys=("function_name", "privacy_mode"),
@@ -2615,6 +2635,11 @@ def project_finalize_payload(data: Any) -> dict[str, Any]:
         raise MetadataContractViolation
     if out.get("session_id") is not None:
         out["session_id"] = _strict_id(out["session_id"], _Ctx())
+    if out.get("optimization_outcome") is not None and (
+        not isinstance(out["optimization_outcome"], str)
+        or out["optimization_outcome"] not in FINALIZE_OUTCOMES
+    ):
+        raise MetadataContractViolation
     for key in list(out):
         if key not in FINALIZE_KEYS:  # unknown members are dropped whatever their value
             del out[key]
@@ -2894,8 +2919,11 @@ FINALIZE_KEYS = frozenset(
         "session_aggregation",
         "session_id",
         "request_metadata",
+        "optimization_outcome",
     }
 )
+#: Closed values of the finalize ``optimization_outcome`` member (#2853).
+FINALIZE_OUTCOMES = frozenset({"completed", "failed", "cancelled"})
 
 
 @dataclass(frozen=True)

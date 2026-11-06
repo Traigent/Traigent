@@ -168,6 +168,70 @@ def _is_real_stream(kwargs: dict[str, Any]) -> bool:
     return not MockAdapter.is_mock_enabled("litellm")
 
 
+def _requested_mock_text(kwargs: dict[str, Any]) -> str | None:
+    """The reply the caller asked for with ``mock_response=``, if any (#2798).
+
+    LiteLLM's own ``mock_response`` is the standard way to give a dry run a
+    structured reply, so mock mode honours it: a string is the reply and an
+    exception (instance or class) is raised, as LiteLLM does. Any other type is
+    refused rather than silently replaced by the canned text.
+    """
+    requested = kwargs.get("mock_response")
+    if requested is None or isinstance(requested, str):
+        return requested
+    if isinstance(requested, BaseException):
+        raise requested
+    if isinstance(requested, type) and issubclass(requested, BaseException):
+        message = "Mock exception raised by mock_response"
+        try:
+            error = requested(message)
+        except TypeError:
+            # litellm's own exceptions (RateLimitError, ...) require the
+            # provider and model; build them the way litellm's mock does.
+            factory: Any = requested
+            error = factory(
+                message=message,
+                llm_provider="mock",
+                model=str(kwargs.get("model", "mock-model")),
+            )
+        raise error
+    raise TypeError(
+        "Traigent mock mode supports litellm mock_response as a str or an "
+        f"Exception, not {type(requested).__name__}."
+    )
+
+
+def _requested_choice_count(kwargs: dict[str, Any]) -> int:
+    n = kwargs.get("n")
+    return n if isinstance(n, int) and not isinstance(n, bool) and n > 1 else 1
+
+
+def _mock_litellm_reply(
+    args: tuple[Any, ...], kwargs: dict[str, Any], *, apply_delay: bool = True
+) -> Any:
+    """Mock reply shaped like the request: ``mock_response``, ``n`` and ``stream``.
+
+    Not covered: ``tools``/``tool_choice`` and ``response_format`` still get the
+    plain canned message (their reply needs caller-specific content). Async
+    callers await the delay themselves and pass ``apply_delay=False`` (#2809).
+    """
+    from traigent.integrations.utils.mock_adapter import MockAdapter
+
+    text = _requested_mock_text(kwargs)
+    response = MockAdapter.get_mock_response(
+        "litellm",
+        response_text=text,
+        model=kwargs.get("model", args[0] if args else "mock-model"),
+        apply_delay=apply_delay,
+    )
+    response.response_time_ms = 0.0
+    MockAdapter.expand_litellm_choices(response, _requested_choice_count(kwargs))
+    capture_langchain_response(response)
+    if kwargs.get("stream"):
+        return MockAdapter.build_litellm_stream(response)
+    return response
+
+
 def _completion_once(
     original: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
@@ -175,13 +239,7 @@ def _completion_once(
     from traigent.integrations.utils.mock_adapter import MockAdapter
 
     if MockAdapter.is_mock_enabled("litellm"):
-        mock_data = MockAdapter.get_mock_response(
-            "litellm",
-            model=kwargs.get("model", args[0] if args else "mock-model"),
-        )
-        mock_data.response_time_ms = 0.0
-        capture_langchain_response(mock_data)
-        return mock_data
+        return _mock_litellm_reply(args, kwargs)
 
     note_real_call()
     start_time = time.perf_counter()
@@ -197,13 +255,8 @@ async def _acompletion_once(
     from traigent.integrations.utils.mock_adapter import MockAdapter
 
     if MockAdapter.is_mock_enabled("litellm"):
-        mock_data = MockAdapter.get_mock_response(
-            "litellm",
-            model=kwargs.get("model", args[0] if args else "mock-model"),
-        )
-        mock_data.response_time_ms = 0.0
-        capture_langchain_response(mock_data)
-        return mock_data
+        await MockAdapter.await_mock_delay("litellm")
+        return _mock_litellm_reply(args, kwargs, apply_delay=False)
 
     note_real_call()
     start_time = time.perf_counter()

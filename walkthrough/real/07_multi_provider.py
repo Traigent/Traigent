@@ -69,7 +69,7 @@ configure_logging()
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
-traigent.initialize(offline=True, minimal_logging=True)
+traigent.initialize(minimal_logging=True)
 
 # -----------------------------------------------------------------------------
 # Provider Detection - Check which API keys are available and valid

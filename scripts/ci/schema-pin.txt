@@ -2,9 +2,9 @@
 #
 # WHY THIS FILE EXISTS ALONGSIDE THE pyproject.toml PIN
 # -----------------------------------------------------
-# pyproject.toml declares the PUBLISHED dependency `traigent-schema==7.0.0` (a
+# pyproject.toml declares the PUBLISHED dependency `traigent-schema==7.1.0` (a
 # normal PyPI requirement, which is what `pip install traigent` pulls). That
-# release is TraigentSchema tag v7.0.0 = the commit below, and its package
+# release is TraigentSchema commit (no v7.1.0 tag exists yet; wheel byte-identical to traigent_schema/ here) = the commit below, and its package
 # contents are byte-identical to this commit's traigent_schema/ tree. This file
 # keeps the internal lanes on the exact commit, and it must never reference a
 # direct URL from pyproject.toml, because:
@@ -32,7 +32,7 @@
 # the requirement line at the bottom of this file (the single source of truth).
 # Current compatibility target (checked against the requirement line when this
 # comment was last refreshed): TraigentSchema commit
-# 7104839ae6d748e852b1cb584312cf86d1f0f2db. The same SHA is recorded in the
+# 7ab078d55cbe38e2b4cefcf3ce3dbfe2dea5cfe7. The same SHA is recorded in the
 # disposition dicts in traigent/cli/certify_commands.py; if you bump the pin,
 # change all three together. It is an intentional compatibility baseline
 # for the economics/certification contract, not a "latest major" target:
@@ -55,4 +55,4 @@
 # org secrets, so a token here breaks them. This file is the single source of
 # truth for the commit pin. uv.lock records the PyPI pin from pyproject.toml
 # (regenerate it with `uv lock` when that pin changes).
-traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@7104839ae6d748e852b1cb584312cf86d1f0f2db
+traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@7ab078d55cbe38e2b4cefcf3ce3dbfe2dea5cfe7

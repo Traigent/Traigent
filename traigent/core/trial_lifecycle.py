@@ -55,7 +55,11 @@ from traigent.utils.exceptions import (
 )
 from traigent.utils.langchain_interceptor import capture_scope
 from traigent.utils.logging import get_logger
-from traigent.utils.trial_costs import is_cost_unmeasured, known_spend_lower_bound
+from traigent.utils.trial_costs import (
+    MEASURED_SPEND_KEYS,
+    is_cost_unmeasured,
+    known_spend_lower_bound,
+)
 
 from .tracing import record_trial_result, trial_span
 
@@ -854,6 +858,7 @@ class TrialLifecycle:
                 optuna_trial_id,
                 exc,
             )
+            self._apply_measured_spend(result, exc)
             self._finalize_error_trial(
                 result,
                 func=func,
@@ -992,6 +997,25 @@ class TrialLifecycle:
                 getattr(result, "trial_id", "<unknown>"),
                 type(exc).__name__,
             )
+
+    @staticmethod
+    def _apply_measured_spend(result: TrialResult, error: BaseException) -> None:
+        """Keep the spend an evaluation measured before it failed (#2852).
+
+        The model calls behind a failed trial were paid for; the evaluator
+        attaches what it measured (cost, or the unmeasured flag with its
+        known floor) to the exception, and it goes onto the failed trial so
+        the run's budget counts it instead of reading "no cost reported".
+        """
+        spend = getattr(error, "measured_spend", None)  # only EvaluationError has it
+        if not isinstance(spend, dict) or not spend:
+            return
+        metrics = result.metrics
+        if not isinstance(metrics, dict):
+            return
+        for key, value in spend.items():
+            if key in MEASURED_SPEND_KEYS and key not in metrics:
+                metrics[key] = value
 
     @staticmethod
     def _apply_vendor_attempts(result: TrialResult, capture_bucket: Any) -> None:

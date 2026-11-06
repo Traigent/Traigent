@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from traigent.api.types import ExampleResult, OptimizationResult, TrialResult
+from traigent.core.objective_directions import resolve_objective_orientation
 from traigent.utils.callbacks import OptimizationCallback, ProgressInfo
 from traigent.utils.secure_path import PathTraversalError, validate_path
 
@@ -447,12 +448,21 @@ class InvocationLoggingCallback(OptimizationCallback):
                 }
             )
 
-        # Sort by primary objective
+        # Sort best-first by the primary objective's direction (a cost or
+        # latency objective lists the cheapest/fastest configuration first).
+        # An objective with no declared or SDK-owned direction is left in
+        # insertion order rather than ranked by a guessed direction.
         if config_analysis and self.objectives:
             primary_obj = self.objectives[0]
-            config_analysis.sort(
-                key=lambda x: x["average_metrics"].get(primary_obj, 0), reverse=True
-            )
+            try:
+                primary_orientation = resolve_objective_orientation(primary_obj)
+            except ValueError:
+                primary_orientation = None
+            if primary_orientation is not None:
+                config_analysis.sort(
+                    key=lambda x: x["average_metrics"].get(primary_obj, 0),
+                    reverse=primary_orientation == "maximize",
+                )
 
         metrics_data["configuration_analysis"] = config_analysis[:10]  # Top 10 configs
 

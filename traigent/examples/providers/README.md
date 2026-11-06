@@ -7,7 +7,10 @@ to be **copy-paste starting points**.
 
 All of them **run with no API keys by default** (mock mode intercepts the
 LLM calls — no provider spend), and make **real** calls when you set
-`TRAIGENT_MOCK_LLM=false` and provide the provider's credentials.
+`TRAIGENT_MOCK_LLM=false` and provide the provider's credentials. That variable
+is these example scripts' own mock/real switch; in your own code call
+`traigent.testing.enable_mock_mode_for_quickstart()` to turn mock mode on and
+`traigent.testing.disable_mock_mode()` to turn it off.
 
 ```bash
 # keyless demo (mock):

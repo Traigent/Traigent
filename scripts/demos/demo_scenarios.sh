@@ -105,12 +105,13 @@ scenario_snippet() {
     eval_dataset=DATASET,
     objectives=["cost"],
     configuration_space={
-        "model": ["claude-3-haiku-20240307"],
+        "model": ["claude-haiku-4-5-20251001"],
         "temperature": [0.0],
         "use_rag": [True, False],
         "top_k": [1, 2, 3],
     },
-    execution_mode="edge_analytics",
+    offline=True,
+    algorithm="grid",
 )
 def answer_question(question: str) -> str:
     ...
@@ -126,7 +127,7 @@ EOF
         "model": MODEL_CHOICES,
         "temperature": TEMPERATURE_CHOICES,
     },
-    execution_mode="edge_analytics",
+    offline=True,
     algorithm="grid",
     parallel_config=GLOBAL_PARALLEL_CONFIG,
 )
@@ -149,7 +150,7 @@ from traigent.core.objectives import create_default_objectives
         "schema_rigidity": ["strict", "lenient"],
     },
     metric_functions={"json_score": json_score_metric},
-    execution_mode="edge_analytics",
+    offline=True,
     injection_mode="seamless",
     algorithm="grid",
 )

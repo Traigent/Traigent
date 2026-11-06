@@ -314,6 +314,11 @@ def _typed_configuration_entry(entry: Any) -> Any:
     return entry
 
 
+#: HTTP statuses of a typed session create that mean "the typed shape was not
+#: accepted" and so justify one legacy-contract retry (#2818).
+_TYPED_SHAPE_RETRY_STATUSES = frozenset({400, 404, 405, 415, 422, 426})
+
+
 class ApiOperations:
     """Handles backend API operations."""
 
@@ -573,6 +578,14 @@ class ApiOperations:
         if getattr(typed_failure, "is_quota_refusal", False) or getattr(
             typed_failure, "is_closed_refusal", False
         ):
+            raise
+        # Retry only failures that are about the typed REQUEST SHAPE. A 413, a
+        # 429, a 5xx would be refused the same way on the legacy contract, so a
+        # second POST only wastes a request and hides the real cause (#2818).
+        # A failure carrying no HTTP status is unclassified and keeps the
+        # existing one-retry behaviour.
+        typed_status = getattr(typed_failure, "status_code", None)
+        if typed_status is not None and typed_status not in _TYPED_SHAPE_RETRY_STATUSES:
             raise
         logger.warning(
             "Typed session create failed; retrying once with the "

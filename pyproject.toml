@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.32.0"
+version = "0.33.0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -57,7 +57,7 @@ dependencies = [
     # the verifier fails closed unless the installed non-claim catalog is the one
     # the certificate was issued against. Exact pin on purpose (normal PyPI
     # requirement, never a direct URL); keep in step with scripts/ci/schema-pin.txt.
-    "traigent-schema==7.0.0",
+    "traigent-schema==7.1.0",
 ]
 
 [project.optional-dependencies]
@@ -288,6 +288,7 @@ snapshot-gcs = [
 # Execution-snapshot store on Azure Blob Storage (traigent.snapshot.backends.AzureBlobStore).
 snapshot-azure = [
     "azure-storage-blob>=12.20.0",
+    "azure-identity>=1.16.0",  # DefaultAzureCredential: azblob:// locators authenticate through it
 ]
 
 # Recommended bundle for end users — everything needed to run optimizations

@@ -45,7 +45,7 @@ from traigent.providers import get_provider_for_model
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
-traigent.initialize(offline=True, minimal_logging=True)
+traigent.initialize(minimal_logging=True)
 
 # -----------------------------------------------------------------------------
 # Configuration

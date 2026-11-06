@@ -76,8 +76,11 @@ EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY = "EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY
 # verifier_revision UNCHANGED (recomputed); agent-quality verifier_revision changed
 # because the agent-quality non-claim catalog wording changed ("measured" -> "reported
 # by the customer", same catalog version 1.0.0, new digest).
+# Pin moved to 7ab078d (= PyPI traigent-schema 7.1.0, adds the private_online declared
+# mode): evaluator-quality verifier_revision UNCHANGED (recomputed); agent-quality
+# verifier_revision re-recorded (recomputed on the installed 7.1.0 wheel).
 EVALUATOR_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "7104839ae6d748e852b1cb584312cf86d1f0f2db",
+    "schema_pin": "7ab078d55cbe38e2b4cefcf3ce3dbfe2dea5cfe7",
     "verifier_revision": "887114f799459df27269463cb73e1bc1ff9c4a948d73dddb83db4b88cc3e831f",
     "reviewed_by": "maintainers",
     "date": "2026-10-20",
@@ -154,10 +157,10 @@ def evaluator_quality_verifier_revision(files: list[Path] | None = None) -> str:
 # the verifier module (behaviour-preserving). Owner card
 # feature-pick-2026-10-20-sdk-verifier-revision-rerecord, answered A.
 AGENT_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "7104839ae6d748e852b1cb584312cf86d1f0f2db",
-    "verifier_revision": "37d4c5e891283f85a8b17be385b81ae1eef0c980092fb0a2b2555b0627be24b1",
+    "schema_pin": "7ab078d55cbe38e2b4cefcf3ce3dbfe2dea5cfe7",
+    "verifier_revision": "040fed5ce6aafd805f6d2edf1c8d52b5c7ebf026cefc543a5af1bbe4363f9a80",
     "reviewed_by": "maintainers",
-    "date": "2026-10-23",
+    "date": "2026-11-05",
 }
 
 
@@ -1316,9 +1319,27 @@ def enroll_command(key_path: Path, pins_path: Path | None) -> None:
 @click.option("--run-id", required=True)
 @click.option(
     "--store-dir",
-    required=True,
+    default=None,
     type=click.Path(file_okay=False, path_type=Path),
     help="Local snapshot store holding the tes1 snapshot.",
+)
+@click.option(
+    "--store",
+    "store_locator",
+    default=None,
+    help=(
+        "Snapshot store locator: s3://bucket[/prefix], gs://bucket[/prefix], "
+        "azblob://host/container[/prefix], github+v2://owner/repo@branch[/prefix] "
+        "or a local path. Credentials come from the vendor's standard "
+        "environment, never from this command. Use exactly one of --store or "
+        "--store-dir."
+    ),
+)
+@click.option(
+    "--allow-insecure-local",
+    is_flag=True,
+    default=False,
+    help="Allow plain HTTP to loopback store endpoints; for local emulators only.",
 )
 @click.option(
     "--pins", "pins_path", type=click.Path(dir_okay=False, path_type=Path), default=None
@@ -1332,19 +1353,25 @@ def enroll_command(key_path: Path, pins_path: Path | None) -> None:
 @click.option("--sdk-ref", default=None, help="40-hex git SHA of this SDK build.")
 @click.option(
     "--declared-mode",
-    type=click.Choice(["offline", "current_online"]),
-    default="current_online",
-    show_default=True,
+    type=click.Choice(["offline", "current_online", "private_online"]),
+    default=None,
+    help=(
+        "Data-flow mode to bind; it must equal the mode the server recorded for the run. "
+        "Default: current_online. A run created with privacy mode on (the SDK default) is "
+        "recorded private_online and needs --declared-mode private_online."
+    ),
 )
 def bind_command(
     root: str,
     key_path: Path,
     run_id: str,
-    store_dir: Path,
+    store_dir: Path | None,
+    store_locator: str | None,
+    allow_insecure_local: bool,
     pins_path: Path | None,
     evidence_dir: Path | None,
     sdk_ref: str | None,
-    declared_mode: str,
+    declared_mode: str | None,
 ) -> None:
     """Bind retained client evidence (ROOT is sha256:...) and obtain the certificate."""
     from traigent.certification import bind as bind_module
@@ -1356,20 +1383,39 @@ def bind_command(
     from traigent.certification.client_keys import ClientKeyError, load_client_key
     from traigent.certification.pins import PinError, load_pins
     from traigent.snapshot.backends import LocalDirStore
+    from traigent.snapshot.locator import (
+        SnapshotLocatorError,
+        open_store_from_locator,
+    )
 
+    if (store_dir is None) == (store_locator is None):
+        _g1_fail("BIND_REFUSED STORE_OPTION_EXACTLY_ONE_OF_STORE_OR_STORE_DIR")
+        return
     # Local reconstruction first: a failure here makes no network call.
     try:
+        store = (
+            LocalDirStore(store_dir)
+            if store_dir is not None
+            else open_store_from_locator(
+                str(store_locator), allow_insecure_local=allow_insecure_local
+            )
+        )
         evidence = reconstruct_and_compare(
             root,
             custody=LocalFileCustody(evidence_dir),
-            store=LocalDirStore(store_dir),
+            store=store,
         )
+    except SnapshotLocatorError as err:
+        _g1_fail(f"BIND_REFUSED {err}")
+        return
     except ClientEvidenceError as err:
         _g1_fail(f"BIND_REFUSED {err.code}")
         return
     except Exception:
         _g1_fail("BIND_REFUSED EVIDENCE_STALE_OR_CORRUPT")
         return
+    mode_defaulted = declared_mode is None
+    effective_mode = declared_mode or "current_online"
     try:
         transport = _g1_transport()
         bind_module.check_g1_readiness(transport)
@@ -1384,10 +1430,16 @@ def bind_command(
             run_id=run_id,
             sdk_ref=resolved_ref,
             sdk_version=sdk_version,
-            declared_mode=declared_mode,
+            declared_mode=effective_mode,
         )
     except bind_module.BindError as err:
         click.echo(f"BIND_REFUSED {err.code}")
+        if err.code == "PREPARE_REFUSED" and mode_defaulted:
+            click.echo(
+                "hint: no --declared-mode was given, so current_online was bound. "
+                "A run created with privacy mode on is recorded private_online by the "
+                "server; retry with --declared-mode private_online."
+            )
         session_ref = getattr(err, "session_ref", None)
         if session_ref:
             click.echo(f"session_ref={session_ref}")

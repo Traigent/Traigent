@@ -70,7 +70,7 @@ SCHEMA = _schema_path.read_text() if _schema_path.exists() else ""
 
 if MOCK:
     try:
-        traigent.initialize(offline=True)
+        traigent.initialize()
     except Exception:
         pass
 

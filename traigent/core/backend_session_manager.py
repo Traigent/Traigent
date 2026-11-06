@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
     from traigent.storage.local_storage import LocalStorageManager
 
-from traigent.config.backend_config import get_no_credentials_hint
+from traigent.config.backend_config import PRICING_URL, get_no_credentials_hint
 from traigent.core.execution_policy_runtime import (
     RESULT_SOURCES,
     SOURCE_CLOUD_BRAIN,
@@ -170,6 +170,22 @@ def _status_from_exception(exc: BaseException) -> int | None:
     if match:
         return int(match.group(1))
     return None
+
+
+def _declared_sdk_identity() -> dict[str, str] | None:
+    """``{"sdk_ref", "sdk_version"}`` of this SDK build, or None when it cannot be resolved.
+
+    The certification minter refuses ``SDK_IDENTITY_UNAVAILABLE`` without it. The ref
+    comes from ``TRAIGENT_SDK_REF`` or the pip VCS record; an unresolvable identity is
+    omitted (a local checkout has no recorded commit), never invented.
+    """
+    from traigent.certification.bind import BindError, resolve_sdk_identity
+
+    try:
+        sdk_ref, sdk_version = resolve_sdk_identity()
+    except BindError:
+        return None
+    return {"sdk_ref": sdk_ref, "sdk_version": sdk_version}
 
 
 def _log_safe_http_status(exc: BaseException) -> int | None:
@@ -619,6 +635,8 @@ def _untracked_detail_lines(
     if quota_refusal and detail:
         # Quota path: closed error code only, never backend message/raw body.
         lines.append(f"Backend error_code: {detail.safe_quota_error_code}")
+        if detail.quota_facts is not None and detail.quota_facts.describe():
+            lines.append(f"Quota: {detail.quota_facts.describe()}")
     elif detail and detail.error_code:
         # Closed vocabulary only; the backend message/raw body is never printed.
         lines.append(f"Backend error_code: {detail.safe_error_code}")
@@ -662,7 +680,8 @@ _UNTRACKED_REMEDIES: dict[SessionCreationFailureClassification, str] = {
     SessionCreationFailureClassification.QUOTA_EXCEEDED: (
         "Remedy: a plan quota/limit was reached (the backend is reachable). "
         "Review usage and upgrade in the Traigent portal (Billing), or reduce "
-        "the requested trials/samples."
+        "the requested trials/samples. "
+        f"Plans: {PRICING_URL}"
     ),
     SessionCreationFailureClassification.BACKEND_REFUSED: (
         "Remedy: the backend is reachable and refused this session (closed "
@@ -695,6 +714,18 @@ def _untracked_remedy_line(
         return (
             "Remedy: re-authenticate with `traigent auth login` or provide a "
             "valid, non-revoked API key."
+        )
+    if (
+        classification == SessionCreationFailureClassification.QUOTA_EXCEEDED
+        and result.failure_response is not None
+        and result.failure_response.quota_facts is not None
+        and result.failure_response.quota_facts.reset_at is not None
+    ):
+        return (
+            "Remedy: a plan quota/limit was reached (the backend is reachable). "
+            f"Wait until {result.failure_response.quota_facts.reset_text} for it "
+            "to reset, upgrade in the Traigent portal (Billing), or reduce the "
+            "requested trials/samples."
         )
     return _UNTRACKED_REMEDIES.get(classification, _UNTRACKED_REMEDY_DEFAULT)
 
@@ -2083,6 +2114,9 @@ class BackendSessionManager:
             )
         if warm_start_from:
             session_metadata["warm_start_from"] = warm_start_from
+        sdk_identity = _declared_sdk_identity()
+        if sdk_identity is not None:
+            session_metadata["sdk_identity"] = sdk_identity
         return session_metadata
 
     @staticmethod
@@ -3779,6 +3813,7 @@ class BackendSessionManager:
         completed: bool,
         report: dict[str, Any] | None,
         session_aggregation: dict[str, Any] | None,
+        optimization_outcome: str,
     ) -> dict[str, Any] | None:
         if hasattr(backend_client, "finalize_session_sync"):
             result: dict[str, Any] | None = backend_client.finalize_session_sync(
@@ -3786,6 +3821,7 @@ class BackendSessionManager:
                 completed,
                 certified_selection=report,
                 session_aggregation=session_aggregation,
+                optimization_outcome=optimization_outcome,
             )
         else:
             result = backend_client.finalize_session(
@@ -3793,8 +3829,25 @@ class BackendSessionManager:
                 completed,
                 certified_selection=report,
                 session_aggregation=session_aggregation,
+                optimization_outcome=optimization_outcome,
             )
         return result
+
+    @staticmethod
+    def finalize_outcome_for_status(
+        optimization_status: OptimizationStatus,
+    ) -> str:
+        """Wire ``optimization_outcome`` for a terminal SDK status (#2853).
+
+        Anything that is not COMPLETED or CANCELLED (FAILED, UNKNOWN, or a
+        non-terminal status handed to a finalize) is a failure: the same
+        reading the ``completed`` flag and the local-storage mirror use.
+        """
+        if optimization_status == OptimizationStatus.COMPLETED:
+            return "completed"
+        if optimization_status == OptimizationStatus.CANCELLED:
+            return "cancelled"
+        return "failed"
 
     @staticmethod
     def _log_finalize_retry(session_id: str, attempt: int, exc: BaseException) -> float:
@@ -3871,6 +3924,7 @@ class BackendSessionManager:
                     completed,
                     report,
                     session_aggregation,
+                    self.finalize_outcome_for_status(optimization_status),
                 )
 
                 if _finalize_acknowledged(result):
