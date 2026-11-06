@@ -6,12 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-11-06
+
 ### Added
 
+- **`traigent certify bind --store <locator>` reads a cloud snapshot store.** `certify bind` can now read the execution snapshot from any supported store, not only a local directory. Locators carry no credentials and are secure by default: plain `http://` is refused, GitHub locators use the unambiguous `github+v2://` form (branch percent-encoded, then an optional `/prefix`; an unversioned `github://` locator with a prefix is refused), a GitHub Enterprise locator carries its API URL and is honoured only when it equals `TRAIGENT_GITHUB_API_URL` (so a hostile locator cannot redirect `GITHUB_TOKEN`), and local paths may contain `?` and `#`. The `snapshot-azure` extra now includes `azure-identity`. See `docs/user-guide/execution-snapshot.md`.
+- **`traigent certify bind --declared-mode private_online`.** SDK sessions send `privacy_mode: true`, which the server records as `private_online`; binding with the default `current_online` was refused at prepare. Pass `--declared-mode private_online` for such runs. The default stays `current_online` (never a stronger claim), and a defaulted refusal now tells you to pass the flag.
+- **Optional server-side encryption for `S3Store`.** `server_side_encryption` and `sse_kms_key_id` (or `TRAIGENT_SNAPSHOT_S3_SSE` and `TRAIGENT_SNAPSHOT_S3_KMS_KEY_ID`, so locator-based CLI use works) are sent on every put, including the endpoint probe, for buckets whose policy requires SSE-KMS. Values are validated against a closed list, errors and `repr` never echo the key id, and the default is unchanged. An explicit `aws:kms` without a key id uses the AWS-managed `aws/s3` key, not the bucket's default key.
+- **Certification pins accept ECDSA P-256.** `traigent certify pin` now accepts both signature algorithms of the Schema vocabulary (`ed25519` and `ecdsa_p256_sha256`), requires the pinned key type to match the algorithm (P-256 curve for ECDSA), and refuses everything else. Previously it refused the backend's P-256 certificates with `PIN_INVALID`.
+- **Sessions declare the SDK identity.** Session-create metadata now carries `sdk_identity` (`sdk_ref`, `sdk_version`), built from the build's recorded commit and omitted when none is recorded. Exactly that shape is allowed through the optimization-only egress projection. Without it the backend refused certification with `SDK_IDENTITY_UNAVAILABLE`.
+- **Dependency: `traigent-schema` 7.1.0** (adds the `private_online` declared mode).
 - Documentation: a guide, "Block destructive tool calls with local guards" (`docs/guides/local-guards.md`), and a runnable example (`examples/advanced/local-guards/`) for `LocalGuardSet`, `guarded` and `LocalGuardError` from `traigent.runtime`.
 
 ### Fixed
 
+- A ref-less runtime guard revocation now revokes nothing, and the guard reference vectors gain 8 reference-derived cases.
+- The hooks lock file is created with mode 0600 and an existing lock file is tightened to 0600.
 - A blank or whitespace-only `TRAIGENT_RUN_COST_LIMIT` now means "unset": the default limit applies silently instead of logging a misleading "Invalid TRAIGENT_RUN_COST_LIMIT=''" warning. Non-blank unparseable values still warn.
 - **A scorer exception is a failed trial with its spend, not an "unpriced call" (#2852).** When an objective metric raises, the rows already ran: the failed trial now keeps the spend they measured instead of reporting none, so the run no longer aborts with `Cost extraction failed ... unpriced call` and the budget counts that spend.
 - **OpenRouter responses are priced at the requested id (#2854).** OpenRouter reports `response.model` without the `openrouter/` prefix, and some of those bare ids (`anthropic/claude-haiku-4.5`, `meta-llama/llama-3.3-70b-instruct`, `mistralai/mistral-small-3.2-24b-instruct`) have no price. A call requested through OpenRouter now falls back to the prefixed id, then the requested id, before the "Unknown model ... returning zero cost" warning fires, so a correctly priced run no longer sends users to custom pricing.
