@@ -295,6 +295,9 @@ class PasswordAuthHandler:
                     },
                     headers={"Content-Type": "application/json"},
                     timeout=aiohttp.ClientTimeout(total=30),
+                    # Never let aiohttp replay the credentials POST on a
+                    # 307/308; a 3xx is a failure (#1975).
+                    allow_redirects=False,
                 ) as response:
                     await PasswordAuthHandler._check_login_response(
                         response, InvalidCredentialsError
@@ -324,7 +327,7 @@ class PasswordAuthHandler:
             # replay it on an ambiguous failure (#1975).
             result = await client.execute_with_retry(
                 single_shot_unkeyed_auth_call(
-                    perform_login, passthrough=(InvalidCredentialsError, ValueError)
+                    perform_login, passthrough=(InvalidCredentialsError,)
                 ),
                 operation_name="backend_authentication",
             )

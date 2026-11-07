@@ -379,7 +379,7 @@ async def test_password_auth_success_uses_validated_backend_url():
         async def __aexit__(self, *_args):
             return None
 
-        def post(self, url, json, headers, timeout):
+        def post(self, url, json, headers, timeout, allow_redirects=True):
             captured["url"] = url
             captured["json"] = json
             captured["headers"] = headers

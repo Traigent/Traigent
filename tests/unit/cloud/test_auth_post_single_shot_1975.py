@@ -227,3 +227,124 @@ async def test_refresh_reads_credentials_under_the_lock():
     result = await task
     assert reads == [True], "credentials are read while holding the lock"
     assert result.error_message == "No credentials available"
+
+
+# ---- round 2 review findings (#1975) ----
+
+
+def _seeded_manager(holder: dict | None = None) -> tuple[TokenManager, dict]:
+    holder = holder or {
+        "creds": AuthCredentials(
+            mode=AuthMode.JWT_TOKEN,
+            jwt_token="old_access",
+            refresh_token="old_refresh_token",  # pragma: allowlist secret
+        )
+    }
+    manager = _jwt_manager(holder, asyncio.Lock())
+    manager.store_tokens(
+        {"access_token": "old_access", "refresh_token": "old_refresh_token"}
+    )
+    return manager, holder
+
+
+def _session_with_response(response: MagicMock) -> tuple[MagicMock, MagicMock]:
+    post_cm = MagicMock()
+    post_cm.__aenter__ = AsyncMock(return_value=response)
+    post_cm.__aexit__ = AsyncMock(return_value=False)
+    session = MagicMock()
+    session.post = MagicMock(return_value=post_cm)
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=session)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return MagicMock(return_value=cm), session
+
+
+@pytest.mark.asyncio
+async def test_value_error_with_429_text_is_not_retried():
+    import json
+
+    from traigent.cloud.resilient_client import (
+        ResilientClient,
+        single_shot_unkeyed_auth_call,
+    )
+    from traigent.utils.exceptions import NonRetryableError
+
+    calls = 0
+
+    async def op():
+        nonlocal calls
+        calls += 1
+        raise json.JSONDecodeError("Expecting value 429 rate limit", "doc", 0)
+
+    with pytest.raises(NonRetryableError):
+        await ResilientClient(max_retries=3).execute_with_retry(
+            single_shot_unkeyed_auth_call(op)
+        )
+    assert calls == 1
+
+    # End to end through the refresh path: a decode error is ambiguous.
+    response = _response(200)
+    response.json = AsyncMock(
+        side_effect=json.JSONDecodeError("bad 429 rate limit", "doc", 0)
+    )
+    factory, session = _session_with_response(response)
+    manager, holder = _seeded_manager()
+    with patch("traigent.cloud.token_manager.aiohttp.ClientSession", factory):
+        result = await manager.refresh_access_token()
+    assert result.success is False
+    assert session.post.call_count == 1
+    assert holder["creds"] is None
+    assert manager.refresh_token_secure is None
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_refresh_invalidates_token_and_propagates():
+    factory, session = _failing_session(asyncio.CancelledError())
+    manager, holder = _seeded_manager()
+    with patch("traigent.cloud.token_manager.aiohttp.ClientSession", factory):
+        with pytest.raises(asyncio.CancelledError):
+            await manager.refresh_access_token()
+    assert session.post.call_count == 1
+    assert holder["creds"] is None
+    assert manager.refresh_token_secure is None
+
+
+@pytest.mark.asyncio
+async def test_malformed_2xx_body_clears_old_token():
+    response = _response(200)
+    response.json = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {"access_token": "new_access", "expires_in": "not-a-number"},
+        }
+    )
+    factory, session = _session_with_response(response)
+    manager, holder = _seeded_manager()
+    with patch("traigent.cloud.token_manager.aiohttp.ClientSession", factory):
+        result = await manager.refresh_access_token()
+    assert result.success is False
+    assert session.post.call_count == 1
+    assert holder["creds"] is None
+    assert manager.refresh_token_secure is None
+
+
+@pytest.mark.asyncio
+async def test_auth_posts_disable_redirects_and_3xx_is_not_retried():
+    manager, holder = _seeded_manager()
+    factory, session = _session_with_response(_response(307))
+    with patch("traigent.cloud.token_manager.aiohttp.ClientSession", factory):
+        result = await manager.refresh_access_token()
+    assert result.success is False
+    assert session.post.call_count == 1
+    assert session.post.call_args.kwargs["allow_redirects"] is False
+    assert holder["creds"] is None
+    assert manager.refresh_token_secure is None
+
+    factory, session = _session_with_response(_response(308))
+    with patch("traigent.cloud.password_auth_handler.aiohttp.ClientSession", factory):
+        login = await PasswordAuthHandler()._perform_authentication(
+            {"email": "a@example.com", "password": "pw"}  # pragma: allowlist secret
+        )
+    assert login is None
+    assert session.post.call_count == 1
+    assert session.post.call_args.kwargs["allow_redirects"] is False
