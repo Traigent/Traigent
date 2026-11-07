@@ -152,7 +152,9 @@ class ObjectiveResult:
         p_value_super: Superiority p-value (raw, before multiplicity
             adjustment). Small values prove the candidate is strictly better.
         verdict: Per-objective verdict ("superior", "noninferior", "inferior"
-            for standard objectives; "in_band" or "out_of_band" for banded).
+            for standard objectives; "in_band" or "out_of_band" for banded; "insufficient_evidence" when a banded
+            objective has fewer than two candidate samples: still rejected,
+            but not a claim that the candidate is out of band).
     """
 
     name: str
@@ -166,7 +168,12 @@ class ObjectiveResult:
     p_value_noninf: float = 1.0
     p_value_super: float = 1.0
     verdict: Literal[
-        "superior", "noninferior", "inferior", "in_band", "out_of_band"
+        "superior",
+        "noninferior",
+        "inferior",
+        "in_band",
+        "out_of_band",
+        "insufficient_evidence",
     ] = "noninferior"
 
 
@@ -508,7 +515,18 @@ class PromotionGate:
 
         if not all_bands_pass:
             failing = [r.name for r in objective_results if r.verdict == "out_of_band"]
-            return "reject", f"Banded objectives failed TOST: {', '.join(failing)}"
+            thin = [
+                r.name
+                for r in objective_results
+                if r.verdict == "insufficient_evidence"
+            ]
+            if failing:
+                return "reject", f"Banded objectives failed TOST: {', '.join(failing)}"
+            return (
+                "reject",
+                "Banded objectives lack sufficient evidence (fewer than 2 samples): "
+                f"{', '.join(thin)}",
+            )
 
         if any_superior:
             superior = [r.name for r in objective_results if r.verdict == "superior"]
@@ -629,9 +647,13 @@ class PromotionGate:
         cand_mean = cand_tost.sample_mean
 
         # Band gate: the candidate must itself be within the band.
-        verdict: Literal["in_band", "out_of_band"] = (
-            "in_band" if cand_tost.is_equivalent else "out_of_band"
-        )
+        verdict: Literal["in_band", "out_of_band", "insufficient_evidence"]
+        if cand_tost.is_equivalent:
+            verdict = "in_band"
+        elif cand_tost.sample_size < 2:
+            verdict = "insufficient_evidence"
+        else:
+            verdict = "out_of_band"
         # TOST p-value (in_band iff this is below band_alpha).
         p_value = max(cand_tost.p_lower, cand_tost.p_upper)
 

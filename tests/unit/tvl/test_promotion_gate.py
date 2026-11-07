@@ -421,6 +421,16 @@ class TestChanceConstraints:
 class TestBandedObjectives:
     """Tests for banded objective handling."""
 
+    def test_banded_single_sample_is_rejected_as_insufficient_evidence(self) -> None:
+        """n=1 inside the band: fail-closed Reject, labelled insufficient evidence."""
+        band = BandTarget(low=0.85, high=0.95)
+        policy = PromotionPolicy(min_effect={"consistency": 0.0})
+        gate = PromotionGate(policy, [ObjectiveSpec("consistency", "band", band=band)])
+        decision = gate.evaluate({"consistency": [0.9]}, {"consistency": [0.9]})
+        assert decision.decision == "reject"
+        assert decision.objective_results[0].verdict == "insufficient_evidence"
+        assert "sufficient evidence" in decision.reason
+
     def test_banded_objective_in_band_no_superiority(self) -> None:
         """A banded objective gates but never grants superiority.
 
