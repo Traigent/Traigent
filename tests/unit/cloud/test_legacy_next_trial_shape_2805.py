@@ -88,3 +88,94 @@ def test_payload_too_large_is_in_the_closed_vocabulary(status: int) -> None:
     from traigent.core.session_types import SAFE_HTTP_ERROR_CODES
 
     assert "payload_too_large" in SAFE_HTTP_ERROR_CODES
+
+
+# --- #2805 option A: fail fast when the legacy contract cannot carry the run ---
+
+
+async def _create_with_typed_400(space: dict, max_trials: int = 10):
+    from unittest.mock import AsyncMock, patch
+
+    from traigent.cloud.api_operations import ApiOperations
+    from traigent.cloud.client import CloudServiceError
+    from traigent.cloud.models import SessionCreationRequest
+    from traigent.cloud.session_types import SessionCreationFailureDetail
+
+    client = Mock()
+    client.auth_manager.augment_headers = AsyncMock(return_value={})
+    client.no_egress = False
+    client._url_invalid = False
+    ops = ApiOperations(client)
+    request = SessionCreationRequest(
+        function_name="test_func",
+        configuration_space=space,
+        objectives=["maximize"],
+        max_trials=max_trials,
+    )
+    exc = CloudServiceError("Session creation failed: HTTP 400")
+    exc.session_creation_failure = SessionCreationFailureDetail.from_http_response(
+        400, '{"error_code": "validation_error"}'
+    )
+    post = AsyncMock(side_effect=[exc, ("sid", "exp", "run")])
+    with (
+        patch("traigent.cloud.api_operations.is_backend_offline", return_value=False),
+        patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
+        patch.object(ops, "_post_session_creation", new=post),
+        patch.object(ops, "_is_governed_request", return_value=False),
+        patch.object(ops, "_session_contract", return_value="auto"),
+    ):
+        try:
+            return await ops.create_traigent_session_via_api(request), post
+        except Exception as raised:  # noqa: BLE001 - returned for assertions
+            return raised, post
+
+
+@pytest.mark.asyncio
+@pytest.mark.backend_online
+async def test_unsupported_knob_fails_fast_without_legacy_post() -> None:
+    from traigent.cloud.client import SessionContractError
+
+    err, post = await _create_with_typed_400(
+        {"model": ["a", "b"], "my_secret_knob": [1, 2]}
+    )
+    assert isinstance(err, SessionContractError)
+    assert post.await_count == 1
+    assert "my_secret_knob" in str(err)
+    assert "TRAIGENT_SESSION_CONTRACT=typed" in str(err)
+
+
+@pytest.mark.asyncio
+@pytest.mark.backend_online
+async def test_forced_grid_over_max_trials_fails_fast_without_values() -> None:
+    from traigent.cloud.client import SessionContractError
+
+    err, post = await _create_with_typed_400(
+        {"model": ["m1", "m2", "m3", "m4"], "temperature": [0.1, 0.2, 0.3, 0.4]},
+        max_trials=4,
+    )
+    assert isinstance(err, SessionContractError)
+    assert post.await_count == 1
+    assert "16 configurations" in str(err)
+    assert "m1" not in str(err)
+
+
+@pytest.mark.asyncio
+@pytest.mark.backend_online
+async def test_oversize_legacy_payload_fails_fast() -> None:
+    from traigent.cloud.client import SessionContractError
+
+    err, post = await _create_with_typed_400({"prompt_template": ["x" * 1_100_000]})
+    assert isinstance(err, SessionContractError)
+    assert post.await_count == 1
+    assert "413" in str(err)
+    assert "xxxx" not in str(err)
+
+
+@pytest.mark.asyncio
+@pytest.mark.backend_online
+async def test_carryable_legacy_run_still_retries_once() -> None:
+    result, post = await _create_with_typed_400(
+        {"model": ["a", "b"], "temperature": [0.1, 0.2]}, max_trials=10
+    )
+    assert result == ("sid", "exp", "run")
+    assert post.await_count == 2
