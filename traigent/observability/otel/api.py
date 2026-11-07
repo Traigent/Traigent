@@ -196,6 +196,44 @@ def _init_is_offline(api_key: str | None, endpoint: str | None) -> bool:
     )
 
 
+def _snapshot_destination(
+    api_key: str | None, endpoint: str | None
+) -> tuple[str | None, str | None]:
+    """Resolve (key, endpoint base) ONCE; the same values are validated and sent.
+
+    Either is None when it cannot be resolved (errors surface later, in order).
+    """
+    try:
+        key = api_key if api_key is not None else BackendConfig.get_api_key()
+        base = (endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}").rstrip("/")
+    except Exception:  # noqa: BLE001 - config errors surface later, in order
+        return None, None
+    if not key or not key.strip():
+        return None, base
+    return key, base
+
+
+def _preflight_allows_export(
+    api_key: str | None, endpoint: str | None, offline: bool
+) -> bool:
+    """Run the central trace-egress gate BEFORE taking ``_lock`` (it may wait up to its
+    deadline; the worker it waits on never touches ``_lock``, so this cannot deadlock,
+    but holding ``_lock`` that long would stall shutdown()/init() on other threads).
+
+    Returns False only when Traigent must not receive spans. Configuration errors are
+    left for the guarded section below to raise in their usual order.
+    """
+    if offline:
+        return True  # already offline: no exporter will be built
+    try:
+        key = api_key if api_key is not None else BackendConfig.get_api_key()
+        if not key or not key.strip():
+            return True  # _init_api_key raises the usual error below
+    except Exception:  # noqa: BLE001 - config errors surface later, in order
+        return True
+    return oo_egress.ensure_trace_egress_allowed(key, endpoint)
+
+
 def _init_provider(
     rate: float, service_name: str | None, environment: str | None, release: str | None
 ) -> TracerProvider:
@@ -281,6 +319,19 @@ def init(
     static strings, never data.
     """
     global _handle, _last_handle
+    snap_key, snap_base = _snapshot_destination(api_key, endpoint)
+    # Read the offline state ONCE and carry the decision through: a second read could
+    # flip to online between the preflight (which skips validation when offline) and
+    # the exporter build, giving an exporter built with an unvalidated key.
+    try:
+        offline_once = _init_is_offline(api_key, endpoint)
+    except Exception:  # noqa: BLE001 - config errors surface later, in order
+        offline_once = False
+    export_allowed = _preflight_allows_export(
+        snap_key if snap_key is not None else api_key,
+        snap_base if snap_key is not None else endpoint,
+        offline_once,
+    )
     with _lock:
         if _handle is not None:
             raise RuntimeError("Traigent observability is already initialised")
@@ -289,7 +340,7 @@ def init(
         ContentPolicy(mode, allowed_span_names)
         rate = _resolve_rate(sample_rate)
         # optimization_only workspaces refuse trace ingest: never build an exporter.
-        offline = _init_is_offline(api_key, endpoint)
+        offline = offline_once or not export_allowed
         if tracer_provider is not None and not hasattr(
             tracer_provider, "add_span_processor"
         ):
@@ -304,12 +355,21 @@ def init(
         else:
             provider = tracer_provider
 
+        if not offline and snap_key is None:
+            # The snapshot held no key, so the gate validated none. Raise the usual
+            # configuration error if there still is none; a key that appeared since
+            # was never validated, so it is never sent (no exporter is built).
+            _init_api_key(api_key)
+            offline = True
+
         processor = exporter = None
         if not offline:
-            key = _init_api_key(api_key)
-            base = (endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}").rstrip(
-                "/"
-            )
+            # send exactly what the gate validated: never re-read key/destination
+            key = snap_key
+            assert key is not None  # noqa: S101 - narrowed by the guard above
+            base = snap_base or (
+                endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}"
+            ).rstrip("/")
             url = validate_cloud_base_url(base, purpose="observability OTLP endpoint")
             headers = {"X-API-Key": key.strip(), "User-Agent": "traigent-otel/1"}
             if project:
@@ -335,6 +395,8 @@ def init(
             # ``403 optimization_only`` seen for it (by any SDK client) stops them
             oo_scope = oo_egress.credential_scope(url, headers)
             exporter.oo_scope = oo_scope
+            # the exact credential/origin the gate validated, re-checked before each POST
+            exporter.egress_credential = (key.strip(), url)
             processor.oo_scope = oo_scope
             provider.add_span_processor(processor)
         if set_global:

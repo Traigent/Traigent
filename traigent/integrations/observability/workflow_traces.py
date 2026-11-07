@@ -34,6 +34,7 @@ For OpenTelemetry integration, use TraigentSpanExporter:
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import hashlib
 import json
@@ -877,6 +878,13 @@ class WorkflowTracesClient:
             return TraceIngestionResponse(success=False, error="optimization_only")
         if is_backend_offline():
             return TraceIngestionResponse(success=False, error="offline")
+        # ONE snapshot of destination + credential, validated and sent as-is.
+        snap_url = self.backend_url
+        snap_headers = self._get_headers()
+        if not oo_egress.ensure_trace_egress_allowed(
+            snap_headers.get("X-API-Key"), snap_url, headers=snap_headers
+        ):
+            return TraceIngestionResponse(success=False, error="optimization_only")
 
         if not REQUESTS_AVAILABLE:
             raise ImportError(
@@ -902,7 +910,7 @@ class WorkflowTracesClient:
             )
 
         try:
-            ingest_url = f"{self.backend_url}/api/v1/traces/ingest"
+            ingest_url = f"{snap_url}/api/v1/traces/ingest"
             # Under the self-hosted opt-in the credential-bearing origin never
             # follows a redirect; a 3xx is reported as a refusal below.
             request_payload = freeze_json_body(request_payload)
@@ -910,7 +918,7 @@ class WorkflowTracesClient:
             response = requests.post(
                 ingest_url,
                 json=request_payload,
-                headers=self._get_headers(),
+                headers=snap_headers,
                 timeout=self.timeout,
                 allow_redirects=False,
             )
@@ -965,6 +973,15 @@ class WorkflowTracesClient:
             return TraceIngestionResponse(success=False, error="optimization_only")
         if is_backend_offline():
             return TraceIngestionResponse(success=False, error="offline")
+        # the gate may wait on a bounded key validation: keep it off the event loop
+        snap_url = self.backend_url
+        snap_headers = self._get_headers()
+        if not await asyncio.to_thread(
+            lambda: oo_egress.ensure_trace_egress_allowed(
+                snap_headers.get("X-API-Key"), snap_url, headers=snap_headers
+            )
+        ):
+            return TraceIngestionResponse(success=False, error="optimization_only")
 
         if not AIOHTTP_AVAILABLE:
             raise ImportError(
@@ -990,8 +1007,8 @@ class WorkflowTracesClient:
             )
 
         try:
-            url = f"{self.backend_url}/api/v1/traces/ingest"
-            headers = self._get_headers()
+            url = f"{snap_url}/api/v1/traces/ingest"
+            headers = snap_headers
 
             async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
                 async with session.post(
@@ -999,7 +1016,14 @@ class WorkflowTracesClient:
                     json=request_payload,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    allow_redirects=False,
                 ) as response:
+                    # never follow a redirect: the Location is not a validated origin
+                    if 300 <= response.status < 400:
+                        return TraceIngestionResponse(
+                            success=False,
+                            error=f"Redirect refused ({response.status})",
+                        )
                     # Auth failures: instance-scoped dedup at DEBUG
                     if response.status in (401, 403):
                         if not self._auth_ingestion_error_logged:
@@ -1759,6 +1783,16 @@ def setup_workflow_tracing(
         or os.environ.get("TRAIGENT_BACKEND_URL")
         or BackendConfig.get_cloud_backend_url()
     )
+    from traigent.utils import optimization_only_egress as oo_egress
+
+    if not oo_egress.ensure_trace_egress_allowed(
+        auth_token
+        or os.environ.get("TRAIGENT_API_KEY")
+        or os.environ.get("TRAIGENT_API_TOKEN"),
+        resolved_url,
+    ):
+        logger.info("Workflow tracing not configured: Traigent trace export is off")
+        return None
     exporter = TraigentSpanExporter(
         backend_url=resolved_url,  # type: ignore[arg-type]
         auth_token=auth_token,
