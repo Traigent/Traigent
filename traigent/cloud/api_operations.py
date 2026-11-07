@@ -62,12 +62,17 @@ from traigent.utils.artifact_fingerprints import (
     fingerprint_meta_to_wire,
 )
 from traigent.utils.crew_declaration import (
-    UNKNOWN_BINDING,
+    SESSION_CREATE_REDIRECT_REFUSED as _SESSION_CREATE_REDIRECT_REFUSED,
 )
+from traigent.utils.crew_declaration import UNKNOWN_BINDING
 from traigent.utils.crew_declaration import (
     crew_declaration_in_body as _crew_declaration_in_body,
 )
-from traigent.utils.crew_declaration import crew_declaration_to_wire, parse_crew_binding
+from traigent.utils.crew_declaration import (
+    crew_declaration_to_wire,
+    parse_crew_binding,
+    without_crew_declaration,
+)
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.logging import get_logger
@@ -575,7 +580,8 @@ class ApiOperations:
         # cannot carry strict mode and silently degrading would
         # launder it — RFC 0001 P7).
         if (
-            self._session_contract() != "auto"
+            getattr(typed_exc, "session_create_redirect_refused", False)
+            or self._session_contract() != "auto"
             or self._is_governed_request(session_request)
             or "capabilities" in session_payload
         ):
@@ -843,6 +849,8 @@ class ApiOperations:
         # Only the standard typed path carries a declaration: content-less and
         # optimization_only sessions never send it (stripped here, before the body
         # is built).
+        # A hand-put raw value never rides along: only the validated one is added.
+        payload["metadata"].pop("crew_declaration", None)
         payload["metadata"].update(
             crew_declaration_to_wire(
                 session_request,
@@ -1006,21 +1014,36 @@ class ApiOperations:
             timeout = cast(Any, aiohttp).ClientTimeout(total=30)
             # Final policy check + projection immediately before the send, with the
             # headers already resolved (no await between this and the transport call).
+            send_policy = oo_egress.policy_of(self.client, headers, url)
+            if oo_egress.is_active(send_policy):
+                # Per-request optimization-only egress: never a declaration.
+                payload = without_crew_declaration(payload)
             payload = oo_egress.project_for_send(
                 oo_egress.PHASE_SESSION_CREATE_AUTO,
                 payload,
-                explicit=oo_egress.policy_of(self.client, headers, url),
+                explicit=send_policy,
             )
             # The send decision, read off the final body: a binding is only
             # honoured when a declaration actually went out.
             crew_declaration_sent = _crew_declaration_in_body(payload)
+
+            # A declaration-bearing POST never follows a redirect: aiohttp keeps the
+            # body on 307/308, so the target (even cross-origin) would receive it.
+            send_options: dict[str, Any] = (
+                {"allow_redirects": False} if crew_declaration_sent else {}
+            )
 
             async with session.post(
                 url,
                 json=payload,
                 headers=headers,
                 timeout=timeout,
+                **send_options,
             ) as response:
+                if crew_declaration_sent and 300 <= response.status < 400:
+                    refused = CloudServiceError(_SESSION_CREATE_REDIRECT_REFUSED)
+                    cast(Any, refused).session_create_redirect_refused = True
+                    raise refused
                 if response.status == 201:
                     if content_less_ctx is not None:
                         parsed = await self._parse_session_response(

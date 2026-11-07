@@ -557,3 +557,130 @@ async def test_real_content_less_run_sends_the_canary_nowhere(
     _logs_clean(caplog)
     _sweep_files(tmp_path)
     assert not _has_canary(repr(result))
+
+
+# ---------------------------------------------------------------------------
+# Redirects: a declaration-bearing POST is never followed (aiohttp keeps the
+# body on 307/308); other requests keep the default redirect behaviour.
+# ---------------------------------------------------------------------------
+
+REDIRECT_TEXT = "redirect-body-canary-5c2e"
+
+
+class _RedirectResponse(_Response):
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+    async def text(self) -> str:
+        return REDIRECT_TEXT
+
+
+class _RedirectWire(_Wire):
+    status = 307
+    options: list[dict[str, Any]] = []
+
+    def post(self, url: Any, *args: Any, **kwargs: Any) -> _Response:
+        _Wire.sent.append(kwargs.get("json"))
+        _RedirectWire.options.append(
+            {k: v for k, v in kwargs.items() if k == "allow_redirects"}
+        )
+        if kwargs.get("allow_redirects", True) is False:
+            return _RedirectResponse(_RedirectWire.status)
+        return _Response()  # redirect followed, final answer is a 201
+
+
+def _redirect_clean(exc: BaseException, caplog: pytest.LogCaptureFixture) -> None:
+    text = str(exc) + repr(exc) + "".join(r.getMessage() for r in caplog.records)
+    assert CANARY_CREW not in text
+    assert CANARY_ROLE not in text
+    assert REDIRECT_TEXT not in text
+    assert "redirected; request refused" in str(exc)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [307, 308])
+@pytest.mark.parametrize("path", ["api_operations", "direct_client"])
+async def test_declaration_post_refuses_redirects(
+    wire, monkeypatch, caplog, status, path
+):
+    from traigent.cloud.client import CloudServiceError  # noqa: PLC0415
+
+    _RedirectWire.status = status
+    _RedirectWire.options = []
+    monkeypatch.setattr(aiohttp, "ClientSession", _RedirectWire)
+    caplog.set_level(logging.DEBUG)
+    with pytest.raises(CloudServiceError) as info:
+        if path == "api_operations":
+            await _create(_client(), _request())
+        else:
+            await _direct_create(_request(), _aio_session=_RedirectWire())
+    assert len(wire) == 1
+    assert _RedirectWire.options == [{"allow_redirects": False}]
+    assert sum(_has_canary(b) for b in wire) == 1  # only the first, refused send
+    _redirect_clean(info.value, caplog)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["api_operations", "direct_client"])
+async def test_request_without_declaration_keeps_default_redirects(
+    wire, monkeypatch, path
+):
+    _RedirectWire.status = 307
+    _RedirectWire.options = []
+    monkeypatch.setattr(aiohttp, "ClientSession", _RedirectWire)
+    request = _request(crew_declaration=None)
+    if path == "api_operations":
+        result = await _create(_client(), request)
+    else:
+        result = await _direct_create(request, _aio_session=_RedirectWire())
+    assert _RedirectWire.options == [{}]
+    assert result.crew_binding.status == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Raw metadata value and per-request optimization-only override
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["api_operations", "direct_client"])
+async def test_raw_metadata_declaration_without_crew_is_not_sent(wire, path):
+    request = _request(
+        crew_declaration=None,
+        metadata={
+            "evaluation_set": "evalset-x",
+            "crew_declaration": {"crew_key": CANARY_CREW, "role_key": CANARY_ROLE},
+        },
+    )
+    if path == "api_operations":
+        result = await _create(_client(), request)
+    else:
+        result = await _direct_create(request)
+    assert not any(_has_canary(b) for b in wire)
+    assert result.crew_binding.status == "unknown"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["api_operations", "direct_client"])
+async def test_per_request_optimization_only_override_strips_declaration(
+    wire, monkeypatch, path
+):
+    from traigent.utils import optimization_only_egress as oo
+
+    real = oo.policy_of
+
+    def per_request(client: Any, headers: Any = None, url: Any = None) -> Any:
+        if headers is not None or url is not None:  # only the send-time check
+            return oo.Policy(True, None)
+        return real(client)
+
+    monkeypatch.setattr(oo, "policy_of", per_request)
+    if path == "api_operations":
+        result = await _create(_client(), _request())
+    else:
+        result = await _direct_create(
+            _request(), _get_headers=AsyncMock(return_value={"X": "y"})
+        )
+    assert wire
+    assert not any(_has_canary(b) for b in wire)
+    assert result.crew_binding.status == "unknown"

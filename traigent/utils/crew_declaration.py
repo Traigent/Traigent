@@ -97,6 +97,9 @@ class CrewBinding:
 
 UNKNOWN_BINDING = CrewBinding()
 
+# Fixed text: a declaration-bearing session create is never redirected.
+SESSION_CREATE_REDIRECT_REFUSED = "session create was redirected; request refused"
+
 
 def validate_crew_declaration(crew: Any, role: Any) -> CrewDeclaration | None:
     """Validate the decorator's ``crew`` / ``role`` pair.
@@ -137,6 +140,17 @@ def crew_declaration_to_wire(
         logger.info(NOT_SENT_MESSAGE)
         return {}
     return {DECLARATION_METADATA_KEY: declaration.to_wire()}
+
+
+def without_crew_declaration(body: Any) -> Any:
+    """``body`` minus ``metadata.crew_declaration`` (a detached copy when it had one)."""
+    if not crew_declaration_in_body(body):
+        return body
+    stripped = dict(body)
+    metadata = dict(stripped["metadata"])
+    metadata.pop(DECLARATION_METADATA_KEY, None)
+    stripped["metadata"] = metadata
+    return stripped
 
 
 def crew_declaration_in_body(body: Any) -> bool:
