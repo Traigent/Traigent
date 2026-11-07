@@ -380,3 +380,180 @@ async def test_direct_client_binding_follows_the_send_decision(
     result = await _direct_create(_request(**request_overrides), **attrs)
     assert ("crew_declaration" in wire[-1]["metadata"]) is sent
     assert result.crew_binding.status == ("pending_portal" if sent else "unknown")
+
+
+# ---------------------------------------------------------------------------
+# End to end: a REAL ``@traigent.optimize(crew=..., role=...)`` run
+# ---------------------------------------------------------------------------
+
+
+class _E2EResponse(_Response):
+    def __init__(self, status: int, payload: dict[str, Any]) -> None:
+        self.status = status
+        self._payload = payload
+
+    async def json(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._payload
+
+    async def text(self) -> str:
+        return json.dumps(self._payload)
+
+
+class _E2EWire(_Wire):
+    """Records every outgoing request of any verb; only session create is special."""
+
+    requests: list[tuple[str, str, Any]] = []
+
+    def _record(self, method: str, url: Any, kwargs: dict[str, Any]) -> _E2EResponse:
+        body = kwargs.get("json", kwargs.get("data"))
+        _E2EWire.requests.append((method, str(url), body))
+        is_create = (
+            method == "POST"
+            and str(url).rstrip("/").endswith("/sessions")
+            and isinstance(body, dict)
+        )
+        return _E2EResponse(201, _body()) if is_create else _E2EResponse(200, {})
+
+    def post(self, url: Any, *args: Any, **kwargs: Any) -> Any:
+        return self._record("POST", url, kwargs)
+
+    def put(self, url: Any, *args: Any, **kwargs: Any) -> Any:
+        return self._record("PUT", url, kwargs)
+
+    def patch(self, url: Any, *args: Any, **kwargs: Any) -> Any:
+        return self._record("PATCH", url, kwargs)
+
+    def get(self, url: Any, *args: Any, **kwargs: Any) -> Any:
+        return self._record("GET", url, kwargs)
+
+    def delete(self, url: Any, *args: Any, **kwargs: Any) -> Any:
+        return self._record("DELETE", url, kwargs)
+
+
+def _e2e_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[Any]:
+    _E2EWire.requests = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TRAIGENT_API_KEY", KEY)
+    monkeypatch.setenv("TRAIGENT_BACKEND_URL", URL)
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "results"))
+    monkeypatch.setattr(aiohttp, "ClientSession", _E2EWire)
+    monkeypatch.setattr(
+        "traigent.labels.transport.send_session_labels", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(AuthManager, "_validate_api_key_with_backend", _accept_key)
+    monkeypatch.setattr("socket.getaddrinfo", lambda *a, **k: _PUBLIC_ADDRINFO)
+    return _E2EWire.requests
+
+
+def _e2e_function(**extra: Any):
+    import traigent
+    from traigent.evaluators.base import Dataset, EvaluationExample
+
+    dataset = Dataset(
+        [EvaluationExample({"text": f"case-{i}"}, "ok") for i in range(2)],
+        name="crew_canary_e2e",
+    )
+
+    @traigent.optimize(
+        eval_dataset=dataset,
+        objectives=["accuracy"],
+        configuration_space={"x": ["a", "b"]},
+        injection_mode="parameter",
+        crew=CANARY_CREW,
+        role=CANARY_ROLE,
+        **extra,
+    )
+    async def answer(text: str, config=None) -> str:
+        logging.getLogger("traigent.test.crew_e2e").info("evaluating %s", text)
+        return "ok"
+
+    return answer
+
+
+def _span_texts() -> tuple[list[Any], list[Any]]:
+    spans = _SPANS["exporter"].get_finished_spans()
+    return (
+        [
+            [s.name, dict(s.attributes or {})]
+            + [[e.name, dict(e.attributes or {})] for e in s.events]
+            + [[dict(link.attributes or {}) for link in s.links]]
+            for s in spans
+        ],
+        spans,
+    )
+
+
+def _assert_canary_only_in_declaration(
+    requests: list[Any], tmp_path: Path, caplog, result: Any
+) -> None:
+    assert requests, "no outgoing HTTP request was captured"
+    carriers = []
+    for method, url, body in requests:
+        assert not _has_canary(url)
+        if isinstance(body, dict) and _has_canary(body):
+            carriers.append((method, url, body))
+    assert len(carriers) == 1, "the canary must ride exactly one request body"
+    body = carriers[0][2]
+    assert body["metadata"]["crew_declaration"] == {
+        "crew_key": CANARY_CREW,
+        "role_key": CANARY_ROLE,
+    }
+    rest = {k: v for k, v in body.items() if k != "metadata"}
+    rest["metadata"] = {
+        k: v for k, v in body["metadata"].items() if k != "crew_declaration"
+    }
+    assert not _has_canary(rest)
+
+    texts, spans = _span_texts()
+    assert spans, "the run exported no span: the sweep would prove nothing"
+    assert not _has_canary(texts)
+    pytest.importorskip("opentelemetry.baggage")
+    from opentelemetry import baggage
+
+    assert not _has_canary({k: str(v) for k, v in baggage.get_all().items()})
+    _logs_clean(caplog)
+    assert not _has_canary([getattr(r, "__dict__", {}) for r in caplog.records])
+    _sweep_files(tmp_path)
+    assert not _has_canary(repr(result))
+    assert not _has_canary(str(result))
+
+
+@pytest.mark.asyncio
+async def test_real_run_keeps_the_canary_on_the_declared_path(
+    monkeypatch, tmp_path, caplog
+):
+    requests = _e2e_env(monkeypatch, tmp_path)
+    caplog.set_level(logging.DEBUG)
+    func = _e2e_function()
+    result = await func.optimize(algorithm="grid", max_trials=2)
+    assert len(result.trials) == 2
+    assert func.crew_binding.status == "pending_portal"
+    _assert_canary_only_in_declaration(requests, tmp_path, caplog, result)
+
+
+@pytest.mark.asyncio
+async def test_real_content_less_run_sends_the_canary_nowhere(
+    monkeypatch, tmp_path, caplog
+):
+    requests = _e2e_env(monkeypatch, tmp_path)
+    caplog.set_level(logging.DEBUG)
+    func = _e2e_function(content_less=cl.ContentLessOptions(enabled=True))
+    result = await func.optimize(algorithm="grid", max_trials=2)
+    assert requests, "no outgoing HTTP request was captured"
+    assert any(
+        isinstance(body, dict) and "capabilities" in body for _, _, body in requests
+    ), "premise: a content-less session create reached the transport"
+    for _, url, body in requests:
+        assert not _has_canary(url)
+        assert not _has_canary(body)
+    assert func.crew_binding.status == "unknown"
+    texts, spans = _span_texts()
+    assert spans
+    assert not _has_canary(texts)
+    _logs_clean(caplog)
+    _sweep_files(tmp_path)
+    assert not _has_canary(repr(result))
