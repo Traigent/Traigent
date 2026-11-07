@@ -448,15 +448,25 @@ class TokenManager:
                 self._set_credentials_fn(updated_credentials, AuthStatus.AUTHENTICATED)
             self.store_tokens(token_data)
 
-            if self.config.auto_refresh and updated_credentials.refresh_token:
-                self.schedule_refresh(updated_credentials)
-
+            # Committed: the new token is installed and usable. A later
+            # failure (auto-refresh scheduling, the cache callback) must not
+            # invalidate it, so those steps are non-fatal.
             headers: dict[str, str] = {}
             if updated_credentials.jwt_token:
                 headers["Authorization"] = f"Bearer {updated_credentials.jwt_token}"
 
-            if self.config.cache_credentials and self._cache_credentials_fn:
-                await self._cache_credentials_fn(updated_credentials)
+            try:
+                if self.config.auto_refresh and updated_credentials.refresh_token:
+                    self.schedule_refresh(updated_credentials)
+
+                if self.config.cache_credentials and self._cache_credentials_fn:
+                    await self._cache_credentials_fn(updated_credentials)
+            except Exception as post_exc:
+                logger.warning(
+                    "Post-refresh step failed after the new token was installed; "
+                    "keeping it: %s",
+                    type(post_exc).__name__,
+                )
 
             return AuthResult(
                 success=True,

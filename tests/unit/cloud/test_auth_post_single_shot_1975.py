@@ -348,3 +348,68 @@ async def test_auth_posts_disable_redirects_and_3xx_is_not_retried():
     assert login is None
     assert session.post.call_count == 1
     assert session.post.call_args.kwargs["allow_redirects"] is False
+
+
+@pytest.mark.asyncio
+async def test_cache_callback_failure_after_commit_keeps_new_token():
+    response = _response(200)
+    response.json = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {
+                "access_token": "new_access",
+                "refresh_token": "new_refresh_token",
+                "expires_in": 3600,
+            },
+        }
+    )
+    factory, session = _session_with_response(response)
+    holder = {
+        "creds": AuthCredentials(
+            mode=AuthMode.JWT_TOKEN,
+            jwt_token="old_access",
+            refresh_token="old_refresh_token",  # pragma: allowlist secret
+        )
+    }
+    manager = TokenManager(
+        UnifiedAuthConfig(
+            cloud_base_url="http://localhost:5000",
+            auto_refresh=False,
+            cache_credentials=True,
+        )
+    )
+    manager.set_callbacks(
+        get_credentials=lambda: holder["creds"],
+        set_credentials=lambda creds, _s: holder.update(creds=creds),
+        cache_credentials=AsyncMock(side_effect=RuntimeError("disk full")),
+        auth_lock=asyncio.Lock(),
+    )
+    manager.store_tokens(
+        {"access_token": "old_access", "refresh_token": "old_refresh_token"}
+    )
+    with patch("traigent.cloud.token_manager.aiohttp.ClientSession", factory):
+        result = await manager.refresh_access_token()
+    assert result.success is True
+    assert session.post.call_count == 1
+    assert holder["creds"].jwt_token == "new_access"
+    assert holder["creds"].refresh_token == "new_refresh_token"
+    # The old refresh token is not retained anywhere.
+    secure = manager.refresh_token_secure
+    assert secure is None or secure.get_value() != "old_refresh_token"
+
+
+@pytest.mark.asyncio
+async def test_login_decode_error_with_429_text_is_single_shot():
+    import json
+
+    response = _response(200)
+    response.json = AsyncMock(
+        side_effect=json.JSONDecodeError("bad 429 rate limit", "doc", 0)
+    )
+    factory, session = _session_with_response(response)
+    with patch("traigent.cloud.password_auth_handler.aiohttp.ClientSession", factory):
+        result = await PasswordAuthHandler()._perform_authentication(
+            {"email": "a@example.com", "password": "pw"}  # pragma: allowlist secret
+        )
+    assert result is None
+    assert session.post.call_count == 1
