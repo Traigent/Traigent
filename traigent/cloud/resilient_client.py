@@ -17,7 +17,11 @@ from hashlib import sha256
 from typing import Any, cast
 
 from traigent.labels.transport_gate import gate_session
-from traigent.utils.exceptions import NonRetryableError, RetryableError
+from traigent.utils.exceptions import (
+    NonRetryableError,
+    RateLimitError,
+    RetryableError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -447,7 +451,7 @@ def single_shot_unkeyed_auth_call[T](
 
     Timeouts, connection resets and 5xx raise ``NonRetryableError`` with fixed
     text (same conversion as ``_execute_backend_request_once``). Exceptions in
-    ``passthrough`` (e.g. invalid credentials) and rate limits (429, refused by
+    ``passthrough`` (e.g. invalid credentials) and ``RateLimitError`` (HTTP 429, refused by
     the server before processing) keep their original type/retry behaviour.
     """
 
@@ -459,8 +463,9 @@ def single_shot_unkeyed_auth_call[T](
         except Exception as exc:
             if isinstance(exc, NonRetryableError):
                 raise
-            text = str(exc).lower()
-            if "429" in text or "rate limited" in text:
+            # Structured signal only: the typed rate-limit exception raised
+            # from an HTTP 429 response. Message text is never inspected.
+            if isinstance(exc, RateLimitError):
                 raise
             raise NonRetryableError(_AMBIGUOUS_NO_RETRY_MESSAGE) from None
 

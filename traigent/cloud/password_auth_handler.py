@@ -23,6 +23,7 @@ from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
 from traigent.labels.transport_gate import gate_session
+from traigent.utils.exceptions import RateLimitError
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import AuthResult
@@ -360,7 +361,7 @@ class PasswordAuthHandler:
             raise invalid_credentials_error("Invalid credentials")
         if response.status == 429:
             await response.text()
-            raise RuntimeError("Backend authentication rate limited")
+            raise RateLimitError("Backend authentication rate limited")
         if response.status != 200:
             await response.text()
             raise RuntimeError(

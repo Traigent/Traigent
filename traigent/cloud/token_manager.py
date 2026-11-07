@@ -19,6 +19,7 @@ from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
 from traigent.labels.transport_gate import gate_session
+from traigent.utils.exceptions import NonRetryableError, RateLimitError
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import (
@@ -272,33 +273,37 @@ class TokenManager:
             TokenExpiredError,
         )
 
-        credentials = self._get_credentials_fn() if self._get_credentials_fn else None
-        if not credentials:
-            return AuthResult(
-                success=False,
-                status=AuthStatus.INVALID,
-                error_message="No credentials available",
-            )
-
-        refresh_token_value: str | None = None
-        if self._refresh_token_secure:
-            try:
-                refresh_token_value = self._refresh_token_secure.get_value()
-            except TokenExpiredError:
-                refresh_token_value = None
-
-        if not refresh_token_value:
-            refresh_token_value = credentials.refresh_token
-
-        if not refresh_token_value:
-            return AuthResult(
-                success=False,
-                status=AuthStatus.INVALID,
-                error_message="No refresh token available",
-            )
-
         lock = self._auth_lock or asyncio.Lock()
         async with lock:
+            # Read credentials and the refresh token under the lock so a caller
+            # that waited never reuses a token an earlier refresh invalidated.
+            credentials = (
+                self._get_credentials_fn() if self._get_credentials_fn else None
+            )
+            if not credentials:
+                return AuthResult(
+                    success=False,
+                    status=AuthStatus.INVALID,
+                    error_message="No credentials available",
+                )
+
+            refresh_token_value: str | None = None
+            if self._refresh_token_secure:
+                try:
+                    refresh_token_value = self._refresh_token_secure.get_value()
+                except TokenExpiredError:
+                    refresh_token_value = None
+
+            if not refresh_token_value:
+                refresh_token_value = credentials.refresh_token
+
+            if not refresh_token_value:
+                return AuthResult(
+                    success=False,
+                    status=AuthStatus.INVALID,
+                    error_message="No refresh token available",
+                )
+
             try:
                 self._last_refresh_attempt = time.time()
 
@@ -446,6 +451,15 @@ class TokenManager:
                 error_message=str(exc),
             )
         except Exception as exc:
+            if isinstance(exc, NonRetryableError):
+                # Ambiguous outcome (timeout/reset/5xx): the server may already
+                # have rotated this refresh token. Fail closed: drop it so the
+                # next refresh reports "No credentials available" and the
+                # caller must re-authenticate, instead of resending a token
+                # that refresh-token-reuse detection would treat as theft.
+                self.clear_tokens()
+                if self._set_credentials_fn:
+                    self._set_credentials_fn(None, AuthStatus.INVALID)
             logger.error("Token refresh error: %s", type(exc).__name__)
             return AuthResult(
                 success=False,
@@ -461,7 +475,7 @@ class TokenManager:
             raise ValueError("Refresh token invalid or expired")
         if response.status == 429:
             await response.text()  # drain body; do not propagate upstream content
-            raise RuntimeError("Token refresh failed with HTTP 429")
+            raise RateLimitError("Token refresh failed with HTTP 429")
         if response.status != 200:
             await response.text()  # drain body; do not propagate upstream content
             raise RuntimeError(f"Token refresh failed with HTTP {response.status}")
