@@ -413,3 +413,142 @@ async def test_login_decode_error_with_429_text_is_single_shot():
         )
     assert result is None
     assert session.post.call_count == 1
+
+
+# ---- #1975 follow-ups: credentials cache + OAuth2 refresh ----
+
+
+def _oauth_manager(holder: dict, clear_cache=None) -> TokenManager:
+    manager = TokenManager(
+        UnifiedAuthConfig(cloud_base_url="https://api.example.test", auto_refresh=False)
+    )
+
+    def set_credentials(creds, _status):
+        holder["creds"] = creds
+
+    manager.set_callbacks(
+        get_credentials=lambda: holder["creds"],
+        set_credentials=set_credentials,
+        cache_credentials=AsyncMock(),
+        auth_lock=asyncio.Lock(),
+        clear_cached_credentials=clear_cache,
+    )
+    return manager
+
+
+def _oauth_holder() -> dict:
+    return {
+        "creds": AuthCredentials(
+            mode=AuthMode.OAUTH2,
+            refresh_token="old_oauth_refresh",  # pragma: allowlist secret
+            client_id="client-id",
+            client_secret="client-secret",  # pragma: allowlist secret
+        )
+    }
+
+
+@pytest.mark.asyncio
+async def test_invalidation_removes_cache_file_so_old_refresh_token_is_not_reloaded(
+    tmp_path,
+):
+    from traigent.cloud.credential_resolver import CredentialResolver
+
+    cache_file = tmp_path / "credentials.enc"
+    config = UnifiedAuthConfig(
+        cloud_base_url="http://localhost:5000",
+        auto_refresh=False,
+        credentials_file=str(cache_file),
+    )
+    resolver = CredentialResolver(config)
+    old = AuthCredentials(
+        mode=AuthMode.JWT_TOKEN,
+        jwt_token="old_access",
+        refresh_token="old_refresh_token",  # pragma: allowlist secret
+    )
+    await resolver.cache(old)
+    assert cache_file.exists()
+    reloaded = await resolver.load_cached()
+    assert reloaded is not None and reloaded.refresh_token == "old_refresh_token"
+
+    holder = {"creds": old}
+    manager = TokenManager(config)
+    manager.set_callbacks(
+        get_credentials=lambda: holder["creds"],
+        set_credentials=lambda c, _s: holder.update(creds=c),
+        cache_credentials=AsyncMock(),
+        auth_lock=asyncio.Lock(),
+        clear_cached_credentials=resolver.clear_cached,
+    )
+    factory, session = _failing_session(TimeoutError())
+    with patch("traigent.cloud.token_manager.aiohttp.ClientSession", factory):
+        await manager.refresh_access_token()
+
+    assert not cache_file.exists()
+    assert await resolver.load_cached() is None
+
+
+def test_clear_cached_is_safe_when_absent_and_does_not_follow_symlinks(tmp_path):
+    from traigent.cloud.credential_resolver import CredentialResolver
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me")
+    link = tmp_path / "credentials.enc"
+    link.symlink_to(victim)
+    resolver = CredentialResolver(
+        UnifiedAuthConfig(credentials_file=str(link), auto_refresh=False)
+    )
+    resolver.clear_cached()
+    assert victim.read_text() == "keep me", "symlink target must survive"
+    assert not link.is_symlink() and not link.exists()
+    resolver.clear_cached()  # absent: no error
+    CredentialResolver(UnifiedAuthConfig(auto_refresh=False)).clear_cached()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [TimeoutError(), ConnectionResetError()])
+async def test_oauth_ambiguous_failure_is_single_shot_and_clears_token(exc):
+    holder = _oauth_holder()
+    clear_cache = MagicMock()
+    manager = _oauth_manager(holder, clear_cache)
+    factory, session = _failing_session(exc)
+    with patch("traigent.cloud.token_manager.aiohttp.ClientSession", factory):
+        first = await manager.refresh_oauth2()
+        second = await manager.refresh_oauth2()
+
+    assert first.success is False
+    assert session.post.call_count == 1, "OAuth refresh POST must not be replayed"
+    assert session.post.call_args.kwargs["allow_redirects"] is False
+    assert holder["creds"] is None
+    clear_cache.assert_called_once()
+    assert second.success is False
+    assert second.status == AuthStatus.UNAUTHENTICATED
+    assert session.post.call_count == 1, "the old token must not be resent"
+
+
+@pytest.mark.asyncio
+async def test_oauth_cancellation_clears_and_propagates():
+    holder = _oauth_holder()
+    clear_cache = MagicMock()
+    manager = _oauth_manager(holder, clear_cache)
+    factory, session = _failing_session(asyncio.CancelledError())
+    with patch("traigent.cloud.token_manager.aiohttp.ClientSession", factory):
+        with pytest.raises(asyncio.CancelledError):
+            await manager.refresh_oauth2()
+    assert session.post.call_count == 1
+    assert holder["creds"] is None
+    clear_cache.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_oauth_definitive_rejection_keeps_existing_behaviour():
+    holder = _oauth_holder()
+    clear_cache = MagicMock()
+    manager = _oauth_manager(holder, clear_cache)
+    response = _response(400)
+    factory, session = _session_with_response(response)
+    with patch("traigent.cloud.token_manager.aiohttp.ClientSession", factory):
+        result = await manager.refresh_oauth2()
+    assert result.success is False
+    assert session.post.call_count == 1
+    assert holder["creds"] is not None
+    clear_cache.assert_not_called()

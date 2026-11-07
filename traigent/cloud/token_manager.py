@@ -82,6 +82,7 @@ class TokenManager:
         self._get_credentials_fn: Any = None
         self._set_credentials_fn: Any = None
         self._cache_credentials_fn: Any = None
+        self._clear_cached_credentials_fn: Any = None
         self._auth_lock: asyncio.Lock | None = None
         # Latch-on-read hook (set by AuthManager); see APIKeyManager.read_guard.
         self.read_guard: Any = None
@@ -101,6 +102,7 @@ class TokenManager:
         auth_lock: asyncio.Lock,
         validate_key_format: Any = None,
         set_api_key_token: Any = None,
+        clear_cached_credentials: Any = None,
     ) -> None:
         """Set callback functions for credential operations.
 
@@ -111,7 +113,10 @@ class TokenManager:
             auth_lock: Lock for authentication operations
             validate_key_format: Callback to validate API key format
             set_api_key_token: Callback to set API key token
+            clear_cached_credentials: Optional sync callback that removes the
+                on-disk credentials cache (called when refresh state is invalidated)
         """
+        self._clear_cached_credentials_fn = clear_cached_credentials
         self._get_credentials_fn = get_credentials
         self._set_credentials_fn = set_credentials
         self._cache_credentials_fn = cache_credentials
@@ -224,6 +229,15 @@ class TokenManager:
         self.clear_tokens()
         if self._set_credentials_fn:
             self._set_credentials_fn(None, AuthStatus.INVALID)
+        if self._clear_cached_credentials_fn:
+            # The encrypted cache would otherwise keep (and reload) the old
+            # refresh token. Best effort: never mask the original failure.
+            try:
+                self._clear_cached_credentials_fn()
+            except Exception as exc:
+                logger.warning(
+                    "Could not clear cached credentials: %s", type(exc).__name__
+                )
 
     def schedule_refresh(self, credentials: AuthCredentials) -> None:
         """Schedule automatic token refresh.
@@ -630,9 +644,20 @@ class TokenManager:
         # clearing self credentials; if specific failure modes (e.g. 401
         # invalid_grant) should also invalidate stored credentials, that
         # behavior should be added explicitly here.
-        try:
+        from traigent.cloud.resilient_client import (
+            ResilientClient,
+            single_shot_unkeyed_auth_call,
+        )
+
+        async def perform_refresh() -> AuthResult | dict[str, Any]:
             async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
-                async with session.post(token_url, data=data) as response:
+                async with session.post(
+                    token_url,
+                    data=data,
+                    # A 307/308 would replay the POST (and the refresh token
+                    # and client secret) elsewhere (#1975).
+                    allow_redirects=False,
+                ) as response:
                     if response.status != 200:
                         await (
                             response.text()
@@ -641,6 +666,7 @@ class TokenManager:
                             "OAuth2 token refresh failed with HTTP %s",
                             response.status,
                         )
+                        # A definitive HTTP answer, not an ambiguous outcome.
                         return AuthResult(
                             success=False,
                             status=AuthStatus.INVALID,
@@ -648,11 +674,36 @@ class TokenManager:
                                 f"OAuth2 token refresh failed with HTTP {response.status}"
                             ),
                         )
-                    token_data = await response.json()
-                    return await self._apply_oauth2_token_response(
-                        credentials, token_data
-                    )
+                    return cast(dict[str, Any], await response.json())
+
+        client = ResilientClient(
+            max_retries=MAX_RETRIES,
+            base_delay=1.0,
+            max_delay=10.0,
+            jitter_factor=0.1,
+        )
+        token_data: dict[str, Any] | None = None
+        try:
+            # Non-idempotent POST that may rotate the refresh token: never
+            # replay it on an ambiguous failure (#1975).
+            try:
+                outcome = await client.execute_with_retry(
+                    single_shot_unkeyed_auth_call(perform_refresh),
+                    operation_name="oauth2_token_refresh",
+                )
+            except asyncio.CancelledError:
+                # The POST may already have rotated the token server-side.
+                self._invalidate_refresh_state()
+                raise
+            if isinstance(outcome, AuthResult):
+                return outcome
+            token_data = outcome
+            return await self._apply_oauth2_token_response(credentials, token_data)
         except Exception as exc:
+            if token_data is not None or isinstance(exc, NonRetryableError):
+                # Ambiguous outcome, or the server already consumed the old
+                # refresh token: drop it everywhere so it is never resent.
+                self._invalidate_refresh_state()
             logger.error("OAuth2 token refresh failed: %s", type(exc).__name__)
             return AuthResult(
                 success=False,

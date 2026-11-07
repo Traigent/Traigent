@@ -460,6 +460,25 @@ class CredentialResolver:
         except Exception as e:
             logger.warning(f"Failed to cache credentials: {e}")
 
+    def clear_cached(self) -> None:
+        """Remove the cached credentials file (no-op when absent).
+
+        Never follows a symlink at the cache path: only the link itself is
+        removed, never its target. Used when a refresh token must not survive
+        (an ambiguous refresh may already have rotated it server-side, #1975).
+        """
+        if not self.config.credentials_file:
+            return
+        raw = Path(self.config.credentials_file).expanduser()
+        # Resolve the directory only; the final component stays unresolved.
+        target = raw.parent.resolve() / raw.name
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            logger.warning("Failed to clear cached credentials: %s", type(exc).__name__)
+
     def encrypt(self, credentials: AuthCredentials) -> dict[str, Any]:
         """Secure credential encryption using AES-256.
 
