@@ -236,6 +236,35 @@ class CircuitBreaker:
                 self._on_failure()
             raise
 
+    async def call_async[T](self, func: Callable[..., T], *args, **kwargs) -> T:
+        """Execute async function with circuit breaker protection."""
+        with self._lock:
+            if self.state == CircuitBreakerState.OPEN:
+                now = datetime.now(UTC)
+                if self._should_attempt_reset(now):
+                    self.state = CircuitBreakerState.HALF_OPEN
+                    self.success_count = 0
+                    self.last_state_change = now
+                    self._half_open_in_flight = True
+                    logger.info("Circuit breaker entering HALF_OPEN state")
+                else:
+                    raise ServiceUnavailableError("Circuit breaker is OPEN")
+            elif self.state == CircuitBreakerState.HALF_OPEN:
+                if self._half_open_in_flight:
+                    raise ServiceUnavailableError("Circuit breaker is HALF_OPEN")
+                self._half_open_in_flight = True
+
+        try:
+            result = await func(*args, **kwargs)  # type: ignore[misc]
+            self._on_success()
+            return result
+        except Exception as exc:
+            if self._is_ignored_failure(exc):
+                self._on_neutral()
+            else:
+                self._on_failure()
+            raise
+
     def _is_ignored_failure(self, exc: Exception) -> bool:
         """True when the configured predicate says this failure is not counted."""
         if self._ignore_failure is None:
@@ -310,7 +339,10 @@ class RetryHandler:
 
     def execute[T](self, func: Callable[..., T], *args, **kwargs) -> T:
         """Execute function with retry logic."""
-        return self.execute_with_result(func, *args, **kwargs).result  # type: ignore[return-value]
+        result = self.execute_with_result(func, *args, **kwargs)
+        if result.success:
+            return result.result  # type: ignore[return-value]
+        raise result.error or RetryError(f"All {result.attempts} retry attempts failed")
 
     def execute_with_result(
         self, func: Callable[..., Any], *args, **kwargs
@@ -394,7 +426,11 @@ class RetryHandler:
         for attempt in range(1, self.config.max_attempts + 1):
             final_attempt = attempt
             try:
-                result = await func(*args, **kwargs)  # type: ignore[misc]
+                # Use circuit breaker if enabled
+                if self.circuit_breaker:
+                    result = await self.circuit_breaker.call_async(func, *args, **kwargs)
+                else:
+                    result = await func(*args, **kwargs)  # type: ignore[misc]
                 return RetryResult(
                     success=True,
                     result=result,
