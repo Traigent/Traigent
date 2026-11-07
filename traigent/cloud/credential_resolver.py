@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 import time
 from datetime import datetime
 from pathlib import Path
@@ -44,6 +45,8 @@ class CredentialResolver:
         self._set_api_key_token_fn: Any = None
         self._get_api_key_token_fn: Any = None
         self._increment_cache_hits_fn: Any = None
+        # Set when an invalidated cache could not be removed (see clear_cached).
+        self._cache_load_disabled = False
 
     def set_callbacks(
         self,
@@ -235,7 +238,7 @@ class CredentialResolver:
         from traigent.cloud.auth import AuthCredentials
 
         try:
-            if not self.config.credentials_file:
+            if not self.config.credentials_file or self._cache_load_disabled:
                 return None
 
             from traigent.security.crypto_utils import SecureFileManager
@@ -461,23 +464,61 @@ class CredentialResolver:
             logger.warning(f"Failed to cache credentials: {e}")
 
     def clear_cached(self) -> None:
-        """Remove the cached credentials file (no-op when absent).
+        """Make the cached credentials file unloadable (no-op when absent).
 
-        Never follows a symlink at the cache path: only the link itself is
-        removed, never its target. Used when a refresh token must not survive
-        (an ambiguous refresh may already have rotated it server-side, #1975).
+        Only acts when caching is enabled (the condition that governs load and
+        write). Like ``cache()`` and ``load_cached()`` it resolves a symlink and
+        clears the resolved target, but only if that target is a regular file
+        owned by the current user; otherwise just the link is unlinked and the
+        refusal is logged. Used when a refresh token must not survive (an
+        ambiguous refresh may already have rotated it server-side, #1975).
+
+        If deletion fails the file is truncated; if that also fails the error
+        is logged and this resolver stops loading from cache for the rest of
+        the process. Residual: a process restart could still reload a file
+        that could be neither deleted nor truncated.
         """
-        if not self.config.credentials_file:
+        if not (self.config.cache_credentials and self.config.credentials_file):
             return
         raw = Path(self.config.credentials_file).expanduser()
-        # Resolve the directory only; the final component stays unresolved.
-        target = raw.parent.resolve() / raw.name
+        try:
+            target = raw.resolve()
+            if raw.is_symlink():
+                st = target.stat() if target.exists() else None
+                if st is None or not (
+                    stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid()
+                ):
+                    logger.warning(
+                        "Cached credentials path is a symlink to a target that "
+                        "is not a regular file owned by this user; removing "
+                        "only the link."
+                    )
+                    target = raw.parent.resolve() / raw.name
+        except OSError as exc:
+            logger.warning(
+                "Failed to inspect cached credentials: %s", type(exc).__name__
+            )
+            target = raw.parent.resolve() / raw.name
         try:
             target.unlink()
+            return
         except FileNotFoundError:
             return
         except OSError as exc:
-            logger.warning("Failed to clear cached credentials: %s", type(exc).__name__)
+            logger.warning(
+                "Failed to delete cached credentials (%s); truncating",
+                type(exc).__name__,
+            )
+        try:
+            with open(target, "r+b") as fh:
+                fh.truncate(0)
+        except OSError as exc:
+            self._cache_load_disabled = True
+            logger.error(
+                "Could not delete or truncate cached credentials (%s); the "
+                "cache will not be loaded for the rest of this process.",
+                type(exc).__name__,
+            )
 
     def encrypt(self, credentials: AuthCredentials) -> dict[str, Any]:
         """Secure credential encryption using AES-256.

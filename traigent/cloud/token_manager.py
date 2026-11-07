@@ -649,7 +649,10 @@ class TokenManager:
             single_shot_unkeyed_auth_call,
         )
 
+        ambiguous_status = False
+
         async def perform_refresh() -> AuthResult | dict[str, Any]:
+            nonlocal ambiguous_status
             async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
                 async with session.post(
                     token_url,
@@ -666,7 +669,12 @@ class TokenManager:
                             "OAuth2 token refresh failed with HTTP %s",
                             response.status,
                         )
-                        # A definitive HTTP answer, not an ambiguous outcome.
+                        # 5xx/408 may come from a server or proxy after the
+                        # token was already rotated: ambiguous. Other 4xx are
+                        # definitive rejections.
+                        ambiguous_status = (
+                            response.status >= 500 or response.status == 408
+                        )
                         return AuthResult(
                             success=False,
                             status=AuthStatus.INVALID,
@@ -696,6 +704,8 @@ class TokenManager:
                 self._invalidate_refresh_state()
                 raise
             if isinstance(outcome, AuthResult):
+                if ambiguous_status:
+                    self._invalidate_refresh_state()
                 return outcome
             token_data = outcome
             return await self._apply_oauth2_token_response(credentials, token_data)

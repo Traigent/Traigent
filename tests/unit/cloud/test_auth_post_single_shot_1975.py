@@ -487,21 +487,105 @@ async def test_invalidation_removes_cache_file_so_old_refresh_token_is_not_reloa
     assert await resolver.load_cached() is None
 
 
-def test_clear_cached_is_safe_when_absent_and_does_not_follow_symlinks(tmp_path):
+def _resolver(path, **kw):
     from traigent.cloud.credential_resolver import CredentialResolver
 
-    victim = tmp_path / "victim.txt"
-    victim.write_text("keep me")
-    link = tmp_path / "credentials.enc"
-    link.symlink_to(victim)
-    resolver = CredentialResolver(
-        UnifiedAuthConfig(credentials_file=str(link), auto_refresh=False)
+    return CredentialResolver(
+        UnifiedAuthConfig(credentials_file=str(path), auto_refresh=False, **kw)
     )
-    resolver.clear_cached()
-    assert victim.read_text() == "keep me", "symlink target must survive"
-    assert not link.is_symlink() and not link.exists()
-    resolver.clear_cached()  # absent: no error
+
+
+def test_clear_cached_absent_file_and_no_path_are_noops(tmp_path):
+    _resolver(tmp_path / "missing.enc").clear_cached()
+    from traigent.cloud.credential_resolver import CredentialResolver
+
     CredentialResolver(UnifiedAuthConfig(auto_refresh=False)).clear_cached()
+
+
+def test_clear_cached_clears_resolved_symlink_target_when_owned_regular_file(tmp_path):
+    target = tmp_path / "real.enc"
+    target.write_text("secret")
+    link = tmp_path / "credentials.enc"
+    link.symlink_to(target)
+    _resolver(link).clear_cached()
+    assert not target.exists(), "resolved target (what cache() wrote) is cleared"
+
+
+def test_clear_cached_unlinks_only_link_when_target_not_owned_regular_file(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "real.enc"
+    target.write_text("keep me")
+    link = tmp_path / "credentials.enc"
+    link.symlink_to(target)
+    monkeypatch.setattr("traigent.cloud.credential_resolver.os.getuid", lambda: -1)
+    _resolver(link).clear_cached()
+    assert target.read_text() == "keep me"
+    assert not link.is_symlink()
+
+
+def test_clear_cached_skipped_when_caching_disabled(tmp_path):
+    f = tmp_path / "credentials.enc"
+    f.write_text("not ours")
+    _resolver(f, cache_credentials=False).clear_cached()
+    assert f.read_text() == "not ours"
+
+
+def test_clear_cached_truncates_when_delete_fails(tmp_path, monkeypatch):
+    f = tmp_path / "credentials.enc"
+    f.write_text("old token blob")
+    monkeypatch.setattr(
+        "pathlib.Path.unlink", MagicMock(side_effect=PermissionError("no"))
+    )
+    resolver = _resolver(f)
+    resolver.clear_cached()
+    assert f.read_text() == ""
+    assert resolver._cache_load_disabled is False
+
+
+@pytest.mark.asyncio
+async def test_clear_cached_total_failure_disables_cache_loading(tmp_path, monkeypatch):
+    resolver = _resolver(tmp_path / "credentials.enc")
+    await resolver.cache(
+        AuthCredentials(
+            mode=AuthMode.JWT_TOKEN,
+            jwt_token="a",
+            refresh_token="old_refresh_token",  # pragma: allowlist secret
+        )
+    )
+    assert await resolver.load_cached() is not None
+    monkeypatch.setattr(
+        "pathlib.Path.unlink", MagicMock(side_effect=PermissionError("no"))
+    )
+    real_open = open
+
+    def deny_open(file, mode="r", *a, **k):
+        if "+" in mode:
+            raise PermissionError("no")
+        return real_open(file, mode, *a, **k)
+
+    monkeypatch.setattr("builtins.open", deny_open)
+    resolver.clear_cached()
+    monkeypatch.undo()
+    assert resolver._cache_load_disabled is True
+    assert await resolver.load_cached() is None, "file still exists but is not loaded"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [503, 500, 408])
+async def test_oauth_ambiguous_status_clears_state_and_returns_authresult(status):
+    holder = _oauth_holder()
+    clear_cache = MagicMock()
+    manager = _oauth_manager(holder, clear_cache)
+    factory, session = _session_with_response(_response(status))
+    with patch("traigent.cloud.token_manager.aiohttp.ClientSession", factory):
+        result = await manager.refresh_oauth2()
+        again = await manager.refresh_oauth2()
+    assert result.success is False and result.status == AuthStatus.INVALID
+    assert holder["creds"] is None
+    clear_cache.assert_called_once()
+    assert again.status == AuthStatus.UNAUTHENTICATED
+    assert session.post.call_count == 1
 
 
 @pytest.mark.asyncio
