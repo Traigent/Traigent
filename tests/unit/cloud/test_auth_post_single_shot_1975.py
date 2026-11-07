@@ -502,9 +502,18 @@ def test_clear_cached_absent_file_and_no_path_are_noops(tmp_path):
     CredentialResolver(UnifiedAuthConfig(auto_refresh=False)).clear_cached()
 
 
-def test_clear_cached_clears_resolved_symlink_target_when_owned_regular_file(tmp_path):
+def test_clear_cached_clears_resolved_symlink_target_when_owned_regular_file(
+    tmp_path, monkeypatch
+):
     target = tmp_path / "real.enc"
     target.write_text("secret")
+    # Simulate an available UID on every OS (os.getuid is absent on Windows).
+    owner_uid = target.stat().st_uid
+    monkeypatch.setattr(
+        "traigent.cloud.credential_resolver.os.getuid",
+        lambda: owner_uid,
+        raising=False,
+    )
     link = tmp_path / "credentials.enc"
     link.symlink_to(target)
     _resolver(link).clear_cached()
