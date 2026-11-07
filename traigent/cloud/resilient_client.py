@@ -17,7 +17,11 @@ from hashlib import sha256
 from typing import Any, cast
 
 from traigent.labels.transport_gate import gate_session
-from traigent.utils.exceptions import NonRetryableError, RetryableError
+from traigent.utils.exceptions import (
+    NonRetryableError,
+    RateLimitError,
+    RetryableError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -437,6 +441,36 @@ async def _execute_backend_request_once(
         # processed the request, so never replay a non-idempotent call
         # that carries no Idempotency-Key (#1975). Fixed text only.
         raise NonRetryableError(_AMBIGUOUS_NO_RETRY_MESSAGE) from None
+
+
+def single_shot_unkeyed_auth_call[T](
+    operation: Callable[[], Awaitable[T]],
+    passthrough: tuple[type[BaseException], ...] = (),
+) -> Callable[[], Awaitable[T]]:
+    """Wrap a non-idempotent, unkeyed auth POST so ambiguous failures are not replayed (#1975).
+
+    Timeouts, connection resets and 5xx raise ``NonRetryableError`` with fixed
+    text (same conversion as ``_execute_backend_request_once``). Exceptions in
+    ``passthrough`` (e.g. invalid credentials) and ``RateLimitError`` (HTTP 429, refused by
+    the server before processing) keep their original type/retry behaviour.
+    """
+
+    async def _wrapped() -> T:
+        try:
+            return await operation()
+        except passthrough:
+            raise
+        except Exception as exc:
+            if isinstance(exc, NonRetryableError):
+                raise
+            # Structured signal only: the typed rate-limit exception raised
+            # from an HTTP 429 response. Message text is never inspected.
+            if isinstance(exc, RateLimitError):
+                raise
+            raise NonRetryableError(_AMBIGUOUS_NO_RETRY_MESSAGE) from None
+
+    _wrapped.__name__ = getattr(operation, "__name__", "single_shot_auth_call")
+    return _wrapped
 
 
 def _raise_for_retryable_status(status: int) -> None:
