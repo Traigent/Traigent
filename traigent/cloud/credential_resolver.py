@@ -481,24 +481,38 @@ class CredentialResolver:
         if not (self.config.cache_credentials and self.config.credentials_file):
             return
         raw = Path(self.config.credentials_file).expanduser()
+        link_path = raw.parent.resolve() / raw.name
+        target = link_path
+        # True when the target must never be opened: it is only reached through
+        # a symlink we refused to follow (not an owned regular file).
+        link_only = False
         try:
-            target = raw.resolve()
             if raw.is_symlink():
-                st = target.stat() if target.exists() else None
-                if st is None or not (
-                    stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid()
-                ):
+                resolved = raw.resolve()
+                st = resolved.stat() if resolved.exists() else None
+                getuid = getattr(os, "getuid", None)  # absent on Windows
+                owned = (
+                    st is not None
+                    and getuid is not None
+                    and stat.S_ISREG(st.st_mode)
+                    and st.st_uid == getuid()
+                )
+                if owned:
+                    target = resolved
+                else:
+                    link_only = True
                     logger.warning(
                         "Cached credentials path is a symlink to a target that "
-                        "is not a regular file owned by this user; removing "
-                        "only the link."
+                        "is not a verifiably owned regular file; removing only "
+                        "the link."
                     )
-                    target = raw.parent.resolve() / raw.name
+            else:
+                target = raw.resolve()
         except OSError as exc:
             logger.warning(
                 "Failed to inspect cached credentials: %s", type(exc).__name__
             )
-            target = raw.parent.resolve() / raw.name
+            target, link_only = link_path, True
         try:
             target.unlink()
             return
@@ -506,19 +520,26 @@ class CredentialResolver:
             return
         except OSError as exc:
             logger.warning(
-                "Failed to delete cached credentials (%s); truncating",
-                type(exc).__name__,
+                "Failed to delete cached credentials (%s)", type(exc).__name__
             )
-        try:
-            with open(target, "r+b") as fh:
-                fh.truncate(0)
-        except OSError as exc:
-            self._cache_load_disabled = True
-            logger.error(
-                "Could not delete or truncate cached credentials (%s); the "
-                "cache will not be loaded for the rest of this process.",
-                type(exc).__name__,
-            )
+        if not link_only:
+            try:
+                flags = os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(target, flags)
+                try:
+                    os.ftruncate(fd, 0)
+                finally:
+                    os.close(fd)
+                return
+            except OSError as exc:
+                logger.warning(
+                    "Failed to truncate cached credentials (%s)", type(exc).__name__
+                )
+        self._cache_load_disabled = True
+        logger.error(
+            "Could not remove or truncate cached credentials; the cache will "
+            "not be loaded for the rest of this process."
+        )
 
     def encrypt(self, credentials: AuthCredentials) -> dict[str, Any]:
         """Secure credential encryption using AES-256.

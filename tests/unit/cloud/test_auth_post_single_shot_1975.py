@@ -518,7 +518,39 @@ def test_clear_cached_unlinks_only_link_when_target_not_owned_regular_file(
     target.write_text("keep me")
     link = tmp_path / "credentials.enc"
     link.symlink_to(target)
-    monkeypatch.setattr("traigent.cloud.credential_resolver.os.getuid", lambda: -1)
+    monkeypatch.setattr(
+        "traigent.cloud.credential_resolver.os.getuid", lambda: -1, raising=False
+    )
+    _resolver(link).clear_cached()
+    assert target.read_text() == "keep me"
+    assert not link.is_symlink()
+
+
+def test_clear_cached_unowned_target_and_failing_link_unlink_never_opens_target(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "real.enc"
+    target.write_text("keep me")
+    link = tmp_path / "credentials.enc"
+    link.symlink_to(target)
+    monkeypatch.setattr(
+        "traigent.cloud.credential_resolver.os.getuid", lambda: -1, raising=False
+    )
+    monkeypatch.setattr(
+        "pathlib.Path.unlink", MagicMock(side_effect=PermissionError("no"))
+    )
+    resolver = _resolver(link)
+    resolver.clear_cached()
+    assert target.read_text() == "keep me", "unowned target must not be truncated"
+    assert resolver._cache_load_disabled is True
+
+
+def test_clear_cached_without_getuid_treats_target_as_unowned(tmp_path, monkeypatch):
+    target = tmp_path / "real.enc"
+    target.write_text("keep me")
+    link = tmp_path / "credentials.enc"
+    link.symlink_to(target)
+    monkeypatch.delattr("traigent.cloud.credential_resolver.os.getuid", raising=False)
     _resolver(link).clear_cached()
     assert target.read_text() == "keep me"
     assert not link.is_symlink()
@@ -557,14 +589,10 @@ async def test_clear_cached_total_failure_disables_cache_loading(tmp_path, monke
     monkeypatch.setattr(
         "pathlib.Path.unlink", MagicMock(side_effect=PermissionError("no"))
     )
-    real_open = open
-
-    def deny_open(file, mode="r", *a, **k):
-        if "+" in mode:
-            raise PermissionError("no")
-        return real_open(file, mode, *a, **k)
-
-    monkeypatch.setattr("builtins.open", deny_open)
+    monkeypatch.setattr(
+        "traigent.cloud.credential_resolver.os.open",
+        MagicMock(side_effect=PermissionError("no")),
+    )
     resolver.clear_cached()
     monkeypatch.undo()
     assert resolver._cache_load_disabled is True
