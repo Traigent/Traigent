@@ -516,7 +516,7 @@ class CredentialResolver:
         try:
             target.unlink()
             return
-        except FileNotFoundError:
+        except FileNotFoundError:  # silent-ok: clearing a cache file that is already absent is the desired end state
             return
         except OSError as exc:
             logger.warning(
