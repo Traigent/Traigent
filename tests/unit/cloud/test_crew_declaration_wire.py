@@ -140,9 +140,10 @@ def _has_canary(value: Any) -> bool:
 
 
 def _sweep_files(folder: Path) -> None:
-    for path in folder.rglob("*"):
-        if path.is_file():
-            assert "7f3a91" not in path.read_text(encoding="utf-8", errors="ignore")
+    files = [path for path in folder.rglob("*") if path.is_file()]
+    assert files, "no local result file was written: the sweep would prove nothing"
+    for path in files:
+        assert "7f3a91" not in path.read_text(encoding="utf-8", errors="ignore")
 
 
 def _spans_and_baggage_clean() -> None:
@@ -150,13 +151,19 @@ def _spans_and_baggage_clean() -> None:
     from opentelemetry import baggage
 
     assert not _has_canary({k: str(v) for k, v in baggage.get_all().items()})
-    exporter = _SPANS.get("exporter")
-    if exporter is not None:
-        spans = exporter.get_finished_spans()
-        assert not _has_canary([dict(s.attributes or {}) for s in spans])
-        assert not _has_canary(
-            [[dict(e.attributes or {}) for e in s.events] for s in spans]
-        )
+    exporter = _SPANS["exporter"]
+    spans = exporter.get_finished_spans()
+    assert spans, "no span was exported: the sweep would prove nothing"
+    assert not _has_canary([dict(s.attributes or {}) for s in spans])
+    assert not _has_canary(
+        [[dict(e.attributes or {}) for e in s.events] for s in spans]
+    )
+
+
+def _logs_clean(caplog: pytest.LogCaptureFixture) -> None:
+    assert caplog.records, "no log record was captured: the sweep would prove nothing"
+    assert not _has_canary(caplog.text)
+    assert not _has_canary([r.getMessage() for r in caplog.records])
 
 
 _SPANS: dict[str, Any] = {}
@@ -188,7 +195,28 @@ def _in_memory_spans(monkeypatch: pytest.MonkeyPatch):
 
 
 async def _create(client: Any, request: SessionCreationRequest):
-    return await ApiOperations(client).create_traigent_session_via_api(request)
+    """Real session create inside a real SDK session span, then the local record.
+
+    Guarantees every sink the sweeps read (span, log record, local file) is produced.
+    """
+    from traigent.core.tracing import optimization_session_span
+    from traigent.storage.local_storage import LocalStorageManager
+
+    with optimization_session_span(
+        request.function_name,
+        max_trials=request.max_trials,
+        objectives=["accuracy"],
+        config_space=request.configuration_space,
+    ):
+        result = await ApiOperations(client).create_traigent_session_via_api(request)
+    logging.getLogger("traigent.test.crew_wire").info("session created")
+    LocalStorageManager().create_session(
+        request.function_name,
+        optimization_config={"configuration_space": request.configuration_space},
+        metadata={"evaluation_set": "evalset-x"},
+        session_id=result[0],
+    )
+    return result
 
 
 @pytest.mark.asyncio
@@ -208,7 +236,7 @@ async def test_full_mode_sends_only_in_metadata_and_exposes_binding(
     }
     assert not _has_canary(elsewhere)
     assert result.crew_binding.status == "pending_portal"
-    assert not _has_canary(caplog.text)
+    _logs_clean(caplog)
     _sweep_files(tmp_path)
     _spans_and_baggage_clean()
 
@@ -216,13 +244,16 @@ async def test_full_mode_sends_only_in_metadata_and_exposes_binding(
 @pytest.mark.asyncio
 async def test_content_less_final_body_has_no_declaration(wire, tmp_path, caplog):
     caplog.set_level(logging.DEBUG)
-    await _create(_client(), _request(content_less=cl.ContentLessOptions(enabled=True)))
+    result = await _create(
+        _client(), _request(content_less=cl.ContentLessOptions(enabled=True))
+    )
+    assert result.crew_binding.status == "unknown"  # backend said pending_portal
     body = wire[-1]
     assert "capabilities" in body  # premise: this is the content-less shape
     assert "crew_declaration" not in body["metadata"]
     assert not _has_canary(body)
-    assert not _has_canary(caplog.text)
     assert caplog.text.count(NOT_SENT_MESSAGE) == 1
+    _logs_clean(caplog)
     _sweep_files(tmp_path)
     _spans_and_baggage_clean()
 
@@ -230,11 +261,12 @@ async def test_content_less_final_body_has_no_declaration(wire, tmp_path, caplog
 @pytest.mark.asyncio
 async def test_optimization_only_final_body_has_no_declaration(wire, tmp_path, caplog):
     caplog.set_level(logging.DEBUG)
-    await _create(_client(optimization_only=True), _request())
+    result = await _create(_client(optimization_only=True), _request())
+    assert result.crew_binding.status == "unknown"
     body = wire[-1]
     assert not _has_canary(body)
     assert caplog.text.count(NOT_SENT_MESSAGE) == 1
-    assert not _has_canary(caplog.text)
+    _logs_clean(caplog)
     _sweep_files(tmp_path)
     _spans_and_baggage_clean()
 
@@ -245,12 +277,13 @@ async def test_legacy_contract_final_body_has_no_declaration(
 ):
     monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
     caplog.set_level(logging.DEBUG)
-    await _create(_client(), _request())
+    result = await _create(_client(), _request())
+    assert result.crew_binding.status == "unknown"
     body = wire[-1]
     assert "problem_statement" in body  # premise: the legacy shape was sent
     assert not _has_canary(body)
     assert caplog.text.count(NOT_SENT_MESSAGE) == 1
-    assert not _has_canary(caplog.text)
+    _logs_clean(caplog)
     _sweep_files(tmp_path)
     _spans_and_baggage_clean()
 
@@ -304,3 +337,46 @@ def test_direct_client_optimization_only_strips(caplog):
     assert not _has_canary(payload)
     assert caplog.text.count(NOT_SENT_MESSAGE) == 1
     assert not _has_canary(caplog.text)
+
+
+@pytest.mark.asyncio
+async def test_undeclared_request_ignores_a_backend_binding(wire):
+    result = await _create(_client(), _request(crew_declaration=None))
+    assert "crew_declaration" not in wire[-1]["metadata"]
+    assert result.crew_binding.status == "unknown"
+
+
+async def _direct_create(request: SessionCreationRequest, **attrs: Any):
+    from traigent.cloud.client import TraigentCloudClient
+
+    client: Any = object.__new__(TraigentCloudClient)
+    client._ensure_owner_metadata = lambda metadata: metadata or {}
+    client._raise_if_backend_egress_disabled = lambda *_a, **_k: None
+    client._ensure_session = AsyncMock(return_value=None)
+    client._get_headers = AsyncMock(return_value={})
+    client.api_base_url = URL
+    client._aio_session = _Wire()
+    client._remember_session_owner = lambda *_a, **_k: None
+    client._remember_cost_budget_armed_session = lambda *_a, **_k: None
+    for name, value in attrs.items():
+        setattr(client, name, value)
+    return await TraigentCloudClient.create_optimization_session(client, request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("request_overrides", "attrs", "sent"),
+    [
+        ({}, {}, True),
+        ({"content_less": cl.ContentLessOptions(enabled=True)}, {}, False),
+        ({}, {"optimization_only": True}, False),
+        ({"crew_declaration": None}, {}, False),
+    ],
+    ids=["full", "content_less", "optimization_only", "undeclared"],
+)
+async def test_direct_client_binding_follows_the_send_decision(
+    wire, request_overrides, attrs, sent
+):
+    result = await _direct_create(_request(**request_overrides), **attrs)
+    assert ("crew_declaration" in wire[-1]["metadata"]) is sent
+    assert result.crew_binding.status == ("pending_portal" if sent else "unknown")

@@ -139,6 +139,12 @@ def crew_declaration_to_wire(
     return {DECLARATION_METADATA_KEY: declaration.to_wire()}
 
 
+def crew_declaration_in_body(body: Any) -> bool:
+    """True only when the final outgoing session body carries a declaration."""
+    metadata = body.get("metadata") if isinstance(body, dict) else None
+    return isinstance(metadata, dict) and DECLARATION_METADATA_KEY in metadata
+
+
 def parse_crew_binding(raw: Any) -> CrewBinding:
     """Read the response ``crew_binding`` against the closed binding schema.
 

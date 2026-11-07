@@ -48,9 +48,12 @@ from traigent.utils.artifact_fingerprints import (
     fingerprint_meta_to_wire,
 )
 from traigent.utils.crew_declaration import (
-    crew_declaration_to_wire,
-    parse_crew_binding,
+    UNKNOWN_BINDING,
 )
+from traigent.utils.crew_declaration import (
+    crew_declaration_in_body as _crew_declaration_in_body,
+)
+from traigent.utils.crew_declaration import crew_declaration_to_wire, parse_crew_binding
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.error_handler import OfflineModeError
 from traigent.utils.error_handler import TraigentError as HelpfulTraigentError
@@ -1878,6 +1881,9 @@ class TraigentCloudClient(BaseTraigentClient):
                 request_data,
                 explicit=oo_egress.policy_of(self, headers, url),
             )
+            # The send decision, read off the final body: a binding is only
+            # honoured when a declaration actually went out.
+            crew_declaration_sent = _crew_declaration_in_body(request_data)
             async with self._aio_session.post(
                 url, json=request_data, headers=headers
             ) as response:
@@ -1896,6 +1902,8 @@ class TraigentCloudClient(BaseTraigentClient):
                                 policy=oo_egress.policy_of(self, headers, url),
                             )
                     result = self._deserialize_session_response(data)
+                    if not crew_declaration_sent:
+                        result.crew_binding = UNKNOWN_BINDING
                     oo_egress.register_session_objectives(
                         result.session_id, declared_metrics
                     )

@@ -62,9 +62,12 @@ from traigent.utils.artifact_fingerprints import (
     fingerprint_meta_to_wire,
 )
 from traigent.utils.crew_declaration import (
-    crew_declaration_to_wire,
-    parse_crew_binding,
+    UNKNOWN_BINDING,
 )
+from traigent.utils.crew_declaration import (
+    crew_declaration_in_body as _crew_declaration_in_body,
+)
+from traigent.utils.crew_declaration import crew_declaration_to_wire, parse_crew_binding
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.logging import get_logger
@@ -1008,6 +1011,9 @@ class ApiOperations:
                 payload,
                 explicit=oo_egress.policy_of(self.client, headers, url),
             )
+            # The send decision, read off the final body: a binding is only
+            # honoured when a declaration actually went out.
+            crew_declaration_sent = _crew_declaration_in_body(payload)
 
             async with session.post(
                 url,
@@ -1022,6 +1028,8 @@ class ApiOperations:
                         )
                     else:
                         parsed = await self._parse_session_response(response)
+                    if not crew_declaration_sent:
+                        parsed.crew_binding = UNKNOWN_BINDING
                     self._remember_session_objectives(parsed, declared_metrics)
                     return parsed
 
