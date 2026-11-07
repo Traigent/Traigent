@@ -38,6 +38,13 @@ pytestmark = pytest.mark.backend_online
 
 CANARY_CREW = "canary-crew-7f3a91"
 CANARY_ROLE = "canary role 7f3a91 (triage)"
+CREW_ID = "crew_" + "ab" * 16
+BOUND_IDS = {
+    "crew_id": CREW_ID,
+    "role_id": "crol_" + "cd" * 16,
+    "role_token": "rtk_abcdefghijklmnopqrstuvwxyz",  # pragma: allowlist secret
+    "crew_revision_id": "crev_" + "ef" * 16,
+}
 
 
 def _request(**kwargs: Any) -> SessionCreationRequest:
@@ -179,16 +186,83 @@ class TestResponse:
         binding = parse_crew_binding(
             {
                 "status": "bound",
-                "crew_id": "crew_1",
-                "role_id": "role_1",
-                "role_token": "tok",
-                "crew_revision_id": "rev_1",
+                **BOUND_IDS,
                 "revision_no": 2,
-                "crew_key": CANARY_CREW,
             }
         )
         assert binding.status == "bound" and binding.revision_no == 2
+        assert binding.crew_id == BOUND_IDS["crew_id"]
         assert CANARY_CREW not in repr(binding)
+
+    def test_extra_field_such_as_a_name_is_unknown(self):
+        raw = {
+            "status": "bound",
+            **BOUND_IDS,
+            "revision_no": 2,
+            "crew_key": CANARY_CREW,
+        }
+        assert parse_crew_binding(raw) == UNKNOWN_BINDING
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            {"status": "bound", **BOUND_IDS},  # revision_no missing
+            {"status": "bound", "crew_id": CREW_ID, "revision_no": 1},  # ids missing
+            {"status": "bound", **BOUND_IDS, "revision_no": 0},
+            {"status": "bound", **BOUND_IDS, "revision_no": True},
+            {"status": "bound", **{**BOUND_IDS, "crew_id": "crew_1"}, "revision_no": 1},
+            {"status": "bound", **{**BOUND_IDS, "role_token": "tok"}, "revision_no": 1},
+            {
+                "status": "bound",
+                **{**BOUND_IDS, "crew_id": CREW_ID + "\n"},
+                "revision_no": 1,
+            },
+            {
+                "status": "bound",
+                **{**BOUND_IDS, "role_id": CANARY_ROLE},
+                "revision_no": 1,
+            },
+            {"status": "pending_portal", **BOUND_IDS, "revision_no": 1},
+            {"status": "conflict", "role_id": BOUND_IDS["role_id"]},
+            {"status": "disabled", "crew_id": CREW_ID},
+            {"status": "unknown", "crew_id": CREW_ID},
+        ],
+    )
+    def test_malformed_binding_is_unknown(self, raw):
+        assert parse_crew_binding(raw) == UNKNOWN_BINDING
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            {"status": "pending_portal"},
+            {"status": "pending_portal", "crew_id": CREW_ID},
+            {"status": "conflict", "crew_id": CREW_ID},
+            {"status": "disabled"},
+            {"status": "unknown"},
+        ],
+    )
+    def test_valid_non_bound_statuses_are_kept(self, raw):
+        assert parse_crew_binding(raw).status == raw["status"]
+
+    def test_repr_has_status_and_ids_only(self):
+        text = repr(parse_crew_binding({"status": "conflict", "crew_id": CREW_ID}))
+        assert "conflict" in text and CREW_ID in text
+        assert CANARY_CREW not in text
+
+    def test_direct_client_response_exposes_binding(self):
+        client = object.__new__(TraigentCloudClient)
+        data = {
+            "session_id": "s",
+            "status": "active",
+            "crew_binding": {"status": "pending_portal", "crew_id": CREW_ID},
+        }
+        assert (
+            client._deserialize_session_response(data).crew_binding.crew_id == CREW_ID
+        )
+        data.pop("crew_binding")
+        assert (
+            client._deserialize_session_response(data).crew_binding.status == "unknown"
+        )
 
     @pytest.mark.asyncio
     async def test_session_response_exposes_binding(self):
@@ -197,12 +271,12 @@ class TestResponse:
             return_value={
                 "session_id": "s",
                 "metadata": {"experiment_id": "e", "experiment_run_id": "r"},
-                "crew_binding": {"status": "pending_portal", "crew_id": "crew_1"},
+                "crew_binding": {"status": "pending_portal", "crew_id": CREW_ID},
             }
         )
         parsed = await ApiOperations(Mock())._parse_session_response(response)
         assert parsed.crew_binding.status == "pending_portal"
-        assert parsed.crew_binding.crew_id == "crew_1"
+        assert parsed.crew_binding.crew_id == CREW_ID
 
     @pytest.mark.asyncio
     async def test_older_backend_reads_unknown(self):
@@ -327,6 +401,10 @@ class TestOptimizedFunctionBinding:
         agent._adopt_crew_binding(Mock(crew_binding=None))
         assert agent.crew_binding.status == "unknown"
         agent._adopt_crew_binding(
-            Mock(crew_binding=parse_crew_binding({"status": "bound", "crew_id": "x"}))
+            Mock(
+                crew_binding=parse_crew_binding(
+                    {"status": "bound", **BOUND_IDS, "revision_no": 1}
+                )
+            )
         )
         assert agent.crew_binding.status == "bound"

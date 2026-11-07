@@ -605,6 +605,7 @@ class ApiOperations:
             f"contract is deprecated. {_LEGACY_SESSION_CONTRACT_DEPRECATION}",
             stacklevel=4,
         )
+        crew_declaration_to_wire(session_request, send=False)
         legacy_payload = self._build_legacy_session_payload(
             session_request,
             max_trials_value,
@@ -704,8 +705,13 @@ class ApiOperations:
                 f"{_LEGACY_SESSION_CONTRACT_DEPRECATION}",
                 stacklevel=3,
             )
+            crew_declaration_to_wire(session_request, send=False)
             return self._build_legacy_session_payload(session_request, max_trials)
         return self._build_typed_session_payload(session_request, max_trials)
+
+    def _optimization_only_active(self) -> bool:
+        """True when the effective optimization_only policy applies to this client."""
+        return bool(oo_egress.is_active(oo_egress.policy_of(self.client)))
 
     def _build_content_less_session_payload(
         self,
@@ -721,7 +727,9 @@ class ApiOperations:
         or write). The cache context for the response is parked on ``self`` for
         ``_post_session_creation`` (consumed once, then cleared).
         """
-        payload = self._build_typed_session_payload(session_request, max_trials)
+        payload = self._build_typed_session_payload(
+            session_request, max_trials, send_crew=False
+        )
         local_keys = content_less_session.local_keys_for(
             session_request, payload.get("metadata") or {}
         )
@@ -779,7 +787,11 @@ class ApiOperations:
         return normalize_typed_objectives(objectives)
 
     def _build_typed_session_payload(
-        self, session_request: SessionCreationRequest, max_trials: int
+        self,
+        session_request: SessionCreationRequest,
+        max_trials: int,
+        *,
+        send_crew: bool = True,
     ) -> dict[str, Any]:
         """The typed interactive-session contract (TraigentSchema sdk_tuning):
         function_name + configuration_space + objectives at top level select
@@ -825,7 +837,15 @@ class ApiOperations:
         # deliberately NOT mirrored into _build_legacy_session_payload.
         payload.update(session_dataset_identity_to_wire(session_request))
         payload.update(session_content_identity_to_wire(session_request))
-        payload["metadata"].update(crew_declaration_to_wire(session_request))
+        # Only the standard typed path carries a declaration: content-less and
+        # optimization_only sessions never send it (stripped here, before the body
+        # is built).
+        payload["metadata"].update(
+            crew_declaration_to_wire(
+                session_request,
+                send=send_crew and not self._optimization_only_active(),
+            )
+        )
 
         # CHOKE POINT (review round 2): the allowlist serializer runs on the
         # actual request body, not only on the orchestrator path — a direct

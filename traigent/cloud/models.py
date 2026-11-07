@@ -838,6 +838,8 @@ class SessionCreationResponse:
     estimated_duration: float | None = None
     billing_estimate: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Closed crew binding (status + ids only); ``unknown`` when absent or malformed.
+    crew_binding: Any = None
 
 
 @dataclass

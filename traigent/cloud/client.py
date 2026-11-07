@@ -47,7 +47,10 @@ from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
 )
-from traigent.utils.crew_declaration import crew_declaration_to_wire
+from traigent.utils.crew_declaration import (
+    crew_declaration_to_wire,
+    parse_crew_binding,
+)
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.error_handler import OfflineModeError
 from traigent.utils.error_handler import TraigentError as HelpfulTraigentError
@@ -2191,7 +2194,13 @@ class TraigentCloudClient(BaseTraigentClient):
         # typed builder emits the identical fields.
         payload.update(session_dataset_identity_to_wire(request))
         payload.update(session_content_identity_to_wire(request))
-        payload["metadata"].update(crew_declaration_to_wire(request))
+        # Standard typed path only: content-less and optimization_only never send it.
+        from traigent.cloud import content_less as _content_less
+
+        send_crew = not _content_less.is_enabled(
+            _content_less.options_of(request)
+        ) and not oo_egress.is_active(oo_egress.policy_of(self))
+        payload["metadata"].update(crew_declaration_to_wire(request, send=send_crew))
         if request.budget is not None:
             payload["budget"] = request.budget
         if request.constraints is not None:
@@ -2250,6 +2259,7 @@ class TraigentCloudClient(BaseTraigentClient):
             estimated_duration=data.get("estimated_duration"),
             billing_estimate=data.get("billing_estimate"),
             metadata=data.get("metadata", {}),
+            crew_binding=parse_crew_binding(data.get("crew_binding")),
         )
 
     def _serialize_next_trial_request(
