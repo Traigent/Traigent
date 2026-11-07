@@ -68,11 +68,13 @@ class TestTOSTEquivalenceTest:
         with pytest.raises(ValueError, match="empty samples"):
             tost_equivalence_test([], band)
 
-    def test_single_sample_inside_band(self) -> None:
-        """Single sample inside band shows equivalent."""
+    def test_single_sample_inside_band_is_inconclusive(self) -> None:
+        """Regression: one sample inside the band must NOT claim equivalence."""
         band = BandTarget(low=0.8, high=0.95)
         result = tost_equivalence_test([0.87], band)
-        assert result.is_equivalent is True
+        assert result.is_equivalent is False
+        assert result.p_lower == 1.0
+        assert result.p_upper == 1.0
         assert result.sample_size == 1
 
     def test_single_sample_outside_band(self) -> None:
@@ -85,17 +87,17 @@ class TestTOSTEquivalenceTest:
         """n=1 edge case: sample exactly at lower bound."""
         band = BandTarget(low=0.8, high=0.95)
         result = tost_equivalence_test([0.8], band)
-        # At the bound, considered inside
-        assert result.is_equivalent is True
+        # n=1 never claims equivalence, even at/inside the bound
+        assert result.is_equivalent is False
         assert result.sample_size == 1
         assert result.sample_std == 0.0  # No variance with n=1
-        assert result.confidence_interval == (0.8, 0.8)  # Degenerate CI
+        assert result.confidence_interval is None  # no variance estimate
 
     def test_n1_edge_case_at_upper_bound(self) -> None:
         """n=1 edge case: sample exactly at upper bound."""
         band = BandTarget(low=0.8, high=0.95)
         result = tost_equivalence_test([0.95], band)
-        assert result.is_equivalent is True
+        assert result.is_equivalent is False
         assert result.sample_size == 1
 
     def test_n1_edge_case_just_outside_lower(self) -> None:
@@ -125,9 +127,8 @@ class TestTOSTEquivalenceTest:
         # P-values should be valid (0 <= p <= 1)
         assert 0.0 <= result.p_lower <= 1.0
         assert 0.0 <= result.p_upper <= 1.0
-        # Confidence interval should be a degenerate point for n=1
-        assert len(result.confidence_interval) == 2
-        assert result.confidence_interval[0] == result.confidence_interval[1]
+        # No variance estimate with n=1, so no confidence interval is claimed
+        assert result.confidence_interval is None
 
     def test_samples_clearly_inside_band(self) -> None:
         """Samples clearly inside band show equivalence."""

@@ -8,10 +8,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `traigent.tvl.evidence_bundle`: write an offline JSON evidence bundle for one promotion decision (policy, paired scores under per-bundle-salted opaque ids, dataset hash, evaluator, strict/fallback flags, decision statistics, SHA-256 manifest) and recompute it with `replay_evidence_bundle` or `python -m traigent.tvl.evidence_bundle replay BUNDLE.json [--expect-sha256 DIGEST]`. The manifest is an integrity check, not provenance. Identifiers are validated and prose is rejected at build time. Strict (no-fallback) mode is opted into with `promotion_policy.require_calibration.enabled`.
 - Documentation: a guide, "Block destructive tool calls with local guards" (`docs/guides/local-guards.md`), and a runnable example (`examples/advanced/local-guards/`) for `LocalGuardSet`, `guarded` and `LocalGuardError` from `traigent.runtime`.
 
 ### Fixed
 
+- `tost_equivalence_test` no longer claims equivalence from a single sample: with n < 2 the result is inconclusive (`is_equivalent=False`, p-values 1.0, no confidence interval). A banded objective with one candidate sample is still rejected, now with verdict `insufficient_evidence` instead of `out_of_band`.
 - A blank or whitespace-only `TRAIGENT_RUN_COST_LIMIT` now means "unset": the default limit applies silently instead of logging a misleading "Invalid TRAIGENT_RUN_COST_LIMIT=''" warning. Non-blank unparseable values still warn.
 - **A scorer exception is a failed trial with its spend, not an "unpriced call" (#2852).** When an objective metric raises, the rows already ran: the failed trial now keeps the spend they measured instead of reporting none, so the run no longer aborts with `Cost extraction failed ... unpriced call` and the budget counts that spend.
 - **OpenRouter responses are priced at the requested id (#2854).** OpenRouter reports `response.model` without the `openrouter/` prefix, and some of those bare ids (`anthropic/claude-haiku-4.5`, `meta-llama/llama-3.3-70b-instruct`, `mistralai/mistral-small-3.2-24b-instruct`) have no price. A call requested through OpenRouter now falls back to the prefixed id, then the requested id, before the "Unknown model ... returning zero cost" warning fires, so a correctly priced run no longer sends users to custom pricing.
