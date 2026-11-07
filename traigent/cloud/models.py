@@ -740,6 +740,10 @@ class SessionCreationRequest:
     # ``optimize(content_less=..., agent_ref=..., environment=...)``. ``None`` = the
     # legacy request, byte for byte, unless TRAIGENT_CONTENT_LESS opts the process in.
     content_less: Any = None
+    # Crew declaration (``CrewDeclaration`` from ``optimize(crew=..., role=...)``).
+    # Content: serialized ONLY as ``metadata.crew_declaration`` on the wire, never into
+    # ``metadata`` here, so no local record, active-session mirror or log carries it.
+    crew_declaration: Any = None
     # ecd1 digest of the user-code scorer that actually runs (wire form
     # ``sha256:<64 hex>``); see ``effective_evaluator_code_identity``. Identifies,
     # never validates. Typed/v2 shape only; content-less drops it.

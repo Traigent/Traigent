@@ -3,6 +3,7 @@
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-ORCH-LIFECYCLE REQ-CLOUD-009 REQ-ORCH-003 SYNC-CloudHybrid
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -30,6 +31,8 @@ class SessionContext:
         head_capture_refusal: Closed code (``HeadRefusalCode`` value) when a
             content-less run could not capture its head at start; a later publish
             is then refused locally
+        crew_binding: Closed crew binding result (status and ids only) when a crew
+            was declared; None otherwise
     """
 
     session_id: str | None
@@ -43,3 +46,4 @@ class SessionContext:
     agent_ref: str | None = None
     content_less: bool = False
     head_capture_refusal: str | None = None
+    crew_binding: Any = None

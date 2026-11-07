@@ -61,6 +61,10 @@ from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
 )
+from traigent.utils.crew_declaration import (
+    crew_declaration_to_wire,
+    parse_crew_binding,
+)
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.logging import get_logger
@@ -135,6 +139,7 @@ class TraigentSessionApiResult(tuple):
     agent_id: str | None
     agent_ref: str | None
     content_less: bool
+    crew_binding: Any
 
     def __new__(
         cls,
@@ -148,8 +153,10 @@ class TraigentSessionApiResult(tuple):
         agent_id: str | None = None,
         agent_ref: str | None = None,
         content_less: bool = False,
+        crew_binding: Any = None,
     ):
         obj = super().__new__(cls, (session_id, experiment_id, experiment_run_id))
+        obj.crew_binding = crew_binding
         obj.agent_id = agent_id
         obj.agent_ref = agent_ref
         obj.content_less = content_less
@@ -818,6 +825,7 @@ class ApiOperations:
         # deliberately NOT mirrored into _build_legacy_session_payload.
         payload.update(session_dataset_identity_to_wire(session_request))
         payload.update(session_content_identity_to_wire(session_request))
+        payload["metadata"].update(crew_declaration_to_wire(session_request))
 
         # CHOKE POINT (review round 2): the allowlist serializer runs on the
         # actual request body, not only on the orchestrator path — a direct
@@ -1083,6 +1091,9 @@ class ApiOperations:
             ),
             agent_ref=issued_refs.get("agent"),
             content_less=content_less_ctx is not None,
+            # Closed status + ids only; a missing or unrecognised field (older
+            # backend) reads as status "unknown".
+            crew_binding=parse_crew_binding(result.get("crew_binding")),
         )
         if issued_refs:
             cast(Any, parsed).content_less_refs = issued_refs

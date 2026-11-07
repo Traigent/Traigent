@@ -47,6 +47,7 @@ from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
 )
+from traigent.utils.crew_declaration import crew_declaration_to_wire
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.error_handler import OfflineModeError
 from traigent.utils.error_handler import TraigentError as HelpfulTraigentError
@@ -2190,6 +2191,7 @@ class TraigentCloudClient(BaseTraigentClient):
         # typed builder emits the identical fields.
         payload.update(session_dataset_identity_to_wire(request))
         payload.update(session_content_identity_to_wire(request))
+        payload["metadata"].update(crew_declaration_to_wire(request))
         if request.budget is not None:
             payload["budget"] = request.budget
         if request.constraints is not None:

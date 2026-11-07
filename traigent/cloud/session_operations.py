@@ -360,6 +360,7 @@ def _session_request(
     evaluator_id_source = context["evaluator_id_source"]
     content_identity = context["content_identity"]
     content_less = context["content_less"]
+    crew_declaration = context["crew_declaration"]
     evaluator_code_digest = context["evaluator_code_digest"]
     snapshot_g1_required = context["snapshot_g1_required"]
     snapshot_g1_deadline_days = context["snapshot_g1_deadline_days"]
@@ -413,6 +414,7 @@ def _session_request(
         task_type=task_type,
         dataset_id=dataset_id,
         content_less=content_less,
+        crew_declaration=crew_declaration,
         evaluator_code_digest=evaluator_code_digest,
         snapshot_g1_required=snapshot_g1_required is True,
         snapshot_g1_deadline_days=snapshot_g1_deadline_days,
@@ -588,6 +590,7 @@ def _complete_session_creation(
         agent_id=bound_agent_id,
         agent_ref=bound_agent_ref,
         content_less=session_content_less,
+        crew_binding=getattr(session_api_result, "crew_binding", None),
     )
 
 
@@ -1097,6 +1100,7 @@ class SessionOperations:
         evaluator_id_source: EvaluatorIdSource | None = None,
         content_identity: dict[str, Any] | None = None,
         content_less: Any = None,
+        crew_declaration: Any = None,
         evaluator_code_digest: str | None = None,
         snapshot_g1_required: bool = False,
         snapshot_g1_deadline_days: int | None = None,
@@ -1172,6 +1176,7 @@ class SessionOperations:
             "content_identity": content_identity,
             "content_less": content_less,
             "cost_limit": cost_limit,
+            "crew_declaration": crew_declaration,
             "dataset_id": dataset_id,
             "default_config": default_config,
             "evaluator_code_digest": evaluator_code_digest,
