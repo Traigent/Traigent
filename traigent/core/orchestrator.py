@@ -679,6 +679,10 @@ class OptimizationOrchestrator:
         self._agent_key: str | None = kwargs.pop("agent_key", None)
         # Content-less session options (group 1); None unless optimize() set them.
         self._content_less: Any = kwargs.pop("content_less", None)
+        # Crew declaration (set by OptimizedFunction; content, session metadata only)
+        # and the closed binding the backend answered with.
+        self.crew_declaration: Any = None
+        self.crew_binding: Any = None
         # Best-config environment whose agent head is captured at step start,
         # and the promotion precondition captured for the current run.
         self.head_environment: str | None = None
@@ -3779,7 +3783,13 @@ class OptimizationOrchestrator:
             dataset_id=getattr(self, "dataset_id", None),
             **head_environment_kwargs,
             **({"content_less": self._content_less} if self._content_less else {}),
+            **(
+                {"crew_declaration": self.crew_declaration}
+                if self.crew_declaration is not None
+                else {}
+            ),
         )
+        self.crew_binding = getattr(session_context, "crew_binding", None)
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
         self._promotion_precondition = self._promotion_precondition_from(

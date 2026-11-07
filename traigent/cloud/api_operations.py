@@ -61,6 +61,18 @@ from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
 )
+from traigent.utils.crew_declaration import (
+    SESSION_CREATE_REDIRECT_REFUSED as _SESSION_CREATE_REDIRECT_REFUSED,
+)
+from traigent.utils.crew_declaration import UNKNOWN_BINDING
+from traigent.utils.crew_declaration import (
+    crew_declaration_in_body as _crew_declaration_in_body,
+)
+from traigent.utils.crew_declaration import (
+    crew_declaration_to_wire,
+    parse_crew_binding,
+    without_crew_declaration,
+)
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.logging import get_logger
@@ -135,6 +147,7 @@ class TraigentSessionApiResult(tuple):
     agent_id: str | None
     agent_ref: str | None
     content_less: bool
+    crew_binding: Any
 
     def __new__(
         cls,
@@ -148,8 +161,10 @@ class TraigentSessionApiResult(tuple):
         agent_id: str | None = None,
         agent_ref: str | None = None,
         content_less: bool = False,
+        crew_binding: Any = None,
     ):
         obj = super().__new__(cls, (session_id, experiment_id, experiment_run_id))
+        obj.crew_binding = crew_binding
         obj.agent_id = agent_id
         obj.agent_ref = agent_ref
         obj.content_less = content_less
@@ -565,7 +580,8 @@ class ApiOperations:
         # cannot carry strict mode and silently degrading would
         # launder it — RFC 0001 P7).
         if (
-            self._session_contract() != "auto"
+            getattr(typed_exc, "session_create_redirect_refused", False)
+            or self._session_contract() != "auto"
             or self._is_governed_request(session_request)
             or "capabilities" in session_payload
         ):
@@ -598,6 +614,7 @@ class ApiOperations:
             f"contract is deprecated. {_LEGACY_SESSION_CONTRACT_DEPRECATION}",
             stacklevel=4,
         )
+        crew_declaration_to_wire(session_request, send=False)
         legacy_payload = self._build_legacy_session_payload(
             session_request,
             max_trials_value,
@@ -697,8 +714,13 @@ class ApiOperations:
                 f"{_LEGACY_SESSION_CONTRACT_DEPRECATION}",
                 stacklevel=3,
             )
+            crew_declaration_to_wire(session_request, send=False)
             return self._build_legacy_session_payload(session_request, max_trials)
         return self._build_typed_session_payload(session_request, max_trials)
+
+    def _optimization_only_active(self) -> bool:
+        """True when the effective optimization_only policy applies to this client."""
+        return bool(oo_egress.is_active(oo_egress.policy_of(self.client)))
 
     def _build_content_less_session_payload(
         self,
@@ -714,7 +736,9 @@ class ApiOperations:
         or write). The cache context for the response is parked on ``self`` for
         ``_post_session_creation`` (consumed once, then cleared).
         """
-        payload = self._build_typed_session_payload(session_request, max_trials)
+        payload = self._build_typed_session_payload(
+            session_request, max_trials, send_crew=False
+        )
         local_keys = content_less_session.local_keys_for(
             session_request, payload.get("metadata") or {}
         )
@@ -772,7 +796,11 @@ class ApiOperations:
         return normalize_typed_objectives(objectives)
 
     def _build_typed_session_payload(
-        self, session_request: SessionCreationRequest, max_trials: int
+        self,
+        session_request: SessionCreationRequest,
+        max_trials: int,
+        *,
+        send_crew: bool = True,
     ) -> dict[str, Any]:
         """The typed interactive-session contract (TraigentSchema sdk_tuning):
         function_name + configuration_space + objectives at top level select
@@ -818,6 +846,17 @@ class ApiOperations:
         # deliberately NOT mirrored into _build_legacy_session_payload.
         payload.update(session_dataset_identity_to_wire(session_request))
         payload.update(session_content_identity_to_wire(session_request))
+        # Only the standard typed path carries a declaration: content-less and
+        # optimization_only sessions never send it (stripped here, before the body
+        # is built).
+        # A hand-put raw value never rides along: only the validated one is added.
+        payload["metadata"].pop("crew_declaration", None)
+        payload["metadata"].update(
+            crew_declaration_to_wire(
+                session_request,
+                send=send_crew and not self._optimization_only_active(),
+            )
+        )
 
         # CHOKE POINT (review round 2): the allowlist serializer runs on the
         # actual request body, not only on the orchestrator path — a direct
@@ -975,10 +1014,23 @@ class ApiOperations:
             timeout = cast(Any, aiohttp).ClientTimeout(total=30)
             # Final policy check + projection immediately before the send, with the
             # headers already resolved (no await between this and the transport call).
+            send_policy = oo_egress.policy_of(self.client, headers, url)
+            if oo_egress.is_active(send_policy):
+                # Per-request optimization-only egress: never a declaration.
+                payload = without_crew_declaration(payload)
             payload = oo_egress.project_for_send(
                 oo_egress.PHASE_SESSION_CREATE_AUTO,
                 payload,
-                explicit=oo_egress.policy_of(self.client, headers, url),
+                explicit=send_policy,
+            )
+            # The send decision, read off the final body: a binding is only
+            # honoured when a declaration actually went out.
+            crew_declaration_sent = _crew_declaration_in_body(payload)
+
+            # A declaration-bearing POST never follows a redirect: aiohttp keeps the
+            # body on 307/308, so the target (even cross-origin) would receive it.
+            send_options: dict[str, Any] = (
+                {"allow_redirects": False} if crew_declaration_sent else {}
             )
 
             async with session.post(
@@ -986,7 +1038,12 @@ class ApiOperations:
                 json=payload,
                 headers=headers,
                 timeout=timeout,
+                **send_options,
             ) as response:
+                if crew_declaration_sent and 300 <= response.status < 400:
+                    refused = CloudServiceError(_SESSION_CREATE_REDIRECT_REFUSED)
+                    cast(Any, refused).session_create_redirect_refused = True
+                    raise refused
                 if response.status == 201:
                     if content_less_ctx is not None:
                         parsed = await self._parse_session_response(
@@ -994,6 +1051,8 @@ class ApiOperations:
                         )
                     else:
                         parsed = await self._parse_session_response(response)
+                    if not crew_declaration_sent:
+                        parsed.crew_binding = UNKNOWN_BINDING
                     self._remember_session_objectives(parsed, declared_metrics)
                     return parsed
 
@@ -1083,6 +1142,9 @@ class ApiOperations:
             ),
             agent_ref=issued_refs.get("agent"),
             content_less=content_less_ctx is not None,
+            # Closed status + ids only; a missing or unrecognised field (older
+            # backend) reads as status "unknown".
+            crew_binding=parse_crew_binding(result.get("crew_binding")),
         )
         if issued_refs:
             cast(Any, parsed).content_less_refs = issued_refs

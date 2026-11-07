@@ -47,6 +47,18 @@ from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
 )
+from traigent.utils.crew_declaration import (
+    SESSION_CREATE_REDIRECT_REFUSED as _SESSION_CREATE_REDIRECT_REFUSED,
+)
+from traigent.utils.crew_declaration import UNKNOWN_BINDING
+from traigent.utils.crew_declaration import (
+    crew_declaration_in_body as _crew_declaration_in_body,
+)
+from traigent.utils.crew_declaration import (
+    crew_declaration_to_wire,
+    parse_crew_binding,
+    without_crew_declaration,
+)
 from traigent.utils.env_config import is_backend_offline
 from traigent.utils.error_handler import OfflineModeError
 from traigent.utils.error_handler import TraigentError as HelpfulTraigentError
@@ -1869,14 +1881,28 @@ class TraigentCloudClient(BaseTraigentClient):
             )
 
             declared_metrics = oo_egress.declared_from_session_payload(request_data)
+            send_policy = oo_egress.policy_of(self, headers, url)
+            if oo_egress.is_active(send_policy):
+                # Per-request optimization-only egress: never a declaration.
+                request_data = without_crew_declaration(request_data)
             request_data = oo_egress.project_for_send(
                 oo_egress.PHASE_SESSION_CREATE_AUTO,
                 request_data,
-                explicit=oo_egress.policy_of(self, headers, url),
+                explicit=send_policy,
+            )
+            # The send decision, read off the final body: a binding is only
+            # honoured when a declaration actually went out.
+            crew_declaration_sent = _crew_declaration_in_body(request_data)
+            # A declaration-bearing POST never follows a redirect: aiohttp keeps the
+            # body on 307/308, so the target (even cross-origin) would receive it.
+            send_options: dict[str, Any] = (
+                {"allow_redirects": False} if crew_declaration_sent else {}
             )
             async with self._aio_session.post(
-                url, json=request_data, headers=headers
+                url, json=request_data, headers=headers, **send_options
             ) as response:
+                if crew_declaration_sent and 300 <= response.status < 400:
+                    raise CloudServiceError(_SESSION_CREATE_REDIRECT_REFUSED)
                 if response.status == 201:
                     data = await response.json()
                     if content_less_ctx is not None:
@@ -1892,6 +1918,8 @@ class TraigentCloudClient(BaseTraigentClient):
                                 policy=oo_egress.policy_of(self, headers, url),
                             )
                     result = self._deserialize_session_response(data)
+                    if not crew_declaration_sent:
+                        result.crew_binding = UNKNOWN_BINDING
                     oo_egress.register_session_objectives(
                         result.session_id, declared_metrics
                     )
@@ -2190,6 +2218,15 @@ class TraigentCloudClient(BaseTraigentClient):
         # typed builder emits the identical fields.
         payload.update(session_dataset_identity_to_wire(request))
         payload.update(session_content_identity_to_wire(request))
+        # Standard typed path only: content-less and optimization_only never send it.
+        from traigent.cloud import content_less as _content_less
+
+        send_crew = not _content_less.is_enabled(
+            _content_less.options_of(request)
+        ) and not oo_egress.is_active(oo_egress.policy_of(self))
+        # A hand-put raw value never rides along: only the validated one is added.
+        payload["metadata"].pop("crew_declaration", None)
+        payload["metadata"].update(crew_declaration_to_wire(request, send=send_crew))
         if request.budget is not None:
             payload["budget"] = request.budget
         if request.constraints is not None:
@@ -2248,6 +2285,7 @@ class TraigentCloudClient(BaseTraigentClient):
             estimated_duration=data.get("estimated_duration"),
             billing_estimate=data.get("billing_estimate"),
             metadata=data.get("metadata", {}),
+            crew_binding=parse_crew_binding(data.get("crew_binding")),
         )
 
     def _serialize_next_trial_request(
