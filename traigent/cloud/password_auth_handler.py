@@ -258,7 +258,10 @@ class PasswordAuthHandler:
 
         # Import at runtime to avoid circular import
         from traigent.cloud.auth import InvalidCredentialsError
-        from traigent.cloud.resilient_client import ResilientClient
+        from traigent.cloud.resilient_client import (
+            ResilientClient,
+            single_shot_unkeyed_auth_call,
+        )
         from traigent.config.backend_config import BackendConfig
 
         try:
@@ -316,8 +319,13 @@ class PasswordAuthHandler:
                     return token_data
 
         try:
+            # Login is a non-idempotent POST with no Idempotency-Key: never
+            # replay it on an ambiguous failure (#1975).
             result = await client.execute_with_retry(
-                perform_login, operation_name="backend_authentication"
+                single_shot_unkeyed_auth_call(
+                    perform_login, passthrough=(InvalidCredentialsError, ValueError)
+                ),
+                operation_name="backend_authentication",
             )
             return cast(dict[str, Any] | None, result)
         except InvalidCredentialsError:

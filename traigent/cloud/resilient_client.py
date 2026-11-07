@@ -439,6 +439,35 @@ async def _execute_backend_request_once(
         raise NonRetryableError(_AMBIGUOUS_NO_RETRY_MESSAGE) from None
 
 
+def single_shot_unkeyed_auth_call[T](
+    operation: Callable[[], Awaitable[T]],
+    passthrough: tuple[type[BaseException], ...] = (),
+) -> Callable[[], Awaitable[T]]:
+    """Wrap a non-idempotent, unkeyed auth POST so ambiguous failures are not replayed (#1975).
+
+    Timeouts, connection resets and 5xx raise ``NonRetryableError`` with fixed
+    text (same conversion as ``_execute_backend_request_once``). Exceptions in
+    ``passthrough`` (e.g. invalid credentials) and rate limits (429, refused by
+    the server before processing) keep their original type/retry behaviour.
+    """
+
+    async def _wrapped() -> T:
+        try:
+            return await operation()
+        except passthrough:
+            raise
+        except Exception as exc:
+            if isinstance(exc, NonRetryableError):
+                raise
+            text = str(exc).lower()
+            if "429" in text or "rate limited" in text:
+                raise
+            raise NonRetryableError(_AMBIGUOUS_NO_RETRY_MESSAGE) from None
+
+    _wrapped.__name__ = getattr(operation, "__name__", "single_shot_auth_call")
+    return _wrapped
+
+
 def _raise_for_retryable_status(status: int) -> None:
     if status >= 500:
         raise RetryableError(f"Server error: HTTP {status}")

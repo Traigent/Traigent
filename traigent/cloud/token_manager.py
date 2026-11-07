@@ -350,7 +350,10 @@ class TokenManager:
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for token refresh")
 
-        from traigent.cloud.resilient_client import ResilientClient
+        from traigent.cloud.resilient_client import (
+            ResilientClient,
+            single_shot_unkeyed_auth_call,
+        )
         from traigent.config.backend_config import BackendConfig
 
         try:
@@ -391,8 +394,13 @@ class TokenManager:
                     )
 
         try:
+            # Refresh is a non-idempotent POST with no Idempotency-Key (token
+            # rotation): never replay it on an ambiguous failure (#1975).
             token_data = await client.execute_with_retry(
-                perform_refresh, operation_name="token_refresh"
+                single_shot_unkeyed_auth_call(
+                    perform_refresh, passthrough=(ValueError,)
+                ),
+                operation_name="token_refresh",
             )
 
             if not token_data:
