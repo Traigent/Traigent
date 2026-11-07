@@ -19,6 +19,7 @@ from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
 from traigent.labels.transport_gate import gate_session
+from traigent.utils.exceptions import NonRetryableError, RateLimitError
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import (
@@ -31,6 +32,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _GENERIC_REFRESH_ERROR = "Token refresh failed"
+
+
+class RefreshRejectedError(ValueError):
+    """The server explicitly rejected the refresh token (HTTP 401 / success=false).
+
+    A dedicated type so the single-shot helper can pass exactly this through;
+    any other ValueError (e.g. a JSON decode error) is an ambiguous failure.
+    """
 
 
 class TokenManager:
@@ -73,6 +82,7 @@ class TokenManager:
         self._get_credentials_fn: Any = None
         self._set_credentials_fn: Any = None
         self._cache_credentials_fn: Any = None
+        self._clear_cached_credentials_fn: Any = None
         self._auth_lock: asyncio.Lock | None = None
         # Latch-on-read hook (set by AuthManager); see APIKeyManager.read_guard.
         self.read_guard: Any = None
@@ -92,6 +102,7 @@ class TokenManager:
         auth_lock: asyncio.Lock,
         validate_key_format: Any = None,
         set_api_key_token: Any = None,
+        clear_cached_credentials: Any = None,
     ) -> None:
         """Set callback functions for credential operations.
 
@@ -102,7 +113,10 @@ class TokenManager:
             auth_lock: Lock for authentication operations
             validate_key_format: Callback to validate API key format
             set_api_key_token: Callback to set API key token
+            clear_cached_credentials: Optional sync callback that removes the
+                on-disk credentials cache (called when refresh state is invalidated)
         """
+        self._clear_cached_credentials_fn = clear_cached_credentials
         self._get_credentials_fn = get_credentials
         self._set_credentials_fn = set_credentials
         self._cache_credentials_fn = cache_credentials
@@ -208,6 +222,23 @@ class TokenManager:
             self._refresh_token_secure.clear()
             self._refresh_token_secure = None
 
+    def _invalidate_refresh_state(self) -> None:
+        """Drop the refresh token everywhere this manager holds it."""
+        from traigent.cloud.auth import AuthStatus
+
+        self.clear_tokens()
+        if self._set_credentials_fn:
+            self._set_credentials_fn(None, AuthStatus.INVALID)
+        if self._clear_cached_credentials_fn:
+            # The encrypted cache would otherwise keep (and reload) the old
+            # refresh token. Best effort: never mask the original failure.
+            try:
+                self._clear_cached_credentials_fn()
+            except Exception as exc:
+                logger.warning(
+                    "Could not clear cached credentials: %s", type(exc).__name__
+                )
+
     def schedule_refresh(self, credentials: AuthCredentials) -> None:
         """Schedule automatic token refresh.
 
@@ -272,33 +303,37 @@ class TokenManager:
             TokenExpiredError,
         )
 
-        credentials = self._get_credentials_fn() if self._get_credentials_fn else None
-        if not credentials:
-            return AuthResult(
-                success=False,
-                status=AuthStatus.INVALID,
-                error_message="No credentials available",
-            )
-
-        refresh_token_value: str | None = None
-        if self._refresh_token_secure:
-            try:
-                refresh_token_value = self._refresh_token_secure.get_value()
-            except TokenExpiredError:
-                refresh_token_value = None
-
-        if not refresh_token_value:
-            refresh_token_value = credentials.refresh_token
-
-        if not refresh_token_value:
-            return AuthResult(
-                success=False,
-                status=AuthStatus.INVALID,
-                error_message="No refresh token available",
-            )
-
         lock = self._auth_lock or asyncio.Lock()
         async with lock:
+            # Read credentials and the refresh token under the lock so a caller
+            # that waited never reuses a token an earlier refresh invalidated.
+            credentials = (
+                self._get_credentials_fn() if self._get_credentials_fn else None
+            )
+            if not credentials:
+                return AuthResult(
+                    success=False,
+                    status=AuthStatus.INVALID,
+                    error_message="No credentials available",
+                )
+
+            refresh_token_value: str | None = None
+            if self._refresh_token_secure:
+                try:
+                    refresh_token_value = self._refresh_token_secure.get_value()
+                except TokenExpiredError:
+                    refresh_token_value = None
+
+            if not refresh_token_value:
+                refresh_token_value = credentials.refresh_token
+
+            if not refresh_token_value:
+                return AuthResult(
+                    success=False,
+                    status=AuthStatus.INVALID,
+                    error_message="No refresh token available",
+                )
+
             try:
                 self._last_refresh_attempt = time.time()
 
@@ -350,7 +385,10 @@ class TokenManager:
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for token refresh")
 
-        from traigent.cloud.resilient_client import ResilientClient
+        from traigent.cloud.resilient_client import (
+            ResilientClient,
+            single_shot_unkeyed_auth_call,
+        )
         from traigent.config.backend_config import BackendConfig
 
         try:
@@ -385,15 +423,29 @@ class TokenManager:
                     json={"refresh_token": refresh_token_value},
                     headers={"Content-Type": "application/json"},
                     timeout=aiohttp.ClientTimeout(total=30),
+                    # A 307/308 would make aiohttp replay the POST (and the
+                    # refresh token) elsewhere; a 3xx is a failure (#1975).
+                    allow_redirects=False,
                 ) as response:
                     return await TokenManager._parse_jwt_refresh_response(
                         response, refresh_token_value
                     )
 
+        token_data: dict[str, Any] | None = None
         try:
-            token_data = await client.execute_with_retry(
-                perform_refresh, operation_name="token_refresh"
-            )
+            # Refresh is a non-idempotent POST with no Idempotency-Key (token
+            # rotation): never replay it on an ambiguous failure (#1975).
+            try:
+                token_data = await client.execute_with_retry(
+                    single_shot_unkeyed_auth_call(
+                        perform_refresh, passthrough=(RefreshRejectedError,)
+                    ),
+                    operation_name="token_refresh",
+                )
+            except asyncio.CancelledError:
+                # The POST may already have rotated the token server-side.
+                self._invalidate_refresh_state()
+                raise
 
             if not token_data:
                 return AuthResult(
@@ -410,15 +462,25 @@ class TokenManager:
                 self._set_credentials_fn(updated_credentials, AuthStatus.AUTHENTICATED)
             self.store_tokens(token_data)
 
-            if self.config.auto_refresh and updated_credentials.refresh_token:
-                self.schedule_refresh(updated_credentials)
-
+            # Committed: the new token is installed and usable. A later
+            # failure (auto-refresh scheduling, the cache callback) must not
+            # invalidate it, so those steps are non-fatal.
             headers: dict[str, str] = {}
             if updated_credentials.jwt_token:
                 headers["Authorization"] = f"Bearer {updated_credentials.jwt_token}"
 
-            if self.config.cache_credentials and self._cache_credentials_fn:
-                await self._cache_credentials_fn(updated_credentials)
+            try:
+                if self.config.auto_refresh and updated_credentials.refresh_token:
+                    self.schedule_refresh(updated_credentials)
+
+                if self.config.cache_credentials and self._cache_credentials_fn:
+                    await self._cache_credentials_fn(updated_credentials)
+            except Exception as post_exc:
+                logger.warning(
+                    "Post-refresh step failed after the new token was installed; "
+                    "keeping it: %s",
+                    type(post_exc).__name__,
+                )
 
             return AuthResult(
                 success=True,
@@ -429,15 +491,21 @@ class TokenManager:
             )
 
         except ValueError as exc:
-            self.clear_tokens()
-            if self._set_credentials_fn:
-                self._set_credentials_fn(None, AuthStatus.INVALID)
+            self._invalidate_refresh_state()
             return AuthResult(
                 success=False,
                 status=AuthStatus.INVALID,
                 error_message=str(exc),
             )
         except Exception as exc:
+            if token_data or isinstance(exc, NonRetryableError):
+                # Server already returned a 2xx token body (the old refresh
+                # token is consumed) or the outcome is ambiguous. Fail closed.
+                # Drop the old token so the next refresh reports "No
+                # credentials available" and the caller must re-authenticate,
+                # instead of resending a token that refresh-token-reuse
+                # detection would treat as theft.
+                self._invalidate_refresh_state()
             logger.error("Token refresh error: %s", type(exc).__name__)
             return AuthResult(
                 success=False,
@@ -450,16 +518,16 @@ class TokenManager:
         response: Any, refresh_token_value: str
     ) -> dict[str, Any]:
         if response.status == 401:
-            raise ValueError("Refresh token invalid or expired")
+            raise RefreshRejectedError("Refresh token invalid or expired")
         if response.status == 429:
             await response.text()  # drain body; do not propagate upstream content
-            raise RuntimeError("Token refresh failed with HTTP 429")
+            raise RateLimitError("Token refresh failed with HTTP 429")
         if response.status != 200:
             await response.text()  # drain body; do not propagate upstream content
             raise RuntimeError(f"Token refresh failed with HTTP {response.status}")
         data = await response.json()
         if not data.get("success"):
-            raise ValueError(_GENERIC_REFRESH_ERROR)
+            raise RefreshRejectedError(_GENERIC_REFRESH_ERROR)
 
         payload = data.get("data", {})
         if "refresh_token" not in payload or not payload["refresh_token"]:
@@ -576,9 +644,23 @@ class TokenManager:
         # clearing self credentials; if specific failure modes (e.g. 401
         # invalid_grant) should also invalidate stored credentials, that
         # behavior should be added explicitly here.
-        try:
+        from traigent.cloud.resilient_client import (
+            ResilientClient,
+            single_shot_unkeyed_auth_call,
+        )
+
+        ambiguous_status = False
+
+        async def perform_refresh() -> AuthResult | dict[str, Any]:
+            nonlocal ambiguous_status
             async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
-                async with session.post(token_url, data=data) as response:
+                async with session.post(
+                    token_url,
+                    data=data,
+                    # A 307/308 would replay the POST (and the refresh token
+                    # and client secret) elsewhere (#1975).
+                    allow_redirects=False,
+                ) as response:
                     if response.status != 200:
                         await (
                             response.text()
@@ -587,6 +669,12 @@ class TokenManager:
                             "OAuth2 token refresh failed with HTTP %s",
                             response.status,
                         )
+                        # 5xx/408 may come from a server or proxy after the
+                        # token was already rotated: ambiguous. Other 4xx are
+                        # definitive rejections.
+                        ambiguous_status = (
+                            response.status >= 500 or response.status == 408
+                        )
                         return AuthResult(
                             success=False,
                             status=AuthStatus.INVALID,
@@ -594,11 +682,38 @@ class TokenManager:
                                 f"OAuth2 token refresh failed with HTTP {response.status}"
                             ),
                         )
-                    token_data = await response.json()
-                    return await self._apply_oauth2_token_response(
-                        credentials, token_data
-                    )
+                    return cast(dict[str, Any], await response.json())
+
+        client = ResilientClient(
+            max_retries=MAX_RETRIES,
+            base_delay=1.0,
+            max_delay=10.0,
+            jitter_factor=0.1,
+        )
+        token_data: dict[str, Any] | None = None
+        try:
+            # Non-idempotent POST that may rotate the refresh token: never
+            # replay it on an ambiguous failure (#1975).
+            try:
+                outcome = await client.execute_with_retry(
+                    single_shot_unkeyed_auth_call(perform_refresh),
+                    operation_name="oauth2_token_refresh",
+                )
+            except asyncio.CancelledError:
+                # The POST may already have rotated the token server-side.
+                self._invalidate_refresh_state()
+                raise
+            if isinstance(outcome, AuthResult):
+                if ambiguous_status:
+                    self._invalidate_refresh_state()
+                return outcome
+            token_data = outcome
+            return await self._apply_oauth2_token_response(credentials, token_data)
         except Exception as exc:
+            if token_data is not None or isinstance(exc, NonRetryableError):
+                # Ambiguous outcome, or the server already consumed the old
+                # refresh token: drop it everywhere so it is never resent.
+                self._invalidate_refresh_state()
             logger.error("OAuth2 token refresh failed: %s", type(exc).__name__)
             return AuthResult(
                 success=False,

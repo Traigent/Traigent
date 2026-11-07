@@ -691,6 +691,7 @@ class AuthManager:
             set_credentials=self._set_credentials_and_status,
             cache_credentials=self._cache_credentials,
             auth_lock=self._auth_lock,
+            clear_cached_credentials=self._credential_resolver.clear_cached,
         )
 
         # Latch-on-read: every getter of a stored credential latches it first (flagged only).
