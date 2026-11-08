@@ -1172,9 +1172,20 @@ def _coerce_dataset_example_mapping(
 
 
 def _example_correlation_key(example: EvaluationExample, index: int) -> Any:
-    """Return the key used to correlate captured LLM responses for an example."""
+    """Return the key used to correlate captured LLM responses for an example.
+
+    ``None``, ``""`` and booleans are not real ids (same absent-id rule as the
+    hybrid lane, which also never accepts a bool as an id) and fall back to the
+    positional key.
+    """
     if example.metadata:
-        return example.metadata.get("example_id", f"example_{index}")
+        explicit = example.metadata.get("example_id")
+        if (
+            explicit is not None
+            and not isinstance(explicit, bool)
+            and not (isinstance(explicit, str) and explicit == "")
+        ):
+            return explicit
     return f"example_{index}"
 
 
@@ -3155,11 +3166,7 @@ class BaseEvaluator(ABC):
         execution_budget_lease: SampleBudgetLease | None = None,
     ) -> tuple[Any, str | None]:
         """Evaluate a single example in non-detailed mode with tracing."""
-        example_id = (
-            example.metadata.get("example_id", f"example_{index}")
-            if example.metadata
-            else f"example_{index}"
-        )
+        example_id = _example_correlation_key(example, index)
         start_time = time.time()
         cleanup_boundary = self._new_sample_lease_cleanup_boundary(
             sample_lease, execution_budget_lease

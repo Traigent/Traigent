@@ -943,3 +943,45 @@ class TestIntegration:
 
         # Dataset should still work
         assert len(dataset) == 10000
+
+
+class TestExampleIdAbsentAndTypeIdentity3231:
+    """#3231: null/empty ids are absent; 1 and True are distinct ids."""
+
+    @staticmethod
+    def _ex(example_id: object, i: int = 0) -> EvaluationExample:
+        return EvaluationExample(
+            input_data={"q": str(i)},
+            expected_output="x",
+            metadata={"example_id": example_id},
+        )
+
+    @pytest.mark.parametrize("absent", [None, ""])
+    def test_absent_ids_fall_back_to_position(self, absent: object) -> None:
+        ds = Dataset(examples=[self._ex(absent, 0), self._ex(absent, 1)])
+        assert len(ds.examples) == 2
+
+    def test_absent_id_from_jsonl(self, tmp_path) -> None:
+        p = tmp_path / "t.jsonl"
+        p.write_text(
+            '{"input":"a","output":"A","example_id":null}\n'
+            '{"input":"b","output":"B","example_id":null}\n'
+        )
+        assert len(Dataset.from_jsonl(str(p)).examples) == 2
+
+    @pytest.mark.parametrize("flag", [True, False])
+    def test_boolean_id_is_not_a_real_id(self, flag: bool) -> None:
+        from traigent.evaluators.base import _example_correlation_key
+
+        assert _example_correlation_key(self._ex(flag), 3) == "example_3"
+        ds = Dataset(examples=[self._ex(flag, 0), self._ex(flag, 1)])
+        assert len(ds.examples) == 2
+
+    def test_add_example_with_boolean_id(self) -> None:
+        ds = Dataset(examples=[self._ex(1, 0)])
+        ds.add_example(self._ex(True, 1))
+        assert len(ds.examples) == 2
+
+    def test_real_duplicates_still_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="Duplicate example_id 'a'"):
+            Dataset(examples=[self._ex("a", 0), self._ex("a", 1)])
