@@ -148,3 +148,159 @@ def test_langchain_openai_methods_accept_seed_and_penalties():
         params = METHOD_MAPPINGS["langchain_openai.ChatOpenAI"][method]
         for name in ("seed", "frequency_penalty", "presence_penalty"):
             assert name in params
+
+
+ANTHROPIC_RESPONSE = {
+    "id": "m",
+    "type": "message",
+    "role": "assistant",
+    "model": "x",
+    "content": [{"type": "text", "text": "hi"}],
+    "stop_reason": "end_turn",
+    "stop_sequence": None,
+    "usage": {"input_tokens": 1, "output_tokens": 1},
+}
+OPENAI_RESPONSE = {
+    "id": "c",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "x",
+    "choices": [
+        {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {"role": "assistant", "content": "hi"},
+        }
+    ],
+    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+}
+
+
+@pytest.mark.parametrize("name", ["stop", "stop_sequences"])
+def test_stop_alias_reaches_anthropic_as_stop_sequences(manager, name):
+    anthropic = pytest.importorskip("anthropic")
+    bodies: list[dict] = []
+    client = anthropic.Anthropic(
+        api_key="k", http_client=_http_client(ANTHROPIC_RESPONSE, bodies)
+    )
+    manager.activate_overrides(["anthropic.Anthropic"])
+    set_config(TraigentConfig(model="claude-sonnet-4-5", custom_params={name: ["ZZ"]}))
+    set_config_space({"model": ["claude-sonnet-4-5"], name: [["ZZ"]]})
+    try:
+        client.messages.create(
+            model="x", max_tokens=5, messages=[{"role": "user", "content": "q"}]
+        )
+    finally:
+        set_config_space(None)
+    assert bodies[0]["stop_sequences"] == ["ZZ"]
+    assert "stop" not in bodies[0]
+
+
+@pytest.mark.parametrize("name", ["stop", "stop_sequences"])
+def test_stop_alias_reaches_openai_as_stop(manager, name):
+    openai = pytest.importorskip("openai")
+    bodies: list[dict] = []
+    client = openai.OpenAI(
+        api_key="k", http_client=_http_client(OPENAI_RESPONSE, bodies)
+    )
+    manager.activate_overrides(["openai.OpenAI"])
+    set_config(TraigentConfig(model="gpt-4o-mini", custom_params={name: ["ZZ"]}))
+    set_config_space({"model": ["gpt-4o-mini"], name: [["ZZ"]]})
+    try:
+        client.chat.completions.create(
+            model="x", messages=[{"role": "user", "content": "q"}]
+        )
+    finally:
+        set_config_space(None)
+    assert bodies[0]["stop"] == ["ZZ"]
+    assert "stop_sequences" not in bodies[0]
+
+
+@pytest.mark.parametrize("method", ["invoke", "ainvoke"])
+def test_langchain_openai_request_body_gets_seed_penalties_stop(manager, method):
+    import asyncio
+
+    pytest.importorskip("langchain_openai")
+    from langchain_openai import ChatOpenAI
+
+    bodies: list[dict] = []
+    sync_client = _http_client(OPENAI_RESPONSE, bodies)
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=OPENAI_RESPONSE)
+
+    async_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        api_key="k",
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+    manager.activate_overrides(["langchain_openai.ChatOpenAI"])
+    set_config(
+        TraigentConfig(
+            model="gpt-4o-mini",
+            custom_params={
+                "seed": 9,
+                "frequency_penalty": 0.5,
+                "presence_penalty": 0.4,
+                "stop": ["ZZ"],
+            },
+        )
+    )
+    set_config_space(
+        {
+            "model": ["gpt-4o-mini"],
+            "seed": [9],
+            "frequency_penalty": [0.5],
+            "presence_penalty": [0.4],
+            "stop": [["ZZ"]],
+        }
+    )
+    try:
+        if method == "invoke":
+            llm.invoke("q")
+        else:
+            asyncio.run(llm.ainvoke("q"))
+    finally:
+        set_config_space(None)
+    body = bodies[0]
+    assert body["seed"] == 9
+    assert body["frequency_penalty"] == 0.5
+    assert body["presence_penalty"] == 0.4
+    assert body["stop"] == ["ZZ"]
+
+
+def test_canonical_stop_wins_over_alias_for_every_provider(manager):
+    from traigent.integrations.mappings import METHOD_MAPPINGS
+
+    for cls, methods in METHOD_MAPPINGS.items():
+        for method, params in methods.items():
+            if "stop" in params and "stop_sequences" in params:
+                assert params.index("stop") > params.index("stop_sequences"), (
+                    cls,
+                    method,
+                )
+
+
+def test_openai_both_stop_names_send_canonical_value(manager):
+    openai = pytest.importorskip("openai")
+    bodies: list[dict] = []
+    client = openai.OpenAI(
+        api_key="k", http_client=_http_client(OPENAI_RESPONSE, bodies)
+    )
+    manager.activate_overrides(["openai.OpenAI"])
+    set_config(
+        TraigentConfig(
+            model="m", custom_params={"stop": ["A"], "stop_sequences": ["B"]}
+        )
+    )
+    set_config_space({"model": ["m"], "stop": [["A"]], "stop_sequences": [["B"]]})
+    try:
+        client.chat.completions.create(
+            model="x", messages=[{"role": "user", "content": "q"}]
+        )
+    finally:
+        set_config_space(None)
+    assert bodies[0]["stop"] == ["A"]
