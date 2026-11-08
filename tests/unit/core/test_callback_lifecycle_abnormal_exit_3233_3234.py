@@ -192,7 +192,6 @@ def test_parallel_interrupt_pairs_started_trials_3234() -> None:
 def test_preflight_failure_completion_result_is_not_running_3233(
     tmp_path, monkeypatch
 ) -> None:
-    from traigent.api.types import OptimizationStatus
     from traigent.core.orchestrator import OptimizationOrchestrator
 
     def declined(self, dataset):
@@ -210,7 +209,11 @@ def test_preflight_failure_completion_result_is_not_running_3233(
     rec = _Cap()
     with pytest.raises(Exception, match="approval declined"):
         _run(tmp_path, ValueError("unused"), rec)
-    assert seen == [OptimizationStatus.FAILED]
+    # #2960: the approval is decided before the run (and its backend session)
+    # starts, so a declined run never notifies start; start/complete stay
+    # paired (neither fires) and the worker is still closed.
+    assert seen == []
+    assert rec.ev == []
     _assert_no_leaked_threads(before)
 
 

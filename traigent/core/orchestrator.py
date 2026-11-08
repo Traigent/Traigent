@@ -3910,6 +3910,19 @@ class OptimizationOrchestrator:
             )
             experiment_display_name = function_name
 
+        # Cost approval is decided BEFORE the backend session exists (#2960): a
+        # declined approval used to raise after POST /sessions, stranding a
+        # RUNNING experiment and consuming one plan trial for a run that never
+        # started. Fail closed: any refusal propagates and no session or trial
+        # reservation is ever created.
+        try:
+            self._check_cost_approval(dataset)
+        except BaseException:
+            self._status = OptimizationStatus.FAILED
+            if not self._stop_reason:
+                self._stop_reason = "error"
+            raise
+
         # Create backend session using manager. Governance crosses the wire
         # content-free (Phase 8): the declared promotion policy and the
         # cvar summary from DECLARED bindings — never values or evidence.
@@ -6211,7 +6224,8 @@ class OptimizationOrchestrator:
         session_span: Any,
     ) -> OptimizationResult:
         """Run optimization with tracing enabled."""
-        self._check_cost_approval(dataset)
+        # Cost approval already ran in _initialize_optimization_run, before
+        # the backend session was created (#2960).
         self._apply_resume(dataset)
 
         try:
