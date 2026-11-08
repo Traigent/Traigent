@@ -190,8 +190,8 @@ def _contains_accuracy(
     },
     eval_dataset=DATASET_FILE,
     objectives=create_default_objectives(
-        ["accuracy", "cost", "response_time"],
-        orientations={"response_time": "minimize"},
+        ["accuracy", "cost", "response_time_ms"],
+        orientations={"response_time_ms": "minimize"},
     ),
     metric_functions={"accuracy": _contains_accuracy},
     offline=True,

@@ -176,8 +176,8 @@ class OptimizedChatService:
                 os.path.dirname(__file__), "production_queries.jsonl"
             ),
             objectives=create_default_objectives(
-                ["cost", "quality", "response_time"],
-                orientations={"quality": "maximize", "response_time": "minimize"},
+                ["cost", "quality", "response_time_ms"],
+                orientations={"quality": "maximize", "response_time_ms": "minimize"},
             ),
             offline=True,
             max_trials=10,
