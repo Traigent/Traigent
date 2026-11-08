@@ -25,6 +25,10 @@ _SPEND_ACCUMULATING_STATUSES = {
     TrialStatus.FAILED,
 }
 
+#: Internal marker (exact ``True``) for a trial that never started, e.g. its
+#: cost permit was denied (#2943). Only the orchestrator sets it.
+NEVER_STARTED_METADATA_KEY = "_traigent_never_started"
+
 #: Attempts that may have spent money without reaching a terminal result.
 _ATTEMPT_STATUSES = {TrialStatus.CANCELLED, TrialStatus.RUNNING}
 
@@ -97,7 +101,7 @@ class MandatoryMetricsCollector:
         cost_increment, token_increment = self._extract_cost_and_tokens(trial)
         # A trial abandoned before it started (cost permit denied, #2943) spent
         # nothing: it is not an attempt of unknown spend.
-        never_started = bool((trial.metadata or {}).get("abandoned", False))
+        never_started = (trial.metadata or {}).get(NEVER_STARTED_METADATA_KEY) is True
         attempted = trial.status in _ATTEMPT_STATUSES and not never_started
         flagged = is_cost_unmeasured(trial.metrics or {})
         if not (attempted or flagged or cost_increment > 0):

@@ -15,6 +15,7 @@ import pytest
 
 import traigent
 from traigent.api.types import TrialResult, TrialStatus
+from traigent.core.mandatory_metrics import NEVER_STARTED_METADATA_KEY
 from traigent.core.metric_registry import MetricRegistry
 from traigent.core.metrics_aggregator import aggregate_metrics
 
@@ -70,6 +71,7 @@ def test_parallel_cost_limit_reports_cost_limit_and_total() -> None:
     for trial in result.trials:
         if trial.status == TrialStatus.CANCELLED:
             assert trial.metadata.get("abandoned") is True
+            assert trial.metadata.get(NEVER_STARTED_METADATA_KEY) is True
 
 
 def _trial(status: TrialStatus, metrics: dict, metadata: dict) -> TrialResult:
@@ -88,7 +90,7 @@ def test_abandoned_never_started_trial_is_not_unmeasured_spend() -> None:
     agg = aggregate_metrics(
         [
             _trial(TrialStatus.COMPLETED, {"total_cost": 0.1}, {}),
-            _trial(TrialStatus.CANCELLED, {}, {"abandoned": True}),
+            _trial(TrialStatus.CANCELLED, {}, {NEVER_STARTED_METADATA_KEY: True}),
         ],
         MetricRegistry(),
     )
@@ -106,3 +108,39 @@ def test_started_cancelled_trial_without_cost_stays_unmeasured() -> None:
     )
     assert agg.total_cost is None
     assert agg.cost_unmeasured_trials == 1
+
+
+@pytest.mark.parametrize("marker", ["false", 1, "abandoned"])
+def test_foreign_abandoned_metadata_does_not_hide_unknown_spend(marker) -> None:
+    agg = aggregate_metrics(
+        [
+            _trial(TrialStatus.COMPLETED, {"total_cost": 0.1}, {}),
+            _trial(
+                TrialStatus.CANCELLED,
+                {},
+                {"abandoned": marker, NEVER_STARTED_METADATA_KEY: marker},
+            ),
+        ],
+        MetricRegistry(),
+    )
+    assert agg.total_cost is None
+    assert agg.cost_unmeasured_trials == 1
+
+
+@pytest.mark.asyncio
+async def test_denial_probe_distinguishes_transient_from_exhausted() -> None:
+    from types import SimpleNamespace
+
+    from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    probe = OptimizationOrchestrator._cost_budget_exhausted_after_denial
+
+    roomy = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+    assert await probe(SimpleNamespace(cost_enforcer=roomy)) is False
+    assert roomy.get_status().reserved_cost_usd == 0.0  # probe released
+
+    full = CostEnforcer(config=CostEnforcerConfig(limit=0.10))
+    permit = await full.acquire_permit_async()
+    await full.track_cost_async(0.10, permit=permit)
+    assert await probe(SimpleNamespace(cost_enforcer=full)) is True

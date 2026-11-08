@@ -86,7 +86,10 @@ from traigent.core.execution_policy_runtime import (
     unsupported_backend_smart_algorithm_message,
 )
 from traigent.core.logger_facade import LoggerFacade
-from traigent.core.mandatory_metrics import MandatoryMetricsCollector
+from traigent.core.mandatory_metrics import (
+    NEVER_STARTED_METADATA_KEY,
+    MandatoryMetricsCollector,
+)
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
 from traigent.core.metrics_aggregator import (
@@ -2922,10 +2925,14 @@ class OptimizationOrchestrator:
         log_on_success: bool,
         permit: Permit | None = None,
         submit_to_backend: bool = True,
+        scheduled_index: int | None = None,
     ) -> int:
         """Update orchestrator state after a single trial completes.
 
         Args:
+            scheduled_index: Index the trial was announced under in
+                ``on_trial_start``, when it differs from ``current_trial_index``
+                (permit-denied batch items do not advance the count, #2943).
             permit: The Permit object from permit acquisition.
                 When provided, track_cost_async uses this to release the
                 reservation exactly with single-release semantics, preventing
@@ -2981,8 +2988,11 @@ class OptimizationOrchestrator:
         if getattr(self, "_trial_complete_dispatched", None) is None:
             self._trial_complete_dispatched = set()
         self._trial_real_results: dict[int, TrialResult] = {}
-        self._trial_complete_dispatched.add(current_trial_index)
-        self._trial_real_results.pop(current_trial_index, None)
+        started_index = (
+            current_trial_index if scheduled_index is None else scheduled_index
+        )
+        self._trial_complete_dispatched.add(started_index)
+        self._trial_real_results.pop(started_index, None)
         self.callback_manager.on_trial_complete(trial_result, progress_info)
 
         if new_count % PROGRESS_LOG_INTERVAL == 0 or (
@@ -3430,9 +3440,13 @@ class OptimizationOrchestrator:
 
         The placeholder stays visible in ``trials`` but carries the ``abandoned``
         marker, so ``max_trials`` and the mandatory-cost collector ignore it
-        (it never ran, so it spent nothing). The run stops for ``cost_limit``.
+        (it never ran, so it spent nothing). Whether the run stops for
+        ``cost_limit`` is decided once the batch settles.
         """
         trial_result.metadata[_ABANDONED_TRIAL_METADATA_KEY] = True
+        trial_result.metadata[NEVER_STARTED_METADATA_KEY] = True
+        # Never collide with the id a later real trial takes at this index.
+        trial_result.trial_id = f"{trial_result.trial_id}_not_started"
         trial_result.metadata["stop_reason"] = "cost_limit"
         self._trials.append(trial_result)
         self._log_trial(trial_result)
@@ -3444,7 +3458,17 @@ class OptimizationOrchestrator:
         self.callback_manager.on_trial_complete(
             trial_result, self._get_progress_info(trial_number)
         )
-        self._stop_reason = "cost_limit"
+
+    async def _cost_budget_exhausted_after_denial(self) -> bool:
+        """Probe admission once the batch settled; True when no trial fits."""
+        enforcer = getattr(self, "cost_enforcer", None)
+        if enforcer is None:
+            return True
+        probe = await enforcer.acquire_permit_async()
+        if not probe.is_granted:
+            return True
+        await enforcer.release_permit_async(probe)
+        return False
 
     async def _process_parallel_results(
         self,
@@ -3470,6 +3494,7 @@ class OptimizationOrchestrator:
         # _handle_trial_result increments trial_count on every item, so anchor
         # synthetic cancelled/failed IDs once for contiguous batch numbering.
         batch_start = trial_count
+        denied_numbers: list[int] = []
 
         try:
             for batch_offset, (config, permitted_result, optuna_id) in enumerate(
@@ -3495,6 +3520,7 @@ class OptimizationOrchestrator:
                             batch_start + batch_offset,
                             optuna_id,
                         )
+                        denied_numbers.append(batch_start + batch_offset)
                         continue
 
                     trial_count = await self._handle_trial_result(
@@ -3506,6 +3532,7 @@ class OptimizationOrchestrator:
                         log_on_success=False,
                         permit=permit,
                         submit_to_backend=submit_to_backend,
+                        scheduled_index=batch_start + batch_offset,
                     )
                 except CloudBrainOptimizationComplete as complete:
                     if terminal_completion is None:
@@ -3535,6 +3562,12 @@ class OptimizationOrchestrator:
                 )
                 self._notify_interrupted_trial(batch_start + offset, cfg)
             raise
+        # The batch is settled: free the denied indexes so a later batch that
+        # reuses them (denied items do not advance the count) dispatches its
+        # own completion normally.
+        dispatched = getattr(self, "_trial_complete_dispatched", None)
+        if dispatched is not None:
+            dispatched.difference_update(denied_numbers)
         if terminal_completion is not None:
             raise terminal_completion
         return trial_count
@@ -3710,12 +3743,6 @@ class OptimizationOrchestrator:
             scheduled_configs, results, scheduled_optuna_ids, session_id, trial_count
         )
 
-        # #2943: a denied cost permit means the budget is spent. Mirror the
-        # sequential path: end the run with the cost_limit stop reason.
-        if any(item.result is None for item in results):
-            self._stop_reason = "cost_limit"
-            return trial_count, "break"
-
         # Phase 9: Check for batch-wide vendor errors (parallel mode)
         vendor_stop = await self._check_batch_vendor_errors(results)
         if vendor_stop:
@@ -3725,6 +3752,14 @@ class OptimizationOrchestrator:
         if getattr(self, "_execution_debit_denied", False):
             self._stop_reason = "execution_budget"
             return trial_count, "break"
+
+        # #2943: permits denied while sibling trials held reservations may be a
+        # transient shortage. Now that the batch has settled, stop for
+        # cost_limit only if the budget genuinely cannot admit another trial.
+        if any(item.result is None for item in results):
+            if await self._cost_budget_exhausted_after_denial():
+                self._stop_reason = "cost_limit"
+                return trial_count, "break"
 
         # Phase 10: Checkpoint logging
         self._maybe_log_checkpoint(trial_count)
