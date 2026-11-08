@@ -102,6 +102,24 @@ def test_ragas_runner_exits_nonzero_when_every_trial_fails(
     assert result.returncode != 0, result.stdout[-2000:]
 
 
+def test_example_symlinks_are_not_dangling() -> None:
+    tracked = subprocess.run(
+        ["git", "ls-files", "-s", "examples"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    dangling = []
+    for line in tracked:
+        meta, _, name = line.partition("\t")
+        if meta.startswith("120000"):
+            link = ROOT / name
+            if not link.exists():
+                dangling.append(name)
+    assert not dangling, dangling
+
+
 @pytest.mark.timeout(180)
 def test_ragas_with_llm_mock_fallback_metrics_complete(tmp_path: Path) -> None:
     result = _run(EXAMPLES / "advanced/ragas/with_llm/run.py", tmp_path)
