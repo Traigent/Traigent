@@ -423,7 +423,7 @@ def paired_comparison_test(
     df = max(1, n - 1)
 
     if se_diff < 1e-15:
-        return _handle_degenerate_case(mean_diff, epsilon, direction, df, n)
+        return _handle_degenerate_case(differences, epsilon, direction, df)
 
     t_stat, p_value = _compute_test_statistics(
         mean_diff, epsilon, se_diff, direction, df
@@ -460,37 +460,48 @@ def _compute_difference_stats(differences: list[float], n: int) -> tuple[float, 
 
 
 def zero_variance_sign_test_p_value(
-    n: int,
-    effect_size: float,
+    differences: Sequence[float],
     epsilon: float,
     direction: Literal["greater", "less"],
 ) -> float:
-    """One-sided exact sign-test p-value for a zero-variance difference vector.
+    """One-sided exact sign-test p-value for a (near) zero-variance sample.
 
-    When every paired difference equals the same value ``d`` the t statistic is
-    undefined (zero standard error), so a t-test cannot decide the case. The
-    exact sign test on the differences is valid instead. For ``direction ==
-    "greater"`` the null is ``P(diff > epsilon) <= 1/2`` (median difference at
-    most ``epsilon``). If ``d > epsilon`` all ``n`` pairs fall on the alternative
-    side, and under the null that happens with probability at most ``0.5**n``, so
-    ``p = 0.5**n`` is an exact (conservative) p-value that assumes only
-    independent pairs, not normality. ``"less"`` mirrors this with ``d <
-    -epsilon``. Otherwise no pair favors the alternative and ``p = 1.0``.
+    When the paired differences have no spread the t statistic is undefined
+    (zero standard error), so a t-test cannot decide the case. The exact sign
+    test is used instead. For ``direction == "greater"`` let ``k`` be the number
+    of differences strictly above ``epsilon`` (``"less"``: strictly below
+    ``-epsilon``). Under the null ``P(diff beyond epsilon) <= 1/2`` each pair is
+    on the alternative side with probability at most ``1/2``, so
+    ``p = P(Binomial(n, 1/2) >= k)`` is exact and conservative, assuming only
+    independent pairs (no normality). For a constant difference beyond epsilon
+    ``k = n`` and ``p = 0.5**n``; if ``k = 0`` then ``p = 1.0``.
 
-    The p-value is never 0: with ``n = 5`` the smallest attainable one-sided
-    value is ``0.03125`` (``0.0625`` two-sided), so a tiny sample cannot yield
-    a spuriously certain result.
+    Estimand: this tests the *median* (sign) of the differences, not the mean.
+    A zero-variance sample carries no information about the spread of the
+    population, so a mean-based claim would need extra assumptions (e.g.
+    symmetry); the sign test is the assumption-light choice and it is
+    deliberately conservative at small ``n`` (``n = 5`` cannot go below
+    ``0.03125`` one-sided, ``0.0625`` two-sided).
+
+    The result is never exactly 0: it is floored at the smallest positive float.
     """
-    reject = effect_size > epsilon if direction == "greater" else effect_size < -epsilon
-    return 0.5 ** max(1, n) if reject else 1.0
+    n = len(differences)
+    if direction == "greater":
+        k = sum(1 for d in differences if d > epsilon)
+    else:
+        k = sum(1 for d in differences if d < -epsilon)
+    if k == 0:
+        return 1.0
+    tail = sum(math.comb(n, i) for i in range(k, n + 1))
+    p = tail / (2**n)  # exact big-int ratio; no 0.5**n underflow
+    return float(min(1.0, max(p, math.ulp(0.0))))
 
 
 def _handle_degenerate_case(
-    effect_size: float,
+    differences: Sequence[float],
     epsilon: float,
     direction: Literal["greater", "less"],
     df: int,
-    n: int,
 ) -> PairedComparisonResult:
     """Decide the zero-variance case with an exact sign test.
 
@@ -498,13 +509,13 @@ def _handle_degenerate_case(
     and left ``False`` like the non-degenerate path, so callers must compare
     ``p_value`` with their own alpha.
     """
-    p_value = zero_variance_sign_test_p_value(n, effect_size, epsilon, direction)
-    reject = p_value < 1.0
+    p_value = zero_variance_sign_test_p_value(differences, epsilon, direction)
+    effect_size = sum(differences) / len(differences)
     return PairedComparisonResult(
         reject_null=False,
         p_value=p_value,
         effect_size=effect_size,
-        test_statistic=float("inf") if reject else 0.0,
+        test_statistic=float("inf") if p_value < 1.0 else 0.0,
         degrees_of_freedom=df,
     )
 

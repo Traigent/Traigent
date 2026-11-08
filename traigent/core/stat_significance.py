@@ -621,14 +621,15 @@ def _paired_t_margin(
     ``epsilon=0``) and converts to a two-sided p-value. The zero-variance case
     is decided by an exact sign test on the paired differences (the t statistic
     is undefined at zero variance): a constant non-zero difference puts all ``n``
-    pairs on one side, giving two-sided ``p = 2 * 0.5**n`` (valid under only
-    independent pairs; see
+    pairs on one side, giving two-sided ``p = 2 * 0.5**n`` (a median/sign
+    claim valid under only independent pairs; see
     :func:`~traigent.tvl.statistics.zero_variance_sign_test_p_value`), never
     ``0.0``. With few shared examples this cannot reach the multiplicity-
     corrected alpha (n=5 gives 0.0625), so the verdict is ``"statistical_tie"``
     (inconclusive) instead of ``"clear"``. An all-zero difference is a tie
-    (``p = 1.0``). The ``ci95`` point ``(d, d)`` is the sign-test interval
-    ``[min, max]``, which has confidence ``1 - 2**(1 - n)`` only.
+    (``p = 1.0``). ``ci95`` is the sign-test interval ``[min, max]`` (coverage
+    ``1 - 2**(1 - n)``) when that reaches the corrected confidence, otherwise it
+    is widened to include 0.
 
     ``effective_alpha`` is the multiplicity-corrected significance level (see
     :func:`compute_best_config_margin`). It drives BOTH the ``ci95`` interval —
@@ -646,18 +647,22 @@ def _paired_t_margin(
     # Treat float-noise spread (e.g. 0.3 - 0.25 repeated) as zero variance too.
     spread = max(abs(d - mean_diff) for d in diffs)
     if var_diff <= 0.0 or spread <= 1e-12 * max(1.0, abs(mean_diff)):
-        p_value = (
-            1.0
-            if abs(mean_diff) <= 1e-12
-            else min(
-                1.0,
-                2.0
-                * zero_variance_sign_test_p_value(
-                    n_shared, abs(mean_diff), 0.0, "greater"
-                ),
-            )
+        p_value = min(
+            1.0,
+            2.0
+            * min(
+                zero_variance_sign_test_p_value(diffs, 0.0, "greater"),
+                zero_variance_sign_test_p_value(diffs, 0.0, "less"),
+            ),
         )
-        ci: tuple[float, float] = (mean_diff, mean_diff)
+        if p_value <= effective_alpha:
+            # Sign-test interval [min, max] has coverage 1 - 2**(1 - n), which
+            # is >= 1 - effective_alpha exactly when p = 2 * 0.5**n <= alpha.
+            ci: tuple[float, float] = (min(diffs), max(diffs))
+        else:
+            # Too few pairs to bound the effect at this confidence: widen to
+            # include 0 rather than report a falsely tight interval.
+            ci = (min(0.0, min(diffs)), max(0.0, max(diffs)))
     else:
         result = paired_comparison_test(
             x_samples=winner_values,

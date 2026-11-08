@@ -468,3 +468,28 @@ class TestZeroVarianceSignTest:
 
         res = paired_comparison_test([1.1] * 30, [1.0] * 30, 0.5, "greater")
         assert res.p_value == 1.0
+
+    def test_near_zero_variance_mixed_signs_uses_actual_count(self):
+        from traigent.tvl.statistics import paired_comparison_test
+
+        x = [1e-15, 3e-15, 3e-15, 3e-15, 3e-15]
+        res = paired_comparison_test(x, [0.0] * 5, 2e-15, "greater")
+        # 4 of 5 differences exceed epsilon: P(Bin(5, .5) >= 4) = 6/32
+        assert res.p_value == 6 / 32
+
+    def test_less_direction_and_negative_epsilon(self):
+        from traigent.tvl.statistics import paired_comparison_test
+
+        res = paired_comparison_test([0.9] * 6, [1.0] * 6, 0.0, "less")
+        assert res.p_value == 0.5**6
+        # non-inferiority: diff -0.1 is NOT above -epsilon(-0.5)? it is (> -0.5)
+        res = paired_comparison_test([0.9] * 6, [1.0] * 6, -0.5, "greater")
+        assert res.p_value == 0.5**6
+        res = paired_comparison_test([0.9] * 6, [1.0] * 6, -0.05, "greater")
+        assert res.p_value == 1.0
+
+    def test_huge_n_p_value_never_zero(self):
+        from traigent.tvl.statistics import paired_comparison_test
+
+        res = paired_comparison_test([1.1] * 1100, [1.0] * 1100, 0.0, "greater")
+        assert res.p_value > 0.0

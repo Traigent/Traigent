@@ -189,8 +189,8 @@ class TestContinuousPairedT:
         This pins the ONE correct verdict for these inputs. With exactly two
         distinct configs the multiplicity correction is a no-op
         (effective_alpha == alpha), and a constant non-zero paired difference has
-        zero variance -> p_value 0.0 with a point CI at +0.001 that excludes 0 and
-        favors the winner -> "clear". (Previously this test accepted either
+        zero variance -> exact sign-test p ~ 2 * 0.5**30 with a point CI at +0.001
+        that excludes 0 and favors the winner -> "clear". (Previously this test accepted either
         "clear" or "statistical_tie", which asserted nothing.)
         """
         winner = [0.50 + 0.001 * i for i in range(30)]
@@ -763,6 +763,8 @@ class TestZeroVarianceSignTest:
         assert margin is not None
         assert margin["p_value"] == 0.0625
         assert margin["verdict"] == "statistical_tie"
+        lo, hi = margin["ci95"]
+        assert lo <= 0.0 <= hi  # no falsely tight interval when undecided
 
     def test_large_n_constant_gap_still_clear(self):
         margin = self._margin(30)
