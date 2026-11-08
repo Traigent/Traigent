@@ -298,11 +298,22 @@ class Validators:
         """Validate numeric value with optional range."""
         result = ValidationResult()
 
-        if not isinstance(value, (int, float)):
+        # bool is an int subclass (True would pass as 1) and NaN fails every
+        # comparison below, so both must be rejected explicitly.
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
             result.add_error(
                 field_name,
                 f"Expected number, got {type(value).__name__}",
                 error_code="TYPE_ERROR",
+            )
+            return result
+
+        if not math.isfinite(value):
+            result.add_error(
+                field_name,
+                f"Expected a finite number, got {value}",
+                error_code="RANGE_ERROR",
+                suggestions=["Use a finite number (not NaN or infinity)"],
             )
             return result
 
