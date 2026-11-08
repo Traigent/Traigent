@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import statistics
 from datetime import datetime
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -516,86 +516,120 @@ class TestParameterImportanceAnalyzer:
         result = analyzer.analyze_permutation_based(trials)
         assert result == {}
 
-    @patch("random.shuffle")
-    def test_analyze_permutation_based_success(
-        self,
-        mock_shuffle: Mock,
-        analyzer: ParameterImportanceAnalyzer,
-        simple_trials: list[TrialResult],
-    ) -> None:
-        """Test permutation-based analysis with valid trials."""
-        # Use fewer permutations for speed
-        result = analyzer.analyze_permutation_based(simple_trials, n_permutations=5)
-
-        assert isinstance(result, dict)
-        # Check structure of results
-        for param_result in result.values():
-            assert isinstance(param_result, ImportanceResult)
-            assert param_result.method == "permutation_based"
-            assert param_result.importance_score >= 0.0
-            assert len(param_result.confidence_interval) == 2
-
-    def test_calculate_baseline_score_empty_trials(
-        self, analyzer: ParameterImportanceAnalyzer
-    ) -> None:
-        """Test baseline score calculation with empty trials."""
-        result = analyzer._calculate_baseline_score([])
-        assert result == 0.0
-
-    def test_calculate_baseline_score_valid_trials(
-        self, analyzer: ParameterImportanceAnalyzer, simple_trials: list[TrialResult]
-    ) -> None:
-        """Test baseline score calculation with valid trials."""
-        result = analyzer._calculate_baseline_score(simple_trials)
-        assert result > 0.0
-        # Should be the mean of accuracy values
-        expected = statistics.mean([t.metrics["accuracy"] for t in simple_trials])
-        assert abs(result - expected) < 0.001
-
-    def test_permute_parameter_empty_trials(
-        self, analyzer: ParameterImportanceAnalyzer
-    ) -> None:
-        """Test parameter permutation with empty trials."""
-        result = analyzer._permute_parameter([], "param1")
-        assert result == []
-
-    def test_permute_parameter_missing_param(
-        self, analyzer: ParameterImportanceAnalyzer, simple_trials: list[TrialResult]
-    ) -> None:
-        """Test parameter permutation with missing parameter."""
-        result = analyzer._permute_parameter(simple_trials, "nonexistent_param")
-        # Should return original trials if parameter not found
-        assert len(result) == len(simple_trials)
-
-    @patch("random.shuffle")
-    def test_permute_parameter_shuffles_values(
-        self, mock_shuffle: Mock, analyzer: ParameterImportanceAnalyzer
-    ) -> None:
-        """Test parameter permutation shuffles values correctly."""
+    @staticmethod
+    def _issue_2944_trials() -> list[TrialResult]:
+        """30 trials: model drives accuracy, temperature is unique and inert."""
+        noise = [-0.02, 0.0, 0.02, 0.01, -0.01]
+        accuracy_by_model = {"small": 0.60, "large": 0.90, "medium": 0.60}
+        models = ["small", "large", "medium"]
         trials = []
-        for i in range(5):
+        for i in range(30):
+            model = models[i % 3]
             trials.append(
                 TrialResult(
                     trial_id=f"trial_{i}",
-                    config={"param1": i},
-                    metrics={"accuracy": 0.7},
+                    config={"model": model, "temperature": 0.001 * i + 0.1234},
+                    metrics={"accuracy": accuracy_by_model[model] + noise[i % 5]},
                     status=TrialStatus.COMPLETED,
                     duration=1.0,
                     timestamp=datetime.now(),
                 )
             )
+        return trials
 
-        # Mock shuffle to reverse the list
-        def reverse_shuffle(lst: list) -> None:
-            lst.reverse()
+    def test_permutation_decisive_parameter_scores_high_issue_2944(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        """A parameter that drives the objective must not get 0.0 importance."""
+        result = analyzer.analyze_permutation_based(
+            self._issue_2944_trials(), n_permutations=50
+        )
+        model = result["model"]
+        assert model.method == "permutation_based"
+        assert model.importance_score is not None
+        assert model.importance_score > 0.3
+        assert model.confidence_interval is not None
+        assert model.confidence_interval[1] > 0.0
+        assert model.not_measurable_reason is None
 
-        mock_shuffle.side_effect = reverse_shuffle
+    def test_permutation_unreplicated_parameter_is_not_measurable_issue_2944(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        """A continuous parameter unique to each trial gets None plus a reason."""
+        result = analyzer.analyze_permutation_based(
+            self._issue_2944_trials(), n_permutations=50
+        )
+        temp = result["temperature"]
+        assert temp.importance_score is None
+        assert temp.confidence_interval is None
+        assert temp.not_measurable_reason
+        assert "replication" in temp.not_measurable_reason
+        assert "not measurable" in str(temp)
 
-        result = analyzer._permute_parameter(trials, "param1")
+    def test_permutation_inert_replicated_parameter_scores_near_zero(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        """A replicated parameter with no effect is measurable and ~0."""
+        trials = self._issue_2944_trials()
+        for i, trial in enumerate(trials):
+            trial.config["seed"] = i % 2  # independent of model (i % 3)
+        result = analyzer.analyze_permutation_based(trials, n_permutations=50)
+        seed = result["seed"]
+        assert seed.importance_score is not None
+        assert seed.importance_score < 0.1
+        assert result["model"].importance_score > seed.importance_score
 
-        assert len(result) == len(trials)
-        # Values should be shuffled
-        mock_shuffle.assert_called_once()
+    def test_permutation_constant_objective_not_measurable(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        """A constant objective cannot support an importance value."""
+        trials = self._issue_2944_trials()
+        for trial in trials:
+            trial.metrics["accuracy"] = 0.5
+        result = analyzer.analyze_permutation_based(trials, n_permutations=5)
+        assert result["model"].importance_score is None
+        assert result["model"].not_measurable_reason == "objective is constant"
+
+    def test_permutation_only_scores_trials_that_set_parameter(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        """Trials lacking the parameter do not dilute its importance."""
+        trials = self._issue_2944_trials()
+        for i in range(30):
+            trials.append(
+                TrialResult(
+                    trial_id=f"extra_{i}",
+                    config={"other": i % 2},
+                    metrics={"accuracy": 0.1 * (i % 7)},
+                    status=TrialStatus.COMPLETED,
+                    duration=1.0,
+                    timestamp=datetime.now(),
+                )
+            )
+        result = analyzer.analyze_permutation_based(trials, n_permutations=50)
+        assert result["model"].sample_size == 30
+        assert result["model"].importance_score > 0.3
+
+    def test_get_top_parameters_skips_not_measurable(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        result = analyzer.analyze_permutation_based(
+            self._issue_2944_trials(), n_permutations=20
+        )
+        top = analyzer.get_top_parameters(result)
+        assert [r.parameter_name for r in top] == ["model"]
+
+    def test_report_lists_not_measurable_parameters(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        results = analyzer.analyze_permutation_based(
+            self._issue_2944_trials(), n_permutations=20
+        )
+        lines: list[str] = []
+        analyzer._format_method_results(results, lines)
+        text = "\n".join(lines)
+        assert "model" in text
+        assert "temperature" in text and "not measurable" in text
 
     def test_get_top_parameters_empty_results(
         self, analyzer: ParameterImportanceAnalyzer

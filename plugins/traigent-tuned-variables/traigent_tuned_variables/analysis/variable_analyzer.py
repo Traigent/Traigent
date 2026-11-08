@@ -313,7 +313,10 @@ class VariableAnalyzer:
             )
             analysis.variables[var_name] = var_analysis
 
-            if var_analysis.suggestion and var_analysis.suggestion.action != EliminationAction.KEEP:
+            if (
+                var_analysis.suggestion
+                and var_analysis.suggestion.action != EliminationAction.KEEP
+            ):
                 analysis.elimination_suggestions.append(var_analysis.suggestion)
 
         # Sort and finalize
@@ -500,8 +503,24 @@ class VariableAnalyzer:
 
                 # Results is dict[str, ImportanceResult], extract importance_score
                 importance = {
-                    name: result.importance_score for name, result in results.items()
+                    name: result.importance_score
+                    for name, result in results.items()
+                    if result.importance_score is not None
                 }
+
+                # A parameter the core analyzer calls "not measurable" must not
+                # fall through to the 0.0 default (which would suggest dropping
+                # it); use the simple variance estimate for those names instead.
+                unmeasurable = [
+                    name
+                    for name, result in results.items()
+                    if result.importance_score is None
+                ]
+                if unmeasurable:
+                    fallback = self._compute_variance_importance(objective)
+                    for name in unmeasurable:
+                        if name in fallback:
+                            importance[name] = fallback[name]
 
                 # If core analyzer returned no results (insufficient data), use fallback
                 if not importance:

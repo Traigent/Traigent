@@ -872,6 +872,29 @@ class TestPlotParameterImportance:
             mock_ascii.assert_called_once()
 
 
+class TestPlotParameterImportanceNotMeasurable:
+    """Unmeasurable (None) importance scores must not crash or plot as zero."""
+
+    @staticmethod
+    def _result(score: float | None) -> MagicMock:
+        result = MagicMock()
+        result.importance_score = score
+        return result
+
+    def test_mixed_results_omit_unmeasurable(self) -> None:
+        plotter = PlotGenerator(use_matplotlib=False)
+        output = plotter.plot_parameter_importance(
+            {"model": self._result(0.8), "temperature": self._result(None)}
+        )
+        assert "model" in output
+        assert "temperature" not in output
+
+    def test_all_unmeasurable(self) -> None:
+        plotter = PlotGenerator(use_matplotlib=False)
+        output = plotter.plot_parameter_importance({"temperature": self._result(None)})
+        assert output == "No measurable importance data to plot"
+
+
 class TestPlotImportanceMatplotlib:
     """Tests for _plot_importance_matplotlib method."""
 

@@ -56,6 +56,42 @@ class TestVariableAnalyzer:
 
         assert importance == {}
 
+    def test_permutation_unmeasurable_variable_gets_variance_fallback(self):
+        """A variable the permutation method cannot measure is not scored 0.0."""
+        from datetime import datetime
+
+        from traigent_tuned_variables import VariableAnalyzer
+
+        from traigent.api.types import TrialResult, TrialStatus
+
+        accuracy = {"small": 0.60, "large": 0.90, "medium": 0.60}
+        models = ["small", "large", "medium"]
+        trials = [
+            TrialResult(
+                trial_id=f"t{i}",
+                config={"model": models[i % 3], "temperature": 0.1 + 0.001 * i},
+                metrics={"accuracy": accuracy[models[i % 3]] + 0.01 * (i % 5)},
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime.now(),
+            )
+            for i in range(30)
+        ]
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={
+                "model": models,
+                "temperature": (0.0, 1.0),
+            },
+        )
+        analyzer = VariableAnalyzer(result, importance_method="permutation")
+        importance = analyzer.get_variable_importance("accuracy")
+
+        assert importance["model"] > 0.3
+        # temperature has no replicated values: permutation cannot score it,
+        # so it must come from the variance fallback rather than be absent.
+        assert "temperature" in importance
+
     def test_get_variable_importance_single_variable(self):
         """Test importance calculation with trials."""
         from traigent_tuned_variables import VariableAnalyzer
@@ -629,15 +665,21 @@ class TestMultiObjectiveAnalysis:
         analyzer = VariableAnalyzer(result)
 
         # Mean aggregation
-        analysis_mean = analyzer.analyze_multi_objective(["obj1", "obj2"], aggregation="mean")
+        analysis_mean = analyzer.analyze_multi_objective(
+            ["obj1", "obj2"], aggregation="mean"
+        )
         mean_imp = analysis_mean.variables["model"].aggregate_importance
 
         # Max aggregation (keep if important for any)
-        analysis_max = analyzer.analyze_multi_objective(["obj1", "obj2"], aggregation="max")
+        analysis_max = analyzer.analyze_multi_objective(
+            ["obj1", "obj2"], aggregation="max"
+        )
         max_imp = analysis_max.variables["model"].aggregate_importance
 
         # Min aggregation (eliminate only if unimportant for all)
-        analysis_min = analyzer.analyze_multi_objective(["obj1", "obj2"], aggregation="min")
+        analysis_min = analyzer.analyze_multi_objective(
+            ["obj1", "obj2"], aggregation="min"
+        )
         min_imp = analysis_min.variables["model"].aggregate_importance
 
         # Max should be >= mean >= min
@@ -650,11 +692,21 @@ class TestMultiObjectiveAnalysis:
         # "dominated" is worse on BOTH objectives
         trials = [
             MockTrial(config={"strategy": "good"}, metrics={"acc": 0.9, "speed": 0.8}),
-            MockTrial(config={"strategy": "good"}, metrics={"acc": 0.88, "speed": 0.85}),
-            MockTrial(config={"strategy": "good"}, metrics={"acc": 0.92, "speed": 0.82}),
-            MockTrial(config={"strategy": "dominated"}, metrics={"acc": 0.3, "speed": 0.2}),
-            MockTrial(config={"strategy": "dominated"}, metrics={"acc": 0.32, "speed": 0.22}),
-            MockTrial(config={"strategy": "dominated"}, metrics={"acc": 0.28, "speed": 0.18}),
+            MockTrial(
+                config={"strategy": "good"}, metrics={"acc": 0.88, "speed": 0.85}
+            ),
+            MockTrial(
+                config={"strategy": "good"}, metrics={"acc": 0.92, "speed": 0.82}
+            ),
+            MockTrial(
+                config={"strategy": "dominated"}, metrics={"acc": 0.3, "speed": 0.2}
+            ),
+            MockTrial(
+                config={"strategy": "dominated"}, metrics={"acc": 0.32, "speed": 0.22}
+            ),
+            MockTrial(
+                config={"strategy": "dominated"}, metrics={"acc": 0.28, "speed": 0.18}
+            ),
         ]
 
         result = MockOptimizationResult(
@@ -681,11 +733,21 @@ class TestMultiObjectiveAnalysis:
         # Trade-off: "fast" is good at speed, "accurate" is good at accuracy
         trials = [
             MockTrial(config={"strategy": "fast"}, metrics={"acc": 0.6, "speed": 0.9}),
-            MockTrial(config={"strategy": "fast"}, metrics={"acc": 0.58, "speed": 0.92}),
-            MockTrial(config={"strategy": "fast"}, metrics={"acc": 0.62, "speed": 0.88}),
-            MockTrial(config={"strategy": "accurate"}, metrics={"acc": 0.95, "speed": 0.4}),
-            MockTrial(config={"strategy": "accurate"}, metrics={"acc": 0.93, "speed": 0.42}),
-            MockTrial(config={"strategy": "accurate"}, metrics={"acc": 0.97, "speed": 0.38}),
+            MockTrial(
+                config={"strategy": "fast"}, metrics={"acc": 0.58, "speed": 0.92}
+            ),
+            MockTrial(
+                config={"strategy": "fast"}, metrics={"acc": 0.62, "speed": 0.88}
+            ),
+            MockTrial(
+                config={"strategy": "accurate"}, metrics={"acc": 0.95, "speed": 0.4}
+            ),
+            MockTrial(
+                config={"strategy": "accurate"}, metrics={"acc": 0.93, "speed": 0.42}
+            ),
+            MockTrial(
+                config={"strategy": "accurate"}, metrics={"acc": 0.97, "speed": 0.38}
+            ),
         ]
 
         result = MockOptimizationResult(
@@ -707,12 +769,27 @@ class TestMultiObjectiveAnalysis:
         from traigent_tuned_variables import VariableAnalyzer
 
         trials = [
-            MockTrial(config={"model": "good", "temp": 0.7}, metrics={"acc": 0.9, "cost": 1.0}),
-            MockTrial(config={"model": "good", "temp": 0.8}, metrics={"acc": 0.88, "cost": 1.1}),
-            MockTrial(config={"model": "good", "temp": 0.75}, metrics={"acc": 0.92, "cost": 0.9}),
-            MockTrial(config={"model": "bad", "temp": 0.1}, metrics={"acc": 0.3, "cost": 5.0}),
-            MockTrial(config={"model": "bad", "temp": 0.2}, metrics={"acc": 0.32, "cost": 4.8}),
-            MockTrial(config={"model": "bad", "temp": 0.15}, metrics={"acc": 0.28, "cost": 5.2}),
+            MockTrial(
+                config={"model": "good", "temp": 0.7}, metrics={"acc": 0.9, "cost": 1.0}
+            ),
+            MockTrial(
+                config={"model": "good", "temp": 0.8},
+                metrics={"acc": 0.88, "cost": 1.1},
+            ),
+            MockTrial(
+                config={"model": "good", "temp": 0.75},
+                metrics={"acc": 0.92, "cost": 0.9},
+            ),
+            MockTrial(
+                config={"model": "bad", "temp": 0.1}, metrics={"acc": 0.3, "cost": 5.0}
+            ),
+            MockTrial(
+                config={"model": "bad", "temp": 0.2}, metrics={"acc": 0.32, "cost": 4.8}
+            ),
+            MockTrial(
+                config={"model": "bad", "temp": 0.15},
+                metrics={"acc": 0.28, "cost": 5.2},
+            ),
         ]
 
         result = MockOptimizationResult(
@@ -736,10 +813,22 @@ class TestMultiObjectiveAnalysis:
         from traigent_tuned_variables.analysis import EliminationAction
 
         trials = [
-            MockTrial(config={"model": "good", "unused": "x"}, metrics={"acc": 0.9, "speed": 0.8}),
-            MockTrial(config={"model": "good", "unused": "y"}, metrics={"acc": 0.9, "speed": 0.8}),
-            MockTrial(config={"model": "bad", "unused": "x"}, metrics={"acc": 0.3, "speed": 0.2}),
-            MockTrial(config={"model": "bad", "unused": "y"}, metrics={"acc": 0.3, "speed": 0.2}),
+            MockTrial(
+                config={"model": "good", "unused": "x"},
+                metrics={"acc": 0.9, "speed": 0.8},
+            ),
+            MockTrial(
+                config={"model": "good", "unused": "y"},
+                metrics={"acc": 0.9, "speed": 0.8},
+            ),
+            MockTrial(
+                config={"model": "bad", "unused": "x"},
+                metrics={"acc": 0.3, "speed": 0.2},
+            ),
+            MockTrial(
+                config={"model": "bad", "unused": "y"},
+                metrics={"acc": 0.3, "speed": 0.2},
+            ),
         ]
 
         result = MockOptimizationResult(
