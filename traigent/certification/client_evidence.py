@@ -252,8 +252,12 @@ class LocalFileCustody:
     def save(self, root_hex: str, record: bytes) -> None:
         path = self._path(root_hex)
         try:
+            # Tighten only a directory this call creates; a pre-existing one
+            # (an operator-supplied --evidence-dir) keeps its permissions.
+            created = not self._directory.exists()
             self._directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            os.chmod(self._directory, 0o700)
+            if created:
+                os.chmod(self._directory, 0o700)
             fd, temp_name = tempfile.mkstemp(dir=self._directory, prefix=".evidence-")
             try:
                 os.fchmod(fd, 0o600)

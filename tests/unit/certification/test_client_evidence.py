@@ -293,11 +293,14 @@ def test_reconstruct_refuses_documents_not_derived_from_the_referenced_snapshot(
     assert caught.value.code == "EVIDENCE_STALE_OR_CORRUPT"
 
 
-def test_existing_loose_directory_is_tightened(
+def test_existing_loose_directory_keeps_its_mode(
     snapshot: ExecutionSnapshot, tmp_path: Path
 ) -> None:
     directory = tmp_path / "loose"
     directory.mkdir(mode=0o755)
     os.chmod(directory, 0o755)
     ce.build_client_evidence(snapshot, custody=ce.LocalFileCustody(directory))
-    assert stat.S_IMODE(os.stat(directory).st_mode) == 0o700
+    # #2983: a directory the SDK did not create is not chmod-ed; files stay 0600.
+    assert stat.S_IMODE(os.stat(directory).st_mode) == 0o755
+    (saved,) = list(directory.iterdir())
+    assert stat.S_IMODE(os.stat(saved).st_mode) == 0o600

@@ -28,6 +28,19 @@ def test_generate_stores_0600_and_refuses_overwrite(tmp_path: Path) -> None:
     assert ck.load_client_key(path).public_key_der_b64 == key.public_key_der_b64
 
 
+def test_existing_parent_directory_keeps_its_mode(tmp_path: Path) -> None:
+    """#2983: keygen --out ./key.json must not chmod the pre-existing cwd."""
+    parent = tmp_path / "proj"
+    parent.mkdir()
+    os.chmod(parent, 0o755)
+    path = parent / "key.json"
+    key = ck.generate_client_key(path)
+    assert stat.S_IMODE(os.stat(parent).st_mode) == 0o755
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    ck._write(path, key._document(), replace=True)  # the re-write pin() performs
+    assert stat.S_IMODE(os.stat(parent).st_mode) == 0o755
+
+
 def test_load_refuses_loose_permissions_and_garbage(tmp_path: Path) -> None:
     key = ck.generate_client_key(tmp_path / "k.json")
     os.chmod(key.path, 0o644)
