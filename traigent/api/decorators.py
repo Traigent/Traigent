@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 # bug; the alias keeps the pydantic class reachable under an unambiguous name.
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from pydantic import ValidationError as PydanticValidationError
-from pydantic import field_validator, model_validator
+from pydantic import ValidationInfo, field_validator, model_validator
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
@@ -293,10 +293,26 @@ class HybridAPIOptions(BaseModel):
     batch_size: int = Field(default=1, ge=1)
     batch_parallelism: int = Field(default=1, ge=1)
     keep_alive: bool = True
-    heartbeat_interval: float = Field(default=30.0, gt=0)
-    timeout: float | None = None
+    heartbeat_interval: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    timeout: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     auth_header: str | None = None
     auto_discover_tvars: bool = False
+
+    @field_validator(
+        "batch_size",
+        "batch_parallelism",
+        "heartbeat_interval",
+        "timeout",
+        mode="before",
+    )
+    @classmethod
+    def _reject_bool_numeric(cls, v: Any, info: ValidationInfo) -> Any:
+        # Pydantic lax mode accepts True as 1 and '5' as 5; both are typos here.
+        if isinstance(v, (bool, str)):
+            raise ValueError(
+                f"{info.field_name} must be a number, got {type(v).__name__}"
+            )
+        return v
 
 
 class ExternalServiceEvaluator(BaseModel):
