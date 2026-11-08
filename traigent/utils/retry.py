@@ -145,15 +145,11 @@ class RetryConfig:
             RetryStrategy.EXPONENTIAL,
             RetryStrategy.EXPONENTIAL_BACKOFF,
         ):
-            delay = min(
-                self.initial_delay * (self.exponential_base ** (attempt - 1)),
-                self.max_delay,
-            )
+            delay = self._exponential_delay(attempt)
         elif self.strategy in (RetryStrategy.LINEAR, RetryStrategy.LINEAR_BACKOFF):
             delay = min(self.initial_delay * attempt, self.max_delay)
         else:  # JITTER / RANDOM_JITTER
-            base_delay = self.initial_delay * (self.exponential_base ** (attempt - 1))
-            delay = min(base_delay, self.max_delay)
+            delay = self._exponential_delay(attempt)
 
         # Add jitter if enabled
         if self.jitter and self.strategy != RetryStrategy.JITTER:
@@ -162,7 +158,21 @@ class RetryConfig:
         elif self.strategy == RetryStrategy.JITTER:
             delay = _SECURE_RANDOM.uniform(0, delay)
 
-        return delay
+        # Clamp last so jitter can never push the delay past the documented cap
+        # (applies to every strategy, including FIXED and LINEAR).
+        return min(delay, self.max_delay)
+
+    def _exponential_delay(self, attempt: int) -> float:
+        """Exponential delay capped at max_delay; safe for very large attempts."""
+        try:
+            return min(
+                self.initial_delay * (self.exponential_base ** (attempt - 1)),
+                self.max_delay,
+            )
+        except OverflowError:
+            # base**(attempt-1) overflowed: the product is >= the cap unless the
+            # initial delay is zero.
+            return 0.0 if self.initial_delay == 0 else self.max_delay
 
 
 @dataclass
