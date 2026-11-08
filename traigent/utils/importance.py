@@ -31,6 +31,9 @@ class ImportanceResult:
     # Set (and the score/interval are None) when the data cannot support an
     # importance value for this parameter; "not measurable" is not "zero".
     not_measurable_reason: str | None = None
+    # Trials that set this parameter; ``sample_size`` is how many of them the
+    # score was computed from (replicated values only). None when unknown.
+    trials_with_parameter: int | None = None
 
     @property
     def is_measurable(self) -> bool:
@@ -117,6 +120,66 @@ class ParameterImportanceAnalyzer:
 
         return results
 
+    @staticmethod
+    def _hashable_key(value: object) -> object:
+        """Group key that never merges values of different types."""
+        type_name = type(value).__qualname__
+        try:
+            hash(value)
+        except TypeError:
+            return (type_name, repr(value))
+        return (type_name, value)
+
+    @staticmethod
+    def _not_measurable(
+        parameter: str,
+        method: str,
+        reason: str,
+        n: int,
+        total: int | None = None,
+    ) -> ImportanceResult:
+        return ImportanceResult(
+            parameter_name=parameter,
+            importance_score=None,
+            confidence_interval=None,
+            method=method,
+            sample_size=n,
+            not_measurable_reason=reason,
+            trials_with_parameter=total,
+        )
+
+    @classmethod
+    def _grouped_effect(
+        cls, keys: list[object], ys: list[float]
+    ) -> tuple[float | None, int, str | None]:
+        """Share of objective variance explained by grouping on ``keys``.
+
+        Only values seen at least twice are kept (a value seen once has no
+        within-group spread, so keeping it would score every unique-valued
+        knob 1.0), and at least half of the trials must survive. Returns
+        ``(eta_squared, n_kept, None)`` or ``(None, n_kept, reason)``.
+        """
+        counts: dict[object, int] = defaultdict(int)
+        for key in keys:
+            counts[key] += 1
+        kept = [i for i, key in enumerate(keys) if counts[key] >= 2]
+        if len({keys[i] for i in kept}) < 2:
+            return None, len(kept), "fewer than 2 parameter values with replication"
+        if len(kept) * 2 < len(ys):
+            return None, len(kept), "insufficient_replication_coverage"
+        kept_y = [ys[i] for i in kept]
+        mean = statistics.fmean(kept_y)
+        total_ss = sum((v - mean) ** 2 for v in kept_y)
+        if total_ss <= 0.0:
+            return None, len(kept), "objective is constant"
+        groups: dict[object, list[float]] = defaultdict(list)
+        for i in kept:
+            groups[keys[i]].append(ys[i])
+        between_ss = sum(
+            len(g) * (statistics.fmean(g) - mean) ** 2 for g in groups.values()
+        )
+        return min(1.0, max(0.0, between_ss / total_ss)), len(kept), None
+
     def _calculate_parameter_variance_importance(
         self,
         trials: list[TrialResult],
@@ -124,67 +187,39 @@ class ParameterImportanceAnalyzer:
         objective_values: list[float],
         total_variance: float,
     ) -> ImportanceResult | None:
-        """Calculate variance-based importance for a single parameter."""
-        # Group trials by parameter value
-        param_groups = defaultdict(list)
+        """Calculate variance-based importance (eta-squared) for one parameter.
 
+        Uses only replicated parameter values, like the permutation method, so
+        a continuous knob whose values are all unique is "not measurable"
+        rather than 1.0. No confidence interval is reported: none has been
+        derived, and an invented one is worse than none.
+        """
+        keys: list[object] = []
+        ys: list[float] = []
         for i, trial in enumerate(trials):
             if parameter in trial.config:
-                param_value = trial.config[parameter]
-                param_groups[param_value].append(objective_values[i])
+                keys.append(self._hashable_key(trial.config[parameter]))
+                ys.append(float(objective_values[i]))
 
-        if len(param_groups) < 2:  # Need at least 2 different values
+        if len(set(keys)) < 2:  # Need at least 2 different values
             return None
 
-        # Calculate between-group variance
-        group_means = []
-        group_sizes = []
-
-        for group_values in param_groups.values():
-            if len(group_values) > 0:
-                group_means.append(statistics.mean(group_values))
-                group_sizes.append(len(group_values))
-
-        if len(group_means) < 2:
-            return None
-
-        # Calculate overall mean
-        overall_mean = statistics.mean(objective_values)
-
-        # Calculate between-group sum of squares
-        between_ss = sum(
-            size * (mean - overall_mean) ** 2
-            for mean, size in zip(group_means, group_sizes, strict=False)
-        )
-
-        # Calculate within-group sum of squares
-        within_ss = 0.0
-        for group_values in param_groups.values():
-            if len(group_values) > 1:
-                group_mean = statistics.mean(group_values)
-                within_ss += sum((value - group_mean) ** 2 for value in group_values)
-
-        # Calculate importance as explained variance ratio
-        total_ss = between_ss + within_ss
-        if total_ss > 0:
-            importance_score = between_ss / total_ss
-        else:
-            importance_score = 0.0
-
-        # Simple confidence interval (could be improved with proper statistical methods)
-        len(param_groups)
-        total_samples = len(trials)
-        confidence_interval = (
-            max(0.0, importance_score - 0.1 / math.sqrt(total_samples)),
-            min(1.0, importance_score + 0.1 / math.sqrt(total_samples)),
-        )
-
+        eta2, n_kept, reason = self._grouped_effect(keys, ys)
+        if eta2 is None:
+            return self._not_measurable(
+                parameter,
+                "variance_based",
+                reason or "not measurable",
+                n_kept,
+                len(keys),
+            )
         return ImportanceResult(
             parameter_name=parameter,
-            importance_score=importance_score,
-            confidence_interval=confidence_interval,
+            importance_score=eta2,
+            confidence_interval=None,
             method="variance_based",
-            sample_size=total_samples,
+            sample_size=n_kept,
+            trials_with_parameter=len(keys),
         )
 
     def analyze_correlation_based(
@@ -230,15 +265,19 @@ class ParameterImportanceAnalyzer:
     @staticmethod
     def _encode_parameter_values(
         trials: list[TrialResult], parameter: str
-    ) -> tuple[list[float], list[int]]:
+    ) -> tuple[list[float], list[int], list[object]]:
         """Encode a parameter's values as floats (strings by first-seen order).
 
-        Returns the encoded values and the indices of the trials they came
-        from; trials without the parameter or with other value types are
+        The string codes are arbitrary and only used to detect distinct values;
+        scores for string categories use a grouped effect, not these codes.
+
+        Returns the encoded values, the indices of the trials they came
+        from and the raw (unencoded) values; trials without the parameter or with other value types are
         skipped.
         """
         param_values: list[float] = []
         valid_indices: list[int] = []
+        raw_values: list[object] = []
         categorical_mapping: dict[str, int] = {}
 
         for i, trial in enumerate(trials):
@@ -257,38 +296,77 @@ class ParameterImportanceAnalyzer:
                 continue
             param_values.append(encoded)
             valid_indices.append(i)
-        return param_values, valid_indices
+            raw_values.append(param_value)
+        return param_values, valid_indices, raw_values
 
     def _calculate_parameter_correlation_importance(
         self, trials: list[TrialResult], parameter: str, objective_values: list[float]
     ) -> ImportanceResult | None:
-        """Calculate association-based importance for a single parameter."""
-        param_values, valid_indices = self._encode_parameter_values(trials, parameter)
+        """Calculate association-based importance for a single parameter.
 
-        if len(param_values) < 10 or len(set(param_values)) < 2:
-            return None
-
-        # Calculate statistical association
-        filtered_objectives = [objective_values[i] for i in valid_indices]
-        correlation = self._calculate_correlation(param_values, filtered_objectives)
-
-        # Use absolute association strength as importance score
-        importance_score = abs(correlation)
-
-        # Simple confidence interval
-        n = len(param_values)
-        std_error = 1.0 / math.sqrt(n - 3) if n > 3 else 0.5
-        confidence_interval = (
-            max(0.0, importance_score - 1.96 * std_error),
-            min(1.0, importance_score + 1.96 * std_error),
+        Numeric values use |Pearson r|; unordered string categories use the
+        correlation ratio. No confidence interval is reported.
+        """
+        param_values, valid_indices, raw_values = self._encode_parameter_values(
+            trials, parameter
         )
 
+        if len(param_values) < 10:
+            return None
+
+        filtered_objectives = [objective_values[i] for i in valid_indices]
+        categorical = any(isinstance(v, str) for v in raw_values)
+
+        # Distinct values are judged on raw values for categoricals: the
+        # arbitrary string codes can collide with real numbers (0 vs "x").
+        distinct = (
+            {self._hashable_key(v) for v in raw_values}
+            if categorical
+            else set(param_values)
+        )
+        if len(distinct) < 2:
+            return None
+
+        if categorical:
+            # A string category has no order, so a Pearson r on an arbitrary
+            # integer encoding depends on first-seen order. Use the
+            # correlation ratio (sqrt of eta-squared over replicated groups).
+            keys = [self._hashable_key(v) for v in raw_values]
+            eta2, n_kept, reason = self._grouped_effect(keys, filtered_objectives)
+            if eta2 is None:
+                return self._not_measurable(
+                    parameter,
+                    "correlation_based",
+                    reason or "not measurable",
+                    n_kept,
+                    len(keys),
+                )
+            return ImportanceResult(
+                parameter_name=parameter,
+                importance_score=math.sqrt(eta2),
+                confidence_interval=None,
+                method="correlation_based",
+                sample_size=n_kept,
+                trials_with_parameter=len(keys),
+            )
+
+        if len(set(filtered_objectives)) < 2:
+            return self._not_measurable(
+                parameter,
+                "correlation_based",
+                "objective is constant",
+                len(param_values),
+                len(param_values),
+            )
+
+        correlation = self._calculate_correlation(param_values, filtered_objectives)
         return ImportanceResult(
             parameter_name=parameter,
-            importance_score=importance_score,
-            confidence_interval=confidence_interval,
+            importance_score=abs(correlation),
+            confidence_interval=None,
             method="correlation_based",
-            sample_size=n,
+            sample_size=len(param_values),
+            trials_with_parameter=len(param_values),
         )
 
     def _calculate_correlation(self, x: list[float], y: list[float]) -> float:
@@ -364,14 +442,6 @@ class ParameterImportanceAnalyzer:
             )
         return results
 
-    @staticmethod
-    def _hashable_key(value: object) -> object:
-        try:
-            hash(value)
-        except TypeError:
-            return repr(value)
-        return value
-
     def _permutation_importance_for_parameter(
         self, trials: list[TrialResult], parameter: str, n_permutations: int
     ) -> ImportanceResult:
@@ -385,7 +455,10 @@ class ParameterImportanceAnalyzer:
                 method="permutation_based",
                 sample_size=n,
                 not_measurable_reason=reason,
+                trials_with_parameter=total,
             )
+
+        total = 0
 
         # Only runs that set the parameter carry information about it.
         keys: list[object] = []
@@ -394,6 +467,7 @@ class ParameterImportanceAnalyzer:
             if parameter in trial.config:
                 keys.append(self._hashable_key(trial.config[parameter]))
                 ys.append(float(trial.metrics[self.objective]))
+        total = len(ys)
         if len(ys) < 2:
             return not_measurable("parameter set in fewer than 2 trials", len(ys))
 
@@ -456,6 +530,7 @@ class ParameterImportanceAnalyzer:
             ),
             method="permutation_based",
             sample_size=n,
+            trials_with_parameter=total,
         )
 
     def get_top_parameters(
@@ -492,10 +567,19 @@ class ParameterImportanceAnalyzer:
             lines.append("  No significant importance detected")
             return
         for result in self.get_top_parameters(results, top_k=5):
-            ci_low, ci_high = result.confidence_interval or (0.0, 0.0)
+            interval = " (no interval)"
+            if result.confidence_interval is not None:
+                ci_low, ci_high = result.confidence_interval
+                interval = f" [{ci_low:.3f}, {ci_high:.3f}]"
+            basis = ""
+            if result.trials_with_parameter is not None:
+                basis = (
+                    f" (from {result.sample_size} of "
+                    f"{result.trials_with_parameter} trials)"
+                )
             lines.append(
-                f"  {result.parameter_name:15s}: {result.importance_score:.3f} "
-                f"[{ci_low:.3f}, {ci_high:.3f}]"
+                f"  {result.parameter_name:15s}: {result.importance_score:.3f}"
+                f"{interval}{basis}"
             )
         for result in results.values():
             if result.importance_score is None:
