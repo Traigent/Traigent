@@ -49,6 +49,18 @@ _SCRIPT = textwrap.dedent("""
     )
     log.log_session_end(result, error="bo\\u00efm")
     log.log_session_end(result)  # second call re-reads session.json and index.json
+    from traigent.utils.optimization_analyzer import OptimizationAnalyzer
+
+    latest = OptimizationAnalyzer._load_json_file(
+        log.run_path, "checkpoints", "checkpoint_latest",
+        log.file_manager, log.file_manager,
+    )
+    assert latest and "checkpoint_file" in latest, latest
+    ckpt = OptimizationAnalyzer._load_json_file(
+        log.run_path, "checkpoints", "checkpoint", log.file_manager,
+        log.file_manager, trial_count=1,
+    )
+    assert ckpt["optimizer_state"]["note"] == "na\\u00efve \\u2713", ckpt
     print("OK")
     """)
 
