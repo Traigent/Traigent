@@ -735,6 +735,14 @@ class TestParameterImportanceAnalyzer:
         assert result is not None
         assert result.importance_score == pytest.approx(1.0)
 
+    def test_correlation_constant_objective_is_not_measurable_issue_2945(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        rows = [({"x": 0.1 * i}, 0.5) for i in range(12)]
+        result = analyzer.analyze_correlation_based(self._trials(rows))
+        assert result["x"].importance_score is None
+        assert result["x"].not_measurable_reason == "objective is constant"
+
     def test_get_top_parameters_skips_not_measurable(
         self, analyzer: ParameterImportanceAnalyzer
     ) -> None:

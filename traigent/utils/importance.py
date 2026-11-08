@@ -330,6 +330,14 @@ class ParameterImportanceAnalyzer:
                 sample_size=n_kept,
             )
 
+        if len(set(filtered_objectives)) < 2:
+            return self._not_measurable(
+                parameter,
+                "correlation_based",
+                "objective is constant",
+                len(param_values),
+            )
+
         correlation = self._calculate_correlation(param_values, filtered_objectives)
         return ImportanceResult(
             parameter_name=parameter,
@@ -532,12 +540,10 @@ class ParameterImportanceAnalyzer:
             lines.append("  No significant importance detected")
             return
         for result in self.get_top_parameters(results, top_k=5):
-            interval = (
-                f" [{result.confidence_interval[0]:.3f}, "
-                f"{result.confidence_interval[1]:.3f}]"
-                if result.confidence_interval is not None
-                else " (no interval)"
-            )
+            interval = " (no interval)"
+            if result.confidence_interval is not None:
+                ci_low, ci_high = result.confidence_interval
+                interval = f" [{ci_low:.3f}, {ci_high:.3f}]"
             lines.append(
                 f"  {result.parameter_name:15s}: {result.importance_score:.3f}"
                 f"{interval}"
