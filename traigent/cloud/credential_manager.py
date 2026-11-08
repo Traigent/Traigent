@@ -140,6 +140,13 @@ class CredentialManager:
         stored_creds = cls._load_cli_credentials()
         if stored_creds:
             stored_creds["source"] = "cli"
+            if "api_key" in stored_creds:
+                # blank/padded stored key: strip, and drop when blank
+                stripped = str(stored_creds["api_key"] or "").strip()
+                if stripped:
+                    stored_creds["api_key"] = stripped
+                else:
+                    del stored_creds["api_key"]
             return stored_creds
 
         # Development fallback (env-driven; see get_api_key for rationale).

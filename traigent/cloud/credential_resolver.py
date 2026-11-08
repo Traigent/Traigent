@@ -361,7 +361,7 @@ class CredentialResolver:
     def _fallback_api_key(CredentialManager: Any, metadata: dict[str, Any]) -> Any:
         api_key = CredentialManager.get_api_key()
         if not api_key:
-            api_key = os.getenv("TRAIGENT_API_KEY")
+            api_key = (os.getenv("TRAIGENT_API_KEY") or "").strip() or None
             if api_key:
                 metadata["source"] = "environment"
         return api_key

@@ -135,3 +135,22 @@ def test_ecdsa_key_file_is_refused_closed(tmp_path: Path) -> None:
     with pytest.raises(ck.ClientKeyError) as caught:
         ck.load_client_key(key.path)
     assert caught.value.code == "KEY_FILE_INVALID"
+
+
+def test_directory_created_concurrently_is_not_chmodded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2983: another process creating the dir after our check must not be chmod-ed."""
+    parent = tmp_path / "shared"
+    real_mkdir = Path.mkdir
+
+    def racing_mkdir(self: Path, *args: object, **kwargs: object) -> None:
+        if self == parent:
+            real_mkdir(self, mode=0o755)  # the other process wins the race
+            os.chmod(self, 0o755)
+            raise FileExistsError(str(self))
+        real_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "mkdir", racing_mkdir)
+    ck.generate_client_key(parent / "k.json")
+    assert stat.S_IMODE(os.stat(parent).st_mode) == 0o755

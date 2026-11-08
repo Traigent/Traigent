@@ -24,6 +24,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from traigent_schema.certification import derive_client_key_ref
 
+from traigent.certification._private_dir import ensure_private_dir
 from traigent.certification.transport import G1RequestError, G1Transport
 
 __all__ = [
@@ -127,12 +128,7 @@ def _write(path: Path, document: dict[str, Any], *, replace: bool) -> None:
     data = json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
     try:
         directory = path.parent
-        # Tighten only a directory this call creates; a pre-existing one
-        # (cwd, $HOME, a shared folder) keeps the caller's permissions.
-        created = not directory.exists()
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if created:
-            os.chmod(directory, 0o700)
+        ensure_private_dir(directory)  # chmods only a directory it creates
         fd, temp_name = tempfile.mkstemp(dir=directory, prefix=".key-")
         try:
             os.fchmod(fd, 0o600)

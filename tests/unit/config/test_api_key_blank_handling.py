@@ -14,6 +14,7 @@ from traigent.evaluation.config import EvaluationConfig
 from traigent.projects.config import ProjectManagementConfig
 from traigent.prompts.config import PromptManagementConfig
 
+KEY = "uk_abc"  # pragma: allowlist secret
 STORED = "tg_stored_test_key"  # pragma: allowlist secret
 _STORED_PATCH = (
     "traigent.cloud.credential_manager.CredentialManager.get_stored_api_key_only"
@@ -76,3 +77,40 @@ def test_service_configs_drop_blank_and_strip_padded_key(cls: type) -> None:
     assert "X-API-Key" not in blank.build_headers()
     padded = cls(api_key="uk_abc\n", **kwargs)
     assert padded.build_headers()["X-API-Key"] == "uk_abc"
+
+
+def test_auth_manager_ignores_blank_env_key_and_strips_padding() -> None:
+    from traigent.cloud.auth import AuthManager
+
+    with patch.dict(
+        "os.environ", {"TRAIGENT_API_KEY": "  \n"}, clear=True
+    ):  # pragma: allowlist secret
+        assert AuthManager()._provided_credentials is None
+    with patch.dict(
+        "os.environ", {"TRAIGENT_API_KEY": KEY + "\n"}, clear=True
+    ):  # pragma: allowlist secret
+        creds = AuthManager()._provided_credentials
+        assert creds is not None and creds.api_key == KEY
+
+
+def test_stored_credentials_strip_api_key() -> None:
+    stored = {"api_key": f" {KEY}\n", "backend_url": "https://api.example.com"}
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch.object(CredentialManager, "_load_cli_credentials", return_value=stored),
+    ):
+        assert CredentialManager.get_credentials()["api_key"] == KEY
+    blank = {"api_key": "  "}
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch.object(CredentialManager, "_load_cli_credentials", return_value=blank),
+    ):
+        assert "api_key" not in CredentialManager.get_credentials()
+
+
+def test_analytics_jwt_selection_ignores_blank_env_key() -> None:
+    from traigent.cloud.analytics_auth import _configured_jwt_without_api_key
+
+    env = {"TRAIGENT_API_KEY": "   ", "TRAIGENT_JWT_TOKEN": "a.b.c"}
+    with patch.dict("os.environ", env, clear=True):
+        assert _configured_jwt_without_api_key() is True
