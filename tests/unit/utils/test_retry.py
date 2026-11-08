@@ -13,9 +13,9 @@ import pytest
 
 from traigent.utils.exceptions import AuthenticationError, ClientError
 from traigent.utils.retry import (
+    CLOUD_API_RETRY_CONFIG,
     CircuitBreaker,
     CircuitBreakerState,
-    CLOUD_API_RETRY_CONFIG,
     NetworkError,
     NonRetryableError,
     RateLimitError,
@@ -589,3 +589,28 @@ class TestRetryIntegration:
         assert elapsed >= 0.25  # Allow some tolerance
         assert result.success is False
         assert result.attempts == 3
+
+
+class TestMaxDelayCapAfterJitter:
+    """#3227: jitter must never push a delay past max_delay."""
+
+    @pytest.mark.parametrize("strategy", ["fixed", "exponential", "linear", "jitter"])
+    def test_delay_never_exceeds_max_delay(self, strategy):
+        from traigent.utils.retry import RetryConfig
+
+        cfg = RetryConfig(
+            strategy=strategy, initial_delay=10.0, max_delay=10.0, jitter=True
+        )
+        assert max(cfg.calculate_delay(10) for _ in range(500)) <= 10.0
+
+    def test_fixed_strategy_honours_cap(self):
+        from traigent.utils.retry import RetryConfig
+
+        cfg = RetryConfig(strategy="fixed", initial_delay=30.0, max_delay=10.0)
+        assert cfg.calculate_delay(1) <= 10.0
+
+    def test_huge_attempt_does_not_overflow(self):
+        from traigent.utils.retry import RetryConfig
+
+        cfg = RetryConfig(initial_delay=1.0, max_delay=10.0, jitter=True)
+        assert cfg.calculate_delay(5000) <= 10.0

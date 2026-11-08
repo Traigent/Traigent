@@ -244,7 +244,8 @@ class ResilientClient:
             )
             delay += jitter
 
-        return delay
+        # Clamp last: jitter must never push the delay past max_delay.
+        return min(delay, self.max_delay)
 
     def _structured_retry_delay(self, server_delay: float) -> float:
         if not math.isfinite(server_delay):
