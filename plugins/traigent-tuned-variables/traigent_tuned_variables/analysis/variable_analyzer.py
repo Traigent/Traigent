@@ -96,7 +96,7 @@ class EliminationSuggestion:
     variable: str
     action: EliminationAction
     reason: str
-    importance_score: float
+    importance_score: float | None
     dominated_values: list[Any] | None = None
     suggested_range: tuple[float, float] | None = None
     suggested_values: list[Any] | None = None
@@ -120,8 +120,8 @@ class VariableAnalysis:
 
     name: str
     var_type: Literal["numeric", "categorical"]
-    importance: float
-    # Set when the importance could not be measured from the data; the
+    importance: float | None
+    # None when unknown (see importance_unknown_reason). Set when the importance could not be measured from the data; the
     # variable is then never suggested for elimination on importance grounds.
     importance_unknown_reason: str | None = None
     correlation: float | None = None
@@ -147,7 +147,7 @@ class MultiObjectiveVariableAnalysis:
     name: str
     var_type: Literal["numeric", "categorical"]
     importance_by_objective: dict[str, float]
-    aggregate_importance: float
+    aggregate_importance: float | None
     importance_unknown_reason: str | None = None
     pareto_dominated_values: list[Any] | None = None
     suggestion: EliminationSuggestion | None = None
@@ -166,6 +166,13 @@ class MultiObjectiveAnalysis:
     elimination_suggestions: list[EliminationSuggestion] = field(default_factory=list)
     pareto_frontier_values: dict[str, list[Any]] = field(default_factory=dict)
     refined_space: dict[str, Any] = field(default_factory=dict)
+
+
+def _suggestion_sort_key(suggestion: EliminationSuggestion) -> tuple[int, float]:
+    """Least important first; suggestions with unknown importance last."""
+    if suggestion.importance_score is None:
+        return (1, 0.0)
+    return (0, suggestion.importance_score)
 
 
 class VariableAnalyzer:
@@ -246,15 +253,16 @@ class VariableAnalyzer:
 
         for var_name in config_space:
             var_type = self._get_variable_type(var_name)
-            importance = importance_scores.get(var_name, 0.0)
+            unknown_reason = self.get_unknown_importance(objective).get(var_name)
+            importance = (
+                None if unknown_reason else importance_scores.get(var_name, 0.0)
+            )
 
             var_analysis = VariableAnalysis(
                 name=var_name,
                 var_type=var_type,
                 importance=importance,
-                importance_unknown_reason=self.get_unknown_importance(objective).get(
-                    var_name
-                ),
+                importance_unknown_reason=unknown_reason,
             )
 
             # Categorical-specific analysis
@@ -273,7 +281,7 @@ class VariableAnalyzer:
                 analysis.elimination_suggestions.append(suggestion)
 
         # Sort suggestions by importance (least important first for elimination)
-        analysis.elimination_suggestions.sort(key=lambda s: s.importance_score)
+        analysis.elimination_suggestions.sort(key=_suggestion_sort_key)
 
         # Generate refined space
         analysis.refined_space = self.get_refined_space([objective])
@@ -329,7 +337,7 @@ class VariableAnalyzer:
                 analysis.elimination_suggestions.append(var_analysis.suggestion)
 
         # Sort and finalize
-        analysis.elimination_suggestions.sort(key=lambda s: s.importance_score)
+        analysis.elimination_suggestions.sort(key=_suggestion_sort_key)
         analysis.pareto_frontier_values = self._compute_pareto_frontiers(
             analysis.variables
         )
@@ -355,8 +363,8 @@ class VariableAnalyzer:
                 for obj in objectives
                 if var_name not in self.get_unknown_importance(obj)
             }
-            # Unknown objectives are left out of the aggregate; a variable
-            # unknown on every objective has an empty mapping.
+            # Unknown objectives are left out of the per-objective scores; a
+            # variable unknown on every objective has an empty mapping.
             importance_by_var[var_name] = known
         return importance_by_var
 
@@ -369,18 +377,19 @@ class VariableAnalyzer:
     ) -> MultiObjectiveVariableAnalysis:
         """Analyze a single variable across multiple objectives."""
         var_type = self._get_variable_type(var_name)
-        aggregate_imp = self._aggregate_importance(obj_importance, aggregation)
+        aggregate_imp = (
+            self._aggregate_importance(obj_importance, aggregation)
+            if obj_importance
+            else None
+        )
 
         pareto_dominated = None
         if var_type == "categorical":
             pareto_dominated = self.get_dominated_values(var_name, objectives)
 
-        unknown_reason = None
-        if not obj_importance:
-            reasons = [
-                self.get_unknown_importance(obj).get(var_name) for obj in objectives
-            ]
-            unknown_reason = next((r for r in reasons if r), None)
+        # Unknown on ANY objective -> the variable's importance is unknown.
+        reasons = [self.get_unknown_importance(obj).get(var_name) for obj in objectives]
+        unknown_reason = next((r for r in reasons if r), None)
 
         var_analysis = MultiObjectiveVariableAnalysis(
             name=var_name,
@@ -434,9 +443,15 @@ class VariableAnalyzer:
         importance = var_analysis.aggregate_importance
 
         unknown = var_analysis.importance_unknown_reason
+        if importance is None:
+            unknown = unknown or "not measurable"
 
         # Low aggregate importance -> suggest elimination (never when unknown)
-        if unknown is None and importance < self.elimination_threshold:
+        if (
+            unknown is None
+            and importance is not None
+            and importance < self.elimination_threshold
+        ):
             return EliminationSuggestion(
                 variable=var_name,
                 action=EliminationAction.ELIMINATE,
@@ -481,7 +496,7 @@ class VariableAnalyzer:
             variable=var_name,
             action=EliminationAction.KEEP,
             reason=(
-                f"Important variable (aggregate: {importance:.3f}) "
+                f"Important variable (aggregate: {importance or 0.0:.3f}) "
                 f"across {len(objectives)} objectives"
             ),
             importance_score=importance,
@@ -803,7 +818,9 @@ class VariableAnalyzer:
             if (
                 prune_low_importance
                 and primary_objective
-                and var_name not in self.get_unknown_importance(primary_objective)
+                and not any(
+                    var_name in self.get_unknown_importance(obj) for obj in objectives
+                )
             ):
                 importance = self.get_variable_importance(primary_objective).get(
                     var_name, 0.0
@@ -1158,7 +1175,11 @@ class VariableAnalyzer:
         unknown = var_analysis.importance_unknown_reason
 
         # Low importance -> suggest elimination (never when unknown)
-        if unknown is None and importance < self.elimination_threshold:
+        if (
+            unknown is None
+            and importance is not None
+            and importance < self.elimination_threshold
+        ):
             return EliminationSuggestion(
                 variable=var_name,
                 action=EliminationAction.ELIMINATE,
@@ -1206,6 +1227,6 @@ class VariableAnalyzer:
         return EliminationSuggestion(
             variable=var_name,
             action=EliminationAction.KEEP,
-            reason=f"Important variable ({importance:.3f})",
+            reason=f"Important variable ({importance or 0.0:.3f})",
             importance_score=importance,
         )

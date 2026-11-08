@@ -112,6 +112,42 @@ class TestVariableAnalyzer:
         assert all(s.variable != "temperature" for s in multi.elimination_suggestions)
         assert "temperature" in multi.refined_space
 
+    def test_unknown_importance_is_none_not_zero(self):
+        analyzer = self._permutation_analyzer()
+        analysis = analyzer.analyze("accuracy")
+        assert analysis.variables["temperature"].importance is None
+        assert analysis.variables["model"].importance > 0.3
+
+        multi = analyzer.analyze_multi_objective(["accuracy"])
+        temp = multi.variables["temperature"]
+        assert temp.aggregate_importance is None
+        assert temp.suggestion.importance_score is None
+        assert temp.suggestion.action.value == "keep"
+        assert "unknown" in temp.suggestion.reason
+        assert multi.variables["model"].aggregate_importance > 0.3
+
+    def test_unknown_on_any_objective_is_never_eliminated(self):
+        """Unknown on one objective + low importance on another: keep it."""
+        analyzer = self._permutation_analyzer()
+        analyzer._unknown_importance["accuracy"] = {"model": "forced unknown"}
+        analyzer._importance_cache["accuracy"] = {"temperature": 0.9}
+        analyzer._importance_cache["cost"] = {"model": 0.0, "temperature": 0.9}
+        analyzer._unknown_importance["cost"] = {}
+
+        multi = analyzer.analyze_multi_objective(["accuracy", "cost"])
+        model = multi.variables["model"]
+        assert model.importance_unknown_reason == "forced unknown"
+        # PRUNE_VALUES/NARROW_RANGE are not importance-based and are accepted.
+        assert model.suggestion.action.value != "eliminate"
+        assert all(
+            s.variable != "model" or s.action.value != "eliminate"
+            for s in multi.elimination_suggestions
+        )
+        assert "model" in multi.refined_space
+
+        refined = analyzer.get_refined_space(["cost", "accuracy"])
+        assert "model" in refined
+
     def test_permutation_constant_objective_yields_no_elimination(self):
         analyzer = self._permutation_analyzer(constant=True)
         analysis = analyzer.analyze("accuracy")
