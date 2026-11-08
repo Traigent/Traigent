@@ -31,7 +31,8 @@ class TOSTResult:
         sample_mean: Mean of the samples.
         sample_std: Standard deviation of the samples.
         sample_size: Number of samples.
-        confidence_interval: 90% CI for the mean (corresponding to alpha=0.05 two-sided).
+        confidence_interval: 90% CI for the mean (corresponding to alpha=0.05
+            two-sided); ``None`` when unavailable (fewer than two samples).
     """
 
     is_equivalent: bool
@@ -40,7 +41,7 @@ class TOSTResult:
     sample_mean: float
     sample_std: float
     sample_size: int
-    confidence_interval: tuple[float, float]
+    confidence_interval: tuple[float, float] | None
 
 
 @dataclass(slots=True)
@@ -256,7 +257,9 @@ def tost_equivalence_test(
         alpha: Significance level for each one-sided test (default 0.05).
 
     Returns:
-        TOSTResult with equivalence decision and statistics.
+        TOSTResult with equivalence decision and statistics. With fewer than
+        two samples the result is inconclusive (``is_equivalent=False``,
+        p-values 1.0): no equivalence is claimed from one observation.
 
     Raises:
         ValueError: If samples is empty or target bounds are invalid.
@@ -270,17 +273,19 @@ def tost_equivalence_test(
     n = len(samples)
     sample_mean = sum(samples) / n
 
-    if n == 1:
-        # Single sample: can only check if it's in the band
-        in_band = target.contains(sample_mean)
+    if n < 2:
+        # A single observation carries no variance estimate, so no equivalence
+        # claim can be made: being inside the band is NOT evidence of
+        # equivalence. Inconclusive = not equivalent, p-values 1.0 (no
+        # rejection of either one-sided null).
         return TOSTResult(
-            is_equivalent=in_band,
-            p_lower=0.0 if sample_mean > target.low else 1.0,
-            p_upper=0.0 if sample_mean < target.high else 1.0,
+            is_equivalent=False,
+            p_lower=1.0,
+            p_upper=1.0,
             sample_mean=sample_mean,
             sample_std=0.0,
-            sample_size=1,
-            confidence_interval=(sample_mean, sample_mean),
+            sample_size=n,
+            confidence_interval=None,
         )
 
     # Compute sample standard deviation
