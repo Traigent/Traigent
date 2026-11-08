@@ -1325,7 +1325,7 @@ def with_usage(
         ...     input_cost=0.001, output_cost=0.002, total_cost=0.003,
         ...     model_used="gpt-4o-mini"
         ... )
-        >>> workflow = WorkflowCostSummary(
+        >>> workflow = WorkflowCostSummary.from_agents(
         ...     workflow_id="workflow-001",
         ...     workflow_name="Research",
         ...     agent_breakdowns=[agent1]
