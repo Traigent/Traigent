@@ -643,7 +643,9 @@ class AuthManager:
         self._unified_auth = self
 
         self._provided_credentials: AuthCredentials | None = None
-        initial_api_key = api_key or os.getenv("TRAIGENT_API_KEY")
+        initial_api_key = (
+            api_key or (os.getenv("TRAIGENT_API_KEY") or "").strip() or None
+        )
         initial_source: str | None
         if api_key:
             initial_source = "explicit"

@@ -50,6 +50,7 @@ from typing import Any, Final, Protocol, runtime_checkable
 
 from traigent_schema import fp2
 
+from traigent.certification._private_dir import ensure_private_dir
 from traigent.snapshot.manifest import ExecutionSnapshot, is_valid_digest
 from traigent.snapshot.store import SnapshotStore, load_snapshot, verify_snapshot
 
@@ -252,8 +253,7 @@ class LocalFileCustody:
     def save(self, root_hex: str, record: bytes) -> None:
         path = self._path(root_hex)
         try:
-            self._directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            os.chmod(self._directory, 0o700)
+            ensure_private_dir(self._directory)  # chmods only a directory it creates
             fd, temp_name = tempfile.mkstemp(dir=self._directory, prefix=".evidence-")
             try:
                 os.fchmod(fd, 0o600)

@@ -73,9 +73,10 @@ class CredentialManager:
         # Check for CLI stored credentials
         stored_creds = cls._load_cli_credentials()
         if stored_creds:
-            if stored_creds.get("api_key"):
+            stored_key = str(stored_creds.get("api_key") or "").strip()
+            if stored_key:
                 logger.debug("Using API key from CLI credentials")
-                return cast(str, stored_creds["api_key"]), "stored CLI credentials"
+                return stored_key, "stored CLI credentials"
             # regression fix: previously this fell back to using the
             # stored `jwt_token` as if it were an API key. JWTs expire
             # within minutes; using one as a long-lived API key leaks
@@ -139,6 +140,13 @@ class CredentialManager:
         stored_creds = cls._load_cli_credentials()
         if stored_creds:
             stored_creds["source"] = "cli"
+            if "api_key" in stored_creds:
+                # blank/padded stored key: strip, and drop when blank
+                stripped = str(stored_creds["api_key"] or "").strip()
+                if stripped:
+                    stored_creds["api_key"] = stripped
+                else:
+                    del stored_creds["api_key"]
             return stored_creds
 
         # Development fallback (env-driven; see get_api_key for rationale).
@@ -247,8 +255,9 @@ class CredentialManager:
         must not mix credential types (e.g. ``BackendConfig.get_api_key``).
         """
         stored_creds = cls._load_cli_credentials()
-        if stored_creds and stored_creds.get("api_key"):
-            return cast(str, stored_creds["api_key"])
+        if stored_creds:
+            value = str(stored_creds.get("api_key") or "").strip()
+            return value or None
         return None
 
     @classmethod
@@ -307,7 +316,8 @@ class CredentialManager:
     def _get_env_api_key() -> str | None:
         """Return API key from supported environment variables."""
 
-        return os.environ.get("TRAIGENT_API_KEY")
+        value = os.environ.get("TRAIGENT_API_KEY", "").strip()
+        return value or None
 
     @staticmethod
     def _get_dev_api_key() -> str | None:
