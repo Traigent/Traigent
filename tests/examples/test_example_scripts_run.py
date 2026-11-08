@@ -61,3 +61,9 @@ def test_local_search_example_builds_messages_langchain_accepts(
     result = _run(script, tmp_path)
     assert "Unsupported message type" not in result.stderr, result.stderr[-2000:]
     assert "MESSAGE_COERCION_FAILURE" not in result.stderr
+
+
+@pytest.mark.timeout(180)
+def test_text_to_sql_mock_quick_start_runs(tmp_path: Path) -> None:
+    result = _run(EXAMPLES / "core/text-to-sql/run.py", tmp_path)
+    assert result.returncode == 0, result.stderr[-2000:]
