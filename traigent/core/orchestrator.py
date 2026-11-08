@@ -130,7 +130,7 @@ from traigent.core.selection_receipt import build_selection_receipt
 from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
-from traigent.core.stop_conditions import StopCondition
+from traigent.core.stop_conditions import StopCondition, validate_plateau_window
 from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.utils import extract_examples_attempted
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
@@ -1207,7 +1207,12 @@ class OptimizationOrchestrator:
 
     def _configure_stop_conditions(self) -> None:
         """Configure stop conditions and sample budget management."""
-        plateau_window = int(self.config.get("plateau_window", 0) or 0)
+        raw_plateau_window = self.config.get("plateau_window")
+        plateau_window = (
+            validate_plateau_window(raw_plateau_window)
+            if raw_plateau_window is not None
+            else 0
+        )
         plateau_epsilon = (
             float(self.config.get("plateau_epsilon", 1e-6) or 1e-6)
             if plateau_window > 0

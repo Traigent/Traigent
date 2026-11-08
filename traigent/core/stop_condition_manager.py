@@ -25,6 +25,7 @@ from traigent.core.stop_conditions import (
     SafetyConstraintStopCondition,
     SemanticSaturationStopCondition,
     StopCondition,
+    validate_plateau_window,
 )
 
 __all__ = ["StopConditionManager"]
@@ -65,7 +66,8 @@ class StopConditionManager:
                 )
             )
 
-        if plateau_window and plateau_window > 0:
+        if plateau_window is not None:
+            plateau_window = validate_plateau_window(plateau_window)
             if objective_schema is None:
                 raise ValueError(
                     "plateau_window configured but no objective schema available"

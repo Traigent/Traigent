@@ -1771,6 +1771,10 @@ def _normalize_runtime_override_aliases(
 
 def _validate_runtime_overrides(remaining_overrides: dict[str, Any]) -> None:
     """Validate that runtime overrides don't contain unknown keys."""
+    if remaining_overrides.get("plateau_window") is not None:
+        from traigent.core.stop_conditions import validate_plateau_window
+
+        validate_plateau_window(remaining_overrides["plateau_window"])
     unknown_keys = (
         set(remaining_overrides.keys())
         - _DIRECT_OPTION_KEYS
