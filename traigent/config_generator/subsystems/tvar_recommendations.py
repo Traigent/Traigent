@@ -26,7 +26,11 @@ if TYPE_CHECKING:
 # Recommendation hints returned by the optimization service are consumed as
 # provided; the SDK does not rank or filter them.
 _RECOMMENDATIONS_FETCH_TIMEOUT_SECONDS = 2.0
-_RECOMMENDATIONS_CACHE: dict[tuple[str, tuple[str, ...]], RecommendationBundle] = {}
+# Only successful, non-empty bundles are cached: the client returns an empty
+# bundle for every failure, so caching one would pin "no hints" for the process
+# (#3157). The key carries the backend and a credential fingerprint.
+_RECOMMENDATIONS_CACHE: dict[tuple[str, ...], RecommendationBundle] = {}
+_RECOMMENDATIONS_CACHE_MAX = 64
 
 
 def generate_recommendations(
@@ -561,7 +565,7 @@ def _fetch_backend_recommendations(
     if not names or not _should_fetch_backend_recommendations():
         return RecommendationBundle.empty()
 
-    cache_key = (agent_type, names)
+    cache_key = (agent_type, *names, *_backend_cache_identity())
     cached = _RECOMMENDATIONS_CACHE.get(cache_key)
     if cached is not None:
         return cached
@@ -586,10 +590,27 @@ def _fetch_backend_recommendations(
     try:
         bundle = asyncio.run(_fetch())
     except Exception:
-        bundle = RecommendationBundle.empty()
+        return RecommendationBundle.empty()
 
-    _RECOMMENDATIONS_CACHE[cache_key] = bundle
+    if not bundle.is_empty:
+        if len(_RECOMMENDATIONS_CACHE) >= _RECOMMENDATIONS_CACHE_MAX:
+            _RECOMMENDATIONS_CACHE.pop(next(iter(_RECOMMENDATIONS_CACHE)))
+        _RECOMMENDATIONS_CACHE[cache_key] = bundle
     return bundle
+
+
+def _backend_cache_identity() -> tuple[str, str]:
+    """Backend URL and a credential fingerprint, so a switch never reuses hints."""
+    import hashlib
+
+    from traigent.config.backend_config import BackendConfig
+
+    try:
+        url = BackendConfig.get_configured_backend_url() or ""
+        secret = BackendConfig.get_api_key() or os.getenv("TRAIGENT_JWT_TOKEN") or ""
+    except Exception:
+        return ("", "")
+    return (url, hashlib.sha256(secret.encode("utf-8")).hexdigest()[:12])
 
 
 def _should_fetch_backend_recommendations() -> bool:
