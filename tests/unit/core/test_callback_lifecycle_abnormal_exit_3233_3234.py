@@ -307,11 +307,15 @@ def test_cancel_during_result_processing_pairs_all_started_trials_3234() -> None
 
     orch = _bare_orch()
     orch._handle_trial_result = AsyncMock(side_effect=aio.CancelledError())
-    orch._trial_result_from_parallel_item = MagicMock(return_value=_real_trial(0))
+    orch._trial_result_from_parallel_item = (
+        OptimizationOrchestrator._trial_result_from_parallel_item
+    )
     orch.cost_enforcer = None
     results = [
         PermittedTrialResult(result=_real_trial(0), permit=MagicMock(active=False)),
-        PermittedTrialResult(result=None, permit=MagicMock(active=False)),
+        PermittedTrialResult(
+            result=RuntimeError("boom"), permit=MagicMock(active=False)
+        ),
     ]
     with pytest.raises(aio.CancelledError):
         aio.run(
@@ -322,5 +326,5 @@ def test_cancel_during_result_processing_pairs_all_started_trials_3234() -> None
     calls = orch.callback_manager.on_trial_complete.call_args_list
     assert [c.args[0].status for c in calls] == [
         TrialStatus.COMPLETED,
-        TrialStatus.CANCELLED,
+        TrialStatus.FAILED,  # a finished failed trial keeps its failure
     ]

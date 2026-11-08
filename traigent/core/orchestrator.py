@@ -3493,7 +3493,12 @@ class OptimizationOrchestrator:
             for offset, (cfg, permitted) in enumerate(
                 zip(scheduled_configs, results, strict=False)
             ):
-                self._remember_trial_result(batch_start + offset, permitted.result)
+                self._remember_trial_result(
+                    batch_start + offset,
+                    self._trial_result_from_parallel_item(
+                        permitted.result, cfg, f"trial_{batch_start + offset}"
+                    ),
+                )
                 self._notify_interrupted_trial(batch_start + offset, cfg)
             raise
         if terminal_completion is not None:
