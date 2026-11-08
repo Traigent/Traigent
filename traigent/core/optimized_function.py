@@ -2369,7 +2369,17 @@ class OptimizedFunction[**P, R]:
             raise TypeError(
                 "strategy_params is no longer supported; use algorithm or objectives."
             )
-        return algorithm
+        if algorithm is None:
+            return None
+        # Same strip/lower normalisation as the decorator path, so 'RANDOM' and
+        # ' random ' resolve identically at decoration and at call time. A name
+        # a user registered verbatim is kept as-is; unknown names still reach the
+        # registry, which lists the available optimizers.
+        from traigent.optimizers.registry import list_optimizers
+
+        if algorithm in list_optimizers():
+            return algorithm
+        return str(normalize_algorithm_name(algorithm))
 
     async def optimize(
         self,
