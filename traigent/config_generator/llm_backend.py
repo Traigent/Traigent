@@ -19,6 +19,9 @@ from traigent.utils.money import format_usd
 logger = logging.getLogger(__name__)
 
 
+_FRAMING_TOKENS = 16  # per-message role/framing margin for the pre-call bound
+
+
 class BudgetExhausted(Exception):
     """Raised when the LLM call budget has been exceeded."""
 
@@ -138,10 +141,21 @@ class LiteLLMBackend:
             # Bound the call's cost from above (a token is never shorter than a
             # byte, and output is capped by max_tokens) so one call cannot
             # overshoot the budget.
+            messages = [{"role": "user", "content": prompt}]
+            # A token is never shorter than a byte; add a framing margin when
+            # the real counter is unavailable, and never go below the byte bound.
+            prompt_token_bound = len(prompt.encode("utf-8")) + _FRAMING_TOKENS
+            try:
+                prompt_token_bound = max(
+                    prompt_token_bound,
+                    int(litellm.token_counter(model=self._model, messages=messages)),
+                )
+            except Exception:
+                logger.debug("token_counter failed; using byte bound", exc_info=True)
             try:
                 prompt_bound, completion_bound = litellm.cost_per_token(
                     model=self._model,
-                    prompt_tokens=len(prompt.encode("utf-8")),
+                    prompt_tokens=prompt_token_bound,
                     completion_tokens=max_tokens,
                 )
             except Exception as exc:
@@ -157,12 +171,18 @@ class LiteLLMBackend:
                     f"up to {format_usd(worst_case)})"
                 )
 
-            response = litellm.completion(
-                model=self._model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=max_tokens,
-                temperature=0.0,  # Deterministic for config generation
-            )
+            try:
+                response = litellm.completion(
+                    model=self._model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=0.0,  # Deterministic for config generation
+                )
+            except BaseException:
+                # The request may have been billed even though it failed on our
+                # side; reserve its worst-case cost so it cannot be spent twice.
+                self._spent_usd += worst_case
+                raise
 
             self._calls_made += 1
 

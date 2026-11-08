@@ -218,3 +218,53 @@ class TestBudgetSafety2928:
                 backend.complete("p")
             with pytest.raises(BudgetExhausted):
                 backend.complete("p")
+
+
+class TestBudgetBound2928Delta:
+    def test_framed_cost_above_byte_bound_is_refused(self) -> None:
+        import litellm
+
+        byte_cost = sum(
+            litellm.cost_per_token(model="gpt-4o", prompt_tokens=1, completion_tokens=1)
+        )
+        framed_cost = sum(
+            litellm.cost_per_token(
+                model="gpt-4o", prompt_tokens=100_000, completion_tokens=1
+            )
+        )
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=byte_cost * 5)
+        assert byte_cost * 5 < framed_cost
+        with (
+            patch("litellm.token_counter", return_value=100_000),
+            patch("litellm.completion") as completion,
+        ):
+            with pytest.raises(BudgetExhausted):
+                backend.complete("p", max_tokens=1)
+        completion.assert_not_called()
+
+    def test_token_counter_failure_uses_byte_plus_margin(self) -> None:
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=1.0)
+        with (
+            patch("litellm.token_counter", side_effect=RuntimeError("x")),
+            patch("litellm.completion", return_value=_response(5, 5)),
+        ):
+            assert backend.complete("p", max_tokens=1) == "ok"
+
+    def test_failed_call_debits_worst_case(self) -> None:
+        import litellm
+
+        one = sum(
+            litellm.cost_per_token(
+                model="gpt-4o", prompt_tokens=9, completion_tokens=1000
+            )
+        )
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=one * 1.5)
+        with (
+            patch("litellm.token_counter", return_value=9),
+            patch("litellm.completion", side_effect=TimeoutError("t")),
+        ):
+            with pytest.raises(TimeoutError):
+                backend.complete("p", max_tokens=1000)
+            assert backend.total_cost_usd > 0
+            with pytest.raises(BudgetExhausted):
+                backend.complete("p", max_tokens=1000)
