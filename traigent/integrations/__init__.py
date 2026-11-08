@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import importlib
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Activation state management (thread-safe state)
 from .activation import ActivationState, create_activation_state
@@ -289,6 +289,88 @@ for _group_name, _spec in _LAZY_GROUPS.items():
         _LAZY_ATTRS[_attr] = _group_name
 _LAZY_ATTRS["log_traigent_optimization"] = "wandb"
 del _group_name, _spec, _attr
+
+if TYPE_CHECKING:
+    from .dspy_adapter import (
+        DSPY_AVAILABLE,
+        DSPyPromptOptimizer,
+        PromptOptimizationResult,
+        create_dspy_integration,
+    )
+    from .langchain import (
+        LANGCHAIN_AVAILABLE,
+        LLMCallMetrics,
+        ToolCallMetrics,
+        TraigentHandler,
+        TraigentHandlerMetrics,
+        create_traigent_handler,
+        get_current_node_name,
+        get_current_trial_config,
+        node_context,
+        trial_context,
+    )
+    from .langfuse import (
+        LANGFUSE_AVAILABLE,
+        LangfuseClient,
+        LangfuseObservation,
+        LangfuseOptimizationCallback,
+        LangfuseTraceMetrics,
+        LangfuseTracker,
+        TraceIdResolver,
+        create_langfuse_tracker,
+    )
+    from .llms.langchain.base import (
+        add_langchain_llm_mapping,
+        auto_detect_langchain_llms,
+        enable_chatgpt_optimization,
+        enable_claude_optimization,
+        enable_langchain_optimization,
+        get_supported_langchain_llms,
+    )
+    from .llms.openai import (
+        auto_detect_openai,
+        enable_async_openai,
+        enable_openai_optimization,
+        enable_streaming_optimization,
+        enable_sync_openai,
+        enable_tools_optimization,
+        get_supported_openai_clients,
+        openai_context,
+    )
+    from .observability.mlflow import (
+        TraigentMLflowTracker,
+        compare_traigent_runs,
+        create_mlflow_tracker,
+        enable_mlflow_autolog,
+        get_best_traigent_run,
+    )
+    from .observability.wandb import (
+        TraigentWandBTracker,
+        WandBIntegration,
+        create_wandb_sweep_config,
+        create_wandb_tracker,
+        enable_wandb_autolog,
+        init_wandb_run,
+        log_final_results_to_wandb,
+        log_traigent_optimization,
+        log_trial_to_wandb,
+    )
+    from .pydantic_ai import (
+        PYDANTICAI_AVAILABLE,
+        PydanticAIHandler,
+        PydanticAIPlugin,
+        create_pydantic_ai_handler,
+    )
+
+    MLFLOW_INTEGRATION_AVAILABLE: bool
+    WANDB_INTEGRATION_AVAILABLE: bool
+    LANGCHAIN_INTEGRATION_AVAILABLE: bool
+    OPENAI_SDK_INTEGRATION_AVAILABLE: bool
+    DSPY_INTEGRATION_AVAILABLE: bool
+    PYDANTICAI_INTEGRATION_AVAILABLE: bool
+    LANGFUSE_INTEGRATION_AVAILABLE: bool
+    LANGCHAIN_HANDLER_AVAILABLE: bool
+
 
 _loaded_groups: set[str] = set()
 _lazy_lock = threading.RLock()

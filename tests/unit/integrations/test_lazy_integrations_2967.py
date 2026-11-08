@@ -14,10 +14,11 @@ from pathlib import Path
 
 import pytest
 
-_FAKE_FRAMEWORKS = ("dspy", "langchain_core", "pydantic_ai", "langfuse")
+_FAKE_FRAMEWORKS = ("dspy", "langchain_core", "pydantic_ai", "langfuse", "wandb")
 
 _ADAPTER_MODULES = (
     "traigent.integrations.dspy_adapter",
+    "traigent.integrations.observability.wandb",
     "traigent.integrations.pydantic_ai",
     "traigent.integrations.langchain",
     "traigent.integrations.langfuse",
