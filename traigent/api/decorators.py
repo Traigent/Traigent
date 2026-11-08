@@ -2933,7 +2933,9 @@ def _hybrid_api_kwargs(hybrid_api_options: Any) -> dict[str, Any]:
     }
 
 
-def _snapshot_kwargs(snapshot_store: Any, snapshot_g1_deadline_days: Any) -> dict:
+def _snapshot_kwargs(
+    snapshot_store: Any, snapshot_g1_deadline_days: Any
+) -> dict[str, Any]:
     if snapshot_store is None:
         return {}
     kwargs: dict[str, Any] = {"snapshot_store": snapshot_store}

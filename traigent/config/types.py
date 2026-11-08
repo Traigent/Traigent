@@ -1217,7 +1217,7 @@ class TraigentConfig:
         storage_path: str | None = None,
         minimal_logging: bool = True,
         auto_sync: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> TraigentConfig:
         """Compatibility constructor for local-only execution."""
         return cls(
@@ -1235,7 +1235,7 @@ class TraigentConfig:
         storage_path: str | None = None,
         minimal_logging: bool = True,
         auto_sync: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> TraigentConfig:
         """Deprecated compatibility constructor for offline local execution.
 

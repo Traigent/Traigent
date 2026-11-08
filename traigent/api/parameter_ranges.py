@@ -38,7 +38,7 @@ import numbers
 import os
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import (
     TYPE_CHECKING,
@@ -814,7 +814,7 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
         """Return as list for backward compatibility."""
         return list(self.values)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[T]:
         """Allow iteration over choices."""
         return iter(self.values)
 
@@ -822,7 +822,7 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
         """Return number of choices."""
         return len(self.values)
 
-    def __contains__(self, item: T) -> bool:
+    def __contains__(self, item: object) -> bool:
         """Check if item is in choices."""
         return item in self.values
 
