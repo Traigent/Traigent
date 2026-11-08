@@ -70,9 +70,9 @@ class MockWandB:
         """Log metrics to W&B."""
         self.logged_data.append((data, step))
 
-    def save(self, path: str) -> None:
-        """Save file to W&B."""
-        self.saved_files.append(path)
+    def save(self, path: str, **_kwargs: Any) -> None:
+        """Save file to W&B (artifacts are staged in a temp dir; keep the name)."""
+        self.saved_files.append(Path(path).name)
 
     def finish(self) -> None:
         """Finish current run."""
@@ -666,7 +666,7 @@ class TestTraigentWandBTrackerLogOptimizationResult:
 
         tracker.log_optimization_result(sample_optimization_result, str(dataset_path))
 
-        assert str(dataset_path) in mock_wandb_available.saved_files
+        assert dataset_path.name in mock_wandb_available.saved_files
 
     def test_log_optimization_result_dataset_not_exists(
         self,
