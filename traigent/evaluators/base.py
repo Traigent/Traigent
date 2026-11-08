@@ -712,7 +712,7 @@ def _resolve_relative_to_cwd(
     cwd-relative spelling is unusable", which is exactly ``None``; letting one
     escape would turn a structured ``ValidationError`` into a raw ``OSError``
     and break the callers that only catch ``ValidationError`` (the MCP
-    ``validate_dataset`` tool and ``traigent validate-dataset``).
+    ``validate_dataset`` tool and ``traigent validate``).
     """
 
     try:
