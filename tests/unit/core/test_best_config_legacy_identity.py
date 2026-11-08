@@ -136,6 +136,16 @@ def _entry(kind: str, tmp_path: Path, monkeypatch, data: dict[str, Any], **kwarg
     return _manager(dev_logs=True, **kwargs)
 
 
+def _refused_non_strict(manager: ConfigStateManager, entry: str) -> None:
+    """Non-strict refusal: an explicit load_from raises (#3268); others skip."""
+    if entry == "load_from":
+        with pytest.raises(ConfigurationError):
+            manager.maybe_auto_load_config()
+        return
+    manager.maybe_auto_load_config()
+    assert _is_default(manager)
+
+
 ENTRY_POINTS = ["load_from", "env", "dev_log"]
 EXPLICIT_ENTRY_POINTS = ["load_from", "env"]
 
@@ -186,8 +196,7 @@ def test_a_contradicting_identity_is_skipped_not_loaded_non_strict(
     manager = _entry(
         entry, tmp_path, monkeypatch, _legacy(**CONTRADICTIONS[field]), strict=False
     )
-    manager.maybe_auto_load_config()
-    assert _is_default(manager)
+    _refused_non_strict(manager, entry)
 
 
 @pytest.mark.parametrize("entry", ENTRY_POINTS)
@@ -204,8 +213,7 @@ def test_a_contradicting_identity_is_refused_even_when_identity_is_partial(
     with pytest.raises(ConfigurationError):
         manager.maybe_auto_load_config()
     manager = _entry(entry, tmp_path, monkeypatch, data, strict=False)
-    manager.maybe_auto_load_config()
-    assert _is_default(manager)
+    _refused_non_strict(manager, entry)
 
 
 @pytest.mark.parametrize("entry", ENTRY_POINTS)
@@ -215,8 +223,7 @@ def test_a_non_string_identity_field_is_a_contradiction(
     manager = _entry(
         entry, tmp_path, monkeypatch, _legacy(function_ref=["x"]), strict=False
     )
-    manager.maybe_auto_load_config()
-    assert _is_default(manager)
+    _refused_non_strict(manager, entry)
 
 
 @pytest.mark.parametrize("entry", ENTRY_POINTS)
@@ -244,8 +251,7 @@ def test_a_bound_legacy_file_without_environment_is_the_default_environment(
 ) -> None:
     data = _legacy(environment="__omit__")
     prod = _entry(entry, tmp_path, monkeypatch, data, strict=False)
-    prod.maybe_auto_load_config()
-    assert _is_default(prod)
+    _refused_non_strict(prod, entry)
     default = _entry(
         entry, tmp_path, monkeypatch, data, strict=False, environment="default"
     )
@@ -283,8 +289,7 @@ def test_b_an_unsupported_schema_version_is_skipped_non_strict(
         {"schema_version": "traigent.best_config.v2", "config": {"t": 2}},
         strict=False,
     )
-    manager.maybe_auto_load_config()
-    assert _is_default(manager)
+    _refused_non_strict(manager, entry)
 
 
 # --- ruling c: identity-free legacy loads only when the user named the file ------------
@@ -630,8 +635,7 @@ def test_f1f_a_bare_dict_with_contradicting_identity_is_refused(
         with pytest.raises(ConfigurationError, match="identity mismatch"):
             manager.maybe_auto_load_config()
     else:
-        manager.maybe_auto_load_config()
-    assert _is_default(manager)
+        _refused_non_strict(manager, entry)
 
 
 def test_f1f_sols_exact_bare_dict_does_not_install_t2(tmp_path, monkeypatch) -> None:
@@ -643,7 +647,11 @@ def test_f1f_sols_exact_bare_dict_does_not_install_t2(tmp_path, monkeypatch) -> 
     }
     for entry in EXPLICIT_ENTRY_POINTS:
         manager = _entry(entry, tmp_path, monkeypatch, data, strict=False)
-        manager.maybe_auto_load_config()
+        if entry == "load_from":
+            with pytest.raises(ConfigurationError):
+                manager.maybe_auto_load_config()
+        else:
+            manager.maybe_auto_load_config()
         assert manager._best_config_snapshot.config["t"] == 1
 
 
@@ -731,8 +739,7 @@ def test_f1f_a_canonical_envelope_with_an_unsupported_version_is_still_refused(
         with pytest.raises(ConfigurationError, match="schema_version"):
             manager.maybe_auto_load_config()
     else:
-        manager.maybe_auto_load_config()
-    assert _is_default(manager)
+        _refused_non_strict(manager, entry)
 
 
 # F1f item 5: a customer-chosen path never reaches a log line or an exception text.
@@ -766,6 +773,9 @@ _REFUSED_FILES = {
 }
 
 
+_LOADS_WHEN_NAMED = {"identity_free", "bare_identity_free"}
+
+
 @pytest.mark.parametrize("entry", EXPLICIT_ENTRY_POINTS)
 @pytest.mark.parametrize("kind", sorted(_REFUSED_FILES))
 @pytest.mark.parametrize("strict", [False, True])
@@ -776,7 +786,10 @@ def test_f1f_a_refusal_never_prints_the_file_path(
     caplog.set_level(logging.DEBUG)
     manager = _entry(entry, root, monkeypatch, _REFUSED_FILES[kind], strict=strict)
     caught = None
-    if strict:
+    # Identity-free files load with a warning when named (non-strict), so only
+    # the other kinds are refused for an explicit load_from (#3268).
+    raises = strict or (entry == "load_from" and kind not in _LOADS_WHEN_NAMED)
+    if raises:
         with pytest.raises(ConfigurationError) as caught:
             manager.maybe_auto_load_config()
         label = {"load_from": "load_from", "env": "TRAIGENT_CONFIG_PATH"}[entry]

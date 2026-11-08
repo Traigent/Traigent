@@ -109,7 +109,9 @@ def test_implicit_env_path_missing_still_falls_back_3268(tmp_path, monkeypatch):
     assert opt_func.current_config["temperature"] == 0.1
 
 
-def test_load_from_canonical_config_id_mismatch_does_not_legacy_fallback(tmp_path):
+def test_load_from_canonical_config_id_mismatch_raises_without_legacy_fallback(
+    tmp_path,
+):
     spec_path = write_repo_best_config(
         tmp_path,
         config_id="other-answerer",
@@ -117,16 +119,15 @@ def test_load_from_canonical_config_id_mismatch_does_not_legacy_fallback(tmp_pat
         function_ref=function_ref_for(plain_answer),
     )
 
-    opt_func = OptimizedFunction(
-        func=plain_answer,
-        configuration_space={"temperature": [0.1, 0.9]},
-        config_id="expected-answerer",
-        load_from=str(spec_path),
-        default_config={"temperature": 0.1},
-    )
-
-    assert opt_func.current_config["temperature"] == 0.1
-    assert opt_func.best_config_snapshot.source == BestConfigSource.DEFAULT.value
+    # An explicit load_from that cannot be used fails loudly (#3268).
+    with pytest.raises(ConfigurationError):
+        OptimizedFunction(
+            func=plain_answer,
+            configuration_space={"temperature": [0.1, 0.9]},
+            config_id="expected-answerer",
+            load_from=str(spec_path),
+            default_config={"temperature": 0.1},
+        )
 
 
 def test_repo_best_config_source_loads_at_init(tmp_path, monkeypatch):

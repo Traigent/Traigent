@@ -485,7 +485,7 @@ class ConfigStateManager:
                 # SDK does not support, or any other canonical refusal, never falls
                 # back to the identity-blind legacy reader.
                 refusal = self._canonical_refusal(envelope, spec_exc)
-                if self.best_config_strict:
+                if self.best_config_strict or explicit:
                     raise self._canonical_failure(refusal, path, label) from None
                 logger.warning(
                     "Ignoring invalid canonical best config (%s): %s",
@@ -569,10 +569,13 @@ class ConfigStateManager:
             )
         )
 
-    def _refuse_legacy_file(self, path: str, label: str, reason: str) -> None:
-        """Refuse a legacy file: strict raises; non-strict warns and the caller skips."""
+    def _refuse_legacy_file(
+        self, path: str, label: str, reason: str, *, explicit: bool = False
+    ) -> None:
+        """Refuse a legacy file: strict or an explicit load_from raises (#3268);
+        otherwise warn and the caller skips."""
         message = f"Refusing legacy best config ({label}): {reason}"
-        if self.best_config_strict:
+        if self.best_config_strict or explicit:
             raise diag._safe_error(message, details={"path": path})
         logger.warning("%s", message)
 
@@ -621,6 +624,7 @@ class ConfigStateManager:
         """
 
         label = _source_label(source)
+        explicit = source == BestConfigSource.LOAD_FROM.value
         payload = self._read_legacy_payload(path, label)
         if payload is None:
             return False, None
@@ -630,7 +634,9 @@ class ConfigStateManager:
 
         mismatch = self._legacy_identity_mismatch(data)
         if mismatch is not None:
-            self._refuse_legacy_file(path, label, f"identity mismatch: {mismatch}")
+            self._refuse_legacy_file(
+                path, label, f"identity mismatch: {mismatch}", explicit=explicit
+            )
             return True, None
 
         function_ref = data.get("function_ref")
@@ -648,6 +654,7 @@ class ConfigStateManager:
                     label,
                     "no function identity (function_ref); best_config_strict only "
                     "loads a best config bound to the requested function",
+                    explicit=explicit,
                 )
                 return True, None
             logger.warning(
@@ -664,6 +671,7 @@ class ConfigStateManager:
                 label,
                 "identity mismatch: environment does not match the requested "
                 "environment",
+                explicit=explicit,
             )
             return True, None
         return True, self._snapshot_from_plain_config(loaded_config, source=source)

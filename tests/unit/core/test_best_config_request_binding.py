@@ -166,9 +166,9 @@ def test_load_from_never_serves_another_environment(tmp_path) -> None:
     path = _write_file(tmp_path / "staging.json", _spec())
     with pytest.raises(ConfigurationError, match="environment"):
         _manager(source="off", strict=True, load_from=path).maybe_auto_load_config()
-    loose = _manager(source="off", strict=False, load_from=path)
-    loose.maybe_auto_load_config()
-    assert loose._best_config_snapshot.source == BestConfigSource.DEFAULT.value
+    # An explicit load_from that cannot be used fails loudly even non-strict (#3268).
+    with pytest.raises(ConfigurationError, match="environment"):
+        _manager(source="off", strict=False, load_from=path).maybe_auto_load_config()
     ok = _manager(source="off", environment="staging", load_from=path)
     ok.maybe_auto_load_config()
     assert ok._best_config_snapshot.config["t"] == 2
@@ -370,9 +370,8 @@ def test_explicit_file_without_function_ref_is_refused_for_a_bound_manager(
     )
     with pytest.raises(ConfigurationError, match="function_ref"):
         _manager(source="off", strict=True, load_from=path).maybe_auto_load_config()
-    loose = _manager(source="off", strict=False, load_from=path)
-    loose.maybe_auto_load_config()
-    assert loose._best_config_snapshot.source == BestConfigSource.DEFAULT.value
+    with pytest.raises(ConfigurationError, match="function_ref"):
+        _manager(source="off", strict=False, load_from=path).maybe_auto_load_config()
 
 
 # --- P3-4: the transport client validates the identity it returns -----------------------
