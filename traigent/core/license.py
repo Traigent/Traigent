@@ -51,6 +51,7 @@ from typing import Any
 
 from traigent.config.backend_config import PRICING_URL
 from traigent.utils.env_config import _is_truthy_env_value
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ class LicenseInfo:
         return feature in self.features and self.is_valid
 
 
-class FeatureRequiresLicenseError(Exception):
+class FeatureRequiresLicenseError(PicklableExceptionMixin, Exception):
     """Raised when a feature requires a license that is not present."""
 
     def __init__(self, feature: str, required_tier: str = "Pro"):

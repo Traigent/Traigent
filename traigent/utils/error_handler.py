@@ -10,12 +10,14 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 _PERMISSION_DENIED = "Permission denied"
 
 _NO_MODULE_NAMED = "No module named"
 
 
-class TraigentError(Exception):
+class TraigentError(PicklableExceptionMixin, Exception):
     """Base exception for Traigent errors with helpful messages."""
 
     def __init__(
@@ -95,6 +97,17 @@ class APIKeyError(TraigentError):
             message=message,
             fix=fix,
             docs_link="https://github.com/Traigent/Traigent#troubleshooting",
+        )
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # ``key_name`` is dropped when ``message`` is given, so replaying the raw
+        # constructor call would carry it across pickle. Rebuild from the stored
+        # (formatted) message and fix instead.
+        rebuild, (cls, _args, _kwargs), state = super().__reduce__()
+        return (
+            rebuild,
+            (cls, (), {"message": self.message, "fix": self.fix}),
+            state,
         )
 
     @classmethod

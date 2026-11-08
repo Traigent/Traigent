@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 __all__ = ["ResolutionError", "ResolutionNode", "ResolutionRejection"]
 
 
@@ -28,7 +30,7 @@ class ResolutionRejection(StrEnum):
     NO_DECISION = "no_decision"  # calibrator ⊥ with no R_i holding
 
 
-class ResolutionError(Exception):
+class ResolutionError(PicklableExceptionMixin, Exception):
     """Typed, fail-closed resolution failure.
 
     Carries the full set of rejections so callers can report every reason,

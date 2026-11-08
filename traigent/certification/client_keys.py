@@ -26,6 +26,7 @@ from traigent_schema.certification import derive_client_key_ref
 
 from traigent.certification._private_dir import ensure_private_dir
 from traigent.certification.transport import G1RequestError, G1Transport
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 
 __all__ = [
     "ALGORITHM",
@@ -42,7 +43,7 @@ CLIENT_KEYS_PATH: Final = "/api/v1beta/certificate-client-keys"
 _KEY_FILE_VERSION: Final = 1
 
 
-class ClientKeyError(Exception):
+class ClientKeyError(PicklableExceptionMixin, Exception):
     """Closed failure; ``code`` is a fixed token, never key material."""
 
     CODES: Final = frozenset(

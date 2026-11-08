@@ -53,6 +53,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 if TYPE_CHECKING:
     from traigent.api.parameter_ranges import ParameterRange
     from traigent.tvl.models import StructuralConstraint
@@ -71,7 +73,7 @@ _IMPLICATION_REQUIRES_WHEN_THEN = (
 # =============================================================================
 
 
-class ConstraintScopeError(ValueError):
+class ConstraintScopeError(PicklableExceptionMixin, ValueError):
     """Raised when a constraint references a TVAR not in the ConfigSpace scope.
 
     This error indicates that a constraint uses a ParameterRange (TVAR) that

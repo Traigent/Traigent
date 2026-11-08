@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 # Closed vocabulary of quota/limit error codes safe to render. Anything else
 # (including backend-invented strings) is shown as "unknown" so a quota
 # diagnostic can never carry backend or customer text (#2550).
@@ -393,7 +395,7 @@ class SessionCreationFailureDetail:
         return " | ".join(parts)
 
 
-class SessionCreationHTTPError(Exception):
+class SessionCreationHTTPError(PicklableExceptionMixin, Exception):
     """HTTP error raised while creating a backend tracking session."""
 
     def __init__(self, detail: SessionCreationFailureDetail) -> None:

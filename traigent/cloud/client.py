@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.labels.transport_gate import client_origins, gate_session
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 
 # Capture the genuine, unpatched ClientSession class at module-load time — before
 # any test can monkeypatch the mutable ``aiohttp.ClientSession`` module attribute.
@@ -627,7 +628,7 @@ class BaseTraigentClient(ABC):
         return False
 
 
-class StandardizedClientError(Exception):
+class StandardizedClientError(PicklableExceptionMixin, Exception):
     """Standardized error class for all Traigent clients."""
 
     def __init__(

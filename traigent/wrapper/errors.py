@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 
-class HybridAPIError(Exception):
+
+class HybridAPIError(PicklableExceptionMixin, Exception):
     """Base exception for explicit Hybrid API HTTP responses."""
 
     def __init__(

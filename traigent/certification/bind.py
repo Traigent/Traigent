@@ -31,6 +31,7 @@ from traigent.certification.client_evidence import COMMITMENT_SCHEME, ClientEvid
 from traigent.certification.client_keys import ALGORITHM, ClientKey, ClientKeyError
 from traigent.certification.pins import Pins
 from traigent.certification.transport import G1RequestError, G1Transport
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 
 __all__ = [
     "ATTESTOR_VERSION",
@@ -52,7 +53,7 @@ _SEMVER_PREFIX_RE = re.compile(r"([0-9]{1,4})\.([0-9]{1,4})\.([0-9]{1,4})")
 _DIGEST_RE = re.compile(r"sha256:[a-f0-9]{64}")
 
 
-class BindError(Exception):
+class BindError(PicklableExceptionMixin, Exception):
     """Closed failure. ``code`` is a fixed token; ``session_ref`` is the server-issued
     ``bsn:`` reference if one was already issued (so it can be abandoned)."""
 
