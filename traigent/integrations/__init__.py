@@ -207,7 +207,7 @@ except (ImportError, KeyError, RuntimeError):
     def _pydanticai_unavailable(*args: Any, **kwargs: Any) -> Any:
         raise ImportError(
             "PydanticAI integration is unavailable. "
-            "Install with: pip install 'pydantic-ai>=1,<2'"
+            "Install with: pip install 'pydantic-ai>=2.53.0,<3'"
         )
 
     PydanticAIHandler = _pydanticai_unavailable  # type: ignore[assignment, misc]
