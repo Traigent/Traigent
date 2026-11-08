@@ -13,7 +13,7 @@ import copy
 import json
 import logging
 import os
-import shutil
+import stat
 import threading
 import uuid
 from collections.abc import Callable
@@ -1334,16 +1334,22 @@ class ConfigStateManager:
                     base_dir,
                     must_exist=False,
                 )
+                # Created with the previous file's exact mode (0o600 when there
+                # is none) before any byte is written, so the staged copy is
+                # never more permissive than the original, even if killed.
+                mode = (
+                    stat.S_IMODE(output_path.stat().st_mode)
+                    if output_path.exists()
+                    else 0o600
+                )
                 try:
-                    with safe_open(
-                        temp_path, base_dir, mode="w", encoding="utf-8"
-                    ) as f:
+                    fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        if hasattr(os, "fchmod"):
+                            os.fchmod(f.fileno(), mode)
                         json.dump(result_dict, f, indent=2, default=str)
                         f.flush()
                         os.fsync(f.fileno())
-                    if output_path.exists():
-                        # keep the previous file's permissions (e.g. 0600)
-                        shutil.copymode(output_path, temp_path)
                     os.replace(temp_path, output_path)
                 finally:
                     if temp_path.exists():

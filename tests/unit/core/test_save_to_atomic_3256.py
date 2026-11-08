@@ -82,3 +82,32 @@ def test_overwrite_keeps_restrictive_permissions(tmp_path):
     path.chmod(0o600)
     _save(tmp_path, path)
     assert (path.stat().st_mode & 0o777) == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_temp_file_never_more_permissive_than_original(tmp_path, monkeypatch):
+    path = tmp_path / "out.json"
+    _save(tmp_path, path)
+    path.chmod(0o600)
+    old_umask = os.umask(0o000)  # worst case: umask adds no restriction
+    seen = []
+
+    def _kill(fd):
+        seen.append(os.fstat(fd).st_mode & 0o777)
+        raise OSError(5, "killed")
+
+    monkeypatch.setattr(os, "fsync", _kill)
+    try:
+        with pytest.raises(Exception):  # noqa: B017
+            _save(tmp_path, path)
+    finally:
+        os.umask(old_umask)
+        monkeypatch.undo()
+    assert seen == [0o600]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_new_file_defaults_to_owner_only(tmp_path):
+    path = tmp_path / "fresh.json"
+    _save(tmp_path, path)
+    assert (path.stat().st_mode & 0o777) == 0o600

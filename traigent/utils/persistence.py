@@ -13,7 +13,9 @@ import logging
 import os
 import pickle
 import shutil
+import stat
 import threading
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,6 +54,16 @@ METADATA_FILE = "metadata.json"
 _STAGING_PREFIX = ".traigent-staging-"
 _ASIDE_PREFIX = _STAGING_PREFIX + "old."
 _PUBLISH_LOCK = threading.Lock()
+_SEQ_LAST = 0
+
+
+def _next_seq() -> int:
+    """Strictly increasing within the process, wall-clock ordered across them."""
+    global _SEQ_LAST
+    _SEQ_LAST = max(time.time_ns(), _SEQ_LAST + 1)
+    return _SEQ_LAST
+
+
 TRIALS_JSON_FILE = "trials.json.gz"
 TRIALS_PKL_FILE = "trials.pkl.gz"
 TRIALS_SUMMARY_FILE = "trials_summary.json"
@@ -546,23 +558,41 @@ class PersistenceManager:
                 temp_path.unlink()
 
     def _recover_displaced(self) -> None:
-        """Restore a generation displaced by a save that died mid-swap.
+        """Restore generations displaced by a save that died mid-swap.
 
         ``_publish_result_dir`` renames the old directory aside before moving
         the new one in. A hard kill between the two leaves the name absent and
-        the old generation under ``.traigent-staging-old.<name>.<pid>.<id>``;
-        put it back (when nothing has been published since).
+        the old generation under
+        ``.traigent-staging-old.<name>.<seq>.<pid>.<id>``, where ``<seq>`` is a
+        zero-padded, process-monotonic nanosecond stamp. The NEWEST aside copy
+        is put back, and older copies are deleted only after that rename
+        succeeded. When the name is present, leftover copies are stale and are
+        removed. Runs under the publish lock so it cannot restore a copy a
+        concurrent in-process save is about to replace.
+
+        Known limits: a reader racing an overwrite can still see a mixed
+        generation (readers are not locked), and savers in different processes
+        are not synchronised with each other.
         """
-        for aside in sorted(self.base_dir.glob(f"{_ASIDE_PREFIX}*")):
-            name = aside.name[len(_ASIDE_PREFIX) :].rsplit(".", 2)[0]
-            if not name:
-                continue
-            target = self.base_dir / name
-            if not target.exists() and aside.is_dir():
-                try:
-                    os.replace(aside, target)
-                except OSError:
-                    logger.warning("Could not restore a displaced saved result")
+        with _PUBLISH_LOCK:
+            groups: dict[str, list[tuple[str, Path]]] = {}
+            for aside in self.base_dir.glob(f"{_ASIDE_PREFIX}*"):
+                parts = aside.name[len(_ASIDE_PREFIX) :].rsplit(".", 3)
+                if len(parts) != 4 or not parts[0] or not aside.is_dir():
+                    continue
+                groups.setdefault(parts[0], []).append((parts[1], aside))
+            for name, copies in groups.items():
+                copies.sort(key=lambda c: c[0])
+                target = self.base_dir / name
+                if not target.exists():
+                    try:
+                        os.replace(copies[-1][1], target)
+                    except OSError:
+                        logger.warning("Could not restore a displaced saved result")
+                        continue
+                    copies = copies[:-1]
+                for _seq, stale in copies:
+                    shutil.rmtree(stale, ignore_errors=True)
 
     def result_exists(self, name: str) -> bool:
         """Return True if a result named ``name`` is already saved."""
@@ -616,6 +646,10 @@ class PersistenceManager:
         final rename fails.
         """
         with _PUBLISH_LOCK:
+            if result_dir.exists():
+                # the new generation must not be more permissive than the one
+                # it replaces (e.g. a private 0700 result directory)
+                os.chmod(stage_dir, stat.S_IMODE(result_dir.stat().st_mode))
             self._swap_in(stage_dir, result_dir)
 
     def _swap_in(self, stage_dir: Path, result_dir: Path) -> None:
@@ -624,7 +658,7 @@ class PersistenceManager:
             return
         aside = self._resolve_path(
             self.base_dir
-            / f"{_ASIDE_PREFIX}{result_dir.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
+            / f"{_ASIDE_PREFIX}{result_dir.name}.{_next_seq():020d}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
         )
         os.replace(result_dir, aside)
         try:
