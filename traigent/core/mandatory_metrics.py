@@ -95,7 +95,10 @@ class MandatoryMetricsCollector:
         """
 
         cost_increment, token_increment = self._extract_cost_and_tokens(trial)
-        attempted = trial.status in _ATTEMPT_STATUSES
+        # A trial abandoned before it started (cost permit denied, #2943) spent
+        # nothing: it is not an attempt of unknown spend.
+        never_started = bool((trial.metadata or {}).get("abandoned", False))
+        attempted = trial.status in _ATTEMPT_STATUSES and not never_started
         flagged = is_cost_unmeasured(trial.metrics or {})
         if not (attempted or flagged or cost_increment > 0):
             return

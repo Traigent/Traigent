@@ -1114,8 +1114,12 @@ class TestOptimizationOrchestrator:
             trial_count=7,
         )
 
-        assert handled_trial_ids == ["trial_7", "trial_8", "trial_9"]
-        assert final_trial_count == 10
+        # #2943: permit-denied placeholders never started, so they are not
+        # handled as attempts and do not advance the trial count; the failed
+        # trial keeps its batch-anchored synthetic id.
+        assert handled_trial_ids == ["trial_8"]
+        assert final_trial_count == 8
+        assert orchestrator._stop_reason == "cost_limit"
 
     @pytest.mark.asyncio
     async def test_default_config_is_evaluated_first(

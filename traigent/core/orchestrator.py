@@ -3423,6 +3423,29 @@ class OptimizationOrchestrator:
             )
         return cast(TrialResult, result)
 
+    def _record_unstarted_cost_limit_trial(
+        self, trial_result: TrialResult, trial_number: int, optuna_id: int | None
+    ) -> None:
+        """Record a permit-denied parallel trial without counting it as an attempt.
+
+        The placeholder stays visible in ``trials`` but carries the ``abandoned``
+        marker, so ``max_trials`` and the mandatory-cost collector ignore it
+        (it never ran, so it spent nothing). The run stops for ``cost_limit``.
+        """
+        trial_result.metadata[_ABANDONED_TRIAL_METADATA_KEY] = True
+        trial_result.metadata["stop_reason"] = "cost_limit"
+        self._trials.append(trial_result)
+        self._log_trial(trial_result)
+        self._notify_optimizer_of_result(trial_result, optuna_id)
+        dispatched = getattr(self, "_trial_complete_dispatched", None)
+        if dispatched is None:
+            dispatched = self._trial_complete_dispatched = set()
+        dispatched.add(trial_number)
+        self.callback_manager.on_trial_complete(
+            trial_result, self._get_progress_info(trial_number)
+        )
+        self._stop_reason = "cost_limit"
+
     async def _process_parallel_results(
         self,
         scheduled_configs: list[dict[str, Any]],
@@ -3462,6 +3485,17 @@ class OptimizationOrchestrator:
                     trial_result = self._trial_result_from_parallel_item(
                         result, config, f"trial_{batch_start + batch_offset}"
                     )
+
+                    if result is None:
+                        # #2943: the cost permit was denied, so the trial never
+                        # started. It spent nothing and must not consume the
+                        # max_trials budget or count as unmeasured spend.
+                        self._record_unstarted_cost_limit_trial(
+                            trial_result,
+                            batch_start + batch_offset,
+                            optuna_id,
+                        )
+                        continue
 
                     trial_count = await self._handle_trial_result(
                         trial_result=trial_result,
@@ -3675,6 +3709,12 @@ class OptimizationOrchestrator:
         trial_count = await self._process_parallel_results(
             scheduled_configs, results, scheduled_optuna_ids, session_id, trial_count
         )
+
+        # #2943: a denied cost permit means the budget is spent. Mirror the
+        # sequential path: end the run with the cost_limit stop reason.
+        if any(item.result is None for item in results):
+            self._stop_reason = "cost_limit"
+            return trial_count, "break"
 
         # Phase 9: Check for batch-wide vendor errors (parallel mode)
         vendor_stop = await self._check_batch_vendor_errors(results)
