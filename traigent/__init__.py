@@ -730,6 +730,7 @@ __all__ = [
     "OptimizationStateError",
     "PlatformCapabilityError",
     "SnapshotBindingError",
+    "VendorPauseError",
     "ConfigAccessWarning",
     "DataIntegrityError",
     "MetricExtractionError",
