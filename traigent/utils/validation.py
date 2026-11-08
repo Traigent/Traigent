@@ -1002,7 +1002,7 @@ def _resolve_dataset_base(
             .expanduser()
             .resolve(strict=True)
         )
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         result.add_error(
             "dataset",
             f"Dataset base directory cannot be resolved: {exc}",
@@ -1036,12 +1036,14 @@ def _resolve_dataset_path(
         candidate = dataset_base / raw_path
 
     try:
-        return candidate.resolve(strict=True)
-    except FileNotFoundError:
-        # Keep the public validator's established NOT_FOUND result for a
-        # missing in-base target while strictly resolving existing paths.
-        return candidate.resolve()
-    except (OSError, RuntimeError) as exc:
+        try:
+            return candidate.resolve(strict=True)
+        except FileNotFoundError:
+            # Keep the public validator's established NOT_FOUND result for a
+            # missing in-base target while strictly resolving existing paths.
+            return candidate.resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        # ValueError covers an embedded NUL byte in the path.
         result.add_error(
             "dataset",
             f"Dataset path cannot be resolved: {exc}",
