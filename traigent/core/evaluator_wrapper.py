@@ -421,6 +421,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         total.cost.output_cost += extra.cost.output_cost
         total.cost.total_cost += extra.cost.total_cost
         total.cost.unpriced = total.cost.unpriced or extra.cost.unpriced
+        total.cost.cache_rate_unknown = (
+            total.cost.cache_rate_unknown or extra.cost.cache_rate_unknown
+        )
         total.response.response_time_ms += extra.response.response_time_ms
 
     def _enhance_result_with_llm_metrics(
