@@ -268,3 +268,9 @@ class TestBudgetBound2928Delta:
             assert backend.total_cost_usd > 0
             with pytest.raises(BudgetExhausted):
                 backend.complete("p", max_tokens=1000)
+
+    def test_no_hidden_provider_retries(self) -> None:
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=1.0)
+        with patch("litellm.completion", return_value=_response(5, 5)) as completion:
+            backend.complete("p", max_tokens=1)
+        assert completion.call_args.kwargs["num_retries"] == 0

@@ -177,6 +177,7 @@ class LiteLLMBackend:
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=0.0,  # Deterministic for config generation
+                    num_retries=0,  # hidden retries would be unbudgeted spend
                 )
             except BaseException:
                 # The request may have been billed even though it failed on our
