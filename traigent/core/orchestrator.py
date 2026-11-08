@@ -704,6 +704,8 @@ class OptimizationOrchestrator:
         self._default_config: dict[str, Any] | None = None
         self._default_config_used = False
         self._init_default_config(default_config)
+        # User-supplied starting configs (issue #1665), run after the baseline.
+        self._seed_configs: list[dict[str, Any]] = []
 
         self.use_versioned_logger = use_versioned_logger
         self.file_version = file_version
@@ -1514,13 +1516,19 @@ class OptimizationOrchestrator:
             )
 
     def _consume_default_config(self) -> dict[str, Any] | None:
-        """Return the default config once to seed a baseline trial."""
+        """Return the next fixed starting config, or None.
+
+        The ``default_config`` baseline comes first (once), then any
+        user-supplied ``seed_configs`` one per call (issue #1665). Every
+        trial-start path already calls this, so seeds reach sequential and
+        parallel runs alike.
+        """
         if self._default_config_used:
-            return None
+            return self._consume_seed_config()
 
         self._default_config_used = True
         if not self._default_config:
-            return None
+            return self._consume_seed_config()
 
         self._warn_if_baseline_shrinks_grid()
 
@@ -1534,6 +1542,52 @@ class OptimizationOrchestrator:
                 logger.debug("Unable to increment optimizer trial count for baseline.")
 
         return copy.deepcopy(self._default_config)
+
+    def set_seed_configs(self, seed_configs: list[dict[str, Any]]) -> None:
+        """Queue validated seed configs to run before any optimizer suggestion.
+
+        They run in order, after the ``default_config`` baseline (if any), and
+        count toward ``max_trials``. The caller validates them against the
+        configuration space (``traigent.core.seed_configs``).
+        """
+        for index, seed in enumerate(seed_configs):
+            if not pre_trial_validate_config(seed, self._constraints_pre_eval):
+                raise ValueError(
+                    f"Seed config #{index} violates a pre-evaluation constraint "
+                    "of this run."
+                )
+        self._seed_configs = [copy.deepcopy(c) for c in seed_configs]
+        planned = self._max_trials
+        baseline = 1 if self._default_config else 0
+        if planned is not None and len(self._seed_configs) + baseline > planned:
+            logger.warning(
+                "%d seed config(s) plus the default_config baseline exceed "
+                "max_trials=%d, so some seeds will not be evaluated.",
+                len(self._seed_configs),
+                planned,
+            )
+
+    def _consume_seed_config(self) -> dict[str, Any] | None:
+        """Return the next queued seed config, or None when none are left."""
+        if not self._seed_configs:
+            return None
+        # Keep local optimizers' internal trial counters aligned with
+        # max_trials, exactly as for the baseline trial.
+        if hasattr(self.optimizer, "_trial_count"):
+            try:
+                self.optimizer._trial_count += 1  # type: ignore[attr-defined]
+            except Exception:
+                logger.debug("Unable to increment optimizer trial count for seed.")
+        seed = self._seed_configs.pop(0)
+        # Tell local optimizers this point is spent so they never re-propose it
+        # (same call resume_from uses for reused configs, #1697).
+        mark = getattr(self.optimizer, "mark_config_evaluated", None)
+        if callable(mark):
+            try:
+                mark(seed)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                logger.warning("seed_configs: optimizer could not record a seed")
+        return seed
 
     @property
     def status(self) -> OptimizationStatus:
@@ -3021,14 +3075,22 @@ class OptimizationOrchestrator:
         configs: list[dict[str, Any]] = []
         remaining = target_batch_size
 
-        baseline_config = self._consume_default_config()
-        if baseline_config is not None:
-            # baseline trials get the same Fixed/CVAR injection as suggested
+        # Baseline, then user seed configs (#1665): fixed starting trials.
+        seeds_before = len(self._seed_configs)
+        self._parallel_batch_had_seeds = False
+        while remaining > 0:
+            start_config = self._consume_default_config()
+            if start_config is None:
+                break
+            # start trials get the same Fixed/CVAR injection as suggested
             # ones — no bypass of R3/R6/R8 (RFC 0001)
-            configs.append(self._apply_knob_resolution(baseline_config))
+            configs.append(self._apply_knob_resolution(start_config))
             remaining -= 1
-            if remaining <= 0:
-                return configs, False
+        self._parallel_batch_had_seeds = len(self._seed_configs) < seeds_before
+        # Seeds run alone in their batch: suggestions made in the same batch
+        # could not see the seeds' results.
+        if configs and (remaining <= 0 or len(self._seed_configs) < seeds_before):
+            return configs, False
 
         # Try hybrid/async generation if applicable
         used_async_batch = False
@@ -3549,6 +3611,16 @@ class OptimizationOrchestrator:
         configs = self._apply_cache_policy_and_prune(configs, function_name, dataset)
 
         if not configs:
+            if getattr(self, "_parallel_batch_had_seeds", False):
+                # Every seed in this batch was filtered by the cache policy
+                # (already seen). That must not end the run: the seeds are spent
+                # and the optimizer's own suggestions come next (#1665).
+                logger.info(
+                    "seed_configs: seed batch fully filtered by cache policy; "
+                    "continuing with optimizer suggestions."
+                )
+                self._parallel_batch_had_seeds = False
+                return trial_count, "continue"
             return trial_count, "break"
 
         # Phase 5: Build trial descriptors
@@ -6445,6 +6517,25 @@ class OptimizationOrchestrator:
             for c in [t.config for t in reusable] + list(blocked_configs)
         )
 
+    def _drop_seeds_covered_by_resume(
+        self, reusable: Any, blocked_configs: Any
+    ) -> None:
+        """Drop seeds already evaluated (reused) or in flight (never retried)."""
+        if not self._seed_configs:
+            return
+        kept = [
+            seed
+            for seed in self._seed_configs
+            if not self._baseline_already_covered(seed, reusable, blocked_configs)
+        ]
+        dropped = len(self._seed_configs) - len(kept)
+        if dropped:
+            logger.info(
+                "resume_from: skipped %d seed config(s) already covered by prior trials.",
+                dropped,
+            )
+        self._seed_configs = kept
+
     def _adopt_reusable_trials(self, reusable: Any) -> tuple[float, int]:
         """Adopt prior trials into this run; return (known reused cost, unknown-cost count)."""
         reused_cost = 0.0
@@ -6514,6 +6605,7 @@ class OptimizationOrchestrator:
             # The baseline was already evaluated (reused) or is in flight with an
             # unknown outcome (never retried); do not spend a trial on it.
             self._default_config_used = True
+        self._drop_seeds_covered_by_resume(plan.reusable, plan.blocked_configs)
         self._resume_summary = {
             "reused_trials": len(plan.reusable),
             "unfinished_prior_trials_not_reused": plan.not_reusable_unfinished,
