@@ -642,6 +642,18 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
     ),
     (
         "local_storage.py",
+        "LocalStorageManager.list_sessions",
+        "log",
+        "dc0b3aada7cae239",  # pragma: allowlist secret
+    ): (
+        1,
+        (
+            "skipped is an int counter (initialised 0 and += 1 in the same "
+            "function); no session id, path or created_at value (#3046)"
+        ),
+    ),
+    (
+        "local_storage.py",
         "LocalStorageManager.delete_session",
         "log",
         "d288f3d7657ce756",  # pragma: allowlist secret

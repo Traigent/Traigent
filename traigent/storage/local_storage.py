@@ -248,6 +248,24 @@ def _dataclass_kwargs(cls: type, data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if key in allowed}
 
 
+def parse_session_created_at(value: Any) -> datetime | None:
+    """Parse a session ``created_at`` into an aware datetime, or ``None``.
+
+    Naive values are read as UTC (the reading cleanup and its ``--dry-run``
+    preview already used). A non-string or non-ISO value returns ``None`` so
+    callers can skip the record instead of raising (#3046, #3099).
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
 class LocalStorageManager:
     """
     Manages local storage for Traigent optimization sessions.
@@ -264,6 +282,9 @@ class LocalStorageManager:
         """
         self.storage_path = self._get_storage_path(storage_path)
         self._ensure_directories()
+        # Records the last ``list_sessions()`` skipped for an unusable
+        # ``created_at`` (#3046).
+        self.last_skipped_sessions = 0
 
     def _get_storage_path(self, custom_path: str | None) -> Path:
         """Get storage path from custom path, env var, or default."""
@@ -873,13 +894,29 @@ class LocalStorageManager:
         if not sessions_dir.exists():
             return sessions
 
+        dated: list[tuple[datetime, OptimizationSession]] = []
+        skipped = 0
         for session_file in sessions_dir.glob("*.json"):
             session = self.load_session(session_file.stem)
             if session and (status is None or session.status == status):
-                sessions.append(session)
+                created = parse_session_created_at(session.created_at)
+                if created is None:
+                    # Like an unreadable file: one record with a null or
+                    # non-ISO created_at must not break listing or cleanup.
+                    skipped += 1
+                    continue
+                dated.append((created, session))
+
+        self.last_skipped_sessions = skipped
+        if skipped:
+            logger.warning(
+                "Skipped %d session record(s) with a missing or unparseable created_at",
+                skipped,
+            )
 
         # Sort by creation time, newest first
-        sessions.sort(key=lambda s: s.created_at, reverse=True)
+        dated.sort(key=lambda item: item[0], reverse=True)
+        sessions.extend(session for _, session in dated)
         return sessions
 
     _SESSION_INDEX_NAME = "session_summary_index.json"
@@ -1202,10 +1239,10 @@ class LocalStorageManager:
         for session in self.list_sessions():
             if session.status not in TERMINAL_SESSION_STATUSES:
                 continue  # never delete in-flight or unrecognised sessions
-            session_date = datetime.fromisoformat(session.created_at)
             # Same reading as the cleanup --dry-run preview: naive means UTC.
-            if session_date.tzinfo is None:
-                session_date = session_date.replace(tzinfo=UTC)
+            session_date = parse_session_created_at(session.created_at)
+            if session_date is None:
+                continue  # already skipped (and counted) by list_sessions
             if session_date < cutoff_date:
                 if self.delete_session(session.session_id):
                     deleted_count += 1
