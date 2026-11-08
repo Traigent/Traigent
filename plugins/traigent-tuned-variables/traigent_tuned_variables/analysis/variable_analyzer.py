@@ -14,7 +14,7 @@ import logging
 import math
 import statistics
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
 # numpy is optional - only needed for percentile calculation
@@ -80,7 +80,7 @@ def _percentile(values: list[float], p: float) -> float:
     return d0 + d1
 
 
-class EliminationAction(str, Enum):
+class EliminationAction(StrEnum):
     """Actions for variable/value elimination."""
 
     KEEP = "keep"
