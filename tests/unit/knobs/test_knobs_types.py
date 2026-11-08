@@ -458,3 +458,10 @@ def test_counts_are_natural_numbers():
         with pytest.raises(ValueError):
             EvidenceRef(n=bad, pool_hash="p")
     EvidenceRef(n=0, pool_hash="p")  # zero is a natural number here
+
+
+@pytest.mark.parametrize("bad", ["\ud800", {"k": "a\udfffb"}, {"\ud800": 1}, ["ok", "\udc00"]])
+def test_canonical_hash_rejects_lone_surrogates_with_typed_error(bad):
+    # #3262: used to leak a raw UnicodeEncodeError at the UTF-8 encode step.
+    with pytest.raises(CanonicalizationError):
+        canonical_hash(bad)
