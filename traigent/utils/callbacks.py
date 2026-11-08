@@ -644,6 +644,9 @@ class ManagedProgressCallback(OptimizationCallback):
         )
 
 
+_LOGGING_CALLBACK_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
 class LoggingCallback(OptimizationCallback):
     """Callback that logs optimization progress."""
 
@@ -654,6 +657,14 @@ class LoggingCallback(OptimizationCallback):
             logger: Logger instance (uses print if None)
             log_level: Logging level
         """
+        if (
+            not isinstance(log_level, str)
+            or log_level.upper() not in _LOGGING_CALLBACK_LEVELS
+        ):
+            raise ValueError(
+                f"log_level must be one of {', '.join(_LOGGING_CALLBACK_LEVELS)} "
+                f"(case-insensitive); got {log_level!r}"
+            )
         self.logger = logger
         self.log_level = log_level
 
@@ -670,7 +681,8 @@ class LoggingCallback(OptimizationCallback):
     ) -> None:
         """Called when optimization starts."""
         self._log(
-            f"Starting optimization: algorithm={algorithm}, objectives={objectives}"
+            f"Starting optimization: algorithm={_sanitize_user_label(algorithm)}, "
+            f"objectives={objectives}"
         )
 
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
