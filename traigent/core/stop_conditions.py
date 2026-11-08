@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import warnings
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -345,29 +346,34 @@ class MaxTrialsStopCondition(StopCondition):
         return count >= self._max_trials
 
 
-MIN_PLATEAU_WINDOW = 2
-
-
 def validate_plateau_window(window: object) -> int:
     """Validate a configured ``plateau_window`` and return it as an int.
 
-    ``plateau_window`` is the number of running-best values compared (so
-    ``N - 1`` comparisons), per the owner-ruled ``optimize.stop-rules.v1``
-    contract. A window of 1 compares a value with itself and would stop the
-    run after the first trial, so anything below 2 is rejected.
+    ``plateau_window`` is a positive integer: the number of running-best
+    values compared (``N - 1`` comparisons), per the ``optimize.stop-rules.v1``
+    contract. Integral floats such as ``3.0`` are normalised to ``int``.
+    Bools, non-integral floats, strings and values below 1 raise ``ValueError``.
+    A window of 1 is accepted but warns: it stops after the first trial.
     """
-    if isinstance(window, bool) or not isinstance(window, int):
+    value: object = window
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(
-            f"plateau_window must be an integer >= {MIN_PLATEAU_WINDOW}, "
-            f"got {type(window).__name__}"
+            "plateau_window must be a positive integer, "
+            f"got {type(window).__name__} {window!r}"
         )
-    if window < MIN_PLATEAU_WINDOW:
-        raise ValueError(
-            f"plateau_window must be >= {MIN_PLATEAU_WINDOW} (got {window}): it is "
-            "the number of running-best values compared, so a window of 1 "
-            "always stops after the first trial"
+    if value < 1:
+        raise ValueError(f"plateau_window must be a positive integer (got {value})")
+    if value == 1:
+        warnings.warn(
+            "plateau_window=1 stops the run after the first trial under the "
+            "stop-rules contract (a window of 1 running-best value always "
+            "spans zero); use a larger plateau_window to compare trials.",
+            UserWarning,
+            stacklevel=3,
         )
-    return window
+    return value
 
 
 class PlateauAfterNStopCondition(StopCondition):
@@ -376,7 +382,8 @@ class PlateauAfterNStopCondition(StopCondition):
     Follows the ``optimize.stop-rules.v1`` rule: once ``window_size``
     running-best values exist, take the last ``window_size`` values (including
     the one after the trial just completed); stop if max - min <= epsilon.
-    That is ``window_size - 1`` comparisons, so ``window_size`` must be >= 2.
+    That is ``window_size - 1`` comparisons; ``window_size`` must be a
+    positive integer (1 stops after the first trial).
     """
 
     reason = "plateau"

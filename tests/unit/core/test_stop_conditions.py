@@ -335,8 +335,8 @@ def _plateau_stop_index(window: int, accuracies: list[float]) -> int | None:
     return None
 
 
-@pytest.mark.parametrize("window", [1, 0, -1])
-def test_plateau_window_below_two_rejected(window):
+@pytest.mark.parametrize("window", [0, -1, 2.5, "3", True])
+def test_plateau_window_invalid_rejected(window):
     schema = ObjectiveSchema.from_objectives(
         [ObjectiveDefinition("accuracy", "maximize", 1.0)]
     )
@@ -380,3 +380,19 @@ def test_plateau_uses_true_running_best_not_epsilon_gated_best():
         history.append(_make_trial(f"t{i}", {"accuracy": acc}))
         fired.append(condition.should_stop(history))
     assert fired == [False, False, False, True]
+
+
+def test_plateau_window_one_accepted_with_warning_and_stops_after_first_trial():
+    schema = ObjectiveSchema.from_objectives(
+        [ObjectiveDefinition("accuracy", "maximize", 1.0)]
+    )
+    with pytest.warns(UserWarning, match="plateau_window=1"):
+        condition = PlateauAfterNStopCondition(
+            window_size=1, epsilon=0.01, objective_schema=schema
+        )
+    assert condition.should_stop([_make_trial("t1", {"accuracy": 0.5})])
+
+
+def test_plateau_window_integral_float_normalised_to_int():
+    assert stop_conditions.validate_plateau_window(3.0) == 3
+    assert isinstance(stop_conditions.validate_plateau_window(3.0), int)

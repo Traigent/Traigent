@@ -238,9 +238,9 @@ class TestCallTimeOverridesDecorationTimePlateau:
         assert len(result.trials) == _TOTAL_CONFIGS
 
 
-@pytest.mark.parametrize("window", [1, 0, -1])
-def test_decorator_rejects_plateau_window_below_two_at_decoration(window: int) -> None:
-    """plateau_window < 2 fails at configuration, not mid-run."""
+@pytest.mark.parametrize("window", [0, -1, 2.5, "3", True])
+def test_decorator_rejects_invalid_plateau_window_at_decoration(window: object) -> None:
+    """Invalid plateau_window fails at configuration, not mid-run."""
     import traigent
 
     with pytest.raises(ValueError, match="plateau_window"):

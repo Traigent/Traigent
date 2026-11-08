@@ -233,8 +233,8 @@ class TestAddConvergenceCondition:
         assert should_stop is False
 
 
-@pytest.mark.parametrize("window", [1, 0, -1])
-def test_plateau_window_below_two_rejected_at_configuration(window):
+@pytest.mark.parametrize("window", [0, -1, 2.5, "3", True])
+def test_plateau_window_invalid_rejected_at_configuration(window):
     with pytest.raises(ValueError, match="plateau_window"):
         base_manager(
             plateau_window=window,
@@ -248,3 +248,13 @@ def test_plateau_window_none_disables_plateau():
     assert not any(
         isinstance(c, PlateauAfterNStopCondition) for c in manager.conditions
     )
+
+
+def test_plateau_window_one_warns_at_configuration():
+    with pytest.warns(UserWarning, match="plateau_window=1"):
+        manager = base_manager(
+            plateau_window=1,
+            plateau_epsilon=0.01,
+            objective_schema=make_schema(),
+        )
+    assert any(isinstance(c, PlateauAfterNStopCondition) for c in manager.conditions)

@@ -25,7 +25,7 @@ Built-in implementations:
 | Condition | Purpose | Config knobs |
 |-----------|---------|--------------|
 | `MaxTrialsStopCondition` | Enforces a hard trial budget. | Uses `max_trials`. |
-| `PlateauAfterNStopCondition` | Stops when the last `window_size` running-best values (including the one after the trial just completed; `window_size - 1` comparisons) span at most `epsilon`. `plateau_window` must be >= 2. | `plateau_window`, `plateau_epsilon`. |
+| `PlateauAfterNStopCondition` | Stops when the last `window_size` running-best values (including the one after the trial just completed; `window_size - 1` comparisons) span at most `epsilon`. `plateau_window` must be a positive integer; N=1 stops after the first trial. | `plateau_window`, `plateau_epsilon`. |
 | `MetricLimitStopCondition` | Soft stop when the cumulative value of a named completed-trial metric reaches a limit. | `metric_limit`, `metric_name`, `metric_include_pruned`. |
 | `CostLimitStopCondition` | Hard money-spend guard backed by `CostEnforcer` permits before execution starts. Parallel-safe. | `cost_limit`, `cost_approved`. |
 | `HypervolumeConvergenceStopCondition` | Stops when hypervolume improvement remains below a threshold across a sliding window. | `convergence_metric="hypervolume_improvement"`, `convergence_window`, `convergence_threshold`. |
