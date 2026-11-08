@@ -292,25 +292,25 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
     },
     # Cohere methods
     "cohere.Client": {
-        "generate": ["model", "temperature", "max_tokens", "p", "k", "stream"],
+        "generate": ["model", "temperature", "max_tokens", "top_p", "top_k", "stream"],
         "chat": [
             "model",
             "temperature",
             "max_tokens",
-            "p",
-            "k",
+            "top_p",
+            "top_k",
             "stream",
             "tools",
         ],
     },
     "cohere.AsyncClient": {
-        "generate": ["model", "temperature", "max_tokens", "p", "k", "stream"],
+        "generate": ["model", "temperature", "max_tokens", "top_p", "top_k", "stream"],
         "chat": [
             "model",
             "temperature",
             "max_tokens",
-            "p",
-            "k",
+            "top_p",
+            "top_k",
             "stream",
             "tools",
         ],
@@ -367,14 +367,10 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "stream",
         ],
     },
-    # PydanticAI methods — params are injected via model_settings dict
-    # (see PydanticAIPlugin.apply_overrides for actual nesting logic)
-    "pydantic_ai.Agent": {
-        "run": ["temperature", "max_tokens", "top_p"],
-        "run_sync": ["temperature", "max_tokens", "top_p"],
-        "run_stream": ["temperature", "max_tokens", "top_p"],
-        "run_stream_sync": ["temperature", "max_tokens", "top_p"],
-    },
+    # PydanticAI is intentionally absent: Agent.run*/run_stream* take sampling
+    # params inside ``model_settings``, not as keyword arguments, and this table
+    # only injects top-level kwargs. PydanticAIPlugin.apply_overrides owns the
+    # nesting (issue #2924).
 }
 
 # Method-level parameter name translations.
