@@ -255,11 +255,13 @@ def _display_failed_optimization_result(
     max_trials: int,
 ) -> None:
     """Report a run whose trials all failed, without the success tick."""
-    console.print(
+    err_console.print(
         f"❌ [red]Error optimizing {escape(func_name)}: {_safe_error_text(reason)}[/red]"
     )
     for warning in getattr(result, "warnings", None) or []:
-        console.print(f"   [yellow]{_safe_error_text(warning, limit=None)}[/yellow]")
+        err_console.print(
+            f"   [yellow]{_safe_error_text(warning, limit=None)}[/yellow]"
+        )
     _save_result_announcing_replace(
         persistence, result, f"{func_name}_{algorithm}_{max_trials}"
     )
@@ -946,12 +948,12 @@ async def _run_optimizations(
             )
             results.append((func_name, result))
         except Exception as e:
-            console.print(
+            err_console.print(
                 f"❌ [red]Error optimizing {escape(func_name)}: "
                 f"{_safe_error_text(e)}[/red]"
             )
             if verbose:
-                console.print(_safe_error_text(traceback.format_exc(), limit=None))
+                err_console.print(_safe_error_text(traceback.format_exc(), limit=None))
             failed_functions.append(func_name)
     return results, failed_functions
 
@@ -2996,13 +2998,13 @@ async def _run_validations(
             result = await validator.validate_optimization(func_info)
             results.append(result)
             if result.should_block:
-                console.print(f"[red]{result.get_summary()}[/red]")
+                err_console.print(f"[red]{result.get_summary()}[/red]")
                 failed += 1
             else:
                 console.print(f"[green]{result.get_summary()}[/green]")
                 passed += 1
         except Exception as e:
-            console.print(
+            err_console.print(
                 f"[red]❌ Error validating {escape(func_info.name)}: "
                 f"{_safe_error_text(e)}[/red]"
             )
@@ -3030,7 +3032,7 @@ def _report_check_dry_run(discovered_functions: list[Any]) -> None:
 
     blocking_issues, _ = classify_discovered_functions(discovered_functions)
     if blocking_issues:
-        console.print(
+        err_console.print(
             f"\n[red]❌ Dry run found {len(blocking_issues)} blocking "
             "issue(s); the real run would be BLOCKED[/red]"
         )
@@ -3127,20 +3129,22 @@ def check(
         missing = _missing_requested_functions(function_filter, discovered_functions)
         if missing:
             available = available_names
-            console.print(
+            err_console.print(
                 f"\n[red]❌ Requested function(s) not found: {', '.join(missing)}[/red]"
             )
-            console.print(
+            err_console.print(
                 "Available @traigent.optimize functions: "
                 f"{', '.join(available) if available else '(none)'}"
             )
             sys.exit(1)
 
         if not discovered_functions:
-            console.print(
+            # --allow-empty makes this a non-failure (exit 0): stay on stdout.
+            empty_console = console if allow_empty else err_console
+            empty_console.print(
                 f"\n[red]❌ No optimizable functions found in {module_path}[/red]"
             )
-            console.print(
+            empty_console.print(
                 "Make sure your functions are decorated with @traigent.optimize"
             )
             if allow_empty:
@@ -3152,7 +3156,8 @@ def check(
                 discovered_functions, objectives_filter
             )
             if not discovered_functions:
-                console.print(
+                # --allow-empty makes this a non-failure (exit 0): stay on stdout.
+                (console if allow_empty else err_console).print(
                     f"\n[red]❌ No functions found with objectives: {objectives_filter}[/red]"
                 )
                 if allow_empty:

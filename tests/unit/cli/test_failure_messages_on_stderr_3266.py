@@ -61,3 +61,55 @@ def test_whoami_invalid_format_on_stderr() -> None:
     assert result.exit_code == 1
     assert "Invalid API key format" in result.stderr
     assert "Invalid API key format" not in result.stdout
+
+
+def test_whoami_backend_rejection_on_stderr() -> None:
+    import contextlib
+    import io
+
+    from traigent.cli.auth_commands import _handle_200_response
+
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        assert _handle_200_response({"valid": False}) is False
+    assert "Invalid API key" in err.getvalue()
+    assert "Invalid API key" not in out.getvalue()
+
+
+def test_check_no_functions_reason_on_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    empty = tmp_path / "empty.py"
+    empty.write_text("x = 1\n")
+    result = _runner().invoke(cli, ["check", str(empty)])
+    assert result.exit_code == 1
+    assert "No optimizable functions found" in result.stderr
+    assert "No optimizable functions found" not in result.stdout
+
+
+def test_check_allow_empty_stays_on_stdout_exit_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    empty = tmp_path / "empty.py"
+    empty.write_text("x = 1\n")
+    result = _runner().invoke(cli, ["check", str(empty), "--allow-empty"])
+    assert result.exit_code == 0
+    assert "No optimizable functions found" in result.stdout
+
+
+def test_check_dry_run_blocking_issues_listed_on_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "m.py").write_text(
+        "import traigent\n\n"
+        "@traigent.optimize(configuration_space={'t': [0.1, 0.5]}, objectives=['accuracy'])\n"
+        "def f(q: str) -> str:\n    return q\n"
+    )
+    result = _runner().invoke(cli, ["check", "m.py", "--dry-run"])
+    if result.exit_code == 0:
+        pytest.skip("fixture produced no blocking issue")
+    assert "Validation Issues" in result.stderr
+    assert "Validation Issues" not in result.stdout

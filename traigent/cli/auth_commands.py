@@ -2543,33 +2543,33 @@ def _print_error_status(
         msg = "[red]❌ Unable to validate API key (unexpected backend response)[/red]"
         category = "backend_response_error"
 
-    console.print(msg)
-    console.print(f"[yellow]Category:[/yellow] {category}")
+    err_console.print(msg)
+    err_console.print(f"[yellow]Category:[/yellow] {category}")
     if status == 404:
-        console.print(
+        err_console.print(
             "[yellow]Hint:[/yellow] Check TRAIGENT_BACKEND_URL / TRAIGENT_API_URL"
         )
     elif category == "authorization":
-        console.print(
+        err_console.print(
             "[yellow]Hint:[/yellow] The key is valid but lacks a required scope. "
             "Grant the scope rather than rotating the key."
         )
     elif category == "edge_blocked":
-        console.print(
+        err_console.print(
             "[yellow]Hint:[/yellow] The request did not reach Traigent. Check for a "
             "proxy, VPN or WAF between you and the backend; the key is unaffected."
         )
     elif category == "forbidden_indeterminate":
-        console.print(
+        err_console.print(
             "[yellow]Hint:[/yellow] Both are possible: the key may lack a required "
             "scope, or a proxy/VPN/WAF may have blocked the request before it "
             "reached Traigent. The response preview below is the best evidence — "
             "do not rotate the key on the strength of this alone."
         )
-    console.print(f"[yellow]HTTP status:[/yellow] {status}")
+    err_console.print(f"[yellow]HTTP status:[/yellow] {status}")
     if body_preview:
-        console.print(f"[dim]Response preview:[/dim] {body_preview}")
-    console.print()
+        err_console.print(f"[dim]Response preview:[/dim] {body_preview}")
+    err_console.print()
 
 
 async def _check_api_key(backend_api_url: str, key: str) -> bool:
@@ -2577,7 +2577,7 @@ async def _check_api_key(backend_api_url: str, key: str) -> bool:
     try:
         import aiohttp
     except ImportError:
-        console.print(
+        err_console.print(
             "[red]aiohttp dependency not installed; cannot validate API key.[/red]"
         )
         return False
@@ -2623,13 +2623,13 @@ async def _check_api_key(backend_api_url: str, key: str) -> bool:
                 )
                 return False
     except (TimeoutError, aiohttp.ClientError) as exc:
-        console.print("[red]❌ Cannot reach backend to validate API key[/red]")
-        console.print("[yellow]Category:[/yellow] connectivity_error")
-        console.print(
+        err_console.print("[red]❌ Cannot reach backend to validate API key[/red]")
+        err_console.print("[yellow]Category:[/yellow] connectivity_error")
+        err_console.print(
             f"[yellow]Error:[/yellow] {type(exc).__name__}: "
             f"{_redact_key(str(exc), key)}"
         )
-        console.print()
+        err_console.print()
         return False
 
 
@@ -2648,7 +2648,7 @@ def _handle_200_response(data: dict[str, Any], *, api_key: str | None = None) ->
         _print_valid_key_info(data.get("data", {}), api_key=api_key)
         return True
 
-    console.print("[red]❌ Invalid API key[/red]")
-    console.print("[yellow]Category:[/yellow] authentication")
-    console.print()
+    err_console.print("[red]❌ Invalid API key[/red]")
+    err_console.print("[yellow]Category:[/yellow] authentication")
+    err_console.print()
     return False
