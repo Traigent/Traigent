@@ -139,3 +139,33 @@ def test_aggregated_non_colliding_columns_unchanged() -> None:
         "duration",
     ]
     assert isinstance(df, pd.DataFrame)
+
+
+def test_renamed_metric_never_lands_on_an_existing_config_column() -> None:
+    trials = [_trial("t1", {"metric.duration": "tuned"}, {"duration": 42})]
+    for df in (
+        _result(trials).to_dataframe(),
+        _result(trials).to_aggregated_dataframe(),
+    ):
+        assert df["metric.duration"].iloc[0] == "tuned"
+        assert df["metric.duration_"].iloc[0] == 42
+
+
+def test_aggregated_sort_uses_renamed_metric_column() -> None:
+    # Metric "duration" is exported as metric.duration; sorting by the
+    # objective "duration" must use it, not the trial-duration column.
+    trials = [
+        TrialResult(
+            trial_id=f"t{i}",
+            config={"m": i},
+            metrics={"duration": float(i)},
+            status=TrialStatus.COMPLETED,
+            duration=d,
+            timestamp=TS,
+            metadata={},
+        )
+        for i, d in ((1, 10.0), (2, 1.0))
+    ]
+    df = _result(trials).to_aggregated_dataframe(primary_objective="duration")
+    # "duration" is a minimize metric by name -> metric 1 first.
+    assert list(df["metric.duration"]) == [1.0, 2.0]

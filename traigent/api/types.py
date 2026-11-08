@@ -65,22 +65,46 @@ def _disambiguate_column(name: str, prefix: str, taken: set[str]) -> str:
 
 
 def _column_rename_map(
-    names: Iterable[str], reserved: AbstractSet[str], prefix: str
+    names: Iterable[str],
+    reserved: AbstractSet[str],
+    prefix: str,
+    also_taken: AbstractSet[str] = frozenset(),
 ) -> dict[str, str]:
     """Map each name that collides with a ``reserved`` column to a prefixed one.
 
     Names that do not collide are absent from the map, so non-colliding
-    exports keep their original column names byte-for-byte. The result is
-    deterministic: names are processed in sorted order.
+    exports keep their original column names byte-for-byte. ``also_taken``
+    lists column names owned by another namespace so a new prefixed name never
+    lands on them. The result is deterministic: names are processed in sorted
+    order.
     """
     names = {str(n) for n in names}
-    taken = names | reserved
+    taken = names | reserved | also_taken
     renames: dict[str, str] = {}
     for name in sorted(names & reserved):
         new = _disambiguate_column(name, prefix, taken)
         taken.add(new)
         renames[name] = new
     return renames
+
+
+def _metric_and_config_renames(
+    metric_names: AbstractSet[str],
+    config_names: AbstractSet[str],
+    metric_reserved: AbstractSet[str],
+    config_reserved: AbstractSet[str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Return ``(metric_renames, config_renames)`` allocated across both namespaces."""
+    metric_renames = _column_rename_map(
+        metric_names, metric_reserved, "metric", also_taken=config_names
+    )
+    config_renames = _column_rename_map(
+        config_names,
+        config_reserved | metric_names,
+        "config",
+        also_taken=frozenset(metric_renames.values()),
+    )
+    return metric_renames, config_renames
 
 
 _TRIAL_IDENTITY_COLUMNS = frozenset({"trial_id", "status", "duration", "timestamp"})
@@ -2523,14 +2547,12 @@ class OptimizationResult:
         # identity column are exported as ``metric.<name>``. Nothing is
         # silently overwritten.
         metric_names = {str(k) for t in self.trials for k in (t.metrics or {})}
-        metric_renames = _column_rename_map(
-            metric_names, _TRIAL_IDENTITY_COLUMNS, "metric"
-        )
         config_names = {str(k) for t in self.trials for k in (t.config or {})}
-        config_renames = _column_rename_map(
+        metric_renames, config_renames = _metric_and_config_renames(
+            metric_names,
             config_names,
-            _TRIAL_IDENTITY_COLUMNS | _TRIAL_DERIVED_COLUMNS | metric_names,
-            "config",
+            _TRIAL_IDENTITY_COLUMNS,
+            _TRIAL_IDENTITY_COLUMNS | _TRIAL_DERIVED_COLUMNS,
         )
 
         data = []
@@ -2620,18 +2642,25 @@ class OptimizationResult:
         return groups
 
     @staticmethod
+    def _aggregated_renames(
+        groups: dict[str, dict[str, Any]],
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        metric_names = {str(k) for g in groups.values() for k in g["metrics_sum"]}
+        config_names = {str(k) for g in groups.values() for k in (g["config"] or {})}
+        return _metric_and_config_renames(
+            metric_names,
+            config_names,
+            _AGGREGATED_RESERVED_COLUMNS,
+            _AGGREGATED_RESERVED_COLUMNS,
+        )
+
+    @classmethod
     def _build_aggregated_rows(
+        cls,
         groups: dict[str, dict[str, Any]],
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        metric_names = {str(k) for g in groups.values() for k in g["metrics_sum"]}
-        metric_renames = _column_rename_map(
-            metric_names, _AGGREGATED_RESERVED_COLUMNS, "metric"
-        )
-        config_names = {str(k) for g in groups.values() for k in (g["config"] or {})}
-        config_renames = _column_rename_map(
-            config_names, _AGGREGATED_RESERVED_COLUMNS | metric_names, "config"
-        )
+        metric_renames, config_renames = cls._aggregated_renames(groups)
         for cfg_hash, group in groups.items():
             row: dict[str, Any] = {
                 "config_hash": cfg_hash,
@@ -2659,15 +2688,21 @@ class OptimizationResult:
         return rows
 
     def _sort_aggregated_dataframe(
-        self, df: pd.DataFrame, primary_objective: str | None
+        self,
+        df: pd.DataFrame,
+        primary_objective: str | None,
+        metric_renames: Mapping[str, str] | None = None,
     ) -> pd.DataFrame:
-        if not primary_objective or primary_objective not in df.columns:
+        if not primary_objective:
+            return df
+        # The objective's direction is keyed by its metric name; the column may
+        # have been exported under a collision-free ``metric.<name>`` alias.
+        column = (metric_renames or {}).get(primary_objective, primary_objective)
+        if column not in df.columns:
             return df
         orientation = self._objective_orientation(primary_objective)
         ascending = orientation == "minimize"
-        return df.sort_values(
-            by=[primary_objective], ascending=ascending, na_position="last"
-        )
+        return df.sort_values(by=[column], ascending=ascending, na_position="last")
 
     def to_aggregated_dataframe(
         self, primary_objective: str | None = None
@@ -2695,7 +2730,8 @@ class OptimizationResult:
         groups = self._group_trials_for_aggregation()
         rows = self._build_aggregated_rows(groups)
         df = pd.DataFrame(rows)
-        return self._sort_aggregated_dataframe(df, primary_objective)
+        metric_renames, _ = self._aggregated_renames(groups)
+        return self._sort_aggregated_dataframe(df, primary_objective, metric_renames)
 
     def _extract_examples_attempted(self, trial: TrialResult) -> int | None:
         metadata = trial.metadata or {}
