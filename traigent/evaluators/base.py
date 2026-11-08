@@ -114,16 +114,41 @@ logger = get_logger(__name__)
 #: (quality 0.0, cost unknown), not as a ``None`` score.
 EXAMPLE_TIMEOUT_ERROR_PREFIX = "Function call timed out after"
 
+#: Error-message prefix for an example that was never run because every
+#: evaluator worker lane is still held by timed-out (stuck) sync workers.  The
+#: example did not fail on its own merits; a known stuck worker caused it, so it
+#: is counted with the timeouts rather than as a generic failure (#2951).
+EXAMPLE_LANE_UNAVAILABLE_ERROR_PREFIX = "Sync evaluator worker lane unavailable"
+
+_TIMEOUT_CAUSED_ERROR_PREFIXES = (
+    EXAMPLE_TIMEOUT_ERROR_PREFIX,
+    EXAMPLE_LANE_UNAVAILABLE_ERROR_PREFIX,
+)
+
+
+class _SyncLane:
+    """One admitted sync worker lane; released at most once (#2951)."""
+
+    __slots__ = ("released", "retired")
+
+    def __init__(self) -> None:
+        self.released = False
+        self.retired = False
+
 
 def count_timed_out_examples(example_results: Any) -> int:
-    """Count example results whose error records a per-example timeout."""
+    """Count example results whose error records a timeout-caused failure.
+
+    That includes examples skipped because timed-out workers still hold every
+    lane (:data:`EXAMPLE_LANE_UNAVAILABLE_ERROR_PREFIX`).
+    """
     if not isinstance(example_results, list):
         return 0
     return sum(
         1
         for result in example_results
         if isinstance(getattr(result, "error_message", None), str)
-        and result.error_message.startswith(EXAMPLE_TIMEOUT_ERROR_PREFIX)
+        and result.error_message.startswith(_TIMEOUT_CAUSED_ERROR_PREFIXES)
     )
 
 
@@ -1665,6 +1690,19 @@ class BaseEvaluator(ABC):
         # timed-out/cancelled call still occupies one evaluator worker until
         # its underlying thread future settles.
         self._sync_worker_slots = threading.BoundedSemaphore(max_workers)
+        # A timed-out sync call cannot be interrupted.  Its lane is retired
+        # (freed for a fresh worker thread) so later examples are not poisoned,
+        # but only up to ``max_stuck_workers`` threads may be left running at
+        # once.  At that bound a stuck worker keeps its lane, and later
+        # examples are reported as skipped (#2951).
+        configured_stuck = kwargs.get("max_stuck_workers")
+        self._max_stuck_workers = (
+            max(0, int(configured_stuck))
+            if configured_stuck is not None
+            else max(2, max_workers)
+        )
+        self._stuck_workers = 0
+        self._stuck_lock = threading.Lock()
 
         # Initialize metric registry with defaults
         self._metric_registry: dict[str, Any] = {
@@ -2853,10 +2891,49 @@ class BaseEvaluator(ABC):
             if trial_token is not None:
                 trial_context_var.reset(trial_token)
 
+    def _retire_stuck_lane(self, lane: _SyncLane) -> bool:
+        """Free a timed-out worker's lane while its thread keeps running.
+
+        Returns False (lane stays held) once ``max_stuck_workers`` abandoned
+        threads are already running, which bounds thread accumulation.
+        """
+        with self._stuck_lock:
+            if lane.released or self._stuck_workers >= self._max_stuck_workers:
+                return False
+            lane.retired = True
+            lane.released = True
+            self._stuck_workers += 1
+        try:
+            self._sync_worker_slots.release()
+        except ValueError:  # pragma: no cover - defensive guard
+            logger.error("Sync evaluator worker lane released twice")
+        logger.warning(
+            "Retired lane of a timed-out sync worker (%d/%d stuck workers)",
+            self._stuck_workers,
+            self._max_stuck_workers,
+        )
+        return True
+
+    def _release_sync_lane(self, lane: _SyncLane) -> None:
+        """Release a lane once; settle the stuck count for retired lanes."""
+        with self._stuck_lock:
+            if lane.retired:
+                self._stuck_workers -= 1
+                lane.retired = False
+                return
+            if lane.released:
+                return
+            lane.released = True
+        try:
+            self._sync_worker_slots.release()
+        except ValueError:  # pragma: no cover - defensive guard
+            logger.error("Sync evaluator worker lane released twice")
+
     def _on_sync_worker_done(
         self,
         done_future: Any,
         worker_done_callback: Callable[[], None] | None,
+        lane: _SyncLane,
     ) -> None:
         """Observe worker failures and release its evaluator lane."""
         try:
@@ -2865,10 +2942,7 @@ class BaseEvaluator(ABC):
             # The result is observed here; callers that were still
             # awaiting the wrapped Future receive the same failure.
             pass
-        try:
-            self._sync_worker_slots.release()
-        except ValueError:  # pragma: no cover - defensive guard
-            logger.error("Sync evaluator worker lane released twice")
+        self._release_sync_lane(lane)
         if worker_done_callback is not None:
             try:
                 worker_done_callback()
@@ -2974,7 +3048,9 @@ class BaseEvaluator(ABC):
             slot_acquired = await self._acquire_sync_worker_slot(lane_timeout)
             if not slot_acquired:
                 error_msg = (
-                    f"Sync evaluator worker lane unavailable after {self.timeout}s"
+                    f"{EXAMPLE_LANE_UNAVAILABLE_ERROR_PREFIX} after "
+                    f"{self.timeout}s: {self._stuck_workers} timed-out "
+                    "worker(s) still running"
                 )
                 logger.warning(error_msg)
                 return None, error_msg
@@ -2982,8 +3058,10 @@ class BaseEvaluator(ABC):
             if worker_started_callback is not None:
                 worker_started_callback()
 
+            lane = _SyncLane()
+
             def on_worker_done(done_future: Any) -> None:
-                self._on_sync_worker_done(done_future, worker_done_callback)
+                self._on_sync_worker_done(done_future, worker_done_callback, lane)
 
             future.add_done_callback(on_worker_done)
             slot_acquired = False
@@ -3002,6 +3080,8 @@ class BaseEvaluator(ABC):
                 future, async_future, apply_timeout
             )
             if timeout_error is not None:
+                if not future.done():
+                    self._retire_stuck_lane(lane)
                 return None, timeout_error
 
             if type(output) is _TaskBoundaryInterrupt:
