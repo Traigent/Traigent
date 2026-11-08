@@ -1390,6 +1390,33 @@ def cost_from_tokens(
     return 0.0, 0.0
 
 
+def get_cached_input_rate(model: str) -> float | None:
+    """Per-token USD rate for cache-read (cached) input, from the price table.
+
+    Reads ``cache_read_input_token_cost`` from the litellm cost map (which
+    includes the SDK's bundled provider snapshot). Returns ``None`` when the
+    table has no usable cached rate for ``model``; callers must then keep the
+    full input rate rather than guess a discount (Traigent#3253).
+    """
+    if not LITELLM_AVAILABLE:
+        return None
+    try:
+        candidates = _build_model_candidates(model)
+        model_cost_lower = {k.lower(): k for k in litellm.model_cost}
+        for candidate in candidates:
+            actual_key = model_cost_lower.get(candidate.lower())
+            if not actual_key:
+                continue
+            raw = litellm.model_cost[actual_key].get("cache_read_input_token_cost")
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                return None
+            rate = float(raw)
+            return rate if math.isfinite(rate) and rate >= 0 else None
+    except Exception:  # noqa: BLE001 - an unreadable table is an unknown rate
+        logger.debug("cached-input rate lookup failed for %r", model, exc_info=True)
+    return None
+
+
 def model_pricing_resolves(model: str) -> bool:
     """True when a price (an explicit custom ``0`` rate included) resolves for ``model``.
 

@@ -497,6 +497,11 @@ class CostMetrics:
     # Consumers (trial/result aggregation) must treat this as "unknown spend",
     # not "verified free".
     unpriced: bool = False
+    # True when the call reported cached prompt tokens but the price table has
+    # no usable cached-input rate for the model, so those tokens were priced at
+    # the full input rate: ``total_cost`` is an upper bound, never an
+    # undercount (Traigent#3253).
+    cache_rate_unknown: bool = False
     # True when ``total_cost`` came from a local/LiteLLM price-table estimate
     # (``_hidden_params['response_cost']`` used as a fallback) rather than an
     # explicit provider-reported charge (``response.cost`` or ``usage.cost``,
@@ -2718,6 +2723,46 @@ def _handle_mock_mode(
     metrics.cost.total_cost = 0.0
 
 
+def _cost_with_cached_input(
+    metrics: ExampleMetrics, model_name: str, strict: bool
+) -> tuple[float, float]:
+    """``cost_from_tokens`` with cache-read input priced at the cached rate.
+
+    Applies only when the response's input count INCLUDES the cache reads
+    (OpenAI / Gemini shape: ``cache_total_input_tokens == input_tokens``).
+    Disjoint shapes (Bedrock / Anthropic) and unknown cache counts are left on
+    the existing path. When the table has no cached rate (or one above the
+    fresh rate) the full input rate is kept and ``cache_rate_unknown`` is set:
+    the figure may overstate but never undercounts (Traigent#3253).
+    """
+    from traigent.utils import cost_calculator
+
+    in_tokens = metrics.tokens.input_tokens
+    out_tokens = metrics.tokens.output_tokens
+    cached = metrics.cache_read_tokens
+    full = cost_calculator.cost_from_tokens(
+        in_tokens, out_tokens, model_name, strict=strict
+    )
+    if (
+        not cached
+        or cached <= 0
+        or cached > in_tokens
+        or metrics.cache_total_input_tokens != in_tokens
+    ):
+        return full
+
+    rate = cost_calculator.get_cached_input_rate(model_name)
+    fresh_rate = full[0] / in_tokens if in_tokens > 0 else 0.0
+    if rate is None or rate > fresh_rate or fresh_rate <= 0.0:
+        if fresh_rate > 0.0:
+            metrics.cost.cache_rate_unknown = True
+        return full
+    fresh_cost, output_cost = cost_calculator.cost_from_tokens(
+        in_tokens - cached, out_tokens, model_name, strict=strict
+    )
+    return fresh_cost + cached * rate, output_cost
+
+
 def _compute_cost(
     metrics: ExampleMetrics,
     model_name: str,
@@ -2727,8 +2772,6 @@ def _compute_cost(
     strict_cost_accounting: bool,
 ) -> None:
     """Compute cost using cost_from_tokens (preferred) or legacy text path."""
-    from traigent.utils.cost_calculator import cost_from_tokens
-
     # Ensure total tokens computed
     if metrics.tokens.total_tokens == 0:
         metrics.tokens.total_tokens = (
@@ -2737,11 +2780,8 @@ def _compute_cost(
 
     if metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0:
         # Preferred path: use canonical cost_from_tokens directly
-        input_cost, output_cost = cost_from_tokens(
-            metrics.tokens.input_tokens,
-            metrics.tokens.output_tokens,
-            model_name,
-            strict=strict_cost_accounting,
+        input_cost, output_cost = _cost_with_cached_input(
+            metrics, model_name, strict_cost_accounting
         )
         metrics.cost.input_cost = input_cost
         metrics.cost.output_cost = output_cost
