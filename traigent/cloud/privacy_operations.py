@@ -389,6 +389,9 @@ class PrivacyOperations:
                 metrics,
                 "COMPLETED" if not error_message else "FAILED",
                 error_message,
+                # The measured trial duration (seconds) rides in metadata so
+                # the results POST carries it top-level (#3238).
+                metadata={"duration": duration},
             )
 
             if not session_submitted:
