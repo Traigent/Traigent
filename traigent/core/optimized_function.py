@@ -322,6 +322,38 @@ def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> No
         )
 
 
+#: Hooks the CallbackManager invokes unconditionally; these are exactly the
+#: abstract methods of ``OptimizationCallback`` (``on_run_settings`` is optional).
+_CALLBACK_HOOKS = (
+    "on_optimization_start",
+    "on_trial_start",
+    "on_trial_complete",
+    "on_optimization_complete",
+)
+
+
+def _coerce_callbacks(value: Any, name: str = "callbacks") -> list[Any] | None:
+    """Normalize a ``callbacks`` argument to a list, rejecting non-callbacks.
+
+    Shared by the decoration-time and call-time paths so both name the argument
+    instead of failing later with "'int' object is not iterable" (#2922).
+    """
+    if value is None:
+        return None
+    items = list(value) if isinstance(value, (list, tuple)) else [value]
+    for index, item in enumerate(items):
+        missing = [
+            hook for hook in _CALLBACK_HOOKS if not callable(getattr(item, hook, None))
+        ]
+        if missing:
+            raise TypeError(
+                f"{name} must be an OptimizationCallback or a list of them; "
+                f"{name}[{index}] is {type(item).__name__} and lacks "
+                f"{', '.join(missing)}"
+            )
+    return items
+
+
 def _resolve_callbacks(
     explicit_callbacks: list[Any] | None,
     decorator_callbacks: list[Any] | None,
@@ -420,7 +452,11 @@ def _resolve_callbacks(
     def _reports_per_trial(callback: Any) -> bool:
         return type(callback) in _per_trial_reporters
 
-    callbacks = list(explicit_callbacks or decorator_callbacks or [])
+    callbacks = list(
+        _coerce_callbacks(explicit_callbacks)
+        or _coerce_callbacks(decorator_callbacks)
+        or []
+    )
     has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
 
     if progress_bar is not False and not has_progress:
@@ -1350,17 +1386,14 @@ class OptimizedFunction[**P, R]:
             self.callbacks = None
             return
 
-        if isinstance(callbacks_value, list):
-            self.callbacks = callbacks_value
-            kwargs["callbacks"] = list(callbacks_value)
-        elif isinstance(callbacks_value, tuple):
-            normalized_callbacks = list(callbacks_value)
-            self.callbacks = normalized_callbacks
-            kwargs["callbacks"] = list(normalized_callbacks)
-        else:
-            normalized_callbacks = [callbacks_value]
-            self.callbacks = normalized_callbacks
-            kwargs["callbacks"] = list(normalized_callbacks)
+        normalized_callbacks = _coerce_callbacks(callbacks_value) or []
+        # Keep list identity when the caller passed a list (existing behaviour).
+        self.callbacks = (
+            callbacks_value
+            if isinstance(callbacks_value, list)
+            else normalized_callbacks
+        )
+        kwargs["callbacks"] = list(normalized_callbacks)
 
     def _store_optional_param(
         self,
