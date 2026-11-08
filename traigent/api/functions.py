@@ -84,9 +84,13 @@ def configure(
     """Configure global Traigent SDK settings.
 
     Args:
-        default_storage_backend: Default storage ("local", "s3", "gcs")
+        default_storage_backend: Deprecated and has no effect. Nothing in the SDK
+            reads it; a ``DeprecationWarning`` is emitted and the value is ignored.
         parallel_workers: Default number of parallel workers
-        cache_policy: Cache policy ("memory", "disk", "distributed")
+        cache_policy: Deprecated and has no effect. The per-run cache policy is
+            the ``cache_policy`` argument of ``.optimize()`` (e.g.
+            ``"allow_repeats"``). Valid legacy values are still checked, then a
+            ``DeprecationWarning`` is emitted and the value is ignored.
         logging_level: Logging verbosity ("DEBUG", "INFO", "WARNING", "ERROR")
         api_keys: API keys for external services
         objectives: Default objectives (list of names or ObjectiveSchema)
@@ -103,7 +107,12 @@ def configure(
         True
     """
     if default_storage_backend is not None:
-        _GLOBAL_CONFIG["default_storage_backend"] = default_storage_backend
+        warnings.warn(
+            "configure(default_storage_backend=...) has no effect: no SDK "
+            "component reads it, so the value is ignored.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     if parallel_workers is not None:
         result = Validators.validate_positive_int(parallel_workers, "parallel_workers")
@@ -116,7 +125,12 @@ def configure(
             cache_policy, "cache_policy", valid_policies
         )
         validate_or_raise(result)
-        _GLOBAL_CONFIG["cache_policy"] = cache_policy
+        warnings.warn(
+            "configure(cache_policy=...) has no effect: the run cache policy is "
+            "set per run via .optimize(cache_policy=...), so the value is ignored.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     if logging_level is not None:
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
