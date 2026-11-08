@@ -2915,6 +2915,22 @@ class ParetoFront:
     objectives: list[str]
     is_maximized: list[bool]
 
+    def __eq__(self, other: object) -> bool:
+        # The generated dataclass __eq__ compares the ndarray inside a tuple,
+        # which raises for any multi-element array (#3113).
+        if not isinstance(other, ParetoFront):
+            return NotImplemented
+        import numpy as np  # noqa: PLC0415
+
+        return (
+            self.configurations == other.configurations
+            and self.objectives == other.objectives
+            and self.is_maximized == other.is_maximized
+            and np.array_equal(self.objective_values, other.objective_values)
+        )
+
+    __hash__ = None  # type: ignore[assignment]  # mutable, compared by value
+
     def get_best_balanced_config(self) -> dict[str, Any]:
         """Get configuration with best balance across objectives."""
         import numpy as np  # noqa: PLC0415
