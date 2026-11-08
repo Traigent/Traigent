@@ -113,7 +113,17 @@ class ObjectiveDefinition:
                 raise ValueError(
                     f"Bounds must be a tuple of (min, max), got {self.bounds}"
                 )
-            if self.bounds[0] >= self.bounds[1]:
+            for bound in self.bounds:
+                if (
+                    isinstance(bound, bool)
+                    or not isinstance(bound, (int, float))
+                    or not math.isfinite(bound)
+                ):
+                    raise ValueError(
+                        f"Bounds must be finite numbers, got {self.bounds} "
+                        f"for objective '{self.name}'"
+                    )
+            if not self.bounds[0] < self.bounds[1]:
                 raise ValueError(
                     f"Invalid bounds: min ({self.bounds[0]}) must be less than max ({self.bounds[1]})"
                 )
