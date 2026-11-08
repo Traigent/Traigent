@@ -129,11 +129,12 @@ _TIMEOUT_CAUSED_ERROR_PREFIXES = (
 class _SyncLane:
     """One admitted sync worker lane; released at most once (#2951)."""
 
-    __slots__ = ("released", "retired")
+    __slots__ = ("released", "retired", "timed_out")
 
     def __init__(self) -> None:
         self.released = False
         self.retired = False
+        self.timed_out = False
 
 
 def count_timed_out_examples(example_results: Any) -> int:
@@ -1702,6 +1703,9 @@ class BaseEvaluator(ABC):
             else max(2, max_workers)
         )
         self._stuck_workers = 0
+        # Timed-out workers that could not be retired (bound hit) and so still
+        # hold their lane; promoted to retired as retired workers settle.
+        self._held_timed_out: list[_SyncLane] = []
         self._stuck_lock = threading.Lock()
 
         # Initialize metric registry with defaults
@@ -2894,40 +2898,65 @@ class BaseEvaluator(ABC):
     def _retire_stuck_lane(self, lane: _SyncLane) -> bool:
         """Free a timed-out worker's lane while its thread keeps running.
 
-        Returns False (lane stays held) once ``max_stuck_workers`` abandoned
-        threads are already running, which bounds thread accumulation.
+        Returns False (lane stays held, remembered for later promotion) once
+        ``max_stuck_workers`` abandoned threads are already running, which
+        bounds thread accumulation.
         """
         with self._stuck_lock:
-            if lane.released or self._stuck_workers >= self._max_stuck_workers:
+            if lane.released:
                 return False
-            lane.retired = True
-            lane.released = True
-            self._stuck_workers += 1
-        try:
-            self._sync_worker_slots.release()
-        except ValueError:  # pragma: no cover - defensive guard
-            logger.error("Sync evaluator worker lane released twice")
+            lane.timed_out = True
+            if self._stuck_workers >= self._max_stuck_workers:
+                self._held_timed_out.append(lane)
+                return False
+            self._mark_retired_locked(lane)
+            stuck = self._stuck_workers
+        self._release_semaphore()
         logger.warning(
             "Retired lane of a timed-out sync worker (%d/%d stuck workers)",
-            self._stuck_workers,
+            stuck,
             self._max_stuck_workers,
         )
         return True
 
-    def _release_sync_lane(self, lane: _SyncLane) -> None:
-        """Release a lane once; settle the stuck count for retired lanes."""
-        with self._stuck_lock:
-            if lane.retired:
-                self._stuck_workers -= 1
-                lane.retired = False
-                return
-            if lane.released:
-                return
-            lane.released = True
+    def _mark_retired_locked(self, lane: _SyncLane) -> None:
+        lane.retired = True
+        lane.released = True
+        self._stuck_workers += 1
+
+    def _release_semaphore(self) -> None:
         try:
             self._sync_worker_slots.release()
         except ValueError:  # pragma: no cover - defensive guard
             logger.error("Sync evaluator worker lane released twice")
+
+    def _release_sync_lane(self, lane: _SyncLane) -> None:
+        """Release a lane once; settle stuck accounting for retired lanes."""
+        release_slot = False
+        with self._stuck_lock:
+            if lane.retired:
+                self._stuck_workers -= 1
+                lane.retired = False
+                # Capacity returned: a timed-out worker still holding its lane
+                # can now be retired so later examples are not blocked.
+                while self._held_timed_out:
+                    held = self._held_timed_out.pop(0)
+                    if not held.released:
+                        self._mark_retired_locked(held)
+                        release_slot = True
+                        break
+            elif not lane.released:
+                lane.released = True
+                if lane.timed_out and lane in self._held_timed_out:
+                    self._held_timed_out.remove(lane)
+                release_slot = True
+        if release_slot:
+            self._release_semaphore()
+
+    def _timed_out_worker_count(self) -> int:
+        """Timed-out sync workers still running (retired or lane-holding)."""
+        with self._stuck_lock:
+            return self._stuck_workers + len(self._held_timed_out)
 
     def _on_sync_worker_done(
         self,
@@ -3047,11 +3076,17 @@ class BaseEvaluator(ABC):
             )
             slot_acquired = await self._acquire_sync_worker_slot(lane_timeout)
             if not slot_acquired:
-                error_msg = (
-                    f"{EXAMPLE_LANE_UNAVAILABLE_ERROR_PREFIX} after "
-                    f"{self.timeout}s: {self._stuck_workers} timed-out "
-                    "worker(s) still running"
-                )
+                stuck = self._timed_out_worker_count()
+                if stuck:
+                    error_msg = (
+                        f"{EXAMPLE_LANE_UNAVAILABLE_ERROR_PREFIX} after "
+                        f"{self.timeout}s: {stuck} timed-out "
+                        "worker(s) still running"
+                    )
+                else:
+                    # Plain contention (no timed-out worker involved) is not
+                    # timeout-caused and must not be counted as one.
+                    error_msg = f"Sync evaluator worker lane busy after {self.timeout}s"
                 logger.warning(error_msg)
                 return None, error_msg
             future = submit_executor.submit(call_with_config)
