@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 from traigent.labels.transport_gate import gate_session, preflight_requests
 from traigent.utils.logging import get_logger
+from traigent.utils.url_segments import quote_path_segment
 
 logger = get_logger(__name__)
 
@@ -505,11 +506,12 @@ class LangfuseClient:
     ) -> dict[str, Any] | None:
         """Legacy v1 ``GET /api/public/traces/{id}`` (Langfuse v3 self-hosted only)."""
         try:
+            trace_segment = quote_path_segment(trace_id, field="trace_id")
             preflight_requests(
-                "GET", f"{self.host}/api/public/traces/{trace_id}", external=True
+                "GET", f"{self.host}/api/public/traces/{trace_segment}", external=True
             )
             response = requests.get(
-                f"{self.host}/api/public/traces/{trace_id}",
+                f"{self.host}/api/public/traces/{trace_segment}",
                 headers=self._get_auth_header(),
                 timeout=self.timeout,
             )
@@ -996,11 +998,12 @@ class LangfuseClient:
     ) -> dict[str, Any] | None:
         """Legacy v1 trace endpoint (Langfuse v3 self-hosted only)."""
         try:
+            trace_segment = quote_path_segment(trace_id, field="trace_id")
             async with gate_session(
                 aiohttp.ClientSession(trust_env=True), external=True
             ) as session:
                 async with session.get(
-                    f"{self.host}/api/public/traces/{trace_id}",
+                    f"{self.host}/api/public/traces/{trace_segment}",
                     headers=self._get_auth_header(),
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
                 ) as response:
