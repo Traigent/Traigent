@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+import numbers
 import random
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -206,8 +207,15 @@ class ParetoFrontCalculator:
                 # Flagged unmeasured: a number next to the flag is a
                 # floor or a stray zero, never a ranking value (#2517).
                 continue
-            if trial.metrics.get(obj) is not None:
-                point_objectives[obj] = trial.metrics[obj]
+            value = trial.metrics.get(obj)
+            if value is None:
+                continue
+            if isinstance(value, numbers.Real) and not math.isfinite(value):
+                # NaN compares as "equal" in dominates(), and +/-inf beats
+                # every real value: either lets an unmeasurable point evict
+                # valid ones, so it is treated as missing (#2949).
+                continue
+            point_objectives[obj] = value
 
         # A trial missing any configured objective (an unmeasured cost
         # is the common case) cannot be placed on the front: being
