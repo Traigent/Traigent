@@ -250,3 +250,60 @@ def test_self_loop_symlink_rejected_without_path(mgr, tmp_path):
     with pytest.raises(ValueError, match="not allowed") as exc:
         mgr.load_result("r")
     assert str(tmp_path) not in str(exc.value)
+
+
+# --- #3257: a result directory is published atomically -----------------------
+
+
+def _kill_at_nth_replace(monkeypatch, n):
+    """Raise (simulated kill) right before the nth ``os.replace`` of a save."""
+    import traigent.utils.persistence as p
+
+    real = p.os.replace
+    calls = {"n": 0}
+
+    def _replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] == n:
+            raise KeyboardInterrupt("simulated kill")
+        return real(src, dst)
+
+    monkeypatch.setattr(p.os, "replace", _replace)
+
+
+@pytest.mark.parametrize("kill_at", range(1, 8))
+def test_interrupted_overwrite_keeps_old_generation(
+    mgr, tmp_path, monkeypatch, kill_at
+):
+    mgr.save_result(_result(), name="r")
+    old = mgr.load_result("r")
+    changed = _result(best_config={"model": "smart"})
+    _kill_at_nth_replace(monkeypatch, kill_at)
+    try:
+        mgr.save_result(changed, name="r")
+    except KeyboardInterrupt:
+        pass
+    monkeypatch.undo()
+    loaded = mgr.load_result("r")  # verifies integrity, must not raise
+    assert loaded.best_config in ({"model": "cheap"}, {"model": "smart"})
+    if loaded.best_config == {"model": "cheap"}:
+        assert loaded.best_config == old.best_config
+
+
+@pytest.mark.parametrize("kill_at", range(1, 8))
+def test_interrupted_new_save_is_never_listed(mgr, tmp_path, monkeypatch, kill_at):
+    _kill_at_nth_replace(monkeypatch, kill_at)
+    try:
+        mgr.save_result(_result(), name="fresh")
+    except KeyboardInterrupt:
+        pass
+    monkeypatch.undo()
+    names = [r["name"] for r in mgr.list_results()]
+    if "fresh" in names:
+        mgr.load_result("fresh")  # anything listed must be loadable
+
+
+def test_save_leaves_no_staging_dirs(mgr, tmp_path):
+    mgr.save_result(_result(), name="r")
+    mgr.save_result(_result(), name="r")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["r"]

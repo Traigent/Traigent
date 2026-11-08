@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import pickle
+import shutil
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -45,6 +47,8 @@ logger = logging.getLogger(__name__)
 # File name constants
 _INTEGRITY_FILES = ("metadata.json", "trials.json.gz")
 METADATA_FILE = "metadata.json"
+# #3257: in-progress / displaced result directories; never listed as results.
+_STAGING_PREFIX = ".traigent-staging-"
 TRIALS_JSON_FILE = "trials.json.gz"
 TRIALS_PKL_FILE = "trials.pkl.gz"
 TRIALS_SUMMARY_FILE = "trials_summary.json"
@@ -560,10 +564,48 @@ class PersistenceManager:
             )
             name = f"{func_slug}_{timestamp}"
 
-        # Create subdirectory for this optimization
+        # #3257: the result is built in a sibling staging directory (files and
+        # integrity manifest together) and only then swapped into place, so a
+        # crash mid-save can neither expose a half-written result nor mix old
+        # and new generations under one name.
         result_dir = self._resolve_path(self.base_dir / name)
-        result_dir.mkdir(exist_ok=True)
+        stage_dir = self._resolve_path(
+            self.base_dir
+            / f"{_STAGING_PREFIX}{name}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
+        )
+        stage_dir.mkdir()
+        try:
+            self._write_result_files(result, stage_dir)
+            self._publish_result_dir(stage_dir, result_dir)
+        except BaseException:
+            shutil.rmtree(stage_dir, ignore_errors=True)
+            raise
+        return str(result_dir)
 
+    def _publish_result_dir(self, stage_dir: Path, result_dir: Path) -> None:
+        """Swap a fully built staging directory into place as ``result_dir``.
+
+        Directory rename-over-existing is not portable (it fails on Windows),
+        so an existing generation is renamed aside first and restored if the
+        final rename fails.
+        """
+        if not result_dir.exists():
+            os.replace(stage_dir, result_dir)
+            return
+        aside = self._resolve_path(
+            self.base_dir
+            / f"{_STAGING_PREFIX}old.{result_dir.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
+        )
+        os.replace(result_dir, aside)
+        try:
+            os.replace(stage_dir, result_dir)
+        except BaseException:
+            os.replace(aside, result_dir)
+            raise
+        shutil.rmtree(aside, ignore_errors=True)
+
+    def _write_result_files(self, result: OptimizationResult, result_dir: Path) -> None:
+        """Write every artifact of ``result`` into ``result_dir``."""
         # Save metadata as JSON
         metadata = {
             "function_identifier": result.metadata.get("function_name", "unknown"),
@@ -713,8 +755,6 @@ class PersistenceManager:
             )
 
         self._atomic_write_json(result_dir / TRIALS_SUMMARY_FILE, trials_summary)
-
-        return str(result_dir)
 
     def _load_trials(self, name: str, result_dir: Path) -> list[TrialResult]:
         """Read the saved trials: JSON first, legacy pickle with a warning."""
@@ -896,7 +936,7 @@ class PersistenceManager:
         results = []
 
         for result_dir in self.base_dir.iterdir():
-            if result_dir.is_dir():
+            if result_dir.is_dir() and not result_dir.name.startswith(_STAGING_PREFIX):
                 metadata_file = self._resolve_path(result_dir / METADATA_FILE)
                 if metadata_file.exists():
                     try:

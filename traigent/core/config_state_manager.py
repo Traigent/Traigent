@@ -1323,8 +1323,24 @@ class ConfigStateManager:
                     else Path.cwd().resolve()
                 )
                 output_path = validate_path(output_path, base_dir, must_exist=False)
-                with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
-                    json.dump(result_dict, f, indent=2, default=str)
+                # #3256: stage in the same directory, fsync, then replace, so a
+                # crash or a full disk cannot truncate the previous good file.
+                temp_path = validate_path(
+                    output_path.with_name(f"{output_path.name}.tmp.{os.getpid()}"),
+                    base_dir,
+                    must_exist=False,
+                )
+                try:
+                    with safe_open(
+                        temp_path, base_dir, mode="w", encoding="utf-8"
+                    ) as f:
+                        json.dump(result_dict, f, indent=2, default=str)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(temp_path, output_path)
+                finally:
+                    if temp_path.exists():
+                        temp_path.unlink()
         except ConfigurationError as exc:
             if diag.is_safe(exc):
                 raise
