@@ -75,3 +75,12 @@ def test_surrogate_coevolution_demo_wire_carry_proof_runs(tmp_path: Path) -> Non
         EXAMPLES / "advanced/surrogate_evaluator_coevolution_demo.py", tmp_path
     )
     assert result.returncode == 0, result.stderr[-2000:]
+
+
+@pytest.mark.timeout(180)
+def test_mock_prompt_optimization_walkthrough_needs_no_cost_approval(
+    tmp_path: Path,
+) -> None:
+    script = ROOT / "walkthrough/mock/advanced/02_prompt_optimization.py"
+    result = _run(script, tmp_path, drop=("TRAIGENT_COST_APPROVED",))
+    assert result.returncode == 0, result.stderr[-2000:]
