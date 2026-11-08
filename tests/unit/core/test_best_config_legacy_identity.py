@@ -530,14 +530,13 @@ def test_d_a_logger_artifact_round_trips_through_a_bound_manager(tmp_path) -> No
 def test_d_the_orchestrator_hands_the_logger_the_head_identity(
     tmp_path, monkeypatch
 ) -> None:
-    from traigent.config.types import TraigentConfig
-    from traigent.core.orchestrator import OptimizationOrchestrator
-    from traigent.evaluators.base import Dataset
-
     from tests.unit.core.test_orchestrator_run_config_logging import (
         TinyEvaluator,
         TinyOptimizer,
     )
+    from traigent.config.types import TraigentConfig
+    from traigent.core.orchestrator import OptimizationOrchestrator
+    from traigent.evaluators.base import Dataset
 
     monkeypatch.setenv("TRAIGENT_OPTIMIZATION_LOG_DIR", str(tmp_path / "ol"))
     orchestrator = OptimizationOrchestrator(
@@ -806,7 +805,8 @@ def test_f1f_an_unreadable_file_never_prints_the_file_path(
         monkeypatch.setenv("TRAIGENT_CONFIG_PATH", str(path))
         manager = _manager(strict=strict)
     caught = None
-    if strict:
+    # An explicit load_from fails loudly even when non-strict (#3268).
+    if strict or entry == "load_from":
         with pytest.raises(ConfigurationError) as caught:
             manager.maybe_auto_load_config()
     else:

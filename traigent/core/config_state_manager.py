@@ -454,6 +454,7 @@ class ConfigStateManager:
         path: str,
         *,
         source: str,
+        explicit: bool = False,
     ) -> BestConfigSnapshot | None:
         label = _source_label(source)
         try:
@@ -496,7 +497,10 @@ class ConfigStateManager:
             is_legacy_config, legacy = self._load_legacy_snapshot(path, source=source)
             if is_legacy_config:
                 return legacy
-            if self.best_config_strict:
+            if self.best_config_strict or explicit:
+                # An explicitly named path (load_from) that is missing or
+                # malformed must fail loudly (#3268): it never degrades to a
+                # lower-precedence source or the default config.
                 raise self._canonical_failure(spec_exc, path, label) from None
             logger.warning(
                 "Failed to load best config (%s): %s. Function will use fallback.",
@@ -1488,7 +1492,9 @@ class ConfigStateManager:
         if self._load_from:
             logger.debug("Using explicit load_from path")
             resolved = self._load_snapshot_from_file(
-                self._load_from, source=BestConfigSource.LOAD_FROM.value
+                self._load_from,
+                source=BestConfigSource.LOAD_FROM.value,
+                explicit=True,
             )
 
         if resolved is None:

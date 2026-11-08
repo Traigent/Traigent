@@ -198,7 +198,7 @@ class TestLooksLikeSecret:
         assert _looks_like_secret(pem) is True
 
     def test_long_token_like(self) -> None:
-        token = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_=-XYZ"
+        token = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_=-XYZ"  # pragma: allowlist secret
         assert _looks_like_secret(token) is True
 
     @pytest.mark.parametrize(
@@ -873,6 +873,27 @@ class TestLogSessionEnd:
         assert len(status_files) == 1
         status_data = json.loads(status_files[0].read_text())
         assert status_data["status"] == "completed"
+
+    @pytest.mark.parametrize(
+        ("result_status", "expected"),
+        [
+            (OptimizationStatus.COMPLETED, "completed"),
+            (OptimizationStatus.CANCELLED, "cancelled"),
+            (OptimizationStatus.FAILED, "failed"),
+        ],
+    )
+    def test_session_end_records_real_terminal_status_3258(
+        self, tmp_path: Path, result_status: OptimizationStatus, expected: str
+    ) -> None:
+        log = _make_logger(tmp_path)
+        result = _make_opt_result()
+        result.status = result_status
+        log.log_session_end(result)
+
+        status_file = next(log.run_path.glob("status_v*.json"))
+        assert json.loads(status_file.read_text())["status"] == expected
+        session_file = next((log.run_path / "meta").glob("session_v*.json"))
+        assert json.loads(session_file.read_text())["status"] == expected
 
     def test_session_end_with_error(self, tmp_path: Path) -> None:
         log = _make_logger(tmp_path)
