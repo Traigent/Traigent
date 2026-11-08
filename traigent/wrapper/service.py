@@ -1375,18 +1375,18 @@ class TraigentService:
 
     def _compute_aggregate_metrics(
         self, metrics_list: list[dict[str, float]]
-    ) -> dict[str, dict[str, float | int]]:
-        """Compute aggregate statistics (mean, std, n) for each metric."""
+    ) -> dict[str, dict[str, float | int | None]]:
+        """Compute aggregate statistics (mean, std, n); std is None for n < 2 for each metric."""
         if not metrics_list:
             return {}
 
         import statistics
 
-        aggregates: dict[str, dict[str, float | int]] = {}
+        aggregates: dict[str, dict[str, float | int | None]] = {}
         for name, values in self._collect_numeric_values(metrics_list).items():
             n = len(values)
             mean = sum(values) / n
-            std = statistics.stdev(values) if n > 1 else 0.0
+            std = statistics.stdev(values) if n > 1 else None
             aggregates[name] = {"mean": mean, "std": std, "n": n}
         return aggregates
 

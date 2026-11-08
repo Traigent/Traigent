@@ -170,7 +170,9 @@ class RetryConfig:
                 self.max_delay,
             )
         except OverflowError:
-            return self.max_delay
+            # base**(attempt-1) overflowed: the product is >= the cap unless the
+            # initial delay is zero.
+            return 0.0 if self.initial_delay == 0 else self.max_delay
 
 
 @dataclass

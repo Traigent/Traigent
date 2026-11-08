@@ -614,3 +614,10 @@ class TestMaxDelayCapAfterJitter:
 
         cfg = RetryConfig(initial_delay=1.0, max_delay=10.0, jitter=True)
         assert cfg.calculate_delay(5000) <= 10.0
+
+
+def test_zero_initial_delay_huge_attempt_stays_zero():
+    from traigent.utils.retry import RetryConfig
+
+    cfg = RetryConfig(initial_delay=0.0, max_delay=10.0, jitter=False)
+    assert cfg.calculate_delay(5000) == 0.0

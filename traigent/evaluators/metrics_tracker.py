@@ -808,10 +808,16 @@ class MetricsTracker:
             return self.end_time - self.start_time
         return 0.0
 
-    def calculate_statistics(self, values: Sequence[int | float]) -> dict[str, float]:
-        """Calculate mean, median, and std for a list of values."""
+    def calculate_statistics(
+        self, values: Sequence[int | float]
+    ) -> dict[str, float | None]:
+        """Calculate mean, median, and std for a list of values.
+
+        ``std`` is the sample standard deviation and is ``None`` when fewer than
+        two values exist (undefined, like pandas' NaN), not a fake 0.0 (#3226).
+        """
         if not values:
-            return {"mean": 0.0, "median": 0.0, "std": 0.0}
+            return {"mean": 0.0, "median": 0.0, "std": None}
 
         # Filter out None values and ensure all are float
         clean_values = []
@@ -823,20 +829,24 @@ class MetricsTracker:
                     logger.warning(f"Skipping invalid value {v}: {e}")
 
         if not clean_values:
-            return {"mean": 0.0, "median": 0.0, "std": 0.0}
+            return {"mean": 0.0, "median": 0.0, "std": None}
 
         try:
             mean_val = statistics.mean(clean_values)
             median_val = statistics.median(clean_values)
-            std_val = statistics.stdev(clean_values) if len(clean_values) > 1 else 0.0
+            std_val = (
+                round(statistics.stdev(clean_values), 6)
+                if len(clean_values) > 1
+                else None
+            )
         except Exception as e:
             logger.exception(f"Error calculating statistics: {e}")
-            return {"mean": 0.0, "median": 0.0, "std": 0.0}
+            return {"mean": 0.0, "median": 0.0, "std": None}
 
         return {
             "mean": round(mean_val, 6),
             "median": round(median_val, 6),
-            "std": round(std_val, 6),
+            "std": std_val,
         }
 
     def aggregate_metrics(self) -> dict[str, Any]:
@@ -941,7 +951,8 @@ class MetricsTracker:
         empty_stats = {
             "mean": missing_default,
             "median": missing_default,
-            "std": missing_default,
+            # Sample std of zero values is undefined, never a fake 0.0 (#3226)
+            "std": None,
         }
         return {
             "input_tokens": empty_stats.copy(),
@@ -1642,22 +1653,25 @@ class MetricsTracker:
 
     def _calculate_describe_stats(
         self, values: Sequence[int | float]
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Calculate pandas.describe()-compatible statistics.
 
         Returns statistics in the exact format of pandas.DataFrame.describe():
         count, mean, std, min, 25%, 50%, 75%, max
+
+        pandas reports NaN for every statistic of zero values and for the
+        sample ``std`` of one value; we report ``None`` for those (#3226).
         """
         if not values:
             return {
                 "count": 0,
-                "mean": 0.0,
-                "std": 0.0,
-                "min": 0.0,
-                "25%": 0.0,
-                "50%": 0.0,
-                "75%": 0.0,
-                "max": 0.0,
+                "mean": None,
+                "std": None,
+                "min": None,
+                "25%": None,
+                "50%": None,
+                "75%": None,
+                "max": None,
             }
 
         sorted_values = sorted(values)
@@ -1682,7 +1696,7 @@ class MetricsTracker:
         return {
             "count": n,
             "mean": statistics.mean(values),
-            "std": statistics.stdev(values) if n > 1 else 0.0,
+            "std": statistics.stdev(values) if n > 1 else None,
             "min": min(values),
             "25%": percentile(sorted_values, 0.25),
             "50%": percentile(sorted_values, 0.50),  # median

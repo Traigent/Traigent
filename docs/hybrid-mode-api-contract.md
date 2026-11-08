@@ -616,7 +616,7 @@ Evaluate outputs against expected targets to measure quality.
 | Field | Type | Description |
 |-------|------|-------------|
 | `mean` | number | Mean value across all examples |
-| `std` | number | Standard deviation |
+| `std` | number \| null | Sample standard deviation; `null` when `n` < 2 (undefined) |
 | `n` | integer | Number of examples |
 
 **Custom Quality Metrics** - add any metrics specific to your use case:

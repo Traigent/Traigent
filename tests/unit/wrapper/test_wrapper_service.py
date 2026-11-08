@@ -1481,11 +1481,11 @@ class TestComputeAggregateMetrics:
         assert svc._compute_aggregate_metrics([]) == {}
 
     def test_single_metric_zero_std(self) -> None:
-        """Test that a single metric has std=0."""
+        """A single value has an undefined sample std: None (#3226)."""
         svc = TraigentService()
         result = svc._compute_aggregate_metrics([{"accuracy": 0.9}])
         assert result["accuracy"]["mean"] == pytest.approx(0.9)
-        assert result["accuracy"]["std"] == pytest.approx(0.0)
+        assert result["accuracy"]["std"] is None
         assert result["accuracy"]["n"] == 1
 
     def test_multiple_values(self) -> None:
