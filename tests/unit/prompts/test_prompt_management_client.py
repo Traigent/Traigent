@@ -15,6 +15,7 @@ from traigent.prompts import (
     PromptManagementClient,
     PromptNotFoundError,
     PromptNotPermittedError,
+    PromptPaginationError,
     PromptPaymentRequiredError,
     PromptType,
     PromptUpstreamError,
@@ -27,6 +28,7 @@ from traigent.utils.exceptions import (
     RateLimitError,
     ServiceUnavailableError,
     TraigentConnectionError,
+    ValidationError,
 )
 
 
@@ -518,7 +520,7 @@ def test_iter_prompts_follows_cursor_with_unchanged_filters():
     ]
 
 
-def test_iter_prompts_stops_when_has_more_without_cursor():
+def test_iter_prompts_raises_when_has_more_without_cursor():
     def request_sender(method: str, path: str, payload: dict | None):
         return {
             "data": {
@@ -528,8 +530,101 @@ def test_iter_prompts_stops_when_has_more_without_cursor():
         }
 
     client = PromptManagementClient(request_sender=request_sender)
+    seen: list[str] = []
 
-    assert [p.name for p in client.iter_prompts(limit=1)] == ["a"]
+    with pytest.raises(PromptPaginationError):
+        for prompt in client.iter_prompts(limit=1):
+            seen.append(prompt.name)
+
+    assert seen == ["a"]
+
+
+def test_iter_prompts_raises_when_cursor_repeats():
+    calls: list[str] = []
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        calls.append(path)
+        return {
+            "data": {
+                "items": [_summary("a")],
+                "pagination": {"limit": 1, "next_cursor": "same", "has_more": True},
+            }
+        }
+
+    client = PromptManagementClient(request_sender=request_sender)
+
+    with pytest.raises(PromptPaginationError):
+        list(client.iter_prompts(limit=1))
+
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("bad", [".", "..", ""])
+def test_dot_only_and_empty_names_are_rejected_before_any_request(monkeypatch, bad):
+    def opener(http_request, timeout):
+        raise AssertionError("no request may be sent")
+
+    client = _client(monkeypatch, opener)
+
+    with pytest.raises(ValidationError):
+        client.get_prompt(bad)
+    with pytest.raises(ValidationError):
+        client.delete_prompt(bad)
+
+
+@pytest.mark.parametrize("bad", [".", ".."])
+def test_dot_only_project_id_is_rejected_before_any_request(monkeypatch, bad):
+    def opener(http_request, timeout):
+        raise AssertionError("no request may be sent")
+
+    monkeypatch.setattr("traigent.prompts.client.open_no_redirect", opener)
+    client = PromptManagementClient(
+        PromptManagementConfig(
+            backend_origin="https://example.test",
+            api_key="test-key",  # pragma: allowlist secret
+            project_id=bad,
+        )
+    )
+
+    with pytest.raises(ConfigurationError):
+        client.get_prompt("p")
+    with pytest.raises(ConfigurationError):
+        client.delete_prompt("p")
+
+
+def test_caller_x_project_id_header_is_stripped_in_any_case(monkeypatch):
+    seen = {}
+
+    def opener(http_request, timeout):
+        seen["headers"] = {k.lower(): v for k, v in http_request.headers.items()}
+        return _FakeResponse(
+            json.dumps(
+                {
+                    "data": {
+                        "items": [],
+                        "pagination": {
+                            "limit": 5,
+                            "next_cursor": None,
+                            "has_more": False,
+                        },
+                    }
+                }
+            )
+        )
+
+    monkeypatch.setattr("traigent.prompts.client.open_no_redirect", opener)
+    client = PromptManagementClient(
+        PromptManagementConfig(
+            backend_origin="https://example.test",
+            api_key="test-key",  # pragma: allowlist secret
+            project_id="proj_1",
+            extra_headers={"x-PROJECT-id": "other", "X-Keep": "yes"},
+        )
+    )
+    client.list_prompts(limit=5)
+
+    assert "x-project-id" not in seen["headers"]
+    assert seen["headers"]["x-keep"] == "yes"
 
 
 def test_delete_prompt_and_get_prompt_version_paths():
@@ -677,7 +772,8 @@ def test_request_url_is_project_scoped_and_sends_no_project_header(monkeypatch):
         (402, "insufficient_balance", PromptPaymentRequiredError),
         (402, "spend_blocked", PromptPaymentRequiredError),
         (502, "upstream_failed", PromptUpstreamError),
-        (409, "some_future_conflict", PromptConflictError),
+        (409, "some_future_conflict", PromptApiError),
+        (403, "some_future_denial", PromptApiError),
         (500, "some_future_failure", PromptApiError),
     ],
 )
@@ -700,10 +796,40 @@ def test_problem_json_maps_to_typed_errors(monkeypatch, status, code, expected):
     err = excinfo.value
     assert isinstance(err, ClientError)
     assert type(err) is expected
-    assert err.code == code
+    assert err.code == (code if not code.startswith("some_future") else None)
     assert err.status_code == status
     assert err.problem_id == "prob_123"
-    assert "Fixed detail text." in str(err)
+    assert "Fixed detail text." not in str(err)
+    assert "Problem title" not in str(err)
+
+
+def test_server_text_never_reaches_message_properties_or_repr(monkeypatch):
+    secret = "sk-live-FAKESECRET1234567890abcdef"  # pragma: allowlist secret
+    customer = "Alice Example has diabetes"
+    problem = {
+        "title": f"title {customer}",
+        "status": 404,
+        "code": f"not_found {customer}",
+        "detail": f"{secret} {customer}",
+        "problem_id": f"bad id {secret}",
+    }
+
+    def opener(http_request, timeout):
+        raise _http_error(404, problem, "application/problem+json")
+
+    with pytest.raises(PromptApiError) as excinfo:
+        _client(monkeypatch, opener).get_prompt("p")
+
+    err = excinfo.value
+    assert type(err) is PromptApiError
+    assert err.code is None
+    assert err.problem_id is None
+    dump = " ".join(
+        [str(err), repr(err), repr(vars(err)), repr(getattr(err, "details", ""))]
+    )
+    assert secret not in dump
+    assert "Alice" not in dump
+    assert "diabetes" not in dump
 
 
 def test_problem_json_403_wins_over_legacy_authentication_mapping(monkeypatch):

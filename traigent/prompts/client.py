@@ -20,7 +20,7 @@ from traigent.prompts.dtos import (
     PromptType,
     ResolvedPrompt,
 )
-from traigent.prompts.errors import error_from_problem
+from traigent.prompts.errors import PromptPaginationError, error_from_problem
 from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
     AuthenticationError,
@@ -28,6 +28,7 @@ from traigent.utils.exceptions import (
     RateLimitError,
     ServiceUnavailableError,
     TraigentConnectionError,
+    ValidationError,
 )
 
 PROBLEM_CONTENT_TYPE = "application/problem+json"
@@ -115,6 +116,7 @@ class PromptManagementClient:
             Same filter semantics as :meth:`list_prompts`.
         """
         cursor: str | None = None
+        seen_cursors: set[str] = set()
         while True:
             page = self.list_prompts(
                 limit=limit,
@@ -124,9 +126,18 @@ class PromptManagementClient:
                 label=label,
             )
             yield from page.items
-            cursor = page.pagination.next_cursor
-            if not page.pagination.has_more or cursor is None:
+            if not page.pagination.has_more:
                 return
+            cursor = page.pagination.next_cursor
+            if not cursor:
+                raise PromptPaginationError(
+                    "Prompt list reported more pages but returned no cursor"
+                )
+            if cursor in seen_cursors:
+                raise PromptPaginationError(
+                    "Prompt list returned a cursor that was already used"
+                )
+            seen_cursors.add(cursor)
 
     def get_prompt(self, name: str) -> PromptDetail:
         payload = self._request_json("GET", f"/{self._quote_name(name)}")
@@ -392,7 +403,6 @@ class PromptManagementClient:
         raise ClientError(
             f"Prompt request failed with status {exc.code}",
             status_code=exc.code,
-            details={"body": body},
         ) from exc
 
     def _unwrap_data(self, payload: dict, label: str) -> dict:
@@ -412,6 +422,10 @@ class PromptManagementClient:
         return "?" + urlencode(serialized)
 
     def _quote_name(self, name: str) -> str:
+        if not isinstance(name, str) or name in {"", ".", ".."}:
+            raise ValidationError(
+                "Prompt name must be a non-empty name other than '.' or '..'"
+            )
         return quote(name, safe="")
 
     def _serialize_message(self, message: ChatPromptMessage | dict) -> dict:

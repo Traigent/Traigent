@@ -63,13 +63,21 @@ class PromptManagementConfig:
                 "Prompt management needs a project id: pass project_id= to "
                 "PromptManagementConfig or set TRAIGENT_PROJECT_ID"
             )
+        if self.project_id in {".", ".."}:
+            raise ConfigurationError(
+                "Prompt management project id must not be '.' or '..'"
+            )
         return f"/api/v1/projects/{quote(self.project_id, safe='')}/prompts"
 
     def build_headers(self) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "traigent-prompts/0.1",
-            **self.extra_headers,
+            **{
+                key: value
+                for key, value in self.extra_headers.items()
+                if key.lower() != "x-project-id"
+            },
         }
         if self.api_key:
             headers["X-API-Key"] = self.api_key

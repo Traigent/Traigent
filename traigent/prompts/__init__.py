@@ -26,6 +26,7 @@ from traigent.prompts.errors import (
     PromptInvalidRequestError,
     PromptNotFoundError,
     PromptNotPermittedError,
+    PromptPaginationError,
     PromptPaymentRequiredError,
     PromptUpstreamError,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "PromptManagementConfig",
     "PromptNotFoundError",
     "PromptNotPermittedError",
+    "PromptPaginationError",
     "PromptPaymentRequiredError",
     "PromptPlaygroundConfig",
     "PromptPlaygroundResult",
