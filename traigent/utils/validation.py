@@ -1176,7 +1176,10 @@ def _validate_dataset_content(result: ValidationResult, dataset_file: Path) -> N
             mode="r",
             encoding="utf-8",
         ) as f:
-            row_count, invalid_rows = _scan_dataset_rows(result, f)
+            if dataset_file.suffix.lower() == ".json":
+                row_count, invalid_rows = _scan_json_dataset(result, f)
+            else:
+                row_count, invalid_rows = _scan_dataset_rows(result, f)
 
             result.metadata["dataset_rows_inspected"] = row_count
             result.metadata["dataset_invalid_rows"] = invalid_rows
@@ -1203,6 +1206,50 @@ def _validate_dataset_content(result: ValidationResult, dataset_file: Path) -> N
             f"Could not read dataset: {str(e)}",
             error_code="READ_ERROR",
         )
+
+
+def _row_object_problem(data: Any) -> tuple[str, str] | None:
+    if not isinstance(data, dict):
+        return f"Expected a JSON object, got {type(data).__name__}", "INVALID_FORMAT"
+    if "input" not in data and "input_data" not in data:
+        return "Missing 'input' or 'input_data' field", "INVALID_FORMAT"
+    return None
+
+
+def _scan_json_dataset(result: ValidationResult, handle: Any) -> tuple[int, int]:
+    """Validate a ``.json`` dataset with the loader's layout rules (#3232).
+
+    ``Dataset.from_jsonl`` parses ``.json`` as one document (array, ``{"examples":
+    [...]}`` envelope or a single example object), so the validator must too
+    rather than treat each physical line as a JSONL row. One ``json.load`` pass,
+    no per-line re-parse.
+    """
+    # Imported lazily: evaluators.base imports from this package.
+    from traigent.evaluators.base import _json_dataset_layout
+
+    try:
+        data = json.load(handle)
+    except json.JSONDecodeError as exc:
+        result.add_error("dataset", f"Invalid JSON: {exc}", error_code="JSON_ERROR")
+        return 1, 1
+    try:
+        iterable, _, _, _ = _json_dataset_layout(data, "dataset")
+    except Exception as exc:
+        result.add_error("dataset", str(exc), error_code="INVALID_FORMAT")
+        return 1, 1
+
+    row_count = 0
+    invalid_rows = 0
+    for index, item in iterable:
+        row_count += 1
+        problem = _row_object_problem(item)
+        if problem is None:
+            continue
+        invalid_rows += 1
+        if invalid_rows <= MAX_REPORTED_DATASET_ROW_ERRORS:
+            message, error_code = problem
+            result.add_error(f"dataset:example{index}", message, error_code=error_code)
+    return row_count, invalid_rows
 
 
 def _dataset_row_problem(text: str) -> tuple[str, str] | None:

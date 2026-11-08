@@ -484,3 +484,54 @@ class TestCoercionRefusesJunkInsteadOfInventingOrCrashing:
 
         assert usage.cache_read_tokens is None
         assert "cache_read_tokens" in usage.unreported_fields
+
+
+class TestLiteLLMAnthropicShape:
+    """Traigent#3225: LiteLLM's Anthropic transform uses the OpenAI chat shape with
+    prompt_tokens inclusive of cache reads AND writes."""
+
+    def test_top_level_creation_is_read_and_subtracted(self):
+        usage = normalize_cache_usage(
+            {
+                "prompt_tokens": 550,
+                "completion_tokens": 50,
+                "prompt_tokens_details": {"cached_tokens": 400},
+                "cache_read_input_tokens": 400,
+                "cache_creation_input_tokens": 50,
+            }
+        )
+        assert usage.input_tokens == 100
+        assert usage.cache_read_tokens == 400
+        assert usage.cache_creation_tokens == 50
+        assert usage.billable_input_tokens == 550
+        assert usage.unreported_fields == ()
+
+    def test_creation_from_prompt_tokens_details(self):
+        usage = normalize_cache_usage(
+            {
+                "prompt_tokens": 550,
+                "prompt_tokens_details": {
+                    "cached_tokens": 400,
+                    "cache_creation_tokens": 50,
+                },
+            }
+        )
+        assert (usage.input_tokens, usage.cache_creation_tokens) == (100, 50)
+        assert usage.billable_input_tokens == 550
+
+    def test_inconsistent_totals_report_unknown_not_undercount(self):
+        usage = normalize_cache_usage(
+            {
+                "prompt_tokens": 300,
+                "prompt_tokens_details": {"cached_tokens": 200},
+                "cache_creation_input_tokens": 150,
+            }
+        )
+        assert usage.input_tokens is None
+
+    def test_plain_openai_unchanged(self):
+        usage = normalize_cache_usage(
+            {"prompt_tokens": 1500, "prompt_tokens_details": {"cached_tokens": 1024}}
+        )
+        assert usage.input_tokens == 476
+        assert usage.cache_creation_tokens is None
