@@ -1883,6 +1883,11 @@ def results_list(storage_dir: str | None) -> None:
     legacy_storage_dir = storage_dir or ".traigent"
     persistence = PersistenceManager(legacy_storage_dir)
     legacy_results = persistence.list_results()
+    if persistence.last_skipped_results:
+        console.print(
+            f"[yellow]{persistence.last_skipped_results} result(s) unreadable "
+            f"in {persistence.base_dir} (see log warnings)[/yellow]"
+        )
     local_results, local_storage_path = _list_local_session_results(storage_dir)
     all_results = _merge_result_infos(legacy_results, local_results)
 
