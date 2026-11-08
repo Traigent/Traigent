@@ -14,16 +14,37 @@ from ..api.types import OptimizationResult, TrialResult, TrialStatus
 
 @dataclass
 class ImportanceResult:
-    """Result of parameter importance analysis."""
+    """Result of parameter importance analysis.
+
+    ``importance_score`` and ``confidence_interval`` are Optional: both are
+    None, and ``not_measurable_reason`` is set, when the data cannot support an
+    importance value for the parameter (for example no replicated values,
+    insufficient replication coverage, or a constant objective). None means
+    "unknown", never "zero importance".
+    """
 
     parameter_name: str
-    importance_score: float
-    confidence_interval: tuple[float, float]
+    importance_score: float | None
+    confidence_interval: tuple[float, float] | None
     method: str
     sample_size: int
+    # Set (and the score/interval are None) when the data cannot support an
+    # importance value for this parameter; "not measurable" is not "zero".
+    not_measurable_reason: str | None = None
+
+    @property
+    def is_measurable(self) -> bool:
+        """True when an importance score could be computed."""
+        return self.importance_score is not None
 
     def __str__(self) -> str:
         """String representation of importance result."""
+        if self.importance_score is None:
+            return (
+                f"{self.parameter_name}: not measurable "
+                f"({self.not_measurable_reason}; {self.method}, "
+                f"n={self.sample_size})"
+            )
         return (
             f"{self.parameter_name}: {self.importance_score:.3f} "
             f"({self.method}, n={self.sample_size})"
@@ -295,10 +316,23 @@ class ParameterImportanceAnalyzer:
     def analyze_permutation_based(
         self, trials: list[TrialResult], n_permutations: int = 100
     ) -> dict[str, ImportanceResult]:
-        """Analyze parameter importance using permutation-based method.
+        """Analyze parameter importance using permutation of a grouped-mean model.
 
-        This method shuffles parameter values and measures the decrease in
-        model performance to estimate importance.
+        For each parameter a grouped-mean predictor (the mean objective of the
+        other trials sharing the same parameter value) is scored with
+        leave-one-out squared error. The parameter's values are then shuffled
+        across trials and the same predictor is re-scored; the increase in
+        error, relative to the objective's variance, is the importance.
+
+        Only trials that set the parameter are scored, and a parameter whose
+        values are never repeated (e.g. a continuous value unique to each
+        trial) cannot be evaluated this way. Such parameters are returned with
+        ``importance_score=None`` and a ``not_measurable_reason`` instead of a
+        misleading 0.0.
+
+        The ``confidence_interval`` is mean +/- 1.96 standard deviations of the
+        importance across shuffles of the observed trials. It describes shuffle
+        spread only, not sampling uncertainty over trials.
 
         Args:
             trials: List of completed trials
@@ -318,87 +352,111 @@ class ParameterImportanceAnalyzer:
         if len(successful_trials) < 20:  # Need sufficient data for permutations
             return {}
 
-        results = {}
-        baseline_score = self._calculate_baseline_score(successful_trials)
-
-        # Get all parameters
         all_params: set[str] = set()
         for trial in successful_trials:
             all_params.update(trial.config.keys())
 
-        for param in all_params:
-            importance_scores = []
-
-            for _ in range(n_permutations):
-                # Create permuted trials
-                permuted_trials = self._permute_parameter(successful_trials, param)
-                permuted_score = self._calculate_baseline_score(permuted_trials)
-
-                # Calculate importance as performance drop
-                importance = baseline_score - permuted_score
-                importance_scores.append(max(0.0, importance))  # Ensure non-negative
-
-            if importance_scores:
-                mean_importance = statistics.mean(importance_scores)
-                std_importance = (
-                    statistics.stdev(importance_scores)
-                    if len(importance_scores) > 1
-                    else 0.0
-                )
-
-                # Confidence interval
-                confidence_interval = (
-                    max(0.0, mean_importance - 1.96 * std_importance),
-                    mean_importance + 1.96 * std_importance,
-                )
-
-                results[param] = ImportanceResult(
-                    parameter_name=param,
-                    importance_score=mean_importance,
-                    confidence_interval=confidence_interval,
-                    method="permutation_based",
-                    sample_size=len(successful_trials),
-                )
-
+        n_permutations = max(1, n_permutations)
+        results: dict[str, ImportanceResult] = {}
+        for param in sorted(all_params):
+            results[param] = self._permutation_importance_for_parameter(
+                successful_trials, param, n_permutations
+            )
         return results
 
-    def _calculate_baseline_score(self, trials: list[TrialResult]) -> float:
-        """Calculate baseline score for permutation importance."""
-        objective_values = [t.metrics[self.objective] for t in trials]
-        return statistics.mean(objective_values) if objective_values else 0.0
+    @staticmethod
+    def _hashable_key(value: object) -> object:
+        try:
+            hash(value)
+        except TypeError:
+            return repr(value)
+        return value
 
-    def _permute_parameter(
-        self, trials: list[TrialResult], parameter: str
-    ) -> list[TrialResult]:
-        """Create trials with permuted parameter values."""
-        import copy
+    def _permutation_importance_for_parameter(
+        self, trials: list[TrialResult], parameter: str, n_permutations: int
+    ) -> ImportanceResult:
         import random
 
-        # Extract parameter values
-        param_values = []
+        def not_measurable(reason: str, n: int) -> ImportanceResult:
+            return ImportanceResult(
+                parameter_name=parameter,
+                importance_score=None,
+                confidence_interval=None,
+                method="permutation_based",
+                sample_size=n,
+                not_measurable_reason=reason,
+            )
+
+        # Only runs that set the parameter carry information about it.
+        keys: list[object] = []
+        ys: list[float] = []
         for trial in trials:
             if parameter in trial.config:
-                param_values.append(trial.config[parameter])
+                keys.append(self._hashable_key(trial.config[parameter]))
+                ys.append(float(trial.metrics[self.objective]))
+        if len(ys) < 2:
+            return not_measurable("parameter set in fewer than 2 trials", len(ys))
 
-        if not param_values:
-            return trials
+        # Keep only replicated values: a value seen once cannot be predicted
+        # from other trials, and keeping it would reward unique values.
+        counts: dict[object, int] = defaultdict(int)
+        for key in keys:
+            counts[key] += 1
+        kept = [i for i, key in enumerate(keys) if counts[key] >= 2]
+        kept_groups = {keys[i] for i in kept}
+        if len(kept_groups) < 2:
+            return not_measurable(
+                "fewer than 2 parameter values with replication", len(kept)
+            )
+        if len(kept) * 2 < len(ys):
+            return not_measurable("insufficient_replication_coverage", len(kept))
 
-        # Shuffle parameter values
-        shuffled_values = param_values.copy()
-        random.shuffle(shuffled_values)  # NOSONAR - statistical permutation, no crypto
+        ks = [keys[i] for i in kept]
+        y = [ys[i] for i in kept]
+        n = len(y)
+        y_mean = statistics.fmean(y)
+        total_var = sum((v - y_mean) ** 2 for v in y) / n
+        if total_var <= 0.0:
+            return not_measurable("objective is constant", n)
 
-        # Create permuted trials
-        permuted_trials = []
-        shuffle_index = 0
+        sums: dict[object, float] = defaultdict(float)
+        sizes: dict[object, int] = defaultdict(int)
+        for key, val in zip(ks, y, strict=True):
+            sums[key] += val
+            sizes[key] += 1
 
-        for trial in trials:
-            new_trial = copy.deepcopy(trial)
-            if parameter in trial.config and shuffle_index < len(shuffled_values):
-                new_trial.config[parameter] = shuffled_values[shuffle_index]
-                shuffle_index += 1
-            permuted_trials.append(new_trial)
+        def loo_error(assigned: list[object]) -> float:
+            """Mean squared error of the grouped-mean predictor, leaving each
+            trial out of the group it was originally measured in."""
+            total = 0.0
+            for own_key, key, val in zip(ks, assigned, y, strict=True):
+                g_sum, g_n = sums[key], sizes[key]
+                if key == own_key:
+                    g_sum -= val
+                    g_n -= 1
+                total += (val - g_sum / g_n) ** 2
+            return total / n
 
-        return permuted_trials
+        baseline_error = loo_error(ks)
+        rng = random.Random(0)  # NOSONAR - statistical permutation, no crypto
+        scores: list[float] = []
+        for _ in range(n_permutations):
+            shuffled = ks.copy()
+            rng.shuffle(shuffled)
+            scores.append((loo_error(shuffled) - baseline_error) / total_var)
+
+        mean_importance = min(1.0, max(0.0, statistics.fmean(scores)))
+        std_importance = statistics.stdev(scores) if len(scores) > 1 else 0.0
+        return ImportanceResult(
+            parameter_name=parameter,
+            importance_score=mean_importance,
+            confidence_interval=(
+                max(0.0, mean_importance - 1.96 * std_importance),
+                min(1.0, mean_importance + 1.96 * std_importance),
+            ),
+            method="permutation_based",
+            sample_size=n,
+        )
 
     def get_top_parameters(
         self, analysis_results: dict[str, ImportanceResult], top_k: int = 5
@@ -412,8 +470,13 @@ class ParameterImportanceAnalyzer:
         Returns:
             List of top importance results, sorted by importance score
         """
+        measurable = [
+            r for r in analysis_results.values() if r.importance_score is not None
+        ]
         sorted_results = sorted(
-            analysis_results.values(), key=lambda x: x.importance_score, reverse=True
+            measurable,
+            key=lambda x: x.importance_score,  # type: ignore[arg-type,return-value]
+            reverse=True,
         )
         return sorted_results[:top_k]
 
@@ -429,11 +492,17 @@ class ParameterImportanceAnalyzer:
             lines.append("  No significant importance detected")
             return
         for result in self.get_top_parameters(results, top_k=5):
-            ci_low, ci_high = result.confidence_interval
+            ci_low, ci_high = result.confidence_interval or (0.0, 0.0)
             lines.append(
                 f"  {result.parameter_name:15s}: {result.importance_score:.3f} "
                 f"[{ci_low:.3f}, {ci_high:.3f}]"
             )
+        for result in results.values():
+            if result.importance_score is None:
+                lines.append(
+                    f"  {result.parameter_name:15s}: not measurable "
+                    f"({result.not_measurable_reason})"
+                )
 
     @staticmethod
     def _format_report_summary(
@@ -449,7 +518,8 @@ class ParameterImportanceAnalyzer:
         param_scores = defaultdict(list)
         for method_results in all_results.values():
             for param, result in method_results.items():
-                param_scores[param].append(result.importance_score)
+                if result.importance_score is not None:
+                    param_scores[param].append(result.importance_score)
 
         # Calculate average importance across methods
         avg_importance = {}
