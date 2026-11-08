@@ -9,6 +9,7 @@ while maintaining security and SOC2 compliance.
 import asyncio
 import logging
 import math
+import re
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -83,59 +84,98 @@ class ResilientClient:
         error_str = str(error).lower()
         error_type_name = type(error).__name__.lower()
 
-        # Network errors - always retry
-        network_indicators = [
-            "connection",
-            "timeout",
-            "network",
-            "dns",
-            "refused",
-            "reset",
-            "broken pipe",
-            "ssl",
-        ]
-        if any(
-            ind in error_str or ind in error_type_name for ind in network_indicators
-        ):
+        # 1. Structured HTTP status (error.status / status_code / response.*)
+        # is authoritative over any message text (#3228).
+        status = self._extract_status(error)
+        if status is not None:
+            by_status = self._classify_status(status)
+            if by_status is not None:
+                return by_status
+
+        # 2. The exception TYPE name (ConnectionError, TimeoutError, SSLError,
+        # ...) identifies transport failures reliably.
+        if any(ind in error_type_name for ind in self._NETWORK_INDICATORS):
             return ErrorType.NETWORK
 
-        # Authentication errors - never retry
-        auth_indicators = ["401", "unauthorized", "authentication", "forbidden", "403"]
-        if any(ind in error_str for ind in auth_indicators):
+        # 3. Status numbers embedded in the message, matched as whole numbers
+        # so "port 4010" or "id 5003" is not mistaken for a status.
+        # Only when preceded by status context ("HTTP 403", "status: 500",
+        # "error 404").
+        for match in re.finditer(
+            r"(?:\b(?:http|status|code|error)\b[\s:=/.]*?)([1-5]\d\d)(?![\w.])",
+            error_str,
+        ):
+            by_status = self._classify_status(int(match.group(1)))
+            if by_status is not None:
+                return by_status
+
+        # 4. Status phrases.
+        if any(ind in error_str for ind in self._AUTH_PHRASES):
             return ErrorType.AUTH
-
-        # Rate limiting - retry with backoff
-        rate_limit_indicators = ["429", "rate limit", "too many requests"]
-        if any(ind in error_str for ind in rate_limit_indicators):
+        if any(ind in error_str for ind in self._RATE_LIMIT_PHRASES):
             return ErrorType.RATE_LIMIT
-
-        # Server errors - retry
-        server_indicators = [
-            "500",
-            "502",
-            "503",
-            "504",
-            "server error",
-            "internal error",
-        ]
-        if any(ind in error_str for ind in server_indicators):
+        if any(ind in error_str for ind in self._SERVER_PHRASES):
             return ErrorType.SERVER
-
-        # Client errors - don't retry (except specific cases above)
-        client_indicators = [
-            "400",
-            "404",
-            "405",
-            "406",
-            "409",
-            "410",
-            "bad request",
-            "not found",
-        ]
-        if any(ind in error_str for ind in client_indicators):
+        if any(ind in error_str for ind in self._CLIENT_PHRASES):
             return ErrorType.CLIENT
 
+        # 5. Last resort: loose network words in the message text.
+        if any(ind in error_str for ind in self._NETWORK_INDICATORS):
+            return ErrorType.NETWORK
+
         return ErrorType.UNKNOWN
+
+    _NETWORK_INDICATORS = (
+        "connection",
+        "timeout",
+        "network",
+        "dns",
+        "refused",
+        "reset",
+        "broken pipe",
+        "ssl",
+    )
+    _AUTH_PHRASES = ("unauthorized", "authentication", "forbidden")
+    _RATE_LIMIT_PHRASES = ("rate limit", "too many requests")
+    _SERVER_PHRASES = (
+        "server error",
+        "internal error",
+        "bad gateway",
+        "service unavailable",
+        "gateway time",
+    )
+    _CLIENT_PHRASES = ("bad request", "not found")
+
+    @staticmethod
+    def _extract_status(error: Exception) -> int | None:
+        """Return an integer HTTP status carried by the exception, if any."""
+        candidates = [
+            getattr(error, "status", None),
+            getattr(error, "status_code", None),
+        ]
+        response = getattr(error, "response", None)
+        if response is not None:
+            candidates.append(getattr(response, "status_code", None))
+            candidates.append(getattr(response, "status", None))
+        for value in candidates:
+            if isinstance(value, int) and not isinstance(value, bool):
+                if 100 <= value <= 599:
+                    return value
+        return None
+
+    @staticmethod
+    def _classify_status(status: int) -> "ErrorType | None":
+        if status in (401, 403):
+            return ErrorType.AUTH
+        if status == 429:
+            return ErrorType.RATE_LIMIT
+        if status in (408, 425):
+            return None  # transient client-side timeouts: defer to other signals
+        if 400 <= status <= 499:
+            return ErrorType.CLIENT
+        if 500 <= status <= 599:
+            return ErrorType.SERVER
+        return None
 
     def should_retry(self, error: Exception, attempt: int) -> bool:
         """Determine if request should be retried.
