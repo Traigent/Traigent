@@ -79,12 +79,7 @@ class BaseOptimizer(ABC):
             }
         self.algorithm_config = kwargs
         if kwargs.get("seed") is not None and not self._honours_seed:
-            get_logger(__name__).warning(
-                "seed=%r has no effect for %s: it is not seeded, so runs are "
-                "not reproducible through this argument.",
-                kwargs["seed"],
-                self.__class__.__name__,
-            )
+            self._warn_seed_ignored()
 
         # Handle objective weights - support both parameter and kwargs
         weights = objective_weights or kwargs.get("objective_weights", {})
@@ -112,6 +107,15 @@ class BaseOptimizer(ABC):
         self._best_config: dict[str, Any] | None = None
         self._tried_config_hashes: set[str] = set()
         self._config_space_cardinality: int | None = self._compute_cardinality()
+
+    def _warn_seed_ignored(self, detail: str | None = None) -> None:
+        """Warn that a supplied ``seed`` does not influence this optimizer."""
+        get_logger(__name__).warning(
+            "seed=%r has no effect for %s: %s",
+            self.algorithm_config.get("seed"),
+            self.__class__.__name__,
+            detail or "this optimizer does not use a random seed.",
+        )
 
     def _initialize_objective_weights(self, weights: dict[str, float]) -> None:
         # Initialize objective weights with proper handling

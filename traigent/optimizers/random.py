@@ -85,6 +85,9 @@ class RandomSearchOptimizer(BaseOptimizer):
             )
         if random_seed is None:
             random_seed = seed
+        # Keep ``seed`` in algorithm_config so run metadata records it.
+        if seed is not None:
+            kwargs["seed"] = seed
         super().__init__(config_space, objectives, context, **kwargs)
 
         self.max_trials = max_trials

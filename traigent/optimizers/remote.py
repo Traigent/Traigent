@@ -55,6 +55,9 @@ class RemoteOptimizer(BaseOptimizer):
       that single suggestion. This is logged, not silent.
     """
 
+    # The seed reaches only the local fallback; handled explicitly in __init__.
+    _honours_seed = True
+
     def __init__(
         self,
         config_space: dict[str, Any],
@@ -84,6 +87,11 @@ class RemoteOptimizer(BaseOptimizer):
             **kwargs,
         )
         self.remote_enabled = remote_enabled
+        if kwargs.get("seed") is not None:
+            self._warn_seed_ignored(
+                "remote suggestions are not seeded; the seed applies only to "
+                "the local random fallback."
+            )
 
         # Runtime fallback (only used when the remote client raises mid-call;
         # never as a substitute for a missing client — see __init__ guard).

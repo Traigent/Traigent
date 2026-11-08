@@ -599,3 +599,49 @@ class TestSeedAlias:
 
         assert first(3) == first(3)
         assert first(3) != first(4)
+
+    def test_multi_objective_batch_random_seed_and_conflict(self):
+        from traigent.optimizers.batch_optimizers import MultiObjectiveBatchOptimizer
+
+        def build(**kw):
+            return MultiObjectiveBatchOptimizer(
+                configuration_space=self.SPACE,
+                objectives=["accuracy", "cost"],
+                **kw,
+            )
+
+        assert build(random_seed=5)._base_optimizer.random_seed == 5
+        with pytest.raises(ValueError, match="aliases"):
+            build(seed=1, random_seed=2)
+
+    def test_injected_base_optimizer_warns_seed_not_applied(self, caplog):
+        import logging
+
+        from traigent.optimizers.batch_optimizers import ParallelBatchOptimizer
+
+        base = RandomSearchOptimizer(self.SPACE, ["accuracy"])
+        with caplog.at_level(logging.WARNING):
+            ParallelBatchOptimizer(base_optimizer=base, seed=7)
+        assert "injected base_optimizer is not re-seeded" in caplog.text
+
+    def test_seed_kept_in_algorithm_config(self):
+        opt = RandomSearchOptimizer(self.SPACE, ["accuracy"], seed=7)
+        assert opt.algorithm_config["seed"] == 7
+
+    def test_remote_warning_names_fallback_only(self, caplog):
+        import logging
+
+        from traigent.optimizers.remote import (
+            MockRemoteSuggestionClient,
+            RemoteOptimizer,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            RemoteOptimizer(
+                {"a": [1, 2]},
+                ["accuracy"],
+                remote_enabled=True,
+                remote_client=MockRemoteSuggestionClient(),
+                seed=7,
+            )
+        assert "applies only to the local random fallback" in caplog.text
