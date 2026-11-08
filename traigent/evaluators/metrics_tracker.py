@@ -2608,6 +2608,14 @@ def _price_call_and_check_zero_cost(
 def _token_derived_cost(
     metrics: ExampleMetrics, model_name: str | None
 ) -> tuple[float, float, float] | None:
+    """Token-derived estimate ``(input, output, total)``, or ``None``."""
+    result = _token_derived_estimate(metrics, model_name)
+    return None if result is None else result[:3]
+
+
+def _token_derived_estimate(
+    metrics: ExampleMetrics, model_name: str | None
+) -> tuple[float, float, float, bool] | None:
     if not model_name:
         return None
     in_tokens = metrics.tokens.input_tokens
@@ -2616,7 +2624,9 @@ def _token_derived_cost(
         return None
 
     try:
-        input_cost, output_cost = _cost_with_cached_input(metrics, model_name, False)
+        input_cost, output_cost, upper_bound = _price_with_cached_input(
+            metrics, model_name, False
+        )
     except Exception:  # pragma: no cover - defensive; never break the trial
         logger.debug(
             "Cost breakdown backfill failed for model %r", model_name, exc_info=True
@@ -2626,7 +2636,7 @@ def _token_derived_cost(
     derived_total = input_cost + output_cost
     if derived_total <= 0.0:
         return None
-    return input_cost, output_cost, derived_total
+    return input_cost, output_cost, derived_total, upper_bound
 
 
 def _reconcile_reported_cost_with_tokens(
@@ -2641,11 +2651,11 @@ def _reconcile_reported_cost_with_tokens(
     estimate. If token data or pricing is unavailable, this is the residual BYOK
     trust boundary: accept the caller/provider-reported value as-is.
     """
-    derived = _token_derived_cost(metrics, model_name)
+    derived = _token_derived_estimate(metrics, model_name)
     if derived is None:
         return
 
-    input_cost, output_cost, derived_total = derived
+    input_cost, output_cost, derived_total, upper_bound = derived
     authoritative_total = metrics.cost.total_cost
     # The provider's own billed charge is not a self-report: it may sit well
     # below a stale table price (OpenRouter routing to a cheaper upstream), and
@@ -2653,8 +2663,13 @@ def _reconcile_reported_cost_with_tokens(
     # the exact ``provider_billed`` tag skips the floor; anything else,
     # including an unknown source, keeps it.
     provider_billed = metrics.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
-    if not provider_billed and authoritative_total < (
-        derived_total * REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO
+    # An estimate that priced cached tokens at the full rate (no cached rate in
+    # the table) is an upper bound, so it cannot prove a lower reported cost
+    # implausible (Traigent#3253).
+    if (
+        not provider_billed
+        and not upper_bound
+        and authoritative_total < derived_total * REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO
     ):
         logger.warning(
             "Reported LLM cost $%.8f for model %r is implausibly below token-derived "
@@ -2722,14 +2737,33 @@ def _handle_mock_mode(
 def _cost_with_cached_input(
     metrics: ExampleMetrics, model_name: str, strict: bool
 ) -> tuple[float, float]:
+    """Recorded cost: :func:`_price_with_cached_input`, flagging an unknown rate."""
+    input_cost, output_cost, rate_unknown = _price_with_cached_input(
+        metrics, model_name, strict
+    )
+    if rate_unknown:
+        metrics.cost.cache_rate_unknown = True
+        logger.warning(
+            "No usable cached-input rate for model %r; %d cached prompt "
+            "tokens priced at the full input rate (cost is an upper bound).",
+            model_name,
+            metrics.cache_read_tokens,
+        )
+    return input_cost, output_cost
+
+
+def _price_with_cached_input(
+    metrics: ExampleMetrics, model_name: str, strict: bool
+) -> tuple[float, float, bool]:
     """``cost_from_tokens`` with cache-read input priced at the cached rate.
 
     Applies only when the response's input count INCLUDES the cache reads
     (OpenAI / Gemini shape: ``cache_total_input_tokens == input_tokens``).
     Disjoint shapes (Bedrock / Anthropic) and unknown cache counts are left on
     the existing path. When the table has no cached rate (or one above the
-    fresh rate) the full input rate is kept and ``cache_rate_unknown`` is set:
+    fresh rate) the full input rate is kept and the third element is True:
     the figure may overstate but never undercounts (Traigent#3253).
+    Returns ``(input_cost, output_cost, cache_rate_unknown)``; pure, no flags.
     """
     from traigent.utils import cost_calculator
 
@@ -2745,24 +2779,16 @@ def _cost_with_cached_input(
         or cached > in_tokens
         or metrics.cache_total_input_tokens != in_tokens
     ):
-        return full
+        return full[0], full[1], False
 
     rate = cost_calculator.get_cached_input_rate(model_name)
     fresh_rate = full[0] / in_tokens if in_tokens > 0 else 0.0
     if rate is None or rate > fresh_rate or fresh_rate <= 0.0:
-        if fresh_rate > 0.0:
-            metrics.cost.cache_rate_unknown = True
-            logger.warning(
-                "No usable cached-input rate for model %r; %d cached prompt "
-                "tokens priced at the full input rate (cost is an upper bound).",
-                model_name,
-                cached,
-            )
-        return full
+        return full[0], full[1], fresh_rate > 0.0
     fresh_cost, output_cost = cost_calculator.cost_from_tokens(
         in_tokens - cached, out_tokens, model_name, strict=strict
     )
-    return fresh_cost + cached * rate, output_cost
+    return fresh_cost + cached * rate, output_cost, False
 
 
 def _compute_cost(

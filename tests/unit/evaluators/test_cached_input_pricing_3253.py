@@ -97,3 +97,22 @@ def test_cache_rate_unknown_survives_call_merge():
     b.cost.cache_rate_unknown = True
     SimpleScoringEvaluator._merge_call_metrics(a, b)
     assert a.cost.cache_rate_unknown is True
+
+
+def test_unknown_rate_upper_bound_does_not_clamp_lower_reported_cost(monkeypatch):
+    from traigent.evaluators.metrics_tracker import (
+        ExampleMetrics,
+        _reconcile_reported_cost_with_tokens,
+    )
+
+    monkeypatch.setattr(cost_calculator, "get_cached_input_rate", lambda m: None)
+    metrics = extract_llm_metrics(_response(1000, 800), model_name=MODEL)
+    low = metrics.cost.total_cost * 0.1  # far below half the full-rate bound
+    m = ExampleMetrics()
+    m.tokens = metrics.tokens
+    m.cache_read_tokens = metrics.cache_read_tokens
+    m.cache_total_input_tokens = metrics.cache_total_input_tokens
+    m.cost.total_cost = low
+    _reconcile_reported_cost_with_tokens(m, MODEL)
+    assert m.cost.total_cost == pytest.approx(low)
+    assert m.cost.cache_rate_unknown is False  # comparison estimate is not recorded

@@ -2840,6 +2840,10 @@ class LocalEvaluator(BaseEvaluator):
             example_metric.cost.unpriced = (
                 example_metric.cost.unpriced or metrics.cost.unpriced
             )
+            example_metric.cost.cache_rate_unknown = (
+                example_metric.cost.cache_rate_unknown
+                or metrics.cost.cache_rate_unknown
+            )
         return spend
 
     def _apply_judge_spend(
