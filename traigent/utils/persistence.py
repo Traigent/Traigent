@@ -629,7 +629,7 @@ class PersistenceManager:
             self.base_dir
             / f"{_STAGING_PREFIX}{name}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
         )
-        stage_dir.mkdir()
+        stage_dir.mkdir(mode=0o700)  # private while being built
         try:
             self._write_result_files(result, stage_dir)
             self._publish_result_dir(stage_dir, result_dir)
