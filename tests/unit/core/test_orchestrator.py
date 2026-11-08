@@ -583,6 +583,25 @@ class TestOptimizationOrchestrator:
         manager._runtime_degraded = True
         assert manager.finalize_egress_allowed() is True
 
+    def test_fallback_finalize_reports_cancelled_outcome_2961(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+    ):
+        """#2961: the fallback finalize carries the real terminal outcome."""
+        orchestrator, _calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        manager = orchestrator.backend_session_manager
+        manager._flag_backend_degraded("trial submission")
+
+        manager.finalize_session("sess-1", OptimizationStatus.CANCELLED)
+
+        wire = manager._backend_client.finalize_session_sync
+        assert wire.call_count == 1
+        assert wire.call_args.kwargs["optimization_outcome"] == "cancelled"
+
     @pytest.mark.asyncio
     async def test_no_fallback_finalizes_session_once_2961(
         self,

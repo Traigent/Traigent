@@ -5742,8 +5742,10 @@ class OptimizationOrchestrator:
                     "(source='local_fallback'): "
                     "the Traigent backend was unreachable during the run, so results "
                     "were computed and stored locally and are NOT on the cloud "
-                    "backend. The backend session was closed with the trials it "
-                    "had received; the rest exist only in local storage.",
+                    "backend. One finalize of the backend session was attempted "
+                    "with the trials it had received (see "
+                    "metadata['persistence_status']); the rest exist only in "
+                    "local storage.",
                     self._optimization_id,
                 )
 
