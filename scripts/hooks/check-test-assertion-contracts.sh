@@ -10,16 +10,20 @@ TARGETS=(
   "tests/unit/utils"
 )
 
-EXISTING_TARGETS=()
+MISSING=()
 for target in "${TARGETS[@]}"; do
-  if [ -d "$target" ]; then
-    EXISTING_TARGETS+=("$target")
+  if [ ! -d "$target" ]; then
+    MISSING+=("$target")
   fi
 done
 
-if [ "${#EXISTING_TARGETS[@]}" -eq 0 ]; then
-  exit 0
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  echo "ERROR: target directory not found: ${MISSING[*]}" >&2
+  echo "Run from the repository root, or update TARGETS in this guard if a directory was renamed." >&2
+  exit 1
 fi
+
+EXISTING_TARGETS=("${TARGETS[@]}")
 
 PATTERNS=(
   '^[[:space:]]*assert .*\bor[[:space:]]+True\b'
@@ -30,10 +34,16 @@ PATTERNS=(
 
 VIOLATIONS=()
 for pattern in "${PATTERNS[@]}"; do
+  rc=0
+  # Exit 0 = matches, 1 = no match; anything else is a search error and must fail.
   if command -v rg >/dev/null 2>&1; then
-    MATCHES="$(rg -n -i --glob '*.py' "$pattern" "${EXISTING_TARGETS[@]}" || true)"
+    MATCHES="$(rg -n -i --glob '*.py' "$pattern" "${EXISTING_TARGETS[@]}")" || rc=$?
   else
-    MATCHES="$(grep -R -n -i -E "$pattern" "${EXISTING_TARGETS[@]}" --include='*.py' || true)"
+    MATCHES="$(grep -R -n -i -E "$pattern" "${EXISTING_TARGETS[@]}" --include='*.py')" || rc=$?
+  fi
+  if [ "$rc" -gt 1 ]; then
+    echo "ERROR: search for pattern '$pattern' failed (exit $rc)" >&2
+    exit 1
   fi
   while IFS= read -r match; do
     [ -z "$match" ] && continue

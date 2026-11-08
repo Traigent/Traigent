@@ -7,10 +7,23 @@ TARGET_DIR="traigent"
 ALLOWED_FILE="traigent/utils/cost_calculator.py"
 ALLOWED_FUNCTION="get_model_pricing_per_1k"
 
+for required in "$TARGET_DIR" "$ALLOWED_FILE"; do
+  if [ ! -e "$required" ]; then
+    echo "ERROR: $required not found (run from the repository root, or update this guard if it was renamed)" >&2
+    exit 1
+  fi
+done
+
+# Exit 0 = matches, 1 = no match; anything else is a search error and must fail.
+rc=0
 if command -v rg >/dev/null 2>&1; then
-  MATCHES="$(rg -n "$PATTERN" "$TARGET_DIR" --glob '*.py' || true)"
+  MATCHES="$(rg -n "$PATTERN" "$TARGET_DIR" --glob '*.py')" || rc=$?
 else
-  MATCHES="$(grep -R -n -E "$PATTERN" "$TARGET_DIR" --include='*.py' || true)"
+  MATCHES="$(grep -R -n -E "$PATTERN" "$TARGET_DIR" --include='*.py')" || rc=$?
+fi
+if [ "$rc" -gt 1 ]; then
+  echo "ERROR: search over $TARGET_DIR failed (exit $rc)" >&2
+  exit 1
 fi
 
 if [ -z "$MATCHES" ]; then
