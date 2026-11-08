@@ -784,7 +784,7 @@ def test_problem_json_maps_to_typed_errors(monkeypatch, status, code, expected):
         "status": status,
         "code": code,
         "detail": "Fixed detail text.",
-        "problem_id": "prob_123",
+        "problem_id": "0123456789abcdef" * 2,
     }
 
     def opener(http_request, timeout):
@@ -798,7 +798,7 @@ def test_problem_json_maps_to_typed_errors(monkeypatch, status, code, expected):
     assert type(err) is expected
     assert err.code == (code if not code.startswith("some_future") else None)
     assert err.status_code == status
-    assert err.problem_id == "prob_123"
+    assert err.problem_id == "0123456789abcdef" * 2
     assert "Fixed detail text." not in str(err)
     assert "Problem title" not in str(err)
 
@@ -876,3 +876,32 @@ def test_unparseable_problem_body_falls_back_to_status_mapping(monkeypatch):
         _client(monkeypatch, opener).get_prompt("p")
 
     assert excinfo.value.status_code == 404
+
+
+def test_problem_id_only_accepts_backend_format(monkeypatch):
+    valid = "0123456789abcdef" * 2
+    for raw, expected in [(valid, valid), ("patient_diabetes_123", None)]:
+        problem = {"status": 404, "code": "not_found", "problem_id": raw}
+
+        def opener(http_request, timeout, problem=problem):
+            raise _http_error(404, problem, "application/problem+json")
+
+        with pytest.raises(PromptApiError) as excinfo:
+            _client(monkeypatch, opener).get_prompt("p")
+        assert excinfo.value.problem_id == expected
+
+
+@pytest.mark.parametrize(
+    "pagination",
+    [None, {"limit": 1, "next_cursor": None}],
+    ids=["absent", "no-has-more"],
+)
+def test_list_without_pagination_metadata_raises(monkeypatch, pagination):
+    body = {"items": [_summary("a")]}
+    if pagination is not None:
+        body["pagination"] = pagination
+
+    from traigent.prompts.dtos import PromptListResponse
+
+    with pytest.raises(PromptPaginationError):
+        PromptListResponse.from_dict(body)

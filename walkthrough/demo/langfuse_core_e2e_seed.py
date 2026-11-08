@@ -147,6 +147,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+PROMPT_SCENARIOS = frozenset(
+    {
+        "prompt-version-lineage",
+        "playground-run-and-compare",
+        "trace-to-prompt-lineage",
+    }
+)
+
+
+def phase_env(args: argparse.Namespace) -> dict[str, str]:
+    """Environment for guided phases: every phase targets the resolved project."""
+    env = os.environ.copy()
+    project_id = (getattr(args, "project_id", None) or "").strip()
+    if project_id:
+        env["TRAIGENT_PROJECT_ID"] = project_id
+    return env
+
+
 def prompts_api_path(args: argparse.Namespace) -> str:
     """Project-scoped prompts route; the project id travels in the path only."""
     project_id = (getattr(args, "project_id", None) or "").strip()
@@ -288,7 +306,7 @@ def run_phase(
         check=False,
         capture_output=True,
         text=True,
-        env=os.environ.copy(),
+        env=phase_env(args),
     )
 
     phase_log = _resolve_allowed_path(artifacts_dir / args.run_id / f"{phase}.log")
@@ -1213,6 +1231,8 @@ def seed_access_control_fixture(
 
 def main() -> int:
     args = parse_args()
+    if args.scenario in PROMPT_SCENARIOS:
+        prompts_api_path(args)  # fail before any phase runs
     args.backend_url = _validate_backend_url(args.backend_url)
     output_path = _resolve_allowed_path(args.output)
     artifacts_dir = (

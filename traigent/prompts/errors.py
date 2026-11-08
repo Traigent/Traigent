@@ -35,7 +35,8 @@ KNOWN_PROBLEM_CODES: frozenset[str] = frozenset(
     }
 )
 
-_PROBLEM_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+# The backend mints problem ids as ``uuid.uuid4().hex``: 32 lowercase hex digits.
+_PROBLEM_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 
 
 class PromptApiError(ClientError):

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from traigent.prompts.errors import PromptPaginationError
+
 
 class PromptType(StrEnum):
     TEXT = "text"
@@ -47,11 +49,13 @@ class CursorPagination:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> CursorPagination:
+        if "has_more" not in payload:
+            raise PromptPaginationError("Prompt list pagination is missing has_more")
         cursor = payload.get("next_cursor")
         return cls(
             limit=int(payload.get("limit", 20)),
             next_cursor=cursor if isinstance(cursor, str) and cursor else None,
-            has_more=bool(payload.get("has_more", False)),
+            has_more=bool(payload["has_more"]),
         )
 
 
@@ -179,11 +183,14 @@ class PromptListResponse:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> PromptListResponse:
+        pagination = payload.get("pagination")
+        if not isinstance(pagination, dict):
+            raise PromptPaginationError("Prompt list response has no pagination")
         return cls(
             items=[
                 PromptSummary.from_dict(item) for item in payload.get("items") or []
             ],
-            pagination=CursorPagination.from_dict(payload.get("pagination") or {}),
+            pagination=CursorPagination.from_dict(pagination),
         )
 
 
