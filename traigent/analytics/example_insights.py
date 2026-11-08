@@ -36,6 +36,7 @@ from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import DEFAULT_LOCAL_URL
 from traigent.labels.transport_gate import gate_session
 from traigent.utils.logging import get_logger
+from traigent.utils.url_segments import quote_path_segment
 
 logger = get_logger(__name__)
 
@@ -209,7 +210,7 @@ class ExampleInsightsClient:
         client = self._get_client()
 
         response = await client.post(
-            f"/analytics/example-scoring/{experiment_run_id}/compute",
+            f"/analytics/example-scoring/{quote_path_segment(experiment_run_id, field='experiment_run_id')}/compute",
             json={},
         )
         response.raise_for_status()
@@ -252,7 +253,7 @@ class ExampleInsightsClient:
             params["example_ids"] = example_ids
 
         payload = await self._poll_endpoint(
-            f"/analytics/example-scoring/{experiment_run_id}/scores",
+            f"/analytics/example-scoring/{quote_path_segment(experiment_run_id, field='experiment_run_id')}/scores",
             "Scores",
             poll_interval,
             params=params,
@@ -292,7 +293,7 @@ class ExampleInsightsClient:
             TimeoutError: If metrics not ready within timeout
         """
         return await self._poll_endpoint(
-            f"/analytics/example-scoring/{experiment_run_id}/dataset-quality",
+            f"/analytics/example-scoring/{quote_path_segment(experiment_run_id, field='experiment_run_id')}/dataset-quality",
             "Quality metrics",
             poll_interval,
         )
@@ -314,7 +315,9 @@ class ExampleInsightsClient:
         """
         client = self._get_client()
 
-        response = await client.get(f"/jobs/{job_id}")
+        response = await client.get(
+            f"/jobs/{quote_path_segment(job_id, field='job_id')}"
+        )
         response.raise_for_status()
 
         return cast(dict[str, Any], response.json())
