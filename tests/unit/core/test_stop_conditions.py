@@ -362,3 +362,21 @@ def test_plateau_window_n_values_per_stop_rules_contract(window, flat_after_best
 @pytest.mark.parametrize("window", [2, 5])
 def test_plateau_window_improving_sequence_never_stops(window):
     assert _plateau_stop_index(window, [0.1 * i for i in range(1, 10)]) is None
+
+
+def test_plateau_uses_true_running_best_not_epsilon_gated_best():
+    # Contract optimize.stop-rules.v1: running best = max so far. With
+    # eps=0.05, running best is 0.0, 0.049, 0.051, 0.098; the last three span
+    # 0.049 <= eps at trial 4 (but 0.051 at trial 3 > eps).
+    schema = ObjectiveSchema.from_objectives(
+        [ObjectiveDefinition("accuracy", "maximize", 1.0)]
+    )
+    condition = PlateauAfterNStopCondition(
+        window_size=3, epsilon=0.05, objective_schema=schema
+    )
+    history: list[TrialResult] = []
+    fired = []
+    for i, acc in enumerate([0.0, 0.049, 0.051, 0.098], start=1):
+        history.append(_make_trial(f"t{i}", {"accuracy": acc}))
+        fired.append(condition.should_stop(history))
+    assert fired == [False, False, False, True]

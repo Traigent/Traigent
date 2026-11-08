@@ -421,7 +421,10 @@ class PlateauAfterNStopCondition(StopCondition):
             if score is None:
                 continue
 
-            if self._best_score is None or score > self._best_score + self._epsilon:
+            # Running best is the true maximum so far (stop-rules.v1); only the
+            # span across the window is compared against epsilon, so several
+            # sub-epsilon gains cannot hide an accumulated improvement.
+            if self._best_score is None or score > self._best_score:
                 self._best_score = score
 
             if self._best_score is not None:
