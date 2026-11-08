@@ -14,7 +14,14 @@ from ..api.types import OptimizationResult, TrialResult, TrialStatus
 
 @dataclass
 class ImportanceResult:
-    """Result of parameter importance analysis."""
+    """Result of parameter importance analysis.
+
+    ``importance_score`` and ``confidence_interval`` are Optional: both are
+    None, and ``not_measurable_reason`` is set, when the data cannot support an
+    importance value for the parameter (for example no replicated values,
+    insufficient replication coverage, or a constant objective). None means
+    "unknown", never "zero importance".
+    """
 
     parameter_name: str
     importance_score: float | None
@@ -401,6 +408,8 @@ class ParameterImportanceAnalyzer:
             return not_measurable(
                 "fewer than 2 parameter values with replication", len(kept)
             )
+        if len(kept) * 2 < len(ys):
+            return not_measurable("insufficient_replication_coverage", len(kept))
 
         ks = [keys[i] for i in kept]
         y = [ys[i] for i in kept]

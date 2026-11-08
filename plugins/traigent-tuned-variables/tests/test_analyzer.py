@@ -56,8 +56,8 @@ class TestVariableAnalyzer:
 
         assert importance == {}
 
-    def test_permutation_unmeasurable_variable_gets_variance_fallback(self):
-        """A variable the permutation method cannot measure is not scored 0.0."""
+    @staticmethod
+    def _permutation_analyzer(constant: bool = False):
         from datetime import datetime
 
         from traigent_tuned_variables import VariableAnalyzer
@@ -70,7 +70,11 @@ class TestVariableAnalyzer:
             TrialResult(
                 trial_id=f"t{i}",
                 config={"model": models[i % 3], "temperature": 0.1 + 0.001 * i},
-                metrics={"accuracy": accuracy[models[i % 3]] + 0.01 * (i % 5)},
+                metrics={
+                    "accuracy": 0.5
+                    if constant
+                    else accuracy[models[i % 3]] + 0.01 * (i % 5)
+                },
                 status=TrialStatus.COMPLETED,
                 duration=1.0,
                 timestamp=datetime.now(),
@@ -79,18 +83,44 @@ class TestVariableAnalyzer:
         ]
         result = MockOptimizationResult(
             trials=trials,
-            configuration_space={
-                "model": models,
-                "temperature": (0.0, 1.0),
-            },
+            configuration_space={"model": models, "temperature": (0.0, 1.0)},
         )
-        analyzer = VariableAnalyzer(result, importance_method="permutation")
-        importance = analyzer.get_variable_importance("accuracy")
+        return VariableAnalyzer(result, importance_method="permutation")
 
+    def test_permutation_unknown_variable_is_never_eliminated(self):
+        """An all-unique (unmeasurable) variable stays unknown, not 0.0 or 1.0."""
+        analyzer = self._permutation_analyzer()
+        importance = analyzer.get_variable_importance("accuracy")
         assert importance["model"] > 0.3
-        # temperature has no replicated values: permutation cannot score it,
-        # so it must come from the variance fallback rather than be absent.
-        assert "temperature" in importance
+        assert "temperature" not in importance
+        assert (
+            "replication" in analyzer.get_unknown_importance("accuracy")["temperature"]
+        )
+
+        analysis = analyzer.analyze("accuracy")
+        temp = analysis.variables["temperature"]
+        assert temp.importance_unknown_reason
+        assert temp.suggestion.action.value != "eliminate"
+        assert all(
+            s.variable != "temperature" or s.action.value != "eliminate"
+            for s in analysis.elimination_suggestions
+        )
+        assert "temperature" in analysis.refined_space
+
+        multi = analyzer.analyze_multi_objective(["accuracy"])
+        assert multi.variables["temperature"].importance_unknown_reason
+        assert all(s.variable != "temperature" for s in multi.elimination_suggestions)
+        assert "temperature" in multi.refined_space
+
+    def test_permutation_constant_objective_yields_no_elimination(self):
+        analyzer = self._permutation_analyzer(constant=True)
+        analysis = analyzer.analyze("accuracy")
+        assert all(
+            s.action.value != "eliminate" for s in analysis.elimination_suggestions
+        )
+        for name in ("model", "temperature"):
+            assert analysis.variables[name].importance_unknown_reason
+        assert set(analysis.refined_space) == {"model", "temperature"}
 
     def test_get_variable_importance_single_variable(self):
         """Test importance calculation with trials."""

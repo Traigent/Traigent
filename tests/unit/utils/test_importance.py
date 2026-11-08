@@ -590,6 +590,29 @@ class TestParameterImportanceAnalyzer:
         assert result["model"].importance_score is None
         assert result["model"].not_measurable_reason == "objective is constant"
 
+    def test_permutation_low_replication_coverage_not_measurable(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        """A parameter scored from 4 of 100 trials is unmeasurable."""
+        trials = []
+        for i in range(100):
+            # two values replicated twice each, 96 values unique
+            value = float(i) if i >= 4 else float(i % 2)
+            trials.append(
+                TrialResult(
+                    trial_id=f"trial_{i}",
+                    config={"p": value},
+                    metrics={"accuracy": 0.5 + 0.1 * (i % 3)},
+                    status=TrialStatus.COMPLETED,
+                    duration=1.0,
+                    timestamp=datetime.now(),
+                )
+            )
+        res = analyzer.analyze_permutation_based(trials, n_permutations=5)["p"]
+        assert res.importance_score is None
+        assert res.not_measurable_reason == "insufficient_replication_coverage"
+        assert res.sample_size == 4
+
     def test_permutation_only_scores_trials_that_set_parameter(
         self, analyzer: ParameterImportanceAnalyzer
     ) -> None:
