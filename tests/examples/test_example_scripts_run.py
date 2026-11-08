@@ -84,3 +84,26 @@ def test_mock_prompt_optimization_walkthrough_needs_no_cost_approval(
     script = ROOT / "walkthrough/mock/advanced/02_prompt_optimization.py"
     result = _run(script, tmp_path, drop=("TRAIGENT_COST_APPROVED",))
     assert result.returncode == 0, result.stderr[-2000:]
+
+
+@pytest.mark.timeout(180)
+@pytest.mark.parametrize("runner", ["basics", "column_map"])
+def test_ragas_runner_exits_nonzero_when_every_trial_fails(
+    runner: str, tmp_path: Path
+) -> None:
+    pytest.importorskip("traigent")
+    try:
+        import ragas  # noqa: F401
+    except ImportError:
+        pass
+    else:
+        pytest.skip("ragas installed; all-trials-failed path is not reachable")
+    result = _run(EXAMPLES / f"advanced/ragas/{runner}/run.py", tmp_path)
+    assert result.returncode != 0, result.stdout[-2000:]
+
+
+@pytest.mark.timeout(180)
+def test_ragas_with_llm_mock_fallback_metrics_complete(tmp_path: Path) -> None:
+    result = _run(EXAMPLES / "advanced/ragas/with_llm/run.py", tmp_path)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert "best_config: None" not in result.stdout
