@@ -67,3 +67,11 @@ def test_local_search_example_builds_messages_langchain_accepts(
 def test_text_to_sql_mock_quick_start_runs(tmp_path: Path) -> None:
     result = _run(EXAMPLES / "core/text-to-sql/run.py", tmp_path)
     assert result.returncode == 0, result.stderr[-2000:]
+
+
+@pytest.mark.timeout(300)
+def test_surrogate_coevolution_demo_wire_carry_proof_runs(tmp_path: Path) -> None:
+    result = _run(
+        EXAMPLES / "advanced/surrogate_evaluator_coevolution_demo.py", tmp_path
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
