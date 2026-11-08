@@ -206,7 +206,11 @@ class UsageTracker:
             # Respect TRAIGENT_RESULTS_FOLDER if set, otherwise fall back to ~/.traigent
             results_folder = os.environ.get("TRAIGENT_RESULTS_FOLDER")
             if results_folder:
-                self.storage_path = Path(results_folder) / _USAGE_STORAGE_FILENAME
+                # expanduser: ``~`` arrives literally from dotenv/Compose/systemd
+                # (``.env.example`` ships ``~/.traigent``); #3013.
+                self.storage_path = (
+                    Path(results_folder).expanduser() / _USAGE_STORAGE_FILENAME
+                )
             else:
                 self.storage_path = Path.home() / ".traigent" / _USAGE_STORAGE_FILENAME
 
