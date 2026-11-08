@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -250,3 +251,113 @@ def test_self_loop_symlink_rejected_without_path(mgr, tmp_path):
     with pytest.raises(ValueError, match="not allowed") as exc:
         mgr.load_result("r")
     assert str(tmp_path) not in str(exc.value)
+
+
+# --- #3257: a result directory is published atomically -----------------------
+
+
+def _kill_at_nth_replace(monkeypatch, n):
+    """Raise (simulated kill) right before the nth ``os.replace`` of a save."""
+    import traigent.utils.persistence as p
+
+    real = p.os.replace
+    calls = {"n": 0}
+
+    def _replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] == n:
+            raise KeyboardInterrupt("simulated kill")
+        return real(src, dst)
+
+    monkeypatch.setattr(p.os, "replace", _replace)
+
+
+@pytest.mark.parametrize("kill_at", range(1, 8))
+def test_interrupted_overwrite_keeps_old_generation(
+    mgr, tmp_path, monkeypatch, kill_at
+):
+    mgr.save_result(_result(), name="r")
+    old = mgr.load_result("r")
+    changed = _result(best_config={"model": "smart"})
+    _kill_at_nth_replace(monkeypatch, kill_at)
+    try:
+        mgr.save_result(changed, name="r")
+    except KeyboardInterrupt:
+        pass
+    monkeypatch.undo()
+    loaded = mgr.load_result("r")  # verifies integrity, must not raise
+    assert loaded.best_config in ({"model": "cheap"}, {"model": "smart"})
+    if loaded.best_config == {"model": "cheap"}:
+        assert loaded.best_config == old.best_config
+
+
+@pytest.mark.parametrize("kill_at", range(1, 8))
+def test_interrupted_new_save_is_never_listed(mgr, tmp_path, monkeypatch, kill_at):
+    _kill_at_nth_replace(monkeypatch, kill_at)
+    try:
+        mgr.save_result(_result(), name="fresh")
+    except KeyboardInterrupt:
+        pass
+    monkeypatch.undo()
+    names = [r["name"] for r in mgr.list_results()]
+    if "fresh" in names:
+        mgr.load_result("fresh")  # anything listed must be loadable
+
+
+def test_save_leaves_no_staging_dirs(mgr, tmp_path):
+    mgr.save_result(_result(), name="r")
+    mgr.save_result(_result(), name="r")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["r"]
+
+
+def test_hard_kill_between_directory_renames_is_recovered(mgr, tmp_path):
+    """State left by a SIGKILL after the old dir was moved aside, before the new
+    one was moved in (no handler ran): the old generation must come back."""
+    mgr.save_result(_result(), name="r")
+    (tmp_path / "r").rename(
+        tmp_path / ".traigent-staging-old.r.00000000000000000100.1234.deadbeef"
+    )
+    assert mgr.result_exists("r")  # recovery runs on lookup
+    assert mgr.load_result("r").best_config == {"model": "cheap"}
+    assert [r["name"] for r in mgr.list_results()] == ["r"]
+
+
+def test_staging_prefix_name_rejected(mgr):
+    with pytest.raises(ValueError):
+        mgr.save_result(_result(), name=".traigent-staging-x")
+
+
+def test_recovery_restores_newest_of_two_displaced_generations(mgr, tmp_path):
+    """Two interruptions: an older leftover aside plus a newer one, no target."""
+    mgr.save_result(_result(best_config={"model": "cheap"}), name="r")
+    mgr.save_result(_result(best_config={"model": "smart"}), name="gen2")
+    (tmp_path / "r").rename(
+        tmp_path / ".traigent-staging-old.r.00000000000000000100.1.aaaaaaaa"
+    )  # generation 1, displaced earlier
+    (tmp_path / "gen2").rename(
+        tmp_path / ".traigent-staging-old.r.00000000000000000200.2.bbbbbbbb"
+    )  # generation 2, displaced by the later killed overwrite
+    assert mgr.load_result("r").best_config == {"model": "smart"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["r"]  # older copy deleted
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_overwrite_keeps_directory_mode(mgr, tmp_path):
+    mgr.save_result(_result(), name="r")
+    (tmp_path / "r").chmod(0o700)
+    mgr.save_result(_result(), name="r")
+    assert ((tmp_path / "r").stat().st_mode & 0o777) == 0o700
+
+
+def test_recovery_waits_for_publish_lock(mgr):
+    import threading
+
+    import traigent.utils.persistence as p
+
+    done = threading.Event()
+    with p._PUBLISH_LOCK:
+        t = threading.Thread(target=lambda: (mgr._recover_displaced(), done.set()))
+        t.start()
+        assert not done.wait(0.3)  # blocked while a publish holds the lock
+    t.join(2)
+    assert done.is_set()

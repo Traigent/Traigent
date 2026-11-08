@@ -13,7 +13,9 @@ import copy
 import json
 import logging
 import os
+import stat
 import threading
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import Enum, auto
@@ -1323,8 +1325,35 @@ class ConfigStateManager:
                     else Path.cwd().resolve()
                 )
                 output_path = validate_path(output_path, base_dir, must_exist=False)
-                with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
-                    json.dump(result_dict, f, indent=2, default=str)
+                # #3256: stage in the same directory, fsync, then replace, so a
+                # crash or a full disk cannot truncate the previous good file.
+                temp_path = validate_path(
+                    output_path.with_name(
+                        f"{output_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}"
+                    ),
+                    base_dir,
+                    must_exist=False,
+                )
+                # Created with the previous file's exact mode (0o600 when there
+                # is none) before any byte is written, so the staged copy is
+                # never more permissive than the original, even if killed.
+                mode = (
+                    stat.S_IMODE(output_path.stat().st_mode)
+                    if output_path.exists()
+                    else 0o600
+                )
+                try:
+                    fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        if hasattr(os, "fchmod"):
+                            os.fchmod(f.fileno(), mode)
+                        json.dump(result_dict, f, indent=2, default=str)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(temp_path, output_path)
+                finally:
+                    if temp_path.exists():
+                        temp_path.unlink()
         except ConfigurationError as exc:
             if diag.is_safe(exc):
                 raise
