@@ -35,6 +35,15 @@ class PairedComparisonResult:
     degrees_of_freedom: int
 
 
+def _validate_p_values(p_values: Sequence[float]) -> None:
+    """Raise ``ValueError`` for any p-value that is not a finite number in [0, 1]."""
+    for i, p in enumerate(p_values):
+        if isinstance(p, bool) or not isinstance(p, (int, float)) or not 0 <= p <= 1:
+            raise ValueError(
+                f"Invalid p-value at index {i}: {p!r} (must be a number in [0, 1])"
+            )
+
+
 def benjamini_hochberg_adjust(p_values: Sequence[float]) -> list[float]:
     """Apply Benjamini-Hochberg procedure for multiple testing correction.
 
@@ -56,6 +65,7 @@ def benjamini_hochberg_adjust(p_values: Sequence[float]) -> list[float]:
         Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery
         rate: a practical and powerful approach to multiple testing.
     """
+    _validate_p_values(p_values)
     n = len(p_values)
     if n == 0:
         return []
@@ -99,6 +109,7 @@ def bonferroni_adjust(p_values: Sequence[float]) -> list[float]:
     Returns:
         List of adjusted p-values (same order as input).
     """
+    _validate_p_values(p_values)
     n = len(p_values)
     if n == 0:
         return []
@@ -115,6 +126,7 @@ def holm_bonferroni_adjust(p_values: Sequence[float]) -> list[float]:
     Returns:
         List of adjusted p-values (same order as input).
     """
+    _validate_p_values(p_values)
     n = len(p_values)
     if n == 0:
         return []
