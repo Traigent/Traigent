@@ -99,7 +99,7 @@ def test_cache_rate_unknown_survives_call_merge():
     assert a.cost.cache_rate_unknown is True
 
 
-def test_unknown_rate_upper_bound_does_not_clamp_lower_reported_cost(monkeypatch):
+def _unknown_rate_metrics(monkeypatch, reported_fraction_of_upper):
     from traigent.evaluators.metrics_tracker import (
         ExampleMetrics,
         _reconcile_reported_cost_with_tokens,
@@ -107,12 +107,44 @@ def test_unknown_rate_upper_bound_does_not_clamp_lower_reported_cost(monkeypatch
 
     monkeypatch.setattr(cost_calculator, "get_cached_input_rate", lambda m: None)
     metrics = extract_llm_metrics(_response(1000, 800), model_name=MODEL)
-    low = metrics.cost.total_cost * 0.1  # far below half the full-rate bound
+    upper = metrics.cost.total_cost
     m = ExampleMetrics()
     m.tokens = metrics.tokens
     m.cache_read_tokens = metrics.cache_read_tokens
     m.cache_total_input_tokens = metrics.cache_total_input_tokens
-    m.cost.total_cost = low
+    m.cost.total_cost = upper * reported_fraction_of_upper
     _reconcile_reported_cost_with_tokens(m, MODEL)
-    assert m.cost.total_cost == pytest.approx(low)
-    assert m.cost.cache_rate_unknown is False  # comparison estimate is not recorded
+    fresh, out = cost_from_tokens(200, 10, MODEL)
+    return m, upper, fresh + out
+
+
+def test_unknown_rate_reported_between_bounds_is_accepted(monkeypatch):
+    m, upper, lower = _unknown_rate_metrics(monkeypatch, 0.5)
+    assert lower < upper * 0.5 < upper
+    assert m.cost.total_cost == pytest.approx(upper * 0.5)
+    assert m.cost.cache_rate_unknown is False
+
+
+def test_unknown_rate_reported_below_lower_bound_is_clamped(monkeypatch):
+    m, upper, lower = _unknown_rate_metrics(monkeypatch, 0.01)
+    assert upper * 0.01 < lower
+    assert m.cost.total_cost == pytest.approx(lower)
+    assert m.cost.cache_rate_unknown is True  # lower bound only: bill may be higher
+
+
+def test_known_rate_under_report_still_clamped_to_derived(monkeypatch):
+    from traigent.evaluators.metrics_tracker import (
+        ExampleMetrics,
+        _reconcile_reported_cost_with_tokens,
+    )
+
+    metrics = extract_llm_metrics(_response(1000, 800), model_name=MODEL)
+    derived = metrics.cost.total_cost
+    m = ExampleMetrics()
+    m.tokens = metrics.tokens
+    m.cache_read_tokens = metrics.cache_read_tokens
+    m.cache_total_input_tokens = metrics.cache_total_input_tokens
+    m.cost.total_cost = derived * 0.01
+    _reconcile_reported_cost_with_tokens(m, MODEL)
+    assert m.cost.total_cost == pytest.approx(derived)
+    assert m.cost.cache_rate_unknown is False
