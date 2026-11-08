@@ -89,7 +89,10 @@ _AUTH_FILE_REFRESH_KEYS = ("refresh_token", "refreshToken")
 
 # Effective inference base URL (env-overridable at import). Exported so discovery
 # and the example pass the SAME value — the single source of the base_url.
-NOUS_BASE_URL: str = os.environ.get("TRAIGENT_NOUS_BASE_URL", _DEFAULT_NOUS_BASE_URL)
+# A blank or whitespace-only override is treated as unset (Traigent#3270).
+NOUS_BASE_URL: str = (
+    os.environ.get("TRAIGENT_NOUS_BASE_URL") or ""
+).strip() or _DEFAULT_NOUS_BASE_URL
 
 # Env var names, in resolution order.
 _STATIC_KEY_ENV = "NOUS_API_KEY"
@@ -141,7 +144,7 @@ def _auth_file_path() -> Path:
 
 def _token_url() -> str:
     """Resolve the token endpoint (``TRAIGENT_NOUS_TOKEN_URL`` override)."""
-    return os.environ.get(_TOKEN_URL_ENV, _DEFAULT_NOUS_TOKEN_URL)
+    return (os.environ.get(_TOKEN_URL_ENV) or "").strip() or _DEFAULT_NOUS_TOKEN_URL
 
 
 def has_nous_credentials() -> bool:
