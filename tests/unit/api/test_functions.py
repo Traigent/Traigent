@@ -49,11 +49,13 @@ class TestConfigure:
         _GLOBAL_CONFIG.clear()
         _GLOBAL_CONFIG.update(self.original_config)
 
-    def test_configure_default_storage_backend(self):
-        """Test configuring default storage backend."""
-        result = configure(default_storage_backend="s3")
+    def test_configure_default_storage_backend_is_deprecated_noop(self):
+        """default_storage_backend has no consumer: warn loudly, do not store (#2930)."""
+        before = get_global_config()["default_storage_backend"]
+        with pytest.warns(DeprecationWarning, match="no effect"):
+            result = configure(default_storage_backend="s3")
         assert result is True
-        assert get_global_config()["default_storage_backend"] == "s3"
+        assert get_global_config()["default_storage_backend"] == before
 
     def test_configure_parallel_workers(self):
         """Test configuring parallel workers."""
@@ -69,11 +71,13 @@ class TestConfigure:
         with pytest.raises(ValueError, match="Must be positive"):
             configure(parallel_workers=-5)
 
-    def test_configure_cache_policy(self):
-        """Test configuring cache policy."""
-        result = configure(cache_policy="disk")
+    def test_configure_cache_policy_is_deprecated_noop(self):
+        """cache_policy has no consumer: warn loudly, do not store (#2930)."""
+        before = get_global_config()["cache_policy"]
+        with pytest.warns(DeprecationWarning, match="no effect"):
+            result = configure(cache_policy="disk")
         assert result is True
-        assert get_global_config()["cache_policy"] == "disk"
+        assert get_global_config()["cache_policy"] == before
 
     def test_configure_invalid_cache_policy(self):
         """Test configuring with invalid cache policy."""
@@ -141,18 +145,14 @@ class TestConfigure:
     def test_configure_multiple_settings(self):
         """Test configuring multiple settings at once."""
         result = configure(
-            default_storage_backend="gcs",
             parallel_workers=6,
-            cache_policy="distributed",
             logging_level="WARNING",
             api_keys={"test": "key"},
         )
 
         assert result is True
         config = get_global_config()
-        assert config["default_storage_backend"] == "gcs"
         assert config["parallel_workers"] == 6
-        assert config["cache_policy"] == "distributed"
         assert config["logging_level"] == "WARNING"
         assert config["api_keys"]["test"] == "key"
 
@@ -160,10 +160,10 @@ class TestConfigure:
         """Test that unconfigured values remain unchanged."""
         original_workers = get_global_config()["parallel_workers"]
 
-        configure(cache_policy="disk")
+        configure(logging_level="WARNING")
 
         config = get_global_config()
-        assert config["cache_policy"] == "disk"
+        assert config["logging_level"] == "WARNING"
         assert config["parallel_workers"] == original_workers  # Unchanged
 
 
@@ -555,9 +555,7 @@ class TestIntegration:
     def test_configure_and_get_config_integration(self):
         """Test configuration and retrieval integration."""
         # Configure with specific settings
-        result = configure(
-            parallel_workers=4, logging_level="INFO", cache_policy="disk"
-        )
+        result = configure(parallel_workers=4, logging_level="INFO")
 
         # Verify configuration was successful
         assert result is True
@@ -566,7 +564,6 @@ class TestIntegration:
         global_config = get_global_config()
         assert global_config["parallel_workers"] == 4
         assert global_config["logging_level"] == "INFO"
-        assert global_config["cache_policy"] == "disk"
 
 
 class TestGetTrialConfig:
