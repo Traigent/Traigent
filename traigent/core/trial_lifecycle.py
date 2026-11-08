@@ -415,6 +415,7 @@ class TrialLifecycle:
                 session_id,
                 optuna_trial_id=optuna_trial_id,
             )
+            orchestrator._remember_trial_result(trial_count, trial_result)
 
             trial_count = await orchestrator._handle_trial_result(
                 trial_result=trial_result,
@@ -429,6 +430,11 @@ class TrialLifecycle:
             await TrialLifecycle._release_failed_sequential_permit(
                 orchestrator, exc, permit
             )
+            raise
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # #3234: close the started trial so start/complete callbacks pair
+            # on the Ctrl+C path, then let the interrupt propagate.
+            orchestrator._notify_interrupted_trial(trial_count, config_for_run)
             raise
 
         if getattr(orchestrator, "_execution_debit_denied", False):
