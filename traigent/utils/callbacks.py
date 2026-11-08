@@ -936,9 +936,12 @@ class SimpleProgressCallback(OptimizationCallback):
             score = _declared_objective_score(trial, self._primary_objective)
 
             if score is not None:
+                best_str = (
+                    f"{self.best_score:.1%}" if self.best_score is not None else "n/a"
+                )
                 self._output(
                     f"[{self.current_trial}/{self.total_trials}] "
-                    f"Completed. Score: {score:.1%} | Best so far: {self.best_score:.1%}"
+                    f"Completed. Score: {score:.1%} | Best so far: {best_str}"
                 )
             elif self.best_score is not None:
                 self._output(
