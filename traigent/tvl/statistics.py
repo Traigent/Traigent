@@ -26,6 +26,9 @@ class PairedComparisonResult:
         effect_size: Estimated effect size (difference in means).
         test_statistic: The computed test statistic.
         degrees_of_freedom: Degrees of freedom for the test.
+        zero_variance_inconclusive: True when the differences had no spread
+            and the caller asked for ``zero_variance="inconclusive"``; the
+            p-value is then forced to 1.0 because a mean cannot be tested.
     """
 
     reject_null: bool
@@ -33,6 +36,7 @@ class PairedComparisonResult:
     effect_size: float
     test_statistic: float
     degrees_of_freedom: int
+    zero_variance_inconclusive: bool = False
 
 
 def benjamini_hochberg_adjust(p_values: Sequence[float]) -> list[float]:
@@ -390,6 +394,7 @@ def paired_comparison_test(
     y_samples: Sequence[float],
     epsilon: float,
     direction: Literal["greater", "less"],
+    zero_variance: Literal["inconclusive", "sign"] = "inconclusive",
 ) -> PairedComparisonResult:
     """Test if x is better than y by at least epsilon using a paired t-test.
 
@@ -407,6 +412,13 @@ def paired_comparison_test(
         y_samples: Samples from the second distribution (must match x_samples length).
         epsilon: The margin/tolerance for the comparison.
         direction: Direction of the test ("greater" or "less").
+        zero_variance: How to decide a zero-variance difference vector, where
+            the t statistic is undefined. ``"inconclusive"`` (default, fails
+            closed for mean-based policy decisions such as the promotion gate)
+            returns ``p_value=1.0`` and sets ``zero_variance_inconclusive``.
+            ``"sign"`` decides it with an exact sign test (see
+            :func:`zero_variance_sign_test_p_value`), which answers "better on
+            more examples than chance", not a mean difference.
 
     Returns:
         PairedComparisonResult with test outcome and statistics.
@@ -423,7 +435,16 @@ def paired_comparison_test(
     df = max(1, n - 1)
 
     if se_diff < 1e-15:
-        return _handle_degenerate_case(mean_diff, epsilon, direction, df)
+        if zero_variance == "inconclusive":
+            return PairedComparisonResult(
+                reject_null=False,
+                p_value=1.0,
+                effect_size=mean_diff,
+                test_statistic=0.0,
+                degrees_of_freedom=df,
+                zero_variance_inconclusive=True,
+            )
+        return _handle_degenerate_case(differences, epsilon, direction, df)
 
     t_stat, p_value = _compute_test_statistics(
         mean_diff, epsilon, se_diff, direction, df
@@ -459,19 +480,63 @@ def _compute_difference_stats(differences: list[float], n: int) -> tuple[float, 
     return mean_diff, var_diff
 
 
+def zero_variance_sign_test_p_value(
+    differences: Sequence[float],
+    epsilon: float,
+    direction: Literal["greater", "less"],
+) -> float:
+    """One-sided exact sign-test p-value for a (near) zero-variance sample.
+
+    When the paired differences have no spread the t statistic is undefined
+    (zero standard error), so a t-test cannot decide the case. The exact sign
+    test is used instead. For ``direction == "greater"`` let ``k`` be the number
+    of differences strictly above ``epsilon`` (``"less"``: strictly below
+    ``-epsilon``). Under the null ``P(diff beyond epsilon) <= 1/2`` each pair is
+    on the alternative side with probability at most ``1/2``, so
+    ``p = P(Binomial(n, 1/2) >= k)`` is exact and conservative, assuming only
+    independent pairs (no normality). For a constant difference beyond epsilon
+    ``k = n`` and ``p = 0.5**n``; if ``k = 0`` then ``p = 1.0``.
+
+    Estimand: this tests the *median* (sign) of the differences, not the mean.
+    A zero-variance sample carries no information about the spread of the
+    population, so a mean-based claim would need extra assumptions (e.g.
+    symmetry); the sign test is the assumption-light choice and it is
+    deliberately conservative at small ``n`` (``n = 5`` cannot go below
+    ``0.03125`` one-sided, ``0.0625`` two-sided).
+
+    The result is never exactly 0: it is floored at the smallest positive float.
+    """
+    n = len(differences)
+    if direction == "greater":
+        k = sum(1 for d in differences if d > epsilon)
+    else:
+        k = sum(1 for d in differences if d < -epsilon)
+    if k == 0:
+        return 1.0
+    tail = sum(math.comb(n, i) for i in range(k, n + 1))
+    p = tail / (2**n)  # exact big-int ratio; no 0.5**n underflow
+    return float(min(1.0, max(p, math.ulp(0.0))))
+
+
 def _handle_degenerate_case(
-    effect_size: float,
+    differences: Sequence[float],
     epsilon: float,
     direction: Literal["greater", "less"],
     df: int,
 ) -> PairedComparisonResult:
-    """Handle degenerate case with zero variance."""
-    reject = effect_size > epsilon if direction == "greater" else effect_size < -epsilon
+    """Decide the zero-variance case with an exact sign test.
+
+    See :func:`zero_variance_sign_test_p_value`. ``reject_null`` is deprecated
+    and left ``False`` like the non-degenerate path, so callers must compare
+    ``p_value`` with their own alpha.
+    """
+    p_value = zero_variance_sign_test_p_value(differences, epsilon, direction)
+    effect_size = sum(differences) / len(differences)
     return PairedComparisonResult(
-        reject_null=reject,
-        p_value=0.0 if reject else 1.0,
+        reject_null=False,
+        p_value=p_value,
         effect_size=effect_size,
-        test_statistic=float("inf") if reject else 0.0,
+        test_statistic=float("inf") if p_value < 1.0 else 0.0,
         degrees_of_freedom=df,
     )
 

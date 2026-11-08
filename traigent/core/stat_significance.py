@@ -27,6 +27,7 @@ from traigent.tvl.statistics import (
     _inverse_normal_cdf,
     holm_bonferroni_adjust,
     paired_comparison_test,
+    zero_variance_sign_test_p_value,
 )
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
@@ -105,6 +106,7 @@ def _holm_significance_matrix(
                 y_samples=worse["values"],
                 epsilon=epsilon,
                 direction=direction,
+                zero_variance="sign",
             )
             pairs.append((i, j))
             # The orientation (i above j) is chosen from the observed data, so
@@ -156,8 +158,10 @@ def find_equivalence_group(
     it cannot repair the underlying paired t-test. That test is approximate
     for small or heavily non-normal samples (binary scores at ``n=50`` measured
     ~0.047 false-winner rate at 8 configs, not exactly ``alpha``) and a
-    zero-variance difference vector is decided by the degenerate-case handler
-    in ``traigent.tvl.statistics``, which can yield p=0. If no pair is
+    zero-variance difference vector is decided by an exact sign test in
+    ``traigent.tvl.statistics`` (``zero_variance="sign"``; ``p = 0.5**n``,
+    never 0), which answers "better on more examples than chance", not a mean
+    difference. If no pair is
     significant after correction the result has no winners ("no significant
     winner").
 
@@ -618,8 +622,23 @@ def _paired_t_margin(
 
     Reuses :func:`~traigent.tvl.statistics.paired_comparison_test` (one-sided,
     ``epsilon=0``) and converts to a two-sided p-value. The zero-variance case
-    is handled directly: a constant non-zero difference is a perfectly
-    consistent (significant) win; an all-zero difference is a perfect tie.
+    is decided by an exact sign test on the paired differences (the t statistic
+    is undefined at zero variance): a constant non-zero difference puts all ``n``
+    pairs on one side, giving two-sided ``p = 2 * 0.5**n`` (a median/sign
+    claim valid under only independent pairs; see
+    :func:`~traigent.tvl.statistics.zero_variance_sign_test_p_value`), never
+    ``0.0``. With few shared examples this cannot reach the multiplicity-
+    corrected alpha (n=5 gives 0.0625), so the verdict is ``"statistical_tie"``
+    (inconclusive) instead of ``"clear"``. An all-zero difference is a tie
+    (``p = 1.0``). In the zero-variance case ``test`` is ``"sign"`` and the sign
+    test answers "better on more examples than chance", not a mean difference.
+    ``ci95`` is the distribution-free order-statistic interval for the median,
+    ``[min, max]`` of the differences (for constant differences ``[d, d]``),
+    whose coverage is ``1 - 2**(1 - n)``; it exists at the corrected confidence
+    only when ``2 * 0.5**n <= effective_alpha`` (``n >= 6`` at 95%). For smaller
+    ``n`` no such interval exists, so the widest honest pair
+    ``[min(0, d), max(0, d)]`` is reported and the verdict is forced to
+    ``"statistical_tie"``.
 
     ``effective_alpha`` is the multiplicity-corrected significance level (see
     :func:`compute_best_config_margin`). It drives BOTH the ``ci95`` interval —
@@ -634,15 +653,33 @@ def _paired_t_margin(
         if n_shared > 1
         else 0.0
     )
-    if var_diff <= 0.0:
-        p_value = 1.0 if abs(mean_diff) <= 1e-12 else 0.0
-        ci: tuple[float, float] = (mean_diff, mean_diff)
+    # Treat float-noise spread (e.g. 0.3 - 0.25 repeated) as zero variance too.
+    spread = max(abs(d - mean_diff) for d in diffs)
+    zero_variance = var_diff <= 0.0 or spread <= 1e-12 * max(1.0, abs(mean_diff))
+    if zero_variance:
+        p_value = min(
+            1.0,
+            2.0
+            * min(
+                zero_variance_sign_test_p_value(diffs, 0.0, "greater"),
+                zero_variance_sign_test_p_value(diffs, 0.0, "less"),
+            ),
+        )
+        if p_value <= effective_alpha:
+            # Sign-test interval [min, max] has coverage 1 - 2**(1 - n), which
+            # is >= 1 - effective_alpha exactly when p = 2 * 0.5**n <= alpha.
+            ci: tuple[float, float] = (min(diffs), max(diffs))
+        else:
+            # Too few pairs to bound the effect at this confidence: widen to
+            # include 0 rather than report a falsely tight interval.
+            ci = (min(0.0, min(diffs)), max(0.0, max(diffs)))
     else:
         result = paired_comparison_test(
             x_samples=winner_values,
             y_samples=runner_values,
             epsilon=0.0,
             direction="greater",
+            zero_variance="sign",
         )
         p_upper = result.p_value
         p_value = min(1.0, 2.0 * min(p_upper, 1.0 - p_upper))
@@ -651,12 +688,14 @@ def _paired_t_margin(
     verdict, reason = _verdict(
         p_value, ci, effective_alpha, delta=mean_diff, minimize=minimize
     )
+    if zero_variance and p_value > effective_alpha:
+        verdict, reason = "statistical_tie", None
     payload: dict[str, Any] = {
         "delta": mean_diff,
         "ci95": [ci[0], ci[1]],
         "p_value": p_value,
         "verdict": verdict,
-        "test": "paired_t",
+        "test": "sign" if zero_variance else "paired_t",
         "n_shared_examples": n_shared,
     }
     if reason is not None:
