@@ -27,6 +27,7 @@ from traigent.evaluators.base import (
     _example_correlation_key,
     _is_empty_expected_output,
     coercion_log_scope,
+    unwrap_with_usage_output,
 )
 from traigent.evaluators.metrics_tracker import (
     COST_SOURCE_MIXED,
@@ -1244,11 +1245,14 @@ class LocalEvaluator(BaseEvaluator):
             else f"example_{example_index}"
         )
         produced_keys: list[str] = []
+        # Metric functions see the function's own output, not the
+        # ``with_usage()`` wrapper, as built-in accuracy does (#2870).
+        metric_output = unwrap_with_usage_output(output)
         for metric_name, metric_func in self.metric_functions.items():
             raw_value = self._invoke_metric_function(
                 metric_func,
                 metric_name,
-                output,
+                metric_output,
                 example_obj,
                 config,
                 llm_payload,
