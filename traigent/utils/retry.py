@@ -294,7 +294,13 @@ class CircuitBreaker:
             self.success_count = 0
             self._half_open_in_flight = False
 
-            if self.failure_count >= self.failure_threshold:
+            # A failed half-open probe re-opens at once (#3082): the success
+            # of an earlier probe reset failure_count, so the threshold check
+            # alone would keep admitting probes against a failing service.
+            if (
+                self.state == CircuitBreakerState.HALF_OPEN
+                or self.failure_count >= self.failure_threshold
+            ):
                 self.state = CircuitBreakerState.OPEN
                 self.last_state_change = datetime.now(UTC)
                 logger.warning(
