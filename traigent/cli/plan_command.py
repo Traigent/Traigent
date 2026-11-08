@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from typing import Any
 
 import click
@@ -24,6 +25,16 @@ from traigent.config.backend_config import (
 )
 
 _STYLE_BOLD_MAGENTA = "bold magenta"
+
+
+def _require_finite_cost_limit(
+    _ctx: click.Context, _param: click.Parameter, value: float
+) -> float:
+    """Reject NaN/inf, which ``FloatRange`` lets through."""
+    if not math.isfinite(value):
+        raise click.BadParameter(f"{value!r} is not a finite number")
+    return value
+
 
 console = Console(width=120)
 
@@ -65,7 +76,7 @@ def _resolve_api_key(explicit: str | None) -> str | None:
 @click.option(
     "--dataset-size",
     required=True,
-    type=int,
+    type=click.IntRange(min=1),
     help="Number of examples available for optimization planning.",
 )
 @click.option(
@@ -84,14 +95,15 @@ def _resolve_api_key(explicit: str | None) -> str | None:
 @click.option(
     "--max-trials",
     required=True,
-    type=int,
+    type=click.IntRange(min=1),
     help="Maximum trial count requested for the planned run.",
 )
 @click.option(
     "--cost-limit",
     "cost_limit_usd",
     required=True,
-    type=float,
+    type=click.FloatRange(min=0, min_open=True),
+    callback=_require_finite_cost_limit,
     help="Maximum approved spend for the planned run, in USD.",
 )
 @click.option(
