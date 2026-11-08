@@ -2192,8 +2192,14 @@ class ObservabilityClient:
         self._transport = self._create_transport()
         self._disable_egress_if_credential_missing()
 
+        # The registration holds a strong reference on purpose: an open client
+        # the caller dropped without close() must survive until exit so the
+        # documented best-effort exit flush still delivers its traces. It is
+        # released once close() completes (#3145).
+        self._atexit_registered = False
         if self.config.enable_atexit_flush:
             atexit.register(self._atexit_close)
+            self._atexit_registered = True
 
     def _resolve_content_mode(self, content_mode: str | None) -> str:
         """Resolve a `content_mode` override against the CLIENT-level default.
@@ -3274,6 +3280,12 @@ class ObservabilityClient:
         self._closing = False
         self._close_pending = not transport_close_completed
         self._closed = transport_close_completed
+        if transport_close_completed and self._atexit_registered:
+            # Nothing is left to flush at exit; drop the hook so a closed
+            # client can be garbage collected (#3145). A close that did not
+            # complete keeps it, so exit still retries.
+            atexit.unregister(self._atexit_close)
+            self._atexit_registered = False
         self._close_complete.set()
 
     def _finalize_close_when_client_lock_releases(
