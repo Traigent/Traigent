@@ -61,9 +61,11 @@ def sigterm_as_cancellation() -> Iterator[None]:
         yield
         return
     counted = False
+    joined = False
     with _LOCK:
         try:
             if _active_scopes > 0:
+                joined = True
                 _active_scopes += 1
                 counted = True
             else:
@@ -85,7 +87,13 @@ def sigterm_as_cancellation() -> Iterator[None]:
         except BaseException:
             # E.g. KeyboardInterrupt from an already-installed handler firing
             # mid-install: undo this call's installs so none leaks, then re-raise.
-            _restore_saved_handlers()
+            if joined:
+                # Handlers belong to the still-active outer scope: keep them,
+                # only undo our own count.
+                if counted:
+                    _active_scopes -= 1
+            else:
+                _restore_saved_handlers()
             raise
     try:
         yield

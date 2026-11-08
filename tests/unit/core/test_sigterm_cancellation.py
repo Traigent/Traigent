@@ -214,3 +214,29 @@ def test_scope_is_a_noop_when_sighup_is_missing(monkeypatch):
         with pytest.raises(KeyboardInterrupt):
             signal.raise_signal(signal.SIGTERM)
     assert signal.getsignal(signal.SIGTERM) is before
+
+
+def test_interrupt_while_joining_active_scope_keeps_outer_handlers(monkeypatch):
+    """Review: an interrupt entering an overlapping scope must not strip the outer."""
+    import traigent.core.sigterm_cancellation as mod
+
+    before = signal.getsignal(signal.SIGTERM)
+    outer = mod.sigterm_as_cancellation()
+    outer.__enter__()
+    try:
+
+        class _Boom(int):
+            def __add__(self, other):
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr(mod, "_active_scopes", _Boom(1))
+        with pytest.raises(KeyboardInterrupt):
+            with mod.sigterm_as_cancellation():
+                pass
+        monkeypatch.undo()
+        assert signal.getsignal(signal.SIGTERM) is mod._raise_cancel
+        assert mod._active_scopes == 1  # monkeypatch restored the real counter
+    finally:
+        outer.__exit__(None, None, None)
+    assert signal.getsignal(signal.SIGTERM) is before
+    assert mod._active_scopes == 0
