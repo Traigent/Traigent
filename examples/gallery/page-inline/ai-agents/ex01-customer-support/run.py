@@ -8,8 +8,8 @@ from pathlib import Path
 # Ensure Traigent SDK is in path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-# Initialize in mock mode for examples
-os.environ["TRAIGENT_MOCK_LLM"] = "true"
+# Default to mock mode for examples; an explicit TRAIGENT_MOCK_LLM wins
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
 from customer_support import demonstrate_customer_support
 
