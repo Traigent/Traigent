@@ -71,6 +71,16 @@ class ServiceUnavailableError(RetryableError):
     """Service temporarily unavailable (retryable variant for circuit breaker)."""
 
 
+class CircuitBreakerOpenError(ServiceUnavailableError):
+    """The circuit breaker is OPEN and rejected the call without running it.
+
+    ``RetryHandler`` does not retry it (#3033): no request was sent, and every
+    shipped retry config backs off for less than ``recovery_timeout`` in total,
+    so sleeping through the attempts could never reach HALF_OPEN. It still
+    subclasses ``ServiceUnavailableError`` so existing handlers keep matching.
+    """
+
+
 @dataclass
 class RetryConfig:
     """Configuration for retry behavior.
@@ -219,7 +229,7 @@ class CircuitBreaker:
                     self._half_open_in_flight = True
                     logger.info("Circuit breaker entering HALF_OPEN state")
                 else:
-                    raise ServiceUnavailableError("Circuit breaker is OPEN")
+                    raise CircuitBreakerOpenError("Circuit breaker is OPEN")
             elif self.state == CircuitBreakerState.HALF_OPEN:
                 if self._half_open_in_flight:
                     raise ServiceUnavailableError("Circuit breaker is HALF_OPEN")
@@ -446,6 +456,10 @@ class RetryHandler:
             return False
 
         if isinstance(exception, NonRetryableError):
+            return False
+
+        # A breaker rejection sent nothing; retrying it only sleeps (#3033).
+        if isinstance(exception, CircuitBreakerOpenError):
             return False
 
         if isinstance(exception, AuthenticationError):
