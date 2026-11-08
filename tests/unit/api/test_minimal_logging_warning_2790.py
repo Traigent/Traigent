@@ -34,12 +34,14 @@ def test_default_decoration_logs_no_minimal_logging_warning(caplog):
     assert not _warned(caplog)
 
 
+@pytest.mark.usefixtures("connected_policy_env")
 def test_explicit_true_on_managed_path_still_warns_kwarg(caplog):
     with caplog.at_level(logging.WARNING):
         _decorate(minimal_logging=True)
     assert _warned(caplog)
 
 
+@pytest.mark.usefixtures("connected_policy_env")
 def test_explicit_true_on_managed_path_still_warns_bundle(caplog):
     with caplog.at_level(logging.WARNING):
         _decorate(execution=ExecutionOptions(minimal_logging=True))
