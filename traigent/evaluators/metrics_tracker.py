@@ -2195,6 +2195,29 @@ class AnthropicResponseHandler(ResponseHandler):
         return 0.0
 
 
+def _token_count(value: Any) -> int:
+    """Coerce a provider-reported token count; null or non-numeric is unmeasured (0)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if value != value or value in (float("inf"), float("-inf")):
+        return 0
+    return int(value)
+
+
+def _token_metrics_from_counts(
+    input_val: Any, output_val: Any, total_val: Any
+) -> TokenMetrics:
+    """Build TokenMetrics from raw provider values, tolerating null/garbage."""
+    input_tokens = _token_count(input_val)
+    output_tokens = _token_count(output_val)
+    total_tokens = _token_count(total_val) or input_tokens + output_tokens
+    return TokenMetrics(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+    )
+
+
 class LangChainResponseHandler(ResponseHandler):
     """Handler for LangChain response objects."""
 
@@ -2213,29 +2236,28 @@ class LangChainResponseHandler(ResponseHandler):
         # Check for token_usage field (ChatOpenAI format)
         if "token_usage" in metadata and isinstance(metadata["token_usage"], dict):
             usage = metadata["token_usage"]
-            tokens.input_tokens = usage.get("prompt_tokens", 0)
-            tokens.output_tokens = usage.get("completion_tokens", 0)
-            tokens.total_tokens = usage.get(
-                "total_tokens", tokens.input_tokens + tokens.output_tokens
+            counted = _token_metrics_from_counts(
+                usage.get("prompt_tokens"),
+                usage.get("completion_tokens"),
+                usage.get("total_tokens"),
             )
+            tokens.input_tokens = counted.input_tokens
+            tokens.output_tokens = counted.output_tokens
+            tokens.total_tokens = counted.total_tokens
             if tokens.total_tokens > 0:
                 return True
 
         # Check for usage field (alternative format)
         if "usage" in metadata and isinstance(metadata["usage"], dict):
             usage = metadata["usage"]
-            input_val = usage.get("input_tokens", usage.get("prompt_tokens", 0))
-            output_val = usage.get("output_tokens", usage.get("completion_tokens", 0))
-            tokens.input_tokens = int(input_val) if input_val is not None else 0
-            tokens.output_tokens = int(output_val) if output_val is not None else 0
-            total_val = usage.get(
-                "total_tokens", tokens.input_tokens + tokens.output_tokens
+            input_val = usage.get("input_tokens", usage.get("prompt_tokens"))
+            output_val = usage.get("output_tokens", usage.get("completion_tokens"))
+            counted = _token_metrics_from_counts(
+                input_val, output_val, usage.get("total_tokens")
             )
-            tokens.total_tokens = (
-                int(total_val)
-                if total_val is not None
-                else tokens.input_tokens + tokens.output_tokens
-            )
+            tokens.input_tokens = counted.input_tokens
+            tokens.output_tokens = counted.output_tokens
+            tokens.total_tokens = counted.total_tokens
             if tokens.total_tokens > 0:
                 return True
 
@@ -2247,11 +2269,14 @@ class LangChainResponseHandler(ResponseHandler):
         # Check usage_metadata for token usage (langchain_core AIMessage)
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             usage = response.usage_metadata
-            tokens.input_tokens = usage.get("input_tokens", 0)
-            tokens.output_tokens = usage.get("output_tokens", 0)
-            tokens.total_tokens = usage.get(
-                "total_tokens", tokens.input_tokens + tokens.output_tokens
+            counted = _token_metrics_from_counts(
+                usage.get("input_tokens"),
+                usage.get("output_tokens"),
+                usage.get("total_tokens"),
             )
+            tokens.input_tokens = counted.input_tokens
+            tokens.output_tokens = counted.output_tokens
+            tokens.total_tokens = counted.total_tokens
             if tokens.total_tokens > 0:
                 return tokens
 
@@ -2267,13 +2292,16 @@ class LangChainResponseHandler(ResponseHandler):
         # Check llm_output for token usage (older format)
         if hasattr(response, "llm_output") and isinstance(response.llm_output, dict):
             llm_output = response.llm_output
-            if "token_usage" in llm_output:
-                usage = llm_output["token_usage"]
-                tokens.input_tokens = usage.get("prompt_tokens", 0)
-                tokens.output_tokens = usage.get("completion_tokens", 0)
-                tokens.total_tokens = usage.get(
-                    "total_tokens", tokens.input_tokens + tokens.output_tokens
+            usage = llm_output.get("token_usage")
+            if isinstance(usage, dict):
+                counted = _token_metrics_from_counts(
+                    usage.get("prompt_tokens"),
+                    usage.get("completion_tokens"),
+                    usage.get("total_tokens"),
                 )
+                tokens.input_tokens = counted.input_tokens
+                tokens.output_tokens = counted.output_tokens
+                tokens.total_tokens = counted.total_tokens
 
         return tokens
 
@@ -2313,30 +2341,21 @@ class DictResponseHandler(ResponseHandler):
             return TokenMetrics()
 
         # Direct token fields
-        input_tokens = response.get("input_tokens", 0)
-        output_tokens = response.get("output_tokens", 0)
-        total_tokens = response.get("total_tokens", 0)
+        input_val = response.get("input_tokens")
+        output_val = response.get("output_tokens")
+        total_val = response.get("total_tokens")
 
         # Check for usage field (OpenAI style)
         if "usage" in response and isinstance(response["usage"], dict):
             usage = response["usage"]
-            input_tokens = usage.get(
-                "prompt_tokens", usage.get("input_tokens", input_tokens)
+            input_val = usage.get("prompt_tokens", usage.get("input_tokens", input_val))
+            output_val = usage.get(
+                "completion_tokens", usage.get("output_tokens", output_val)
             )
-            output_tokens = usage.get(
-                "completion_tokens", usage.get("output_tokens", output_tokens)
-            )
-            total_tokens = usage.get("total_tokens", total_tokens)
+            total_val = usage.get("total_tokens", total_val)
 
-        # If total_tokens is not provided, calculate it
-        if total_tokens == 0 and (input_tokens > 0 or output_tokens > 0):
-            total_tokens = input_tokens + output_tokens
-
-        return TokenMetrics(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-        )
+        # If total_tokens is not provided, it is derived from input + output
+        return _token_metrics_from_counts(input_val, output_val, total_val)
 
     def extract_response_time(self, response: Any) -> float:
         """Extract response time from dict."""
