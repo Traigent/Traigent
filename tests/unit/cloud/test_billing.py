@@ -172,8 +172,11 @@ class TestUsageTracker:
 
         assert _read_json_file(storage_path) == payload
 
-    def test_usage_tracker_initialization_default_path(self):
+    def test_usage_tracker_initialization_default_path(self, monkeypatch, tmp_path):
         """Test UsageTracker initialization with default path."""
+        # Hermetic: ignore a developer's results-folder setting and real home dir.
+        monkeypatch.delenv("TRAIGENT_RESULTS_FOLDER", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
         tracker = UsageTracker()
 
         expected_path = Path.home() / ".traigent" / "usage.json"
