@@ -515,6 +515,44 @@ class TestOptimizationOrchestrator:
         ]
 
     @pytest.mark.asyncio
+    async def test_declined_cost_approval_creates_no_backend_session_2960(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """#2960: a declined approval is decided BEFORE POST /sessions.
+
+        Creating the session first left a RUNNING experiment and spent one
+        plan trial on a run that never started. The decline must fail closed:
+        the typed error propagates and no session is created or finalized.
+        """
+        from traigent.utils.exceptions import CostLimitExceeded
+
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch,
+            config_space,
+            objectives,
+        )
+        orchestrator._check_cost_approval = MagicMock(
+            side_effect=CostLimitExceeded(10.0, 1.0)
+        )
+        manager = orchestrator.backend_session_manager
+        create_spy = MagicMock(wraps=manager.create_session)
+        monkeypatch.setattr(manager, "create_session", create_spy)
+
+        with pytest.raises(CostLimitExceeded):
+            await orchestrator.optimize(mock_function, sample_dataset)
+
+        orchestrator._check_cost_approval.assert_called_once()
+        create_spy.assert_not_called()
+        orchestrator.backend_client.create_session.assert_not_called()
+        assert finalize_calls == []
+        assert orchestrator._status == OptimizationStatus.FAILED
+
+    @pytest.mark.asyncio
     async def test_failed_optimization_error_reraise_finalizes_backend_session_as_failed(
         self,
         monkeypatch,
