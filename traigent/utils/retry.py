@@ -17,7 +17,7 @@ import functools
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from random import SystemRandom
@@ -646,9 +646,9 @@ class RetryWithCircuitBreaker:
 
     def __init__(self, retry_config: RetryConfig) -> None:
         """Initialize with retry configuration."""
-        # Ensure circuit breaker is enabled
-        retry_config.enable_circuit_breaker = True
-        self.handler = RetryHandler(retry_config)
+        # Enable the breaker on a copy: the caller's config is often a shared
+        # module preset (DEFAULT_RETRY, ...) that other handlers use (#3084).
+        self.handler = RetryHandler(replace(retry_config, enable_circuit_breaker=True))
 
     def __call__[T](self, func: Callable[..., T]) -> Callable[..., T]:
         """Decorator implementation."""
