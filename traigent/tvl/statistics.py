@@ -36,11 +36,19 @@ class PairedComparisonResult:
 
 
 def _validate_p_values(p_values: Sequence[float]) -> None:
-    """Raise ``ValueError`` for any p-value that is not a finite number in [0, 1]."""
+    """Raise ``ValueError`` for any p-value that is NaN, infinite or negative.
+
+    Values above 1 stay accepted and are capped at 1.0 by the adjusters
+    (existing, tested contract).
+    """
     for i, p in enumerate(p_values):
-        if isinstance(p, bool) or not isinstance(p, (int, float)) or not 0 <= p <= 1:
+        if (
+            isinstance(p, bool)
+            or not isinstance(p, (int, float))
+            or not 0 <= p < math.inf
+        ):
             raise ValueError(
-                f"Invalid p-value at index {i}: {p!r} (must be a number in [0, 1])"
+                f"Invalid p-value at index {i}: {p!r} (must be a finite number >= 0)"
             )
 
 
