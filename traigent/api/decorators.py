@@ -2555,19 +2555,35 @@ def _normalize_config_space_and_defaults(
     return normalized_space, default_config, constraints
 
 
-def _constraints_for_satisfiability(constraints: list[Any] | None) -> list[Any]:
-    """Return structural constraints that the satisfiability checker can evaluate."""
+def _constraints_for_satisfiability(
+    constraints: list[Any] | None,
+    scope_var_names: dict[int, str] | None = None,
+) -> list[Any]:
+    """Return structural constraints that the satisfiability checker can evaluate.
+
+    Constraints that reference a parameter outside ``scope_var_names`` are left
+    out: with three-valued evaluation a missing parameter is unknown and never
+    passes, so they would read as unsatisfiable. They are reported as a
+    ``ConstraintScopeError`` when constraints are normalized, which is the
+    accurate diagnosis.
+    """
     if not constraints:
         return []
 
-    from traigent.api.constraints import BoolExpr, Constraint
+    from traigent.api.constraints import BoolExpr, Constraint, ConstraintScopeError
 
     satisfiability_constraints: list[Constraint] = []
     for constraint in constraints:
-        if isinstance(constraint, Constraint):
-            satisfiability_constraints.append(constraint)
-        elif isinstance(constraint, BoolExpr):
-            satisfiability_constraints.append(Constraint(expr=constraint))
+        if isinstance(constraint, BoolExpr):
+            constraint = Constraint(expr=constraint)
+        if not isinstance(constraint, Constraint):
+            continue
+        if scope_var_names:
+            try:
+                constraint._validate_scope(scope_var_names)
+            except ConstraintScopeError:
+                continue
+        satisfiability_constraints.append(constraint)
     return satisfiability_constraints
 
 
@@ -2575,9 +2591,12 @@ def _validate_constraint_satisfiability(
     raw_configuration_space: dict[str, Any] | ConfigSpace | None,
     inline_params: dict[str, Any],
     constraints: list[Any] | None,
+    scope_var_names: dict[int, str] | None = None,
 ) -> None:
     """Fail fast when structural constraints make a finite space impossible."""
-    satisfiability_constraints = _constraints_for_satisfiability(constraints)
+    satisfiability_constraints = _constraints_for_satisfiability(
+        constraints, scope_var_names
+    )
     if not satisfiability_constraints:
         return
 
@@ -3654,6 +3673,7 @@ def optimize(  # NOSONAR(S107)
         raw_configuration_space,
         inline_params,
         constraints,
+        constraint_scope_var_names,
     )
 
     # Note: Constraint normalization is deferred until after TVL artifact application
