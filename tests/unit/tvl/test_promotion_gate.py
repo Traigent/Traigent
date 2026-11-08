@@ -365,8 +365,8 @@ class TestChanceConstraints:
         gate = PromotionGate(policy, objectives)
 
         decision = gate.evaluate(
-            incumbent_metrics={"accuracy": [0.8] * 5},
-            candidate_metrics={"accuracy": [0.9] * 5},
+            incumbent_metrics={"accuracy": [0.80, 0.81, 0.79, 0.80, 0.82]},
+            candidate_metrics={"accuracy": [0.90, 0.92, 0.89, 0.91, 0.93]},
             constraint_data={"error_rate": (30, 100)},  # (violations, trials)
         )
 
