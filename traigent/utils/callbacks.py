@@ -1025,7 +1025,10 @@ class CallbackManager:
         if max_callback_threads <= 0:
             raise ValueError("max_callback_threads must be greater than 0")
 
-        self.callbacks = callbacks or []
+        self.callbacks = []
+        for callback in callbacks or []:
+            self._validate_callback(callback)
+            self.callbacks.append(callback)
         self.timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
         self.max_callback_threads = max_callback_threads
         self.callback_failures: list[CallbackFailure] = []
@@ -1280,8 +1283,36 @@ class CallbackManager:
             ],
         }
 
+    _REQUIRED_HOOKS = (
+        "on_optimization_start",
+        "on_trial_start",
+        "on_trial_complete",
+        "on_optimization_complete",
+    )
+
+    @classmethod
+    def _validate_callback(cls, callback: Any) -> None:
+        """Reject entries that cannot receive the lifecycle hooks, at registration.
+
+        Hook lookup happens at the call site, outside the manager's failure
+        isolation, so a mistyped entry (``None``, a bare function) would escape as
+        an ``AttributeError`` from inside the run instead of a clear error here.
+        """
+        missing = [
+            hook
+            for hook in cls._REQUIRED_HOOKS
+            if not callable(getattr(callback, hook, None))
+        ]
+        if missing:
+            raise TypeError(
+                f"callbacks must be OptimizationCallback instances; got "
+                f"{type(callback).__name__} ({callback!r}) without callable "
+                f"hook(s): {', '.join(missing)}"
+            )
+
     def add_callback(self, callback: OptimizationCallback) -> None:
         """Add a callback."""
+        self._validate_callback(callback)
         self.callbacks.append(callback)
 
     def remove_callback(self, callback: OptimizationCallback) -> None:
