@@ -296,12 +296,23 @@ class ParameterImportanceAnalyzer:
             trials, parameter
         )
 
-        if len(param_values) < 10 or len(set(param_values)) < 2:
+        if len(param_values) < 10:
             return None
 
         filtered_objectives = [objective_values[i] for i in valid_indices]
+        categorical = any(isinstance(v, str) for v in raw_values)
 
-        if any(isinstance(v, str) for v in raw_values):
+        # Distinct values are judged on raw values for categoricals: the
+        # arbitrary string codes can collide with real numbers (0 vs "x").
+        distinct = (
+            {self._hashable_key(v) for v in raw_values}
+            if categorical
+            else set(param_values)
+        )
+        if len(distinct) < 2:
+            return None
+
+        if categorical:
             # A string category has no order, so a Pearson r on an arbitrary
             # integer encoding depends on first-seen order. Use the
             # correlation ratio (sqrt of eta-squared over replicated groups).
@@ -521,10 +532,15 @@ class ParameterImportanceAnalyzer:
             lines.append("  No significant importance detected")
             return
         for result in self.get_top_parameters(results, top_k=5):
-            ci_low, ci_high = result.confidence_interval or (0.0, 0.0)
+            interval = (
+                f" [{result.confidence_interval[0]:.3f}, "
+                f"{result.confidence_interval[1]:.3f}]"
+                if result.confidence_interval is not None
+                else " (no interval)"
+            )
             lines.append(
-                f"  {result.parameter_name:15s}: {result.importance_score:.3f} "
-                f"[{ci_low:.3f}, {ci_high:.3f}]"
+                f"  {result.parameter_name:15s}: {result.importance_score:.3f}"
+                f"{interval}"
             )
         for result in results.values():
             if result.importance_score is None:

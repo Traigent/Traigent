@@ -713,6 +713,28 @@ class TestParameterImportanceAnalyzer:
         result = analyzer.analyze_correlation_based(self._trials(rows))
         assert result["x"].importance_score == pytest.approx(1.0)
 
+    def test_report_does_not_invent_interval_when_none_issue_2945(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        lines: list[str] = []
+        analyzer._format_method_results(
+            {"x": ImportanceResult("x", 0.75, None, "variance_based", 12)}, lines
+        )
+        assert "0.750" in lines[0]
+        assert "[0.000, 0.000]" not in lines[0]
+        assert "no interval" in lines[0]
+
+    def test_correlation_numeric_zero_and_string_are_distinct_categories_issue_2945(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        values = [0, "x"] * 6
+        rows = [({"p": v}, 0.2 if v == 0 else 0.8) for v in values]
+        result = analyzer._calculate_parameter_correlation_importance(
+            self._trials(rows), "p", [r[1] for r in rows]
+        )
+        assert result is not None
+        assert result.importance_score == pytest.approx(1.0)
+
     def test_get_top_parameters_skips_not_measurable(
         self, analyzer: ParameterImportanceAnalyzer
     ) -> None:
