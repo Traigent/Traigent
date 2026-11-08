@@ -33,10 +33,24 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, rule
 
-# Ensure mock mode is disabled for these tests
-os.environ["TRAIGENT_MOCK_LLM"] = "false"
-
 from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig, Permit
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_environ_after_module():
+    """Snapshot os.environ and restore it after this module.
+
+    The tests below set TRAIGENT_MOCK_LLM directly (module scope because
+    hypothesis @given rejects function-scoped fixtures); without this restore
+    the value leaks into every later test in the same process.
+    """
+    saved = dict(os.environ)
+    os.environ["TRAIGENT_MOCK_LLM"] = "false"  # mock mode disabled for this module
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
 
 
 class CostEnforcerStateMachine(RuleBasedStateMachine):
