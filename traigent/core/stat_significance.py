@@ -151,10 +151,15 @@ def find_equivalence_group(
     against every lower-ranked trial) form a single family that is adjusted
     with Holm-Bonferroni (step-down; ``traigent.tvl.statistics.holm_bonferroni_adjust``)
     before being compared with ``alpha``. This controls the family-wise error
-    rate: when all configs are truly equivalent, the probability of reporting
-    any winner is at most ``alpha`` regardless of how many configs are
-    compared. If no pair is significant after correction the result has no
-    winners ("no significant winner").
+    rate *given valid pairwise p-values*: Holm bounds the chance of any false
+    rejection by ``alpha`` under arbitrary dependence between the tests, but
+    it cannot repair the underlying paired t-test. That test is approximate
+    for small or heavily non-normal samples (binary scores at ``n=50`` measured
+    ~0.047 false-winner rate at 8 configs, not exactly ``alpha``) and a
+    zero-variance difference vector is decided by the degenerate-case handler
+    in ``traigent.tvl.statistics``, which can yield p=0. If no pair is
+    significant after correction the result has no winners ("no significant
+    winner").
 
     Algorithm:
         1. Sort trials by aggregate metric (best first).
