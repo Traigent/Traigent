@@ -10,7 +10,8 @@ import math
 import traceback as traceback_module
 import warnings
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -53,6 +54,55 @@ def _apply_example_count_columns(row: Any, metadata: Any) -> None:
             f"{metadata.get('successful_examples')}/"
             f"{metadata.get('examples_attempted')} examples succeeded"
         )
+
+
+def _disambiguate_column(name: str, prefix: str, taken: set[str]) -> str:
+    """Return ``name`` prefixed with ``prefix.`` (plus ``_`` until unique)."""
+    candidate = f"{prefix}.{name}"
+    while candidate in taken:
+        candidate += "_"
+    return candidate
+
+
+def _column_rename_map(
+    names: Iterable[str], reserved: AbstractSet[str], prefix: str
+) -> dict[str, str]:
+    """Map each name that collides with a ``reserved`` column to a prefixed one.
+
+    Names that do not collide are absent from the map, so non-colliding
+    exports keep their original column names byte-for-byte. The result is
+    deterministic: names are processed in sorted order.
+    """
+    names = {str(n) for n in names}
+    taken = names | reserved
+    renames: dict[str, str] = {}
+    for name in sorted(names & reserved):
+        new = _disambiguate_column(name, prefix, taken)
+        taken.add(new)
+        renames[name] = new
+    return renames
+
+
+_TRIAL_IDENTITY_COLUMNS = frozenset({"trial_id", "status", "duration", "timestamp"})
+_TRIAL_DERIVED_COLUMNS = frozenset(
+    {
+        "avg_response_time",
+        "avg_response_time_ms",
+        "total_cost",
+        "successful_examples",
+        "examples_attempted",
+        "example_success_summary",
+    }
+)
+_AGGREGATED_RESERVED_COLUMNS = frozenset(
+    {
+        "config_hash",
+        "samples_count",
+        "duration",
+        "avg_response_time",
+        "avg_response_time_ms",
+    }
+)
 
 
 def _name_suggests_minimize(name: str) -> bool:
@@ -2468,6 +2518,21 @@ class OptimizationResult:
         """Convert results to pandas DataFrame."""
         pd = _require_pandas()
 
+        # Config keys that collide with an identity/derived column or a metric
+        # are exported as ``config.<name>``; metrics that collide with an
+        # identity column are exported as ``metric.<name>``. Nothing is
+        # silently overwritten.
+        metric_names = {str(k) for t in self.trials for k in (t.metrics or {})}
+        metric_renames = _column_rename_map(
+            metric_names, _TRIAL_IDENTITY_COLUMNS, "metric"
+        )
+        config_names = {str(k) for t in self.trials for k in (t.config or {})}
+        config_renames = _column_rename_map(
+            config_names,
+            _TRIAL_IDENTITY_COLUMNS | _TRIAL_DERIVED_COLUMNS | metric_names,
+            "config",
+        )
+
         data = []
         for trial in self.trials:
             row = {
@@ -2475,8 +2540,8 @@ class OptimizationResult:
                 "status": trial.status.value,
                 "duration": trial.duration,
                 "timestamp": trial.timestamp,
-                **trial.config,
-                **trial.metrics,
+                **{config_renames.get(k, k): v for k, v in trial.config.items()},
+                **{metric_renames.get(k, k): v for k, v in trial.metrics.items()},
             }
             avg_response_time = self._compute_average_response_time(trial.metadata)
             avg_response_time_ms = self._compute_average_response_time_ms(
@@ -2559,16 +2624,24 @@ class OptimizationResult:
         groups: dict[str, dict[str, Any]],
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        metric_names = {str(k) for g in groups.values() for k in g["metrics_sum"]}
+        metric_renames = _column_rename_map(
+            metric_names, _AGGREGATED_RESERVED_COLUMNS, "metric"
+        )
+        config_names = {str(k) for g in groups.values() for k in (g["config"] or {})}
+        config_renames = _column_rename_map(
+            config_names, _AGGREGATED_RESERVED_COLUMNS | metric_names, "config"
+        )
         for cfg_hash, group in groups.items():
             row: dict[str, Any] = {
                 "config_hash": cfg_hash,
                 "samples_count": group["samples_count"],
             }
             for ck, cv in (group["config"] or {}).items():
-                row[ck] = cv
+                row[config_renames.get(ck, ck)] = cv
             for mk, total in group["metrics_sum"].items():
                 count = max(1, group["metrics_count"].get(mk, 1))
-                row[f"{mk}"] = total / count
+                row[metric_renames.get(mk, mk)] = total / count
             row["duration"] = (
                 (group["duration_sum"] / group["samples_count"])
                 if group["samples_count"] > 0
