@@ -21,12 +21,14 @@ For best tracing support, install the plugin:
 
 from __future__ import annotations
 
-_MIN_PLUGIN_VERSION = (0, 1, 1)
+from typing import Any
+
+_MIN_PLUGIN_VERSION = (0, 1, 2)
 _PLUGIN_REJECTED = False
 
 
 def _plugin_version_ok() -> bool:
-    """Return True only when the traigent-tracing add-on is >= 0.1.1.
+    """Return True only when the traigent-tracing add-on is >= 0.1.2.
 
     Older add-ons predate the span-attribute scrubbers, so they are ignored in
     favour of the embedded scrubbed implementation. Fails closed: any error,
@@ -53,6 +55,89 @@ def _plugin_version_ok() -> bool:
         return parts >= _MIN_PLUGIN_VERSION
     except Exception:
         return False
+
+
+def _resolve_trace_headers() -> dict[str, str]:
+    """OTLP headers exactly as OpenTelemetry resolves them from the environment.
+
+    Uses OpenTelemetry's own parser (last duplicate wins, names lower-cased);
+    OTEL_EXPORTER_OTLP_TRACES_HEADERS takes precedence over OTEL_EXPORTER_OTLP_HEADERS.
+    """
+    import os as _os
+
+    raw = _os.environ.get("OTEL_EXPORTER_OTLP_TRACES_HEADERS") or _os.environ.get(
+        "OTEL_EXPORTER_OTLP_HEADERS", ""
+    )
+    if not raw:
+        return {}
+    try:
+        from opentelemetry.util.re import parse_env_headers as _parse
+
+        try:
+            return dict(_parse(raw, liberal=True))
+        except TypeError:  # older OpenTelemetry without ``liberal``
+            return dict(_parse(raw))
+    except ImportError:
+        out: dict[str, str] = {}
+        for pair in raw.split(","):
+            name, sep, value = pair.partition("=")
+            if sep:
+                out[name.strip().lower()] = value.strip()
+        return out
+
+
+def _api_key_from_headers(headers: dict[str, str]) -> str | None:
+    for name, value in headers.items():
+        if name.strip().lower() == "x-api-key":
+            return value.strip()
+    return None
+
+
+def _effective_trace_api_key(headers: dict[str, str] | None = None) -> str | None:
+    """The X-API-Key the OTLP exporter will actually send.
+
+    A key in the OTLP headers wins over ``BackendConfig.get_api_key()``. ``headers``
+    are the already-resolved (frozen) exporter headers; default: resolve from the
+    current environment.
+    """
+    from traigent.config.backend_config import BackendConfig
+
+    key = _api_key_from_headers(
+        _resolve_trace_headers() if headers is None else headers
+    )
+    if key is not None:
+        return key
+    cfg_key: str | None = BackendConfig.get_api_key()
+    return cfg_key
+
+
+_UNSET: Any = object()
+
+
+def _optimization_only_blocks_export(
+    endpoint: str | None = None, api_key: Any = _UNSET
+) -> bool:
+    """True when optimization_only forbids handing out / using a trace exporter.
+
+    Evaluated on EVERY tracer hand-out, span and exported batch (not just at
+    construction), so a credential that latches later, or
+    ``TRAIGENT_OPTIMIZATION_ONLY=true`` set after the tracer was cached, stops trace
+    bytes at send time. A non-Traigent collector is untouched; with no OTLP endpoint
+    configured only an explicit/env setting blocks. Fails closed on any error.
+    """
+    try:
+        import os as _os
+
+        from traigent.utils import optimization_only_egress as _oo
+
+        endpoint = endpoint or _os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+        if not endpoint:
+            return bool(_oo.env_setting())
+        if api_key is _UNSET:
+            api_key = _effective_trace_api_key()
+        return not _oo.ensure_trace_egress_allowed(api_key, endpoint)
+    except Exception:  # noqa: BLE001 - fail closed
+        return True
 
 
 # Try to import from the plugin first
@@ -86,20 +171,24 @@ try:
 
     _PLUGIN_AVAILABLE = True
 
-    # Gate at the SDK boundary: the offline predicate must apply whichever
-    # implementation is imported, so the plugin's functions are wrapped rather
-    # than trusted. While offline (offline=True run or the offline env vars) no
-    # tracer is handed out, spans are no-ops and nothing is recorded.
+    # Gate at the SDK boundary: the offline AND optimization_only predicates must
+    # apply whichever implementation is imported, so the plugin's functions are
+    # wrapped rather than trusted. While offline (offline=True run or the offline env
+    # vars) or while optimization_only forbids trace export, no tracer is handed out,
+    # spans are no-ops and nothing is recorded.
     import functools as _functools
     from contextlib import contextmanager as _contextmanager
     from typing import Any as _Any
 
     from traigent.utils.env_config import is_backend_offline as _is_offline
 
+    def _blocked() -> bool:
+        return bool(_is_offline() or _optimization_only_blocks_export())
+
     def _gate_call(fn: _Any) -> _Any:
         @_functools.wraps(fn)
         def wrapper(*args: _Any, **kwargs: _Any) -> _Any:
-            if _is_offline():
+            if _blocked():
                 return None
             return fn(*args, **kwargs)
 
@@ -109,7 +198,7 @@ try:
         @_functools.wraps(fn)
         @_contextmanager
         def wrapper(*args: _Any, **kwargs: _Any) -> _Any:
-            if _is_offline():
+            if _blocked():
                 yield None
                 return
             with fn(*args, **kwargs) as span:
@@ -134,7 +223,7 @@ except ImportError:
 
         _logging.getLogger(__name__).warning(
             "Ignoring the traigent-tracing add-on: version is older than "
-            "0.1.1 or could not be determined. Using the built-in scrubbed "
+            "0.1.2 or could not be determined. Using the built-in scrubbed "
             "tracing; upgrade the add-on to use it."
         )
 
@@ -152,6 +241,7 @@ except ImportError:
     TRACING_ENABLED = is_trace_enabled()
 
     try:
+        import requests
         from opentelemetry import context as otel_context
         from opentelemetry import trace
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
@@ -165,6 +255,7 @@ except ImportError:
         OTEL_AVAILABLE = True
     except ImportError:
         OTEL_AVAILABLE = False
+        requests = None  # type: ignore
         trace = None  # type: ignore
         otel_context = None  # type: ignore
         TracerProvider = None  # type: ignore
@@ -291,6 +382,8 @@ except ImportError:
     # Global tracer instance
     _tracer: Tracer | None = None
     _initialized = False
+    _provider: Any = None
+    _frozen_api_key: Any = _UNSET
     _test_context: dict[str, Any] = {}
 
     def set_test_context(
@@ -319,9 +412,11 @@ except ImportError:
         """Get the current test context."""
         return _test_context.copy()
 
+    from traigent.core.trace_export_gate import _GatedSession, _GatedSpanExporter
+
     def _initialize_tracer() -> Tracer | None:
         """Initialize the OpenTelemetry tracer if not already done."""
-        global _tracer, _initialized
+        global _tracer, _initialized, _provider, _frozen_api_key
 
         if _initialized:
             return _tracer
@@ -335,6 +430,20 @@ except ImportError:
         if not otlp_endpoint:
             return None
 
+        from traigent.utils import optimization_only_egress as oo_egress
+
+        # optimization_only: no trace bytes to Traigent (validates the key the exporter
+        # will actually send; a non-Traigent collector is untouched).
+        # Resolve the exporter headers ONCE, with OpenTelemetry's own semantics, and
+        # pass them explicitly: the gate then checks the very key that is sent.
+        headers = _resolve_trace_headers()
+        frozen_key = _effective_trace_api_key(headers)
+        if not oo_egress.ensure_trace_egress_allowed(frozen_key, otlp_endpoint):
+            # A denial may be transient (validation failure has a 60 s TTL in the
+            # central gate): do not cache None, re-consult the gate on later calls.
+            _initialized = False
+            return None
+
         try:
             resource = Resource.create(
                 {"service.name": "traigent-optimizer", "service.version": "1.0.0"}
@@ -342,10 +451,20 @@ except ImportError:
             provider = TracerProvider(
                 resource=resource, id_generator=SecureIdGenerator()
             )
-            otlp_exporter = OTLPHttpSpanExporter(endpoint=f"{otlp_endpoint}/v1/traces")
+            otlp_exporter = _GatedSpanExporter(
+                OTLPHttpSpanExporter(
+                    endpoint=f"{otlp_endpoint}/v1/traces",
+                    headers=headers,
+                    session=_GatedSession(otlp_endpoint, frozen_key),
+                ),
+                otlp_endpoint,
+                frozen_key,
+            )
             provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
             trace.set_tracer_provider(provider)
-            _tracer = trace.get_tracer("traigent.core", "1.0.0")
+            _provider = provider
+            _frozen_api_key = frozen_key
+            _tracer = provider.get_tracer("traigent.core", "1.0.0")
             return _tracer
         except Exception as e:
             import logging
@@ -361,7 +480,20 @@ except ImportError:
         including truncated example output. Checked per call, so a tracer
         initialized by an earlier online run is not used by an offline one.
         """
+        global _tracer, _provider
         if is_backend_offline():
+            return None
+        if _tracer is not None and _optimization_only_blocks_export(
+            None, _frozen_api_key
+        ):
+            # the credential latched (or the env flipped) after the tracer was cached:
+            # tear the exporter down so queued spans are not sent either.
+            provider, _tracer, _provider = _provider, None, None
+            if provider is not None:
+                try:
+                    provider.shutdown()
+                except Exception:  # noqa: BLE001 - best effort
+                    pass
             return None
         return _initialize_tracer()
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "traigent-tracing"
-version = "0.1.1"
+version = "0.1.2"
 description = "OpenTelemetry tracing plugin for Traigent SDK"
 readme = "README.md"
 license = {text = "MIT"}
@@ -20,6 +20,8 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
+    # TODO: plugin 0.1.2 needs the SDK release that contains
+    # traigent/core/trace_export_gate.py; bump this pin once that release number is known.
     "traigent>=0.9.0",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",

@@ -341,11 +341,18 @@ def _initialize_tracer() -> Tracer | None:
             id_generator=SecureIdGenerator(),
         )
 
-        # Add OTLP exporter
-        otlp_exporter = OTLPHttpSpanExporter(
-            endpoint=f"{otlp_endpoint}/v1/traces",
-        )
-        provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+        # Add OTLP exporter. optimization_only: the exporter must be the SDK's gated
+        # one (explicit frozen headers, send-time prepared-request check). If it is
+        # unavailable the add-on fails closed rather than building an ungated one.
+        try:
+            from traigent.core.trace_export_gate import build_gated_otlp_exporter
+        except ImportError:
+            return None
+        built = build_gated_otlp_exporter(otlp_endpoint)
+        if built is None:
+            _initialized = False  # a denial may be transient: re-consult later
+            return None
+        provider.add_span_processor(BatchSpanProcessor(built[0]))
 
         # Set as global provider
         trace.set_tracer_provider(provider)

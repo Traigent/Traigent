@@ -617,6 +617,9 @@ class AuthManager:
         self.no_egress = bool(no_egress)
         #: Sticky: set when /keys/validate answered optimization_only true; never cleared.
         self._server_optimization_only = False
+        #: Set only when /keys/validate answered valid true with the explicit JSON boolean
+        #: ``optimization_only: false``. Absent/malformed never counts as unrestricted.
+        self._key_validation_unrestricted = False
 
         # Authentication state
         self._credentials: AuthCredentials | None = None
@@ -1872,11 +1875,20 @@ class AuthManager:
             return "backend offline mode enabled"
         return "backend egress disabled"
 
+    def _note_explicitly_unrestricted(self, data: Any) -> None:
+        if (
+            isinstance(data, dict)
+            and data.get("valid") is True
+            and data.get("optimization_only") is False
+        ):
+            self._key_validation_unrestricted = True
+
     def _key_validation_success(
         self, url: str, headers: dict[str, str], data: Any, response: Any
     ) -> str | None:
         if _latch_key_validation(url, headers, data):
             self._server_optimization_only = True
+        self._note_explicitly_unrestricted(data)
         return self._interpret_backend_key_validation_response(
             response.status,
             data,
@@ -2040,6 +2052,7 @@ class AuthManager:
                 return "backend returned non-JSON success body"
             if _latch_key_validation(url, headers, data):
                 self._server_optimization_only = True
+            self._note_explicitly_unrestricted(data)
             return self._interpret_backend_key_validation_response(
                 status,
                 data,
