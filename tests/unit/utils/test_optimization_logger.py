@@ -880,6 +880,7 @@ class TestLogSessionEnd:
             (OptimizationStatus.COMPLETED, "completed"),
             (OptimizationStatus.CANCELLED, "cancelled"),
             (OptimizationStatus.FAILED, "failed"),
+            (OptimizationStatus.UNKNOWN, "unknown"),
         ],
     )
     def test_session_end_records_real_terminal_status_3258(

@@ -1227,7 +1227,9 @@ class OptimizationLogger:
             return "failed"
         result_status = getattr(optimization_result, "status", None)
         value = getattr(result_status, "value", result_status)
-        if value in ("failed", "cancelled"):
+        if value in ("failed", "cancelled", "unknown"):
+            # "unknown" is a neutral, non-terminal status: never asserted as
+            # success (types.OptimizationStatus.UNKNOWN, #1302).
             return str(value)
         return "completed"
 
