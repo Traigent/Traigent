@@ -183,7 +183,7 @@ class TestPairedComparisonTest:
     def test_with_epsilon_margin(self) -> None:
         """Epsilon margin affects test outcome."""
         x = [10.0, 10.5, 9.5, 10.2, 10.3]
-        y = [9.0, 9.5, 8.5, 9.2, 9.3]
+        y = [9.0, 9.4, 8.6, 9.2, 9.2]  # non-constant gap (nonzero variance)
 
         # Without epsilon, x > y is significant at alpha=0.05
         result_no_eps = paired_comparison_test(x, y, 0.0, "greater")
@@ -454,42 +454,65 @@ class TestZeroVarianceSignTest:
     def test_small_n_constant_difference_is_not_p_zero(self):
         from traigent.tvl.statistics import paired_comparison_test
 
-        res = paired_comparison_test([1.1] * 5, [1.0] * 5, 0.0, "greater")
+        res = paired_comparison_test(
+            [1.1] * 5, [1.0] * 5, 0.0, "greater", zero_variance="sign"
+        )
         assert res.p_value == 0.5**5
 
     def test_large_n_constant_difference_decided(self):
         from traigent.tvl.statistics import paired_comparison_test
 
-        res = paired_comparison_test([1.1] * 30, [1.0] * 30, 0.0, "greater")
+        res = paired_comparison_test(
+            [1.1] * 30, [1.0] * 30, 0.0, "greater", zero_variance="sign"
+        )
         assert 0.0 < res.p_value < 1e-8
 
     def test_constant_difference_within_epsilon_is_not_rejected(self):
         from traigent.tvl.statistics import paired_comparison_test
 
-        res = paired_comparison_test([1.1] * 30, [1.0] * 30, 0.5, "greater")
+        res = paired_comparison_test(
+            [1.1] * 30, [1.0] * 30, 0.5, "greater", zero_variance="sign"
+        )
         assert res.p_value == 1.0
 
     def test_near_zero_variance_mixed_signs_uses_actual_count(self):
         from traigent.tvl.statistics import paired_comparison_test
 
         x = [1e-15, 3e-15, 3e-15, 3e-15, 3e-15]
-        res = paired_comparison_test(x, [0.0] * 5, 2e-15, "greater")
+        res = paired_comparison_test(
+            x, [0.0] * 5, 2e-15, "greater", zero_variance="sign"
+        )
         # 4 of 5 differences exceed epsilon: P(Bin(5, .5) >= 4) = 6/32
         assert res.p_value == 6 / 32
 
     def test_less_direction_and_negative_epsilon(self):
         from traigent.tvl.statistics import paired_comparison_test
 
-        res = paired_comparison_test([0.9] * 6, [1.0] * 6, 0.0, "less")
+        res = paired_comparison_test(
+            [0.9] * 6, [1.0] * 6, 0.0, "less", zero_variance="sign"
+        )
         assert res.p_value == 0.5**6
         # non-inferiority: diff -0.1 is NOT above -epsilon(-0.5)? it is (> -0.5)
-        res = paired_comparison_test([0.9] * 6, [1.0] * 6, -0.5, "greater")
+        res = paired_comparison_test(
+            [0.9] * 6, [1.0] * 6, -0.5, "greater", zero_variance="sign"
+        )
         assert res.p_value == 0.5**6
-        res = paired_comparison_test([0.9] * 6, [1.0] * 6, -0.05, "greater")
+        res = paired_comparison_test(
+            [0.9] * 6, [1.0] * 6, -0.05, "greater", zero_variance="sign"
+        )
         assert res.p_value == 1.0
 
     def test_huge_n_p_value_never_zero(self):
         from traigent.tvl.statistics import paired_comparison_test
 
-        res = paired_comparison_test([1.1] * 1100, [1.0] * 1100, 0.0, "greater")
+        res = paired_comparison_test(
+            [1.1] * 1100, [1.0] * 1100, 0.0, "greater", zero_variance="sign"
+        )
         assert res.p_value > 0.0
+
+    def test_default_is_inconclusive(self):
+        from traigent.tvl.statistics import paired_comparison_test
+
+        res = paired_comparison_test([1.1] * 30, [1.0] * 30, 0.0, "greater")
+        assert res.p_value == 1.0
+        assert res.zero_variance_inconclusive is True

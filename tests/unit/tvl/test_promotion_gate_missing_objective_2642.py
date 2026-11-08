@@ -42,9 +42,12 @@ def test_missing_objective_rejects(candidate_extra, incumbent_extra) -> None:
 def test_all_objectives_present_still_promotes() -> None:
     inc, cand = _samples()
     harm = [0.01 + 0.001 * (i % 5) for i in range(30)]
+    # Non-degenerate paired evidence: a zero-variance gap is inconclusive and
+    # the gate fails closed on it (#2948).
+    harm_cand = [h + 0.0005 * ((i * 3) % 4) for i, h in enumerate(harm)]
     gate = PromotionGate(POLICY, OBJS)
     decision = gate.evaluate(
         {"accuracy": inc, "harm_rate": harm},
-        {"accuracy": cand, "harm_rate": harm},
+        {"accuracy": cand, "harm_rate": harm_cand},
     )
     assert decision.decision == "promote"

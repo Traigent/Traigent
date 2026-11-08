@@ -207,7 +207,7 @@ class TestContinuousPairedT:
             orientation="maximize",
         )
         assert margin is not None
-        assert margin["test"] == "paired_t"
+        assert margin["test"] in ("paired_t", "sign")
         assert margin["n_configs"] == 2
         assert margin["effective_alpha"] == margin["alpha"]
         assert margin["verdict"] == "clear"
@@ -511,7 +511,7 @@ class TestVerdictRequiresFavorableDirection:
             orientation="maximize",
         )
         assert margin is not None
-        assert margin["test"] == "paired_t"
+        assert margin["test"] == "sign"  # constant -0.30 gap: zero variance (#2948)
         assert margin["n_shared_examples"] == 6
         assert margin["delta"] < 0.0
         assert margin["p_value"] is not None and margin["p_value"] <= 0.05
@@ -778,3 +778,13 @@ class TestZeroVarianceSignTest:
         assert margin is not None
         assert margin["p_value"] > 0.0
         assert margin["verdict"] == "statistical_tie"
+
+    def test_ci_is_point_at_n6_and_widened_below(self):
+        m6 = self._margin(6)
+        assert m6["test"] == "sign"
+        assert m6["verdict"] == "clear"
+        assert m6["ci95"][0] == m6["ci95"][1] > 0.0
+        m5 = self._margin(5)
+        assert m5["verdict"] == "statistical_tie"
+        lo, hi = m5["ci95"]
+        assert lo == 0.0 and hi > 0.0

@@ -8,7 +8,9 @@ from traigent.tvl import ObjectiveSpec, PromotionGate, PromotionPolicy
 from traigent.tvl.models import BandTarget
 
 INC = {"accuracy": [0.80 + 0.001 * (i % 5) for i in range(200)]}
-CAND = {"accuracy": [0.82 + 0.001 * (i % 5) for i in range(200)]}
+CAND = {
+    "accuracy": [0.82 + 0.001 * ((i * 3) % 7) for i in range(200)]
+}  # non-constant gap
 
 
 @pytest.mark.parametrize(

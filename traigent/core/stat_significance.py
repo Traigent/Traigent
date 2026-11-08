@@ -106,6 +106,7 @@ def _holm_significance_matrix(
                 y_samples=worse["values"],
                 epsilon=epsilon,
                 direction=direction,
+                zero_variance="sign",
             )
             pairs.append((i, j))
             # The orientation (i above j) is chosen from the observed data, so
@@ -158,7 +159,9 @@ def find_equivalence_group(
     for small or heavily non-normal samples (binary scores at ``n=50`` measured
     ~0.047 false-winner rate at 8 configs, not exactly ``alpha``) and a
     zero-variance difference vector is decided by an exact sign test in
-    ``traigent.tvl.statistics`` (``p = 0.5**n``, never 0). If no pair is
+    ``traigent.tvl.statistics`` (``zero_variance="sign"``; ``p = 0.5**n``,
+    never 0), which answers "better on more examples than chance", not a mean
+    difference. If no pair is
     significant after correction the result has no winners ("no significant
     winner").
 
@@ -627,9 +630,15 @@ def _paired_t_margin(
     ``0.0``. With few shared examples this cannot reach the multiplicity-
     corrected alpha (n=5 gives 0.0625), so the verdict is ``"statistical_tie"``
     (inconclusive) instead of ``"clear"``. An all-zero difference is a tie
-    (``p = 1.0``). ``ci95`` is the sign-test interval ``[min, max]`` (coverage
-    ``1 - 2**(1 - n)``) when that reaches the corrected confidence, otherwise it
-    is widened to include 0.
+    (``p = 1.0``). In the zero-variance case ``test`` is ``"sign"`` and the sign
+    test answers "better on more examples than chance", not a mean difference.
+    ``ci95`` is the distribution-free order-statistic interval for the median,
+    ``[min, max]`` of the differences (for constant differences ``[d, d]``),
+    whose coverage is ``1 - 2**(1 - n)``; it exists at the corrected confidence
+    only when ``2 * 0.5**n <= effective_alpha`` (``n >= 6`` at 95%). For smaller
+    ``n`` no such interval exists, so the widest honest pair
+    ``[min(0, d), max(0, d)]`` is reported and the verdict is forced to
+    ``"statistical_tie"``.
 
     ``effective_alpha`` is the multiplicity-corrected significance level (see
     :func:`compute_best_config_margin`). It drives BOTH the ``ci95`` interval —
@@ -646,7 +655,8 @@ def _paired_t_margin(
     )
     # Treat float-noise spread (e.g. 0.3 - 0.25 repeated) as zero variance too.
     spread = max(abs(d - mean_diff) for d in diffs)
-    if var_diff <= 0.0 or spread <= 1e-12 * max(1.0, abs(mean_diff)):
+    zero_variance = var_diff <= 0.0 or spread <= 1e-12 * max(1.0, abs(mean_diff))
+    if zero_variance:
         p_value = min(
             1.0,
             2.0
@@ -669,6 +679,7 @@ def _paired_t_margin(
             y_samples=runner_values,
             epsilon=0.0,
             direction="greater",
+            zero_variance="sign",
         )
         p_upper = result.p_value
         p_value = min(1.0, 2.0 * min(p_upper, 1.0 - p_upper))
@@ -677,12 +688,14 @@ def _paired_t_margin(
     verdict, reason = _verdict(
         p_value, ci, effective_alpha, delta=mean_diff, minimize=minimize
     )
+    if zero_variance and p_value > effective_alpha:
+        verdict, reason = "statistical_tie", None
     payload: dict[str, Any] = {
         "delta": mean_diff,
         "ci95": [ci[0], ci[1]],
         "p_value": p_value,
         "verdict": verdict,
-        "test": "paired_t",
+        "test": "sign" if zero_variance else "paired_t",
         "n_shared_examples": n_shared,
     }
     if reason is not None:

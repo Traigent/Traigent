@@ -26,6 +26,9 @@ class PairedComparisonResult:
         effect_size: Estimated effect size (difference in means).
         test_statistic: The computed test statistic.
         degrees_of_freedom: Degrees of freedom for the test.
+        zero_variance_inconclusive: True when the differences had no spread
+            and the caller asked for ``zero_variance="inconclusive"``; the
+            p-value is then forced to 1.0 because a mean cannot be tested.
     """
 
     reject_null: bool
@@ -33,6 +36,7 @@ class PairedComparisonResult:
     effect_size: float
     test_statistic: float
     degrees_of_freedom: int
+    zero_variance_inconclusive: bool = False
 
 
 def benjamini_hochberg_adjust(p_values: Sequence[float]) -> list[float]:
@@ -390,6 +394,7 @@ def paired_comparison_test(
     y_samples: Sequence[float],
     epsilon: float,
     direction: Literal["greater", "less"],
+    zero_variance: Literal["inconclusive", "sign"] = "inconclusive",
 ) -> PairedComparisonResult:
     """Test if x is better than y by at least epsilon using a paired t-test.
 
@@ -407,6 +412,13 @@ def paired_comparison_test(
         y_samples: Samples from the second distribution (must match x_samples length).
         epsilon: The margin/tolerance for the comparison.
         direction: Direction of the test ("greater" or "less").
+        zero_variance: How to decide a zero-variance difference vector, where
+            the t statistic is undefined. ``"inconclusive"`` (default, fails
+            closed for mean-based policy decisions such as the promotion gate)
+            returns ``p_value=1.0`` and sets ``zero_variance_inconclusive``.
+            ``"sign"`` decides it with an exact sign test (see
+            :func:`zero_variance_sign_test_p_value`), which answers "better on
+            more examples than chance", not a mean difference.
 
     Returns:
         PairedComparisonResult with test outcome and statistics.
@@ -423,6 +435,15 @@ def paired_comparison_test(
     df = max(1, n - 1)
 
     if se_diff < 1e-15:
+        if zero_variance == "inconclusive":
+            return PairedComparisonResult(
+                reject_null=False,
+                p_value=1.0,
+                effect_size=mean_diff,
+                test_statistic=0.0,
+                degrees_of_freedom=df,
+                zero_variance_inconclusive=True,
+            )
         return _handle_degenerate_case(differences, epsilon, direction, df)
 
     t_stat, p_value = _compute_test_statistics(
