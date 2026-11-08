@@ -17,6 +17,8 @@ from traigent.config.types import (
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.utils.exceptions import ConfigurationError
 
+pytestmark = pytest.mark.usefixtures("connected_policy_env")
+
 FAIL_CLOSED_MESSAGE_PARTS = (
     "execution_mode=",
     "fails closed",
@@ -434,3 +436,66 @@ def test_explicit_conflicting_execution_options_algorithm_still_raises():
             algorithm="grid",
             execution=ExecutionOptions(offline=True, algorithm="random"),
         )(lambda x: x)
+
+
+@pytest.mark.parametrize(
+    ("offline_env", "offline_mode_env", "expect_offline"),
+    [
+        ("true", None, True),
+        (None, "true", True),
+        ("1", "1", True),
+        (None, "yes", True),
+        (None, None, False),
+        (None, "false", False),
+        ("false", "false", False),
+    ],
+)
+def test_offline_aliases_are_equivalent_for_execution_policy_1773(
+    monkeypatch: pytest.MonkeyPatch,
+    offline_env: str | None,
+    offline_mode_env: str | None,
+    expect_offline: bool,
+) -> None:
+    """TRAIGENT_OFFLINE and TRAIGENT_OFFLINE_MODE both force local-only mode.
+
+    ``is_backend_offline()`` already honored both; the execution policy read
+    only ``TRAIGENT_OFFLINE``, so ``_MODE`` alone resolved ``auto`` to
+    CLOUD_BRAIN and then hard-failed with CloudEgressBlockedError.
+    """
+    for name, value in (
+        ("TRAIGENT_OFFLINE", offline_env),
+        ("TRAIGENT_OFFLINE_MODE", offline_mode_env),
+    ):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+    policy = resolve_execution_policy(algorithm="auto")
+
+    assert policy.offline is expect_offline
+    expected_intent = (
+        ExecutionIntent.LOCAL_ONLY if expect_offline else ExecutionIntent.CLOUD_BRAIN
+    )
+    assert policy.intent is expected_intent
+
+
+def test_offline_mode_alias_rejects_managed_only_algorithm_1773(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+
+    with pytest.raises(ConfigurationError):
+        resolve_execution_policy(algorithm="bayesian")
+
+
+def test_from_environment_honors_offline_mode_alias_1773(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.config.types import TraigentConfig
+
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+
+    assert TraigentConfig.from_environment().offline is True
