@@ -13,8 +13,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import pandas as pd
+try:
+    import numpy as np
+    import pandas as pd
+except ImportError:
+    raise ImportError(
+        "OptimizationAnalyzer requires numpy and pandas. "
+        "Install it with: pip install 'traigent[analytics]'"
+    ) from None
 
 from traigent.utils.file_versioning import FileVersionManager
 from traigent.utils.logging import get_logger

@@ -8,7 +8,7 @@ import json
 import math
 import re
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -2409,7 +2409,7 @@ def export(
             export_data: dict[str, Any] = {
                 "config": result.best_config,
                 "function_name": getattr(result, "function_name", result_name),
-                "exported_at": __import__("datetime").datetime.now().isoformat(),
+                "exported_at": datetime.now(UTC).isoformat(),
                 "traigent_version": __version__,
             }
             if result.best_metrics:
@@ -2422,7 +2422,7 @@ def export(
             export_data = {
                 "config": result.best_config,
                 "function_name": getattr(result, "function_name", result_name),
-                "exported_at": __import__("datetime").datetime.now().isoformat(),
+                "exported_at": datetime.now(UTC).isoformat(),
                 "traigent_version": __version__,
                 "trials": [
                     {
