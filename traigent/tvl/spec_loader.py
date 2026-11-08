@@ -2626,7 +2626,9 @@ def _translate_expression(expression: str) -> str:
         if quote is not None
         else _rewrite_segment(expression[segment_start:])
     )
-    return "".join(out)
+    # The `!` -> " not " rewrite can leave leading/trailing whitespace, which
+    # ast.parse(mode="eval") rejects as "unexpected indent" (#3229).
+    return "".join(out).strip()
 
 
 _ALLOWED_AST_NODES = (
