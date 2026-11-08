@@ -76,6 +76,92 @@ def _extract_text_from_messages_response(body: Mapping[str, Any]) -> str:
     return "".join(pieces).strip()
 
 
+def _resolve_model_id(method: str, model_id: str | None, model: str | None) -> str:
+    """Resolve ``model_id``/``model`` (alias); ``model_id`` wins when both given."""
+    resolved = model_id if model_id is not None else model
+    if resolved is None:
+        raise TypeError(f"BedrockChatClient.{method}() missing required model_id/model")
+    return resolved
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
+
+
+class _StreamState:
+    """Accumulate text and token usage from Anthropic messages stream events.
+
+    Bedrock delivers one JSON event per chunk (``message_start``,
+    ``content_block_delta`` with ``delta.text``, ``message_delta`` with
+    cumulative ``usage.output_tokens``, ``message_stop`` carrying
+    ``amazon-bedrock-invocationMetrics``). Text pieces are passed through
+    verbatim: stripping a piece would drop the whitespace that separates words.
+    """
+
+    def __init__(self) -> None:
+        self.text_parts: list[str] = []
+        self._usage: dict[str, int] = {}
+
+    def feed(self, data: Any) -> str:
+        """Consume one decoded event; return the text piece it carries ('' if none)."""
+        if not isinstance(data, Mapping):
+            return ""
+        event_type = data.get("type")
+        if event_type == "message_start":
+            message = data.get("message")
+            usage = message.get("usage") if isinstance(message, Mapping) else None
+            self._merge_usage(usage)
+        elif event_type == "message_delta":
+            self._merge_usage(data.get("usage"))
+        metrics = data.get("amazon-bedrock-invocationMetrics")
+        if isinstance(metrics, Mapping):
+            self._merge_usage(
+                {
+                    "input_tokens": metrics.get("inputTokenCount"),
+                    "output_tokens": metrics.get("outputTokenCount"),
+                }
+            )
+        if event_type != "content_block_delta":
+            return ""
+        delta = data.get("delta")
+        if not isinstance(delta, Mapping) or delta.get("type") != "text_delta":
+            return ""
+        text = delta.get("text")
+        if not isinstance(text, str) or not text:
+            return ""
+        self.text_parts.append(text)
+        return text
+
+    def _merge_usage(self, usage: Any) -> None:
+        if not isinstance(usage, Mapping):
+            return
+        for key in ("input_tokens", "output_tokens"):
+            value = _int_or_none(usage.get(key))
+            if value is not None:
+                self._usage[key] = value
+
+    @property
+    def text(self) -> str:
+        return "".join(self.text_parts)
+
+    @property
+    def usage(self) -> dict[str, int] | None:
+        return dict(self._usage) if self._usage else None
+
+
+def _decode_stream_event(event: Any) -> Any | None:
+    """Decode a Bedrock stream event's JSON chunk; None when absent/undecodable."""
+    chunk = event.get("chunk") if isinstance(event, Mapping) else None
+    if not chunk:
+        return None
+    try:
+        return json.loads(chunk.get("bytes").decode("utf-8"))
+    except Exception:  # noqa: BLE001 - defensive
+        return None
+
+
 def _ai21_request_messages(
     messages: list[Mapping[str, Any]] | str | Iterable[str],
 ) -> list[dict[str, str]]:
@@ -238,12 +324,7 @@ class BedrockChatClient:
         `model_id` is used.
         Returns normalized `BedrockChatResponse` with text and raw payload.
         """
-        resolved_model_id = model_id if model_id is not None else model
-        if resolved_model_id is None:
-            raise TypeError(
-                "BedrockChatClient.invoke() missing required model_id/model"
-            )
-        model_id = resolved_model_id
+        model_id = _resolve_model_id("invoke", model_id, model)
 
         if self._is_mock_enabled():
             return self._mock_response(model_id)
@@ -335,14 +416,19 @@ class BedrockChatClient:
     def invoke_stream(
         self,
         *,
-        model_id: str,
+        model_id: str | None = None,
+        model: str | None = None,
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
         top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> Generator[str, None, BedrockChatResponse]:  # pragma: no cover - streaming path
-        """Stream chat invocation; yields text chunks and returns final response."""
+        """Stream chat invocation; yields text chunks and returns final response.
+
+        `model` is accepted as an alias for `model_id` (see `invoke`).
+        """
+        model_id = _resolve_model_id("invoke_stream", model_id, model)
         if self._is_mock_enabled():
             response = self._mock_response(model_id)
             if response.text:
@@ -356,7 +442,7 @@ class BedrockChatClient:
             messages, max_tokens, temperature, top_p, extra_params
         )
 
-        final_text_parts: list[str] = []
+        state = _StreamState()
         resp = client.invoke_model_with_response_stream(
             modelId=model_id,
             accept=_JSON_CONTENT_TYPE,
@@ -366,25 +452,15 @@ class BedrockChatClient:
 
         stream = resp.get("body")
         for event in stream if stream is not None else ():
-            chunk = event.get("chunk") if isinstance(event, Mapping) else None
-            if not chunk:
-                continue
-            try:
-                data = json.loads(chunk.get("bytes").decode("utf-8"))
-            except Exception:  # noqa: BLE001 - defensive
-                continue
-            # Extract incremental text if present
-            text_piece = _extract_text_from_messages_response(data)
+            text_piece = state.feed(_decode_stream_event(event))
             if text_piece:
-                final_text_parts.append(text_piece)
                 yield text_piece
 
-        final = "".join(final_text_parts)
         return self._capture_response(
             BedrockChatResponse(
-                text=final,
+                text=state.text,
                 raw={"streamed": True},
-                usage=None,
+                usage=state.usage,
                 model=model_id,
             ),
             model_id=model_id,
@@ -394,7 +470,8 @@ class BedrockChatClient:
     async def ainvoke(
         self,
         *,
-        model_id: str,
+        model_id: str | None = None,
+        model: str | None = None,
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
@@ -404,8 +481,10 @@ class BedrockChatClient:
         """Perform an async non-streaming chat invocation.
 
         Uses aioboto3 for true async or falls back to an isolated sync worker.
+        `model` is accepted as an alias for `model_id` (see `invoke`).
         Returns normalized `BedrockChatResponse` with text and raw payload.
         """
+        model_id = _resolve_model_id("ainvoke", model_id, model)
         if self._is_mock_enabled():
             from traigent.integrations.utils.mock_adapter import MockAdapter
 
@@ -503,7 +582,8 @@ class BedrockChatClient:
     async def ainvoke_stream(
         self,
         *,
-        model_id: str,
+        model_id: str | None = None,
+        model: str | None = None,
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
@@ -516,7 +596,9 @@ class BedrockChatClient:
         wrapped in an executor. In mock mode the native path is never selected,
         so the stream is the same deterministic mock ``invoke_stream`` yields
         whether or not the optional ``aioboto3`` package is installed (#2810).
+        `model` is accepted as an alias for `model_id` (see `invoke`).
         """
+        model_id = _resolve_model_id("ainvoke_stream", model_id, model)
         # Try aioboto3 for true async streaming, unless mock mode is on: the
         # native path would open a provider client instead of returning mock
         # output, and which one runs would depend on an optional install.
@@ -526,6 +608,8 @@ class BedrockChatClient:
                 raise ImportError("mock mode uses the synchronous mock stream")
             import aioboto3  # noqa: F401 - used for availability check and async stream
 
+            start_time = time.perf_counter()
+            state = _StreamState()
             async for chunk in self._ainvoke_stream_aioboto3(
                 model_id=model_id,
                 messages=messages,
@@ -533,8 +617,19 @@ class BedrockChatClient:
                 temperature=temperature,
                 top_p=top_p,
                 extra_params=extra_params,
+                state=state,
             ):
                 yield chunk
+            self._capture_response(
+                BedrockChatResponse(
+                    text=state.text,
+                    raw={"streamed": True},
+                    usage=state.usage,
+                    model=model_id,
+                ),
+                model_id=model_id,
+                start_time=start_time,
+            )
         except ImportError:
             loop = asyncio.get_running_loop()
 
@@ -564,8 +659,10 @@ class BedrockChatClient:
         temperature: float,
         top_p: float | None,
         extra_params: Mapping[str, Any] | None,
+        state: _StreamState | None = None,
     ) -> AsyncGenerator[str, None]:
         """Internal async streaming implementation using aioboto3."""
+        state = state if state is not None else _StreamState()
         import aioboto3
 
         payload = _stream_payload(
@@ -590,13 +687,6 @@ class BedrockChatClient:
             if stream is None:
                 return
             async for event in stream:
-                chunk = event.get("chunk") if isinstance(event, Mapping) else None
-                if not chunk:
-                    continue
-                try:
-                    data = json.loads(chunk.get("bytes").decode("utf-8"))
-                except Exception:  # noqa: BLE001 - defensive
-                    continue
-                text_piece = _extract_text_from_messages_response(data)
+                text_piece = state.feed(_decode_stream_event(event))
                 if text_piece:
                     yield text_piece
