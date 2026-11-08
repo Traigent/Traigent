@@ -62,6 +62,10 @@ def _is_dotted_class_path(target: str) -> bool:
     return len(parts) >= 2 and all(part.isidentifier() for part in parts)
 
 
+class _UnsupportedFrameworkTargetError(Exception):
+    """Target imports but is a non-class or has no registered mapping (#2940)."""
+
+
 def _validate_framework_target(target: str) -> None:
     """Validate a single ``framework_targets`` entry before it is patched.
 
@@ -738,6 +742,10 @@ class FrameworkOverrideManager(BaseOverrideManager):
         try:
             self._override_target_class(target)
             return True, ""
+        except _UnsupportedFrameworkTargetError as e:
+            # Importable but cannot receive injected parameters (#2940):
+            # report as not applied rather than as a silent no-op.
+            return False, str(e)
         except (ImportError, AttributeError) as e:
             # Framework not available; reported once by the caller
             return False, self._describe_import_failure(target, str(e))
@@ -750,7 +758,25 @@ class FrameworkOverrideManager(BaseOverrideManager):
     def _override_target_class(self, target: str) -> None:
         module_path, class_name = target.rsplit(".", 1)
         module = __import__(module_path, fromlist=[class_name])
-        target_class = getattr(module, class_name)
+        resolved = getattr(module, class_name)
+
+        # A target that cannot receive parameters must never be reported as
+        # applied (#2940): patching it would inject nothing.
+        if not isinstance(resolved, type):
+            raise _UnsupportedFrameworkTargetError(
+                f"{target} is a {type(resolved).__name__}, not a class; "
+                "only classes can be overridden"
+                f"{self._supported_targets_hint()}"
+            )
+        if not (
+            self._parameter_mappings.get(target) or self._method_mappings.get(target)
+        ):
+            raise _UnsupportedFrameworkTargetError(
+                f"{target} has no parameter or method mapping, so no tuned "
+                f"parameters would reach it{self._supported_targets_hint()}"
+            )
+
+        target_class: Any = resolved
 
         # Store original constructor
         if not hasattr(target_class, "_traigent_original_init"):
@@ -768,6 +794,14 @@ class FrameworkOverrideManager(BaseOverrideManager):
             self._apply_method_override(target_class, target, method_path)
 
         self.register_active_override(target, target_class)
+
+    def _supported_targets_hint(self) -> str:
+        supported = sorted(
+            t
+            for t in {*self._parameter_mappings, *self._method_mappings}
+            if t not in _BUILTIN_MOCK_TARGETS
+        )
+        return f". Supported targets: {', '.join(supported)}"
 
     @staticmethod
     def _describe_import_failure(target: str, error_msg: str) -> str:
