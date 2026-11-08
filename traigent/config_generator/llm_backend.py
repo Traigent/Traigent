@@ -9,6 +9,7 @@ mode.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from typing import Protocol, runtime_checkable
 
@@ -20,6 +21,26 @@ logger = logging.getLogger(__name__)
 
 class BudgetExhausted(Exception):
     """Raised when the LLM call budget has been exceeded."""
+
+
+class UnmeasurableCostError(RuntimeError):
+    """Raised when the cost of an LLM call cannot be measured.
+
+    Deliberately *not* a ``BudgetExhausted``: callers swallow that one and
+    degrade silently, which would hide that the spend cap cannot be enforced.
+    """
+
+
+def validate_budget_usd(budget_usd: float) -> float:
+    """Return ``budget_usd`` if it is a finite number > 0, else raise ValueError."""
+    if (
+        isinstance(budget_usd, bool)
+        or not isinstance(budget_usd, (int, float))
+        or not math.isfinite(budget_usd)
+        or budget_usd <= 0
+    ):
+        raise ValueError(f"budget_usd must be a finite number > 0, got {budget_usd!r}")
+    return float(budget_usd)
 
 
 @runtime_checkable
@@ -63,7 +84,15 @@ class LiteLLMBackend:
     model:
         LiteLLM model identifier (e.g. ``"gpt-4o-mini"``).
     budget_usd:
-        Maximum total spend for this backend instance.
+        Maximum total spend for this backend instance (finite, > 0).
+
+    Raises
+    ------
+    ValueError
+        If ``budget_usd`` is not a finite number greater than zero.
+    UnmeasurableCostError
+        From ``complete`` if ``model`` has no known price, or a response
+        carries no usable token usage, so the cap cannot be enforced.
     """
 
     def __init__(
@@ -72,7 +101,7 @@ class LiteLLMBackend:
         budget_usd: float = 0.10,
     ) -> None:
         self._model = model
-        self._budget_usd = budget_usd
+        self._budget_usd = validate_budget_usd(budget_usd)
         self._spent_usd: float = 0.0
         self._calls_made: int = 0
         self._lock = threading.Lock()
@@ -105,6 +134,17 @@ class LiteLLMBackend:
                 raise BudgetExhausted("litellm not installed") from exc
 
             configure_litellm_logging(litellm_module=litellm)
+            # Fail closed before spending: the cap is meaningless without a price.
+            try:
+                litellm.cost_per_token(
+                    model=self._model, prompt_tokens=1, completion_tokens=1
+                )
+            except Exception as exc:
+                raise UnmeasurableCostError(
+                    f"No known price for model {self._model!r}; refusing to call "
+                    "it because the --budget cap cannot be enforced"
+                ) from exc
+
             response = litellm.completion(
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
@@ -115,11 +155,31 @@ class LiteLLMBackend:
             self._calls_made += 1
 
             usage = getattr(response, "usage", None)
-            if usage:
-                prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
-                completion_tokens = getattr(usage, "completion_tokens", 0) or 0
-                cost = (prompt_tokens * 0.00000015) + (completion_tokens * 0.0000006)
-                self._spent_usd += cost
+            prompt_tokens = getattr(usage, "prompt_tokens", None)
+            completion_tokens = getattr(usage, "completion_tokens", None)
+            if not all(
+                isinstance(n, int) and not isinstance(n, bool) and n >= 0
+                for n in (prompt_tokens, completion_tokens)
+            ):
+                # Unknown spend must not be counted as free.
+                self._spent_usd = math.inf
+                raise UnmeasurableCostError(
+                    f"Response from {self._model!r} reported no token usage; "
+                    "cannot account for spend against the budget"
+                )
+            try:
+                prompt_cost, completion_cost = litellm.cost_per_token(
+                    model=self._model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+            except Exception as exc:
+                self._spent_usd = math.inf
+                raise UnmeasurableCostError(
+                    f"Could not price a call to {self._model!r}; "
+                    "cannot account for spend against the budget"
+                ) from exc
+            self._spent_usd += prompt_cost + completion_cost
 
             content = response.choices[0].message.content
             return content or ""
