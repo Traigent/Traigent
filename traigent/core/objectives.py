@@ -444,8 +444,11 @@ class ObjectiveSchema:
         # Use provided bounds or objective's bounds
         if min_val is None or max_val is None:
             if obj.bounds:
-                min_val = min_val or obj.bounds[0]
-                max_val = max_val or obj.bounds[1]
+                # ``is None`` per argument: an explicit 0.0 is a real bound.
+                if min_val is None:
+                    min_val = obj.bounds[0]
+                if max_val is None:
+                    max_val = obj.bounds[1]
             else:
                 raise ValueError(
                     f"No bounds provided for normalization of '{objective_name}'"
