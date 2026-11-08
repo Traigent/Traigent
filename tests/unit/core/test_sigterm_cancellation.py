@@ -125,3 +125,49 @@ def test_overlapping_scopes_keep_handler_until_last_exit():
     finally:
         b.__exit__(None, None, None)
     assert signal.getsignal(signal.SIGTERM) is before
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGHUP"), reason="no SIGHUP on this platform")
+def test_sighup_raises_keyboard_interrupt_and_restores_handler():
+    """#3259: a closed terminal (SIGHUP) cancels like SIGTERM."""
+    before_hup = signal.getsignal(signal.SIGHUP)
+    before_term = signal.getsignal(signal.SIGTERM)
+    try:
+        with sigterm_as_cancellation():
+            with pytest.raises(KeyboardInterrupt):
+                signal.raise_signal(signal.SIGHUP)
+        assert signal.getsignal(signal.SIGHUP) is before_hup
+        assert signal.getsignal(signal.SIGTERM) is before_term
+    finally:
+        signal.signal(signal.SIGHUP, before_hup)
+        signal.signal(signal.SIGTERM, before_term)
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGHUP"), reason="no SIGHUP on this platform")
+def test_host_sighup_handler_is_never_overridden_but_sigterm_still_is():
+    calls: list[int] = []
+
+    def host(signum, frame):
+        calls.append(signum)
+
+    prev = signal.signal(signal.SIGHUP, host)
+    try:
+        with sigterm_as_cancellation():
+            assert signal.getsignal(signal.SIGHUP) is host
+            signal.raise_signal(signal.SIGHUP)
+            with pytest.raises(KeyboardInterrupt):
+                signal.raise_signal(signal.SIGTERM)
+        assert calls == [signal.SIGHUP]
+        assert signal.getsignal(signal.SIGHUP) is host
+    finally:
+        signal.signal(signal.SIGHUP, prev)
+
+
+def test_scope_is_a_noop_when_sighup_is_missing(monkeypatch):
+    """Windows has no SIGHUP: SIGTERM handling must still work, no AttributeError."""
+    monkeypatch.delattr(signal, "SIGHUP", raising=False)
+    before = signal.getsignal(signal.SIGTERM)
+    with sigterm_as_cancellation():
+        with pytest.raises(KeyboardInterrupt):
+            signal.raise_signal(signal.SIGTERM)
+    assert signal.getsignal(signal.SIGTERM) is before
