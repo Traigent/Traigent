@@ -508,6 +508,27 @@ class TestExtractLLMMetrics:
             for record in caplog.records
         )
 
+    def test_model_free_response_logs_no_warning_and_cost_unmeasured(
+        self, monkeypatch, caplog
+    ):
+        """#3235: no tokens + no model name is a model-free objective; the
+        per-example skip message must not be a WARNING, but the cost must
+        still be marked unmeasured (never an honest-looking $0)."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        with caplog.at_level("DEBUG"):
+            metrics = extract_llm_metrics("plain string output", model_name=None)
+
+        skipped = [
+            r
+            for r in caplog.records
+            if "Cost calculation skipped: model_name is None/empty" in r.message
+        ]
+        assert skipped, "message should still be emitted at debug"
+        assert all(r.levelname == "DEBUG" for r in skipped)
+        assert metrics.cost.unmeasured is True
+
     def test_extract_llm_metrics_survives_raising_model_property(
         self, monkeypatch, caplog
     ):

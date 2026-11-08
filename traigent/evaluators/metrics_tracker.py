@@ -2537,13 +2537,22 @@ def _skip_cost_for_unnamed_model(
             "TRAIGENT_STRICT_COST_ACCOUNTING=false to accept $0 for "
             "calls that cannot be priced."
         )
-    logger.warning(
+    # No tokens were captured: a model-free objective (plain function, cached
+    # lookup, deterministic scorer). Nothing was spent, the example is marked
+    # cost-unmeasured by the caller, and the per-trial and run-level warnings
+    # already carry the actionable text, so a per-example WARNING is only
+    # noise that scales with trials x examples (Traigent#3235). Captured
+    # tokens with no model name stay a WARNING: that is real, unpriced spend.
+    input_tokens = metrics.tokens.input_tokens
+    output_tokens = metrics.tokens.output_tokens
+    log_skip = logger.warning if input_tokens > 0 or output_tokens > 0 else logger.debug
+    log_skip(
         "Cost calculation skipped: model_name is None/empty. "
         "Ensure the optimization config includes a 'model' key or "
         "the LLM response exposes the model name. "
         "tokens=(in=%d, out=%d)",
-        metrics.tokens.input_tokens,
-        metrics.tokens.output_tokens,
+        input_tokens,
+        output_tokens,
     )
 
 
