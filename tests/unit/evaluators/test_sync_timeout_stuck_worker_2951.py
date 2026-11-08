@@ -80,7 +80,7 @@ async def test_stuck_workers_are_bounded_and_skips_are_counted_as_timeouts() -> 
             assert result.errors[i].startswith(
                 "Sync evaluator worker lane unavailable after 0.05s"
             )
-            assert "2 timed-out worker(s) still running" in result.errors[i]
+            assert "1 timed-out worker(s) still running" in result.errors[i]
         # Bound: 1 lane + 1 retired stuck worker => never more than 2 threads.
         assert sorted(gate.started) == [0, 1]
         assert _count(result.errors) == 4
@@ -123,7 +123,7 @@ async def test_held_lane_is_retired_when_stuck_capacity_returns() -> None:
     try:
         assert (await run(lambda: first.wait(5)))[1].startswith("Function call")
         assert (await run(lambda: second.wait(5)))[1].startswith("Function call")
-        assert evaluator._timed_out_worker_count() == 2
+        assert len(evaluator._held_timed_out) == 1 and evaluator._stuck_workers == 1
         first.set()
         for _ in range(200):
             if evaluator._held_timed_out == []:
@@ -162,3 +162,39 @@ async def test_plain_lane_contention_is_not_counted_as_a_timeout() -> None:
     finally:
         release.set()
         await holder
+
+
+@pytest.mark.asyncio
+async def test_retired_worker_does_not_make_unrelated_contention_a_timeout() -> None:
+    a_release, b_release = threading.Event(), threading.Event()
+    evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1, timeout=0.05)
+
+    async def run(fn, apply_timeout=True):
+        return await evaluator._execute_sync_in_thread(
+            fn,
+            {},
+            (),
+            {},
+            None,
+            None,
+            apply_timeout=apply_timeout,
+            bound_lane_wait=True,
+        )
+
+    b_task = None
+    try:
+        # A times out and is retired, freeing the lane.
+        assert (await run(lambda: a_release.wait(5)))[1].startswith("Function call")
+        assert evaluator._stuck_workers == 1
+        # B (no timeout) takes the freed lane and holds it.
+        b_task = asyncio.create_task(run(lambda: b_release.wait(5), False))
+        await asyncio.sleep(0.02)
+        # C cannot get a lane: plain contention, not a timeout.
+        _, error = await run(lambda: 1)
+        assert error == "Sync evaluator worker lane busy after 0.05s"
+        assert _count([error]) == 0
+    finally:
+        a_release.set()
+        b_release.set()
+        if b_task is not None:
+            await b_task

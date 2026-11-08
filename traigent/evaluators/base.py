@@ -2953,10 +2953,10 @@ class BaseEvaluator(ABC):
         if release_slot:
             self._release_semaphore()
 
-    def _timed_out_worker_count(self) -> int:
-        """Timed-out sync workers still running (retired or lane-holding)."""
+    def _lane_holding_timed_out_count(self) -> int:
+        """Timed-out sync workers that still hold a lane (not retired)."""
         with self._stuck_lock:
-            return self._stuck_workers + len(self._held_timed_out)
+            return len(self._held_timed_out)
 
     def _on_sync_worker_done(
         self,
@@ -3076,7 +3076,7 @@ class BaseEvaluator(ABC):
             )
             slot_acquired = await self._acquire_sync_worker_slot(lane_timeout)
             if not slot_acquired:
-                stuck = self._timed_out_worker_count()
+                stuck = self._lane_holding_timed_out_count()
                 if stuck:
                     error_msg = (
                         f"{EXAMPLE_LANE_UNAVAILABLE_ERROR_PREFIX} after "
