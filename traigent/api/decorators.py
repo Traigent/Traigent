@@ -2897,6 +2897,89 @@ def _collect_optimize_settings(
     return combined_settings, remaining_overrides, inline_params
 
 
+def _validate_flat_bundle_options(
+    *,
+    eval_dataset: Any,
+    custom_evaluator: Any,
+    scoring_function: Any,
+    metric_functions: Any,
+    config_param: Any,
+    auto_override_frameworks: Any,
+    framework_targets: Any,
+    effectuation: Any,
+) -> dict[str, Any]:
+    """Run flat ``@optimize`` kwargs through the grouped-bundle models.
+
+    ``evaluation=`` / ``injection=`` bundles are validated by pydantic at
+    decoration time; the same options passed flat used to skip that and fail
+    later (or never). Validating the flat values with the very same models keeps
+    one source of truth, so both spellings reject a bad value identically and
+    the error names the argument (#2922).
+
+    Returns:
+        The model-validated value for every flat option that was given, keyed by
+        option name, so a flat value behaves exactly like its bundled form
+        (tuple dataset -> list, ``"no"`` -> ``False``). Options left ``None`` are
+        absent from the result.
+    """
+    # Materialise a one-shot iterable so validation does not consume it; a bare
+    # string is left alone so the model rejects it by name.
+    if framework_targets is not None and not isinstance(
+        framework_targets, (str, bytes, dict, list)
+    ):
+        try:
+            framework_targets = list(framework_targets)
+        except TypeError:
+            pass
+    evaluation_fields = {
+        name: value
+        for name, value in (
+            ("eval_dataset", eval_dataset),
+            ("custom_evaluator", custom_evaluator),
+            ("scoring_function", scoring_function),
+            ("metric_functions", metric_functions),
+        )
+        if value is not None
+    }
+    injection_fields = {
+        name: value
+        for name, value in (
+            ("config_param", config_param),
+            ("auto_override_frameworks", auto_override_frameworks),
+            ("framework_targets", framework_targets),
+            ("effectuation", effectuation),
+        )
+        if value is not None
+    }
+    validated: dict[str, Any] = {}
+    if evaluation_fields:
+        evaluation = EvaluationOptions.model_validate(evaluation_fields)
+        validated.update({k: getattr(evaluation, k) for k in evaluation_fields})
+    if injection_fields:
+        injection = InjectionOptions.model_validate(injection_fields)
+        validated.update({k: getattr(injection, k) for k in injection_fields})
+    return validated
+
+
+def _validate_default_config(default_config: Any) -> None:
+    """Fail at decoration when ``default_config`` is not a finite-valued dict."""
+    if default_config is None:
+        return
+    if not isinstance(default_config, dict):
+        raise TypeError(
+            f"default_config must be a dict or None, got {type(default_config).__name__}"
+        )
+    for key, value in default_config.items():
+        if not isinstance(key, str):
+            raise TypeError(
+                f"default_config keys must be strings, got {type(key).__name__}"
+            )
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(
+                f"default_config[{key!r}] cannot be NaN or Infinity (got {value})"
+            )
+
+
 def _validate_framework_targets(framework_targets: Any) -> None:
     if not framework_targets:
         return
@@ -3541,6 +3624,7 @@ def optimize(  # NOSONAR(S107)
     objectives = combined_settings["objectives"]
     configuration_space = combined_settings["configuration_space"]
     default_config = combined_settings["default_config"]
+    _validate_default_config(default_config)
     constraints = combined_settings["constraints"]
     safety_constraints = combined_settings["safety_constraints"]
 
@@ -3578,7 +3662,6 @@ def optimize(  # NOSONAR(S107)
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
-    _validate_framework_targets(framework_targets)
     effectuation = combined_settings["effectuation"]
     algorithm_value = validate_algorithm_name(combined_settings["algorithm"])
     offline_value = _require_bool_offline(combined_settings["offline"])
@@ -3601,6 +3684,27 @@ def optimize(  # NOSONAR(S107)
     custom_evaluator = combined_settings["custom_evaluator"]
     scoring_function = combined_settings["scoring_function"]
     metric_functions = combined_settings["metric_functions"]
+    flat_validated = _validate_flat_bundle_options(
+        eval_dataset=eval_dataset,
+        custom_evaluator=custom_evaluator,
+        scoring_function=scoring_function,
+        metric_functions=metric_functions,
+        config_param=config_param,
+        auto_override_frameworks=auto_override_frameworks,
+        framework_targets=framework_targets,
+        effectuation=effectuation,
+    )
+    eval_dataset = flat_validated.get("eval_dataset", eval_dataset)
+    custom_evaluator = flat_validated.get("custom_evaluator", custom_evaluator)
+    scoring_function = flat_validated.get("scoring_function", scoring_function)
+    metric_functions = flat_validated.get("metric_functions", metric_functions)
+    config_param = flat_validated.get("config_param", config_param)
+    framework_targets = flat_validated.get("framework_targets", framework_targets)
+    # The boolean flags are coerced only AFTER bundle resolution: coercing first
+    # would turn a flat "no" into the default False and let a conflicting
+    # injection= bundle win silently instead of raising the conflict error.
+    flat_auto_override = auto_override_frameworks
+    flat_effectuation = effectuation
     tvl_spec_value = combined_settings["tvl_spec"]
     tvl_environment_value = combined_settings["tvl_environment"]
     # Multi-agent configuration
@@ -3715,6 +3819,14 @@ def optimize(  # NOSONAR(S107)
         effectuation,
         defaults,
     )
+    if auto_override_frameworks is flat_auto_override:
+        auto_override_frameworks = flat_validated.get(
+            "auto_override_frameworks", auto_override_frameworks
+        )
+    if effectuation is flat_effectuation:
+        effectuation = flat_validated.get("effectuation", effectuation)
+    # Validate the effective targets (flat or bundled) once, at decoration.
+    _validate_framework_targets(framework_targets)
 
     base_execution_options = ResolvedExecutionOptions(
         algorithm=algorithm_value,
