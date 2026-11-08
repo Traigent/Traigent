@@ -221,9 +221,11 @@ class TestPlatformParameterOverrides:
         # Verify parameters were overridden correctly
         assert client.kwargs["model"] == "claude-3-opus-20240229"
         assert client.kwargs["temperature"] == 0.7
-        assert (
-            client.kwargs["max_tokens_to_sample"] == 2000
-        )  # Note: mapped to max_tokens_to_sample
+        # max_tokens is a per-call parameter for Anthropic (messages.create),
+        # not a constructor kwarg, and the legacy max_tokens_to_sample name
+        # must never be injected (#2923).
+        assert "max_tokens" not in client.kwargs
+        assert "max_tokens_to_sample" not in client.kwargs
         assert client.kwargs["top_p"] == 0.95
         assert client.kwargs["top_k"] == 50
         assert client.kwargs["stop_sequences"] == ["END", "STOP"]
@@ -381,7 +383,7 @@ class TestContextManagement:
             )
 
             # Verify platform-specific mappings
-            assert anthropic_client.kwargs["max_tokens_to_sample"] == 2000
+            assert "max_tokens_to_sample" not in anthropic_client.kwargs
             assert anthropic_client.cohere_client.kwargs["max_tokens"] == 2000
             assert (
                 anthropic_client.cohere_client.hf_pipeline.kwargs["max_new_tokens"]
@@ -441,7 +443,7 @@ class TestContextManagement:
             assert huggingface.kwargs["temperature"] == 0.6
 
             # Verify platform-specific mappings
-            assert anthropic.kwargs["max_tokens_to_sample"] == 1500
+            assert "max_tokens_to_sample" not in anthropic.kwargs
             assert cohere.kwargs["max_tokens"] == 1500
             assert huggingface.kwargs["max_new_tokens"] == 1500
 
@@ -654,10 +656,7 @@ class TestAdvancedFeatures:
                 assert (
                     anthropic_client.kwargs["temperature"] == config_dict["temperature"]
                 )
-                assert (
-                    anthropic_client.kwargs["max_tokens_to_sample"]
-                    == config_dict["max_tokens"]
-                )
+                assert "max_tokens_to_sample" not in anthropic_client.kwargs
 
                 # Verify Cohere parameters
                 assert cohere_client.kwargs["model"] == config_dict["model"]
@@ -727,7 +726,7 @@ class TestCompatibilityScenarios:
             ("openai.OpenAI", ["model", "temperature", "max_tokens", "top_p"]),
             (
                 "anthropic.Anthropic",
-                ["model", "temperature", "max_tokens_to_sample", "top_p"],
+                ["model", "temperature", "top_p"],
             ),
             ("cohere.Client", ["model", "temperature", "max_tokens", "p"]),
             (
