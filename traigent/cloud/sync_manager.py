@@ -799,7 +799,7 @@ class SyncManager:
             if (
                 isinstance(key, str)
                 and len(key) <= _MAX_EXAMPLE_METRIC_KEY_LENGTH
-                and _EXAMPLE_METRIC_KEY_RE.match(key)
+                and _EXAMPLE_METRIC_KEY_RE.fullmatch(key)
                 and cls._is_finite_number(value)
                 and len(clean) < _MAX_EXAMPLE_METRICS
             ):

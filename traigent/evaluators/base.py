@@ -2576,7 +2576,7 @@ class BaseEvaluator(ABC):
         when the key is fine but the value is not a finite non-bool number.
         """
         for key, value in candidate.items():
-            if not isinstance(key, str) or not USER_METRIC_KEY_PATTERN.match(key):
+            if not isinstance(key, str) or not USER_METRIC_KEY_PATTERN.fullmatch(key):
                 return key, value, True
             if (
                 isinstance(value, bool)

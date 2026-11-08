@@ -161,7 +161,7 @@ class ExampleMeasure:
     """
 
     MAX_METRICS = 50
-    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$")
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$", re.ASCII)
 
     def __init__(self, data: dict[str, Any]) -> None:
         """Initialize from a nested measure dict.
@@ -201,7 +201,7 @@ class ExampleMeasure:
             # Keys must be Python identifiers
             if not isinstance(key, str):
                 raise ValueError(f"metric key must be string, got {type(key).__name__}")
-            if not self.KEY_PATTERN.match(key):
+            if not self.KEY_PATTERN.fullmatch(key):
                 raise ValueError(
                     f"metric key '{key}' must match pattern ^[a-zA-Z_]\\w*$"
                 )
@@ -317,7 +317,7 @@ class MeasuresDict(UserDict):
                 raise TypeError(f"Measure key must be string, got {type(key).__name__}")
 
             # NEW: Validate key pattern (Python identifier syntax)
-            if not self.KEY_PATTERN.match(key):
+            if not self.KEY_PATTERN.fullmatch(key):
                 raise ValueError(
                     f"Measure key '{key}' must match pattern ^[a-zA-Z_]\\w*$ "
                     f"(Python identifier syntax). "
@@ -354,7 +354,7 @@ class MeasuresDict(UserDict):
             raise TypeError(f"Key must be string, got {type(key).__name__}")
 
         # NEW: Validate key pattern (Python identifier syntax)
-        if not self.KEY_PATTERN.match(key):
+        if not self.KEY_PATTERN.fullmatch(key):
             raise ValueError(
                 f"Measure key '{key}' must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$ "
                 f"(Python identifier syntax). "
