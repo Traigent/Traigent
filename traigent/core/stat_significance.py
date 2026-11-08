@@ -27,6 +27,7 @@ from traigent.tvl.statistics import (
     _inverse_normal_cdf,
     holm_bonferroni_adjust,
     paired_comparison_test,
+    zero_variance_sign_test_p_value,
 )
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
@@ -156,8 +157,8 @@ def find_equivalence_group(
     it cannot repair the underlying paired t-test. That test is approximate
     for small or heavily non-normal samples (binary scores at ``n=50`` measured
     ~0.047 false-winner rate at 8 configs, not exactly ``alpha``) and a
-    zero-variance difference vector is decided by the degenerate-case handler
-    in ``traigent.tvl.statistics``, which can yield p=0. If no pair is
+    zero-variance difference vector is decided by an exact sign test in
+    ``traigent.tvl.statistics`` (``p = 0.5**n``, never 0). If no pair is
     significant after correction the result has no winners ("no significant
     winner").
 
@@ -618,8 +619,16 @@ def _paired_t_margin(
 
     Reuses :func:`~traigent.tvl.statistics.paired_comparison_test` (one-sided,
     ``epsilon=0``) and converts to a two-sided p-value. The zero-variance case
-    is handled directly: a constant non-zero difference is a perfectly
-    consistent (significant) win; an all-zero difference is a perfect tie.
+    is decided by an exact sign test on the paired differences (the t statistic
+    is undefined at zero variance): a constant non-zero difference puts all ``n``
+    pairs on one side, giving two-sided ``p = 2 * 0.5**n`` (valid under only
+    independent pairs; see
+    :func:`~traigent.tvl.statistics.zero_variance_sign_test_p_value`), never
+    ``0.0``. With few shared examples this cannot reach the multiplicity-
+    corrected alpha (n=5 gives 0.0625), so the verdict is ``"statistical_tie"``
+    (inconclusive) instead of ``"clear"``. An all-zero difference is a tie
+    (``p = 1.0``). The ``ci95`` point ``(d, d)`` is the sign-test interval
+    ``[min, max]``, which has confidence ``1 - 2**(1 - n)`` only.
 
     ``effective_alpha`` is the multiplicity-corrected significance level (see
     :func:`compute_best_config_margin`). It drives BOTH the ``ci95`` interval —
@@ -634,8 +643,20 @@ def _paired_t_margin(
         if n_shared > 1
         else 0.0
     )
-    if var_diff <= 0.0:
-        p_value = 1.0 if abs(mean_diff) <= 1e-12 else 0.0
+    # Treat float-noise spread (e.g. 0.3 - 0.25 repeated) as zero variance too.
+    spread = max(abs(d - mean_diff) for d in diffs)
+    if var_diff <= 0.0 or spread <= 1e-12 * max(1.0, abs(mean_diff)):
+        p_value = (
+            1.0
+            if abs(mean_diff) <= 1e-12
+            else min(
+                1.0,
+                2.0
+                * zero_variance_sign_test_p_value(
+                    n_shared, abs(mean_diff), 0.0, "greater"
+                ),
+            )
+        )
         ci: tuple[float, float] = (mean_diff, mean_diff)
     else:
         result = paired_comparison_test(

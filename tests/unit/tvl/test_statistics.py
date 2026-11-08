@@ -446,3 +446,25 @@ class TestCalculateHypervolume:
         hv = _calculate_hypervolume(pareto_front, reference, directions)
         # After normalization, upper_bound[0] - ref[0] <= 0
         assert abs(hv) < 1e-10
+
+
+class TestZeroVarianceSignTest:
+    """#2948: zero-variance paired differences use an exact sign test, never p=0."""
+
+    def test_small_n_constant_difference_is_not_p_zero(self):
+        from traigent.tvl.statistics import paired_comparison_test
+
+        res = paired_comparison_test([1.1] * 5, [1.0] * 5, 0.0, "greater")
+        assert res.p_value == 0.5**5
+
+    def test_large_n_constant_difference_decided(self):
+        from traigent.tvl.statistics import paired_comparison_test
+
+        res = paired_comparison_test([1.1] * 30, [1.0] * 30, 0.0, "greater")
+        assert 0.0 < res.p_value < 1e-8
+
+    def test_constant_difference_within_epsilon_is_not_rejected(self):
+        from traigent.tvl.statistics import paired_comparison_test
+
+        res = paired_comparison_test([1.1] * 30, [1.0] * 30, 0.5, "greater")
+        assert res.p_value == 1.0

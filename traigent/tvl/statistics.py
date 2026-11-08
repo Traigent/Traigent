@@ -423,7 +423,7 @@ def paired_comparison_test(
     df = max(1, n - 1)
 
     if se_diff < 1e-15:
-        return _handle_degenerate_case(mean_diff, epsilon, direction, df)
+        return _handle_degenerate_case(mean_diff, epsilon, direction, df, n)
 
     t_stat, p_value = _compute_test_statistics(
         mean_diff, epsilon, se_diff, direction, df
@@ -459,17 +459,50 @@ def _compute_difference_stats(differences: list[float], n: int) -> tuple[float, 
     return mean_diff, var_diff
 
 
+def zero_variance_sign_test_p_value(
+    n: int,
+    effect_size: float,
+    epsilon: float,
+    direction: Literal["greater", "less"],
+) -> float:
+    """One-sided exact sign-test p-value for a zero-variance difference vector.
+
+    When every paired difference equals the same value ``d`` the t statistic is
+    undefined (zero standard error), so a t-test cannot decide the case. The
+    exact sign test on the differences is valid instead. For ``direction ==
+    "greater"`` the null is ``P(diff > epsilon) <= 1/2`` (median difference at
+    most ``epsilon``). If ``d > epsilon`` all ``n`` pairs fall on the alternative
+    side, and under the null that happens with probability at most ``0.5**n``, so
+    ``p = 0.5**n`` is an exact (conservative) p-value that assumes only
+    independent pairs, not normality. ``"less"`` mirrors this with ``d <
+    -epsilon``. Otherwise no pair favors the alternative and ``p = 1.0``.
+
+    The p-value is never 0: with ``n = 5`` the smallest attainable one-sided
+    value is ``0.03125`` (``0.0625`` two-sided), so a tiny sample cannot yield
+    a spuriously certain result.
+    """
+    reject = effect_size > epsilon if direction == "greater" else effect_size < -epsilon
+    return 0.5 ** max(1, n) if reject else 1.0
+
+
 def _handle_degenerate_case(
     effect_size: float,
     epsilon: float,
     direction: Literal["greater", "less"],
     df: int,
+    n: int,
 ) -> PairedComparisonResult:
-    """Handle degenerate case with zero variance."""
-    reject = effect_size > epsilon if direction == "greater" else effect_size < -epsilon
+    """Decide the zero-variance case with an exact sign test.
+
+    See :func:`zero_variance_sign_test_p_value`. ``reject_null`` is deprecated
+    and left ``False`` like the non-degenerate path, so callers must compare
+    ``p_value`` with their own alpha.
+    """
+    p_value = zero_variance_sign_test_p_value(n, effect_size, epsilon, direction)
+    reject = p_value < 1.0
     return PairedComparisonResult(
-        reject_null=reject,
-        p_value=0.0 if reject else 1.0,
+        reject_null=False,
+        p_value=p_value,
         effect_size=effect_size,
         test_statistic=float("inf") if reject else 0.0,
         degrees_of_freedom=df,

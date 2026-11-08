@@ -732,3 +732,47 @@ class TestMultiplicityCorrection:
         assert margin["verdict"] == "clear"
         lo, hi = margin["ci95"]
         assert lo > 0.0 or hi < 0.0
+
+
+class TestZeroVarianceSignTest:
+    """#2948: a zero-variance paired gap must not report p=0 / "clear" at tiny n."""
+
+    @staticmethod
+    def _margin(n: int, gap: float = 0.05, n_configs: int = 2):
+        base = [0.5 + 0.01 * i for i in range(n)]
+        trials = [_trial("w", {"p": 0}, "score", [v + gap for v in base])]
+        for k in range(1, n_configs):
+            trials.append(_trial(f"r{k}", {"p": k}, "score", list(base)))
+        return compute_best_config_margin(
+            trials,
+            winner_trial_id="w",
+            winner_config={"p": 0},
+            primary_objective="score",
+            orientation="maximize",
+        )
+
+    def test_small_n_constant_gap_is_not_clear(self):
+        margin = self._margin(5, n_configs=12)
+        assert margin is not None
+        assert margin["p_value"] > 0.0
+        assert margin["p_value"] == 2 * 0.5**5
+        assert margin["verdict"] == "statistical_tie"
+
+    def test_small_n_two_configs_not_clear_at_alpha_05(self):
+        margin = self._margin(5)
+        assert margin is not None
+        assert margin["p_value"] == 0.0625
+        assert margin["verdict"] == "statistical_tie"
+
+    def test_large_n_constant_gap_still_clear(self):
+        margin = self._margin(30)
+        assert margin is not None
+        assert 0.0 < margin["p_value"] <= 2 * 0.5**30 + 1e-18
+        assert margin["verdict"] == "clear"
+        assert margin["delta"] > 0.0
+
+    def test_large_n_constant_negative_gap_not_clear_for_winner(self):
+        margin = self._margin(30, gap=-0.05)
+        assert margin is not None
+        assert margin["p_value"] > 0.0
+        assert margin["verdict"] == "statistical_tie"
