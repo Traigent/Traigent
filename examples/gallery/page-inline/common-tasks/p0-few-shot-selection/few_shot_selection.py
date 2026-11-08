@@ -62,7 +62,7 @@ except Exception:
 
 
 try:
-    from langchain.schema import HumanMessage  # type: ignore
+    from langchain_core.messages import HumanMessage  # type: ignore
 except Exception:
 
     class HumanMessage:  # type: ignore
