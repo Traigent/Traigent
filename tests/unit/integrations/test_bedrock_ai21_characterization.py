@@ -41,7 +41,9 @@ def test_request_envelope_fields():
     client, mock = _client({"choices": [{"message": {"content": "x"}}]})
     _call(client)
     body, kwargs = _sent(mock)
-    assert set(body) == {"messages"}
+    assert set(body) == {"messages", "max_tokens", "temperature"}
+    assert body["max_tokens"] == 8
+    assert body["temperature"] == 0.1
     assert kwargs["modelId"] == "ai21.jamba"
     assert kwargs["accept"] == kwargs["contentType"] == "application/json"
 
