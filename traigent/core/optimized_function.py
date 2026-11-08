@@ -106,6 +106,7 @@ from traigent.core.optimization_pipeline import (
     resolve_execution_parameters,
 )
 from traigent.core.orchestrator import OptimizationOrchestrator, _safe_exception_text
+from traigent.core.seed_configs import validate_seed_configs
 from traigent.core.stop_conditions import NoUsageCapturedStopCondition
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import (
@@ -2396,6 +2397,7 @@ class OptimizedFunction[**P, R]:
         eval_dataset: (
             str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
         ) = None,
+        seed_configs: Sequence[Mapping[str, Any]] | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization on the function.
@@ -2463,6 +2465,23 @@ class OptimizedFunction[**P, R]:
                 same way as the decorator's ``eval_dataset``. Not forwarded to
                 ``algorithm_kwargs``. With ``resume_from``, prior trials are reused
                 only when their dataset fingerprint matches this dataset.
+            seed_configs: Known-good starting configurations (issue #1665),
+                e.g. ``[{"model": "m1", "top_k": 15}]``. Each seed is run as a
+                trial before the optimizer suggests anything, in the order
+                given (after the decorator's ``default_config`` baseline, if
+                any), so with no ``default_config`` trial 1 is the first seed.
+                Seeds count toward ``max_trials`` and are recorded and
+                submitted like any other trial. Local optimizers (grid,
+                random) never re-propose a seed; for backend-guided
+                algorithms such as ``bayesian`` the seeds are evaluated first
+                but are not guaranteed to inform the remote surrogate.
+                A seed already seen under a ``cache_policy`` that filters
+                repeats is skipped, and the run continues. Every seed must name each declared parameter and hold
+                an in-space value; unknown keys, out-of-space values and
+                duplicates raise ``ValueError`` (the message names the seed's
+                position and the declared parameter names, never the supplied
+                values). To warm-start from a previous run's trials, see
+                ``resume_from``.
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -2505,6 +2524,7 @@ class OptimizedFunction[**P, R]:
             "resume_from": resume_from,
             "allow_unverified_resume": allow_unverified_resume,
             "eval_dataset": eval_dataset,
+            "seed_configs": seed_configs,
             "algorithm_kwargs": algorithm_kwargs,
         }
         from traigent.utils.cost_calculator import cost_run_scope
@@ -2538,6 +2558,7 @@ class OptimizedFunction[**P, R]:
         resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
         allow_unverified_resume: bool = False,
         eval_dataset: Any = None,
+        seed_configs: Sequence[Mapping[str, Any]] | None = None,
         algorithm_kwargs: dict[str, Any],
     ) -> OptimizationResult:
         """Body of :meth:`optimize` for one advancing run."""
@@ -2657,6 +2678,7 @@ class OptimizedFunction[**P, R]:
                         resume_from, algorithm, allow_unverified_resume
                     ),
                     call_dataset=per_call_dataset,
+                    seed_configs=seed_configs,
                     **({} if snapshot_run is None else {"snapshot_run": snapshot_run}),
                 )
                 # Inside the run scope: a cost objective that measured no
@@ -2703,6 +2725,7 @@ class OptimizedFunction[**P, R]:
         eval_dataset: (
             str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
         ) = None,
+        seed_configs: Sequence[Mapping[str, Any]] | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization synchronously (convenience wrapper).
@@ -2734,6 +2757,8 @@ class OptimizedFunction[**P, R]:
             resume_from: Resume a local run from a prior result; see
                 :meth:`optimize`.
             allow_unverified_resume: Unsafe opt-in; see :meth:`optimize`.
+            seed_configs: Starting configurations evaluated first; see
+                :meth:`optimize`.
             **algorithm_kwargs: Additional algorithm parameters
 
         Returns:
@@ -2782,6 +2807,7 @@ class OptimizedFunction[**P, R]:
             resume_from=resume_from,
             allow_unverified_resume=allow_unverified_resume,
             eval_dataset=eval_dataset,
+            seed_configs=seed_configs,
             **algorithm_kwargs,
         )
 
@@ -4118,6 +4144,7 @@ class OptimizedFunction[**P, R]:
         execution_budget: ExecutionBudget | None = None,
         custom_evaluator: Callable[..., Any] | None = None,
         snapshot_g1_required: bool = False,
+        seed_configs: list[dict[str, Any]] | None = None,
     ) -> OptimizationResult | None:
         """Try cloud-brain execution, returning None for allowed local fallback."""
 
@@ -4211,6 +4238,8 @@ class OptimizedFunction[**P, R]:
                 snapshot_g1_required=snapshot_g1_required,
             )
             orchestrator._cloud_guidance_client = cloud_client
+            if seed_configs:
+                orchestrator.set_seed_configs(seed_configs)
             return await self._run_and_finalize_optimization(
                 orchestrator=orchestrator,
                 dataset=dataset,
@@ -4591,6 +4620,7 @@ Remediation:
         resume_source: OptimizationResult | None = None,
         call_dataset: Dataset | None = None,
         snapshot_run: Any = None,
+        seed_configs: Sequence[Mapping[str, Any]] | None = None,
     ) -> OptimizationResult:
         """Execute optimization assuming objective schema is already resolved.
 
@@ -4633,6 +4663,10 @@ Remediation:
             fallback_algorithm=cast(str, getattr(self, "algorithm", "grid")),
             fallback_max_trials=getattr(self, "max_trials", None),
             default_config=self.default_config,
+        )
+        # Fail before any dataset load, egress or trial (issue #1665).
+        validated_seed_configs = validate_seed_configs(
+            seed_configs, effective_config_space
         )
         used_implicit_default_max_trials = (
             requested_max_trials is None
@@ -4753,6 +4787,7 @@ Remediation:
             execution_budget=execution_budget,
             custom_evaluator=custom_evaluator,
             snapshot_g1_required=g1_required,
+            seed_configs=validated_seed_configs,
         )
         if cloud_result is not None:
             return cloud_result
@@ -4814,6 +4849,9 @@ Remediation:
             snapshot_g1_required=g1_required,
             snapshot_g1_pending=g1_pending,
         )
+
+        if validated_seed_configs:
+            orchestrator.set_seed_configs(validated_seed_configs)
 
         OptimizedFunction._prepare_orchestrator_run(
             self,

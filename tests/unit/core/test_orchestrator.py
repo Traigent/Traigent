@@ -1148,6 +1148,56 @@ class TestOptimizationOrchestrator:
         assert len(mock_optimizer.suggested_configs) == 2
 
     @pytest.mark.asyncio
+    async def test_seed_result_is_submitted_before_next_suggestion_1665(
+        self, mock_optimizer, mock_evaluator, mock_function, sample_dataset
+    ):
+        """A seed's result goes through the ordinary trial-submission path, and
+        is submitted before the optimizer is asked for the next suggestion."""
+        seed = {"param1": 7, "param2": "value_b"}
+        mock_optimizer.set_max_suggestions(10)
+        events: list[tuple[str, Any]] = []
+        original_suggest = mock_optimizer.suggest_next_trial
+
+        def recording_suggest(history):
+            events.append(("suggest", len(history)))
+            return original_suggest(history)
+
+        mock_optimizer.suggest_next_trial = recording_suggest
+
+        with patch(
+            "traigent.cloud.backend_client.BackendIntegratedClient"
+        ) as mock_backend:
+            mock_client = MagicMock()
+            mock_client.create_session.return_value = "session-seed"
+            mock_backend.return_value = mock_client
+
+            orchestrator = OptimizationOrchestrator(
+                optimizer=mock_optimizer,
+                evaluator=mock_evaluator,
+                max_trials=3,
+                timeout=5.0,
+            )
+            orchestrator.backend_client = mock_client
+            orchestrator.set_seed_configs([seed])
+
+            async def recording_submit(trial_result, *args, **kwargs):
+                events.append(("submit", dict(trial_result.config)))
+                return True
+
+            orchestrator.backend_session_manager.submit_trial = AsyncMock(
+                side_effect=recording_submit
+            )
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.trials[0].config == seed
+        assert len(result.trials) == 3
+        submits = [e for e in events if e[0] == "submit"]
+        assert submits[0] == ("submit", seed)
+        assert events.index(submits[0]) < events.index(
+            next(e for e in events if e[0] == "suggest")
+        )
+
+    @pytest.mark.asyncio
     @pytest.mark.timeout(5)
     async def test_optimize_unbounded_parallel_does_not_overflow(
         self,
