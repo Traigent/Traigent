@@ -1407,7 +1407,13 @@ def get_cached_input_rate(model: str) -> float | None:
             actual_key = model_cost_lower.get(candidate.lower())
             if not actual_key:
                 continue
-            raw = litellm.model_cost[actual_key].get("cache_read_input_token_cost")
+            entry = litellm.model_cost[actual_key]
+            if any("_above_" in str(key) for key in entry):
+                # Context-tiered entry (rates change above a token threshold):
+                # a single cached rate may undercount a long request, and a
+                # reduced fresh count could select a lower tier. Unknown.
+                return None
+            raw = entry.get("cache_read_input_token_cost")
             if isinstance(raw, bool) or not isinstance(raw, (int, float)):
                 return None
             rate = float(raw)

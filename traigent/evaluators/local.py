@@ -1902,6 +1902,7 @@ class LocalEvaluator(BaseEvaluator):
         out.cost.output_cost = sum(c.cost.output_cost for c in calls)
         out.cost.total_cost = sum(c.cost.total_cost for c in calls)
         out.cost.unpriced = any(c.cost.unpriced for c in calls)
+        out.cost.cache_rate_unknown = any(c.cost.cache_rate_unknown for c in calls)
         out.cost.unmeasured = any(c.cost.unmeasured for c in calls)
         out.cost.cost_estimated = any(c.cost.cost_estimated for c in calls)
         out.cost.cost_explicit = all(c.cost.cost_explicit for c in calls)

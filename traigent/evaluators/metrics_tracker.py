@@ -2615,12 +2615,8 @@ def _token_derived_cost(
     if in_tokens <= 0 and out_tokens <= 0:
         return None
 
-    from traigent.utils.cost_calculator import cost_from_tokens
-
     try:
-        input_cost, output_cost = cost_from_tokens(
-            in_tokens, out_tokens, model_name, strict=False
-        )
+        input_cost, output_cost = _cost_with_cached_input(metrics, model_name, False)
     except Exception:  # pragma: no cover - defensive; never break the trial
         logger.debug(
             "Cost breakdown backfill failed for model %r", model_name, exc_info=True
@@ -2756,6 +2752,12 @@ def _cost_with_cached_input(
     if rate is None or rate > fresh_rate or fresh_rate <= 0.0:
         if fresh_rate > 0.0:
             metrics.cost.cache_rate_unknown = True
+            logger.warning(
+                "No usable cached-input rate for model %r; %d cached prompt "
+                "tokens priced at the full input rate (cost is an upper bound).",
+                model_name,
+                cached,
+            )
         return full
     fresh_cost, output_cost = cost_calculator.cost_from_tokens(
         in_tokens - cached, out_tokens, model_name, strict=strict

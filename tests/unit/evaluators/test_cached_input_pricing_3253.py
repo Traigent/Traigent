@@ -68,3 +68,32 @@ def test_cached_rate_above_input_rate_is_not_trusted(monkeypatch):
 
 def test_get_cached_input_rate_unknown_model_is_none():
     assert get_cached_input_rate("definitely-not-a-model-3253") is None
+
+
+def test_context_tiered_entry_has_no_trusted_cached_rate(monkeypatch):
+    entry = {
+        "input_cost_per_token": 3e-6,
+        "cache_read_input_token_cost": 3e-7,
+        "cache_read_input_token_cost_above_200k_tokens": 6e-7,
+    }
+    monkeypatch.setitem(cost_calculator.litellm.model_cost, "tiered-3253", entry)
+    assert get_cached_input_rate("tiered-3253") is None
+
+
+def test_reported_cost_reconciliation_uses_cached_rate():
+    from traigent.evaluators.metrics_tracker import _token_derived_cost
+
+    metrics = extract_llm_metrics(_response(1000, 800), model_name=MODEL)
+    derived = _token_derived_cost(metrics, MODEL)
+    assert derived is not None
+    assert derived[2] == pytest.approx(metrics.cost.total_cost)
+
+
+def test_cache_rate_unknown_survives_call_merge():
+    from traigent.evaluators.base import SimpleScoringEvaluator
+
+    a = extract_llm_metrics(_response(100, 0), model_name=MODEL)
+    b = extract_llm_metrics(_response(100, 0), model_name=MODEL)
+    b.cost.cache_rate_unknown = True
+    SimpleScoringEvaluator._merge_call_metrics(a, b)
+    assert a.cost.cache_rate_unknown is True

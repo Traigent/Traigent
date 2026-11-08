@@ -5865,6 +5865,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         metrics_obj.cost.unpriced = (
             metrics_obj.cost.unpriced or call_metrics.cost.unpriced
         )
+        metrics_obj.cost.cache_rate_unknown = (
+            metrics_obj.cost.cache_rate_unknown or call_metrics.cost.cache_rate_unknown
+        )
         metrics_obj.response.response_time_ms += call_metrics.response.response_time_ms
 
     def _compute_example_metrics(
