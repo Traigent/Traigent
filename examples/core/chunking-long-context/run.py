@@ -70,7 +70,7 @@ try:  # pragma: no cover - optional dependency
 
         def get_relevant_documents(self, query: str) -> list[Document]:
             self._delegate.k = self.k
-            return self._delegate.get_relevant_documents(query)
+            return self._delegate.invoke(query)
 
     def _bm25_from_documents(docs: list[Document]) -> _RetrieverProtocol:
         return _BM25Wrapper(docs)
@@ -311,6 +311,15 @@ def _mock_rag_answer(question: str) -> str:
     return "RAG"
 
 
+def _require_best_config(result: OptimizationResult) -> None:
+    """Fail loudly when every trial failed instead of exiting 0 with no result."""
+    if result.best_config is None:
+        raise SystemExit(
+            "All trials failed: no best configuration was found. "
+            "See the 'Function call failed' warnings above."
+        )
+
+
 @traigent.optimize(
     eval_dataset=DATASET,
     objectives=["accuracy"],
@@ -364,6 +373,7 @@ if __name__ == "__main__":
             r = await rag_qa.optimize(algorithm="grid", max_trials=trials)
             print({"best_config": r.best_config, "best_score": r.best_score})
             _print_results(r)
+            _require_best_config(r)
 
         asyncio.run(main())
     except KeyboardInterrupt:

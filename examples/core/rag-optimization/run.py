@@ -48,7 +48,7 @@ try:  # pragma: no cover - optional dependency
 
         def get_relevant_documents(self, query: str) -> list[Document]:
             self._delegate.k = self.k
-            return self._delegate.get_relevant_documents(query)
+            return self._delegate.invoke(query)
 
     def _build_retriever(docs: list[Document]) -> RetrieverBase:
         return _BM25RetrieverWrapper(docs)
@@ -291,6 +291,15 @@ def _invoke_llm(prompt: str, model: str, temperature: float) -> str:
     return str(response.content).strip()
 
 
+def _require_best_config(result: OptimizationResult) -> None:
+    """Fail loudly when every trial failed instead of exiting 0 with no result."""
+    if result.best_config is None:
+        raise SystemExit(
+            "All trials failed: no best configuration was found. "
+            "See the 'Function call failed' warnings above."
+        )
+
+
 @traigent.optimize(
     eval_dataset=DATASET,
     objectives=["cost"],
@@ -365,6 +374,7 @@ if __name__ == "__main__":
                 algorithm="random", max_trials=trials
             )
             print({"best_config": r.best_config, "best_score": r.best_score})
+            _require_best_config(r)
 
             # Print aggregated table (one row per configuration) for readability
             df = r.to_aggregated_dataframe(primary_objective="cost")
