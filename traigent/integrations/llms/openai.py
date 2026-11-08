@@ -131,7 +131,7 @@ def enable_openai_optimization(client_types: list[str] | None = None) -> None:
     Example:
         ```python
         import traigent
-        from traigent.integrations.openai_sdk import enable_openai_optimization
+        from traigent.integrations.llms.openai import enable_openai_optimization
         import openai
 
         # Enable OpenAI optimization
@@ -187,7 +187,7 @@ def openai_context(
 
     Example:
         ```python
-        from traigent.integrations.openai_sdk import openai_context
+        from traigent.integrations.llms.openai import openai_context
         import openai
 
         # Only override within this context
@@ -252,8 +252,8 @@ def enable_streaming_optimization() -> None:
     This helper automatically sets stream=True in the Traigent configuration
     when optimizing OpenAI streaming calls.
     """
-    from ..config.context import set_config
-    from ..config.types import TraigentConfig
+    from traigent.config.context import set_config
+    from traigent.config.types import TraigentConfig
 
     # Enable OpenAI overrides
     enable_openai_optimization()
@@ -293,8 +293,8 @@ def enable_tools_optimization(tools: list[dict[str, Any]] | None = None) -> None
         enable_tools_optimization(tools)
         ```
     """
-    from ..config.context import set_config
-    from ..config.types import TraigentConfig
+    from traigent.config.context import set_config
+    from traigent.config.types import TraigentConfig
 
     # Enable OpenAI overrides
     enable_openai_optimization()
