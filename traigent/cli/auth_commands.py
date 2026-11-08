@@ -69,6 +69,8 @@ from traigent.utils import env_config as _env_config  # noqa: F401
 from traigent.utils.logging import get_logger
 
 console = Console()
+# Failure output goes here so stdout stays data-only (Traigent#3266).
+err_console = Console(stderr=True)
 RED_DEVICE_LOGIN_EXPIRED_BEFORE_AUTHORIZATION_COMPLETED = (
     "[red]Device login expired before authorization completed.[/red]"
 )
@@ -2241,8 +2243,8 @@ def whoami(key: str | None) -> None:
     else:
         key, source = CredentialManager.get_api_key_with_source()
     if not key:
-        console.print("[red]❌ Missing API key[/red]")
-        console.print(
+        err_console.print("[red]❌ Missing API key[/red]")
+        err_console.print(
             "Set TRAIGENT_API_KEY in your environment, or run "
             "'traigent auth login' to store credentials. If you already logged "
             "in, set TRAIGENT_MASTER_PASSWORD so the stored credentials can be "
@@ -2256,8 +2258,8 @@ def whoami(key: str | None) -> None:
     # Validate format
     valid_prefixes = ("tg_", "uk_", "sk_", "ak_", "tk_")
     if not any(key.startswith(prefix) for prefix in valid_prefixes):
-        console.print("[red]❌ Invalid API key format[/red]")
-        console.print(
+        err_console.print("[red]❌ Invalid API key format[/red]")
+        err_console.print(
             "API keys should start with 'tg_', 'uk_', 'sk_', 'ak_', or 'tk_'\n"
         )
         sys.exit(1)

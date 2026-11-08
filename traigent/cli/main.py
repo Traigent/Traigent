@@ -48,6 +48,8 @@ from traigent.visualization.plots import create_quick_plot
 _OUTPUT_FILE_LABEL = "Output file"
 
 console = Console()
+# Failure output goes here so stdout stays data-only (Traigent#3266).
+err_console = Console(stderr=True)
 
 # Style constant for table headers
 _TABLE_HEADER_STYLE = "bold magenta"
@@ -311,12 +313,16 @@ def _display_optimization_summary(
 def _handle_no_optimizable_functions(function_filter: str | None) -> None:
     """Print error message when no optimizable functions are found."""
     if function_filter:
-        console.print(
+        err_console.print(
             f"[red]No optimizable function named '{function_filter}' found[/red]"
         )
     else:
-        console.print("[red]No functions with @traigent.optimize decorator found[/red]")
-    console.print("\nMake sure your functions are decorated with @traigent.optimize")
+        err_console.print(
+            "[red]No functions with @traigent.optimize decorator found[/red]"
+        )
+    err_console.print(
+        "\nMake sure your functions are decorated with @traigent.optimize"
+    )
 
 
 def _load_user_module(file_path_obj: Path) -> Any | None:
@@ -326,7 +332,7 @@ def _load_user_module(file_path_obj: Path) -> Any | None:
     try:
         return load_user_module(file_path_obj)
     except ModuleSpecError:
-        console.print("[red]Error: Failed to load Python file[/red]")
+        err_console.print("[red]Error: Failed to load Python file[/red]")
         return None
 
 
@@ -412,22 +418,22 @@ def _handle_check_exit(results: list[Any]) -> None:
 
     errored = [r for r in failed if r.has_errors]
     regressed = [r for r in failed if not r.has_errors]
-    console.print(
+    err_console.print(
         f"\n[red]❌ Optimization validation failed for {len(failed)} function(s)[/red]"
     )
     if errored:
         names = ", ".join(r.function_name for r in errored)
-        console.print(
+        err_console.print(
             f"Validation could not complete for {len(errored)} function(s) "
             f"({names}); see the blocking issues above."
         )
-        console.print(
+        err_console.print(
             "Fix the issue above, or rerun with --dry-run to check decorator "
             "wiring only."
         )
     if regressed:
         names = ", ".join(r.function_name for r in regressed)
-        console.print(
+        err_console.print(
             f"Optimization does not improve over default parameters for "
             f"{len(regressed)} function(s): {names}"
         )
@@ -1063,16 +1069,16 @@ def optimize(
         if results:
             _display_optimization_summary(results, output_dir_resolved)
         if failed_functions:
-            console.print(
+            err_console.print(
                 f"\n[red]❌ {len(failed_functions)} function(s) failed to "
                 f"optimize: {', '.join(failed_functions)}[/red]"
             )
             sys.exit(1)
 
     except Exception as e:
-        console.print(f"[red]Error loading file: {_safe_error_text(e)}[/red]")
+        err_console.print(f"[red]Error loading file: {_safe_error_text(e)}[/red]")
         if verbose:
-            console.print(_safe_error_text(traceback.format_exc(), limit=None))
+            err_console.print(_safe_error_text(traceback.format_exc(), limit=None))
         sys.exit(1)
     finally:
         if str(parent_dir) in sys.path:
@@ -1125,9 +1131,9 @@ def validate(
         if verbose:
             console.print(f"   Resolved path: {resolved_path}")
     except ValidationError as e:
-        console.print("❌ [red]Dataset path validation failed[/red]")
-        console.print(f"   [red]{e}[/red]")
-        console.print(
+        err_console.print("❌ [red]Dataset path validation failed[/red]")
+        err_console.print(f"   [red]{e}[/red]")
+        err_console.print(
             "\n[yellow]Hint:[/yellow] Dataset paths must reside under the current "
             "working directory or the path specified by TRAIGENT_DATASET_ROOT."
         )
@@ -1139,9 +1145,11 @@ def validate(
     if path_result.is_valid:
         console.print("✅ [green]Dataset content validation passed[/green]")
     else:
-        console.print("❌ [red]Dataset content validation failed[/red]")
+        err_console.print("❌ [red]Dataset content validation failed[/red]")
 
-    if verbose or not path_result.is_valid:
+    if not path_result.is_valid:
+        err_console.print(path_result.get_feedback())
+    elif verbose:
         console.print(path_result.get_feedback())
 
     has_failure = not path_result.is_valid
@@ -1153,8 +1161,8 @@ def validate(
         if obj_result.is_valid:
             console.print("✅ [green]Objectives validation passed[/green]")
         else:
-            console.print("❌ [red]Objectives validation failed[/red]")
-            console.print(obj_result.get_feedback())
+            err_console.print("❌ [red]Objectives validation failed[/red]")
+            err_console.print(obj_result.get_feedback())
             has_failure = True
 
     if has_failure:
@@ -3167,7 +3175,7 @@ def check(
         _handle_check_exit(results)
 
     except Exception as e:
-        console.print(f"[red]Error during validation: {_safe_error_text(e)}[/red]")
+        err_console.print(f"[red]Error during validation: {_safe_error_text(e)}[/red]")
         exit(1)
 
 

@@ -722,3 +722,24 @@ def test_first_use_logs_one_value_free_unverified_warning(monkeypatch, caplog):
     assert "secret-static-key-value" not in message
     assert "auth.json" in message  # names the schema, never a path or token
     assert "/" not in message
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_blank_nous_urls_fall_back_to_defaults_3270(monkeypatch, blank):
+    """A set-but-blank override is treated as unset, not used as a real URL."""
+    import importlib
+
+    monkeypatch.setenv("TRAIGENT_NOUS_TOKEN_URL", blank)
+    assert nous_auth._token_url() == nous_auth._DEFAULT_NOUS_TOKEN_URL
+    monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", blank)
+    try:
+        reloaded = importlib.reload(nous_auth)
+        assert reloaded.NOUS_BASE_URL == reloaded._DEFAULT_NOUS_BASE_URL
+    finally:
+        monkeypatch.delenv("TRAIGENT_NOUS_BASE_URL")
+        importlib.reload(nous_auth)
+
+
+def test_real_nous_url_overrides_are_stripped_3270(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_NOUS_TOKEN_URL", "  https://example.test/refresh ")
+    assert nous_auth._token_url() == "https://example.test/refresh"
