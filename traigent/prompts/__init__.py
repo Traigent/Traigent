@@ -4,6 +4,7 @@ from traigent.prompts.client import PromptManagementClient
 from traigent.prompts.config import PromptManagementConfig
 from traigent.prompts.dtos import (
     ChatPromptMessage,
+    CursorPagination,
     PaginationInfo,
     PromptAnalytics,
     PromptAnalyticsTotals,
@@ -19,21 +20,38 @@ from traigent.prompts.dtos import (
     PromptVersionRecord,
     ResolvedPrompt,
 )
+from traigent.prompts.errors import (
+    PromptApiError,
+    PromptConflictError,
+    PromptInvalidRequestError,
+    PromptNotFoundError,
+    PromptNotPermittedError,
+    PromptPaymentRequiredError,
+    PromptUpstreamError,
+)
 
 __all__ = [
     "ChatPromptMessage",
+    "CursorPagination",
     "PaginationInfo",
     "PromptAnalytics",
+    "PromptApiError",
     "PromptAnalyticsTotals",
+    "PromptConflictError",
     "PromptDetail",
+    "PromptInvalidRequestError",
     "PromptListResponse",
     "PromptManagementClient",
     "PromptManagementConfig",
+    "PromptNotFoundError",
+    "PromptNotPermittedError",
+    "PromptPaymentRequiredError",
     "PromptPlaygroundConfig",
     "PromptPlaygroundResult",
     "PromptPlaygroundTokenUsage",
     "PromptSummary",
     "PromptType",
+    "PromptUpstreamError",
     "PromptUsageLinkRecord",
     "PromptVersionAnalytics",
     "PromptVersionRecord",

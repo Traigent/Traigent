@@ -34,6 +34,28 @@ class PaginationInfo:
 
 
 @dataclass(frozen=True)
+class CursorPagination:
+    """Cursor pagination state of a list response.
+
+    There is no total count. ``has_more`` says whether another page exists and
+    ``next_cursor`` is the opaque token to request it with.
+    """
+
+    limit: int
+    next_cursor: str | None
+    has_more: bool
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> CursorPagination:
+        cursor = payload.get("next_cursor")
+        return cls(
+            limit=int(payload.get("limit", 20)),
+            next_cursor=cursor if isinstance(cursor, str) and cursor else None,
+            has_more=bool(payload.get("has_more", False)),
+        )
+
+
+@dataclass(frozen=True)
 class ChatPromptMessage:
     role: str
     content: str
@@ -153,7 +175,7 @@ class PromptDetail(PromptSummary):
 @dataclass(frozen=True)
 class PromptListResponse:
     items: list[PromptSummary]
-    pagination: PaginationInfo
+    pagination: CursorPagination
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> PromptListResponse:
@@ -161,7 +183,7 @@ class PromptListResponse:
             items=[
                 PromptSummary.from_dict(item) for item in payload.get("items") or []
             ],
-            pagination=PaginationInfo.from_dict(payload.get("pagination") or {}),
+            pagination=CursorPagination.from_dict(payload.get("pagination") or {}),
         )
 
 

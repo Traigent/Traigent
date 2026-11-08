@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 from urllib import error, request
 from urllib.parse import quote, urlencode
 
@@ -20,17 +20,31 @@ from traigent.prompts.dtos import (
     PromptType,
     ResolvedPrompt,
 )
+from traigent.prompts.errors import error_from_problem
 from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
+    RateLimitError,
+    ServiceUnavailableError,
     TraigentConnectionError,
 )
-from traigent.utils.pagination import iter_pages
+
+PROBLEM_CONTENT_TYPE = "application/problem+json"
 
 
 class PromptManagementClient:
-    """Client for versioned prompt registry operations.
+    """Client for versioned prompt registry operations in one project.
+
+    Every request goes to ``/api/v1/projects/{project_id}/prompts``; the
+    project comes from ``PromptManagementConfig.project_id`` or the
+    ``TRAIGENT_PROJECT_ID`` environment variable.
+
+    Failures raise subclasses of :class:`~traigent.prompts.errors.PromptApiError`
+    (all of them :class:`~traigent.utils.exceptions.ClientError`). Authentication
+    and rate-limit failures raised before a request reaches the prompts service
+    raise :class:`~traigent.utils.exceptions.AuthenticationError` and
+    :class:`~traigent.utils.exceptions.RateLimitError`.
 
     The client is intentionally lightweight and does not coordinate mutable state
     across threads. Treat instances as thread-local or create separate clients
@@ -49,17 +63,30 @@ class PromptManagementClient:
     def list_prompts(
         self,
         *,
-        page: int = 1,
-        per_page: int = 20,
+        limit: int = 20,
+        cursor: str | None = None,
         search: str | None = None,
         prompt_type: PromptType | str | None = None,
         label: str | None = None,
     ) -> PromptListResponse:
+        """Return one page of prompts in the configured project, newest first.
+
+        Args:
+            limit: Page size, 1 to 100. Values outside that range are rejected
+                with :class:`~traigent.prompts.errors.PromptInvalidRequestError`.
+            cursor: The ``pagination.next_cursor`` of the previous page. Pass the
+                same filters again; a cursor is bound to the project and filters
+                it was issued for.
+            search, prompt_type, label: Optional filters.
+
+        There is no total count: use ``response.pagination.has_more``, or
+        :meth:`iter_prompts` to walk every page.
+        """
         if isinstance(prompt_type, str):
             prompt_type = PromptType(prompt_type)
         query = self._build_query_string(
-            page=page,
-            per_page=per_page,
+            limit=limit,
+            cursor=cursor,
             search=search,
             prompt_type=prompt_type.value if prompt_type else None,
             label=label,
@@ -70,33 +97,51 @@ class PromptManagementClient:
     def iter_prompts(
         self,
         *,
-        per_page: int = 100,
+        limit: int = 100,
         search: str | None = None,
         prompt_type: PromptType | str | None = None,
         label: str | None = None,
     ) -> Iterator[PromptSummary]:
         """Iterate over *all* prompts across pages, fetching lazily.
 
-        Filter arguments are forwarded unchanged on every page request.
+        Follows ``pagination.next_cursor`` until the backend reports no more
+        pages. Filters are forwarded unchanged on every page request.
 
         Parameters
         ----------
-        per_page:
-            Items per page.  Defaults to 100 to minimise round-trips.
+        limit:
+            Items per page (1 to 100). Defaults to 100 to minimise round-trips.
         search, prompt_type, label:
             Same filter semantics as :meth:`list_prompts`.
         """
-        yield from iter_pages(
-            self.list_prompts,
-            per_page=per_page,
-            search=search,
-            prompt_type=prompt_type,
-            label=label,
-        )
+        cursor: str | None = None
+        while True:
+            page = self.list_prompts(
+                limit=limit,
+                cursor=cursor,
+                search=search,
+                prompt_type=prompt_type,
+                label=label,
+            )
+            yield from page.items
+            cursor = page.pagination.next_cursor
+            if not page.pagination.has_more or cursor is None:
+                return
 
     def get_prompt(self, name: str) -> PromptDetail:
         payload = self._request_json("GET", f"/{self._quote_name(name)}")
         return PromptDetail.from_dict(self._unwrap_data(payload, "prompt detail"))
+
+    def delete_prompt(self, name: str) -> None:
+        """Delete a prompt and all of its versions."""
+        self._request_json("DELETE", f"/{self._quote_name(name)}")
+
+    def get_prompt_version(self, name: str, version: int) -> ResolvedPrompt:
+        """Return one specific version of a prompt (``version`` is 1 or more)."""
+        payload = self._request_json(
+            "GET", f"/{self._quote_name(name)}/versions/{int(version)}"
+        )
+        return ResolvedPrompt.from_dict(self._unwrap_data(payload, "prompt version"))
 
     def resolve_prompt(
         self,
@@ -307,19 +352,48 @@ class PromptManagementClient:
                 body = exc.read().decode("utf-8") if exc.fp else ""
             finally:
                 exc.close()
-            if exc.code in {401, 403}:
-                raise AuthenticationError(
-                    f"Prompt request rejected with status {exc.code}"
-                ) from exc
-            raise ClientError(
-                f"Prompt request failed with status {exc.code}",
-                status_code=exc.code,
-                details={"body": body},
-            ) from exc
+            self._raise_for_response(exc, body)
         except error.URLError as exc:
             raise TraigentConnectionError(
                 f"Failed to connect to prompt backend at {self.config.backend_origin}"
             ) from exc
+
+    def _raise_for_response(self, exc: error.HTTPError, body: str) -> NoReturn:
+        """Raise the SDK exception that matches a failed response."""
+        headers = exc.headers
+        content_type = (headers.get("Content-Type") if headers else None) or ""
+        if content_type.split(";")[0].strip().lower() == PROBLEM_CONTENT_TYPE:
+            try:
+                problem = json.loads(body)
+            except ValueError:
+                problem = None
+            if isinstance(problem, dict):
+                raise error_from_problem(exc.code, problem) from exc
+        # Failures raised by shared layers before the prompts service keep a
+        # different shape; map them by status.
+        if exc.code in {401, 403}:
+            raise AuthenticationError(
+                f"Prompt request rejected with status {exc.code}"
+            ) from exc
+        if exc.code == 429:
+            retry_after = None
+            raw = headers.get("Retry-After") if headers else None
+            try:
+                retry_after = float(raw) if raw is not None else None
+            except ValueError:
+                retry_after = None
+            raise RateLimitError(
+                "Prompt request was rate limited", retry_after=retry_after
+            ) from exc
+        if exc.code == 503:
+            raise ServiceUnavailableError(
+                "Prompt service is temporarily unavailable", status_code=exc.code
+            ) from exc
+        raise ClientError(
+            f"Prompt request failed with status {exc.code}",
+            status_code=exc.code,
+            details={"body": body},
+        ) from exc
 
     def _unwrap_data(self, payload: dict, label: str) -> dict:
         data = payload.get("data")

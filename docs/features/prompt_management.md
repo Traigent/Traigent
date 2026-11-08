@@ -11,6 +11,43 @@ needed for prompt registry workflows:
 - prompt label updates
 - prompt playground execution and preview
 
+## Projects, pagination and errors
+
+Prompts belong to a project, and the project id is part of every request path
+(`/api/v1/projects/{project_id}/prompts`). Pass it explicitly or set
+`TRAIGENT_PROJECT_ID`; there is no default project.
+
+```python
+from traigent.prompts import PromptManagementClient, PromptManagementConfig
+
+client = PromptManagementClient(PromptManagementConfig(project_id="my-project"))
+
+page = client.list_prompts(limit=50, label="production")
+print(page.pagination.has_more, page.pagination.next_cursor)
+
+# Walk every page; the cursor is followed for you and filters are kept.
+for prompt in client.iter_prompts(label="production"):
+    print(prompt.name)
+```
+
+Lists are newest first and have no total count. A cursor only works with the
+project and filters it was issued for.
+
+Errors from the prompts service raise `PromptApiError` subclasses with `code`,
+`status_code` and `problem_id` attributes:
+
+| Exception | Codes |
+|---|---|
+| `PromptNotFoundError` | `not_found` (missing, or not visible to you; the two look the same) |
+| `PromptInvalidRequestError` | `invalid_page_size`, `invalid_cursor`, `validation_failed` |
+| `PromptConflictError` | `prompt_already_exists`, `prompt_version_conflict` |
+| `PromptNotPermittedError` | `feature_not_entitled`, `provider_not_allowed` |
+| `PromptPaymentRequiredError` | `insufficient_balance`, `spend_blocked` |
+| `PromptUpstreamError` | `upstream_failed` |
+
+Authentication failures raise `AuthenticationError`, rate limits raise
+`RateLimitError` and temporary unavailability raises `ServiceUnavailableError`.
+
 ## Playground API
 
 Use `PromptManagementClient.run_playground(...)` to preview or execute a stored

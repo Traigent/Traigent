@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Breaking
+
+- **Prompts client moved to project-scoped URLs, cursor pagination and typed errors.** `PromptManagementClient` now calls `/api/v1/projects/{project_id}/prompts` only; the project id is part of the path (from `PromptManagementConfig(project_id=...)` or `TRAIGENT_PROJECT_ID`) and there is no default project, so a missing id raises `ConfigurationError`. `PromptManagementConfig.api_path` is now a read-only property and is no longer a constructor argument. `list_prompts(page=, per_page=)` is now `list_prompts(limit=, cursor=)` (limit 1 to 100; no total count) and `response.pagination` is a `CursorPagination` (`limit`, `next_cursor`, `has_more`); `iter_prompts(per_page=)` is now `iter_prompts(limit=)` and follows the cursor. Failures that come back as `application/problem+json` raise `PromptApiError` subclasses (`PromptNotFoundError`, `PromptInvalidRequestError`, `PromptConflictError`, `PromptNotPermittedError`, `PromptPaymentRequiredError`, `PromptUpstreamError`), all still `ClientError`; HTTP 429 raises `RateLimitError` and 503 raises `ServiceUnavailableError`. Added `delete_prompt` and `get_prompt_version`.
+
 ### Added
 
 - Documentation: a guide, "Block destructive tool calls with local guards" (`docs/guides/local-guards.md`), and a runnable example (`examples/advanced/local-guards/`) for `LocalGuardSet`, `guarded` and `LocalGuardError` from `traigent.runtime`.
