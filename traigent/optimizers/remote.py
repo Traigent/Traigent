@@ -89,7 +89,7 @@ class RemoteOptimizer(BaseOptimizer):
         self.remote_enabled = remote_enabled
         if kwargs.get("seed") is not None:
             self._warn_seed_ignored(
-                "remote suggestions are not seeded; the seed applies only to "
+                "does not control RemoteOptimizer suggestions; it seeds only "
                 "the local random fallback."
             )
 

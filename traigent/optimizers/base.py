@@ -108,14 +108,19 @@ class BaseOptimizer(ABC):
         self._tried_config_hashes: set[str] = set()
         self._config_space_cardinality: int | None = self._compute_cardinality()
 
-    def _warn_seed_ignored(self, detail: str | None = None) -> None:
-        """Warn that a supplied ``seed`` does not influence this optimizer."""
-        get_logger(__name__).warning(
-            "seed=%r has no effect for %s: %s",
-            self.algorithm_config.get("seed"),
-            self.__class__.__name__,
-            detail or "this optimizer does not use a random seed.",
-        )
+    def _warn_seed_ignored(self, message: str | None = None) -> None:
+        """Warn that a supplied ``seed`` does not (fully) influence this optimizer."""
+        seed = self.algorithm_config.get("seed")
+        name = self.__class__.__name__
+        if message is None:
+            get_logger(__name__).warning(
+                "seed=%r has no effect for %s: this optimizer does not use a "
+                "random seed.",
+                seed,
+                name,
+            )
+        else:
+            get_logger(__name__).warning("seed=%r %s", seed, message)
 
     def _initialize_objective_weights(self, weights: dict[str, float]) -> None:
         # Initialize objective weights with proper handling

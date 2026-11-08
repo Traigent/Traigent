@@ -160,7 +160,8 @@ class ParallelBatchOptimizer(BaseOptimizer):
         )
         if injected_base and kwargs.get("seed") is not None:
             self._warn_seed_ignored(
-                "the injected base_optimizer is not re-seeded; seed it directly."
+                "is not applied to the injected base_optimizer (not re-seeded); "
+                "seed it directly."
             )
         self.base_optimizer = base_optimizer
         self.batch_config = batch_config
@@ -997,7 +998,8 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
         )
         if injected_base and kwargs.get("seed") is not None:
             self._warn_seed_ignored(
-                "the injected base_optimizer is not re-seeded; seed it directly."
+                "is not applied to the injected base_optimizer (not re-seeded); "
+                "seed it directly."
             )
         self.base_optimizer = base_optimizer
         self.batch_config = batch_config

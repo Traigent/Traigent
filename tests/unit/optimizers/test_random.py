@@ -622,7 +622,7 @@ class TestSeedAlias:
         base = RandomSearchOptimizer(self.SPACE, ["accuracy"])
         with caplog.at_level(logging.WARNING):
             ParallelBatchOptimizer(base_optimizer=base, seed=7)
-        assert "injected base_optimizer is not re-seeded" in caplog.text
+        assert "not applied to the injected base_optimizer" in caplog.text
 
     def test_seed_kept_in_algorithm_config(self):
         opt = RandomSearchOptimizer(self.SPACE, ["accuracy"], seed=7)
@@ -644,4 +644,7 @@ class TestSeedAlias:
                 remote_client=MockRemoteSuggestionClient(),
                 seed=7,
             )
-        assert "applies only to the local random fallback" in caplog.text
+        assert (
+            "does not control RemoteOptimizer suggestions; it seeds only the local random fallback"
+            in caplog.text
+        )
