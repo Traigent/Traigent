@@ -2664,11 +2664,19 @@ def _reconcile_reported_cost_with_tokens(
     # including an unknown source, keeps it.
     provider_billed = metrics.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
     # An estimate that priced cached tokens at the full rate (no cached rate in
-    # the table) is an upper bound, so it cannot prove a lower reported cost
-    # implausible (Traigent#3253).
+    # the table) is an UPPER bound, so it cannot prove a lower reported cost
+    # implausible. A LOWER bound (cache reads free, fresh input and output at
+    # table rates) still can: a reported cost below it is an under-report
+    # whatever the unknown cached rate is (Traigent#3253).
+    if upper_bound:
+        lower = _cached_read_free_lower_bound(metrics, model_name)
+        if lower is None:
+            _backfill_cost_breakdown(metrics, input_cost, output_cost, derived_total)
+            return
+        input_cost, output_cost = lower
+        derived_total = input_cost + output_cost
     if (
         not provider_billed
-        and not upper_bound
         and authoritative_total < derived_total * REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO
     ):
         logger.warning(
@@ -2685,9 +2693,44 @@ def _reconcile_reported_cost_with_tokens(
         metrics.cost.output_cost = output_cost
         metrics.cost.total_cost = derived_total
         metrics.cost.cost_source = COST_SOURCE_TABLE
+        if upper_bound:
+            # Clamped to a lower bound only: the true bill may be higher.
+            metrics.cost.cache_rate_unknown = True
         return
 
+    if upper_bound:
+        # Reported cost sits between the bounds: accept it, scale the split
+        # against the full-rate (upper) estimate as before.
+        derived = _token_derived_estimate(metrics, model_name)
+        if derived is not None:
+            input_cost, output_cost, derived_total, _ = derived
     _backfill_cost_breakdown(metrics, input_cost, output_cost, derived_total)
+
+
+def _cached_read_free_lower_bound(
+    metrics: ExampleMetrics, model_name: str | None
+) -> tuple[float, float] | None:
+    """``(input, output)`` cost with cache-read tokens priced at 0, or ``None``."""
+    if not model_name:
+        return None
+    from traigent.utils import cost_calculator
+
+    cached = metrics.cache_read_tokens or 0
+    in_tokens = metrics.tokens.input_tokens
+    if cached <= 0 or cached > in_tokens:
+        return None
+    try:
+        fresh, output = cost_calculator.cost_from_tokens(
+            in_tokens - cached,
+            metrics.tokens.output_tokens,
+            model_name,
+            strict=False,
+        )
+    except Exception:  # pragma: no cover - defensive; never break the trial
+        return None
+    if fresh + output <= 0.0:
+        return None
+    return fresh, output
 
 
 def _backfill_cost_breakdown(
