@@ -8,6 +8,7 @@ Covers:
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -585,6 +586,79 @@ class TestFindEquivalenceGroup:
         result = find_equivalence_group(data, higher_is_better=True)
         assert result.winners == []
         assert len(result.top_group) == 2
+
+
+class TestFindEquivalenceGroupMultiplicity:
+    """Issue #2942: pairwise winner tests are Holm-corrected (family-wise)."""
+
+    @staticmethod
+    def _bernoulli_trials(
+        rng: random.Random, probs: list[float], n_examples: int
+    ) -> list[dict]:
+        data = []
+        for idx, prob in enumerate(probs):
+            values = [1.0 if rng.random() < prob else 0.0 for _ in range(n_examples)]
+            data.append(
+                {
+                    "values": values,
+                    "metric_value": sum(values) / n_examples,
+                    "trial_idx": idx,
+                }
+            )
+        return data
+
+    def test_identical_quality_configs_rarely_report_a_winner(self):
+        """8 identical-quality configs: false-winner rate stays <= alpha + margin."""
+        alpha = 0.05
+        n_sims = 400
+        false_winner_sims = 0
+        for seed in range(n_sims):
+            rng = random.Random(seed)
+            data = self._bernoulli_trials(rng, [0.7] * 8, 50)
+            result = find_equivalence_group(data, alpha=alpha, higher_is_better=True)
+            if result.winners:
+                false_winner_sims += 1
+        rate = false_winner_sims / n_sims
+        # Uncorrected pairwise tests give ~0.77 here; Holm keeps it near/below
+        # alpha. Margin of 0.03 covers Monte-Carlo noise (sd ~0.011 at n=400).
+        assert rate <= alpha + 0.03, f"false-winner rate {rate:.3f}"
+
+    def test_one_truly_better_config_still_wins(self):
+        rng = random.Random(7)
+        data = self._bernoulli_trials(rng, [0.95] + [0.5] * 7, 60)
+        result = find_equivalence_group(data, higher_is_better=True)
+        assert result.winners == [0]
+        assert result.top_group == [0]
+        assert sorted(result.rest_group) == list(range(1, 8))
+
+    def test_correction_metadata_recorded(self):
+        rng = random.Random(1)
+        data = self._bernoulli_trials(rng, [0.7] * 4, 30)
+        result = find_equivalence_group(data, alpha=0.05)
+        assert result.correction == "holm-bonferroni"
+        assert result.alpha == 0.05
+        assert result.n_comparisons == 6
+
+    def test_borderline_pair_not_a_winner_once_family_grows(self):
+        """A p~0.02 gap wins as a lone pair but not within a 28-test family."""
+        base = [0.0, 1.0] * 15
+        better = [min(1.0, v + 0.1) if i % 3 == 0 else v for i, v in enumerate(base)]
+        pair = [
+            {"values": better, "metric_value": sum(better) / 30, "trial_idx": 0},
+            {"values": base, "metric_value": sum(base) / 30, "trial_idx": 1},
+        ]
+        assert find_equivalence_group(pair).winners == [0]
+        # Same two configs plus six near-duplicates of the weaker one.
+        rng = random.Random(3)
+        clones = []
+        for k in range(2, 8):
+            noisy = [min(1.0, max(0.0, v + rng.uniform(-0.05, 0.05))) for v in base]
+            clones.append(
+                {"values": noisy, "metric_value": sum(noisy) / 30, "trial_idx": k}
+            )
+        crowd = find_equivalence_group(pair + clones)
+        assert crowd.n_comparisons == 28
+        assert crowd.winners == []
 
 
 # ---------------------------------------------------------------------------

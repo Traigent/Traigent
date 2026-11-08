@@ -23,7 +23,11 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from traigent.tvl.statistics import _inverse_normal_cdf, paired_comparison_test
+from traigent.tvl.statistics import (
+    _inverse_normal_cdf,
+    holm_bonferroni_adjust,
+    paired_comparison_test,
+)
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
     is_minimization_objective,
@@ -55,72 +59,77 @@ class EquivalenceGroupResult:
         top_group: Trial indices in the top (statistically equivalent) group.
         rest_group: Trial indices in the rest group.
         badge_name: Name of the badge/metric evaluated.
+        correction: Multiplicity correction applied to the pairwise tests.
+        alpha: Family-wise significance level the correction targets
+            (``None`` when no tests were run).
+        n_comparisons: Number of pairwise tests in the corrected family.
     """
 
     winners: list[int]
     top_group: list[int]
     rest_group: list[int]
     badge_name: str
+    correction: str = "holm-bonferroni"
+    alpha: float | None = None
+    n_comparisons: int = 0
 
 
-def _is_significantly_worse_than_any(
-    trial: dict,
-    top_group: list[dict],
-    *,
-    direction: Literal["greater", "less"],
-    higher_is_better: bool,
-    alpha: float,
-    epsilon: float,
-    badge_name: str,
-) -> bool:
-    """Return True if *trial* is significantly worse than any member of *top_group*."""
-    for top_trial in top_group:
-        result = paired_comparison_test(
-            x_samples=top_trial["values"],
-            y_samples=trial["values"],
-            epsilon=epsilon,
-            direction=direction,
-        )
-        if higher_is_better:
-            top_is_better = top_trial["metric_value"] > trial["metric_value"]
-        else:
-            top_is_better = top_trial["metric_value"] < trial["metric_value"]
-
-        if result.p_value < alpha and top_is_better:
-            logger.debug(
-                "%s: trial %d significantly worse than trial %d (p=%.4f, effect=%.6f)",
-                badge_name,
-                trial["trial_idx"],
-                top_trial["trial_idx"],
-                result.p_value,
-                result.effect_size,
-            )
-            return True
-    return False
-
-
-def _verify_winners(
-    top_group: list[dict],
-    rest_group: list[dict],
+def _holm_significance_matrix(
+    sorted_trials: list[dict],
     *,
     direction: Literal["greater", "less"],
     alpha: float,
     epsilon: float,
-) -> list[int]:
-    """Return indices of top-group trials that significantly beat at least one rest trial."""
-    verified: list[int] = []
-    for top_trial in top_group:
-        for rest_trial in rest_group:
+) -> tuple[dict[tuple[int, int], bool], int]:
+    """Holm-adjusted significance for every (better-ranked, worse-ranked) pair.
+
+    ``sorted_trials`` is ordered best first. One-sided paired tests are run for
+    every pair ``(i, j)`` with ``i < j`` (trial ``i`` ranked above trial ``j``;
+    because that ranking is read off the data, each one-sided p-value is doubled);
+    the whole set of ``n(n-1)/2`` raw p-values is one family and is adjusted
+    together with Holm-Bonferroni, which controls the family-wise error rate at
+    ``alpha`` under any dependence between the tests. A pair counts as
+    significant when its adjusted p-value is ``< alpha`` and the aggregate
+    metric of trial ``i`` is strictly better than that of trial ``j``.
+
+    Returns the ``{(i, j): significant}`` map and the number of tests in the
+    family.
+    """
+    pairs: list[tuple[int, int]] = []
+    p_values: list[float] = []
+    for i, better in enumerate(sorted_trials):
+        for j in range(i + 1, len(sorted_trials)):
+            worse = sorted_trials[j]
             result = paired_comparison_test(
-                x_samples=top_trial["values"],
-                y_samples=rest_trial["values"],
+                x_samples=better["values"],
+                y_samples=worse["values"],
                 epsilon=epsilon,
                 direction=direction,
             )
-            if result.p_value < alpha:
-                verified.append(top_trial["trial_idx"])
-                break
-    return verified
+            pairs.append((i, j))
+            # The orientation (i above j) is chosen from the observed data, so
+            # the one-sided p-value is doubled to a valid two-sided-equivalent
+            # p-value before the family is adjusted.
+            p_values.append(min(1.0, 2.0 * result.p_value))
+
+    adjusted = holm_bonferroni_adjust(p_values)
+    significant: dict[tuple[int, int], bool] = {}
+    for (i, j), raw_p, adj_p in zip(pairs, p_values, adjusted, strict=True):
+        better, worse = sorted_trials[i], sorted_trials[j]
+        if direction == "greater":
+            better_first = better["metric_value"] > worse["metric_value"]
+        else:
+            better_first = better["metric_value"] < worse["metric_value"]
+        significant[(i, j)] = adj_p < alpha and better_first
+        if significant[(i, j)]:
+            logger.debug(
+                "trial %d significantly better than trial %d (p=%.4f, holm_p=%.4f)",
+                better["trial_idx"],
+                worse["trial_idx"],
+                raw_p,
+                adj_p,
+            )
+    return significant, len(pairs)
 
 
 def find_equivalence_group(
@@ -136,29 +145,45 @@ def find_equivalence_group(
     1. Not significantly different from each other (form a "top group")
     2. Significantly better than at least one trial outside the group
 
-    Uses a paired t-test to compare per-example values between trials.
+    Uses one-sided paired t-tests on per-example values between trials.
+
+    Multiplicity correction: all ``n(n-1)/2`` pairwise p-values (every trial
+    against every lower-ranked trial) form a single family that is adjusted
+    with Holm-Bonferroni (step-down; ``traigent.tvl.statistics.holm_bonferroni_adjust``)
+    before being compared with ``alpha``. This controls the family-wise error
+    rate *given valid pairwise p-values*: Holm bounds the chance of any false
+    rejection by ``alpha`` under arbitrary dependence between the tests, but
+    it cannot repair the underlying paired t-test. That test is approximate
+    for small or heavily non-normal samples (binary scores at ``n=50`` measured
+    ~0.047 false-winner rate at 8 configs, not exactly ``alpha``) and a
+    zero-variance difference vector is decided by the degenerate-case handler
+    in ``traigent.tvl.statistics``, which can yield p=0. If no pair is
+    significant after correction the result has no winners ("no significant
+    winner").
 
     Algorithm:
         1. Sort trials by aggregate metric (best first).
-        2. Greedily build a top group: add each trial unless it is
-           significantly worse than any current top-group member.
-        3. If no rest group exists, return empty (everyone equivalent).
-        4. Verify: each top-group trial must significantly beat at least
-           one rest-group trial to be awarded the badge.
+        2. Holm-adjust the pairwise tests (see above).
+        3. Greedily build a top group: add each trial unless it is
+           significantly worse (adjusted) than any current top-group member.
+        4. If no rest group exists, return empty (everyone equivalent).
+        5. Verify: each top-group trial must significantly beat (adjusted)
+           at least one rest-group trial to be awarded the badge.
 
     Args:
         trial_data: List of dicts, each with:
             - "values": list[float] — per-example metric values
             - "metric_value": float — aggregate metric (mean, total, etc.)
             - "trial_idx": int — original trial index
-        alpha: Significance level (default 0.05).
+        alpha: Family-wise significance level (default 0.05).
         higher_is_better: If True, higher metric is better (accuracy).
             If False, lower is better (cost, latency).
         badge_name: Label for logging.
         epsilon: Margin for the paired t-test (default 0.0).
 
     Returns:
-        EquivalenceGroupResult with winners, top_group, rest_group.
+        EquivalenceGroupResult with winners, top_group, rest_group, and the
+        correction metadata (``correction``, ``alpha``, ``n_comparisons``).
     """
     if len(trial_data) < 2:
         return EquivalenceGroupResult(
@@ -173,29 +198,24 @@ def find_equivalence_group(
     # Direction for paired t-test
     direction: Literal["greater", "less"] = "greater" if higher_is_better else "less"
 
-    # Build top group greedily
-    top_group = [sorted_trials[0]]
-    rest_group: list[dict] = []
+    significant, n_comparisons = _holm_significance_matrix(
+        sorted_trials, direction=direction, alpha=alpha, epsilon=epsilon
+    )
 
-    for trial in sorted_trials[1:]:
-        if _is_significantly_worse_than_any(
-            trial,
-            top_group,
-            direction=direction,
-            higher_is_better=higher_is_better,
-            alpha=alpha,
-            epsilon=epsilon,
-            badge_name=badge_name,
-        ):
-            rest_group.append(trial)
+    # Build top group greedily (positions are indices into sorted_trials)
+    top_pos = [0]
+    rest_pos: list[int] = []
+    for pos in range(1, len(sorted_trials)):
+        if any(significant[(t, pos)] for t in top_pos):
+            rest_pos.append(pos)
         else:
-            top_group.append(trial)
+            top_pos.append(pos)
 
-    top_indices = [t["trial_idx"] for t in top_group]
-    rest_indices = [t["trial_idx"] for t in rest_group]
+    top_indices = [sorted_trials[p]["trial_idx"] for p in top_pos]
+    rest_indices = [sorted_trials[p]["trial_idx"] for p in rest_pos]
 
     # If no rest group, everyone is equivalent — no badges
-    if not rest_group:
+    if not rest_pos:
         logger.debug(
             "%s: all %d trials equivalent, no badges awarded",
             badge_name,
@@ -206,16 +226,16 @@ def find_equivalence_group(
             top_group=top_indices,
             rest_group=[],
             badge_name=badge_name,
+            alpha=alpha,
+            n_comparisons=n_comparisons,
         )
 
     # Verify: each top trial must significantly beat at least one rest trial
-    verified = _verify_winners(
-        top_group,
-        rest_group,
-        direction=direction,
-        alpha=alpha,
-        epsilon=epsilon,
-    )
+    verified = [
+        sorted_trials[t]["trial_idx"]
+        for t in top_pos
+        if any(significant.get((t, r), False) for r in rest_pos)
+    ]
 
     logger.debug(
         "%s: winners=%s (top=%s, rest=%s)",
@@ -230,6 +250,8 @@ def find_equivalence_group(
         top_group=top_indices,
         rest_group=rest_indices,
         badge_name=badge_name,
+        alpha=alpha,
+        n_comparisons=n_comparisons,
     )
 
 
@@ -337,12 +359,14 @@ def compute_significance(
         objective_orientations: Optional mapping of objective name to orientation
             (``"maximize"``, ``"minimize"``, ``"band"``).  Typically from
             :class:`~traigent.core.objectives.ObjectiveSchema`.
-        alpha: Significance level for paired t-tests.
+        alpha: Family-wise significance level; pairwise paired t-tests are
+            Holm-Bonferroni corrected (see :func:`find_equivalence_group`).
 
     Returns:
         Dict mapping objective name to significance result dict with keys
         ``"winners"``, ``"top_group"``, ``"rest_group"``, ``"badge_name"``,
-        ``"n_shared_examples"``.
+        ``"n_shared_examples"``, ``"correction"``, ``"alpha"``,
+        ``"n_comparisons"``. Empty ``"winners"`` means no significant winner.
         Objectives with insufficient data (< 5 shared examples) or
         ``"band"`` orientation are skipped.
     """
@@ -393,6 +417,9 @@ def compute_significance(
             "rest_group": equiv.rest_group,
             "badge_name": equiv.badge_name,
             "n_shared_examples": n_shared,
+            "correction": equiv.correction,
+            "alpha": equiv.alpha,
+            "n_comparisons": equiv.n_comparisons,
         }
 
     return results
