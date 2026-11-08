@@ -73,6 +73,19 @@ def test_sync_invoke_body(model_id: str, expected: dict) -> None:
     assert _body(boto.invoke_model.call_args) == expected
 
 
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        f"arn:aws:bedrock:us-east-1::foundation-model/{AI21}",
+        f"us.{AI21}",
+    ],
+)
+def test_sync_invoke_ai21_arn_and_profile_ids(model_id: str) -> None:
+    boto = _sync_boto({"choices": [{"message": {"content": "ok"}}]})
+    BedrockChatClient(client=boto).invoke(model_id=model_id, messages="hi", **TUNED)
+    assert _body(boto.invoke_model.call_args) == AI21_BODY
+
+
 def test_sync_ai21_extra_params_merged() -> None:
     boto = _sync_boto({"choices": [{"message": {"content": "ok"}}]})
     BedrockChatClient(client=boto).invoke(
@@ -117,7 +130,17 @@ def test_sync_stream_ai21_yields_delta_text() -> None:
     assert chunks == ["Hel", "lo"]
 
 
-@pytest.mark.parametrize("model_id", ["meta.llama3-8b-instruct-v1:0", "amazon.titan-x"])
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "meta.llama3-8b-instruct-v1:0",
+        "amazon.titan-x",
+        "us.amazon.nova-2-lite-v1:0",
+        "mistral.mistral-7b-instruct-v0:2",
+        "ai21.j2-mid-v1",
+        "arn:aws:bedrock:us-east-1::foundation-model/meta.llama3-8b-instruct-v1:0",
+    ],
+)
 def test_unsupported_family_rejected_before_any_request(model_id: str) -> None:
     boto = _sync_boto()
     client = BedrockChatClient(client=boto)

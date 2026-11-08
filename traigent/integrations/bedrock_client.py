@@ -122,15 +122,31 @@ class BedrockChatResponse:
     model: str | None = None
 
 
-_AI21_PREFIX = "ai21."
+_PROFILE_REGION_PREFIXES = ("us.", "eu.", "apac.", "us-gov.", "global.")
 # Families whose Bedrock request schema differs from both the Anthropic Messages
 # and the AI21 Jamba chat schema. Sending them the Anthropic body is wrong, so
 # fail up front instead of silently ignoring max_tokens/temperature/top_p (#2931).
-_UNSUPPORTED_PREFIXES = ("meta.", "amazon.")
+_UNSUPPORTED_FAMILIES = frozenset(
+    {"meta", "amazon", "mistral", "cohere", "writer", "deepseek", "stability"}
+)
+
+
+def _base_model_id(model_id: str | None) -> str:
+    """Return the bare ``<provider>.<model>`` id.
+
+    Accepts plain ids, cross-region inference-profile ids (``us.amazon...``) and
+    ARNs (``arn:...:foundation-model/ai21...``), which Bedrock all take as modelId.
+    """
+    base = str(model_id).rsplit("/", 1)[-1]
+    for prefix in _PROFILE_REGION_PREFIXES:
+        if base.startswith(prefix):
+            return base[len(prefix) :]
+    return base
 
 
 def _is_ai21(model_id: str | None) -> bool:
-    return str(model_id).startswith(_AI21_PREFIX)
+    """True for AI21 Jamba (chat-completions schema) model ids."""
+    return _base_model_id(model_id).startswith("ai21.jamba")
 
 
 def _build_request_payload(
@@ -148,10 +164,13 @@ def _build_request_payload(
       optional ``top_p``).
     * ``ai21.*`` (Jamba): chat-completions body (``messages`` with plain-text
       content, ``max_tokens``, ``temperature``, optional ``top_p``).
-    * ``meta.*`` / ``amazon.*``: not supported by this adapter; ``ValueError``.
+    * Other known families (``meta``, ``amazon``, ``mistral``, non-Jamba
+      ``ai21`` such as Jurassic-2, ...): not supported; ``ValueError``.
+    * ``model_id`` may be a plain id, a cross-region profile id or an ARN.
     """
     model = str(model_id)
-    if model.startswith(_UNSUPPORTED_PREFIXES):
+    family = _base_model_id(model).split(".", 1)[0]
+    if family in _UNSUPPORTED_FAMILIES or (family == "ai21" and not _is_ai21(model)):
         raise ValueError(
             f"BedrockChatClient does not support model family of {model!r}: "
             "only Anthropic Claude and AI21 Jamba request shapes are implemented."
@@ -299,7 +318,7 @@ class BedrockChatClient:
         start_time = time.perf_counter()
         client = self._ensure_client()
 
-        if str(model_id).startswith("ai21."):
+        if _is_ai21(model_id):
             return self._capture_response(
                 self._invoke_ai21(
                     model_id=model_id,
