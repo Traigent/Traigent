@@ -289,6 +289,16 @@ def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bo
         return actual, False
 
     if isinstance(expected, (int, float)):
+        # Same identifier guard as the string-string path (Traigent#1772): a
+        # zero-padded string ("007") is an identifier, not the number 7. Also
+        # refuse what float() tolerates but a numeric label never is: digit
+        # separators ("1_000") and non-ASCII digits.
+        if (
+            _ZERO_PADDED_NUMERIC_RE.match(stripped)
+            or not stripped.isascii()
+            or "_" in stripped
+        ):
+            return actual, False
         try:
             return float(stripped), True
         except ValueError:
@@ -450,6 +460,11 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
         actual, coerced = _coerce_string_to_expected_type(actual, expected)
         if coerced:
             _report_coercion(type(expected).__name__, len(original_actual))
+        elif isinstance(expected, (int, float)) and not isinstance(expected, bool):
+            # A refused coercion (zero-padded identifier, digit separators,
+            # non-ASCII digits) must not fall through to the float-tolerant
+            # comparison below, which would re-parse the string via float().
+            return False
 
     # Container elements get zero normalization otherwise: recurse the same
     # scalar rules element-wise (list/tuple) or value-wise (dict), keyed on
