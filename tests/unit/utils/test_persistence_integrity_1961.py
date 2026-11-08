@@ -307,3 +307,18 @@ def test_save_leaves_no_staging_dirs(mgr, tmp_path):
     mgr.save_result(_result(), name="r")
     mgr.save_result(_result(), name="r")
     assert sorted(p.name for p in tmp_path.iterdir()) == ["r"]
+
+
+def test_hard_kill_between_directory_renames_is_recovered(mgr, tmp_path):
+    """State left by a SIGKILL after the old dir was moved aside, before the new
+    one was moved in (no handler ran): the old generation must come back."""
+    mgr.save_result(_result(), name="r")
+    (tmp_path / "r").rename(tmp_path / ".traigent-staging-old.r.1234.deadbeef")
+    assert mgr.result_exists("r")  # recovery runs on lookup
+    assert mgr.load_result("r").best_config == {"model": "cheap"}
+    assert [r["name"] for r in mgr.list_results()] == ["r"]
+
+
+def test_staging_prefix_name_rejected(mgr):
+    with pytest.raises(ValueError):
+        mgr.save_result(_result(), name=".traigent-staging-x")

@@ -13,6 +13,7 @@ import logging
 import os
 import pickle
 import shutil
+import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,6 +50,8 @@ _INTEGRITY_FILES = ("metadata.json", "trials.json.gz")
 METADATA_FILE = "metadata.json"
 # #3257: in-progress / displaced result directories; never listed as results.
 _STAGING_PREFIX = ".traigent-staging-"
+_ASIDE_PREFIX = _STAGING_PREFIX + "old."
+_PUBLISH_LOCK = threading.Lock()
 TRIALS_JSON_FILE = "trials.json.gz"
 TRIALS_PKL_FILE = "trials.pkl.gz"
 TRIALS_SUMMARY_FILE = "trials_summary.json"
@@ -542,8 +545,28 @@ class PersistenceManager:
             if temp_path.exists():
                 temp_path.unlink()
 
+    def _recover_displaced(self) -> None:
+        """Restore a generation displaced by a save that died mid-swap.
+
+        ``_publish_result_dir`` renames the old directory aside before moving
+        the new one in. A hard kill between the two leaves the name absent and
+        the old generation under ``.traigent-staging-old.<name>.<pid>.<id>``;
+        put it back (when nothing has been published since).
+        """
+        for aside in sorted(self.base_dir.glob(f"{_ASIDE_PREFIX}*")):
+            name = aside.name[len(_ASIDE_PREFIX) :].rsplit(".", 2)[0]
+            if not name:
+                continue
+            target = self.base_dir / name
+            if not target.exists() and aside.is_dir():
+                try:
+                    os.replace(aside, target)
+                except OSError:
+                    logger.warning("Could not restore a displaced saved result")
+
     def result_exists(self, name: str) -> bool:
         """Return True if a result named ``name`` is already saved."""
+        self._recover_displaced()
         return self._resolve_path(self.base_dir / name).is_dir()
 
     def save_result(self, result: OptimizationResult, name: str | None = None) -> str:
@@ -568,6 +591,9 @@ class PersistenceManager:
         # integrity manifest together) and only then swapped into place, so a
         # crash mid-save can neither expose a half-written result nor mix old
         # and new generations under one name.
+        if name.startswith(_STAGING_PREFIX):
+            raise ValueError("Result names must not start with the staging prefix")
+        self._recover_displaced()
         result_dir = self._resolve_path(self.base_dir / name)
         stage_dir = self._resolve_path(
             self.base_dir
@@ -589,12 +615,16 @@ class PersistenceManager:
         so an existing generation is renamed aside first and restored if the
         final rename fails.
         """
+        with _PUBLISH_LOCK:
+            self._swap_in(stage_dir, result_dir)
+
+    def _swap_in(self, stage_dir: Path, result_dir: Path) -> None:
         if not result_dir.exists():
             os.replace(stage_dir, result_dir)
             return
         aside = self._resolve_path(
             self.base_dir
-            / f"{_STAGING_PREFIX}old.{result_dir.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
+            / f"{_ASIDE_PREFIX}{result_dir.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
         )
         os.replace(result_dir, aside)
         try:
@@ -837,6 +867,7 @@ class PersistenceManager:
         it is not tamper-proof, because someone who can rewrite the files can
         rewrite the manifest as well.
         """
+        self._recover_displaced()
         result_dir = self._resolve_path(self.base_dir / name)
 
         if not result_dir.exists():
@@ -933,6 +964,7 @@ class PersistenceManager:
             carry a second copy of every result's metadata, metrics and
             best_config).
         """
+        self._recover_displaced()
         results = []
 
         for result_dir in self.base_dir.iterdir():

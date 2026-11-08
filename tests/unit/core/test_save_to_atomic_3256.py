@@ -73,3 +73,12 @@ def test_serialization_error_mid_dump_keeps_previous_result(tmp_path, monkeypatc
 
     assert path.read_bytes() == good
     assert [p.name for p in tmp_path.iterdir() if ".tmp." in p.name] == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_overwrite_keeps_restrictive_permissions(tmp_path):
+    path = tmp_path / "out.json"
+    _save(tmp_path, path)
+    path.chmod(0o600)
+    _save(tmp_path, path)
+    assert (path.stat().st_mode & 0o777) == 0o600

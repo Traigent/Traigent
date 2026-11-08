@@ -13,7 +13,9 @@ import copy
 import json
 import logging
 import os
+import shutil
 import threading
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import Enum, auto
@@ -1326,7 +1328,9 @@ class ConfigStateManager:
                 # #3256: stage in the same directory, fsync, then replace, so a
                 # crash or a full disk cannot truncate the previous good file.
                 temp_path = validate_path(
-                    output_path.with_name(f"{output_path.name}.tmp.{os.getpid()}"),
+                    output_path.with_name(
+                        f"{output_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}"
+                    ),
                     base_dir,
                     must_exist=False,
                 )
@@ -1337,6 +1341,9 @@ class ConfigStateManager:
                         json.dump(result_dict, f, indent=2, default=str)
                         f.flush()
                         os.fsync(f.fileno())
+                    if output_path.exists():
+                        # keep the previous file's permissions (e.g. 0600)
+                        shutil.copymode(output_path, temp_path)
                     os.replace(temp_path, output_path)
                 finally:
                     if temp_path.exists():
