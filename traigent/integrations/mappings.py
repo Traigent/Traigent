@@ -202,7 +202,6 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "max_tokens",
             "top_p",
             "stream",
-            "tools",
         ],
         "chat.completions.create": [
             "model",
@@ -225,7 +224,6 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "max_tokens",
             "top_p",
             "stream",
-            "tools",
         ],
         "chat.completions.create": [
             "model",
@@ -281,12 +279,12 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
     },
     # LangChain methods
     "langchain_openai.ChatOpenAI": {
-        "invoke": ["model", "temperature", "max_tokens", "streaming"],
+        "invoke": ["model", "temperature", "max_tokens"],
         "stream": ["model", "temperature", "max_tokens"],
         "astream": ["model", "temperature", "max_tokens"],
     },
     "langchain_anthropic.ChatAnthropic": {
-        "invoke": ["model", "temperature", "max_tokens", "streaming"],
+        "invoke": ["model", "temperature", "max_tokens"],
         "stream": ["model", "temperature", "max_tokens"],
         "astream": ["model", "temperature", "max_tokens"],
     },

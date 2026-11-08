@@ -58,6 +58,23 @@ def test_pydantic_ai_agent_has_no_top_level_kwarg_injection():
 
 
 @pytest.mark.unit
+def test_openai_legacy_completions_create_does_not_list_tools():
+    from openai.resources.completions import Completions
+
+    assert "tools" not in inspect.signature(Completions.create).parameters
+    for cls in ("openai.OpenAI", "openai.AsyncOpenAI"):
+        assert "tools" not in METHOD_MAPPINGS[cls]["completions.create"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "cls", ["langchain_openai.ChatOpenAI", "langchain_anthropic.ChatAnthropic"]
+)
+def test_langchain_invoke_does_not_list_constructor_only_streaming(cls):
+    assert "streaming" not in METHOD_MAPPINGS[cls]["invoke"]
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("cls", ["cohere.Client", "cohere.AsyncClient"])
 def test_cohere_method_tables_use_canonical_names(cls):
     canonical = set(PARAMETER_MAPPINGS[cls])
