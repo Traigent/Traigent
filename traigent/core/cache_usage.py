@@ -263,6 +263,25 @@ def normalize_cache_usage(usage: dict[str, Any] | None) -> CacheUsage:
                 creation_is_inclusive = True
         break
 
+    if shape is None:
+        # Write-only LiteLLM payload: no cached-read detail, but a write count.
+        only_creation = _coerce_count(
+            _dig(usage, ("prompt_tokens_details", "cache_creation_tokens"))
+        )
+        if only_creation is not None:
+            creation_tokens = only_creation
+            shape = "openai_chat"
+            input_is_inclusive = creation_is_inclusive = True
+    elif (
+        shape == "anthropic"
+        and "prompt_tokens" in usage
+        and "input_tokens" not in usage
+    ):
+        # LiteLLM's Anthropic transform: OpenAI-style prompt_tokens (inclusive of
+        # reads and writes) next to top-level Anthropic cache counts, with no
+        # prompt_tokens_details.cached_tokens. Raw Anthropic uses input_tokens.
+        input_is_inclusive = creation_is_inclusive = True
+
     ttl_split = _read_ttl_split(usage)
     if creation_tokens is None and ttl_split:
         # Anthropic can report the per-tier split without a flat total.

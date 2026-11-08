@@ -535,3 +535,26 @@ class TestLiteLLMAnthropicShape:
         )
         assert usage.input_tokens == 476
         assert usage.cache_creation_tokens is None
+
+    def test_top_level_counts_without_details_are_inclusive(self):
+        usage = normalize_cache_usage(
+            {
+                "prompt_tokens": 550,
+                "cache_read_input_tokens": 400,
+                "cache_creation_input_tokens": 50,
+            }
+        )
+        assert (usage.input_tokens, usage.cache_read_tokens) == (100, 400)
+        assert usage.cache_creation_tokens == 50
+        assert usage.billable_input_tokens == 550
+
+    def test_write_only_details(self):
+        usage = normalize_cache_usage(
+            {
+                "prompt_tokens": 550,
+                "prompt_tokens_details": {"cache_creation_tokens": 50},
+            }
+        )
+        assert usage.input_tokens == 500
+        assert usage.cache_creation_tokens == 50
+        assert usage.cache_read_tokens is None

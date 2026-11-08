@@ -494,3 +494,12 @@ class TestJsonDatasetLayouts:
         f.write_text(json.dumps({"examples": "nope"}), encoding="utf-8")
         result = Validators.validate_dataset(str(f))
         assert ("dataset", "INVALID_FORMAT") in _errs(result)
+
+    def test_duplicate_example_id_rejected_like_the_loader(
+        self, tmp_path: Path
+    ) -> None:
+        f = tmp_path / "d.json"
+        rows = [{"input": "a", "example_id": "x"}, {"input": "b", "example_id": "x"}]
+        f.write_text(json.dumps(rows), encoding="utf-8")
+        result = Validators.validate_dataset(str(f))
+        assert _errs(result) == [("dataset:example1", "INVALID_FORMAT")]
