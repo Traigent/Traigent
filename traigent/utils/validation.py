@@ -192,6 +192,43 @@ def ensure_finite_config_space(config_space: Any) -> None:
             )
 
 
+def validate_max_trials_value(value: Any) -> None:
+    """Reject a ``max_trials`` that is not ``None`` or a positive integer.
+
+    bool (``True`` would silently become a 1-trial run), float/NaN/inf and
+    non-numbers are rejected with a message naming ``max_trials``.
+    """
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            f"max_trials must be a positive integer, got {value!r} "
+            f"({type(value).__name__})"
+        )
+    if value <= 0:
+        raise ValueError(f"max_trials must be a positive integer, got {value!r}")
+
+
+def validate_timeout_value(value: Any) -> None:
+    """Reject a ``timeout`` that is not ``None`` or a finite number >= 0.
+
+    NaN would silently disable the wall-clock cap and bool would become a
+    1-second limit, so both are rejected with a message naming ``timeout``.
+    ``0`` stays valid (it cancels the run before the first trial).
+    """
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            f"timeout must be a non-negative number of seconds, got {value!r} "
+            f"({type(value).__name__})"
+        )
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(
+            f"timeout must be non-negative and finite (seconds), got {value!r}"
+        )
+
+
 class Validators:
     """Core validation functions with consistent interface."""
 

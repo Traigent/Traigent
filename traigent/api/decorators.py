@@ -123,6 +123,7 @@ from traigent.utils.exceptions import (
     ValidationError,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.validation import validate_max_trials_value
 
 _OFFLINE_MUST_BE_BOOL = "offline must be a bool"
 
@@ -2846,8 +2847,7 @@ def _resolve_agent_identity(combined_settings: dict[str, Any]) -> Any:
 
 
 def _validate_max_trials(max_trials_value: Any) -> None:
-    if max_trials_value is not None and max_trials_value <= 0:
-        raise ValueError("max_trials must be a positive integer")
+    validate_max_trials_value(max_trials_value)
 
 
 def _content_less_from_settings(combined_settings: dict[str, Any]) -> Any:
