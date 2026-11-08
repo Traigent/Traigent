@@ -1114,8 +1114,45 @@ class TestOptimizationOrchestrator:
             trial_count=7,
         )
 
-        assert handled_trial_ids == ["trial_7", "trial_8", "trial_9"]
-        assert final_trial_count == 10
+        # #2943: permit-denied placeholders never started, so they are not
+        # handled as attempts and do not advance the trial count; the failed
+        # trial keeps its batch-anchored synthetic id.
+        assert handled_trial_ids == ["trial_8"]
+        assert final_trial_count == 8
+        # Denied indexes are freed once the batch settles and their placeholder
+        # ids cannot collide with a later real trial at the same index.
+        dispatched = getattr(orchestrator, "_trial_complete_dispatched", set())
+        assert 7 not in dispatched and 9 not in dispatched
+        assert [t.trial_id for t in orchestrator._trials] == [
+            "trial_7_not_started",
+            "trial_9_not_started",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_scheduled_index_keys_the_completion_dispatch_2943(
+        self, orchestrator
+    ):
+        """A trial after permit-denied items keeps the index it started under."""
+        trial = TrialResult(
+            trial_id="trial_9",
+            config={"value": 2},
+            metrics={"accuracy": 0.5},
+            status=TrialStatus.COMPLETED,
+            duration=0.0,
+            timestamp=datetime.now(UTC),
+        )
+        new_count = await orchestrator._handle_trial_result(
+            trial_result=trial,
+            optimizer_config={"value": 2},
+            current_trial_index=7,
+            session_id=None,
+            optuna_trial_id=None,
+            log_on_success=False,
+            scheduled_index=9,
+        )
+        assert new_count == 8
+        assert 9 in orchestrator._trial_complete_dispatched
+        assert 7 not in orchestrator._trial_complete_dispatched
 
     @pytest.mark.asyncio
     async def test_default_config_is_evaluated_first(
