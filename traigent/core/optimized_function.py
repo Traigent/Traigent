@@ -5579,8 +5579,21 @@ Remediation:
                 "eval_dataset list must contain only dataset paths or inline examples"
             )
 
+        elif source is None:
+            raise ConfigurationError(
+                "Invalid dataset type: eval_dataset was not provided (None). "
+                'Pass eval_dataset="data.jsonl" to @traigent.optimize, or '
+                "EvaluationOptions(eval_dataset=...), or supply a custom "
+                "evaluator that provides its own data. Each JSONL line looks like "
+                '{"input": {"question": "..."}, "expected_output": "..."}.'
+            )
+
         else:
-            raise ConfigurationError(f"Invalid dataset type: {type(source)}")
+            raise ConfigurationError(
+                f"Invalid dataset type: {type(source).__name__}. eval_dataset must "
+                "be a Dataset, a JSONL file path, a list of JSONL paths, or a "
+                "list of inline example dicts."
+            )
 
     def _build_empty_result(self, algorithm: str) -> OptimizationResult:
         """Create a result representing a skipped optimization run."""
