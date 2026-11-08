@@ -1957,7 +1957,9 @@ class OptimizedFunction[**P, R]:
     # Optuna, ...) runs server-side and may accept algorithm-specific
     # hyperparameters this repo has no local schema for (verified: no such
     # hyperparameter name appears anywhere under ``traigent/``). ``seed`` is
-    # kept on the allowlist for exactly that reason, and because rejecting it
+    # kept on the allowlist for exactly that reason (local ``random`` treats it as
+    # an alias of ``random_seed``; local optimizers that cannot honour it warn,
+    # Traigent#2947), and because rejecting it
     # would break the pre-existing call-time contract pinned by
     # ``tests/unit/core/optimized_function_tests/test_optimize_calltime_kwarg_rejection.py``.
     # A general schema for smart-algorithm kwargs is a further follow-up.

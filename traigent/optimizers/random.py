@@ -50,6 +50,8 @@ class RandomSearchOptimizer(BaseOptimizer):
         ... )
     """
 
+    _honours_seed = True
+
     def __init__(
         self,
         config_space: dict[str, Any],
@@ -57,6 +59,7 @@ class RandomSearchOptimizer(BaseOptimizer):
         max_trials: int = 100,
         random_seed: int | None = None,
         context=None,
+        seed: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize random search optimizer.
@@ -69,9 +72,19 @@ class RandomSearchOptimizer(BaseOptimizer):
             random_seed: Random seed for reproducibility. If provided, the same
                 sequence of configurations will be generated across runs.
             context: Optional TraigentConfig for accessing global configuration.
+            seed: Alias for ``random_seed`` (the name ``.optimize(seed=...)``
+                users reach for). Supplying both with different values raises
+                ``ValueError``.
             **kwargs: Additional arguments passed to BaseOptimizer
                 (e.g., ``objective_weights``).
         """
+        if seed is not None and random_seed is not None and seed != random_seed:
+            raise ValueError(
+                "seed and random_seed are aliases but were given different "
+                f"values ({seed!r} vs {random_seed!r}); pass only one."
+            )
+        if random_seed is None:
+            random_seed = seed
         super().__init__(config_space, objectives, context, **kwargs)
 
         self.max_trials = max_trials

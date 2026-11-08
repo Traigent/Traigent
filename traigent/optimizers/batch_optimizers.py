@@ -113,6 +113,8 @@ class ParallelBatchOptimizer(BaseOptimizer):
     processing its dataset in batches. Useful for CPU-bound optimization tasks.
     """
 
+    _honours_seed = True
+
     def __init__(
         self,
         config_space: dict[str, Any] | BaseOptimizer | None = None,
@@ -461,6 +463,8 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
     Maintains a Pareto frontier of non-dominated solutions.
     """
 
+    _honours_seed = True
+
     def __init__(
         self,
         configuration_space: dict[str, Any] | None = None,
@@ -530,11 +534,13 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         if requested_max_trials is None:
             requested_max_trials = 100
         self._max_trials = requested_max_trials
+        self._seed = kwargs.get("seed", kwargs.get("random_seed"))
         self._base_optimizer = RandomSearchOptimizer(
             configuration_space,
             resolved_objectives,
             max_trials=requested_max_trials,
             objective_orientations=self.objective_orientations,
+            seed=self._seed,
         )
 
     def mark_config_evaluated(self, config: dict[str, Any]) -> None:
@@ -589,6 +595,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             self.config_space,
             self.objectives,
             objective_orientations=self.objective_orientations,
+            seed=self._seed,
         )
 
         for trial_idx in range(max_trials):
@@ -935,6 +942,8 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
 
 class AdaptiveBatchOptimizer(BaseOptimizer):
     """Adaptive batch optimizer that adjusts batch sizes based on performance."""
+
+    _honours_seed = True
 
     def __init__(
         self,

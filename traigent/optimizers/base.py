@@ -29,6 +29,10 @@ class BaseOptimizer(ABC):
     interchangeably.
     """
 
+    # Subclasses that derive a reproducible sequence from ``seed`` set this True;
+    # otherwise a supplied ``seed`` triggers a "has no effect" warning.
+    _honours_seed: bool = False
+
     def __init__(
         self,
         config_space: dict[str, Any],
@@ -74,6 +78,13 @@ class BaseOptimizer(ABC):
                 for definition in objective_schema.objectives
             }
         self.algorithm_config = kwargs
+        if kwargs.get("seed") is not None and not self._honours_seed:
+            get_logger(__name__).warning(
+                "seed=%r has no effect for %s: it is not seeded, so runs are "
+                "not reproducible through this argument.",
+                kwargs["seed"],
+                self.__class__.__name__,
+            )
 
         # Handle objective weights - support both parameter and kwargs
         weights = objective_weights or kwargs.get("objective_weights", {})
