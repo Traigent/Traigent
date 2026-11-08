@@ -50,7 +50,7 @@ import os
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeGuard, TypeVar, cast
 
 if TYPE_CHECKING:
     from traigent.api.config_space import ConfigSpace
@@ -1072,6 +1072,111 @@ def _warn_degenerate_configuration_space(
         f"configuration as the 'best' one by construction, not by measurement. Give "
         f"at least one parameter a second value to make this a real search - for "
         f"example {{'{next(iter(pinned))}': [...two or more values...]}}."
+    )
+    warnings.warn(message, TraigentWarning, stacklevel=3)
+    logger.warning("%s", message)
+
+
+# A numeric knob whose whole span is under this fraction of its canonical
+# range (or, for knobs without a preset, of its own magnitude) offers no
+# distinguishable choice (#2025).
+_NEAR_IDENTICAL_SPAN_FRACTION = 0.01
+_NEAR_IDENTICAL_RELATIVE_FALLBACK = 0.001
+
+
+def _plain_number(value: Any) -> TypeGuard[int | float]:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _canonical_span(name: Any) -> float | None:
+    """Span of the canonical preset range for knob *name*, if one exists."""
+    from traigent.config_generator.presets.range_presets import get_preset_range
+
+    if not isinstance(name, str):
+        return None
+    preset = get_preset_range(name)
+    kwargs = (preset or {}).get("kwargs") or {}
+    low, high = kwargs.get("low"), kwargs.get("high")
+    if (
+        preset
+        and preset.get("range_type") == "Range"
+        and _plain_number(low)
+        and _plain_number(high)
+        and high > low
+    ):
+        return float(high - low)
+    return None
+
+
+def _knob_variation_problems(name: Any, values: Any) -> list[str]:
+    """Closed-form descriptions of why a list knob cannot vary usefully."""
+    if not isinstance(values, (list, tuple)) or len(values) < 2:
+        return []
+    problems: list[str] = []
+    distinct: list[Any] = []
+    for value in values:
+        if not any(
+            isinstance(value, bool) == isinstance(seen, bool) and value == seen
+            for seen in distinct
+        ):
+            distinct.append(value)
+    if len(distinct) < len(values):
+        problems.append(
+            f"'{name}' lists {len(values)} values but only {len(distinct)} are "
+            f"distinct, so the space claims more configurations than it has"
+        )
+    if len(distinct) >= 2 and all(_plain_number(v) for v in distinct):
+        floats = sorted(float(v) for v in distinct)
+        canonical = _canonical_span(name)
+        for low, high in zip(floats, floats[1:], strict=False):
+            if canonical is not None:
+                floor = canonical * _NEAR_IDENTICAL_SPAN_FRACTION
+            else:
+                floor = max(abs(low), abs(high)) * _NEAR_IDENTICAL_RELATIVE_FALLBACK
+            if high - low < floor:
+                problems.append(
+                    f"'{name}' has values only {high - low:g} apart, a very "
+                    f"narrow gap that may not separate the trials"
+                )
+                break
+    return problems
+
+
+def _warn_degenerate_knob_variation(
+    func: Callable[..., Any], configuration_space: Any
+) -> None:
+    """Warn about list knobs whose values cannot give a meaningful comparison (#2025).
+
+    Covers duplicate values within one knob and numeric values clustered inside
+    a negligible span (1% of the knob's canonical preset range, or 0.1% of the
+    magnitude when no preset exists). Advisory only; each message states what it
+    costs the user. Complements ``_warn_degenerate_configuration_space``.
+    """
+    if not isinstance(configuration_space, dict):
+        return
+    problems: list[str] = []
+    for name, values in sorted(configuration_space.items(), key=lambda kv: str(kv[0])):
+        try:
+            problems.extend(_knob_variation_problems(name, values))
+        except Exception:  # advisory only; never block decoration
+            logger.debug("knob variation check skipped for %r", name, exc_info=True)
+    if not problems:
+        return
+
+    import warnings
+
+    func_name = getattr(func, "__name__", repr(func))
+    message = (
+        f"@traigent.optimize: the configuration_space for '{func_name}' has "
+        f"knobs whose values may not differ enough to compare: "
+        + "; ".join(problems)
+        + ". "
+        "Trials built from such values may be indistinguishable; check that "
+        "each value is intended, remove duplicates, or widen the span."
     )
     warnings.warn(message, TraigentWarning, stacklevel=3)
     logger.warning("%s", message)
@@ -3854,6 +3959,7 @@ def optimize(  # NOSONAR(S107)
         # #2021: loudly warn if the space enumerates exactly one configuration
         # (every knob pinned), so the reported "best" is the only candidate.
         _warn_degenerate_configuration_space(func, resolved_configuration_space)
+        _warn_degenerate_knob_variation(func, resolved_configuration_space)  # #2025
 
         # Experiment name resolution (#1422).
         #
