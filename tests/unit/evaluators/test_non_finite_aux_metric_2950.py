@@ -125,3 +125,91 @@ async def test_default_non_detailed_mode_does_not_fail_and_stats_skip_row() -> N
     stats = result.summary_stats["metrics"]["aux"]
     assert stats["count"] == 2
     assert stats["mean"] == 3.0
+
+
+@pytest.mark.asyncio
+async def test_duplicate_key_producers_non_finite_wins_over_earlier_and_later() -> None:
+    """99 (func 1), NaN then 3 (func 2) on the first row: unmeasured, not 51."""
+
+    def first(output, expected_output=None, **kwargs):
+        return {"shared": 99.0}
+
+    def second(output, expected_output=None, **kwargs):
+        return {"shared": float("nan") if expected_output == "1" else 3.0}
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"first": first, "second": second},
+        detailed=True,
+        execution_mode="local",
+    )
+    result = await evaluator.evaluate(_func, {}, _dataset())
+
+    stats = result.summary_stats["metrics"]["shared"]
+    # row 0 unmeasured; rows 1 and 2 are 99 then overridden by 3.0
+    assert stats["count"] == 2
+    assert stats["mean"] == 3.0
+    assert "shared" not in result.example_results[0].metrics
+    assert result.example_results[0].metadata["unmeasured_custom_keys"] == ["shared"]
+
+
+def _resume_dataset() -> Dataset:
+    return Dataset(
+        examples=[
+            EvaluationExample(input_data={"text": "q1"}, expected_output="1"),
+            EvaluationExample(input_data={"text": "q2"}, expected_output="2"),
+        ],
+        name="resume_2950",
+    )
+
+
+async def _resume_run(stored_metadata: dict | None):
+    from traigent.core.resume import ResumePrefill, config_key
+    from traigent.evaluators.base import bind_resume_prefill, reset_resume_prefill
+
+    dataset = _resume_dataset()
+    row = {
+        "input_data": dataset.examples[0].input_data,
+        "expected_output": "1",
+        "actual_output": "1",
+        "metrics": {"total_cost": 0.0, "input_tokens": 1},
+        "execution_time": 0.01,
+    }
+    if stored_metadata is not None:
+        row["metadata"] = stored_metadata
+
+    def aux(output, expected_output=None, **kwargs):
+        return 3.0
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        metric_functions={"aux": aux},
+        detailed=True,
+        execution_mode="local",
+    )
+    token = bind_resume_prefill(ResumePrefill({config_key({}): {"example_0": row}}))
+    try:
+        result = await evaluator.evaluate(_func, {}, dataset)
+    finally:
+        reset_resume_prefill(token)
+    return result
+
+
+@pytest.mark.asyncio
+async def test_resumed_unmeasured_row_keeps_marker() -> None:
+    result = await _resume_run({"unmeasured_custom_keys": ["aux"]})
+
+    stats = result.summary_stats["metrics"]["aux"]
+    assert stats["count"] == 1
+    assert stats["mean"] == 3.0
+    resumed = result.example_results[0]
+    assert resumed.metadata["unmeasured_custom_keys"] == ["aux"]  # survives re-save
+
+
+@pytest.mark.asyncio
+async def test_old_checkpoint_without_marker_still_loads() -> None:
+    result = await _resume_run(None)
+
+    assert result.successful_examples == 2
+    # legacy behaviour for a row that never recorded the key: unchanged
+    assert result.summary_stats["metrics"]["aux"]["count"] == 2
