@@ -1185,7 +1185,7 @@ class OptimizationLogger:
         )
         with self._file_lock(session_file):
             if session_file.exists():
-                with open(session_file) as handle:
+                with open(session_file, encoding="utf-8") as handle:
                     session_data = json.load(handle)
             else:
                 session_data = {}
@@ -1224,7 +1224,7 @@ class OptimizationLogger:
         index_file = self.base_path / "index.json"
         with self._file_lock(index_file):
             if index_file.exists():
-                with open(index_file) as handle:
+                with open(index_file, encoding="utf-8") as handle:
                     index_data = json.load(handle)
             else:
                 index_data = {"experiments": {}, "version": "2.0.0"}
@@ -1279,7 +1279,9 @@ class OptimizationLogger:
         validated_latest_file = validate_path(
             latest_file, checkpoints_dir, must_exist=True
         )
-        with safe_open(validated_latest_file, run_path, mode="r") as handle:
+        with safe_open(
+            validated_latest_file, run_path, mode="r", encoding="utf-8"
+        ) as handle:
             latest_data = json.load(handle)
 
         # Constrain the checkpoint reference to the run's checkpoints directory.
@@ -1293,7 +1295,7 @@ class OptimizationLogger:
             raise ValueError(
                 f"Invalid checkpoint reference in {latest_file}: {exc}"
             ) from exc
-        with safe_open(checkpoint_file, run_path, mode="r") as handle:
+        with safe_open(checkpoint_file, run_path, mode="r", encoding="utf-8") as handle:
             checkpoint_data = json.load(handle)
 
         history_file = (
@@ -1302,7 +1304,9 @@ class OptimizationLogger:
         validated_history_file = validate_path(
             history_file, checkpoints_dir, must_exist=True
         )
-        with safe_open(validated_history_file, run_path, mode="r") as handle:
+        with safe_open(
+            validated_history_file, run_path, mode="r", encoding="utf-8"
+        ) as handle:
             trial_history = json.load(handle)
 
         checkpoint_data["trial_history"] = trial_history

@@ -121,7 +121,7 @@ class OptimizationAnalyzer:
         if not file_path:
             return None
         validated_path = validate_path(file_path, run_path, must_exist=True)
-        with safe_open(validated_path, run_path, mode="r") as f:
+        with safe_open(validated_path, run_path, mode="r", encoding="utf-8") as f:
             return json.load(f)
 
     @staticmethod
@@ -141,7 +141,7 @@ class OptimizationAnalyzer:
 
         entries: list[Any] = []
         validated_path = validate_path(file_path, run_path, must_exist=True)
-        with safe_open(validated_path, run_path, mode="r") as f:
+        with safe_open(validated_path, run_path, mode="r", encoding="utf-8") as f:
             for line in f:
                 stripped = line.strip()
                 if stripped:
@@ -205,7 +205,7 @@ class OptimizationAnalyzer:
             )
 
         validated_index = validate_path(index_file, base_path, must_exist=True)
-        with safe_open(validated_index, base_path, mode="r") as f:
+        with safe_open(validated_index, base_path, mode="r", encoding="utf-8") as f:
             index_data = json.load(f)
 
         # Convert to DataFrame
