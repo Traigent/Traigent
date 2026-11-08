@@ -38,6 +38,16 @@ def _cancel_signals() -> list[int]:
     return [sig for sig in found if sig is not None]
 
 
+def _restore_saved_handlers() -> None:
+    """Restore and forget every handler this module installed (caller holds _LOCK)."""
+    for sig, handler in list(_saved_handlers.items()):
+        try:
+            signal.signal(sig, handler)
+        except (ValueError, OSError):
+            pass
+    _saved_handlers.clear()
+
+
 @contextmanager
 def sigterm_as_cancellation() -> Iterator[None]:
     """Context manager translating SIGTERM and SIGHUP into ``KeyboardInterrupt``.
@@ -61,8 +71,10 @@ def sigterm_as_cancellation() -> Iterator[None]:
                     try:
                         previous = signal.getsignal(sig)
                         if previous == signal.SIG_DFL:
-                            signal.signal(sig, _raise_cancel)
+                            # Record first: an interrupt right after the install
+                            # must still find this signal when rolling back.
                             _saved_handlers[sig] = previous
+                            signal.signal(sig, _raise_cancel)
                     except (ValueError, OSError):
                         continue
                 if _saved_handlers:
@@ -70,6 +82,11 @@ def sigterm_as_cancellation() -> Iterator[None]:
                     counted = True
         except (ValueError, OSError):
             counted = False
+        except BaseException:
+            # E.g. KeyboardInterrupt from an already-installed handler firing
+            # mid-install: undo this call's installs so none leaks, then re-raise.
+            _restore_saved_handlers()
+            raise
     try:
         yield
     finally:
@@ -77,9 +94,4 @@ def sigterm_as_cancellation() -> Iterator[None]:
             with _LOCK:
                 _active_scopes -= 1
                 if _active_scopes == 0:
-                    for sig, handler in _saved_handlers.items():
-                        try:
-                            signal.signal(sig, handler)
-                        except (ValueError, OSError):
-                            pass
-                    _saved_handlers.clear()
+                    _restore_saved_handlers()
