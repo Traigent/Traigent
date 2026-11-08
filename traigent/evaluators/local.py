@@ -1368,6 +1368,50 @@ class LocalEvaluator(BaseEvaluator):
                 }
             )
 
+    def _handle_non_finite_metric_value(
+        self,
+        example_metric: ExampleMetrics,
+        key: str,
+        example_id: Any,
+        example_index: int,
+        config: dict[str, Any],
+        metric_errors: list[dict[str, Any]] | None,
+    ) -> None:
+        """A NaN/inf from a non-accuracy metric (Traigent#2950).
+
+        An objective fails closed with a clear error (it must never be
+        substituted or silently dropped). A non-objective metric is left
+        unmeasured for this example: nothing is stored (so the aggregators skip
+        the row instead of seeing a fabricated 0 or a NaN), a structured record
+        is appended and a warning names the metric -- never the example content.
+        """
+        if key in self.metrics:
+            raise self._objective_returned_none_error(
+                key,
+                example_id,
+                example_index,
+                config,
+                failure_mode="non_finite_return",
+            )
+        example_metric.unmeasured_custom_keys.add(key)
+        logger.warning(
+            "Metric function '%s' returned a non-finite value (NaN/inf) for "
+            "example index %s; recording it as unmeasured for that example.",
+            key,
+            example_index,
+        )
+        if metric_errors is not None:
+            metric_errors.append(
+                {
+                    "metric_name": key,
+                    "example_id": example_id,
+                    "example_index": example_index,
+                    "error_type": "NonFiniteReturn",
+                    "failure_mode": "non_finite_return",
+                    "is_objective": False,
+                }
+            )
+
     def _store_numeric_metric(
         self,
         example_metric: ExampleMetrics,
@@ -1380,16 +1424,26 @@ class LocalEvaluator(BaseEvaluator):
     ) -> bool:
         """Store a finite numeric metric; False when a supplied accuracy was invalid."""
         numeric = float(value)
-        if key == "accuracy" and not math.isfinite(numeric):
-            self._invalidate_supplied_accuracy(
-                example_metric,
-                key,
-                example_id,
-                example_index,
-                config,
-                metric_errors,
-                "non_finite_return",
-            )
+        if not math.isfinite(numeric):
+            if key == "accuracy":
+                self._invalidate_supplied_accuracy(
+                    example_metric,
+                    key,
+                    example_id,
+                    example_index,
+                    config,
+                    metric_errors,
+                    "non_finite_return",
+                )
+            else:
+                self._handle_non_finite_metric_value(
+                    example_metric,
+                    key,
+                    example_id,
+                    example_index,
+                    config,
+                    metric_errors,
+                )
             return False
         example_metric.custom_metrics[key] = numeric
         if key == "accuracy":
