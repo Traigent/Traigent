@@ -430,6 +430,11 @@ class TrialLifecycle:
                 orchestrator, exc, permit
             )
             raise
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # #3234: close the started trial so start/complete callbacks pair
+            # on the Ctrl+C path, then let the interrupt propagate.
+            orchestrator._notify_interrupted_trial(trial_count, config_for_run)
+            raise
 
         if getattr(orchestrator, "_execution_debit_denied", False):
             orchestrator._stop_reason = "execution_budget"

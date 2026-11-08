@@ -2978,6 +2978,9 @@ class OptimizationOrchestrator:
         new_count = current_trial_index + 1
 
         progress_info = self._get_progress_info(new_count)
+        if getattr(self, "_trial_complete_dispatched", None) is None:
+            self._trial_complete_dispatched = set()
+        self._trial_complete_dispatched.add(current_trial_index)
         self.callback_manager.on_trial_complete(trial_result, progress_info)
 
         if new_count % PROGRESS_LOG_INTERVAL == 0 or (
@@ -3350,13 +3353,19 @@ class OptimizationOrchestrator:
         # Use permit-based execution with cost enforcement
         # Each trial checks for a cost permit before execution
         # Trials that exceed the cost limit are cancelled (returned as None)
-        (
-            results,
-            cancelled_count,
-        ) = await self.parallel_execution_manager.run_with_cost_permits(
-            tasks,
-            cancel_sentinel=None,  # None indicates cost limit cancellation
-        )
+        try:
+            (
+                results,
+                cancelled_count,
+            ) = await self.parallel_execution_manager.run_with_cost_permits(
+                tasks,
+                cancel_sentinel=None,  # None indicates cost limit cancellation
+            )
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # #3234: pair every started trial with a completion, then propagate.
+            for offset, cfg in enumerate(scheduled_configs):
+                self._notify_interrupted_trial(trial_count + offset, cfg)
+            raise
 
         # Track cancelled trials for reporting
         if cancelled_count > 0:
@@ -3876,6 +3885,9 @@ class OptimizationOrchestrator:
             example_limit, bool
         ):
             self.callback_manager.on_run_settings({"example_timeout": example_limit})
+        self._optimization_complete_notified = False
+        self._optimization_start_notified = True
+        self._trial_complete_dispatched = set()
         self.callback_manager.on_optimization_start(
             config_space=self.optimizer.config_space,
             objectives=self.optimizer.objectives,
@@ -4229,6 +4241,7 @@ class OptimizationOrchestrator:
                     session_span=session_span,
                 )
         finally:
+            self._ensure_optimization_callbacks_closed()
             recorder = getattr(self, "_mock_recorder", None)
             if recorder is not None:
                 recorder.deactivate()
@@ -4243,6 +4256,77 @@ class OptimizationOrchestrator:
                     reset_resume_prefill(token)
                 except ValueError:  # token from another context: nothing to undo
                     pass
+
+    def _ensure_optimization_callbacks_closed(self) -> None:
+        """Guarantee ``on_optimization_complete`` and worker shutdown (#3233).
+
+        The normal and user-cancel paths deliver the completion callback from
+        ``_finalize_optimization``. Any other exit (SystemExit from the
+        objective, OptimizationError, an unexpected failure) used to skip it,
+        leaving callback resources open and the worker thread alive. This is a
+        best-effort safety net: it never raises, so it cannot mask the
+        original exception.
+        """
+        manager = getattr(self, "callback_manager", None)
+        if manager is None:
+            return
+        started = getattr(self, "_optimization_start_notified", False)
+        notified = getattr(self, "_optimization_complete_notified", False)
+        self._optimization_start_notified = False
+        try:
+            if started and not notified:
+                self._optimization_complete_notified = True
+                if self._status in (
+                    OptimizationStatus.RUNNING,
+                    OptimizationStatus.PENDING,
+                ):
+                    # Abnormal exit before any handler set a terminal status
+                    # (e.g. preflight failure): never report an active run.
+                    self._status = OptimizationStatus.FAILED
+                try:
+                    result = self._create_optimization_result()
+                except Exception:
+                    logger.debug(
+                        "Could not build partial result for the completion "
+                        "callback after an abnormal exit",
+                        exc_info=True,
+                    )
+                else:
+                    manager.on_optimization_complete(result)
+        except BaseException:  # noqa: B036 - must not mask the original exit
+            logger.debug("Completion callback failed on abnormal exit", exc_info=True)
+        finally:
+            try:
+                manager.close()
+            except BaseException:  # noqa: B036 - must not mask the original exit
+                logger.debug("Callback manager close failed", exc_info=True)
+
+    def _notify_interrupted_trial(
+        self, trial_number: int, config: dict[str, Any]
+    ) -> None:
+        """Best-effort on_trial_complete (cancelled) for a started trial that an
+        interrupt cut short (#3234). No-op if its completion already fired."""
+        dispatched = getattr(self, "_trial_complete_dispatched", None)
+        if dispatched is None:
+            dispatched = self._trial_complete_dispatched = set()
+        if trial_number in dispatched:
+            return
+        dispatched.add(trial_number)
+        try:
+            trial = TrialResult(
+                trial_id=f"trial_{trial_number}_interrupted",
+                config=dict(config),
+                metrics={},
+                status=TrialStatus.CANCELLED,
+                duration=0.0,
+                timestamp=datetime.now(UTC),
+                error_message="Trial interrupted by user",
+            )
+            self.callback_manager.on_trial_complete(
+                trial, self._get_progress_info(trial_number)
+            )
+        except BaseException:  # noqa: B036 - must not mask the interrupt
+            logger.debug("Interrupted-trial callback failed", exc_info=True)
 
     def _check_cost_approval(self, dataset: Dataset) -> None:
         """Check pre-run cost approval before optimization.
@@ -5600,7 +5684,9 @@ class OptimizationOrchestrator:
         ):
             await self._submit_workflow_traces(session_id)
 
-        self.callback_manager.on_optimization_complete(result)
+        if not getattr(self, "_optimization_complete_notified", False):
+            self._optimization_complete_notified = True
+            self.callback_manager.on_optimization_complete(result)
 
         self._log_local_only_summary()
 
