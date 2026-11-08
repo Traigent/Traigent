@@ -418,7 +418,7 @@ def configure(
 ) -> bool
 ```
 
-- `default_storage_backend` and `cache_policy` are deprecated and have no effect: nothing in the SDK reads them, so passing either emits a `DeprecationWarning` and the value is ignored. Set the run cache policy per run with `.optimize(cache_policy=...)`.
+- `default_storage_backend` and `cache_policy` are deprecated and have no effect: nothing in the SDK reads them, so passing either emits a `DeprecationWarning` and the value is ignored (an invalid legacy `cache_policy` value still raises `ValueError` first). Set the run cache policy per run with `.optimize(cache_policy=...)`.
 - `objectives`: Optional global default applied when decorators omit the parameter. Accepts a list of objective names or an `ObjectiveSchema`.
 
 ### `traigent.get_version_info()`
