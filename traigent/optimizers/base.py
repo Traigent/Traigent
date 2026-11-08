@@ -345,7 +345,9 @@ class BaseOptimizer(ABC):
             Cardinality count, 0 for empty, or None for continuous types.
         """
         if isinstance(definition, list):
-            return len(definition) if definition else 0
+            # Distinct values only: a repeated list entry is the same
+            # configuration, not another one to try (#2954).
+            return discrete_cardinality_for_config_param(definition)
 
         if isinstance(definition, tuple) and len(definition) == 2:
             return None  # Continuous range

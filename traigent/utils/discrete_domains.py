@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import math
 import sys
+from collections.abc import Iterable
 from typing import Any
 
 FLOAT_GRID_ROUND_DIGITS = 6
@@ -22,6 +24,34 @@ def float_step_divides_span(low: float, high: float, step: float) -> bool:
     nearest = round(intervals)
     tolerance = _FLOAT_STEP_TOLERANCE * max(1.0, abs(intervals))
     return abs(intervals - nearest) <= tolerance
+
+
+def _value_identity(value: Any) -> str:
+    """Identity of one domain value, matching the optimizers' tried-config hash.
+
+    ``BaseOptimizer._hash_config`` encodes a configuration with
+    ``json.dumps(..., sort_keys=True, default=str)``; encoding each value the
+    same way makes two list entries "the same value" exactly when they would
+    produce the same tried configuration. ``True`` and ``1`` (and ``1.0`` and
+    ``1``) therefore stay distinct, so the type handed to the user function is
+    never changed by deduplication.
+    """
+
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def distinct_values(values: Iterable[Any]) -> tuple[Any, ...]:
+    """Return ``values`` without repeats, keeping the first occurrence (#2954)."""
+
+    seen: set[str] = set()
+    result: list[Any] = []
+    for value in values:
+        key = _value_identity(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return tuple(result)
 
 
 def _finite_grid(low: float, high: float, step: float) -> bool:
@@ -247,7 +277,7 @@ def _dict_cardinality(definition: dict[Any, Any]) -> int | None:
     if _is_categorical_shape(param_type, has_range, has_categorical_values):
         choices = _categorical_choices(definition)
         try:
-            return len(choices)
+            return len(distinct_values(choices))
         except TypeError:
             return None
 
@@ -265,7 +295,7 @@ def _dict_values(definition: dict[Any, Any]) -> tuple[Any, ...] | None:
 
     if _is_categorical_shape(param_type, has_range, has_categorical_values):
         choices = _categorical_choices(definition)
-        return tuple(choices)
+        return distinct_values(choices)
 
     if param_type in _FIXED_TYPES:
         return _fixed_values(definition)
@@ -280,7 +310,7 @@ def discrete_cardinality_for_config_param(definition: Any) -> int | None:
     """Return finite cardinality for a config-space parameter, or None if continuous."""
 
     if isinstance(definition, list):
-        return len(definition)
+        return len(distinct_values(definition))
 
     if isinstance(definition, tuple) and len(definition) == 2:
         return None
@@ -295,7 +325,7 @@ def discrete_values_for_config_param(definition: Any) -> tuple[Any, ...] | None:
     """Return finite values for a config-space parameter, or None if continuous."""
 
     if isinstance(definition, list):
-        return tuple(definition)
+        return distinct_values(definition)
 
     if isinstance(definition, tuple) and len(definition) == 2:
         return None
