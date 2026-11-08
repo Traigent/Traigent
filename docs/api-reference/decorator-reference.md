@@ -577,7 +577,7 @@ or `metric_limit` / `metric_name` for other cumulative metrics.
 
 ```python
 @traigent.optimize(
-    plateau_window=10,  # trials
+    plateau_window=10,  # running-best values compared (10 values = 9 comparisons); must be >= 2
     plateau_epsilon=0.01,  # improvement threshold
     ...
 )

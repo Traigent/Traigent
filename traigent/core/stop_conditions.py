@@ -345,8 +345,39 @@ class MaxTrialsStopCondition(StopCondition):
         return count >= self._max_trials
 
 
+MIN_PLATEAU_WINDOW = 2
+
+
+def validate_plateau_window(window: object) -> int:
+    """Validate a configured ``plateau_window`` and return it as an int.
+
+    ``plateau_window`` is the number of running-best values compared (so
+    ``N - 1`` comparisons), per the owner-ruled ``optimize.stop-rules.v1``
+    contract. A window of 1 compares a value with itself and would stop the
+    run after the first trial, so anything below 2 is rejected.
+    """
+    if isinstance(window, bool) or not isinstance(window, int):
+        raise ValueError(
+            f"plateau_window must be an integer >= {MIN_PLATEAU_WINDOW}, "
+            f"got {type(window).__name__}"
+        )
+    if window < MIN_PLATEAU_WINDOW:
+        raise ValueError(
+            f"plateau_window must be >= {MIN_PLATEAU_WINDOW} (got {window}): it is "
+            "the number of running-best values compared, so a window of 1 "
+            "always stops after the first trial"
+        )
+    return window
+
+
 class PlateauAfterNStopCondition(StopCondition):
-    """Stop when the best weighted score plateaus for ``window_size`` trials."""
+    """Stop when the best weighted score plateaus over ``window_size`` values.
+
+    Follows the ``optimize.stop-rules.v1`` rule: once ``window_size``
+    running-best values exist, take the last ``window_size`` values (including
+    the one after the trial just completed); stop if max - min <= epsilon.
+    That is ``window_size - 1`` comparisons, so ``window_size`` must be >= 2.
+    """
 
     reason = "plateau"
 
@@ -359,8 +390,7 @@ class PlateauAfterNStopCondition(StopCondition):
     ) -> None:
         if objective_schema is None:
             raise ValueError("objective_schema is required for plateau detection")
-        if not isinstance(window_size, int) or window_size <= 0:
-            raise ValueError("window_size must be a positive integer")
+        window_size = validate_plateau_window(window_size)
         if epsilon < 0:
             raise ValueError("epsilon must be non-negative")
 
