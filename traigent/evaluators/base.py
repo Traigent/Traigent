@@ -137,6 +137,20 @@ class _SyncLane:
         self.timed_out = False
 
 
+# Row-metadata key listing custom metrics left unmeasured for that example
+# (Traigent#2950). Optional: rows from older checkpoints do not carry it.
+UNMEASURED_CUSTOM_KEYS_METADATA = "unmeasured_custom_keys"
+
+
+def _stored_unmeasured_keys_metadata(stored: Mapping[str, Any]) -> dict[str, Any]:
+    marker = (stored.get("metadata") or {}).get(UNMEASURED_CUSTOM_KEYS_METADATA)
+    if isinstance(marker, (list, tuple)):
+        return {
+            UNMEASURED_CUSTOM_KEYS_METADATA: [k for k in marker if isinstance(k, str)]
+        }
+    return {}
+
+
 def count_timed_out_examples(example_results: Any) -> int:
     """Count example results whose error records a timeout-caused failure.
 
@@ -3361,6 +3375,7 @@ class BaseEvaluator(ABC):
                 metadata={
                     **(example.metadata.copy() if example.metadata else {}),
                     "resumed_example_from_prior_run": True,
+                    **_stored_unmeasured_keys_metadata(stored),
                 },
             ),
             index,

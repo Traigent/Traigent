@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 from traigent.config.types import resolve_execution_mode
 from traigent.evaluators.base import (
+    UNMEASURED_CUSTOM_KEYS_METADATA,
     BaseEvaluator,
     Dataset,
     EvaluationResult,
@@ -1291,6 +1292,8 @@ class LocalEvaluator(BaseEvaluator):
                     config,
                     metric_errors,
                 )
+                if metric_name in example_metric.unmeasured_custom_keys:
+                    continue
                 if metric_name == "accuracy":
                     # No accuracy was supplied for this row: unmeasured, not a
                     # fabricated zero. Other metrics keep their legacy 0.0.
@@ -1368,6 +1371,54 @@ class LocalEvaluator(BaseEvaluator):
                 }
             )
 
+    def _handle_non_finite_metric_value(
+        self,
+        example_metric: ExampleMetrics,
+        key: str,
+        example_id: Any,
+        example_index: int,
+        config: dict[str, Any],
+        metric_errors: list[dict[str, Any]] | None,
+    ) -> None:
+        """A NaN/inf from a non-accuracy metric (Traigent#2950).
+
+        An objective fails closed with a clear error (it must never be
+        substituted or silently dropped). A non-objective metric is left
+        unmeasured for this example: nothing is stored (so the aggregators skip
+        the row instead of seeing a fabricated 0 or a NaN), a structured record
+        is appended and a warning names the metric -- never the example content.
+        """
+        if key in self.metrics:
+            raise self._objective_returned_none_error(
+                key,
+                example_id,
+                example_index,
+                config,
+                failure_mode="non_finite_return",
+            )
+        # Unknown stays unknown: any producer's non-finite value makes the
+        # metric unmeasured for this example, including a value an earlier
+        # producer of the same key already stored.
+        example_metric.custom_metrics.pop(key, None)
+        example_metric.unmeasured_custom_keys.add(key)
+        logger.warning(
+            "Metric function '%s' returned a non-finite value (NaN/inf) for "
+            "example index %s; recording it as unmeasured for that example.",
+            key,
+            example_index,
+        )
+        if metric_errors is not None:
+            metric_errors.append(
+                {
+                    "metric_name": key,
+                    "example_id": example_id,
+                    "example_index": example_index,
+                    "error_type": "NonFiniteReturn",
+                    "failure_mode": "non_finite_return",
+                    "is_objective": False,
+                }
+            )
+
     def _store_numeric_metric(
         self,
         example_metric: ExampleMetrics,
@@ -1380,16 +1431,30 @@ class LocalEvaluator(BaseEvaluator):
     ) -> bool:
         """Store a finite numeric metric; False when a supplied accuracy was invalid."""
         numeric = float(value)
-        if key == "accuracy" and not math.isfinite(numeric):
-            self._invalidate_supplied_accuracy(
-                example_metric,
-                key,
-                example_id,
-                example_index,
-                config,
-                metric_errors,
-                "non_finite_return",
-            )
+        if key in example_metric.unmeasured_custom_keys and math.isfinite(numeric):
+            # A non-finite value from another producer already made this metric
+            # unmeasured for the example; a later finite value cannot undo it.
+            return False
+        if not math.isfinite(numeric):
+            if key == "accuracy":
+                self._invalidate_supplied_accuracy(
+                    example_metric,
+                    key,
+                    example_id,
+                    example_index,
+                    config,
+                    metric_errors,
+                    "non_finite_return",
+                )
+            else:
+                self._handle_non_finite_metric_value(
+                    example_metric,
+                    key,
+                    example_id,
+                    example_index,
+                    config,
+                    metric_errors,
+                )
             return False
         example_metric.custom_metrics[key] = numeric
         if key == "accuracy":
@@ -2498,6 +2563,10 @@ class LocalEvaluator(BaseEvaluator):
         )
         metric.accuracy_eligible = not _is_empty_expected_output(expected)
         metric.custom_metrics.update(stored)
+        marker = (example_result.metadata or {}).get(UNMEASURED_CUSTOM_KEYS_METADATA)
+        if isinstance(marker, (list, tuple, set)):
+            # Optional: checkpoints written before #2950 carry no marker.
+            metric.unmeasured_custom_keys = {k for k in marker if isinstance(k, str)}
         # Accuracy provenance comes only from the stored row: a stored
         # measurement is reused as-is; a successful row with gold but no stored
         # accuracy stays unmeasured (no builtin provenance, so never 1.0).
@@ -2627,6 +2696,15 @@ class LocalEvaluator(BaseEvaluator):
         # sub-keys and exclude any function name a mapping-returning
         # function never populated) rather than the function names -- the
         # latter KeyErrors for mapping-returning metric functions.
+        if detailed_row is not None and example_metric.unmeasured_custom_keys:
+            # Persisted with the row so a resumed run keeps the metric
+            # unmeasured instead of zero-filling it (Traigent#2950).
+            detailed_row.metadata = {
+                **(detailed_row.metadata or {}),
+                UNMEASURED_CUSTOM_KEYS_METADATA: sorted(
+                    example_metric.unmeasured_custom_keys
+                ),
+            }
         if detailed_row is not None:
             # A metric function is authoritative for the key(s) it
             # produces and overrides a built-in computed value of the same

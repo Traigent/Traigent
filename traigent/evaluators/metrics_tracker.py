@@ -614,6 +614,10 @@ class ExampleMetrics:
     # True only when the SDK inserted this row's evaluation_cost. User values
     # win collisions and are never withdrawn by the unknown LLM-cost rule.
     sdk_evaluation_cost: bool = field(default=False, kw_only=True)
+    # Custom-metric names this row could not measure (a non-objective metric
+    # function returned NaN/inf, Traigent#2950). Summary statistics skip the row
+    # for these keys instead of counting a fabricated 0.
+    unmeasured_custom_keys: set[str] = field(default_factory=set, kw_only=True)
     # ``LocalEvaluator`` sets this from the dataset's expected-output contract.
     # A false value means the built-in exact-match accuracy is not meaningful
     # for this row (for example, the expected output is blank), so formatter
@@ -1559,22 +1563,31 @@ class MetricsTracker:
             if key in metrics_data or key == "accuracy":
                 continue
             custom_values = self._custom_values_for_key(
-                key, custom_rows, user_evaluation_cost
+                key, custom_rows, user_evaluation_cost, self.example_metrics
             )
             if custom_values:
                 metrics_data[key] = custom_values
 
     @staticmethod
     def _custom_values_for_key(
-        key: str, custom_rows: list[dict[str, Any]], user_evaluation_cost: bool
+        key: str,
+        custom_rows: list[dict[str, Any]],
+        user_evaluation_cost: bool,
+        example_metrics: Sequence[ExampleMetrics] = (),
     ) -> list[Any]:
         custom_values: list[Any] = []
-        for row in custom_rows:
+        for index, row in enumerate(custom_rows):
             if key in row:
                 custom_values.append(row[key])
             elif key == "evaluation_cost" and user_evaluation_cost:
                 # An excluded SDK entry is not a user measurement
                 # of zero. Use the same samples as the scalar mean.
+                continue
+            elif index < len(example_metrics) and (
+                key in example_metrics[index].unmeasured_custom_keys
+            ):
+                # The metric function returned NaN/inf for this example: it is
+                # unmeasured, not a measured zero (Traigent#2950).
                 continue
             else:
                 custom_values.append(0.0)  # Default value if metric not present
@@ -1667,6 +1680,8 @@ class MetricsTracker:
         pandas reports NaN for every statistic of zero values and for the
         sample ``std`` of one value; we report ``None`` for those (#3226).
         """
+        # NaN/inf are not measurements; statistics.stdev would also raise on them.
+        values = [v for v in values if math.isfinite(v)]
         if not values:
             return {
                 "count": 0,
