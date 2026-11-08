@@ -35,6 +35,7 @@ def _fake_result() -> SimpleNamespace:
     )
 
 
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="time.tzset is POSIX-only")
 @pytest.mark.parametrize("fmt", ["slim", "full"])
 def test_exported_at_is_aware_utc_under_non_utc_tz(
     fmt: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
