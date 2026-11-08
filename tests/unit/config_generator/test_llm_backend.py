@@ -181,13 +181,20 @@ class TestBudgetSafety2928:
             )
         )
         assert expected > 10 * mini
-        backend = LiteLLMBackend(model="gpt-4o", budget_usd=0.10)
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=1.0)
         with patch("litellm.completion", return_value=_response(100_000, 10_000)):
             backend.complete("p")
             assert backend.total_cost_usd == pytest.approx(expected)
-            with pytest.raises(BudgetExhausted):
-                backend.complete("p")
-        assert backend.calls_made == 1
+            assert backend.calls_made == 1
+
+    def test_single_call_cannot_overshoot_budget(self) -> None:
+        """Worst-case cost of the next call is checked before sending it."""
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=0.01)
+        with patch("litellm.completion") as completion:
+            with pytest.raises(BudgetExhausted, match="would be exceeded"):
+                backend.complete("x" * 4000, max_tokens=1024)
+        completion.assert_not_called()
+        assert backend.calls_made == 0
 
     def test_unpriced_model_fails_closed_before_calling(self) -> None:
         backend = LiteLLMBackend(model="no-such-model-xyz", budget_usd=1.0)

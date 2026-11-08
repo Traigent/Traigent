@@ -135,15 +135,27 @@ class LiteLLMBackend:
 
             configure_litellm_logging(litellm_module=litellm)
             # Fail closed before spending: the cap is meaningless without a price.
+            # Bound the call's cost from above (a token is never shorter than a
+            # byte, and output is capped by max_tokens) so one call cannot
+            # overshoot the budget.
             try:
-                litellm.cost_per_token(
-                    model=self._model, prompt_tokens=1, completion_tokens=1
+                prompt_bound, completion_bound = litellm.cost_per_token(
+                    model=self._model,
+                    prompt_tokens=len(prompt.encode("utf-8")),
+                    completion_tokens=max_tokens,
                 )
             except Exception as exc:
                 raise UnmeasurableCostError(
                     f"No known price for model {self._model!r}; refusing to call "
                     "it because the --budget cap cannot be enforced"
                 ) from exc
+            worst_case = prompt_bound + completion_bound
+            if self._spent_usd + worst_case > self._budget_usd:
+                raise BudgetExhausted(
+                    f"Budget of {format_usd(self._budget_usd)} would be exceeded "
+                    f"(spent {format_usd(self._spent_usd)}, next call could cost "
+                    f"up to {format_usd(worst_case)})"
+                )
 
             response = litellm.completion(
                 model=self._model,
