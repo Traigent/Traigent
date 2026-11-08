@@ -13,6 +13,8 @@ developer-friendly and user-friendly.
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 import math
 import numbers
@@ -1641,9 +1643,13 @@ class OptimizationValidator:
 
 
 def validate_and_suggest(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Decorator to validate optimization parameters with helpful suggestions."""
+    """Decorator to validate optimization parameters with helpful suggestions.
 
-    def wrapper(*args, **kwargs):
+    The wrapper keeps the wrapped function's name, docstring and signature, and
+    stays a coroutine function when the wrapped one is.
+    """
+
+    def _check(kwargs: dict[str, Any]) -> None:
         # Extract parameters
         config_space = kwargs.get("configuration_space")
         objectives = kwargs.get("objectives")
@@ -1664,6 +1670,18 @@ def validate_and_suggest(func: Callable[..., Any]) -> Callable[..., Any]:
         if result.has_warnings:
             logger.warning(result.get_feedback(include_warnings=True))
 
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            _check(kwargs)
+            return await func(*args, **kwargs)
+
+        return async_wrapper
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        _check(kwargs)
         return func(*args, **kwargs)
 
     return wrapper
