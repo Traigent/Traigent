@@ -365,7 +365,7 @@ class ProgressBarCallback(OptimizationCallback):
         bar = "█" * filled_width + "░" * (self.width - filled_width)
 
         # Format time
-        elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
+        elapsed = _format_elapsed(progress.elapsed_time)
 
         # Format best score - handle None case properly
         best_score_str = (
@@ -411,7 +411,7 @@ class ProgressBarCallback(OptimizationCallback):
     def _print_final_progress_bar(self, progress: ProgressInfo) -> None:
         """Print the closing 100% progress line from the last recorded progress."""
         bar = "█" * self.width
-        elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
+        elapsed = _format_elapsed(progress.elapsed_time)
         best_score_str = (
             f"{progress.best_score:.3f}" if progress.best_score is not None else "N/A"
         )
