@@ -910,3 +910,80 @@ def test_numpy_int_step_becomes_python_int_and_passes_config_validation() -> Non
     validate_config_space({"batch": value})
     # integral float steps are normalised too
     assert type(IntRange(0, 10, step=np.float64(2.0)).step) is int
+
+
+class TestIntRangeUnevenStepWarning:
+    """IntRange warns like Range when step does not divide the span."""
+
+    def test_uneven_step_warns(self) -> None:
+        with pytest.warns(UserWarning, match="does not evenly divide span"):
+            IntRange(100, 4096, step=16)
+
+    def test_dividing_step_does_not_warn(self) -> None:
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            IntRange(100, 4084, step=16)
+            IntRange(0, 10)
+            IntRange(1, 3, step=1)
+
+    def test_shipped_max_tokens_presets_do_not_warn(self) -> None:
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            for task in ("short", "medium", "long"):
+                IntRange.max_tokens(task=task)
+
+    def test_step_equal_to_span_does_not_warn(self) -> None:
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            IntRange(0, 10, step=10)
+        with pytest.warns(UserWarning, match="does not evenly divide span"):
+            IntRange(0, 11, step=10)
+
+    def test_step_larger_than_span_warns(self) -> None:
+        with pytest.warns(UserWarning, match="does not evenly divide span"):
+            IntRange(0, 5, step=10)
+
+
+class TestIntRangePresetsSmallArguments:
+    """Presets accept their smallest legal argument; bad ones name the argument."""
+
+    def test_few_shot_count_small_max_clamps_default(self) -> None:
+        r = IntRange.few_shot_count(max_examples=2)
+        assert (r.low, r.high, r.default) == (0, 2, 2)
+
+    def test_few_shot_count_smallest_legal_max(self) -> None:
+        r = IntRange.few_shot_count(max_examples=1)
+        assert (r.low, r.high, r.default) == (0, 1, 1)
+
+    def test_few_shot_count_default_unchanged_when_in_range(self) -> None:
+        assert IntRange.few_shot_count().default == 3
+
+    def test_few_shot_count_zero_names_argument(self) -> None:
+        with pytest.raises(ValueError, match="max_examples"):
+            IntRange.few_shot_count(max_examples=0)
+
+    def test_k_retrieval_small_max_clamps_default(self) -> None:
+        r = IntRange.k_retrieval(max_k=2)
+        assert (r.low, r.high, r.default) == (1, 2, 2)
+
+    def test_k_retrieval_one_names_argument(self) -> None:
+        with pytest.raises(ValueError, match="max_k"):
+            IntRange.k_retrieval(max_k=1)
+
+    def test_batch_size_small_max_clamps_default(self) -> None:
+        r = IntRange.batch_size(max_size=8)
+        assert (r.low, r.high, r.default) == (1, 8, 8)
+
+    def test_batch_size_explicit_default_out_of_range_names_argument(self) -> None:
+        with pytest.raises(ValueError, match="default"):
+            IntRange.batch_size(max_size=8, default=100)
+
+    def test_batch_size_min_above_default_clamps_up(self) -> None:
+        r = IntRange.batch_size(min_size=32, max_size=64)
+        assert r.default == 32
