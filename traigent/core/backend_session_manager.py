@@ -43,6 +43,7 @@ from traigent.core.execution_policy_runtime import (
     exception_status,
     failure_reason_from_code,
     fallback_reason_from_session_result,
+    is_offline_requested,
     local_fallback_notice,
     mark_local_fallback,
     policy_allows_cloud_fallback,
@@ -1067,6 +1068,29 @@ class BackendSessionManager:
         config = getattr(self, "_traigent_config", None)
         return bool(config is not None and backend_egress_disabled(config))
 
+    def finalize_egress_allowed(self) -> bool:
+        """Whether the one terminal finalize of a created session may be sent.
+
+        ``mark_local_fallback`` sets ``config.no_egress`` when a run degrades to
+        LOCAL-ONLY mid-run, so ``_egress_disabled()`` is True from then on and
+        correctly blocks every further trial/result/trace call. That same flag
+        used to also swallow the terminal finalize, leaving the backend session
+        RUNNING forever (#2961). A session that was created is closed exactly
+        once, so a *runtime* degradation alone does not forbid the finalize. An
+        egress ban that existed before the run (manager ``no_egress``, offline
+        policy or env) still does.
+        """
+        if bool(getattr(self, "_no_egress", False)):
+            return False
+        if not self._egress_disabled():
+            return True
+        config = getattr(self, "_traigent_config", None)
+        return bool(
+            getattr(self, "_runtime_degraded", False)
+            and config is not None
+            and not is_offline_requested(policy_from_config(config))
+        )
+
     def _effective_require_run_id(self) -> bool:
         """Resolve the tri-state require_run_id option against the env flag.
 
@@ -1306,8 +1330,9 @@ class BackendSessionManager:
             "⚠️  Traigent backend tracking became unavailable during %s — "
             "continuing in LOCAL-ONLY mode. Trials are still optimized and "
             "saved to local storage, but this run is NOT tracked on the cloud "
-            "backend; its result is marked source='local_fallback'. Locally-stored "
-            "results sync to the cloud on the next successful run.",
+            "backend; its result is marked source='local_fallback'. The backend "
+            "session is closed once at the end of the run with the trials it "
+            "already received; later trials stay in local storage only.",
             context,
         )
 
@@ -3890,7 +3915,7 @@ class BackendSessionManager:
             Session summary metadata (or None if backend disabled)
         """
         if (
-            self._egress_disabled()
+            not self.finalize_egress_allowed()
             or not self._backend_client
             or session_id is None
             or not self._backend_tracking_enabled

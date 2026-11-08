@@ -5704,6 +5704,20 @@ class OptimizationOrchestrator:
             )
         return persistence_status
 
+    def _apply_runtime_degradation_tracking(
+        self, result: OptimizationResult, persistence_status: str
+    ) -> str:
+        """A mid-run LOCAL-ONLY fallback leaves the backend with partial trials.
+
+        The session is still finalized once (#2961), but the trials run after
+        the fallback never reached it, so a clean "succeeded" would overstate.
+        """
+        if self.backend_session_manager.backend_degraded:
+            if persistence_status in {"skipped", "succeeded"}:
+                persistence_status = "degraded"
+            result.metadata.setdefault("backend_tracking", "partial")
+        return persistence_status
+
     def _log_local_only_summary(self) -> None:
         # Issue #1265: if a backend-tracking run degraded to local-only, say so
         # prominently at the end (the per-trial warning fired once mid-run; this
@@ -5728,7 +5742,10 @@ class OptimizationOrchestrator:
                     "(source='local_fallback'): "
                     "the Traigent backend was unreachable during the run, so results "
                     "were computed and stored locally and are NOT on the cloud "
-                    "backend. They will sync on the next successful run.",
+                    "backend. One finalize of the backend session was attempted "
+                    "with the trials it had received (see "
+                    "metadata['persistence_status']); the rest exist only in "
+                    "local storage.",
                     self._optimization_id,
                 )
 
@@ -5793,7 +5810,7 @@ class OptimizationOrchestrator:
         persistence_status = "skipped"
         if (
             self.backend_session_manager.backend_tracking_enabled
-            and not backend_egress_disabled(self.traigent_config)
+            and self.backend_session_manager.finalize_egress_allowed()
             and session_id is not None
         ):
             persistence_status = await self._persist_run_to_backend(result, session_id)
@@ -5805,6 +5822,9 @@ class OptimizationOrchestrator:
         # optimizer kept sequencing — the run completed its full local
         # enumeration, but backend tracking is only PARTIAL. Mark it so.
         persistence_status = self._apply_early_complete_tracking(
+            result, persistence_status
+        )
+        persistence_status = self._apply_runtime_degradation_tracking(
             result, persistence_status
         )
 
@@ -5858,7 +5878,7 @@ class OptimizationOrchestrator:
         if (
             getattr(self, "_session_finalized", False)
             or not self.backend_session_manager.backend_tracking_enabled
-            or backend_egress_disabled(self.traigent_config)
+            or not self.backend_session_manager.finalize_egress_allowed()
             or session_id is None
         ):
             return
