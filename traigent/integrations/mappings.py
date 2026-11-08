@@ -184,6 +184,8 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
     },
 }
 
+# NOTE: "stop" is canonical and must be listed AFTER its alias "stop_sequences" so it
+# wins when both are configured (the injection loop applies params in list order).
 # Method mappings: Maps class names to methods and which parameters each method accepts.
 # Used for method-level parameter injection (e.g., chat.completions.create).
 METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
@@ -202,8 +204,8 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "frequency_penalty",
             "presence_penalty",
             "seed",
-            "stop",
             "stop_sequences",
+            "stop",
             "stream",
             "tools",
         ],
@@ -215,8 +217,8 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "frequency_penalty",
             "presence_penalty",
             "seed",
-            "stop",
             "stop_sequences",
+            "stop",
             "stream",
             "tools",
         ],
@@ -235,8 +237,8 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "frequency_penalty",
             "presence_penalty",
             "seed",
-            "stop",
             "stop_sequences",
+            "stop",
             "stream",
             "tools",
         ],
@@ -248,8 +250,8 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "frequency_penalty",
             "presence_penalty",
             "seed",
-            "stop",
             "stop_sequences",
+            "stop",
             "stream",
             "tools",
         ],
@@ -314,8 +316,8 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "frequency_penalty",
             "presence_penalty",
             "seed",
-            "stop",
             "stop_sequences",
+            "stop",
             "streaming",
         ],
         "stream": [
@@ -325,8 +327,8 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "frequency_penalty",
             "presence_penalty",
             "seed",
-            "stop",
             "stop_sequences",
+            "stop",
         ],
         "ainvoke": [
             "model",
@@ -335,8 +337,8 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "frequency_penalty",
             "presence_penalty",
             "seed",
-            "stop",
             "stop_sequences",
+            "stop",
             "streaming",
         ],
         "astream": [
@@ -346,8 +348,8 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "frequency_penalty",
             "presence_penalty",
             "seed",
-            "stop",
             "stop_sequences",
+            "stop",
         ],
     },
     "langchain_anthropic.ChatAnthropic": {

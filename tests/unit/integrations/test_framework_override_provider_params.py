@@ -270,3 +270,37 @@ def test_langchain_openai_request_body_gets_seed_penalties_stop(manager, method)
     assert body["frequency_penalty"] == 0.5
     assert body["presence_penalty"] == 0.4
     assert body["stop"] == ["ZZ"]
+
+
+def test_canonical_stop_wins_over_alias_for_every_provider(manager):
+    from traigent.integrations.mappings import METHOD_MAPPINGS
+
+    for cls, methods in METHOD_MAPPINGS.items():
+        for method, params in methods.items():
+            if "stop" in params and "stop_sequences" in params:
+                assert params.index("stop") > params.index("stop_sequences"), (
+                    cls,
+                    method,
+                )
+
+
+def test_openai_both_stop_names_send_canonical_value(manager):
+    openai = pytest.importorskip("openai")
+    bodies: list[dict] = []
+    client = openai.OpenAI(
+        api_key="k", http_client=_http_client(OPENAI_RESPONSE, bodies)
+    )
+    manager.activate_overrides(["openai.OpenAI"])
+    set_config(
+        TraigentConfig(
+            model="m", custom_params={"stop": ["A"], "stop_sequences": ["B"]}
+        )
+    )
+    set_config_space({"model": ["m"], "stop": [["A"]], "stop_sequences": [["B"]]})
+    try:
+        client.chat.completions.create(
+            model="x", messages=[{"role": "user", "content": "q"}]
+        )
+    finally:
+        set_config_space(None)
+    assert bodies[0]["stop"] == ["A"]
