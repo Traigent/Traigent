@@ -415,6 +415,7 @@ class TrialLifecycle:
                 session_id,
                 optuna_trial_id=optuna_trial_id,
             )
+            orchestrator._remember_trial_result(trial_count, trial_result)
 
             trial_count = await orchestrator._handle_trial_result(
                 trial_result=trial_result,

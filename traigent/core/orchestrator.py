@@ -2980,7 +2980,9 @@ class OptimizationOrchestrator:
         progress_info = self._get_progress_info(new_count)
         if getattr(self, "_trial_complete_dispatched", None) is None:
             self._trial_complete_dispatched = set()
+        self._trial_real_results: dict[int, TrialResult] = {}
         self._trial_complete_dispatched.add(current_trial_index)
+        self._trial_real_results.pop(current_trial_index, None)
         self.callback_manager.on_trial_complete(trial_result, progress_info)
 
         if new_count % PROGRESS_LOG_INTERVAL == 0 or (
@@ -3334,7 +3336,9 @@ class OptimizationOrchestrator:
             scheduled_configs.append(cfg)
             scheduled_optuna_ids.append(optuna_id)
             tasks.append(
-                self._run_trial_recording_subset(
+                self._run_and_remember_trial(
+                    trial_index,
+                    self._run_trial_recording_subset,
                     self._trial_lifecycle.run_trial,
                     subset_indices_of_dataset(ds_for_trial),
                     func,
@@ -3444,45 +3448,54 @@ class OptimizationOrchestrator:
         # synthetic cancelled/failed IDs once for contiguous batch numbering.
         batch_start = trial_count
 
-        for batch_offset, (config, permitted_result, optuna_id) in enumerate(
-            zip(scheduled_configs, results, scheduled_optuna_ids, strict=False)
-        ):
-            # Unwrap PermittedTrialResult to get result and permit
-            result = permitted_result.result
-            permit = permitted_result.permit
+        try:
+            for batch_offset, (config, permitted_result, optuna_id) in enumerate(
+                zip(scheduled_configs, results, scheduled_optuna_ids, strict=False)
+            ):
+                # Unwrap PermittedTrialResult to get result and permit
+                result = permitted_result.result
+                permit = permitted_result.permit
 
-            # Use try/finally to ensure permit is released on any exception
-            # during result processing (Gemini Phase 1.5 fix)
-            try:
-                trial_result = self._trial_result_from_parallel_item(
-                    result, config, f"trial_{batch_start + batch_offset}"
-                )
-
-                trial_count = await self._handle_trial_result(
-                    trial_result=trial_result,
-                    optimizer_config=config,
-                    current_trial_index=trial_count,
-                    session_id=session_id,
-                    optuna_trial_id=optuna_id,
-                    log_on_success=False,
-                    permit=permit,
-                    submit_to_backend=submit_to_backend,
-                )
-            except CloudBrainOptimizationComplete as complete:
-                if terminal_completion is None:
-                    terminal_completion = complete
-                submit_to_backend = False
-                trial_count = len(self._trials)
-            except Exception:
-                # Release permit on any exception to prevent stranding
-                # (only if permit is still active - wasn't already released)
-                if permit.active and self.cost_enforcer is not None:
-                    await self.cost_enforcer.release_permit_async(permit)
-                    logger.debug(
-                        "Released permit %d after exception in _process_parallel_results",
-                        permit.id,
+                # Use try/finally to ensure permit is released on any exception
+                # during result processing (Gemini Phase 1.5 fix)
+                try:
+                    trial_result = self._trial_result_from_parallel_item(
+                        result, config, f"trial_{batch_start + batch_offset}"
                     )
-                raise
+
+                    trial_count = await self._handle_trial_result(
+                        trial_result=trial_result,
+                        optimizer_config=config,
+                        current_trial_index=trial_count,
+                        session_id=session_id,
+                        optuna_trial_id=optuna_id,
+                        log_on_success=False,
+                        permit=permit,
+                        submit_to_backend=submit_to_backend,
+                    )
+                except CloudBrainOptimizationComplete as complete:
+                    if terminal_completion is None:
+                        terminal_completion = complete
+                    submit_to_backend = False
+                    trial_count = len(self._trials)
+                except Exception:
+                    # Release permit on any exception to prevent stranding
+                    # (only if permit is still active - wasn't already released)
+                    if permit.active and self.cost_enforcer is not None:
+                        await self.cost_enforcer.release_permit_async(permit)
+                        logger.debug(
+                            "Released permit %d after exception in _process_parallel_results",
+                            permit.id,
+                        )
+                    raise
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # #3234: pair every started trial of the batch, real result first.
+            for offset, (cfg, permitted) in enumerate(
+                zip(scheduled_configs, results, strict=False)
+            ):
+                self._remember_trial_result(batch_start + offset, permitted.result)
+                self._notify_interrupted_trial(batch_start + offset, cfg)
+            raise
         if terminal_completion is not None:
             raise terminal_completion
         return trial_count
@@ -4301,6 +4314,24 @@ class OptimizationOrchestrator:
             except BaseException:  # noqa: B036 - must not mask the original exit
                 logger.debug("Callback manager close failed", exc_info=True)
 
+    def _remember_trial_result(self, trial_number: int, result: Any) -> None:
+        """Remember a finished trial's real result until its callback fires."""
+        if isinstance(result, TrialResult):
+            if getattr(self, "_trial_real_results", None) is None:
+                self._trial_real_results = {}
+            self._trial_real_results[trial_number] = result
+
+    async def _run_and_remember_trial(
+        self,
+        trial_number: int,
+        run: Callable[..., Awaitable[Any]],
+        *args: Any,
+        **kw: Any,
+    ) -> Any:
+        result = await run(*args, **kw)
+        self._remember_trial_result(trial_number, result)
+        return result
+
     def _notify_interrupted_trial(
         self, trial_number: int, config: dict[str, Any]
     ) -> None:
@@ -4312,19 +4343,27 @@ class OptimizationOrchestrator:
         if trial_number in dispatched:
             return
         dispatched.add(trial_number)
+        real = (getattr(self, "_trial_real_results", None) or {}).pop(
+            trial_number, None
+        )
         try:
-            trial = TrialResult(
-                trial_id=f"trial_{trial_number}_interrupted",
-                config=dict(config),
-                metrics={},
-                status=TrialStatus.CANCELLED,
-                duration=0.0,
-                timestamp=datetime.now(UTC),
-                error_message="Trial interrupted by user",
-            )
-            self.callback_manager.on_trial_complete(
-                trial, self._get_progress_info(trial_number)
-            )
+            if real is not None:
+                # The trial already finished: callbacks must see its real
+                # outcome, never a synthetic cancellation.
+                trial = real
+                progress = self._get_progress_info(trial_number + 1)
+            else:
+                trial = TrialResult(
+                    trial_id=f"trial_{trial_number}_interrupted",
+                    config=dict(config),
+                    metrics={},
+                    status=TrialStatus.CANCELLED,
+                    duration=0.0,
+                    timestamp=datetime.now(UTC),
+                    error_message="Trial interrupted by user",
+                )
+                progress = self._get_progress_info(trial_number)
+            self.callback_manager.on_trial_complete(trial, progress)
         except BaseException:  # noqa: B036 - must not mask the interrupt
             logger.debug("Interrupted-trial callback failed", exc_info=True)
 

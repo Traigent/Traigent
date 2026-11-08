@@ -212,3 +212,115 @@ def test_preflight_failure_completion_result_is_not_running_3233(
         _run(tmp_path, ValueError("unused"), rec)
     assert seen == [OptimizationStatus.FAILED]
     _assert_no_leaked_threads(before)
+
+
+def _bare_orch():
+    from unittest.mock import MagicMock
+
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    orch = MagicMock(spec=OptimizationOrchestrator)
+    orch._trial_complete_dispatched = set()
+    orch._trial_real_results = {}
+    orch.callback_manager = MagicMock()
+    orch._remember_trial_result = lambda n, r: (
+        OptimizationOrchestrator._remember_trial_result(orch, n, r)
+    )
+    orch._notify_interrupted_trial = lambda n, c: (
+        OptimizationOrchestrator._notify_interrupted_trial(orch, n, c)
+    )
+    return orch
+
+
+def _real_trial(n: int):
+    from datetime import UTC, datetime
+
+    from traigent.core.types import TrialResult
+
+    return TrialResult(
+        trial_id=f"trial_{n}",
+        config={"a": n},
+        metrics={"accuracy": 1.0},
+        status=TrialStatus.COMPLETED,
+        duration=0.1,
+        timestamp=datetime.now(UTC),
+    )
+
+
+def test_finished_trial_reports_real_status_not_cancelled_3234() -> None:
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    orch = _bare_orch()
+    real = _real_trial(0)
+    orch._remember_trial_result(0, real)
+    OptimizationOrchestrator._notify_interrupted_trial(orch, 0, {"a": 0})
+    OptimizationOrchestrator._notify_interrupted_trial(orch, 1, {"a": 1})
+    calls = orch.callback_manager.on_trial_complete.call_args_list
+    assert calls[0].args[0] is real
+    assert calls[0].args[0].status == TrialStatus.COMPLETED
+    assert calls[1].args[0].status == TrialStatus.CANCELLED
+
+
+def test_parallel_trial_finished_before_interrupt_keeps_real_result_3234() -> None:
+    import asyncio as aio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    orch = _bare_orch()
+    orch._trials_prevented = 0
+    orch.parallel_execution_manager = MagicMock()
+    real = _real_trial(0)
+    orch._run_and_remember_trial = lambda n, run, *a, **k: (
+        OptimizationOrchestrator._run_and_remember_trial(orch, n, run, *a, **k)
+    )
+
+    async def finish_first_then_interrupt(tasks, cancel_sentinel=None):
+        await tasks[0]  # first trial finishes (and is remembered)
+        tasks[1].close()
+        raise aio.CancelledError()
+
+    orch._run_trial_recording_subset = AsyncMock(return_value=real)
+    orch._trial_lifecycle = MagicMock()
+    orch.parallel_execution_manager.run_with_cost_permits = finish_first_then_interrupt
+    ds = MagicMock()
+    ds.__iter__ = lambda self: iter([])
+    descriptors = [({"a": i}, None, ds, None) for i in range(2)]
+    with pytest.raises(aio.CancelledError):
+        aio.run(
+            OptimizationOrchestrator._schedule_and_run_parallel_trials(
+                orch, lambda: None, descriptors, [None, None], "s", 0
+            )
+        )
+    statuses = [
+        c.args[0].status for c in orch.callback_manager.on_trial_complete.call_args_list
+    ]
+    assert statuses == [TrialStatus.COMPLETED, TrialStatus.CANCELLED]
+
+
+def test_cancel_during_result_processing_pairs_all_started_trials_3234() -> None:
+    import asyncio as aio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from traigent.core.orchestrator import OptimizationOrchestrator
+    from traigent.core.parallel_execution_manager import PermittedTrialResult
+
+    orch = _bare_orch()
+    orch._handle_trial_result = AsyncMock(side_effect=aio.CancelledError())
+    orch._trial_result_from_parallel_item = MagicMock(return_value=_real_trial(0))
+    orch.cost_enforcer = None
+    results = [
+        PermittedTrialResult(result=_real_trial(0), permit=MagicMock(active=False)),
+        PermittedTrialResult(result=None, permit=MagicMock(active=False)),
+    ]
+    with pytest.raises(aio.CancelledError):
+        aio.run(
+            OptimizationOrchestrator._process_parallel_results(
+                orch, [{"a": 0}, {"a": 1}], results, [None, None], "s", 0
+            )
+        )
+    calls = orch.callback_manager.on_trial_complete.call_args_list
+    assert [c.args[0].status for c in calls] == [
+        TrialStatus.COMPLETED,
+        TrialStatus.CANCELLED,
+    ]
