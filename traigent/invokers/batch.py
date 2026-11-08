@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from collections.abc import Callable
 from typing import Any, cast
@@ -279,6 +280,8 @@ class BatchInvoker(LocalInvoker):
         if not isinstance(timeout, (int, float)):
             raise InvocationError("batch_timeout must be numeric or None")
         timeout_value = float(timeout)
+        if math.isnan(timeout_value):
+            raise InvocationError("batch_timeout must be a number, not NaN")
         if timeout_value <= 0:
             raise InvocationError("batch_timeout must be greater than zero seconds")
         if timeout_value > self.MAX_TIMEOUT_SECONDS:

@@ -63,7 +63,7 @@ def _validate_comparability_coverage_ratio(comparability: dict) -> None:
         raise ValueError(
             f"comparability.coverage_ratio must be numeric, got {type(ratio)}"
         )
-    if ratio < 0 or ratio > 1:
+    if not 0 <= ratio <= 1:  # also rejects NaN
         raise ValueError("comparability.coverage_ratio must be between 0 and 1")
 
 
