@@ -31,6 +31,9 @@ class ImportanceResult:
     # Set (and the score/interval are None) when the data cannot support an
     # importance value for this parameter; "not measurable" is not "zero".
     not_measurable_reason: str | None = None
+    # Trials that set this parameter; ``sample_size`` is how many of them the
+    # score was computed from (replicated values only). None when unknown.
+    trials_with_parameter: int | None = None
 
     @property
     def is_measurable(self) -> bool:
@@ -119,15 +122,21 @@ class ParameterImportanceAnalyzer:
 
     @staticmethod
     def _hashable_key(value: object) -> object:
+        """Group key that never merges values of different types."""
+        type_name = type(value).__qualname__
         try:
             hash(value)
         except TypeError:
-            return repr(value)
-        return value
+            return (type_name, repr(value))
+        return (type_name, value)
 
     @staticmethod
     def _not_measurable(
-        parameter: str, method: str, reason: str, n: int
+        parameter: str,
+        method: str,
+        reason: str,
+        n: int,
+        total: int | None = None,
     ) -> ImportanceResult:
         return ImportanceResult(
             parameter_name=parameter,
@@ -136,6 +145,7 @@ class ParameterImportanceAnalyzer:
             method=method,
             sample_size=n,
             not_measurable_reason=reason,
+            trials_with_parameter=total,
         )
 
     @classmethod
@@ -197,7 +207,11 @@ class ParameterImportanceAnalyzer:
         eta2, n_kept, reason = self._grouped_effect(keys, ys)
         if eta2 is None:
             return self._not_measurable(
-                parameter, "variance_based", reason or "not measurable", n_kept
+                parameter,
+                "variance_based",
+                reason or "not measurable",
+                n_kept,
+                len(keys),
             )
         return ImportanceResult(
             parameter_name=parameter,
@@ -205,6 +219,7 @@ class ParameterImportanceAnalyzer:
             confidence_interval=None,
             method="variance_based",
             sample_size=n_kept,
+            trials_with_parameter=len(keys),
         )
 
     def analyze_correlation_based(
@@ -320,7 +335,11 @@ class ParameterImportanceAnalyzer:
             eta2, n_kept, reason = self._grouped_effect(keys, filtered_objectives)
             if eta2 is None:
                 return self._not_measurable(
-                    parameter, "correlation_based", reason or "not measurable", n_kept
+                    parameter,
+                    "correlation_based",
+                    reason or "not measurable",
+                    n_kept,
+                    len(keys),
                 )
             return ImportanceResult(
                 parameter_name=parameter,
@@ -328,6 +347,7 @@ class ParameterImportanceAnalyzer:
                 confidence_interval=None,
                 method="correlation_based",
                 sample_size=n_kept,
+                trials_with_parameter=len(keys),
             )
 
         if len(set(filtered_objectives)) < 2:
@@ -335,6 +355,7 @@ class ParameterImportanceAnalyzer:
                 parameter,
                 "correlation_based",
                 "objective is constant",
+                len(param_values),
                 len(param_values),
             )
 
@@ -345,6 +366,7 @@ class ParameterImportanceAnalyzer:
             confidence_interval=None,
             method="correlation_based",
             sample_size=len(param_values),
+            trials_with_parameter=len(param_values),
         )
 
     def _calculate_correlation(self, x: list[float], y: list[float]) -> float:
@@ -433,7 +455,10 @@ class ParameterImportanceAnalyzer:
                 method="permutation_based",
                 sample_size=n,
                 not_measurable_reason=reason,
+                trials_with_parameter=total,
             )
+
+        total = 0
 
         # Only runs that set the parameter carry information about it.
         keys: list[object] = []
@@ -442,6 +467,7 @@ class ParameterImportanceAnalyzer:
             if parameter in trial.config:
                 keys.append(self._hashable_key(trial.config[parameter]))
                 ys.append(float(trial.metrics[self.objective]))
+        total = len(ys)
         if len(ys) < 2:
             return not_measurable("parameter set in fewer than 2 trials", len(ys))
 
@@ -504,6 +530,7 @@ class ParameterImportanceAnalyzer:
             ),
             method="permutation_based",
             sample_size=n,
+            trials_with_parameter=total,
         )
 
     def get_top_parameters(
@@ -544,9 +571,15 @@ class ParameterImportanceAnalyzer:
             if result.confidence_interval is not None:
                 ci_low, ci_high = result.confidence_interval
                 interval = f" [{ci_low:.3f}, {ci_high:.3f}]"
+            basis = ""
+            if result.trials_with_parameter is not None:
+                basis = (
+                    f" (from {result.sample_size} of "
+                    f"{result.trials_with_parameter} trials)"
+                )
             lines.append(
                 f"  {result.parameter_name:15s}: {result.importance_score:.3f}"
-                f"{interval}"
+                f"{interval}{basis}"
             )
         for result in results.values():
             if result.importance_score is None:

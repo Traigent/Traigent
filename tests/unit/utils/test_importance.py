@@ -743,6 +743,47 @@ class TestParameterImportanceAnalyzer:
         assert result["x"].importance_score is None
         assert result["x"].not_measurable_reason == "objective is constant"
 
+    def test_report_line_shows_retained_count_per_method_issue_2945(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        # 30 trials set "model" (3 replicated values) and "half" is set on
+        # only 24 of them; temperature is unique per trial.
+        rows = []
+        for i in range(30):
+            model = ["small", "medium", "large"][i % 3]
+            cfg = {"model": model, "temperature": 0.01 * i + 0.1}
+            if i < 24:
+                cfg["half"] = "a" if i % 2 else "b"
+            rows.append(
+                (
+                    cfg,
+                    {"small": 0.5, "medium": 0.6, "large": 0.9}[model] + 0.01 * (i % 2),
+                )
+            )
+        trials = self._trials(rows)
+        for method, n_with in (
+            (analyzer.analyze_variance_based, 24),
+            (analyzer.analyze_correlation_based, 24),
+            (analyzer.analyze_permutation_based, 24),
+        ):
+            results = method(trials)
+            assert results["half"].trials_with_parameter == n_with
+            lines: list[str] = []
+            analyzer._format_method_results(results, lines)
+            line = next(x for x in lines if x.strip().startswith("half"))
+            assert f"of {n_with} trials)" in line, line
+            assert f"(from {results['half'].sample_size} of" in line
+            assert results["model"].trials_with_parameter == 30
+
+    def test_hashable_key_separates_types_issue_2945(
+        self, analyzer: ParameterImportanceAnalyzer
+    ) -> None:
+        assert analyzer._hashable_key([1]) != analyzer._hashable_key("[1]")
+        values = [[1], "[1]"] * 6
+        rows = [({"p": v}, 0.2 if isinstance(v, list) else 0.8) for v in values]
+        result = analyzer.analyze_variance_based(self._trials(rows))
+        assert result["p"].importance_score == pytest.approx(1.0)
+
     def test_get_top_parameters_skips_not_measurable(
         self, analyzer: ParameterImportanceAnalyzer
     ) -> None:
