@@ -2,6 +2,12 @@ name: Traigent CI Gates
 
 on:
   workflow_dispatch:
+    inputs:
+      base_ref:
+        description: "Ref (branch, tag or SHA) to use as the regression baseline; the head is the ref this run is dispatched on"
+        required: false
+        default: develop
+        type: string
 
 permissions:
   contents: read
@@ -24,14 +30,27 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.base_ref }}
           path: baseline
 
-      - name: Checkout PR branch
+      - name: Checkout head (the ref this workflow was dispatched on)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           path: work
+
+      - name: Require distinct baseline and head commits
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+        run: |
+          base_sha="$(git -C baseline rev-parse HEAD)"
+          head_sha="$(git -C work rev-parse HEAD)"
+          echo "baseline ($BASE_REF): $base_sha"
+          echo "head: $head_sha"
+          if [ "$base_sha" = "$head_sha" ]; then
+            echo "::error::Baseline ($BASE_REF) and head resolve to the same commit ($head_sha). The regression gate would compare the code with itself. Dispatch this workflow on the branch under test and pass a different base_ref."
+            exit 1
+          fi
 
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -50,7 +69,8 @@ jobs:
 
       - name: Copy dataset to baseline if missing
         run: |
-          # Copy dataset from PR branch if baseline is missing it (for when dataset is newly added)
+          # Reachable now that the baseline is a distinct ref: the head may add the dataset
+          # that an older base_ref does not have yet.
           if [ ! -f "baseline/examples/integrations/ci-cd/math-qa/math_qa.jsonl" ]; then
             echo "Dataset missing in baseline, copying from PR branch..."
             cp work/examples/integrations/ci-cd/math-qa/math_qa.jsonl baseline/examples/integrations/ci-cd/math-qa/
@@ -160,28 +180,3 @@ jobs:
             work/examples/integrations/ci-cd/math-qa/saved_config.json
 
           retention-days: 30
-      - name: Comment on PR
-        if: failure()
-        continue-on-error: true  # Don't fail the workflow if PR comment fails (permissions issue on forks)
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const fs = require('fs');
-
-            // Read comparison output
-            const comment = `
-            ## Traigent CI Gates Results
-
-            ❌ **CI gates failed.** Please review the metrics comparison above.
-
-            If improvements are available, update \`saved_config.json\` with the optimized configuration.
-
-            [View full CI results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            `;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
