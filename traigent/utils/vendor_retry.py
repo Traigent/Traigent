@@ -304,6 +304,7 @@ def _finish(
     error: BaseException | None = None,
     backoff_seconds: float | None = None,
     usage: dict[str, int] | None = None,
+    no_response: bool = False,
 ) -> None:
     finish_vendor_attempt(
         handle,
@@ -314,6 +315,7 @@ def _finish(
         usage=usage,
         # Unknown, not zero: a failed attempt reports no usage.
         usage_known=usage is not None,
+        no_response=no_response,
     )
 
 
@@ -427,10 +429,11 @@ def _on_failure(
         if category is not None and attempt <= settings.max_retries
         else None
     )
+    # The call raised before any response came back: no response, no usage.
     if delay is None or category is None:
-        _finish(handle, "error", error=exc)
+        _finish(handle, "error", error=exc, no_response=True)
         return None
-    _finish(handle, "error", error=exc, backoff_seconds=delay)
+    _finish(handle, "error", error=exc, backoff_seconds=delay, no_response=True)
     logger.warning(
         "traigent.vendor_call_retry category=%s retry=%s/%s backoff=%.2fs",
         category.value,
@@ -531,6 +534,8 @@ def summarize_bucket(bucket: Any) -> dict[str, Any]:
             "vendor_call_attempts": total,
             "vendor_call_retries": root.vendor_retry_total,
             "vendor_call_unknown_usage_attempts": unknown,
+            "vendor_call_no_response_attempts": root.vendor_no_response_total,
+            "vendor_call_responses_captured": root.responses_captured_total,
             "vendor_call_cost_reported_attempts": covered,
             "vendor_call_unmeasured_attempts": unknown - covered,
             "vendor_call_incomplete_attempts": total - root.vendor_done_total,
