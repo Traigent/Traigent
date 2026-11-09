@@ -176,3 +176,45 @@ def test_resolve_unset_mode_trial_one_keeps_example_concurrency() -> None:
     assert resolved.mode == "sequential"
     assert resolved.trial_concurrency == 1
     assert resolved.example_concurrency == 3
+
+
+@pytest.mark.parametrize(
+    "field", ["trial_concurrency", "example_concurrency", "thread_workers"]
+)
+@pytest.mark.parametrize(
+    "bad",
+    [True, False, float("nan"), float("inf"), 2.0, "2", 0, -1, 10**9],
+)
+@pytest.mark.parametrize("mode", [None, "auto", "sequential", "parallel"])
+def test_resolve_rejects_malformed_concurrency_naming_field(
+    field: str, bad: object, mode: str | None
+) -> None:
+    kwargs: dict = {"mode": mode, field: bad}
+    if field != "trial_concurrency" and mode == "parallel":
+        kwargs["trial_concurrency"] = 2
+    cfg = ParallelConfig(**kwargs)
+
+    with pytest.raises(ValidationException) as exc:
+        resolve_parallel_config(
+            cfg,
+            default_thread_workers=4,
+            config_space_size=10,
+            detected_function_kind="sync",
+        )
+
+    assert f"parallel_config.{field}" in str(exc.value)
+
+
+def test_resolve_accepts_upper_bound_value() -> None:
+    from traigent.config.parallel import MAX_PARALLEL_CONCURRENCY
+
+    cfg = ParallelConfig(
+        mode="parallel", trial_concurrency=2, thread_workers=MAX_PARALLEL_CONCURRENCY
+    )
+    resolved = resolve_parallel_config(
+        cfg,
+        default_thread_workers=4,
+        config_space_size=10,
+        detected_function_kind="sync",
+    )
+    assert resolved.thread_workers == MAX_PARALLEL_CONCURRENCY
