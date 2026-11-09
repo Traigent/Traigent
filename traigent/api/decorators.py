@@ -2624,7 +2624,11 @@ def _validate_constraint_satisfiability(
             tvars.update(
                 ConfigSpace.from_decorator_args(inline_params=inline_params).tvars
             )
-        space = ConfigSpace(tvars=tvars, constraints=tuple(satisfiability_constraints))
+        space = ConfigSpace(
+            tvars=tvars,
+            constraints=tuple(satisfiability_constraints),
+            strict_names=False,
+        )
     else:
         space = ConfigSpace.from_decorator_args(
             configuration_space=raw_configuration_space,

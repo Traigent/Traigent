@@ -6,17 +6,17 @@ import re
 from itertools import product
 from typing import TYPE_CHECKING, Any
 
-from traigent_validation.base import (
-    ConstraintViolation,
-    SatResult,
-    SatStatus,
-    ValidationResult,
-)
 from traigent.utils.discrete_domains import (
     stepped_float_cardinality,
     stepped_float_values,
     stepped_int_cardinality,
     stepped_int_values,
+)
+from traigent_validation.base import (
+    ConstraintViolation,
+    SatResult,
+    SatStatus,
+    ValidationResult,
 )
 
 if TYPE_CHECKING:
@@ -69,8 +69,8 @@ class PythonConstraintValidator:
                 violations.append(
                     ConstraintViolation(
                         constraint_index=i,
-                        constraint_id=constraint.id,
-                        constraint_description=constraint.description,
+                        constraint_id=getattr(constraint, "id", None),
+                        constraint_description=getattr(constraint, "description", None),
                         violating_values=config.copy(),
                         message=f"Constraint evaluation error: {exc}",
                     )
