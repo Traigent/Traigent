@@ -5,9 +5,12 @@ This package provides a collection of realistic, challenging optimization proble
 that demonstrate Traigent's capabilities across different domains and use cases.
 """
 
+import logging
 from typing import Dict, List, Type
 
 from .base import BaseLangChainProblem, ProblemConfig, ProblemDefinition, ProblemMetric
+
+logger = logging.getLogger(__name__)
 
 # Problem registry - will be populated as problems are imported
 _PROBLEM_REGISTRY: Dict[str, Type[ProblemDefinition]] = {}
@@ -39,86 +42,59 @@ def create_problem(name: str, **kwargs) -> ProblemDefinition:
 
 
 def load_all_problems():
-    """Load all available problems into the registry."""
+    """Load all available problems into the registry.
+
+    A problem module that fails to import is logged as a warning naming the
+    module; it is never skipped silently.
+    """
     import importlib
-    import sys
     from pathlib import Path
 
     # Clear registry to ensure fresh load
     _PROBLEM_REGISTRY.clear()
 
-    # Get the directory of this module
     module_dir = Path(__file__).parent
 
-    # Temporarily add parent directory to path for imports from examples dir
-    old_path = sys.path.copy()
-    sys.path.insert(0, str(module_dir.parent))
+    for file_path in sorted(module_dir.glob("*.py")):
+        # Skip __init__.py and base.py
+        if file_path.name in ["__init__.py", "base.py"]:
+            continue
 
-    try:
-        # Find all Python files in the directory
-        for file_path in module_dir.glob("*.py"):
-            # Skip __init__.py and base.py
-            if file_path.name in ["__init__.py", "base.py"]:
-                continue
+        # Skip test files
+        if file_path.name.startswith("test_"):
+            continue
 
-            # Skip test files
-            if file_path.name.startswith("test_"):
-                continue
+        module_name = file_path.stem
 
-            # Get module name (without .py extension)
-            module_name = file_path.stem
+        try:
+            module = importlib.import_module(f".{module_name}", package=__name__)
+        except Exception as e:
+            logger.warning(
+                "Failed to load problem module %s: %s: %s",
+                module_name,
+                type(e).__name__,
+                e,
+            )
+            continue
 
-            try:
-                # Try both import paths to handle different execution contexts
-                module = None
-                for import_path in [
-                    f"examples.langchain_problems.{module_name}",  # From project root
-                    f"langchain_problems.{module_name}",  # From examples dir
-                    f".{module_name}",  # Relative import
-                ]:
-                    try:
-                        if import_path.startswith("."):
-                            module = importlib.import_module(
-                                import_path, package=__name__
-                            )
-                        else:
-                            module = importlib.import_module(import_path)
-                        break  # Successfully imported
-                    except ImportError:
-                        continue
-
-                if module is None:
-                    # Could not import module - skip silently
-                    pass
-                else:
-                    # Module imported successfully
-
-                    # Check if it has already registered itself
-                    # If not, try to find and register problem classes manually
-                    if module_name not in [
-                        k.replace("_", "").lower() for k in _PROBLEM_REGISTRY.keys()
-                    ]:
-                        # Look for classes that inherit from ProblemDefinition
-                        for attr_name in dir(module):
-                            attr = getattr(module, attr_name)
-                            if (
-                                isinstance(attr, type)
-                                and hasattr(attr, "create_function")
-                                and hasattr(attr, "create_dataset")
-                                and attr.__name__
-                                not in ["ProblemDefinition", "BaseLangChainProblem"]
-                            ):
-                                # Found a problem class, register it
-                                problem_name = module_name
-                                register_problem(problem_name, attr)
-                                break
-
-            except Exception as e:
-                # Log other errors but continue
-                print(f"Warning: Failed to load problem module {module_name}: {e}")
-    finally:
-        # Restore original path
-        sys.path = old_path
+        # Check if it has already registered itself
+        # If not, try to find and register problem classes manually
+        if module_name not in [
+            k.replace("_", "").lower() for k in _PROBLEM_REGISTRY.keys()
+        ]:
+            # Look for classes that inherit from ProblemDefinition
+            for attr_name in dir(module):
+                attr = getattr(module, attr_name)
+                if (
+                    isinstance(attr, type)
+                    and hasattr(attr, "create_function")
+                    and hasattr(attr, "create_dataset")
+                    and attr.__name__
+                    not in ["ProblemDefinition", "BaseLangChainProblem"]
+                ):
+                    # Found a problem class, register it
+                    register_problem(module_name, attr)
+                    break
 
 
 def print_available_problems():

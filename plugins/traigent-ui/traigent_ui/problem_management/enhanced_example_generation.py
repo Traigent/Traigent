@@ -114,13 +114,7 @@ async def load_problem_instance(problem_name: str):
     """Load a problem instance by name."""
     try:
         # Try different import paths
-        try:
-            from ..langchain_problems import get_problem_class
-        except ImportError:
-            try:
-                from langchain_problems import get_problem_class
-            except ImportError:
-                from examples.langchain_problems import get_problem_class
+        from ..langchain_problems import get_problem_class
 
         problem_class = get_problem_class(problem_name)
         return problem_class()

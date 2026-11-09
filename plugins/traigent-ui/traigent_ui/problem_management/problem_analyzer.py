@@ -5,7 +5,6 @@ This module provides analysis and validation capabilities for existing problems,
 including quality assessment, bias detection, and improvement suggestions.
 """
 
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -207,8 +206,7 @@ class ProblemAnalyzer:
         """Load problem data from module using the problem registry."""
         try:
             # Import the langchain_problems package and load all problems
-            sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-            from examples.langchain_problems import (
+            from ..langchain_problems import (
                 get_available_problems,
                 get_problem_class,
                 load_all_problems,
