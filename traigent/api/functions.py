@@ -35,6 +35,7 @@ from traigent.utils.insights import (
     get_optimization_insights as _get_optimization_insights,
 )
 from traigent.utils.logging import get_logger, setup_logging
+from traigent.utils.numeric_validation import validate_positive_int
 from traigent.utils.validation import Validators, validate_or_raise
 
 logger = get_logger(__name__)
@@ -677,9 +678,9 @@ def override_config(
         override["timeout"] = timeout
 
     if max_total_examples is not None:
-        if max_total_examples <= 0:
-            raise ValueError("max_total_examples must be > 0")
-        override["max_total_examples"] = max_total_examples
+        override["max_total_examples"] = validate_positive_int(
+            "max_total_examples", max_total_examples
+        )
 
     if samples_include_pruned is not None:
         override["samples_include_pruned"] = bool(samples_include_pruned)

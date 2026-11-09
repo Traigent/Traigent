@@ -52,6 +52,7 @@ from typing import Any
 from traigent.config.backend_config import PRICING_URL
 from traigent.utils.env_config import _is_truthy_env_value
 from traigent.utils.exception_pickling import PicklableExceptionMixin
+from traigent.utils.numeric_validation import positive_int_env
 
 logger = logging.getLogger(__name__)
 
@@ -185,13 +186,11 @@ class LicenseValidator:
         env_license_file = os.environ.get("TRAIGENT_LICENSE_FILE")
         self._license_file = license_file or env_license_file
         self._license_file_from_env = license_file is None and bool(env_license_file)
-        self._cache_ttl = cache_ttl or int(
-            os.environ.get("TRAIGENT_LICENSE_CACHE_TTL", str(self.DEFAULT_CACHE_TTL))
+        self._cache_ttl = cache_ttl or positive_int_env(
+            "TRAIGENT_LICENSE_CACHE_TTL", self.DEFAULT_CACHE_TTL
         )
-        self._grace_period = grace_period or int(
-            os.environ.get(
-                "TRAIGENT_LICENSE_GRACE_PERIOD", str(self.DEFAULT_GRACE_PERIOD)
-            )
+        self._grace_period = grace_period or positive_int_env(
+            "TRAIGENT_LICENSE_GRACE_PERIOD", self.DEFAULT_GRACE_PERIOD
         )
 
         # Thread-safe cache

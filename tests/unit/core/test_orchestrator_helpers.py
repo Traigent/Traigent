@@ -190,6 +190,17 @@ class TestValidateConstructorArguments:
         assert result is None
 
 
+class TestMaxTotalExamplesNormalization:
+    """Traigent#2898: integral floats are stored as ints."""
+
+    def test_integral_float_is_stored_as_int(self):
+        orchestrator = OptimizationOrchestrator(
+            MockOptimizer(), MockEvaluator(), max_total_examples=3.0
+        )
+        assert orchestrator.max_total_examples == 3
+        assert type(orchestrator.max_total_examples) is int
+
+
 class TestParallelTrialsNormalization:
     """Tests for parallel_trials validation in Initialization."""
 
@@ -449,7 +460,9 @@ class TestModuleValidateConstructorArguments:
 
     def test_negative_max_total_examples_raises_value_error(self):
         """Test that negative max_total_examples raises ValueError."""
-        with pytest.raises(ValueError, match="max_total_examples must be non-negative"):
+        with pytest.raises(
+            ValueError, match="max_total_examples must be a positive integer"
+        ):
             validate_constructor_arguments(
                 MockOptimizer(), MockEvaluator(), max_total_examples=-1
             )

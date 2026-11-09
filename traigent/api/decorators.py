@@ -123,6 +123,7 @@ from traigent.utils.exceptions import (
     ValidationError,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import validate_positive_int
 
 _OFFLINE_MUST_BE_BOOL = "offline must be a bool"
 
@@ -452,6 +453,14 @@ class ExecutionOptions(BaseModel):
     require_run_id: bool | None = None
     snapshot_store: Any = None
     snapshot_g1_deadline_days: int | None = None
+
+    @field_validator("max_total_examples", mode="before")
+    @classmethod
+    def _validate_max_total_examples(cls, value: Any) -> Any:
+        """Reject bool/NaN/inf/non-integral/non-positive before pydantic coerces."""
+        if value is None:
+            return None
+        return validate_positive_int("max_total_examples", value)
 
     @model_validator(mode="wrap")
     @classmethod
@@ -3701,6 +3710,10 @@ def optimize(  # NOSONAR(S107)
     minimal_logging = combined_settings["minimal_logging"]
     parallel_config = combined_settings["parallel_config"]
     max_total_examples = combined_settings["max_total_examples"]
+    if max_total_examples is not None:
+        max_total_examples = validate_positive_int(
+            "max_total_examples", max_total_examples
+        )
     samples_include_pruned = combined_settings["samples_include_pruned"]
     winner_stability_reps = _coerce_winner_stability_reps(
         combined_settings["winner_stability_reps"]
@@ -3883,6 +3896,10 @@ def optimize(  # NOSONAR(S107)
     )
     parallel_config = resolved_execution.parallel_config
     max_total_examples = resolved_execution.max_total_examples
+    if max_total_examples is not None:
+        max_total_examples = validate_positive_int(
+            "max_total_examples", max_total_examples
+        )
     samples_include_pruned = resolved_execution.samples_include_pruned
     smart_pruning_value = resolved_execution.smart_pruning
     winner_stability_reps_value = resolved_execution.winner_stability_reps
