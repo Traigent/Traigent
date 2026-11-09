@@ -176,10 +176,17 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._protected_request",
         "raise",
-        "d9d06232d3947c89",  # pragma: allowlist secret
+        "37ca82e44c547aba",  # pragma: allowlist secret
     ): (
         1,
-        _COUNT,
+        (
+            "transport-failure text via raise_detached (#3264): the message is the "
+            "operation argument plus ' transport failed'. The three callers pass SDK-owned "
+            "constants only (backend_client.py:2650 AGENT_HEAD_FETCH, :2778 'Token-refs "
+            "issuance', :2825 BEST_CONFIG_PUBLISH). The transport exception is caught "
+            "without being formatted, and raise_detached clears __cause__ and __context__, "
+            "so no URL, header, host or exception text reaches the message"
+        ),
     ),
     (
         "backend_client.py",
@@ -1208,6 +1215,12 @@ class _Scan(ast.NodeVisitor):
         return None
 
     def visit_Call(self, node: ast.Call) -> None:
+        callee = node.func
+        name = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", "")
+        if name == "raise_detached" and node.args:
+            # ``raise_detached(X)`` raises X (see traigent/cloud/_detached_raise.py):
+            # judge X exactly as a ``raise X`` expression, keyed on the call's text
+            self._judge_raise(node, node.args[0])
         sink = self._sink(node)
         if sink is not None:
             method, msgs = sink
@@ -1297,7 +1310,13 @@ class _Scan(ast.NodeVisitor):
         return found
 
     def visit_Raise(self, node: ast.Raise) -> None:
-        exc = node.exc
+        if node.exc is not None:
+            self._judge_raise(node, node.exc)
+        self.generic_visit(node)
+
+    def _judge_raise(self, node: ast.AST, exc: ast.AST) -> None:
+        """Judge the exception expression ``exc`` raised at ``node`` (a raise or a
+        ``raise_detached(...)`` call, which raises its argument)."""
         hv = set(self.handler_vars)
         if isinstance(exc, (ast.Name, ast.Attribute)):
             # ``err = ValueError(f"..{x}"); raise err``: judge the call that built it
@@ -1326,7 +1345,6 @@ class _Scan(ast.NodeVisitor):
             )
             if builds_text:
                 self._add("raise", node, feeders, node.lineno)
-        self.generic_visit(node)
 
     def _call_builds_text(self, exc: ast.Call, hv: set[str]) -> bool:
         """Does this exception constructor print a value (not just a literal)?"""
@@ -1485,6 +1503,9 @@ def _kinds(source: str) -> list[str]:
         ("def f(p):\n logger.exception('fixed')\n", ["log"]),
         ("def f(p):\n logger.warning('fixed', exc_info=True)\n", ["log"]),
         ("def f(p):\n msg = 'bad ' + p\n raise ValueError(msg)\n", ["raise"]),
+        ("def f(p):\n raise_detached(ValueError(f'bad {p}'))\n", ["raise"]),
+        ("def f(p):\n raise_detached(ValueError(p))\n", ["raise"]),
+        ("def f(p):\n m.raise_detached(ValueError(str(p)))\n", ["raise"]),
         ("def f(p):\n raise ValueError(str(p))\n", ["raise"]),
         (
             "class E(ValueError):\n def __init__(self, v):\n  super().__init__(f'bad {v}')\n",
@@ -1549,6 +1570,7 @@ def test_guard_catches_each_bypass(source: str, expected: list[str]) -> None:
         "def f():\n logger.warning('fixed')\n",
         "def f():\n logger.warning('fixed', exc_info=False)\n",
         "def f():\n raise ValueError('fixed')\n",
+        "def f():\n raise_detached(ValueError('fixed'))\n",
         "def f(e):\n diag.log(logger, 30, 'fixed', category=c, exc=e)\n",
         "class E(ValueError):\n def __init__(self):\n  super().__init__('fixed')\n",
     ],
