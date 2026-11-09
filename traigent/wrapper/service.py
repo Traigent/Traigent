@@ -1037,8 +1037,8 @@ class TraigentService:
 
         if tunable_id != self.config.tunable_id:
             raise ValueError(
-                f"tunable_id mismatch: request has '{tunable_id}', "
-                f"service is '{self.config.tunable_id}'"
+                "tunable_id mismatch: the request's tunable_id does not match "
+                f"this service ('{self.config.tunable_id}')"
             )
 
         max_batch = self.config.max_batch_size
@@ -1229,8 +1229,8 @@ class TraigentService:
 
         if tunable_id != self.config.tunable_id:
             raise ValueError(
-                f"tunable_id mismatch: request has '{tunable_id}', "
-                f"service is '{self.config.tunable_id}'"
+                "tunable_id mismatch: the request's tunable_id does not match "
+                f"this service ('{self.config.tunable_id}')"
             )
 
     def _invoke_evaluate_handler(
