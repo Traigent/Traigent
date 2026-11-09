@@ -57,6 +57,7 @@ from traigent.utils.langchain_interceptor import (
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import validate_token_count
 from traigent.utils.response_model import (
     infer_response_model,
     resolve_pricing_model,
@@ -2262,19 +2263,23 @@ class LocalEvaluator(BaseEvaluator):
             metrics: ExampleMetrics to update.
         """
         # Inject token counts (key-presence checks allow explicit zeros)
-        for key, attr in [
-            ("input_tokens", "input_tokens"),
-            ("output_tokens", "output_tokens"),
-        ]:
+        for key in ("input_tokens", "output_tokens"):
             if key not in usage:
                 continue
-            try:
-                val = usage[key]
-                if val < 0:
-                    logger.warning(f"Negative {key} clamped: {val} → 0")
-                setattr(metrics.tokens, attr, max(0, val))
-            except Exception as e:
-                logger.exception(f"Failed to inject {key}: {e}", extra={"usage": usage})
+            valid = validate_token_count(usage[key])
+            if valid is None:
+                # Unknown usage, never clamped to a fake measured zero
+                # (Traigent#3252). The declared value is not echoed.
+                logger.warning(
+                    "Invalid declared %s in __traigent_meta__ usage; "
+                    "token usage is unknown",
+                    key,
+                )
+                metrics.tokens.invalid = True
+                continue
+            setattr(metrics.tokens, key, valid)
+        if usage.get("tokens_invalid") is True:
+            metrics.tokens.invalid = True
 
         # Recompute total_tokens if any token counts were injected
         if "input_tokens" in usage or "output_tokens" in usage:

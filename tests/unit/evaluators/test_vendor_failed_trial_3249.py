@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -265,3 +266,62 @@ def test_failed_trial_with_unpriced_capture_outside_ledger_then_429_still_aborts
 
     with pytest.raises(Exception, match="Cost extraction failed|unpriced"):
         ask.optimize_sync(max_trials=1, algorithm="grid")
+
+
+@pytest.mark.parametrize("bad_prompt_tokens", [-5, True, 10**400, "12"])
+def test_invalid_usage_count_aborts_under_a_cost_objective_3252(
+    bad_prompt_tokens: object,
+) -> None:
+    """Traigent#3252: a returned response with an unusable token count is not $0.
+
+    A response DID come back (so #3249's vendor-error exemption must not apply),
+    its usage is unknown, and the cost objective must fail closed exactly like
+    any other returned-but-unpriced call.
+    """
+    from types import SimpleNamespace
+
+    _write_dataset(1)
+
+    @traigent.optimize(
+        configuration_space={"model": Choices([MODEL])},
+        eval_dataset="ds.jsonl",
+        objectives=["accuracy", "cost"],
+        offline=True,
+    )
+    def ask(q: str) -> Any:
+        return SimpleNamespace(
+            model=MODEL,
+            usage=SimpleNamespace(
+                prompt_tokens=bad_prompt_tokens,
+                completion_tokens=7,
+                total_tokens=18,
+            ),
+        )
+
+    with pytest.raises(Exception, match="Cost extraction failed|unpriced"):
+        ask.optimize_sync(max_trials=1, algorithm="grid")
+
+
+def test_valid_usage_counts_complete_under_a_cost_objective_3252() -> None:
+    """Control for the invalid-count test: valid counts price and complete."""
+    from types import SimpleNamespace
+
+    _write_dataset(1)
+
+    @traigent.optimize(
+        configuration_space={"model": Choices([MODEL])},
+        eval_dataset="ds.jsonl",
+        objectives=["accuracy", "cost"],
+        offline=True,
+    )
+    def ask(q: str) -> Any:
+        return SimpleNamespace(
+            model=MODEL,
+            usage=SimpleNamespace(
+                prompt_tokens=11, completion_tokens=7, total_tokens=18
+            ),
+        )
+
+    result = ask.optimize_sync(max_trials=1, algorithm="grid")
+    assert result.trials[0].metrics["cost"] > 0
+    assert not result.trials[0].metrics.get("cost_unmeasured")

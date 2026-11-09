@@ -35,7 +35,11 @@ from traigent.utils.insights import (
     get_optimization_insights as _get_optimization_insights,
 )
 from traigent.utils.logging import get_logger, setup_logging
-from traigent.utils.numeric_validation import validate_positive_int
+from traigent.utils.numeric_validation import (
+    MAX_TOKEN_COUNT,
+    validate_positive_int,
+    validate_token_count,
+)
 from traigent.utils.validation import Validators, validate_or_raise
 
 logger = get_logger(__name__)
@@ -1140,10 +1144,25 @@ def _build_usage_dict(
     if input_tokens is None and output_tokens is None and response_time_ms is None:
         return None
     usage: dict[str, Any] = {}
-    if input_tokens is not None:
-        usage["input_tokens"] = int(input_tokens)
-    if output_tokens is not None:
-        usage["output_tokens"] = int(output_tokens)
+    for name, declared in (
+        ("input_tokens", input_tokens),
+        ("output_tokens", output_tokens),
+    ):
+        if declared is None:
+            continue
+        valid = validate_token_count(declared)
+        if valid is None:
+            # Unknown, never clamped to a fake measured zero (Traigent#3252).
+            # The value is deliberately not echoed.
+            logger.warning(
+                "with_usage(): ignoring invalid %s (expected a non-negative "
+                "int up to %d); token usage is unknown",
+                name,
+                MAX_TOKEN_COUNT,
+            )
+            usage["tokens_invalid"] = True
+        else:
+            usage[name] = valid
     if response_time_ms is not None:
         usage["response_time_ms"] = float(response_time_ms)
     return usage
