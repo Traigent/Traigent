@@ -19,6 +19,8 @@ from traigent.config.parallel import (
     ParallelConfig,
     coerce_parallel_config,
     merge_parallel_configs,
+    validate_parallel_config_fields,
+    validate_parallel_workers,
 )
 from traigent.config.types import TraigentConfig, validate_execution_mode
 from traigent.core.cache_usage import normalize_cache_usage
@@ -117,6 +119,7 @@ def configure(
     if parallel_workers is not None:
         result = Validators.validate_positive_int(parallel_workers, "parallel_workers")
         validate_or_raise(result)
+        validate_parallel_workers(parallel_workers)
         _GLOBAL_CONFIG["parallel_workers"] = parallel_workers
 
     if cache_policy is not None:
@@ -176,6 +179,7 @@ def _apply_parallel_config(
         )
         return
 
+    validate_parallel_config_fields(coerced)
     existing_config = _GLOBAL_CONFIG.get("parallel_config", ParallelConfig())
     merged_config, _ = merge_parallel_configs(
         [

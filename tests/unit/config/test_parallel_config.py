@@ -218,3 +218,28 @@ def test_resolve_accepts_upper_bound_value() -> None:
         detected_function_kind="sync",
     )
     assert resolved.thread_workers == MAX_PARALLEL_CONCURRENCY
+
+
+def test_resolve_rejects_out_of_range_inherited_worker_default() -> None:
+    with pytest.raises(ValidationException) as exc:
+        resolve_parallel_config(
+            ParallelConfig(mode="parallel", trial_concurrency=2),
+            default_thread_workers=2048,
+            config_space_size=10,
+            detected_function_kind="sync",
+        )
+    assert "parallel_workers" in str(exc.value)
+
+
+def test_configure_rejects_invalid_parallel_config_without_storing() -> None:
+    import traigent
+    from traigent.api.functions import _GLOBAL_CONFIG
+
+    before = dict(_GLOBAL_CONFIG)
+    for bad in ({"thread_workers": 1025}, {"trial_concurrency": "2"}):
+        with pytest.raises(ValidationException):
+            traigent.configure(parallel_config=bad)
+    with pytest.raises(ValidationException):
+        traigent.configure(parallel_workers=10**9)
+    assert _GLOBAL_CONFIG.get("parallel_config") == before.get("parallel_config")
+    assert _GLOBAL_CONFIG.get("parallel_workers") == before.get("parallel_workers")

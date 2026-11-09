@@ -197,10 +197,32 @@ def _validate_parallel_config_inputs(
             f"Unsupported mode '{config.mode}'. Expected 'sequential', 'parallel', or 'auto'.",
         )
 
+    _validate_concurrency_fields(config, validation)
+
+
+def _validate_concurrency_fields(
+    config: ParallelConfig, validation: ValidationResult
+) -> None:
     for field_name in _CONCURRENCY_FIELDS:
         problem = _concurrency_value_problem(field_name, getattr(config, field_name))
         if problem:
             validation.add_error(f"parallel_config.{field_name}", problem)
+
+
+def validate_parallel_config_fields(config: ParallelConfig) -> None:
+    """Raise a ValidationError naming each malformed concurrency field."""
+    validation = ValidationResult()
+    _validate_concurrency_fields(config, validation)
+    validation.raise_if_invalid()
+
+
+def validate_parallel_workers(value: object, name: str = "parallel_workers") -> None:
+    """Raise a ValidationError if ``value`` is not a valid worker count."""
+    problem = _concurrency_value_problem(name, value)
+    if problem:
+        validation = ValidationResult()
+        validation.add_error(name, problem)
+        validation.raise_if_invalid()
 
 
 def _infer_resolved_mode(
@@ -313,8 +335,12 @@ def resolve_parallel_config(
     validation = ValidationResult()
     sources = dict(sources or {})
 
-    # Validate inputs
+    # Validate inputs (including the inherited worker default)
     _validate_parallel_config_inputs(config, validation)
+    if config.thread_workers is None:
+        problem = _concurrency_value_problem("parallel_workers", default_thread_workers)
+        if problem:
+            validation.add_error("parallel_workers", problem)
     # Malformed values must not reach the arithmetic below.
     validation.raise_if_invalid()
 
