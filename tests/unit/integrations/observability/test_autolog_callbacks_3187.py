@@ -171,3 +171,81 @@ def test_manager_still_surfaces_errors_raised_inside_a_hook() -> None:
     summary = manager.get_failure_summary()
     assert summary["total_failures"] == 1
     assert summary["failures"][0]["method"] == "on_trial_start"
+
+
+class _ThreadLocalMLflow:
+    """MLflow double with a thread-local active-run stack, like the real one."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self._local = threading.local()
+        self.resumed: list[str] = []
+        self.logged_to: list[str | None] = []
+        self.ended_run: str | None = None
+
+    def _stack(self) -> list[Any]:
+        if not hasattr(self._local, "stack"):
+            self._local.stack = []
+        return self._local.stack
+
+    def start_run(self, run_name=None, run_id=None):
+        run = MagicMock()
+        run.info.run_id = run_id or "run-A"
+        if run_id:
+            self.resumed.append(run_id)
+        self._stack().append(run)
+        return run
+
+    def active_run(self):
+        stack = self._stack()
+        return stack[-1] if stack else None
+
+    def end_run(self) -> None:
+        active = self.active_run()
+        self.ended_run = active.info.run_id if active else None
+        self._stack().pop()
+
+    def log_param(self, *a, **k) -> None:
+        active = self.active_run()
+        self.logged_to.append(active.info.run_id if active else None)
+
+    def __getattr__(self, name: str):
+        return lambda *a, **k: None
+
+
+def test_mlflow_hooks_on_different_threads_stay_bound_to_the_run(monkeypatch) -> None:
+    import threading
+
+    fake = _ThreadLocalMLflow()
+    monkeypatch.setattr(mlflow_module, "mlflow", fake)
+    monkeypatch.setattr(mlflow_module, "MLFLOW_AVAILABLE", True)
+    tracker = mlflow_module.TraigentMLflowTracker()
+    callback = mlflow_module.MLflowOptimizationCallback(tracker)
+    callback.on_optimization_start(CONFIG_SPACE, ["accuracy"], "grid")
+
+    errors: list[BaseException] = []
+
+    def other_thread() -> None:
+        try:
+            tracker.end_optimization_run()
+        except BaseException as exc:  # pragma: no cover
+            errors.append(exc)
+
+    t = threading.Thread(target=other_thread)
+    t.start()
+    t.join()
+    assert not errors
+    assert fake.resumed == ["run-A"]
+    assert fake.ended_run == "run-A"
+
+
+@pytest.mark.parametrize("cls", CALLBACK_CLASSES)
+def test_legacy_mixed_positional_and_keyword_call(cls) -> None:
+    tracker = _RecordingTracker()
+    cls(tracker).on_optimization_start(
+        "agent", objectives=["accuracy"], configuration_space={"x": [1]}
+    )
+    assert tracker.start is not None
+    assert tracker.start["function_name"] == "agent"
+    assert tracker.start["configuration_space"] == {"x": [1]}

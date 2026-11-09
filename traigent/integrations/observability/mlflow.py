@@ -227,6 +227,22 @@ class TraigentMLflowTracker:
         logger.info(f"Started MLflow run: {self.current_run.info.run_id}")  # type: ignore[attr-defined]
         return cast(str, self.current_run.info.run_id)  # type: ignore[attr-defined]
 
+    def _ensure_run_active(self) -> None:
+        """Re-activate ``current_run`` on the calling thread if needed.
+
+        MLflow's active-run stack is thread-local, while ``CallbackManager`` may
+        dispatch successive hooks on different worker threads. Resuming by run
+        id keeps trial logging and run termination bound to our run (#3187).
+        """
+        run = self.current_run
+        active_run = getattr(mlflow, "active_run", None)
+        if run is None or not callable(active_run):
+            return
+        active = active_run()
+        if active is not None and active.info.run_id == run.info.run_id:
+            return
+        mlflow.start_run(run_id=run.info.run_id)
+
     def log_trial(
         self, trial: TrialResult, trial_number: int, step: int | None = None
     ) -> None:
@@ -240,6 +256,7 @@ class TraigentMLflowTracker:
         if not self.current_run:
             logger.warning("No active MLflow run. Call start_optimization_run first.")
             return
+        self._ensure_run_active()
 
         if step is None:
             step = trial_number
@@ -331,6 +348,7 @@ class TraigentMLflowTracker:
         if not self.current_run:
             logger.warning("No active MLflow run. Call start_optimization_run first.")
             return
+        self._ensure_run_active()
 
         # Log best configuration as parameters
         if result.best_config:
@@ -378,6 +396,7 @@ class TraigentMLflowTracker:
     def end_optimization_run(self) -> None:
         """End current MLflow run."""
         if self.current_run:
+            self._ensure_run_active()
             # mlflow.end_run() is the real API. This called mlflow.finish() until
             # #2183 -- a method MLflow has never exposed -- so every real-MLflow
             # run raised AttributeError here. It passed CI only because the mock
@@ -523,9 +542,11 @@ class MLflowOptimizationCallback(OptimizationCallback):
         ``(config_space, objectives, algorithm)``. The legacy keyword form
         ``function_name=..., configuration_space=...`` still works.
         """
-        if isinstance(config_space, str) and isinstance(algorithm, dict):
-            # Legacy positional order (function_name, objectives, config_space).
-            function_name, config_space, algorithm = config_space, algorithm, None
+        if isinstance(config_space, str):
+            # Legacy positional order (function_name, objectives, config_space),
+            # possibly mixed with keywords.
+            function_name = function_name or config_space
+            config_space = algorithm if isinstance(algorithm, dict) else None
         space = config_space if config_space is not None else configuration_space
         name = function_name or self._function_name or _DEFAULT_RUN_LABEL
         self.tracker.start_optimization_run(

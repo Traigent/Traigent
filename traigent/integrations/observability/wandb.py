@@ -471,9 +471,11 @@ class WandBOptimizationCallback(OptimizationCallback):
         ``(config_space, objectives, algorithm)``. The legacy keyword form
         ``function_name=..., configuration_space=...`` still works.
         """
-        if isinstance(config_space, str) and isinstance(algorithm, dict):
-            # Legacy positional order (function_name, objectives, config_space).
-            function_name, config_space, algorithm = config_space, algorithm, None
+        if isinstance(config_space, str):
+            # Legacy positional order (function_name, objectives, config_space),
+            # possibly mixed with keywords.
+            function_name = function_name or config_space
+            config_space = algorithm if isinstance(algorithm, dict) else None
         space = config_space if config_space is not None else configuration_space
         name = function_name or self._function_name or _DEFAULT_RUN_LABEL
         self.tracker.start_optimization_run(
