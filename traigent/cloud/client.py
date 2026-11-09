@@ -1719,9 +1719,11 @@ class TraigentCloudClient(BaseTraigentClient):
 
         except aiohttp.ClientError as exc:
             await self._reset_http_session("delete_session network error")
-            raise StandardizedClientError(
-                f"Failed to delete session: {exc}", "session_delete", exc
-            ) from exc
+            raise_detached(
+                StandardizedClientError(
+                    f"Failed to delete session: {exc}", "session_delete"
+                )
+            )
 
     async def list_sessions(
         self,
@@ -1771,9 +1773,11 @@ class TraigentCloudClient(BaseTraigentClient):
                 data = await response.json()
         except aiohttp.ClientError as exc:
             await self._reset_http_session("list_sessions network error")
-            raise StandardizedClientError(
-                f"Failed to list sessions: {exc}", "session_list", exc
-            ) from exc
+            raise_detached(
+                StandardizedClientError(
+                    f"Failed to list sessions: {exc}", "session_list"
+                )
+            )
 
         raw_sessions = data.get("sessions") if isinstance(data, dict) else None
         if not isinstance(raw_sessions, list):

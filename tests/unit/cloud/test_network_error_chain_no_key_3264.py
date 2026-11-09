@@ -168,3 +168,78 @@ def test_cloud_client_network_error_chain_has_no_key(stub_url, method):
 
     exc = asyncio.run(run())
     _assert_clean(exc)
+
+
+def _response_error(status: int):
+    import aiohttp
+    from multidict import CIMultiDict, CIMultiDictProxy
+    from yarl import URL
+
+    info = aiohttp.RequestInfo(
+        url=URL("http://127.0.0.1/x"),
+        method="GET",
+        headers=CIMultiDictProxy(CIMultiDict({"X-API-Key": CANARY})),
+        real_url=URL("http://127.0.0.1/x"),
+    )
+    return aiohttp.ClientResponseError(info, (), status=status, message="boom")
+
+
+@pytest.mark.parametrize("method", ["list_sessions", "delete_session"])
+def test_standardized_session_errors_hold_no_key(stub_url, monkeypatch, method):
+    from traigent.cloud.client import StandardizedClientError
+
+    async def run():
+        client = TraigentCloudClient(api_key=CANARY, base_url=stub_url)
+
+        async def _headers(*_a, **_k):
+            return {"X-API-Key": CANARY}
+
+        client._get_headers = _headers  # type: ignore[method-assign]
+        _inject_content_type_error(monkeypatch)
+        try:
+            if method == "list_sessions":
+                return await _capture(client.list_sessions())
+            return await _capture(client.delete_session("s1"))
+        finally:
+            await client.__aexit__(None, None, None)
+
+    exc = asyncio.run(run())
+    assert isinstance(exc, StandardizedClientError)
+    assert exc.original_error is None
+    assert str(exc).startswith("Failed to")
+    for item in _chain(exc):
+        assert CANARY not in repr(item)
+    assert exc.__cause__ is None and exc.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "status,text", [(401, "Authentication failed"), (403, "Session ID mismatch")]
+)
+@pytest.mark.parametrize("call", ["single", "batch"])
+def test_optimizer_client_response_error_holds_no_key(stub_url, status, text, call):
+    from traigent.cloud.optimizer_client import OptimizerDirectClient
+
+    class _Ctx:
+        async def __aenter__(self):
+            raise _response_error(status)
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Session:
+        def post(self, *a, **k):
+            return _Ctx()
+
+    async def run():
+        client = OptimizerDirectClient("https://api.example.com", "tok")
+        client.session = _Session()  # type: ignore[assignment]
+        if call == "single":
+            return await _capture(client._submit_single("s1", {"trial_id": "t"}))
+        return await _capture(client._submit_batch("s1", [{"trial_id": "t"}]))
+
+    exc = asyncio.run(run())
+    assert isinstance(exc, ValueError)
+    assert text in str(exc)
+    for item in _chain(exc):
+        assert CANARY not in repr(item)
+    assert exc.__cause__ is None and exc.__context__ is None
