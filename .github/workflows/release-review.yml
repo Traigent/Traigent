@@ -202,17 +202,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: PR dependency review
-        id: dependency_review_pr
-        if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        if: github.event_name != 'pull_request'
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - name: Tag/manual dependency review
+      - name: Dependency review (pip-audit)
         id: dependency_review_cli
-        if: github.event_name != 'pull_request'
         run: |
           python -m pip install --upgrade pip
           python -m pip install pip-audit
@@ -225,11 +219,7 @@ jobs:
         id: dependency_review_status
         if: always()
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            outcome="${{ steps.dependency_review_pr.outcome }}"
-          else
-            outcome="${{ steps.dependency_review_cli.outcome }}"
-          fi
+          outcome="${{ steps.dependency_review_cli.outcome }}"
           if [ "$outcome" = "success" ]; then
             echo "status=pass" >> "$GITHUB_OUTPUT"
           else
@@ -346,15 +336,12 @@ jobs:
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           INPUT_RELEASE_ID: ${{ inputs.release_id }}
-          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_REF_TYPE: ${{ github.ref_type }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_RELEASE_ID" ]; then
             release_id="$INPUT_RELEASE_ID"
-          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            release_id="pr-$PULL_REQUEST_NUMBER-$GITHUB_RUN_ID"
           elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
             release_id="$GITHUB_REF_NAME-$GITHUB_RUN_ID"
           else
