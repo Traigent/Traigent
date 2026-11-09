@@ -380,6 +380,8 @@ def _apply_config_settings(config: TraigentConfig) -> None:
     if config.auto_sync is not None:
         _GLOBAL_CONFIG["auto_sync"] = config.auto_sync
 
+    _GLOBAL_CONFIG["enable_usage_analytics"] = config.enable_usage_analytics
+
     _GLOBAL_CONFIG["default_storage_backend"] = (
         "local" if config.is_local_mode() else "cloud"
     )
