@@ -5610,6 +5610,7 @@ class OptimizationOrchestrator:
                     self._status,
                     certified_selection=certified_selection,
                     session_aggregation=agg_payload,
+                    stop_reason=self._stop_reason,
                 )
             finally:
                 self._session_finalized = True
@@ -5888,6 +5889,7 @@ class OptimizationOrchestrator:
             self.backend_session_manager.finalize_session(
                 session_id,
                 OptimizationStatus.FAILED,
+                stop_reason=self._stop_reason,
             )
         except Exception as finalize_error:
             logger.warning(

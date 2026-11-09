@@ -125,3 +125,50 @@ class TestManagerMapping:
     )
     def test_status_maps_to_wire_outcome(self, status, outcome):
         assert BackendSessionManager.finalize_outcome_for_status(status) == outcome
+
+
+class TestFinalizeStopReason2508:
+    """#2508: a run refused or stopped before any trial still says why."""
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_is_in_the_wire_body(self, client):
+        body = await _finalize_body(
+            client, True, optimization_outcome="completed", stop_reason="cost_limit"
+        )
+        assert body["stop_reason"] == "cost_limit"
+        assert body["optimization_outcome"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_no_stop_reason_sends_no_key(self, client):
+        body = await _finalize_body(client, True)
+        assert "stop_reason" not in body
+
+    @pytest.mark.asyncio
+    async def test_unknown_stop_reason_is_refused_before_any_send(self, client):
+        session = _http()
+        with patch("aiohttp.ClientSession", return_value=session):
+            with pytest.raises(ValueError):
+                await client._session_ops.finalize_session(
+                    SID, True, stop_reason="because I said so"
+                )
+        session.post.assert_not_called()
+
+    def test_stop_reason_survives_the_finalize_projection(self):
+        out = oo_egress.project_finalize_payload(
+            {"reason": "sdk_explicit_finalization", "stop_reason": "cost_limit"}
+        )
+        assert out["stop_reason"] == "cost_limit"
+
+    @pytest.mark.parametrize("bad", ["free text", "", 1, ["cost_limit"], {}])
+    def test_invalid_stop_reason_is_refused_not_sent(self, bad):
+        with pytest.raises(oo_egress.MetadataContractViolation):
+            oo_egress.project_finalize_payload(
+                {"reason": "sdk_explicit_finalization", "stop_reason": bad}
+            )
+
+    def test_closed_set_matches_the_public_stop_reason_type(self):
+        from typing import get_args
+
+        from traigent.api.types import StopReason
+
+        assert oo_egress.FINALIZE_STOP_REASONS == frozenset(get_args(StopReason))

@@ -1224,6 +1224,25 @@ class TestBackendSessionManagerFinalization:
             optimization_outcome=outcome,
         )
 
+    def test_finalize_session_threads_stop_reason_2508(
+        self, backend_session_manager, mock_backend_client
+    ):
+        """#2508: the run's stop reason rides the finalize call when known."""
+        backend_session_manager.finalize_session(
+            session_id="test-session-id",
+            optimization_status=OptimizationStatus.COMPLETED,
+            stop_reason="cost_limit",
+        )
+
+        mock_backend_client.finalize_session_sync.assert_called_once_with(
+            "test-session-id",
+            True,
+            certified_selection=None,
+            session_aggregation=None,
+            optimization_outcome="completed",
+            stop_reason="cost_limit",
+        )
+
     def test_finalize_session_threads_session_aggregation(
         self, backend_session_manager, mock_backend_client
     ):
