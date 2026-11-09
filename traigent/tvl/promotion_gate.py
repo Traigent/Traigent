@@ -63,7 +63,7 @@ def clopper_pearson_upper_bound(
     comes straight from :func:`scipy.stats.beta.ppf`, matching canonical
     exactly. When scipy is NOT installed this FAILS CLOSED for any case that
     needs the general beta quantile: it raises :class:`ImportError` rather than
-    falling back to the pure-python ``_beta_quantile_approx``. That
+    falling back to the former pure-python Newton approximation (since replaced by an exact bisection in statistics.py). That
     approximation is not reliable for high-violation / high-confidence inputs
     (its damped Newton step can clamp to ``0.001``), which would silently
     *under-estimate* the violation-rate upper bound and flip a chance-constraint
@@ -113,7 +113,7 @@ def clopper_pearson_upper_bound(
     if _scipy_stats is None:
         # FAIL CLOSED. The only reliable exact-beta quantile available is
         # scipy.stats.beta.ppf. statistics.py's pure-python
-        # _beta_quantile_approx clamps to 0.001 on high-violation /
+        # the former Newton approximation (_beta_quantile_approx) clamped to 0.001 on high-violation /
         # high-confidence inputs (e.g. clopper_pearson_upper_bound(95, 100,
         # 0.99) returns 0.001 instead of the canonical 0.987031), which would
         # silently flip a chance-constraint verdict to "promote" when it must
