@@ -744,6 +744,15 @@ class FrameworkOverrideManager(BaseOverrideManager):
             module_globals = vars(module)
             if module_globals is globalns:
                 continue
+            # openai>=3 lazily exposes ``openai.resources.Chat`` (etc.) through a
+            # module ``__getattr__``, so the name is absent from ``vars(module)``.
+            lazy = (
+                getattr(module, annotation_name, None)
+                if annotation_name.isidentifier()
+                else None
+            )
+            if isinstance(lazy, type):
+                return cast(type, lazy)
             resolved = self._resolve_annotation_name(annotation_name, module_globals)
             if isinstance(resolved, type):
                 return cast(type, resolved)

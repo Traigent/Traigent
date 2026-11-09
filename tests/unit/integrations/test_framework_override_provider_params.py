@@ -8,6 +8,7 @@ Drives the real ``anthropic`` / ``openai`` clients through an in-process
 
 from __future__ import annotations
 
+import importlib
 import json
 
 import httpx
@@ -29,14 +30,27 @@ OPENAI_SPACE = {
 }
 
 
-def _http_client(response_body: dict, bodies: list[dict]):
+def _httpx_module_for(sdk: str):
+    """Return the httpx flavour the installed ``sdk`` accepts as ``http_client``.
+
+    Newer anthropic releases reject a plain ``httpx.Client`` (``_reject_httpx_object``)
+    and require ``httpx2``; older releases and openai accept ``httpx``.
+    """
+    base_client = importlib.import_module(f"{sdk}._base_client")
+    if hasattr(base_client, "_reject_httpx_object"):
+        return importlib.import_module("httpx2")
+    return httpx
+
+
+def _http_client(response_body: dict, bodies: list[dict], sdk: str = "openai"):
     """Build an offline http client that records request bodies."""
+    lib = _httpx_module_for(sdk)
 
     def handler(request):
         bodies.append(json.loads(request.content))
-        return httpx.Response(200, json=response_body)
+        return lib.Response(200, json=response_body)
 
-    return httpx.Client(transport=httpx.MockTransport(handler))
+    return lib.Client(transport=lib.MockTransport(handler))
 
 
 @pytest.fixture
@@ -61,6 +75,7 @@ def test_anthropic_max_tokens_reaches_messages_create(manager):
             "usage": {"input_tokens": 1, "output_tokens": 1},
         },
         bodies,
+        "anthropic",
     )
     client = anthropic.Anthropic(api_key="k", http_client=http_client)
     manager.activate_overrides(["anthropic.Anthropic"])
@@ -181,7 +196,7 @@ def test_stop_alias_reaches_anthropic_as_stop_sequences(manager, name):
     anthropic = pytest.importorskip("anthropic")
     bodies: list[dict] = []
     client = anthropic.Anthropic(
-        api_key="k", http_client=_http_client(ANTHROPIC_RESPONSE, bodies)
+        api_key="k", http_client=_http_client(ANTHROPIC_RESPONSE, bodies, "anthropic")
     )
     manager.activate_overrides(["anthropic.Anthropic"])
     set_config(TraigentConfig(model="claude-sonnet-4-5", custom_params={name: ["ZZ"]}))
@@ -304,3 +319,33 @@ def test_openai_both_stop_names_send_canonical_value(manager):
     finally:
         set_config_space(None)
     assert bodies[0]["stop"] == ["A"]
+
+
+def test_cached_property_annotation_resolves_via_lazy_module_getattr(
+    manager, monkeypatch
+):
+    """openai>=3 exposes resource classes through a module ``__getattr__``."""
+    import functools
+    import sys
+    import types
+
+    class Resource:
+        def create(self):
+            return "ok"
+
+    fake = types.ModuleType("lazysdk.resources")
+    fake.__getattr__ = lambda name: Resource if name == "Resource" else _missing(name)
+
+    def _missing(name):
+        raise AttributeError(name)
+
+    monkeypatch.setitem(sys.modules, "lazysdk", types.ModuleType("lazysdk"))
+    monkeypatch.setitem(sys.modules, "lazysdk.resources", fake)
+
+    def resource(self) -> Resource:  # noqa: F821 - resolved lazily by design
+        raise NotImplementedError
+
+    resource.__module__ = "lazysdk.client"
+    descriptor = functools.cached_property(resource)
+
+    assert manager._cached_property_return_class(descriptor) is Resource
