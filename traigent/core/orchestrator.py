@@ -4060,10 +4060,17 @@ class OptimizationOrchestrator:
             )
 
         example_limit = getattr(self.evaluator, "timeout", None)
+        # Closed, non-content run settings. ``function_name`` is the code
+        # identifier (or the user's experiment name), which trackers use to name
+        # their run.
+        run_settings: dict[str, Any] = {
+            "function_name": experiment_display_name or descriptor.identifier
+        }
         if isinstance(example_limit, (int, float)) and not isinstance(
             example_limit, bool
         ):
-            self.callback_manager.on_run_settings({"example_timeout": example_limit})
+            run_settings["example_timeout"] = example_limit
+        self.callback_manager.on_run_settings(run_settings)
         self._optimization_complete_notified = False
         self._optimization_start_notified = True
         self._trial_complete_dispatched = set()
