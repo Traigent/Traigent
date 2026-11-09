@@ -28,17 +28,27 @@ _UTC_TIMEZONE_SUFFIX = "+00:00"
 _LEGACY_TOKEN_MAX_TTL = timedelta(hours=24)
 
 
-def _parse_expiry_utc(expires_str: str) -> datetime:
-    """Parse an ISO 8601 expiry timestamp as an aware UTC datetime.
+def _parse_expiry_utc(expires_str: Any) -> datetime:
+    """Parse an ISO 8601 expiry timestamp that carries an explicit offset.
 
-    A naive timestamp (no offset) is interpreted as UTC rather than the
-    host's local wall-clock time, so token expiry is not skewed by the
-    host's timezone.
+    Fails closed: only a string with an explicit UTC offset (or ``Z``) is
+    accepted. A number, ``None``, a naive timestamp, a bare date or garbage
+    raises ``ValueError`` so the caller denies approval (Traigent#3164). A
+    naive timestamp is not guessed to be UTC: that would grant approval on an
+    ambiguous instant.
     """
-    expires_at = datetime.fromisoformat(expires_str.replace("Z", _UTC_TIMEZONE_SUFFIX))
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=UTC)
-    return expires_at.astimezone(UTC)
+    if not isinstance(expires_str, str):
+        raise ValueError("expiry must be an ISO-8601 string with an offset")
+    text = expires_str
+    if text.endswith("Z"):
+        text = text[:-1] + _UTC_TIMEZONE_SUFFIX
+    expires_at = datetime.fromisoformat(text)
+    if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+        raise ValueError("expiry must carry an explicit UTC offset")
+    try:
+        return expires_at.astimezone(UTC)
+    except OverflowError as exc:
+        raise ValueError("expiry is out of range") from exc
 
 
 def _is_ci_environment() -> bool:
@@ -117,8 +127,9 @@ def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
         )
     except (ValueError, KeyError):
         logger.warning(
-            "Legacy CI approval token rejected: expires_at is missing or not a "
-            "valid ISO-8601 timestamp."
+            "Legacy CI approval token rejected: expires_at is missing or not an "
+            "ISO-8601 timestamp with an explicit offset (for example "
+            "2030-01-01T00:00:00Z)."
         )
     return False
 
@@ -144,7 +155,12 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
     ).decode()
 
     # Constant-time comparison
-    if not hmac.compare_digest(token_data.get("signature", ""), expected_sig):
+    signature = token_data.get("signature", "")
+    if not (
+        isinstance(signature, str)
+        and signature.isascii()
+        and hmac.compare_digest(signature, expected_sig)
+    ):
         logger.warning("Token signature validation failed")
         return False
 
@@ -185,7 +201,12 @@ def _check_token_file_approval(token_file: Path, base_dir: Path) -> bool:
             return True
         if _validate_legacy_token(token_data):
             return True
-    except (ValueError, KeyError) as e:  # JSONDecodeError is subclass of ValueError
+    except (
+        ValueError,
+        KeyError,
+        TypeError,
+        AttributeError,
+    ) as e:  # JSONDecodeError is a ValueError; malformed shapes deny, never raise
         logger.debug(f"Invalid approval token: {e}")
 
     return False
@@ -214,8 +235,8 @@ To approve, use one of these methods:
    export TRAIGENT_RUN_APPROVED=1
    export TRAIGENT_APPROVED_BY="your_name"
 
-2. Approval token file (timestamps are interpreted as UTC; expires_at must be
-   in the future and at most {max_hours} hours ahead):
+2. Approval token file (expires_at must be an ISO-8601 string with an explicit
+   offset such as Z, in the future and at most {max_hours} hours ahead):
    mkdir -p {shlex.quote(str(token_file.parent))} && echo '{{"approved_by": "your_name", "expires_at": "{example_expiry}"}}' > {shlex.quote(str(token_file))}
 
 3. GitHub Actions with environment protection: protection only holds the job
