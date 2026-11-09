@@ -15,10 +15,16 @@ logger = logging.getLogger(__name__)
 # Problem registry - will be populated as problems are imported
 _PROBLEM_REGISTRY: Dict[str, Type[ProblemDefinition]] = {}
 
+# Registrations made by problem modules at import time, keyed by the module's
+# full name. A cached module does not re-run its register_problem() call, so
+# load_all_problems() replays these to keep repeated loads identical.
+_MODULE_REGISTRATIONS: Dict[str, Dict[str, Type[ProblemDefinition]]] = {}
+
 
 def register_problem(name: str, problem_class: Type[ProblemDefinition]):
     """Register a problem class with the global registry."""
     _PROBLEM_REGISTRY[name] = problem_class
+    _MODULE_REGISTRATIONS.setdefault(problem_class.__module__, {})[name] = problem_class
 
 
 def get_available_problems() -> List[str]:
@@ -68,7 +74,9 @@ def load_all_problems():
 
         try:
             module = importlib.import_module(f".{module_name}", package=__name__)
-        except Exception as e:
+        except (Exception, SystemExit) as e:
+            # SystemExit: several modules call sys.exit(1) when langchain is
+            # missing; one such module must not abort loading the rest.
             logger.warning(
                 "Failed to load problem module %s: %s: %s",
                 module_name,
@@ -76,6 +84,9 @@ def load_all_problems():
                 e,
             )
             continue
+
+        # Replay registrations a cached module made on its first import.
+        _PROBLEM_REGISTRY.update(_MODULE_REGISTRATIONS.get(module.__name__, {}))
 
         # Check if it has already registered itself
         # If not, try to find and register problem classes manually

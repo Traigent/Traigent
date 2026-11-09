@@ -126,3 +126,35 @@ def test_broken_module_logs_warning_naming_it(plugin, caplog, monkeypatch):
     registered = _registered_modules(plugin)
     assert broken not in registered
     assert len(registered) == 12
+
+
+def test_load_all_problems_twice_returns_same_registry(plugin):
+    plugin.load_all_problems()
+    first = {n: plugin.get_problem_class(n) for n in plugin.get_available_problems()}
+    plugin.load_all_problems()
+    second = {n: plugin.get_problem_class(n) for n in plugin.get_available_problems()}
+    assert first == second
+    assert "basic_arithmetic" in second
+
+
+def test_module_that_sys_exits_at_import_warns_and_loading_continues(
+    plugin, caplog, monkeypatch
+):
+    broken = "code_review"
+    real_import = importlib.import_module
+
+    def fake_import(name, package=None):
+        if name == f".{broken}":
+            raise SystemExit(1)
+        return real_import(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+    with caplog.at_level(logging.WARNING, logger=PKG):
+        plugin.load_all_problems()
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert broken in warnings[0].getMessage()
+    registered = _registered_modules(plugin)
+    assert broken not in registered
+    assert len(registered) == 12
