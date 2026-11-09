@@ -374,6 +374,12 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 # the legacy estimator's input when that call had no usage.
                 original_prompt=original_prompt if position == 0 else None,
                 response_text=response_text if position == 0 else None,
+                # A captured response with missing/null usage is an unknown
+                # spend, never an estimate from the prompt/answer text
+                # (Traigent#3251). This deliberately does NOT claim the
+                # response is provider-billed (``response_captured``): the
+                # capture buffer also holds caller-supplied objects (#2505).
+                estimate_from_text=False,
             )
             if not self._has_llm_measurement(metrics):
                 # A call with no usage is an unknown spend, and it stays
