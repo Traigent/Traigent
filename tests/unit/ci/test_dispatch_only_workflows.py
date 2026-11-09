@@ -8,7 +8,9 @@ itself (traigent-ci-gates.yml).
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -78,11 +80,68 @@ def test_quality_scans_do_not_swallow_failures() -> None:
     assert not bad, "scan steps must fail on findings:\n" + "\n".join(bad)
 
 
-def test_ci_gates_base_is_an_input_and_guarded() -> None:
-    text = (_WORKFLOWS / "traigent-ci-gates.yml").read_text(encoding="utf-8")
-    assert "inputs.base_ref" in text
-    assert "base_ref:" in text
-    assert "same commit" in text, "gate must fail when base == head"
+def _guard_script() -> str:
+    doc = yaml.safe_load((_WORKFLOWS / "traigent-ci-gates.yml").read_text("utf-8"))
+    steps = doc["jobs"]["optimization-gates"]["steps"]
+    return next(s["run"] for s in steps if "distinct" in s.get("name", ""))
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _run_guard(tmp_path: Path, same: bool) -> subprocess.CompletedProcess[str]:
+    base, head = tmp_path / "baseline", tmp_path / "work"
+    for d in (base, head):
+        d.mkdir()
+        _git(d, "init", "-q")
+        (d / "f").write_text("x" if same else d.name)
+        _git(d, "add", "f")
+        _git(d, "commit", "-q", "-m", "c", "--date=2020-01-01T00:00:00")
+    if same:  # make both repos hold the identical commit
+        _git(head, "fetch", "-q", str(base), "HEAD")
+        _git(head, "reset", "-q", "--hard", "FETCH_HEAD")
+    return subprocess.run(
+        ["bash", "-e", "-c", _guard_script()],
+        cwd=tmp_path,
+        env={**os.environ, "BASE_REF": "develop"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_ci_gates_base_is_an_input() -> None:
+    doc = yaml.safe_load((_WORKFLOWS / "traigent-ci-gates.yml").read_text("utf-8"))
+    on = doc.get(True, doc.get("on"))
+    assert on["workflow_dispatch"]["inputs"]["base_ref"]["default"] == "develop"
+    steps = doc["jobs"]["optimization-gates"]["steps"]
+    base = next(s for s in steps if s.get("with", {}).get("path") == "baseline")
+    assert base["with"]["ref"] == "${{ inputs.base_ref }}"
+
+
+def test_ci_gates_guard_fails_when_base_equals_head(tmp_path: Path) -> None:
+    result = _run_guard(tmp_path, same=True)
+    assert result.returncode != 0
+    assert "same commit" in result.stdout
+
+
+def test_ci_gates_guard_passes_when_commits_differ(tmp_path: Path) -> None:
+    result = _run_guard(tmp_path, same=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_integration_tests_gated_on_dispatch_input() -> None:
+    doc = yaml.safe_load((_WORKFLOWS / "tests.yml").read_text("utf-8"))
+    on = doc.get(True, doc.get("on"))
+    inp = on["workflow_dispatch"]["inputs"]["run_integration"]
+    assert inp["type"] == "boolean" and inp["default"] is True
+    assert doc["jobs"]["integration-tests"]["if"] == "inputs.run_integration"
 
 
 def test_discovery_finds_named_workflows() -> None:

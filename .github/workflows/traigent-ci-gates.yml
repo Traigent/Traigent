@@ -57,15 +57,19 @@ jobs:
         with:
           python-version: '3.12'
 
+      # Separate virtualenvs: an editable install of the head must not replace the
+      # baseline SDK, or an SDK regression would be measured on both sides.
       - name: Install dependencies (baseline)
         working-directory: baseline
         run: |
-          pip install -e ".[dev,analytics,integrations]"
+          python -m venv "$GITHUB_WORKSPACE/venv-baseline"
+          "$GITHUB_WORKSPACE/venv-baseline/bin/python" -m pip install -e ".[dev,analytics,integrations]"
 
-      - name: Install dependencies (PR)
+      - name: Install dependencies (head)
         working-directory: work
         run: |
-          pip install -e ".[dev,analytics,integrations]"
+          python -m venv "$GITHUB_WORKSPACE/venv-head"
+          "$GITHUB_WORKSPACE/venv-head/bin/python" -m pip install -e ".[dev,analytics,integrations]"
 
       - name: Copy dataset to baseline if missing
         run: |
@@ -79,7 +83,8 @@ jobs:
       - name: Evaluate baseline configuration
         working-directory: baseline/examples/integrations/ci-cd/math-qa
         run: |
-          MODE=eval python run.py
+          "$GITHUB_WORKSPACE/venv-baseline/bin/python" -c "import os, pathlib, traigent; p = pathlib.Path(traigent.__file__).resolve(); print('traigent from', p); p.relative_to(pathlib.Path(os.environ['GITHUB_WORKSPACE'], 'baseline').resolve())"
+          MODE=eval "$GITHUB_WORKSPACE/venv-baseline/bin/python" run.py
           echo "Baseline evaluation complete"
 
       - name: Copy baseline results
@@ -90,13 +95,14 @@ jobs:
       - name: Evaluate PR configuration
         working-directory: work/examples/integrations/ci-cd/math-qa
         run: |
-          MODE=eval python run.py
+          "$GITHUB_WORKSPACE/venv-head/bin/python" -c "import os, pathlib, traigent; p = pathlib.Path(traigent.__file__).resolve(); print('traigent from', p); p.relative_to(pathlib.Path(os.environ['GITHUB_WORKSPACE'], 'work').resolve())"
+          MODE=eval "$GITHUB_WORKSPACE/venv-head/bin/python" run.py
           echo "PR evaluation complete"
 
       - name: Run optimization on PR
         working-directory: work/examples/integrations/ci-cd/math-qa
         run: |
-          MODE=tune MAX_TRIALS=10 python run.py
+          MODE=tune MAX_TRIALS=10 "$GITHUB_WORKSPACE/venv-head/bin/python" run.py
           echo "Optimization complete"
 
       - name: Compare metrics
