@@ -12,8 +12,9 @@ from traigent.api.types import TrialResult
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.discrete_domains import (
     discrete_values_for_config_param,
+    sample_stepped_int,
     stepped_float_values,
-    stepped_int_cardinality,
+    uniform_within,
 )
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
@@ -263,14 +264,7 @@ class RandomSearchOptimizer(BaseOptimizer):
         # Pick a grid index arithmetically instead of materializing the grid, so
         # a wide step-less IntRange costs O(1) per sample. The grid is low,
         # low+step, ... plus the inclusive high endpoint when it is off-grid.
-        count = stepped_int_cardinality(low_i, high_i, int_step)
-        if count <= 0:
-            raise OptimizationError(
-                f"Invalid integer range for parameter '{param_name}': no values"
-            )
-        index = self._random.randrange(count)
-        regular = (high_i - low_i) // int_step + 1
-        return low_i + index * int_step if index < regular else high_i
+        return sample_stepped_int(self._random, low_i, high_i, int_step)
 
     def _sample_range_float(self, param_name: str, param_def: dict) -> float:
         """Sample a float value from a range-dict definition."""
@@ -304,8 +298,7 @@ class RandomSearchOptimizer(BaseOptimizer):
                     f"Invalid float range for parameter '{param_name}': no values"
                 )
             return self._random.choice(values)
-        val = self._random.uniform(low_f, high_f)
-        return round(val, 6)
+        return uniform_within(self._random, low_f, high_f)
 
     def _sample_parameter(self, param_name: str, param_def: Any) -> Any:
         """Sample a single parameter value.

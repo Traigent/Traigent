@@ -30,7 +30,7 @@ from traigent.api.types import TrialResult
 from traigent.cloud.models import OptimizationSessionStatus as OptimizationSessionStatus
 from traigent.config.types import TraigentConfig
 from traigent.evaluators.base import EvaluationExample
-from traigent.utils.discrete_domains import discrete_values_for_config_param
+from traigent.utils.discrete_domains import sample_range_dict
 from traigent.utils.exceptions import OptimizationError, ServiceError
 from traigent.utils.logging import get_logger
 
@@ -946,17 +946,7 @@ class MockRemoteService(RemoteOptimizationService):
                     and "high" in param_def
                 ):
                     # Typed range dict (IntRange / Range / LogRange)
-                    grid = discrete_values_for_config_param(param_def)
-                    if grid:
-                        config[param_name] = _SECURE_RANDOM.choice(grid)
-                    elif str(param_def.get("type", "")).lower() in {"int", "integer"}:
-                        config[param_name] = _SECURE_RANDOM.randint(
-                            int(param_def["low"]), int(param_def["high"])
-                        )
-                    else:
-                        config[param_name] = _SECURE_RANDOM.uniform(
-                            float(param_def["low"]), float(param_def["high"])
-                        )
+                    config[param_name] = sample_range_dict(_SECURE_RANDOM, param_def)
                 else:
                     # Fixed parameter
                     config[param_name] = param_def

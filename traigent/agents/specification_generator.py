@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -52,6 +53,20 @@ def _require_cloud_models() -> None:
             plugin_name="traigent-cloud",
             install_hint="pip install traigent[cloud]",
         )
+
+
+def _midpoint_on_grid(definition: dict[str, Any]) -> int | float:
+    """Midpoint of a typed range dict, snapped to its step grid when it has one."""
+    low, high = definition["low"], definition["high"]
+    mid = (low + high) / 2
+    is_int = str(definition.get("type", "")).lower() in {"int", "integer"}
+    step = definition.get("step")
+    if step:
+        # Nearest grid point; ties go to the lower one, clamped to the bounds.
+        k = max(0, math.ceil((mid - low) / step - 0.5))
+        snapped = min(low + k * step, high)
+        return int(snapped) if is_int else round(float(snapped), 10)
+    return int(round(mid)) if is_int else float(mid)
 
 
 class PromptTemplateBuilder(Protocol):
@@ -621,10 +636,7 @@ class SpecificationGenerator:
                     )
                 elif isinstance(value, dict) and "low" in value and "high" in value:
                     # Typed range dict (Range / IntRange): same midpoint heuristic
-                    mid = (value["low"] + value["high"]) / 2
-                    if str(value.get("type", "")).lower() in {"int", "integer"}:
-                        mid = round(mid)
-                    model_params[param] = mid
+                    model_params[param] = _midpoint_on_grid(value)
                 else:
                     # Direct value assignment
                     model_params[param] = value
