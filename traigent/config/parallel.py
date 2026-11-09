@@ -11,6 +11,32 @@ from traigent.utils.validation import ValidationResult
 
 ParallelMode = Literal["auto", "sequential", "parallel"]
 
+# Upper bound for each concurrency field in ``parallel_config``. Requests above
+# this are almost certainly typos (e.g. 10**9) and would spawn unbounded threads.
+MAX_PARALLEL_CONCURRENCY = 1024
+
+_CONCURRENCY_FIELDS = ("thread_workers", "example_concurrency", "trial_concurrency")
+
+
+def _concurrency_value_problem(name: str, value: object) -> str | None:
+    """Return a message if ``value`` is not a valid concurrency setting.
+
+    ``None`` means "inherit" and is valid. Otherwise the value must be a real
+    ``int`` (not ``bool``, ``float``, ``str`` or NaN) in
+    ``[1, MAX_PARALLEL_CONCURRENCY]``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        return (
+            f"{name} must be a positive integer, got {type(value).__name__} {value!r}."
+        )
+    if value < 1:
+        return f"{name} must be >= 1 when specified."
+    if value > MAX_PARALLEL_CONCURRENCY:
+        return f"{name} must be <= {MAX_PARALLEL_CONCURRENCY}, got {value}."
+    return None
+
 
 @dataclass
 class ParallelConfig:
@@ -162,7 +188,6 @@ def merge_parallel_configs(
 
 def _validate_parallel_config_inputs(
     config: ParallelConfig,
-    thread_workers: int,
     validation: ValidationResult,
 ) -> None:
     """Validate input values for parallel configuration."""
@@ -172,22 +197,32 @@ def _validate_parallel_config_inputs(
             f"Unsupported mode '{config.mode}'. Expected 'sequential', 'parallel', or 'auto'.",
         )
 
-    if thread_workers < 1:
-        validation.add_error(
-            "parallel_config.thread_workers",
-            "thread_workers must be >= 1.",
-        )
+    _validate_concurrency_fields(config, validation)
 
-    if config.example_concurrency is not None and config.example_concurrency < 1:
-        validation.add_error(
-            "parallel_config.example_concurrency",
-            "example_concurrency must be >= 1 when specified.",
-        )
-    if config.trial_concurrency is not None and config.trial_concurrency < 1:
-        validation.add_error(
-            "parallel_config.trial_concurrency",
-            "trial_concurrency must be >= 1 when specified.",
-        )
+
+def _validate_concurrency_fields(
+    config: ParallelConfig, validation: ValidationResult
+) -> None:
+    for field_name in _CONCURRENCY_FIELDS:
+        problem = _concurrency_value_problem(field_name, getattr(config, field_name))
+        if problem:
+            validation.add_error(f"parallel_config.{field_name}", problem)
+
+
+def validate_parallel_config_fields(config: ParallelConfig) -> None:
+    """Raise a ValidationError naming each malformed concurrency field."""
+    validation = ValidationResult()
+    _validate_concurrency_fields(config, validation)
+    validation.raise_if_invalid()
+
+
+def validate_parallel_workers(value: object, name: str = "parallel_workers") -> None:
+    """Raise a ValidationError if ``value`` is not a valid worker count."""
+    problem = _concurrency_value_problem(name, value)
+    if problem:
+        validation = ValidationResult()
+        validation.add_error(name, problem)
+        validation.raise_if_invalid()
 
 
 def _infer_resolved_mode(
@@ -300,10 +335,20 @@ def resolve_parallel_config(
     validation = ValidationResult()
     sources = dict(sources or {})
 
-    thread_workers = config.thread_workers or default_thread_workers
+    # Validate inputs (including the inherited worker default)
+    _validate_parallel_config_inputs(config, validation)
+    if config.thread_workers is None:
+        problem = _concurrency_value_problem("parallel_workers", default_thread_workers)
+        if problem:
+            validation.add_error("parallel_workers", problem)
+    # Malformed values must not reach the arithmetic below.
+    validation.raise_if_invalid()
 
-    # Validate inputs
-    _validate_parallel_config_inputs(config, thread_workers, validation)
+    thread_workers = (
+        config.thread_workers
+        if config.thread_workers is not None
+        else default_thread_workers
+    )
 
     # Infer the resolved mode
     resolved_mode = _infer_resolved_mode(

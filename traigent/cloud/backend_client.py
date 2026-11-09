@@ -2195,6 +2195,7 @@ class BackendIntegratedClient:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
         Delegates to session_operations module. Phase 8: an optional
@@ -2207,6 +2208,7 @@ class BackendIntegratedClient:
             certified_selection=certified_selection,
             session_aggregation=session_aggregation,
             optimization_outcome=optimization_outcome,
+            stop_reason=stop_reason,
         )
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
@@ -2221,6 +2223,7 @@ class BackendIntegratedClient:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session.
         Delegates to session_operations module."""
@@ -2230,6 +2233,7 @@ class BackendIntegratedClient:
             certified_selection=certified_selection,
             session_aggregation=session_aggregation,
             optimization_outcome=optimization_outcome,
+            stop_reason=stop_reason,
         )
 
     def delete_session_sync(self, session_id: str, cascade: bool = True) -> bool:
