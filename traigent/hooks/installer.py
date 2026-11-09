@@ -113,9 +113,15 @@ HOOK_MARKER = "# Traigent pre-push hook - validates agent configurations"
 PRE_COMMIT_HOOK_MARKER = "# Traigent pre-commit hook - quick config check"
 
 
-_TRAIGENT_HOOK_BODIES: dict[str, bytes] = {
-    "pre-push": PRE_PUSH_HOOK_SCRIPT.encode("utf-8"),
-    "pre-commit": PRE_COMMIT_HOOK_SCRIPT.encode("utf-8"),
+def _published_bodies(script: str) -> frozenset[bytes]:
+    """The LF script and its whole-file CRLF form (text-mode write on Windows)."""
+    raw = script.encode("utf-8")
+    return frozenset({raw, raw.replace(b"\n", b"\r\n")})
+
+
+_TRAIGENT_HOOK_BODIES: dict[str, frozenset[bytes]] = {
+    "pre-push": _published_bodies(PRE_PUSH_HOOK_SCRIPT),
+    "pre-commit": _published_bodies(PRE_COMMIT_HOOK_SCRIPT),
 }
 
 
@@ -124,16 +130,15 @@ def _is_traigent_hook(content: bytes | str, hook_name: str) -> bool:
 
     A marker line proves nothing about authorship: a customer may have edited
     the generated hook or reused the header in their own hook. Only a file
-    whose bytes equal the script Traigent publishes for that same hook (so
-    deleting it loses nothing, the script is reproducible) is ours to delete
-    or replace. CRLF line endings (written by text-mode I/O on Windows) are
-    normalised to LF before comparing.
+    whose bytes equal, as a whole, the script Traigent publishes for that same
+    hook (so deleting it loses nothing, the script is reproducible) is ours to
+    delete or replace. Mixed line endings do not match.
     """
-    expected = _TRAIGENT_HOOK_BODIES.get(hook_name)
-    if expected is None:
+    bodies = _TRAIGENT_HOOK_BODIES.get(hook_name)
+    if bodies is None:
         return False
     raw = content.encode("utf-8") if isinstance(content, str) else content
-    return raw.replace(b"\r\n", b"\n") == expected
+    return raw in bodies
 
 
 def _read_hook_bytes(path: Path, base_dir: Path) -> bytes:

@@ -226,6 +226,27 @@ class TestUninstallOwnership:
         assert results["pre-push"] is False
         assert push.read_text() == mine
 
+    def test_mixed_line_endings_are_not_treated_as_traigent_hook(
+        self, installer: HooksInstaller
+    ) -> None:
+        hook = installer.hooks_dir / "pre-push"
+        mixed = PRE_PUSH_HOOK_SCRIPT.replace("#!/bin/bash\n", "#!/bin/bash\r\n", 1)
+        hook.write_bytes(mixed.encode())
+
+        assert installer.uninstall()["pre-push"] is False
+        assert hook.read_bytes() == mixed.encode()
+
+        installer.install(force=True)
+        assert (installer.hooks_dir / "pre-push.backup").read_bytes() == mixed.encode()
+
+    def test_whole_file_crlf_script_is_still_recognised(
+        self, installer: HooksInstaller
+    ) -> None:
+        hook = installer.hooks_dir / "pre-push"
+        hook.write_bytes(PRE_PUSH_HOOK_SCRIPT.replace("\n", "\r\n").encode())
+
+        assert installer.status()["pre-push"] == "installed (traigent)"
+
     def test_edited_backup_is_restored_not_deleted(
         self, installer: HooksInstaller
     ) -> None:
