@@ -94,7 +94,7 @@ def usage_analytics_allowed(config: TraigentConfig) -> bool:
     """Single gate in front of every usage-analytics send (#3184).
 
     Refuses when ``enable_usage_analytics`` is False, backend egress is disabled
-    (``no_egress`` or an offline policy / ``TRAIGENT_OFFLINE_MODE``), or the
+    (``no_egress``, ``offline=True`` or an offline policy / ``TRAIGENT_OFFLINE_MODE``), or the
     documented ``TRAIGENT_DISABLE_TELEMETRY`` opt-out is set. The default of
     ``enable_usage_analytics`` is unchanged.
     """
@@ -103,7 +103,7 @@ def usage_analytics_allowed(config: TraigentConfig) -> bool:
 
     if not config.enable_usage_analytics:
         return False
-    if _read_observability_offline_mode():
+    if _read_observability_offline_mode() or getattr(config, "offline", False) is True:
         return False
     return not backend_egress_disabled(config)
 

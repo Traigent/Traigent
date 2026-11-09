@@ -84,6 +84,7 @@ CASES = {
     "no_egress": ({"no_egress": True}, {}),
     "disable_telemetry": ({}, {"TRAIGENT_DISABLE_TELEMETRY": "true"}),
     "offline_env": ({}, {"TRAIGENT_OFFLINE_MODE": "true"}),
+    "offline_config": ({"offline": True}, {}),
     "analytics_off": ({"enable_usage_analytics": False}, {}),
 }
 
@@ -172,3 +173,28 @@ async def test_default_config_with_key_still_sends(entry, transport, monkeypatch
     else:
         await _entry_cli(config, monkeypatch, transport)
     assert "create_hybrid_session" in _Recorder.calls
+
+
+@pytest.mark.parametrize("entry", ["collect", "orchestrator"])
+@pytest.mark.parametrize("case", sorted(CASES))
+@pytest.mark.asyncio
+async def test_entry_guard_stops_before_building_analytics(
+    case, entry, transport, monkeypatch
+):
+    """The entry point itself refuses: it never even constructs LocalAnalytics."""
+    cfg_kw, env = CASES[case]
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    built: list[str] = []
+
+    class _Boom:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            built.append("built")
+
+    monkeypatch.setattr("traigent.utils.local_analytics.LocalAnalytics", _Boom)
+    config = _config(transport, **cfg_kw)
+    if entry == "collect":
+        await _entry_collect(config)
+    else:
+        await _entry_orchestrator(config)
+    assert built == []
