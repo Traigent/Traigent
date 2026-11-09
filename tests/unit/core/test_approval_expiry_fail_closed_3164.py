@@ -197,3 +197,55 @@ def test_parser_rejects_lowercase_z_and_padding(suffix: str) -> None:
     text = base + suffix if suffix == "z" else " " + base + "Z" + suffix
     with pytest.raises(ValueError):
         _parse_expiry_utc(text)
+
+
+def _signed(secret: str = "s3cret") -> dict:  # pragma: allowlist secret
+    stamp = _FUTURE.strftime("%Y-%m-%dT%H:%M:%SZ")
+    payload = f"alice|{stamp}|n1".encode()
+    sig = base64.b64encode(hmac.new(secret.encode(), payload, hashlib.sha256).digest())
+    return {
+        "approver": "alice",
+        "expires_iso": stamp,
+        "nonce": "n1",
+        "signature": sig.decode(),
+    }
+
+
+def test_signed_token_is_validated_by_signature_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_APPROVAL_SECRET", "s3cret")
+    token = _signed()
+    token["signature"] = "AAAA"  # wrong signature
+    token["approved_by"] = "alice"
+    token["expires_at"] = _FUTURE.strftime("%Y-%m-%dT%H:%M:%SZ")
+    (tmp_path / "approval.token").write_text(json.dumps(token), encoding="utf-8")
+    with pytest.raises(OptimizationError, match="CI/CD Approval Required"):
+        _run_gate(tmp_path)
+
+
+def test_signed_token_without_secret_is_not_validated_as_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TRAIGENT_APPROVAL_SECRET", raising=False)
+    token = _signed()
+    token["approved_by"] = "alice"
+    token["expires_at"] = _FUTURE.strftime("%Y-%m-%dT%H:%M:%SZ")
+    (tmp_path / "approval.token").write_text(json.dumps(token), encoding="utf-8")
+    with pytest.raises(OptimizationError, match="CI/CD Approval Required"):
+        _run_gate(tmp_path)
+
+
+def test_valid_signed_token_is_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_APPROVAL_SECRET", "s3cret")
+    (tmp_path / "approval.token").write_text(json.dumps(_signed()), encoding="utf-8")
+    _run_gate(tmp_path)  # must not raise
+
+
+def test_unsigned_legacy_token_is_still_accepted(tmp_path: Path) -> None:
+    stamp = _FUTURE.strftime("%Y-%m-%dT%H:%M:%SZ")
+    token = {"approved_by": "alice", "expires_at": stamp}
+    (tmp_path / "approval.token").write_text(json.dumps(token), encoding="utf-8")
+    _run_gate(tmp_path)  # must not raise

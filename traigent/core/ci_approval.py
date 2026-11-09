@@ -197,6 +197,9 @@ def _check_token_file_approval(token_file: Path, base_dir: Path) -> bool:
         with safe_open(token_file, base_dir, mode="r", encoding="utf-8") as f:
             token_data = json.load(f)
 
+        # A token that carries a signature is validated by its signature only.
+        if isinstance(token_data, dict) and "signature" in token_data:
+            return _validate_hmac_token(token_data)
         if _validate_hmac_token(token_data):
             return True
         if _validate_legacy_token(token_data):
