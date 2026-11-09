@@ -121,6 +121,147 @@ class TestForceInstallBackupOwnership:
         assert not (installer.hooks_dir / "pre-push.backup").exists()
 
 
+def _git_repo(tmp_path: Path) -> Path:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    return tmp_path
+
+
+class TestUninstallOwnership:
+    """Regression tests for #2715: ownership is byte-identity, not a marker line."""
+
+    PRE_COMMIT_MARKER = "# Traigent pre-commit hook - quick config check"
+
+    @pytest.fixture
+    def installer(self, tmp_path: Path) -> HooksInstaller:
+        return HooksInstaller(_git_repo(tmp_path))
+
+    def test_edited_traigent_hook_survives_uninstall(
+        self, installer: HooksInstaller
+    ) -> None:
+        installer.install()
+        hook = installer.hooks_dir / "pre-commit"
+        edited = PRE_COMMIT_HOOK_SCRIPT + "\n./my-own-check.sh\n"
+        hook.write_text(edited)
+
+        results = installer.uninstall()
+
+        assert results["pre-commit"] is False
+        assert hook.read_text() == edited
+        assert not (installer.hooks_dir / "pre-push").exists()
+
+    def test_customer_hook_reusing_marker_line_survives_uninstall(
+        self, installer: HooksInstaller
+    ) -> None:
+        hook = installer.hooks_dir / "pre-commit"
+        mine = f"#!/bin/sh\n{self.PRE_COMMIT_MARKER}\nnpm run lint\n"
+        hook.write_text(mine)
+        push = installer.hooks_dir / "pre-push"
+        push_mine = f"#!/bin/sh\n{HOOK_MARKER}\n./tests.sh\n"
+        push.write_text(push_mine)
+
+        results = installer.uninstall()
+
+        assert results == {"pre-push": False, "pre-commit": False}
+        assert hook.read_text() == mine
+        assert push.read_text() == push_mine
+
+    def test_status_reports_edited_traigent_hook_as_other(
+        self, installer: HooksInstaller
+    ) -> None:
+        installer.install()
+        (installer.hooks_dir / "pre-push").write_text(PRE_PUSH_HOOK_SCRIPT + "# mine\n")
+
+        status = installer.status()
+
+        assert status["pre-push"] == "installed (other)"
+        assert status["pre-commit"] == "installed (traigent)"
+
+    def test_unmodified_install_still_uninstalls_fully(
+        self, installer: HooksInstaller
+    ) -> None:
+        installer.install()
+
+        assert installer.uninstall() == {"pre-push": True, "pre-commit": True}
+        assert not (installer.hooks_dir / "pre-push").exists()
+        assert not (installer.hooks_dir / "pre-commit").exists()
+
+    def test_force_install_backs_up_edited_traigent_hook(
+        self, installer: HooksInstaller
+    ) -> None:
+        installer.install()
+        hook = installer.hooks_dir / "pre-commit"
+        edited = PRE_COMMIT_HOOK_SCRIPT + "./my-own-check.sh\n"
+        hook.write_text(edited)
+
+        installer.install(force=True)
+        installer.uninstall()
+
+        assert hook.read_text() == edited
+        assert not (installer.hooks_dir / "pre-commit.backup").exists()
+
+    def test_other_hooks_script_in_backup_is_not_deleted(
+        self, installer: HooksInstaller
+    ) -> None:
+        push = installer.hooks_dir / "pre-push"
+        backup = installer.hooks_dir / "pre-push.backup"
+        push.write_text(PRE_PUSH_HOOK_SCRIPT)
+        backup.write_text(PRE_COMMIT_HOOK_SCRIPT)
+
+        installer.uninstall()
+
+        assert push.read_text() == PRE_COMMIT_HOOK_SCRIPT
+        assert not backup.exists()
+
+    def test_install_without_force_rejects_marker_reusing_customer_hook(
+        self, installer: HooksInstaller
+    ) -> None:
+        push = installer.hooks_dir / "pre-push"
+        mine = f"#!/bin/sh\n{HOOK_MARKER}\n./tests.sh\n"
+        push.write_text(mine)
+
+        results = installer.install()
+
+        assert results["pre-push"] is False
+        assert push.read_text() == mine
+
+    def test_mixed_line_endings_are_not_treated_as_traigent_hook(
+        self, installer: HooksInstaller
+    ) -> None:
+        hook = installer.hooks_dir / "pre-push"
+        mixed = PRE_PUSH_HOOK_SCRIPT.replace("#!/bin/bash\n", "#!/bin/bash\r\n", 1)
+        hook.write_bytes(mixed.encode())
+
+        assert installer.uninstall()["pre-push"] is False
+        assert hook.read_bytes() == mixed.encode()
+
+        installer.install(force=True)
+        assert (installer.hooks_dir / "pre-push.backup").read_bytes() == mixed.encode()
+
+    def test_whole_file_crlf_script_is_still_recognised(
+        self, installer: HooksInstaller
+    ) -> None:
+        hook = installer.hooks_dir / "pre-push"
+        hook.write_bytes(PRE_PUSH_HOOK_SCRIPT.replace("\n", "\r\n").encode())
+
+        assert installer.status()["pre-push"] == "installed (traigent)"
+
+    def test_edited_backup_is_restored_not_deleted(
+        self, installer: HooksInstaller
+    ) -> None:
+        hook = installer.hooks_dir / "pre-commit"
+        backup = installer.hooks_dir / "pre-commit.backup"
+        hook.write_text(PRE_COMMIT_HOOK_SCRIPT)
+        mine = PRE_COMMIT_HOOK_SCRIPT + "./keep-me.sh\n"
+        backup.write_text(mine)
+
+        installer.uninstall()
+
+        assert hook.read_text() == mine
+        assert not backup.exists()
+
+
 class TestHooksInstaller:
     """Tests for HooksInstaller class."""
 
@@ -262,11 +403,9 @@ class TestHooksInstaller:
         # Install again without force
         results = installer.install(force=False)
 
-        # pre-push has HOOK_MARKER so it's detected as Traigent hook
-        assert results["pre-push"] is True
-        # pre-commit doesn't have HOOK_MARKER so it's not re-detected
-        # This is current behavior - could be considered a bug
-        assert results["pre-commit"] is False
+        # Both hooks are byte-identical to Traigent's scripts, so both are
+        # recognised as already installed.
+        assert results == {"pre-push": True, "pre-commit": True}
 
     def test_install_without_force_preserves_non_traigent_hooks(
         self, installer: HooksInstaller
@@ -392,8 +531,8 @@ class TestHooksInstaller:
         self, installer: HooksInstaller
     ) -> None:
         """Test _uninstall_hook removes Traigent hook."""
-        hook_path = installer.hooks_dir / "test-hook"
-        hook_path.write_text("#!/bin/bash\n" + HOOK_MARKER)
+        hook_path = installer.hooks_dir / "pre-push"
+        hook_path.write_text(PRE_PUSH_HOOK_SCRIPT)
 
         result = installer._uninstall_hook(hook_path)
 
