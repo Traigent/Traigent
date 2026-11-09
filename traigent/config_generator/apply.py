@@ -92,7 +92,7 @@ def apply_config(
 
     safe_path = _sanitize_source_path(file_path)
 
-    source = safe_path.read_text()  # NOSONAR(S2083)
+    source = safe_path.read_text(encoding="utf-8")  # NOSONAR(S2083)
     lines = source.splitlines(keepends=True)
 
     try:
@@ -141,7 +141,7 @@ def apply_config(
         backup_path = safe_path.parent / f"{safe_path.name}.bak"
         shutil.copy2(safe_path, backup_path)
 
-    safe_path.write_text("".join(lines))  # NOSONAR(S2083)
+    safe_path.write_text("".join(lines), encoding="utf-8")  # NOSONAR(S2083)
     return safe_path
 
 

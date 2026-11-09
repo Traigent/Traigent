@@ -21,9 +21,9 @@ from collections.abc import Callable
 
 from traigent.integrations.llms import nous_auth
 from traigent.integrations.llms.nous_auth import (
-    NOUS_BASE_URL,
     _get_nous_cache_identity,
     get_nous_api_key,
+    get_nous_base_url,
     has_nous_credentials,
 )
 from traigent.integrations.model_discovery.base import ModelDiscovery
@@ -53,9 +53,9 @@ class NousDiscovery(ModelDiscovery):
 
         source, identity_material = identity
         cache_parts = (
-            (NOUS_BASE_URL, source)
+            (get_nous_base_url(), source)
             if source == "invalid-auth-file-v1"
-            else (NOUS_BASE_URL, source, identity_material)
+            else (get_nous_base_url(), source, identity_material)
         )
         cache_key = f"{self.PROVIDER}-{self._fingerprint(*cache_parts)}"
 
@@ -69,11 +69,11 @@ class NousDiscovery(ModelDiscovery):
         source, identity_material = identity
         if source == "invalid-auth-file-v1":
             invalid_partition_id: str = ModelDiscovery._fingerprint(
-                NOUS_BASE_URL, source
+                get_nous_base_url(), source
             )
             return invalid_partition_id
         valid_partition_id: str = ModelDiscovery._fingerprint(
-            NOUS_BASE_URL, source, identity_material
+            get_nous_base_url(), source, identity_material
         )
         return valid_partition_id
 
@@ -111,7 +111,7 @@ class NousDiscovery(ModelDiscovery):
 
         client_kwargs: dict[str, str] = {
             "api_key": bearer,
-            "base_url": NOUS_BASE_URL,
+            "base_url": get_nous_base_url(),
         }
         client = OpenAI(**client_kwargs)
         models = client.models.list()

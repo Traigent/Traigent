@@ -51,7 +51,7 @@ def generate_config(
         Which subsystems to run (``None`` = all).
     """
     file_path = Path(file_path)
-    source_code = file_path.read_text()
+    source_code = file_path.read_text(encoding="utf-8")
     # An unparseable file must fail, not yield a generic recommendation for
     # code that was never analysed (#2648). SyntaxError propagates.
     ast.parse(source_code)

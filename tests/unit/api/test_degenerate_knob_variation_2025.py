@@ -42,6 +42,21 @@ def test_cluster_of_three_close_values_warns() -> None:
         _decorate({"temperature": [0.70, 0.701, 0.702]})
 
 
+def test_issue_example_with_float_error_gap_warns() -> None:
+    # 0.71 - 0.70 == 0.010000000000000009, which a strict `< floor` compare misses.
+    assert 0.71 - 0.70 > 0.01
+    with pytest.warns(TraigentWarning, match=_MARKER) as record:
+        _decorate({"temperature": [0.70, 0.71, 0.72]})
+    assert "very narrow gap" in _hits(record)[0]
+
+
+def test_gap_just_above_the_floor_does_not_warn() -> None:
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        _decorate({"temperature": [0.70, 0.7101]})
+    assert _hits(record) == []
+
+
 @pytest.mark.parametrize(
     "space",
     [
