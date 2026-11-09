@@ -446,17 +446,18 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
     def to_config_value(self) -> IntRangeConfigValue:
         """Convert to internal format.
 
-        Returns tuple for simple ranges, dict when log/step is set.
+        Always returns the dict form. An integer range without an explicit
+        step is discrete with step 1: the bare ``(low, high)`` tuple is
+        indistinguishable from a float ``Range`` with integer bounds and would
+        be treated as continuous (no dedup, no exhaustion).
         """
-        if self.step is None and not self.log:
-            return (self.low, self.high)
         result: IntRangeConfigDict = {
             "type": "int",
             "low": self.low,
             "high": self.high,
         }
-        if self.step is not None:
-            result["step"] = self.step
+        if not self.log:
+            result["step"] = self.step if self.step is not None else 1
         if self.log:
             result["log"] = True
         return result

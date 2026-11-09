@@ -13,7 +13,7 @@ from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.discrete_domains import (
     discrete_values_for_config_param,
     stepped_float_values,
-    stepped_int_values,
+    stepped_int_cardinality,
 )
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
@@ -224,6 +224,14 @@ class RandomSearchOptimizer(BaseOptimizer):
             raise OptimizationError(
                 f"Integer parameter '{param_name}' requires integral low/high bounds"
             )
+        # Keep exact integers as-is: a float round trip loses precision above 2**53.
+        raw_low, raw_high = param_def["low"], param_def["high"]
+        exact_ints = (
+            isinstance(raw_low, int)
+            and isinstance(raw_high, int)
+            and not isinstance(raw_low, bool)
+            and not isinstance(raw_high, bool)
+        )
 
         step_raw = param_def.get("step", 1)
         if step_raw is None:
@@ -239,19 +247,30 @@ class RandomSearchOptimizer(BaseOptimizer):
                 f"Invalid step for integer parameter '{param_name}': {step_raw}"
             )
 
-        low_i, high_i, int_step = int(low_f), int(high_f), max(int(step_f), 1)
+        low_i: int
+        high_i: int
+        if exact_ints:
+            low_i, high_i = int(raw_low), int(raw_high)
+        else:
+            low_i, high_i = int(low_f), int(high_f)
+        int_step = max(int(step_f), 1)
         if low_i > high_i:
             raise OptimizationError(
                 f"Invalid integer range for parameter '{param_name}': "
                 f"low ({low_i}) must be <= high ({high_i})"
             )
 
-        values = stepped_int_values(low_i, high_i, int_step)
-        if not values:
+        # Pick a grid index arithmetically instead of materializing the grid, so
+        # a wide step-less IntRange costs O(1) per sample. The grid is low,
+        # low+step, ... plus the inclusive high endpoint when it is off-grid.
+        count = stepped_int_cardinality(low_i, high_i, int_step)
+        if count <= 0:
             raise OptimizationError(
                 f"Invalid integer range for parameter '{param_name}': no values"
             )
-        return self._random.choice(values)
+        index = self._random.randrange(count)
+        regular = (high_i - low_i) // int_step + 1
+        return low_i + index * int_step if index < regular else high_i
 
     def _sample_range_float(self, param_name: str, param_def: dict) -> float:
         """Sample a float value from a range-dict definition."""
