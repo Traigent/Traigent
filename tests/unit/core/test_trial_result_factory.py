@@ -879,3 +879,81 @@ class TestTrialResultFactoryIntegration:
         assert not hasattr(success, "error_message") or success.error_message is None
         assert not hasattr(pruned, "error_message") or pruned.error_message is None
         assert hasattr(failed, "error_message") and failed.error_message is not None
+
+
+# --- Traigent#3217: cost/latency as the primary objective -------------------
+
+
+def _eval_with_example_metrics(rows: list[dict[str, float]]):
+    from types import SimpleNamespace
+
+    examples = [SimpleNamespace(metrics=row) for row in rows]
+    return SimpleNamespace(
+        total_examples=len(examples), example_results=examples, metrics={}
+    )
+
+
+@pytest.mark.parametrize(
+    ("objective", "row"),
+    [
+        ("cost", {"total_cost": 0.01, "input_cost": 0.004, "output_cost": 0.006}),
+        ("latency", {"response_time_ms": 120.0}),
+        ("accuracy", {"accuracy": 1.0}),
+    ],
+)
+def test_primary_objective_coverage_resolves_measured_source_metric(objective, row):
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    comp = _build_fallback_comparability(
+        _eval_with_example_metrics([row, dict(row)]), objective
+    )
+
+    assert comp["primary_objective"] == objective
+    assert comp["examples_with_primary_metric"] == 2
+    assert comp["ranking_eligible"] is True
+    assert "MCI-004" not in comp["warning_codes"]
+
+
+def test_primary_objective_without_any_source_metric_stays_ineligible():
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    comp = _build_fallback_comparability(
+        _eval_with_example_metrics([{"accuracy": 1.0}, {"accuracy": 0.0}]), "cost"
+    )
+
+    assert comp["examples_with_primary_metric"] == 0
+    assert comp["ranking_eligible"] is False
+    assert "MCI-004" in comp["warning_codes"]
+
+
+def test_cost_primary_objective_selects_cheapest_trial():
+    from traigent.api.types import TrialResult
+    from traigent.core.result_selection import select_best_configuration
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    trials = []
+    for idx, cost in enumerate((0.002, 0.001)):
+        comp = _build_fallback_comparability(
+            _eval_with_example_metrics([{"total_cost": cost}]), "cost"
+        )
+        trials.append(
+            TrialResult(
+                trial_id=f"t{idx}",
+                config={"x": idx},
+                metrics={"cost": cost, "total_cost": cost},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=__import__("datetime").datetime.now(UTC),
+                metadata={"comparability": comp},
+            )
+        )
+
+    result = select_best_configuration(
+        trials=trials,
+        primary_objective="cost",
+        config_space_keys={"x"},
+        aggregate_configs=False,
+    )
+
+    assert result.best_config == {"x": 1}
+    assert result.best_score == pytest.approx(0.001)

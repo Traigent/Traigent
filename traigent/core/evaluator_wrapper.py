@@ -20,6 +20,7 @@ from traigent.core.utils import safe_get_nested_attr
 from traigent.evaluators.base import (
     EXAMPLE_TIMEOUT_ERROR_PREFIX,
     MEASURED_ONLY_METRICS,
+    OBJECTIVE_SOURCE_METRICS,
     BaseEvaluator,
     Dataset,
     EvaluationExample,
@@ -614,7 +615,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 continue
             if _any_row_measured(all_metrics, metric):
                 continue
-            source = "total_cost" if metric == "cost" else metric
+            source = OBJECTIVE_SOURCE_METRICS.get(metric, (metric,))[0]
             captured = _measured_number(aggregated.get(source))
             if captured is not None:
                 aggregated[metric] = captured

@@ -18,7 +18,10 @@ from traigent.api.types import (
     TrialStatus,
 )
 from traigent.core.exception_handler import classify_systematic_provider_failure
-from traigent.evaluators.base import count_timed_out_examples
+from traigent.evaluators.base import (
+    OBJECTIVE_SOURCE_METRICS,
+    count_timed_out_examples,
+)
 from traigent.evaluators.metrics_tracker import enforce_user_metric_ceiling
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import TrialPrunedError
@@ -260,6 +263,17 @@ def _build_fallback_comparability(
     )
 
     examples_with_primary_metric = per_metric_counts.get(primary_objective, 0)
+    if examples_with_primary_metric == 0:
+        # cost/latency objectives are reported per example under their source
+        # metric (total_cost, response_time_ms), never under the objective
+        # name itself (Traigent#3217).
+        examples_with_primary_metric = max(
+            (
+                per_metric_counts.get(source, 0)
+                for source in OBJECTIVE_SOURCE_METRICS.get(primary_objective, ())
+            ),
+            default=0,
+        )
     coverage_ratio = (
         examples_with_primary_metric / total_examples
         if total_examples > 0 and examples_with_primary_metric > 0

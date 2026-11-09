@@ -172,6 +172,15 @@ def count_timed_out_examples(example_results: Any) -> int:
 # it was and can let it win a cost objective (issue #2404).
 MEASURED_ONLY_METRICS = frozenset({"cost", "input_cost", "output_cost", "total_cost"})
 
+# Per-example metric that backs an SDK-measured objective whose trial-level name
+# differs (trial ``cost`` <- per-example ``total_cost``; trial ``latency`` <-
+# per-example ``response_time_ms``). Single source for the aggregator and for
+# primary-objective coverage (Traigent#3217).
+OBJECTIVE_SOURCE_METRICS: dict[str, tuple[str, ...]] = {
+    "cost": ("total_cost",),
+    "latency": ("response_time_ms",),
+}
+
 
 def failed_row_metrics(metric_names: Iterable[str]) -> dict[str, float]:
     """Metrics for a failed example: 0.0 quality, no fabricated cost."""
