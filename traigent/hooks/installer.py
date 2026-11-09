@@ -114,17 +114,27 @@ HOOK_MARKER = "# Traigent pre-push hook - validates agent configurations"
 PRE_COMMIT_HOOK_MARKER = "# Traigent pre-commit hook - quick config check"
 
 
-def _is_traigent_hook(content: str) -> bool:
-    """Return True when hook text was written by Traigent's installer."""
-    return HOOK_MARKER in content or PRE_COMMIT_HOOK_MARKER in content
+_TRAIGENT_HOOK_BODIES = frozenset(
+    script.encode("utf-8") for script in (PRE_PUSH_HOOK_SCRIPT, PRE_COMMIT_HOOK_SCRIPT)
+)
 
 
-def _read_hook_text(path: Path, base_dir: Path) -> str:
-    """Read hook text for ownership checks; undecodable bytes count as foreign."""
-    try:
-        return safe_read_text(path, base_dir)
-    except UnicodeDecodeError:
-        return ""
+def _is_traigent_hook(content: bytes | str) -> bool:
+    """Return True only when the hook is exactly what Traigent's installer wrote.
+
+    A marker line proves nothing about authorship: a customer may have edited
+    the generated hook or reused the header in their own hook. Only a file
+    whose bytes equal a script Traigent publishes is ours to delete or
+    replace. CRLF line endings (written by text-mode I/O on Windows) are
+    normalised to LF before comparing.
+    """
+    raw = content.encode("utf-8") if isinstance(content, str) else content
+    return raw.replace(b"\r\n", b"\n") in _TRAIGENT_HOOK_BODIES
+
+
+def _read_hook_bytes(path: Path, base_dir: Path) -> bytes:
+    """Read raw hook bytes for ownership checks (no decoding, no newline mapping)."""
+    return validate_path(path, base_dir, must_exist=True).read_bytes()
 
 
 def _refuse_symlinked_hook(hook_path: Path) -> None:
@@ -292,7 +302,7 @@ class HooksInstaller:
 
             # A Traigent hook is replaced without a backup. A foreign hook is
             # backed up without clobbering: os.link fails if the backup exists.
-            if not _is_traigent_hook(_read_hook_text(hook_path, hooks_dir)):
+            if not _is_traigent_hook(_read_hook_bytes(hook_path, hooks_dir)):
                 backup_path = hook_path.with_suffix(".backup")
                 try:
                     os.link(hook_path, backup_path, follow_symlinks=False)
@@ -347,10 +357,11 @@ class HooksInstaller:
             return True
 
         # Only remove if it's a Traigent hook
-        content = _read_hook_text(hook_path, self.hooks_dir)
+        content = _read_hook_bytes(hook_path, self.hooks_dir)
         if not _is_traigent_hook(content):
             logger.warning(
-                f"Hook at {hook_path} was not installed by Traigent - skipping"
+                f"Hook at {hook_path} was not installed by Traigent, or has been "
+                "modified since install - leaving it untouched"
             )
             return False
 
@@ -360,7 +371,7 @@ class HooksInstaller:
         # Restore backup if exists, unless it is itself a Traigent hook
         backup_path = hook_path.with_suffix(".backup")
         if backup_path.exists():
-            if _is_traigent_hook(_read_hook_text(backup_path, self.hooks_dir)):
+            if _is_traigent_hook(_read_hook_bytes(backup_path, self.hooks_dir)):
                 backup_path.unlink()
                 logger.warning(
                     f"Removed {backup_path.name}: it held a Traigent hook, "
@@ -390,7 +401,7 @@ class HooksInstaller:
             if not hook_path.exists():
                 status[hook_name] = "not installed"
             else:
-                content = _read_hook_text(hook_path, hooks_dir)
+                content = _read_hook_bytes(hook_path, hooks_dir)
                 if _is_traigent_hook(content):
                     status[hook_name] = "installed (traigent)"
                 else:
