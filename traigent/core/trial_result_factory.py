@@ -18,7 +18,10 @@ from traigent.api.types import (
     TrialStatus,
 )
 from traigent.core.exception_handler import classify_systematic_provider_failure
-from traigent.evaluators.base import count_timed_out_examples
+from traigent.evaluators.base import (
+    OBJECTIVE_SOURCE_METRICS,
+    count_timed_out_examples,
+)
 from traigent.evaluators.metrics_tracker import enforce_user_metric_ceiling
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import TrialPrunedError
@@ -220,6 +223,50 @@ def _build_warning_codes(
     return []
 
 
+def _was_timed(example_result: Any) -> bool:
+    """True when the example has a measured wall-clock time (what latency averages)."""
+    execution_time = getattr(example_result, "execution_time", 0)
+    return (
+        isinstance(execution_time, (int, float))
+        and not isinstance(execution_time, bool)
+        and execution_time > 0
+    )
+
+
+def _count_primary_objective_rows(
+    primary_objective: str,
+    per_metric_counts: dict[str, int],
+    example_results: list[Any] | None,
+) -> int:
+    """Count examples carrying the primary objective under any of its names.
+
+    cost/latency objectives are reported per example under their source metric
+    (``total_cost``, ...), never under the objective name itself, and rows may
+    mix names; a row counts once however many names it carries (Traigent#3217).
+    """
+    names = (primary_objective, *OBJECTIVE_SOURCE_METRICS.get(primary_objective, ()))
+    if example_results is None:
+        return max((per_metric_counts.get(name, 0) for name in names), default=0)
+    count = 0
+    for example_result in example_results:
+        metrics = getattr(example_result, "metrics", {}) or {}
+        if not isinstance(metrics, dict):
+            continue
+        if primary_objective == "latency":
+            # Only timed rows feed the latency average; a zero-filled
+            # ``latency`` on a failed row is not a measurement.
+            covered = _was_timed(example_result)
+        else:
+            covered = any(
+                isinstance(metrics.get(name), (int, float))
+                and not isinstance(metrics.get(name), bool)
+                for name in names
+            )
+        if covered:
+            count += 1
+    return count
+
+
 def _build_fallback_comparability(
     eval_result: Any, run_primary_objective: str | None = None
 ) -> dict[str, Any]:
@@ -259,7 +306,11 @@ def _build_fallback_comparability(
         per_metric_counts,
     )
 
-    examples_with_primary_metric = per_metric_counts.get(primary_objective, 0)
+    examples_with_primary_metric = _count_primary_objective_rows(
+        primary_objective,
+        per_metric_counts,
+        example_results if has_detailed_example_results else None,
+    )
     coverage_ratio = (
         examples_with_primary_metric / total_examples
         if total_examples > 0 and examples_with_primary_metric > 0
