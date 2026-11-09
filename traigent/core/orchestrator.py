@@ -134,6 +134,7 @@ from traigent.core.stop_conditions import StopCondition, validate_plateau_window
 from traigent.core.trial_lifecycle import (
     CONSTRAINT_REJECTION_CAP_FACTOR,
     TrialLifecycle,
+    rejection_cap_applies,
 )
 from traigent.core.utils import extract_examples_attempted
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
@@ -2519,8 +2520,14 @@ class OptimizationOrchestrator:
             best_config = best_result.config
 
         # Estimate remaining time
-        avg_trial_time = elapsed_time / len(self._trials) if self._trials else 0
-        remaining_trials = (self.max_trials or 0) - len(self._trials)
+        # Constraint-rejected records were never evaluated (Traigent#3210).
+        executed_count = sum(
+            1
+            for trial in self._trials
+            if not (getattr(trial, "metadata", None) or {}).get("constraint_rejected")
+        )
+        avg_trial_time = elapsed_time / executed_count if executed_count else 0
+        remaining_trials = (self.max_trials or 0) - executed_count
         estimated_remaining = (
             avg_trial_time * remaining_trials if remaining_trials > 0 else None
         )
@@ -2528,7 +2535,7 @@ class OptimizationOrchestrator:
         return ProgressInfo(
             current_trial=current_trial,
             total_trials=self.max_trials or 0,
-            completed_trials=len(self._trials),
+            completed_trials=executed_count,
             successful_trials=successful_trials,
             failed_trials=failed_trials,
             best_score=best_score,
@@ -3075,8 +3082,16 @@ class OptimizationOrchestrator:
         configs: list[dict[str, Any]] = []
         attempts = 0
         # Rejected suggestions do not fill a slot; keep drawing, bounded.
-        max_attempts = count + CONSTRAINT_REJECTION_CAP_FACTOR * count
-        while len(configs) < count and attempts < max_attempts:
+        # The cap only applies to unbounded spaces; grid and finite random
+        # end by exhaustion (optimizer raises OptimizationError).
+        max_attempts = (
+            count + CONSTRAINT_REJECTION_CAP_FACTOR * count
+            if rejection_cap_applies(self.optimizer)
+            else None
+        )
+        while len(configs) < count and (
+            max_attempts is None or attempts < max_attempts
+        ):
             attempts += 1
             trial_count_before = getattr(self.optimizer, "_trial_count", None)
             try:

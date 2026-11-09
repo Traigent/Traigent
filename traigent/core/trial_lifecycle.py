@@ -286,6 +286,17 @@ def _store_surrogate_aggregate(eval_result: Any, scored: list[float]) -> None:
 CONSTRAINT_REJECTION_CAP_FACTOR = 100
 
 
+def rejection_cap_applies(optimizer: Any) -> bool:
+    """Whether consecutive constraint rejections need an explicit cap.
+
+    Grid and finite discrete spaces end by exhaustion, so the cap would only
+    stop them early. It applies when the space is unbounded or unknown.
+    """
+    if isinstance(optimizer, GridSearchOptimizer):
+        return False
+    return getattr(optimizer, "config_space_cardinality", None) is None
+
+
 class TrialLifecycle:
     """Coordinates individual trial execution and post-processing.
 
@@ -389,6 +400,10 @@ class TrialLifecycle:
                 config_for_run,
                 e,
             )
+            # Keep the hashes the optimizer itself registered for this sample
+            # (pre-knob-resolution identity) so a rejected sample is never
+            # redrawn; restoring the snapshot below would drop them.
+            sampled_hashes = self._sampled_hashes_since(optimizer_state_before_suggest)
             try:
                 self._record_pre_constraint_pruned_result(
                     config=config_for_trial,
@@ -401,16 +416,12 @@ class TrialLifecycle:
                 )
             finally:
                 self._restore_optimizer_state(optimizer_state_before_suggest)
+                tried = getattr(orchestrator.optimizer, "_tried_config_hashes", None)
+                if isinstance(tried, set):
+                    tried.update(sampled_hashes)
             # The slot is given back but the rejected config stays marked as
             # tried, so a random optimizer never re-draws it and a fully
             # rejected finite space is detected as exhausted (#3210).
-            register_tried = getattr(
-                orchestrator.optimizer, "register_tried_config", None
-            )
-            if callable(register_tried) and isinstance(
-                getattr(orchestrator.optimizer, "_tried_config_hashes", None), set
-            ):
-                register_tried(config_for_trial)
             self._consecutive_constraint_rejections += 1
             if self._constraint_rejection_cap_reached():
                 logger.warning(
@@ -1191,9 +1202,7 @@ class TrialLifecycle:
         return CONSTRAINT_REJECTION_CAP_FACTOR * 100
 
     def _constraint_rejection_cap_reached(self) -> bool:
-        # A grid walks a finite ordered list and ends on its own; only
-        # optimizers that can redraw forever need the cap.
-        if isinstance(self._orchestrator.optimizer, GridSearchOptimizer):
+        if not rejection_cap_applies(self._orchestrator.optimizer):
             return False
         return self._consecutive_constraint_rejections >= (
             self._constraint_rejection_cap()
@@ -1216,6 +1225,16 @@ class TrialLifecycle:
         else:
             tried_snapshot = None
         return self._snapshot_optimizer_trial_count(), tried_snapshot
+
+    def _sampled_hashes_since(
+        self, previous_state: tuple[int | None, set[str] | None]
+    ) -> set[str]:
+        """Hashes the optimizer registered since the snapshot was taken."""
+        _, previous_tried = previous_state
+        current = getattr(self._orchestrator.optimizer, "_tried_config_hashes", None)
+        if previous_tried is None or not isinstance(current, set):
+            return set()
+        return set(current) - previous_tried
 
     def _restore_optimizer_trial_count(self, previous_trial_count: int | None) -> None:
         """Restore the optimizer's consumed slot for a rejected pre-constraint."""
