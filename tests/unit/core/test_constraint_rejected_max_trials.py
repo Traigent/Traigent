@@ -11,11 +11,11 @@ import traigent
 SPACE = {"n": [1, 2, 3], "x": [0.0, 0.5, 1.0]}
 
 
-def _run(algorithm: str, constraint, max_trials: int, **kwargs):
+def _run(algorithm: str, constraint, max_trials: int, space=None, **kwargs):
     calls: list[dict] = []
 
     @traigent.optimize(
-        configuration_space=SPACE,
+        configuration_space=space or SPACE,
         objectives=["accuracy"],
         eval_dataset=[{"input_data": {"r": 1}, "expected_output": 1}],
         offline=True,
@@ -69,3 +69,27 @@ def test_unsatisfiable_constraint_on_continuous_space_hits_rejection_cap():
 
     assert calls == []
     assert result.stop_reason == "optimizer"
+
+
+def test_grid_reaches_feasible_point_after_many_rejections():
+    # 290 leading infeasible points exceed 100 x max_trials; the finite grid
+    # must still reach the feasible block.
+    space = {"a": list(range(30)), "b": list(range(10))}
+    result, calls = _run("grid", lambda c: c["a"] >= 29, 1, space=space)
+
+    assert len(calls) == 1
+    assert calls[0]["a"] == 29
+
+
+@pytest.mark.parametrize("algorithm", ["grid", "random"])
+def test_parallel_batches_do_not_lose_slots_to_rejections(algorithm):
+    result, calls = _run(
+        algorithm,
+        lambda c: c["n"] >= 2,
+        4,
+        random_seed=3,
+        parallel_config={"trial_concurrency": 2},
+    )
+
+    assert len(calls) == 4
+    assert all(c["n"] >= 2 for c in calls)

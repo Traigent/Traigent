@@ -42,6 +42,7 @@ from traigent.core.trial_result_factory import (
 )
 from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import Dataset
+from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import (
     InsufficientFundsError,
@@ -282,7 +283,7 @@ def _store_surrogate_aggregate(eval_result: Any, scored: list[float]) -> None:
 
 # A constraint that rejects every draw must not loop forever on continuous
 # spaces: stop after this many consecutive rejections per max_trials slot.
-_CONSTRAINT_REJECTION_CAP_FACTOR = 100
+CONSTRAINT_REJECTION_CAP_FACTOR = 100
 
 
 class TrialLifecycle:
@@ -400,6 +401,16 @@ class TrialLifecycle:
                 )
             finally:
                 self._restore_optimizer_state(optimizer_state_before_suggest)
+            # The slot is given back but the rejected config stays marked as
+            # tried, so a random optimizer never re-draws it and a fully
+            # rejected finite space is detected as exhausted (#3210).
+            register_tried = getattr(
+                orchestrator.optimizer, "register_tried_config", None
+            )
+            if callable(register_tried) and isinstance(
+                getattr(orchestrator.optimizer, "_tried_config_hashes", None), set
+            ):
+                register_tried(config_for_trial)
             self._consecutive_constraint_rejections += 1
             if self._constraint_rejection_cap_reached():
                 logger.warning(
@@ -1176,10 +1187,14 @@ class TrialLifecycle:
         """Bound on consecutive constraint rejections (100 x max_trials)."""
         max_trials = self._orchestrator.max_trials
         if isinstance(max_trials, int) and max_trials > 0:
-            return _CONSTRAINT_REJECTION_CAP_FACTOR * max_trials
-        return _CONSTRAINT_REJECTION_CAP_FACTOR * 100
+            return CONSTRAINT_REJECTION_CAP_FACTOR * max_trials
+        return CONSTRAINT_REJECTION_CAP_FACTOR * 100
 
     def _constraint_rejection_cap_reached(self) -> bool:
+        # A grid walks a finite ordered list and ends on its own; only
+        # optimizers that can redraw forever need the cap.
+        if isinstance(self._orchestrator.optimizer, GridSearchOptimizer):
+            return False
         return self._consecutive_constraint_rejections >= (
             self._constraint_rejection_cap()
         )
