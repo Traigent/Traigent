@@ -128,20 +128,26 @@ class TestManagerMapping:
 
 
 class TestFinalizeStopReason2508:
-    """#2508: a run refused or stopped before any trial still says why."""
+    """#2508: the stop reason is threaded internally but not yet on the wire
+    (the field waits for the TraigentSchema finalize request contract)."""
 
     @pytest.mark.asyncio
-    async def test_stop_reason_is_in_the_wire_body(self, client):
+    async def test_stop_reason_reaches_the_api_call_but_not_the_wire_body(self, client):
+        ops = client._session_ops
+        real = ops._finalize_session_via_api
+        seen: dict = {}
+
+        async def spy(*args, **kwargs):
+            seen.update(kwargs)
+            return await real(*args, **kwargs)
+
+        ops._finalize_session_via_api = spy
         body = await _finalize_body(
             client, True, optimization_outcome="completed", stop_reason="cost_limit"
         )
-        assert body["stop_reason"] == "cost_limit"
-        assert body["optimization_outcome"] == "completed"
-
-    @pytest.mark.asyncio
-    async def test_no_stop_reason_sends_no_key(self, client):
-        body = await _finalize_body(client, True)
+        assert seen["stop_reason"] == "cost_limit"
         assert "stop_reason" not in body
+        assert body["optimization_outcome"] == "completed"
 
     @pytest.mark.asyncio
     async def test_unknown_stop_reason_is_refused_before_any_send(self, client):
@@ -153,18 +159,11 @@ class TestFinalizeStopReason2508:
                 )
         session.post.assert_not_called()
 
-    def test_stop_reason_survives_the_finalize_projection(self):
+    def test_stop_reason_is_not_a_finalize_wire_key(self):
         out = oo_egress.project_finalize_payload(
             {"reason": "sdk_explicit_finalization", "stop_reason": "cost_limit"}
         )
-        assert out["stop_reason"] == "cost_limit"
-
-    @pytest.mark.parametrize("bad", ["free text", "", 1, ["cost_limit"], {}])
-    def test_invalid_stop_reason_is_refused_not_sent(self, bad):
-        with pytest.raises(oo_egress.MetadataContractViolation):
-            oo_egress.project_finalize_payload(
-                {"reason": "sdk_explicit_finalization", "stop_reason": bad}
-            )
+        assert "stop_reason" not in out
 
     def test_closed_set_matches_the_public_stop_reason_type(self):
         from typing import get_args

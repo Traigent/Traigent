@@ -2642,11 +2642,6 @@ def project_finalize_payload(data: Any) -> dict[str, Any]:
         or out["optimization_outcome"] not in FINALIZE_OUTCOMES
     ):
         raise MetadataContractViolation
-    if out.get("stop_reason") is not None and (
-        not isinstance(out["stop_reason"], str)
-        or out["stop_reason"] not in FINALIZE_STOP_REASONS
-    ):
-        raise MetadataContractViolation
     for key in list(out):
         if key not in FINALIZE_KEYS:  # unknown members are dropped whatever their value
             del out[key]
@@ -2927,13 +2922,13 @@ FINALIZE_KEYS = frozenset(
         "session_id",
         "request_metadata",
         "optimization_outcome",
-        "stop_reason",
     }
 )
 #: Closed values of the finalize ``optimization_outcome`` member (#2853).
 FINALIZE_OUTCOMES = frozenset({"completed", "failed", "cancelled"})
-#: Closed values of the finalize ``stop_reason`` member (#2508); mirrors
-#: ``traigent.api.types.StopReason`` (a unit test keeps the two equal).
+#: Closed stop-reason vocabulary for the internal finalize threading (#2508);
+#: mirrors ``traigent.api.types.StopReason`` (a unit test keeps them equal).
+#: NOT a wire key: ``stop_reason`` is not in ``FINALIZE_KEYS``.
 FINALIZE_STOP_REASONS = frozenset(
     {
         "max_trials_reached",

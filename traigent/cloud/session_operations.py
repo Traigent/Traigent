@@ -2025,11 +2025,8 @@ class SessionOperations:
             # An older backend ignores the unknown key and keeps its
             # COMPLETED behaviour, so deploy the Backend first.
             finalize_body["optimization_outcome"] = optimization_outcome
-        if stop_reason is not None:
-            # #2508: top-level, closed-vocabulary key so a run refused or
-            # stopped before any trial still says why. An older backend
-            # ignores the unknown key.
-            finalize_body["stop_reason"] = stop_reason
+        # #2508: ``stop_reason`` is deliberately NOT put on the wire yet; the
+        # field waits for the TraigentSchema finalize request contract.
         if certified_selection is not None:
             # Phase 8: the client-attested, content-free certified-
             # selection report — TOP-LEVEL key only (the backend
