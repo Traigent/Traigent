@@ -6253,7 +6253,13 @@ class OptimizationOrchestrator:
         try:
             # Check for immediate timeout
             if self.timeout is not None and self.timeout == 0:
-                return self._cancel_for_zero_timeout()
+                zero_timeout_result = self._cancel_for_zero_timeout()
+                # The session already exists: finalize it once with the reason
+                # instead of stranding it RUNNING (#2508).
+                await self._finalize_optimization(
+                    zero_timeout_result, session_id, session_span
+                )
+                return zero_timeout_result
 
             await self._run_loop_under_deadline(
                 func, dataset, session_id, function_identifier

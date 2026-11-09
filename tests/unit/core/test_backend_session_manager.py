@@ -1243,6 +1243,25 @@ class TestBackendSessionManagerFinalization:
             stop_reason="cost_limit",
         )
 
+    def test_internal_only_stop_reason_is_not_sent_and_does_not_fail_finalize_2508(
+        self, backend_session_manager, mock_backend_client
+    ):
+        """A producer value outside the wire vocabulary (e.g. space_exhausted)
+        is omitted rather than making the finalize raise."""
+        backend_session_manager.finalize_session(
+            session_id="test-session-id",
+            optimization_status=OptimizationStatus.COMPLETED,
+            stop_reason="space_exhausted",
+        )
+
+        mock_backend_client.finalize_session_sync.assert_called_once_with(
+            "test-session-id",
+            True,
+            certified_selection=None,
+            session_aggregation=None,
+            optimization_outcome="completed",
+        )
+
     def test_finalize_session_threads_session_aggregation(
         self, backend_session_manager, mock_backend_client
     ):

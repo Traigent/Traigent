@@ -66,6 +66,7 @@ from traigent.core.session_types import (
 from traigent.evaluators.base import Dataset
 from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_untracked_fallback_allowed
 from traigent.utils.example_id import (
     LOCAL_MARKER_KEY,
@@ -3848,7 +3849,11 @@ class BackendSessionManager:
         optimization_outcome: str,
         stop_reason: str | None = None,
     ) -> dict[str, Any] | None:
-        # Only sent when known, so clients that predate the key keep working.
+        # Only sent when it is a wire-vocabulary value, so clients that predate
+        # the key keep working and an internal-only reason (e.g. a producer
+        # value outside StopReason) can never make the finalize itself fail.
+        if stop_reason not in oo_egress.FINALIZE_STOP_REASONS:
+            stop_reason = None
         extra: dict[str, Any] = (
             {} if stop_reason is None else {"stop_reason": stop_reason}
         )
