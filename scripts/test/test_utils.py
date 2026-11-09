@@ -10,7 +10,6 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, List, Tuple
 from unittest.mock import MagicMock
 
 
@@ -31,7 +30,7 @@ class MockSubprocess:
         """Set output for a specific command."""
         self.outputs[command] = (stdout, stderr)
 
-    def run(self, args: List[str], **kwargs) -> MagicMock:
+    def run(self, args: list[str], **kwargs) -> MagicMock:
         """Mock subprocess.run method."""
         command = " ".join(args) if isinstance(args, list) else args
         self.commands_run.append(command)
@@ -50,13 +49,13 @@ class MockSubprocess:
 
         return result
 
-    def check_call(self, args: List[str], **kwargs):
+    def check_call(self, args: list[str], **kwargs):
         """Mock subprocess.check_call method."""
         result = self.run(args, **kwargs)
         if result.returncode != 0:
             raise subprocess.CalledProcessError(result.returncode, args)
 
-    def check_output(self, args: List[str], **kwargs) -> str:
+    def check_output(self, args: list[str], **kwargs) -> str:
         """Mock subprocess.check_output method."""
         result = self.run(args, **kwargs)
         if result.returncode != 0:
@@ -103,7 +102,7 @@ def create_mock_script(content: str, name: str = "test_script.sh") -> Path:
         return script_path
 
 
-def validate_shell_script(script_path: Path) -> Tuple[bool, str]:
+def validate_shell_script(script_path: Path) -> tuple[bool, str]:
     """Validate shell script syntax using bash -n."""
     try:
         result = subprocess.run(
@@ -114,7 +113,7 @@ def validate_shell_script(script_path: Path) -> Tuple[bool, str]:
         return False, "Bash not found"
 
 
-def run_shellcheck(script_path: Path) -> Tuple[bool, str]:
+def run_shellcheck(script_path: Path) -> tuple[bool, str]:
     """Run shellcheck on a script if available."""
     try:
         result = subprocess.run(
@@ -155,7 +154,7 @@ class ScriptTestCase:
         return text in content
 
     @staticmethod
-    def get_script_functions(script_path: Path) -> List[str]:
+    def get_script_functions(script_path: Path) -> list[str]:
         """Extract function names from a bash script."""
         functions = []
         with open(script_path) as f:
@@ -171,7 +170,7 @@ class ScriptTestCase:
         return functions
 
     @staticmethod
-    def get_script_variables(script_path: Path) -> Dict[str, str]:
+    def get_script_variables(script_path: Path) -> dict[str, str]:
         """Extract variable assignments from a bash script."""
         variables = {}
         with open(script_path) as f:
@@ -216,7 +215,9 @@ def mock_successful_install() -> MockSubprocess:
     mock.set_output("pytest tests/ -v", "All tests passed")
 
     # Code quality
-    mock.set_output("ruff format --check traigent tests examples", "All files formatted")
+    mock.set_output(
+        "ruff format --check traigent tests examples", "All files formatted"
+    )
     mock.set_output("isort --check-only traigent tests examples", "All imports sorted")
     mock.set_output("flake8 traigent tests examples", "No issues found")
     mock.set_output("mypy traigent", "Success: no issues found")
