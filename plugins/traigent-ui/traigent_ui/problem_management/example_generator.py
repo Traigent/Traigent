@@ -142,13 +142,7 @@ class ExampleGenerator:
             List of generated examples
         """
         # Analyze existing problem to understand patterns
-        try:
-            from ..langchain_problems import get_problem_class
-        except ImportError:
-            try:
-                from langchain_problems import get_problem_class
-            except ImportError:
-                from examples.langchain_problems import get_problem_class
+        from ..langchain_problems import get_problem_class
 
         problem_class = get_problem_class(existing_problem)
         problem_instance = problem_class()
