@@ -619,6 +619,12 @@ class SpecificationGenerator:
                     logger.debug(
                         f"Applied midpoint heuristic to {param}: ({min_val}, {max_val}) -> {model_params[param]}"
                     )
+                elif isinstance(value, dict) and "low" in value and "high" in value:
+                    # Typed range dict (Range / IntRange): same midpoint heuristic
+                    mid = (value["low"] + value["high"]) / 2
+                    if str(value.get("type", "")).lower() in {"int", "integer"}:
+                        mid = round(mid)
+                    model_params[param] = mid
                 else:
                     # Direct value assignment
                     model_params[param] = value

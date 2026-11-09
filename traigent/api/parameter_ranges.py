@@ -230,11 +230,10 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
     def to_config_value(self) -> FloatRangeConfigValue:
         """Convert to internal format.
 
-        Returns tuple for simple ranges, dict when log/step is set.
+        Always returns the typed dict form. A bare ``(low, high)`` tuple with
+        integer-valued bounds (``Range(0, 1)``) is indistinguishable from an
+        integer range and would be sampled as integers (#3211).
         """
-        if self.step is None and not self.log:
-            return (self.low, self.high)
-        # Use dict format for advanced options
         result: FloatRangeConfigDict = {
             "type": "float",
             "low": self.low,
@@ -251,7 +250,12 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
         return self.default
 
     def to_tuple(self) -> tuple[float, float]:
-        """Return as simple (low, high) tuple for backward compatibility."""
+        """Return as simple (low, high) tuple for backward compatibility.
+
+        Lossy: a bare tuple is not typed. Do not use it as a configuration
+        space entry; ``to_config_value()`` keeps the float type. A bare
+        user-supplied ``(int, int)`` tuple is still sampled as integers.
+        """
         return (self.low, self.high)
 
     # Constraint builder methods (equals, not_equals, gt, gte, lt, lte,

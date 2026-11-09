@@ -633,8 +633,17 @@ def create_wandb_sweep_config(
                 "min": param_range["low"],
                 "max": param_range["high"],
             }
-            if str(param_range.get("type", "")).lower() in {"int", "integer"}:
+            range_type = str(param_range.get("type", "")).lower()
+            if range_type in {"int", "integer"}:
                 bounds["distribution"] = "int_uniform"
+            elif range_type == "float":
+                # Explicit float domain: integer-valued bounds must not be
+                # inferred as int_uniform by W&B (#3211).
+                bounds = {
+                    "min": float(param_range["low"]),
+                    "max": float(param_range["high"]),
+                    "distribution": "uniform",
+                }
             wandb_parameters[param_name] = bounds
         elif (
             isinstance(param_range, dict)

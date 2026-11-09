@@ -669,8 +669,14 @@ class ConfigSpace:
                     unit=spec.get("unit"),
                 )
 
-            # Use IntRange if both bounds are integers (with or without step)
-            if isinstance(low, int) and isinstance(high, int):
+            # Use IntRange if both bounds are integers (with or without step),
+            # unless the spec explicitly declares a float domain (#3211).
+            declared_type = str(spec.get("type", "")).lower()
+            if (
+                declared_type != "float"
+                and isinstance(low, int)
+                and isinstance(high, int)
+            ):
                 return IntRange(
                     low=low,
                     high=high,
