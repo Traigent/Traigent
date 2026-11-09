@@ -82,7 +82,13 @@ def validate_cost_limit(limit: object) -> float:
             f"({type(limit).__name__})."
         )
     value = float(limit)
-    if math.isnan(value) or value <= 0:
+    if not math.isfinite(value):
+        raise ConfigurationError(
+            f"cost limit must be a positive finite number of USD, got {value!r}. "
+            "Leave it unset to use the default "
+            f"{format_usd(DEFAULT_COST_LIMIT_USD)}."
+        )
+    if value <= 0:
         raise ConfigurationError(
             f"cost limit must be > 0 USD, got {value!r}. A nonpositive limit "
             "would block every planned trial before it starts (silent 0-trial "
