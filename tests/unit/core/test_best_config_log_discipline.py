@@ -630,6 +630,19 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
     ),
     (
         "local_storage.py",
+        "LocalStorageManager._persist_append",
+        "raise",
+        "2db4ce80f15be02d",  # pragma: allowlist secret
+    ): (
+        1,
+        (
+            "fixed text plus the exception type name; the session id lives on details "
+            "only (same shape as _save_session; local_storage.py _persist_append "
+            "except-block, #3272)"
+        ),
+    ),
+    (
+        "local_storage.py",
         "LocalStorageManager.cleanup_old_sessions",
         "log",
         "315c770cd3a4fbe8",  # pragma: allowlist secret
