@@ -23,6 +23,7 @@ from traigent._version import get_version
 # are truncated, evaluator keys are never dropped.
 from traigent.knobs.telemetry import TOTAL_MEASURES_CEILING
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import validate_token_count
 
 # Initialize logger first
 logger = get_logger(__name__)
@@ -457,12 +458,49 @@ class TokenMetrics:
     # pricing) must treat this as "not real usage", never merge it into the
     # same fields as a measured count without a flag.
     estimated: bool = False
+    # True when the provider reported a count that failed validation
+    # (negative, bool, float, string, absurdly large: Traigent#3252). The
+    # counts above are then zero, but zero here means UNKNOWN, not "free":
+    # cost must not be estimated from text and must stay unmeasured.
+    invalid: bool = False
 
     def __post_init__(self) -> None:
         # Ensure non-negative values and handle None
         self.input_tokens = max(0, self.input_tokens or 0)
         self.output_tokens = max(0, self.output_tokens or 0)
         self.total_tokens = self.input_tokens + self.output_tokens
+
+
+def _checked_tokens(
+    input_raw: Any, output_raw: Any, total_raw: Any = None
+) -> TokenMetrics:
+    """Build ``TokenMetrics`` from provider-reported counts, failing closed.
+
+    ``None`` means "not reported" and counts as 0. Any other value must pass
+    ``validate_token_count``; if one does not (negative, bool, float, string,
+    absurdly large), the whole usage is unknown: an empty ``TokenMetrics`` is
+    returned so nothing invalid is stored or priced (Traigent#3252).
+    """
+    counts: list[int] = []
+    for raw in (input_raw, output_raw, total_raw):
+        if raw is None:
+            counts.append(0)
+            continue
+        valid = validate_token_count(raw)
+        if valid is None:
+            logger.warning(
+                "Ignoring invalid provider token count of type %s; "
+                "treating usage as unknown",
+                type(raw).__name__,
+            )
+            return TokenMetrics(invalid=True)
+        counts.append(valid)
+    input_tokens, output_tokens, total_tokens = counts
+    return TokenMetrics(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens or input_tokens + output_tokens,
+    )
 
 
 @dataclass
@@ -2100,24 +2138,14 @@ class OpenAIResponseHandler(ResponseHandler):
         return hasattr(usage, "prompt_tokens") and hasattr(usage, "completion_tokens")
 
     def extract_tokens(self, response: Any) -> TokenMetrics:
-        tokens = TokenMetrics()
-        if hasattr(response, "usage"):
-            usage = response.usage
-            if hasattr(usage, "prompt_tokens") and isinstance(
-                usage.prompt_tokens, (int, float)
-            ):
-                tokens.input_tokens = int(usage.prompt_tokens)
-            if hasattr(usage, "completion_tokens") and isinstance(
-                usage.completion_tokens, (int, float)
-            ):
-                tokens.output_tokens = int(usage.completion_tokens)
-            if hasattr(usage, "total_tokens") and isinstance(
-                usage.total_tokens, (int, float)
-            ):
-                tokens.total_tokens = int(usage.total_tokens)
-            else:
-                tokens.total_tokens = tokens.input_tokens + tokens.output_tokens
-        return tokens
+        if not hasattr(response, "usage"):
+            return TokenMetrics()
+        usage = response.usage
+        return _checked_tokens(
+            getattr(usage, "prompt_tokens", None),
+            getattr(usage, "completion_tokens", None),
+            getattr(usage, "total_tokens", None),
+        )
 
     def extract_response_time(self, response: Any) -> float:
         recorded = recorded_response_time_ms(response)
@@ -2193,28 +2221,28 @@ class AnthropicResponseHandler(ResponseHandler):
                     return u.get(name)
                 return getattr(u, name, None)
 
-            input_val = (
-                _get(usage, "input_tokens")
-                or _get(usage, "num_input_tokens")
-                or _get(usage, "inputTokens")
-                or _get(usage, "prompt_tokens")
+            def _first_reported(*names: str) -> Any:
+                # First key that is present and not None. Plain ``or``
+                # chaining would skip falsy invalid values such as ``False``
+                # and silently treat them as unreported (Traigent#3252).
+                for name in names:
+                    value = _get(usage, name)
+                    if value is not None:
+                        return value
+                return None
+
+            input_val = _first_reported(
+                "input_tokens", "num_input_tokens", "inputTokens", "prompt_tokens"
             )
-            output_val = (
-                _get(usage, "output_tokens")
-                or _get(usage, "num_output_tokens")
-                or _get(usage, "outputTokens")
-                or _get(usage, "completion_tokens")
+            output_val = _first_reported(
+                "output_tokens",
+                "num_output_tokens",
+                "outputTokens",
+                "completion_tokens",
             )
             total_val = _get(usage, "total_tokens")
 
-            if isinstance(input_val, (int, float)):
-                tokens.input_tokens = int(input_val)
-            if isinstance(output_val, (int, float)):
-                tokens.output_tokens = int(output_val)
-            if isinstance(total_val, (int, float)):
-                tokens.total_tokens = int(total_val)
-            else:
-                tokens.total_tokens = tokens.input_tokens + tokens.output_tokens
+            return _checked_tokens(input_val, output_val, total_val)
         return tokens
 
     def extract_response_time(self, response: Any) -> float:
@@ -2243,36 +2271,44 @@ class LangChainResponseHandler(ResponseHandler):
         )
 
     @staticmethod
+    def _tokens_from_usage(
+        usage: Any, input_keys: tuple[str, ...], output_keys: tuple[str, ...]
+    ) -> TokenMetrics:
+        """Validate one LangChain usage mapping; invalid counts mean unknown."""
+
+        def _first(keys: tuple[str, ...]) -> Any:
+            for key in keys:
+                if key in usage:
+                    return usage[key]
+            return None
+
+        return _checked_tokens(
+            _first(input_keys), _first(output_keys), usage.get("total_tokens")
+        )
+
+    @staticmethod
     def _extract_response_metadata_tokens(metadata: Any, tokens: TokenMetrics) -> bool:
-        # Check for token_usage field (ChatOpenAI format)
-        if "token_usage" in metadata and isinstance(metadata["token_usage"], dict):
-            usage = metadata["token_usage"]
-            tokens.input_tokens = usage.get("prompt_tokens", 0)
-            tokens.output_tokens = usage.get("completion_tokens", 0)
-            tokens.total_tokens = usage.get(
-                "total_tokens", tokens.input_tokens + tokens.output_tokens
-            )
-            if tokens.total_tokens > 0:
-                return True
-
-        # Check for usage field (alternative format)
-        if "usage" in metadata and isinstance(metadata["usage"], dict):
-            usage = metadata["usage"]
-            input_val = usage.get("input_tokens", usage.get("prompt_tokens", 0))
-            output_val = usage.get("output_tokens", usage.get("completion_tokens", 0))
-            tokens.input_tokens = int(input_val) if input_val is not None else 0
-            tokens.output_tokens = int(output_val) if output_val is not None else 0
-            total_val = usage.get(
-                "total_tokens", tokens.input_tokens + tokens.output_tokens
-            )
-            tokens.total_tokens = (
-                int(total_val)
-                if total_val is not None
-                else tokens.input_tokens + tokens.output_tokens
-            )
-            if tokens.total_tokens > 0:
-                return True
-
+        # token_usage (ChatOpenAI format) then usage (alternative format).
+        for usage_field, in_keys, out_keys in (
+            ("token_usage", ("prompt_tokens",), ("completion_tokens",)),
+            (
+                "usage",
+                ("input_tokens", "prompt_tokens"),
+                ("output_tokens", "completion_tokens"),
+            ),
+        ):
+            if usage_field in metadata and isinstance(metadata[usage_field], dict):
+                found = LangChainResponseHandler._tokens_from_usage(
+                    metadata[usage_field], in_keys, out_keys
+                )
+                tokens.input_tokens = found.input_tokens
+                tokens.output_tokens = found.output_tokens
+                tokens.total_tokens = found.total_tokens
+                tokens.invalid = found.invalid
+                if found.invalid or tokens.total_tokens > 0:
+                    # Invalid counts end the search: never fall through to a
+                    # different usage field and price that as measured.
+                    return True
         return False
 
     def extract_tokens(self, response: Any) -> TokenMetrics:
@@ -2280,13 +2316,10 @@ class LangChainResponseHandler(ResponseHandler):
 
         # Check usage_metadata for token usage (langchain_core AIMessage)
         if hasattr(response, "usage_metadata") and response.usage_metadata:
-            usage = response.usage_metadata
-            tokens.input_tokens = usage.get("input_tokens", 0)
-            tokens.output_tokens = usage.get("output_tokens", 0)
-            tokens.total_tokens = usage.get(
-                "total_tokens", tokens.input_tokens + tokens.output_tokens
+            tokens = self._tokens_from_usage(
+                response.usage_metadata, ("input_tokens",), ("output_tokens",)
             )
-            if tokens.total_tokens > 0:
+            if tokens.invalid or tokens.total_tokens > 0:
                 return tokens
 
         # Check response_metadata for token usage (alternative format)
@@ -2302,11 +2335,10 @@ class LangChainResponseHandler(ResponseHandler):
         if hasattr(response, "llm_output") and isinstance(response.llm_output, dict):
             llm_output = response.llm_output
             if "token_usage" in llm_output:
-                usage = llm_output["token_usage"]
-                tokens.input_tokens = usage.get("prompt_tokens", 0)
-                tokens.output_tokens = usage.get("completion_tokens", 0)
-                tokens.total_tokens = usage.get(
-                    "total_tokens", tokens.input_tokens + tokens.output_tokens
+                tokens = self._tokens_from_usage(
+                    llm_output["token_usage"],
+                    ("prompt_tokens",),
+                    ("completion_tokens",),
                 )
 
         return tokens
@@ -2347,30 +2379,20 @@ class DictResponseHandler(ResponseHandler):
             return TokenMetrics()
 
         # Direct token fields
-        input_tokens = response.get("input_tokens", 0)
-        output_tokens = response.get("output_tokens", 0)
-        total_tokens = response.get("total_tokens", 0)
+        input_raw = response.get("input_tokens")
+        output_raw = response.get("output_tokens")
+        total_raw = response.get("total_tokens")
 
         # Check for usage field (OpenAI style)
         if "usage" in response and isinstance(response["usage"], dict):
             usage = response["usage"]
-            input_tokens = usage.get(
-                "prompt_tokens", usage.get("input_tokens", input_tokens)
+            input_raw = usage.get("prompt_tokens", usage.get("input_tokens", input_raw))
+            output_raw = usage.get(
+                "completion_tokens", usage.get("output_tokens", output_raw)
             )
-            output_tokens = usage.get(
-                "completion_tokens", usage.get("output_tokens", output_tokens)
-            )
-            total_tokens = usage.get("total_tokens", total_tokens)
+            total_raw = usage.get("total_tokens", total_raw)
 
-        # If total_tokens is not provided, calculate it
-        if total_tokens == 0 and (input_tokens > 0 or output_tokens > 0):
-            total_tokens = input_tokens + output_tokens
-
-        return TokenMetrics(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-        )
+        return _checked_tokens(input_raw, output_raw, total_raw)
 
     def extract_response_time(self, response: Any) -> float:
         """Extract response time from dict."""
@@ -2399,17 +2421,10 @@ class GenericResponseHandler(ResponseHandler):
         if isinstance(metadata, dict):
             usage = metadata.get("usage") or metadata.get("token_usage")
             if isinstance(usage, dict):
-                input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
-                output_tokens = usage.get(
-                    "output_tokens", usage.get("completion_tokens", 0)
-                )
-                total_tokens = usage.get(
-                    "total_tokens", (input_tokens or 0) + (output_tokens or 0)
-                )
-                return TokenMetrics(
-                    input_tokens=int(input_tokens or 0),
-                    output_tokens=int(output_tokens or 0),
-                    total_tokens=int(total_tokens or 0),
+                return _checked_tokens(
+                    usage.get("input_tokens", usage.get("prompt_tokens")),
+                    usage.get("output_tokens", usage.get("completion_tokens")),
+                    usage.get("total_tokens"),
                 )
         return TokenMetrics()  # Return empty metrics
 
@@ -3104,14 +3119,26 @@ def extract_llm_metrics(
     # model name carried on the response itself when the config supplies none
     # (multi-model/multi-step agents have no single config 'model' key; #1599).
     effective_model_name = model_name or _infer_model_name_from_response(response)
-    _calculate_cost_for_metrics(
-        metrics,
-        effective_model_name,
-        original_prompt,
-        response_text,
-        prompt_length=prompt_length,
-        response_length=response_length,
-    )
+    if metrics.tokens.invalid and not (
+        metrics.cost.total_cost > 0 or metrics.cost.cost_explicit
+    ):
+        # The provider reported an unusable token count (Traigent#3252): usage
+        # is unknown, so do not estimate a cost from text either. The example
+        # falls through to the ``cost.unmeasured`` guard below.
+        logger.warning(
+            "Provider token usage was invalid for model %r; "
+            "cost is unmeasured, not priced",
+            effective_model_name,
+        )
+    else:
+        _calculate_cost_for_metrics(
+            metrics,
+            effective_model_name,
+            original_prompt,
+            response_text,
+            prompt_length=prompt_length,
+            response_length=response_length,
+        )
 
     # Nothing was captured and the length-based (privacy-mode) path priced
     # nothing either: the cost is UNKNOWN, not $0 (Traigent#2517). The global

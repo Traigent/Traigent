@@ -57,6 +57,7 @@ from traigent.utils.langchain_interceptor import (
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import validate_token_count
 from traigent.utils.response_model import (
     infer_response_model,
     resolve_pricing_model,
@@ -477,54 +478,42 @@ class _AggregatedResponses:
         totals = self._sum_token_usage()
         self._build_metadata(totals)
 
-    def _extract_tokens_from_response(self, resp: Any) -> tuple[int, int, int]:
-        """Extract (input, output, total) tokens from a single response."""
-        usage = getattr(resp, "usage_metadata", None)
-        if usage:
-            return (
-                usage.get("input_tokens", 0),
-                usage.get("output_tokens", 0),
-                usage.get("total_tokens", 0),
-            )
+    def _extract_tokens_from_response(self, resp: Any) -> tuple[int, int, int] | None:
+        """Extract validated (input, output, total) tokens from one response.
 
-        usage_obj = getattr(resp, "usage", None)
-        if usage_obj is not None:
-            input_tokens = getattr(usage_obj, "prompt_tokens", 0) or 0
-            output_tokens = getattr(usage_obj, "completion_tokens", 0) or 0
-            total_tokens = getattr(usage_obj, "total_tokens", None)
-            if isinstance(input_tokens, (int, float)) and isinstance(
-                output_tokens, (int, float)
-            ):
-                if isinstance(total_tokens, (int, float)):
-                    return (int(input_tokens), int(output_tokens), int(total_tokens))
-                return (
-                    int(input_tokens),
-                    int(output_tokens),
-                    int(input_tokens + output_tokens),
-                )
-
-        resp_meta = getattr(resp, "response_metadata", None)
-        if not resp_meta or not isinstance(resp_meta, dict):
+        Returns ``None`` when the response reports an invalid count (negative,
+        bool, float, string, absurdly large: Traigent#3252). Such a call has
+        unknown usage and must make the aggregate unknown, never be clamped or
+        summed into a valid-looking figure.
+        """
+        # Reuse the tracker's own handler chain so every supported provider
+        # shape (OpenAI, Anthropic, LangChain, dicts) is validated identically.
+        try:
+            extracted = ResponseHandlerFactory.create_handler_chain().handle(resp)
+        except Exception:  # noqa: BLE001 - unreadable usage is unknown usage
+            return None
+        if extracted is None:
             return (0, 0, 0)
+        tokens = extracted.tokens
+        if tokens.invalid:
+            return None
+        return (tokens.input_tokens, tokens.output_tokens, tokens.total_tokens)
 
-        token_usage = resp_meta.get("token_usage", {})
-        if not isinstance(token_usage, dict):
-            return (0, 0, 0)
-
-        return (
-            token_usage.get("prompt_tokens", 0),
-            token_usage.get("completion_tokens", 0),
-            token_usage.get("total_tokens", 0),
-        )
-
-    def _sum_token_usage(self) -> tuple[int, int, int]:
+    def _sum_token_usage(self) -> tuple[float, float, float]:
         """Sum up token usage from all responses."""
         total_input = 0
         total_output = 0
         total_tokens = 0
 
         for resp in self._responses:
-            inp, out, tot = self._extract_tokens_from_response(resp)
+            extracted = self._extract_tokens_from_response(resp)
+            if extracted is None:
+                # One call reported an invalid count: the aggregate usage is
+                # unknown. NaN is rejected by ``validate_token_count`` in the
+                # downstream handler, so the whole example fails closed.
+                nan = float("nan")
+                return (nan, nan, nan)
+            inp, out, tot = extracted
             total_input += inp
             total_output += out
             total_tokens += tot
@@ -535,7 +524,7 @@ class _AggregatedResponses:
 
         return (total_input, total_output, total_tokens)
 
-    def _build_metadata(self, totals: tuple[int, int, int]) -> None:
+    def _build_metadata(self, totals: tuple[float, float, float]) -> None:
         """Build usage_metadata and response_metadata from totals."""
         total_input, total_output, total_tokens = totals
 
@@ -1876,7 +1865,8 @@ class LocalEvaluator(BaseEvaluator):
             return bool(
                 extracted is not None
                 and (
-                    extracted.tokens.input_tokens > 0
+                    extracted.tokens.invalid
+                    or extracted.tokens.input_tokens > 0
                     or extracted.tokens.output_tokens > 0
                     or extracted.cost.total_cost > 0
                 )
@@ -2273,19 +2263,23 @@ class LocalEvaluator(BaseEvaluator):
             metrics: ExampleMetrics to update.
         """
         # Inject token counts (key-presence checks allow explicit zeros)
-        for key, attr in [
-            ("input_tokens", "input_tokens"),
-            ("output_tokens", "output_tokens"),
-        ]:
+        for key in ("input_tokens", "output_tokens"):
             if key not in usage:
                 continue
-            try:
-                val = usage[key]
-                if val < 0:
-                    logger.warning(f"Negative {key} clamped: {val} → 0")
-                setattr(metrics.tokens, attr, max(0, val))
-            except Exception as e:
-                logger.exception(f"Failed to inject {key}: {e}", extra={"usage": usage})
+            valid = validate_token_count(usage[key])
+            if valid is None:
+                # Unknown usage, never clamped to a fake measured zero
+                # (Traigent#3252). The declared value is not echoed.
+                logger.warning(
+                    "Invalid declared %s in __traigent_meta__ usage; "
+                    "token usage is unknown",
+                    key,
+                )
+                metrics.tokens.invalid = True
+                continue
+            setattr(metrics.tokens, key, valid)
+        if usage.get("tokens_invalid") is True:
+            metrics.tokens.invalid = True
 
         # Recompute total_tokens if any token counts were injected
         if "input_tokens" in usage or "output_tokens" in usage:

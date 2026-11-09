@@ -81,3 +81,25 @@ def positive_int_env(name: str, default: int) -> int:
         _logger.warning("Invalid %s=%r, using default %s", name, raw, default)
         return default
     return parsed
+
+
+# Upper bound for a provider-reported token count on a single call. Real
+# context windows are well below 10**8; 10**9 leaves headroom while rejecting
+# absurd values (e.g. ``10**400``) that would otherwise price to a bogus cost.
+MAX_TOKEN_COUNT = 10**9
+
+
+def validate_token_count(value: object) -> int | None:
+    """Return ``value`` as a valid provider token count, else ``None``.
+
+    A valid count is a real ``int`` (not ``bool``) with
+    ``0 <= value <= MAX_TOKEN_COUNT``. Floats (including NaN/inf and integral
+    floats such as ``12.0``), strings, ``bool``, negatives and absurd values
+    return ``None``, which callers must treat as *unknown usage* -- never as
+    zero tokens priced at $0 (Traigent#3252).
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value < 0 or value > MAX_TOKEN_COUNT:
+        return None
+    return value
