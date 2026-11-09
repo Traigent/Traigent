@@ -2624,6 +2624,30 @@ class OptimizationOrchestrator:
             "traigent_config": traigent_config,
         }
 
+    @staticmethod
+    def _failed_on_vendor_errors_only(trial_result: TrialResult) -> bool:
+        """True when a failed trial made no call that returned a response (#3249).
+
+        Requires the trial failed and every provider-call attempt in it raised
+        before any response came back (at least one attempt). One returned
+        response, even with usage that cannot be priced, an interrupted stream,
+        or an incomplete attempt keeps strict mode fail-closed. So does any
+        response captured by a path outside the attempt ledger (LangChain etc.).
+        """
+        if trial_result.status != TrialStatus.FAILED:
+            return False
+        meta = trial_result.metadata or {}
+        attempts = meta.get("vendor_call_attempts")
+        no_response = meta.get("vendor_call_no_response_attempts")
+        captured = meta.get("vendor_call_responses_captured")
+        if (
+            not isinstance(attempts, int)
+            or not isinstance(no_response, int)
+            or not isinstance(captured, int)
+        ):
+            return False  # unknown capture state is never exempt
+        return no_response > 0 and attempts == no_response and captured == 0
+
     async def _track_trial_cost(
         self,
         trial_result: TrialResult,
@@ -2634,6 +2658,7 @@ class OptimizationOrchestrator:
         missing_examples: Any,
         missing_count: int | None,
         attempted_count: int | None,
+        vendor_error_only: bool = False,
     ) -> None:
         if self.cost_enforcer is None:
             return
@@ -2659,6 +2684,7 @@ class OptimizationOrchestrator:
                 unmeasured_examples=missing_examples,
                 missing_usage_examples=missing_count,
                 attempted_examples=attempted_count,
+                vendor_error_only=vendor_error_only,
             )
 
     async def _account_trial_spend(
@@ -2720,6 +2746,9 @@ class OptimizationOrchestrator:
                 missing_examples=missing_examples,
                 missing_count=missing_count,
                 attempted_count=attempted_count,
+                vendor_error_only=OptimizationOrchestrator._failed_on_vendor_errors_only(
+                    trial_result
+                ),
             )
         finally:
             if (budget := getattr(self, "execution_budget", None)) is not None:
