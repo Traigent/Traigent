@@ -51,6 +51,49 @@ def test_no_black_tool_config_or_stale_precommit():
     assert not (REPO / "scripts/config/.pre-commit-config.yaml").exists()
 
 
+# Any spelling of the black formatter as a word, used by scripts (commands,
+# package names, quoted argv). Excludes isort's "profile = black" option.
+SCRIPT_BLACK = re.compile(r"""(?<![\w.-])black(?![\w-])""", re.I)
+
+
+def test_pyproject_does_not_declare_black_dependency():
+    project = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
+    declared = [
+        dep
+        for group in project.get("optional-dependencies", {}).values()
+        for dep in group
+    ]
+    hits = [d for d in declared if re.match(r"\s*black\b", d, re.I)]
+    assert not hits, hits
+
+
+def test_requirements_files_do_not_declare_black():
+    hits = [
+        f"{p.relative_to(REPO)}:{i}: {line.strip()}"
+        for p in sorted((REPO / "requirements").glob("*.txt"))
+        for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if re.match(r"\s*black\b", line, re.I)
+    ]
+    assert not hits, hits
+
+
+def test_scripts_do_not_call_black():
+    hits = []
+    for p in sorted((REPO / "scripts").rglob("*")):
+        if not p.is_file() or p.suffix not in {".sh", ".py", ".bash"}:
+            continue
+        if p.resolve() == Path(__file__).resolve():
+            continue
+        for i, line in _lines(p):
+            if "profile" in line:
+                continue
+            if SCRIPT_BLACK.search(line):
+                hits.append(f"{p.relative_to(REPO)}:{i}: {line.strip()}")
+    assert not hits, hits
+
+
 def test_contributor_docs_do_not_tell_users_to_run_black():
     for rel in (
         "docs/contributing/CONTRIBUTING.md",

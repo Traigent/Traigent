@@ -28,6 +28,5 @@ hypothesis>=6.100.0
 -r requirements-integrations.txt
 
 # Development dependencies
-black>=26.10.1
 flake8>=5.0.0
 mypy==2.3.1
