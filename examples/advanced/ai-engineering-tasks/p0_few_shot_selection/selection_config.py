@@ -317,12 +317,12 @@ def format_examples(examples: list[Any], config: ExampleSelectionConfig) -> str:
     for i, example in enumerate(examples):
         if config.example_format == "input_output":
             formatted.append(
-                f"Example {i+1}:\nInput: {example.get('input', '')}\nOutput: {example.get('output', '')}"
+                f"Example {i + 1}:\nInput: {example.get('input', '')}\nOutput: {example.get('output', '')}"
             )
 
         elif config.example_format == "input_output_explanation":
             formatted.append(
-                f"Example {i+1}:\n"
+                f"Example {i + 1}:\n"
                 f"Input: {example.get('input', '')}\n"
                 f"Output: {example.get('output', '')}\n"
                 f"Explanation: {example.get('explanation', 'The model processed the input to produce this output.')}"
@@ -330,21 +330,21 @@ def format_examples(examples: list[Any], config: ExampleSelectionConfig) -> str:
 
         elif config.example_format == "structured_fields":
             fields = "\n".join([f"  {k}: {v}" for k, v in example.items()])
-            formatted.append(f"Example {i+1}:\n{fields}")
+            formatted.append(f"Example {i + 1}:\n{fields}")
 
         elif config.example_format == "conversational":
             formatted.append(
-                f"Example {i+1}:\n"
+                f"Example {i + 1}:\n"
                 f"User: {example.get('input', '')}\n"
                 f"Assistant: {example.get('output', '')}"
             )
 
         elif config.example_format == "xml_wrapped":
             formatted.append(
-                f"<example_{i+1}>\n"
+                f"<example_{i + 1}>\n"
                 f"  <input>{example.get('input', '')}</input>\n"
                 f"  <output>{example.get('output', '')}</output>\n"
-                f"</example_{i+1}>"
+                f"</example_{i + 1}>"
             )
 
     return "\n\n".join(formatted)

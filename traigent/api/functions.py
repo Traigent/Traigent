@@ -44,15 +44,22 @@ from traigent.utils.validation import Validators, validate_or_raise
 
 logger = get_logger(__name__)
 
-# Global configuration
-_GLOBAL_CONFIG: dict[str, Any] = {
-    "default_storage_backend": "local",
-    "parallel_workers": 1,
-    "cache_policy": "memory",
-    "logging_level": "INFO",
-    "api_keys": {},  # Kept for backward compatibility
-    "parallel_config": ParallelConfig(),
-}
+
+def _default_global_config() -> dict[str, Any]:
+    """Fresh default global configuration."""
+    return {
+        "default_storage_backend": "local",
+        "parallel_workers": 1,
+        "cache_policy": "memory",
+        "logging_level": "INFO",
+        "api_keys": {},  # Kept for backward compatibility
+        "parallel_config": ParallelConfig(),
+    }
+
+
+# Global configuration: the single source of truth. traigent.api.config_builder
+# reads and writes this same dict (#3162); do not create a second store.
+_GLOBAL_CONFIG: dict[str, Any] = _default_global_config()
 
 
 if TYPE_CHECKING:

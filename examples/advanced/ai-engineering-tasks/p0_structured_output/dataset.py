@@ -560,7 +560,7 @@ Rating: {rating}/5
 Reviewer: {reviewer}
 Date: {date}
 Review: {review}
-Would Recommend: {'Yes' if recommend else 'No'}"""
+Would Recommend: {"Yes" if recommend else "No"}"""
 
         expected = {
             "product_name": product,
