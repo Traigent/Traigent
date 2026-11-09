@@ -285,7 +285,9 @@ class TestSinglePathContent:
         f = _write_lines(tmp_path / "d.jsonl", [_good()[0], "{bad", _good()[0]])
         result = Validators.validate_dataset(f)
         assert _errs(result) == [("dataset:line2", "JSON_ERROR")]
-        assert result.errors[0].message == "Invalid JSON"
+        assert result.errors[0].message == (
+            "Invalid JSON: Expecting property name enclosed in double quotes (column 2)"
+        )
         assert result.metadata == {
             "dataset_rows_inspected": 3,
             "dataset_invalid_rows": 1,
@@ -394,7 +396,7 @@ class TestSinglePathContent:
         ]
         args, kwargs = opener.call_args
         assert args == (f.resolve(), f.resolve().parent)
-        assert kwargs == {"mode": "r", "encoding": "utf-8"}
+        assert kwargs == {"mode": "r", "encoding": "utf-8-sig"}
 
 
 class _LatePath(str):

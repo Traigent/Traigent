@@ -5712,7 +5712,8 @@ Remediation:
         if isinstance(source, Dataset):
             return source
 
-        elif isinstance(source, str):
+        elif isinstance(source, (str, os.PathLike)):
+            source = os.fspath(source)
             try:
                 return Dataset.from_jsonl(source)
             except Exception as e:

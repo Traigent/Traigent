@@ -1174,7 +1174,7 @@ def _validate_dataset_content(result: ValidationResult, dataset_file: Path) -> N
             dataset_file,
             dataset_file.parent,
             mode="r",
-            encoding="utf-8",
+            encoding="utf-8-sig",
         ) as f:
             if dataset_file.suffix.lower() == ".json":
                 row_count, invalid_rows = _scan_json_dataset(result, f)
@@ -1283,8 +1283,10 @@ def _dataset_row_problem(text: str) -> tuple[str, str] | None:
     """Return ``(message, error_code)`` for an invalid row, else ``None``."""
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
-        return "Invalid JSON", "JSON_ERROR"
+    except json.JSONDecodeError as exc:
+        # ``exc.msg`` is the parser's fixed reason text; the row's content is
+        # customer data and is never echoed.
+        return f"Invalid JSON: {exc.msg} (column {exc.colno})", "JSON_ERROR"
 
     if not isinstance(data, dict):
         return f"Expected a JSON object, got {type(data).__name__}", "INVALID_FORMAT"

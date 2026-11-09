@@ -113,7 +113,7 @@ def _load_registry() -> Mapping[str, DatasetRegistryEntry]:
         return _CACHE
 
     try:
-        with resolved_path.open(encoding="utf-8") as handle:
+        with resolved_path.open(encoding="utf-8-sig") as handle:
             raw_data = json.load(handle)
     except json.JSONDecodeError as exc:
         raise ValidationError(f"Invalid JSON in dataset registry: {exc}") from exc
