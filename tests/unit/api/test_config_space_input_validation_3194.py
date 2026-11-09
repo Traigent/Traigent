@@ -62,6 +62,11 @@ def test_deep_chain_does_not_crash():
     cs = ConfigSpace(tvars={"k": k}, constraints=[expr])
     result = cs.validate({"k": 5})  # must return, not raise AttributeError
     assert result.checked_count == 1
+    # An expression too deep to evaluate is an evaluation error, never proof
+    # that no configuration satisfies it.
+    assert not result.is_valid
+    assert result.violations[0].message.startswith("Constraint evaluation error")
+    assert cs.check_satisfiability().status.name == "UNKNOWN"
 
 
 def test_validator_handler_survives_object_without_id():
