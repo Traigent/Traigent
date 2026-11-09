@@ -196,6 +196,27 @@ def _shutdown_callback_executor(
     executor.shutdown(wait=False, cancel_futures=True)
 
 
+def _count_executed_trials(trials: Any) -> int:
+    """Count trials that actually ran, skipping never-started placeholders.
+
+    The orchestrator keeps permit-denied / constraint-rejected configurations
+    in ``result.trials`` flagged ``abandoned`` (and ``_traigent_never_started``);
+    they spent nothing and must not count toward the closing progress total.
+    Failed or pruned trials that did start are counted. The metadata keys are
+    the orchestrator's ``_ABANDONED_TRIAL_METADATA_KEY`` and
+    ``mandatory_metrics.NEVER_STARTED_METADATA_KEY`` (not imported: cycle).
+    """
+    count = 0
+    for trial in trials or []:
+        metadata = getattr(trial, "metadata", None)
+        if isinstance(metadata, dict) and (
+            metadata.get("abandoned") or metadata.get("_traigent_never_started")
+        ):
+            continue
+        count += 1
+    return count
+
+
 @dataclass
 class ProgressInfo:
     """Information about optimization progress."""
@@ -389,7 +410,10 @@ class ProgressBarCallback(OptimizationCallback):
         """Called when optimization completes."""
         # Draw final 100% progress bar (throttle may have skipped the last update)
         if self._last_progress is not None:
-            self._print_final_progress_bar(self._last_progress)
+            self._print_final_progress_bar(
+                self._last_progress,
+                executed_trials=_count_executed_trials(result.trials),
+            )
 
         _safe_print("\n")
         self._print_completion_status(result)
@@ -408,14 +432,24 @@ class ProgressBarCallback(OptimizationCallback):
 
         self._print_results_table(result)
 
-    def _print_final_progress_bar(self, progress: ProgressInfo) -> None:
-        """Print the closing 100% progress line from the last recorded progress."""
+    def _print_final_progress_bar(
+        self, progress: ProgressInfo, executed_trials: int | None = None
+    ) -> None:
+        """Print the closing 100% progress line from the last recorded progress.
+
+        ``progress.total_trials`` is the *budget* (``max_trials``); a finite
+        search space (e.g. a 4-point grid with ``max_trials=8``) can finish
+        sooner. When the executed count is known, close on that so the line
+        never claims trials that did not run (Traigent#3207).
+        """
         bar = "█" * self.width
         elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
         best_score_str = (
             f"{progress.best_score:.3f}" if progress.best_score is not None else "N/A"
         )
-        total = progress.total_trials
+        total = (
+            executed_trials if executed_trials is not None else progress.total_trials
+        )
         # Using print for final progress display output
         _safe_print(
             f"\r[{bar}] 100.0% "
