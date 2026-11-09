@@ -34,9 +34,9 @@ jobs:
         python -m pip install -e ".[dev,all]"
         python -m pip install pre-commit
 
-    - name: Code formatting check with black
+    - name: Code formatting check with ruff format
       run: |
-        black --check --diff traigent/ traigent_validation/
+        ruff format --check --diff traigent/ traigent_validation/
 
     - name: Import sorting check with isort
       run: |

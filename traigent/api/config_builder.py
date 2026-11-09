@@ -9,6 +9,7 @@ Traceability: CONC-Layer-API CONC-Quality-Maintainability CONC-Quality-Usability
 import logging
 from typing import Any
 
+from traigent.api.functions import _GLOBAL_CONFIG, _default_global_config
 from traigent.api.parameter_validator import OptimizeParameters
 from traigent.config.parallel import coerce_parallel_config
 from traigent.config.types import InjectionMode, resolve_execution_policy
@@ -17,8 +18,8 @@ from traigent.utils.exceptions import ConfigurationError
 
 logger = logging.getLogger(__name__)
 
-# Global configuration store
-_GLOBAL_CONFIG: dict[str, Any] = {}
+# The one global configuration store lives in traigent.api.functions (#3162);
+# configure()/initialize() write it and this module reads/writes the same dict.
 
 
 __all__ = [
@@ -30,12 +31,28 @@ __all__ = [
 ]
 
 
+def _clear_config(config: dict[str, Any]) -> None:
+    """Clear a config dict.
+
+    The shared store is reset to its defaults, except ``api_keys``: credentials
+    are owned by the API key manager, so wiping this mirror dict would only make
+    the two disagree.
+    """
+    if config is not _GLOBAL_CONFIG:
+        config.clear()
+        return
+    api_keys = config.get("api_keys", {})
+    config.clear()
+    config.update(_default_global_config())
+    config["api_keys"] = api_keys
+
+
 class ConfigurationBuilder:
     """Builds configuration for OptimizedFunction from validated parameters."""
 
     def __init__(self, global_config: dict[str, Any] | None = None) -> None:
         """Initialize with optional global configuration."""
-        self.global_config = global_config or _GLOBAL_CONFIG
+        self.global_config = _GLOBAL_CONFIG if global_config is None else global_config
 
     def build_configuration(
         self, params: OptimizeParameters, original_execution_mode: str | None = None
@@ -160,8 +177,8 @@ class ConfigurationBuilder:
         return self.global_config.copy()
 
     def clear_global_config(self) -> None:
-        """Clear global configuration."""
-        self.global_config.clear()
+        """Clear global configuration (the shared store is reset to defaults)."""
+        _clear_config(self.global_config)
 
 
 # Module-level functions for backward compatibility
@@ -193,5 +210,5 @@ def get_global_config() -> dict[str, Any]:
 
 
 def clear_global_config() -> None:
-    """Clear global configuration."""
-    _GLOBAL_CONFIG.clear()
+    """Reset the shared global configuration to its defaults."""
+    _clear_config(_GLOBAL_CONFIG)

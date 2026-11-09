@@ -363,32 +363,6 @@ constraint-dependencies = [
     "werkzeug>=3.1.6",
 ]
 
-[tool.black]
-line-length = 88
-target-version = ["py312"]
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-  | demos
-  | docs/page-inline
-  | examples/templates
-  | examples/advanced/execution-modes
-  | examples/advanced/results-analysis
-  | examples/tvl/reusable_safety/run_demo\.py
-  | traigent/generated
-)/
-'''
-
 [tool.isort]
 profile = "black"
 line_length = 88
@@ -568,7 +542,7 @@ select = [
     "UP", # pyupgrade
 ]
 ignore = [
-    "E501",  # line too long, handled by black
+    "E501",  # line too long, handled by ruff format
     "B008",  # do not perform function calls in argument defaults
     "C901",  # too complex
 ]
