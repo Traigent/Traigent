@@ -125,6 +125,56 @@ def stepped_float_cardinality(low: float, high: float, step: float) -> int:
     return count
 
 
+# Grids up to this many points keep the materialized-tuple draw, so a seeded
+# run over a small grid produces the same sequence as before (#3193).
+STEPPED_FLOAT_LIST_SAMPLE_CAP = 10_000
+
+
+def sample_stepped_float(rng: Any, low: float, high: float, step: float) -> float:
+    """Draw from the stepped float grid without materializing a large grid.
+
+    Small grids (at most ``STEPPED_FLOAT_LIST_SAMPLE_CAP`` points) keep the
+    original ``rng.choice`` over :func:`stepped_float_values`, so seeded
+    sequences are unchanged. Larger grids draw one integer index and map it to
+    ``low + index * step`` with the same clamping and rounding that
+    :func:`stepped_float_values` applies, so the value is a grid member.
+
+    Known limit: on the indexed path, neighbouring indices that rounding
+    collapses into one grid value (only when ``|low|`` is so large that
+    ``index * step`` loses precision) are drawn in proportion to their index
+    count, not uniformly.
+
+    Raises:
+        ValueError: if the inputs are non-finite, ``step <= 0``, the range is
+            empty, or the grid is too large to index.
+    """
+
+    count = stepped_float_cardinality(low, high, step)
+    if count <= 0:
+        raise ValueError("float range has no values")
+    if count <= STEPPED_FLOAT_LIST_SAMPLE_CAP:
+        values = stepped_float_values(low, high, step)
+        if not values:
+            raise ValueError("float range has no values")
+        return float(rng.choice(values))
+    if count == sys.maxsize:  # non-finite interval count
+        raise ValueError("float range is too large to sample")
+
+    digits = _grid_round_digits(step)
+    # Index only the points at or below ``high`` (no tolerance), so grid points
+    # that merely clamp to ``high`` are not counted as extra draws; ``high``
+    # itself is one more entry when the last regular point rounds elsewhere.
+    regular = math.floor((high - low) / step) + 1
+    last = round(min(max(low + (regular - 1) * step, low), high), digits)
+    high_value = round(high, digits)
+    total = regular + (1 if last != high_value else 0)
+    index = rng.randrange(total)
+    if index >= regular:
+        return float(high_value)
+    value = min(max(low + index * step, low), high)
+    return float(round(value, digits))
+
+
 def sample_stepped_int(rng: Any, low: int, high: int, step: int) -> int:
     """Draw from the integer grid without materializing it.
 
@@ -162,10 +212,7 @@ def sample_range_dict(rng: Any, definition: dict[Any, Any]) -> int | float:
         return sample_stepped_int(rng, int(low), int(high), int(step or 1))
     low_f, high_f = float(low), float(high)
     if step is not None:
-        values = stepped_float_values(low_f, high_f, float(step))
-        if not values:
-            raise ValueError("float range has no values")
-        return float(rng.choice(values))
+        return sample_stepped_float(rng, low_f, high_f, float(step))
     return uniform_within(rng, low_f, high_f)
 
 
