@@ -71,7 +71,6 @@ from traigent.utils.crew_declaration import (
 )
 from traigent.utils.crew_declaration import (
     crew_declaration_to_wire,
-    metadata_without_crew_declaration,
     parse_crew_binding,
     without_crew_declaration,
 )
@@ -919,18 +918,6 @@ class ApiOperations:
         # deliberately NOT mirrored into _build_legacy_session_payload.
         payload.update(session_dataset_identity_to_wire(session_request))
         payload.update(session_content_identity_to_wire(session_request))
-        # Only the standard typed path carries a declaration: content-less and
-        # optimization_only sessions never send it (stripped here, before the body
-        # is built).
-        # A hand-put raw value never rides along: only the validated one is added.
-        payload["metadata"].pop("crew_declaration", None)
-        payload["metadata"].update(
-            crew_declaration_to_wire(
-                session_request,
-                send=send_crew and not self._optimization_only_active(),
-            )
-        )
-
         # CHOKE POINT (review round 2): the allowlist serializer runs on the
         # actual request body, not only on the orchestrator path — a direct
         # SessionCreationRequest caller must not be able to serialize
@@ -964,6 +951,15 @@ class ApiOperations:
             payload.pop("evaluator_definition_id", None)
         payload.update(identity_v2)
         payload["metadata"] = filter_wire_metadata(payload["metadata"])
+        # Only the standard typed path carries a declaration: content-less and
+        # optimization_only sessions never send it. Inserted AFTER the filter, which
+        # drops any hand-put raw value: only the validated one rides along.
+        payload["metadata"].update(
+            crew_declaration_to_wire(
+                session_request,
+                send=send_crew and not self._optimization_only_active(),
+            )
+        )
         return payload
 
     def _build_legacy_session_payload(
@@ -1015,11 +1011,9 @@ class ApiOperations:
         payload.update(session_g1_required_to_wire(session_request))
         self._attach_evaluator_identity(payload, session_request)
         self._attach_artifact_fingerprint_payload(payload, session_request)
-        # The legacy path never carries a declaration; a raw value placed in request
-        # metadata by a direct caller is dropped (no key text logged).
-        payload["metadata"] = metadata_without_crew_declaration(
-            filter_wire_metadata(payload["metadata"])
-        )
+        # filter_wire_metadata drops any hand-put declaration; the legacy path never
+        # carries one.
+        payload["metadata"] = filter_wire_metadata(payload["metadata"])
         return payload
 
     @staticmethod

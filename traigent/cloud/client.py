@@ -2224,8 +2224,7 @@ class TraigentCloudClient(BaseTraigentClient):
         send_crew = not _content_less.is_enabled(
             _content_less.options_of(request)
         ) and not oo_egress.is_active(oo_egress.policy_of(self))
-        # A hand-put raw value never rides along: only the validated one is added.
-        payload["metadata"].pop("crew_declaration", None)
+        # Added after filter_wire_metadata (which drops any hand-put raw value).
         payload["metadata"].update(crew_declaration_to_wire(request, send=send_crew))
         if request.budget is not None:
             payload["budget"] = request.budget

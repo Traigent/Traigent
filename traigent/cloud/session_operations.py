@@ -47,7 +47,6 @@ from traigent.config.backend_config import (
 from traigent.core.session_types import safe_http_error_summary
 from traigent.labels.transport_gate import client_origins, gate_session, mark_explicit
 from traigent.utils import optimization_only_egress as oo_egress
-from traigent.utils.crew_declaration import metadata_without_crew_declaration
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
@@ -1322,13 +1321,8 @@ class SessionOperations:
                     "problem_statement": problem_statement,
                     "search_space": search_space,
                     "optimization_config": optimization_config,
-                    # A raw crew_declaration from a direct caller never crosses here.
                     "metadata": (
-                        metadata_without_crew_declaration(
-                            filter_wire_metadata(metadata)
-                        )
-                        if metadata is not None
-                        else None
+                        filter_wire_metadata(metadata) if metadata is not None else None
                     ),
                 },
                 headers=await self.client.auth_manager.auth.get_headers(),

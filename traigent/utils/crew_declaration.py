@@ -142,13 +142,6 @@ def crew_declaration_to_wire(
     return {DECLARATION_METADATA_KEY: declaration.to_wire()}
 
 
-def metadata_without_crew_declaration(metadata: Any) -> Any:
-    """``metadata`` minus a raw declaration key (a detached copy; input never mutated)."""
-    if not isinstance(metadata, dict) or DECLARATION_METADATA_KEY not in metadata:
-        return metadata
-    return {k: v for k, v in metadata.items() if k != DECLARATION_METADATA_KEY}
-
-
 def without_crew_declaration(body: Any) -> Any:
     """``body`` minus ``metadata.crew_declaration`` (a detached copy when it had one)."""
     if not crew_declaration_in_body(body):
