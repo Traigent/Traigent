@@ -153,6 +153,7 @@ from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationError,
+    TVLConstraintError,
     VendorPauseError,
 )
 from traigent.utils.function_identity import (
@@ -586,6 +587,26 @@ _NON_LLM_MODEL_KEYS = frozenset(
         "reranker_model",
     }
 )
+
+
+def _deterministic_fill(definition: Any) -> tuple[bool, Any]:
+    """Deterministic value for a tuned variable with no default, if one exists.
+
+    Categorical: first declared value. Range: lower bound (the first point of
+    the step grid). Anything else has no fill.
+    """
+    if isinstance(definition, (list, tuple)) and definition:
+        # A list is a categorical; a (low, high) tuple is a range. Either way
+        # the first element is the deterministic fill.
+        return True, definition[0]
+    if isinstance(definition, dict):
+        if "low" in definition and "high" in definition:
+            return True, definition["low"]
+        for key in ("choices", "values"):
+            values = definition.get(key)
+            if isinstance(values, (list, tuple)) and values:
+                return True, values[0]
+    return False, None
 
 
 class OptimizationOrchestrator:
@@ -1548,6 +1569,10 @@ class OptimizationOrchestrator:
         if not self._default_config:
             return self._consume_seed_config()
 
+        baseline = self._complete_default_config()
+        if baseline is None:
+            return self._consume_seed_config()
+
         self._warn_if_baseline_shrinks_grid()
 
         # Keep optimizer trial counts aligned with max_trials when applicable.
@@ -1559,7 +1584,47 @@ class OptimizationOrchestrator:
             except Exception:
                 logger.debug("Unable to increment optimizer trial count for baseline.")
 
-        return copy.deepcopy(self._default_config)
+        return baseline
+
+    def _complete_default_config(self) -> dict[str, Any] | None:
+        """The baseline with every tuned key present, or None to skip it (#3200).
+
+        Keys the ``default_config`` lacks are filled from the configuration
+        space itself, never from the optimizer, so the optimizer's own sequence
+        and tried-hash accounting are unaffected: a Choices takes its first
+        declared value; a range takes its lower bound (the first point of its
+        step grid). A parameter with no deterministic fill, or a completed
+        baseline that violates a pre-evaluation constraint, skips the baseline
+        with one warning.
+        """
+        assert self._default_config is not None
+        baseline = copy.deepcopy(self._default_config)
+        space = getattr(self.optimizer, "config_space", None)
+        if not isinstance(space, dict):
+            return baseline
+        for name, definition in space.items():
+            if name in baseline:
+                continue
+            found, value = _deterministic_fill(definition)
+            if not found:
+                logger.warning(
+                    "Skipping the default_config baseline: parameter '%s' has no "
+                    "default and no deterministic fill, so trial 1 would lack it.",
+                    name,
+                )
+                return None
+            baseline[name] = value
+        try:
+            satisfied = pre_trial_validate_config(baseline, self._constraints_pre_eval)
+        except TVLConstraintError:
+            satisfied = False
+        if not satisfied:
+            logger.warning(
+                "Skipping the default_config baseline: the baseline completed from "
+                "the configuration space violates a pre-evaluation constraint."
+            )
+            return None
+        return baseline
 
     def set_seed_configs(self, seed_configs: list[dict[str, Any]]) -> None:
         """Queue validated seed configs to run before any optimizer suggestion.
