@@ -754,3 +754,11 @@ def test_base_url_is_read_at_call_time_3270(monkeypatch):
 def test_real_nous_url_overrides_are_stripped_3270(monkeypatch):
     monkeypatch.setenv("TRAIGENT_NOUS_TOKEN_URL", "  https://example.test/refresh ")
     assert nous_auth._token_url() == "https://example.test/refresh"
+
+
+def test_llms_package_nous_base_url_is_lazy_and_importable_3270(monkeypatch):
+    import traigent.integrations.llms as llms
+
+    monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", "https://lazy.test/v1")
+    assert llms.NOUS_BASE_URL == "https://lazy.test/v1"
+    assert llms.get_nous_base_url() == "https://lazy.test/v1"

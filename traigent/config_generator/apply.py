@@ -10,6 +10,7 @@ import ast
 import os
 import re
 import shutil
+import tokenize
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -18,6 +19,17 @@ from traigent.config_generator.types import AutoConfigResult
 # Optional base directory override for path containment checks (S2083).
 # If unset, the current working directory is treated as the trusted base.
 _SAFE_BASE_DIR = os.environ.get("TRAIGENT_CONFIG_BASE_DIR")
+
+
+def read_source_text(path: Path) -> tuple[str, str]:
+    """Read Python source honouring its PEP 263 declaration (UTF-8 default).
+
+    Never uses the locale encoding (#3260). Newline handling matches
+    ``Path.read_text`` (universal newlines). Returns ``(text, encoding)``.
+    """
+    with path.open("rb") as raw:
+        encoding, _ = tokenize.detect_encoding(raw.readline)
+    return path.read_text(encoding=encoding), encoding
 
 
 def _get_safe_base_dir() -> Path:
@@ -92,7 +104,7 @@ def apply_config(
 
     safe_path = _sanitize_source_path(file_path)
 
-    source = safe_path.read_text(encoding="utf-8")  # NOSONAR(S2083)
+    source, source_encoding = read_source_text(safe_path)  # NOSONAR(S2083)
     lines = source.splitlines(keepends=True)
 
     try:
@@ -141,7 +153,7 @@ def apply_config(
         backup_path = safe_path.parent / f"{safe_path.name}.bak"
         shutil.copy2(safe_path, backup_path)
 
-    safe_path.write_text("".join(lines), encoding="utf-8")  # NOSONAR(S2083)
+    safe_path.write_text("".join(lines), encoding=source_encoding)  # NOSONAR(S2083)
     return safe_path
 
 

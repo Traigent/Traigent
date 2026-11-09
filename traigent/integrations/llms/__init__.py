@@ -41,3 +41,10 @@ __all__ = [
     "get_nous_api_key",
     "get_nous_base_url",
 ]
+
+
+def __getattr__(name: str) -> str:
+    # Back-compat: ``NOUS_BASE_URL`` resolves at access time (Traigent#3270).
+    if name == "NOUS_BASE_URL":
+        return get_nous_base_url()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -52,14 +52,17 @@ class NousDiscovery(ModelDiscovery):
             return self.PROVIDER, lambda: []
 
         source, identity_material = identity
+        # One endpoint snapshot for both the cache key and the deferred fetch,
+        # so an env change in between cannot cache B's models under A's key.
+        base_url = get_nous_base_url()
         cache_parts = (
-            (get_nous_base_url(), source)
+            (base_url, source)
             if source == "invalid-auth-file-v1"
-            else (get_nous_base_url(), source, identity_material)
+            else (base_url, source, identity_material)
         )
         cache_key = f"{self.PROVIDER}-{self._fingerprint(*cache_parts)}"
 
-        return cache_key, lambda: self._fetch_models_from_identity(identity)
+        return cache_key, lambda: self._fetch_models_from_identity(identity, base_url)
 
     def _get_credential_fingerprint(self) -> str | None:
         """Partition portal models by endpoint and winning credential source."""
@@ -77,7 +80,9 @@ class NousDiscovery(ModelDiscovery):
         )
         return valid_partition_id
 
-    def _fetch_models_from_identity(self, identity: tuple[str, str]) -> list[str]:
+    def _fetch_models_from_identity(
+        self, identity: tuple[str, str], base_url: str | None = None
+    ) -> list[str]:
         """Fetch using the already captured identity, without rereading sources."""
         source, identity_material = identity
         try:
@@ -92,7 +97,7 @@ class NousDiscovery(ModelDiscovery):
                     bearer = nous_auth._get_nous_api_key_for_identity(
                         identity_material, source
                     )
-            return self._fetch_models_with_bearer(bearer)
+            return self._fetch_models_with_bearer(bearer, base_url)
         except ImportError:
             logger.debug("OpenAI SDK not installed")
             raise
@@ -105,13 +110,15 @@ class NousDiscovery(ModelDiscovery):
             )
             raise
 
-    def _fetch_models_with_bearer(self, bearer: str) -> list[str]:
+    def _fetch_models_with_bearer(
+        self, bearer: str, base_url: str | None = None
+    ) -> list[str]:
         """Fetch portal models with a token selected by the caller."""
         from openai import OpenAI
 
         client_kwargs: dict[str, str] = {
             "api_key": bearer,
-            "base_url": get_nous_base_url(),
+            "base_url": base_url or get_nous_base_url(),
         }
         client = OpenAI(**client_kwargs)
         models = client.models.list()

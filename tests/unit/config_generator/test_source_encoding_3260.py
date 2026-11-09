@@ -60,3 +60,13 @@ def test_generate_and_apply_roundtrip_non_ascii_under_ascii_locale(
         cwd=tmp_path,
     )
     assert proc.returncode == 0 and "OK" in proc.stdout, proc.stderr[-1500:]
+
+
+def test_declared_non_utf8_source_encoding_is_honoured(tmp_path: Path) -> None:
+    from traigent.config_generator.apply import read_source_text
+
+    src = tmp_path / "latin.py"
+    src.write_bytes(b"# -*- coding: latin-1 -*-\nx = '\xe9'\n")
+    text, encoding = read_source_text(src)
+    assert encoding == "iso-8859-1"
+    assert "x = 'é'" in text
