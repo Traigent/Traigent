@@ -131,7 +131,11 @@ from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.stop_conditions import StopCondition, validate_plateau_window
-from traigent.core.trial_lifecycle import TrialLifecycle
+from traigent.core.trial_lifecycle import (
+    CONSTRAINT_REJECTION_CAP_FACTOR,
+    TrialLifecycle,
+    rejection_cap_applies,
+)
 from traigent.core.utils import extract_examples_attempted
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
 from traigent.evaluators.base import MEASURED_ONLY_METRICS, BaseEvaluator, Dataset
@@ -2516,8 +2520,14 @@ class OptimizationOrchestrator:
             best_config = best_result.config
 
         # Estimate remaining time
-        avg_trial_time = elapsed_time / len(self._trials) if self._trials else 0
-        remaining_trials = (self.max_trials or 0) - len(self._trials)
+        # Constraint-rejected records were never evaluated (Traigent#3210).
+        executed_count = sum(
+            1
+            for trial in self._trials
+            if not (getattr(trial, "metadata", None) or {}).get("constraint_rejected")
+        )
+        avg_trial_time = elapsed_time / executed_count if executed_count else 0
+        remaining_trials = (self.max_trials or 0) - executed_count
         estimated_remaining = (
             avg_trial_time * remaining_trials if remaining_trials > 0 else None
         )
@@ -2525,7 +2535,7 @@ class OptimizationOrchestrator:
         return ProgressInfo(
             current_trial=current_trial,
             total_trials=self.max_trials or 0,
-            completed_trials=len(self._trials),
+            completed_trials=executed_count,
             successful_trials=successful_trials,
             failed_trials=failed_trials,
             best_score=best_score,
@@ -3099,7 +3109,20 @@ class OptimizationOrchestrator:
         constraints.
         """
         configs: list[dict[str, Any]] = []
-        for _ in range(count):
+        attempts = 0
+        # Rejected suggestions do not fill a slot; keep drawing, bounded.
+        # The cap only applies to unbounded spaces; grid and finite random
+        # end by exhaustion (optimizer raises OptimizationError).
+        max_attempts = (
+            count + CONSTRAINT_REJECTION_CAP_FACTOR * count
+            if rejection_cap_applies(self.optimizer)
+            else None
+        )
+        while len(configs) < count and (
+            max_attempts is None or attempts < max_attempts
+        ):
+            attempts += 1
+            trial_count_before = getattr(self.optimizer, "_trial_count", None)
             try:
                 config = self.optimizer.suggest_next_trial(self._trials)
                 config = self._apply_knob_resolution(config)
@@ -3113,6 +3136,12 @@ class OptimizationOrchestrator:
             # Pre-trial constraint validation — reject before execution
             if not pre_trial_validate_config(config, self._constraints_pre_eval):
                 logger.debug("Config rejected by pre-trial constraints: %s", config)
+                # Give the optimizer's slot back (Traigent#3210); keep the
+                # config marked tried so it is not re-drawn.
+                if isinstance(trial_count_before, int) and isinstance(
+                    getattr(self.optimizer, "_trial_count", None), int
+                ):
+                    self.optimizer._trial_count = trial_count_before
                 continue
             configs.append(config)
         return configs
