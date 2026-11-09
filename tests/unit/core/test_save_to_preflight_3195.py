@@ -29,6 +29,7 @@ def _make(calls: list):
     )
     def fn(x):
         calls.append(x)
+        traigent.get_config()
         return x
 
     return fn
@@ -99,3 +100,38 @@ def test_late_save_failure_still_returns_result(tmp_path, monkeypatch):
         "error_type": "OSError",
     }
     assert any(str(out) in str(w.message) for w in caught)
+
+
+def test_relative_path_escaping_cwd_fails_before_any_trial(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    calls: list = []
+    with pytest.raises(ConfigurationError, match="save_to"):
+        _make(calls).optimize_sync(max_trials=2, save_to="../out.json")
+    assert calls == []
+
+
+def test_rejected_save_to_does_not_leak_objective_override(tmp_path):
+    fn = _make([])
+    before = fn.objective_schema
+    with pytest.raises(ConfigurationError):
+        fn.optimize_sync(
+            max_trials=1,
+            objectives=["accuracy", "cost"],
+            save_to=str(tmp_path / "nope" / "o.json"),
+        )
+    assert fn.objective_schema is before
+
+
+def test_late_save_failure_survives_warnings_as_errors(tmp_path, monkeypatch):
+    def _boom(self, path):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(ConfigStateManager, "save_optimization_results", _boom)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        warnings.filterwarnings("error", category=RuntimeWarning)
+        result = _make([]).optimize_sync(max_trials=2, save_to=str(tmp_path / "o.json"))
+    assert len(result.trials) == 2
+    assert result.metadata["save_to_error"]["error_type"] == "OSError"

@@ -952,8 +952,17 @@ def _preflight_save_to(save_to: object) -> None:
         raise ConfigurationError(
             f"save_to={given!r}: parent directory {str(parent)!r} is not writable"
         )
-    if target.exists() and not os.access(target, os.W_OK):
-        raise ConfigurationError(f"save_to={given!r} exists and is not writable")
+    # Same containment rule as the writer (relative paths stay under the cwd).
+    from traigent.utils.secure_path import validate_path
+
+    base_dir = target.parent if Path(given).expanduser().is_absolute() else Path.cwd()
+    try:
+        validate_path(target, base_dir, must_exist=False)
+    except Exception:
+        raise ConfigurationError(
+            f"save_to={given!r} is not an allowed location (relative paths "
+            "must stay inside the current directory)"
+        ) from None
 
 
 def _record_pricing_provenance(
@@ -2693,6 +2702,12 @@ class OptimizedFunction[**P, R]:
             if sample_config:
                 self._provider.assert_injectable(self.func, sample_config)
 
+        # #3195: fail before the first trial, not after the last one, and before
+        # any per-call state (objective schema) is installed.
+        _preflight_save_to(
+            save_to if save_to is not None else getattr(self, "save_to", None)
+        )
+
         original_schema = self.objective_schema
         runtime_objective_input = (
             objectives if objectives is not None else legacy_objectives
@@ -2707,8 +2722,6 @@ class OptimizedFunction[**P, R]:
 
         timeout = timeout if timeout is not None else getattr(self, "timeout", None)
         save_to = save_to if save_to is not None else getattr(self, "save_to", None)
-        # #3195: fail before the first trial, not after the last one.
-        _preflight_save_to(save_to)
         # Per-call resolved mode, not the stale construction-time
         # self.execution_mode -- see _resolve_runtime_execution_mode (#2352).
         callbacks = _resolve_callbacks(
@@ -4009,13 +4022,18 @@ class OptimizedFunction[**P, R]:
                 f"save_to={os.fspath(save_to)!r} ({reason}). The result is still "
                 "returned; call save_optimization_results(<path>) to retry."
             )
-            logger.warning(message)
-            warnings.warn(message, RuntimeWarning, stacklevel=2)
             if isinstance(result.metadata, dict):
                 result.metadata["save_to_error"] = {
                     "path": os.fspath(save_to),
                     "error_type": reason,
                 }
+            logger.warning(message)
+            try:
+                warnings.warn(message, RuntimeWarning, stacklevel=2)
+            except Warning:
+                # ``-W error`` turns the warning into an exception; the
+                # finished result must still be returned.
+                pass
 
     def _carry_result_sync_session_id(
         self,
