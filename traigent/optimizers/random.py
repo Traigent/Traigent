@@ -12,8 +12,8 @@ from traigent.api.types import TrialResult
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.discrete_domains import (
     discrete_values_for_config_param,
+    sample_stepped_float,
     sample_stepped_int,
-    stepped_float_values,
     uniform_within,
 )
 from traigent.utils.exceptions import OptimizationError
@@ -292,12 +292,12 @@ class RandomSearchOptimizer(BaseOptimizer):
                 raise OptimizationError(
                     f"Invalid step for float parameter '{param_name}': {step}"
                 )
-            values = stepped_float_values(low_f, high_f, step)
-            if not values:
+            try:
+                return sample_stepped_float(self._random, low_f, high_f, step)
+            except ValueError as exc:
                 raise OptimizationError(
-                    f"Invalid float range for parameter '{param_name}': no values"
-                )
-            return self._random.choice(values)
+                    f"Invalid float range for parameter '{param_name}': {exc}"
+                ) from exc
         return uniform_within(self._random, low_f, high_f)
 
     def _sample_parameter(self, param_name: str, param_def: Any) -> Any:
