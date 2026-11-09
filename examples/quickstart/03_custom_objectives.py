@@ -57,6 +57,25 @@ MOCK_QA_ANSWERS = [
 ]
 
 
+RULE_BASED_NOTICE = (
+    "RULE-BASED DEMO: no model is called and no tokens are billed; every "
+    "trial reports $0.00 cost, so the cost objective cannot differentiate "
+    "configurations here. Wire a real model call to see measured spend."
+)
+
+
+def _mock_mode_label() -> str:
+    """Describe the mock state truthfully (the env var may simply be unset)."""
+    mock_on = os.environ.get("TRAIGENT_MOCK_LLM", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }
+    state = "true" if mock_on else "false"
+    return f"{state} (this script never calls a model either way)"
+
+
 def _config_value(config, key: str, default):
     if isinstance(config, dict):
         return config.get(key, default)
@@ -145,12 +164,13 @@ async def main():
     print()
 
     print(f"Dataset: {DATASET_PATH}")
-    print(f"Mock mode: {os.environ.get('TRAIGENT_MOCK_LLM', 'false')}")
+    print(RULE_BASED_NOTICE)
+    print(f"Mock mode: {_mock_mode_label()}")
     print()
 
     # Run optimization
     print("Starting multi-objective optimization...")
-    print("(Balancing accuracy vs cost with custom weights)")
+    print("(Custom weights applied; cost is $0 in this rule-based demo)")
     print()
 
     results = await weighted_agent.optimize()
@@ -167,15 +187,16 @@ async def main():
     # Explain the trade-off
     print("Understanding the Results:")
     print("-" * 40)
-    print("  The optimizer found a configuration that balances:")
-    print("  - High accuracy (weighted 70%)")
-    print("  - Low cost (weighted 30%)")
+    print("  The objective weights were applied as configured:")
+    print("  - Accuracy (weighted 70%)")
+    print("  - Cost (weighted 30%) - $0.00 for every trial in this")
+    print("    rule-based demo, so accuracy alone decided the winner.")
     print()
-    print("  This means the solution prioritizes accuracy")
-    print("  but still considers cost optimization.")
+    print("  Swap the rule-based answer for a real model call to see")
+    print("  a measured accuracy/cost trade-off.")
     print()
 
-    print("Try adjusting weights to see different trade-offs:")
+    print("With a real model call, adjusting the weights changes the trade-off:")
     print("  - accuracy=0.5, cost=0.5 -> Equal balance")
     print("  - accuracy=0.3, cost=0.7 -> Cost-focused")
     print("  - accuracy=0.9, cost=0.1 -> Accuracy-focused")

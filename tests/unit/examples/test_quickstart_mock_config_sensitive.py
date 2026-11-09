@@ -110,3 +110,22 @@ def test_custom_objectives_function_reads_config_context(monkeypatch) -> None:
         {"model": "gpt-4.1-mini", "temperature": 0.1, "top_p": 0.9}
     ):
         assert module.weighted_agent.func(question) == "Jupiter"
+
+
+def test_custom_objectives_states_rule_based_no_model_calls_3205(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """03 never calls a model: it must say so and not claim 'Mock mode: false'."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+    module = _load_example_module("03_custom_objectives")
+
+    assert "no model is called" in module.RULE_BASED_NOTICE
+    assert "$0.00" in module.RULE_BASED_NOTICE
+    label = module._mock_mode_label()
+    assert "never calls a model" in label
+    assert label != "false"
+
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    assert module._mock_mode_label().startswith("true")
+    monkeypatch.delenv("TRAIGENT_MOCK_LLM")
+    assert module._mock_mode_label().startswith("false")
