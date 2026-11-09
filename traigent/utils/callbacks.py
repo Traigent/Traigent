@@ -1036,6 +1036,7 @@ class CallbackManager:
             CallbackInvocationKey, concurrent.futures.Future[Any]
         ] = {}
         self._running_callbacks_lock = threading.Lock()
+        self._warned_missing_hooks: set[tuple[int, str]] = set()
 
     def _ensure_executor(self) -> concurrent.futures.ThreadPoolExecutor:
         """Create or return the shared callback executor."""
@@ -1289,6 +1290,26 @@ class CallbackManager:
         if callback in self.callbacks:
             self.callbacks.remove(callback)
 
+    def _optional_hook(
+        self, callback: Any, method_name: str
+    ) -> Callable[..., Any] | None:
+        """Look up a hook; warn once and return None if the callback lacks it.
+
+        Only the attribute lookup is guarded. Exceptions raised *inside* a hook
+        still go through ``_invoke_callback_safe`` and are recorded as before.
+        """
+        hook = getattr(callback, method_name, None)
+        if callable(hook):
+            return hook  # type: ignore[no-any-return]
+        key = (id(callback), method_name)
+        if key not in self._warned_missing_hooks:
+            self._warned_missing_hooks.add(key)
+            logger.warning(
+                f"Callback {callback.__class__.__name__} has no {method_name}; "
+                "skipping it (subclass OptimizationCallback to implement every hook)"
+            )
+        return None
+
     def on_run_settings(self, settings: dict[str, Any]) -> None:
         """Notify callbacks that implement the optional run-settings hook."""
         for callback in self.callbacks:
@@ -1306,10 +1327,13 @@ class CallbackManager:
         )
         for i, callback in enumerate(self.callbacks):
             logger.debug(f"Calling callback {i}: {callback.__class__.__name__}")
+            hook = self._optional_hook(callback, "on_optimization_start")
+            if hook is None:
+                continue
             self._invoke_callback_safe(
                 callback,
                 "on_optimization_start",
-                callback.on_optimization_start,
+                hook,
                 config_space,
                 objectives,
                 algorithm,
@@ -1318,10 +1342,13 @@ class CallbackManager:
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Notify all callbacks of trial start."""
         for callback in self.callbacks:
+            hook = self._optional_hook(callback, "on_trial_start")
+            if hook is None:
+                continue
             self._invoke_callback_safe(
                 callback,
                 "on_trial_start",
-                callback.on_trial_start,
+                hook,
                 trial_number,
                 config,
             )
@@ -1329,10 +1356,13 @@ class CallbackManager:
     def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
         """Notify all callbacks of trial completion."""
         for callback in self.callbacks:
+            hook = self._optional_hook(callback, "on_trial_complete")
+            if hook is None:
+                continue
             self._invoke_callback_safe(
                 callback,
                 "on_trial_complete",
-                callback.on_trial_complete,
+                hook,
                 trial,
                 progress,
             )
@@ -1341,10 +1371,13 @@ class CallbackManager:
         """Notify all callbacks of optimization completion."""
         try:
             for callback in self.callbacks:
+                hook = self._optional_hook(callback, "on_optimization_complete")
+                if hook is None:
+                    continue
                 self._invoke_callback_safe(
                     callback,
                     "on_optimization_complete",
-                    callback.on_optimization_complete,
+                    hook,
                     result,
                 )
         finally:

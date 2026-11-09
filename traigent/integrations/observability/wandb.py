@@ -39,10 +39,14 @@ except ImportError:
 
 from ...api.types import OptimizationResult, TrialResult
 from ...core.objective_directions import resolve_objective_orientation
+from ...utils.callbacks import OptimizationCallback
 from ...utils.discrete_domains import discrete_values_for_config_param
 from ...utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+#: Run-name prefix when the optimized function's name is not available.
+_DEFAULT_RUN_LABEL = "traigent"
 
 
 class TraigentWandBTracker:
@@ -432,7 +436,7 @@ class TraigentWandBTracker:
         return cast(str, sweep_id)
 
 
-class WandBOptimizationCallback:
+class WandBOptimizationCallback(OptimizationCallback):
     """Callback for automatic W&B logging during optimization."""
 
     def __init__(self, tracker: TraigentWandBTracker) -> None:
@@ -443,24 +447,50 @@ class WandBOptimizationCallback:
         """
         self.tracker = tracker
         self.trial_count = 0
+        self._function_name: str | None = None
 
-    def on_optimization_start(
+    def on_run_settings(self, settings: dict[str, Any]) -> None:
+        """Remember the optimized function's name for the W&B run name."""
+        name = settings.get("function_name")
+        if isinstance(name, str) and name:
+            self._function_name = name
+
+    def on_optimization_start(  # type: ignore[override]
         self,
-        function_name: str,
-        objectives: list[str],
-        configuration_space: dict[str, Any],
-        **kwargs,
+        config_space: dict[str, Any] | None = None,
+        objectives: list[str] | None = None,
+        algorithm: str | None = None,
+        *,
+        function_name: str | None = None,
+        configuration_space: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
-        """Called when optimization starts."""
+        """Called when optimization starts.
+
+        Accepts the ``OptimizationCallback`` signature
+        ``(config_space, objectives, algorithm)``. The legacy keyword form
+        ``function_name=..., configuration_space=...`` still works.
+        """
+        if isinstance(config_space, str) and isinstance(algorithm, dict):
+            # Legacy positional order (function_name, objectives, config_space).
+            function_name, config_space, algorithm = config_space, algorithm, None
+        space = config_space if config_space is not None else configuration_space
+        name = function_name or self._function_name or _DEFAULT_RUN_LABEL
         self.tracker.start_optimization_run(
-            function_name=function_name,
-            objectives=objectives,
-            configuration_space=configuration_space,
+            function_name=name,
+            objectives=list(objectives or []),
+            configuration_space=dict(space or {}),
             additional_tags=kwargs.get("wandb_tags", []),
             config=kwargs.get("wandb_config", {}),
         )
 
-    def on_trial_complete(self, trial: TrialResult) -> None:
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts (nothing to log until it completes)."""
+        return None
+
+    def on_trial_complete(  # type: ignore[override]
+        self, trial: TrialResult, progress: Any = None
+    ) -> None:
         """Called when trial completes."""
         self.trial_count += 1
         self.tracker.log_trial(trial, self.trial_count)
