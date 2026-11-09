@@ -743,3 +743,18 @@ async def test_per_request_optimization_only_override_strips_declaration(
     assert wire
     assert not any(_has_canary(b) for b in wire)
     assert result.crew_binding.status == "unknown"
+
+
+def test_legacy_session_body_drops_a_raw_crew_declaration_in_metadata():
+    """A direct caller's raw metadata value never crosses on the legacy path."""
+    raw = {"crew_key": CANARY_CREW, "role_key": CANARY_ROLE}
+    request = _request(
+        metadata={"evaluation_set": "evalset-x", "crew_declaration": raw},
+        crew_declaration=None,
+        objectives=[{"metric": "accuracy", "orientation": "maximize"}],
+    )
+    ops = ApiOperations(_client())
+    payload = ops._build_legacy_session_payload(request, 3)
+    assert "crew_declaration" not in payload["metadata"]
+    assert payload["metadata"]["evaluation_set"] == "evalset-x"
+    assert not _has_canary(json.dumps(payload, default=repr))

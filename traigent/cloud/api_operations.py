@@ -62,6 +62,9 @@ from traigent.utils.artifact_fingerprints import (
     fingerprint_meta_to_wire,
 )
 from traigent.utils.crew_declaration import (
+    DECLARATION_METADATA_KEY as _DECLARATION_METADATA_KEY,
+)
+from traigent.utils.crew_declaration import (
     SESSION_CREATE_REDIRECT_REFUSED as _SESSION_CREATE_REDIRECT_REFUSED,
 )
 from traigent.utils.crew_declaration import UNKNOWN_BINDING
@@ -943,6 +946,9 @@ class ApiOperations:
         self._attach_evaluator_identity(payload, session_request)
         self._attach_artifact_fingerprint_payload(payload, session_request)
         payload["metadata"] = filter_wire_metadata(payload["metadata"])
+        # The legacy path never carries a declaration; a raw value placed in request
+        # metadata by a direct caller is dropped (no key text logged).
+        payload["metadata"].pop(_DECLARATION_METADATA_KEY, None)
         return payload
 
     @staticmethod
