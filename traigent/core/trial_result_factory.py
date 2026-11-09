@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -462,7 +463,9 @@ def _provider_failure_summary(
     for error in errors:
         if not error:
             continue
-        category = classify_systematic_provider_failure(str(error))
+        category = classify_systematic_provider_failure(
+            _EXCEPTION_CLASS_MARKER.sub(r"\1", str(error))
+        )
         if category is None:
             continue
         fatal_failures += 1
@@ -508,6 +511,10 @@ def _all_attempted_examples_failed(
 
 
 _NO_EXAMPLES_SUCCEEDED = "No examples succeeded"
+# "Function call failed: <ExceptionClass>: <msg>" -- the class marker is for
+# humans; vendor-failure classification reads the text without it so adding the
+# marker cannot change which failures are treated as provider failures.
+_EXCEPTION_CLASS_MARKER = re.compile(r"^(Function call failed: )[A-Za-z_][\w.]*: ")
 _ERROR_MESSAGE_MAX_CHARS = 500
 
 
@@ -515,15 +522,25 @@ def _all_failed_error_message(eval_result: Any) -> str:
     """Name the cause when every example failed (#3213).
 
     Uses the most common per-example error (with a count when examples differ),
-    redacted like every other error text that leaves the SDK. Falls back to the
-    generic message when no example carries an error.
+    redacted like every other error text that leaves the SDK. The text keeps the
+    "No examples succeeded" prefix so the closed wire code derived from it
+    (``wire_text``) is unchanged. Falls back to the bare generic message when no
+    example carries an error.
     """
     counts: dict[str, int] = {}
     total = 0
-    for row in getattr(eval_result, "example_results", None) or []:
-        message = getattr(row, "error_message", None)
-        if message is None and isinstance(row, dict):
-            message = row.get("error_message")
+    messages: list[Any] = [
+        (
+            getattr(row, "error_message", None)
+            if not isinstance(row, dict)
+            else row.get("error_message")
+        )
+        for row in getattr(eval_result, "example_results", None) or []
+    ]
+    if not any(isinstance(m, str) and m for m in messages):
+        errors = getattr(eval_result, "errors", None)
+        messages = [m for m in errors if m] if isinstance(errors, list) else []
+    for message in messages:
         total += 1
         if isinstance(message, str) and message:
             counts[message] = counts.get(message, 0) + 1
@@ -534,7 +551,7 @@ def _all_failed_error_message(eval_result: Any) -> str:
     if len(text) > _ERROR_MESSAGE_MAX_CHARS:
         text = text[:_ERROR_MESSAGE_MAX_CHARS] + "..."
     suffix = f" ({top_count} of {total} examples)" if len(counts) > 1 else ""
-    return f"{text}{suffix}"
+    return f"{_NO_EXAMPLES_SUCCEEDED}: {text}{suffix}"
 
 
 def _set_metric_if_convertible(

@@ -54,7 +54,7 @@ async def test_all_examples_raising_names_exception_in_trial_error_message():
     assert trial.status.value == "failed"
     assert "ValueError" in trial.error_message
     assert "boom" in trial.error_message
-    assert "No examples succeeded" not in trial.error_message
+    assert trial.error_message != "No examples succeeded"
 
 
 @pytest.mark.asyncio
@@ -111,3 +111,65 @@ async def test_log_has_class_and_one_traceback_for_n_examples(caplog):
     assert "boom" in text
     assert text.count("Traceback (most recent call last)") == 1
     assert failures[0].levelno == logging.WARNING
+
+
+@pytest.mark.asyncio
+async def test_traceback_omits_source_lines(caplog):
+    def func(row):
+        customer_note = "zq-private-literal-91"  # noqa: F841
+        raise ValueError("x")
+
+    with caplog.at_level(logging.WARNING, logger="traigent"):
+        await _evaluate(func)
+
+    assert "zq-private-literal-91" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_each_trial_logs_its_own_traceback(caplog):
+    from traigent.config.context import TrialContext
+
+    with caplog.at_level(logging.WARNING, logger="traigent"):
+        evaluator = LocalEvaluator(metrics=["accuracy"], detailed=True)
+        for trial_id in ("t1", "t2"):
+            with TrialContext(trial_id):
+                await evaluator.evaluate(_raise_value_error, {"m": "a"}, _dataset())
+
+    failures = [r for r in caplog.records if "Function call failed" in r.getMessage()]
+    assert len(failures) == 2
+
+
+@pytest.mark.asyncio
+async def test_wire_code_and_provider_classification_unchanged():
+    from traigent.core.trial_result_factory import (
+        _provider_failure_summary,
+    )
+    from traigent.utils.wire_text import error_code_for_wire
+
+    def func(row):
+        raise ValueError("quota exceeded")
+
+    eval_result = await _evaluate(func)
+    trial = build_success_result(
+        trial_id="t1",
+        evaluation_config={"m": "a"},
+        eval_result=eval_result,
+        duration=0.1,
+        examples_attempted=N_EXAMPLES,
+        total_cost=None,
+        optuna_trial_id=None,
+    )
+
+    assert error_code_for_wire(trial.error_message) == "no_examples_succeeded"
+    assert _provider_failure_summary(eval_result, N_EXAMPLES) is not None
+
+
+@pytest.mark.asyncio
+async def test_two_evaluate_calls_without_trial_context_each_log_a_traceback(caplog):
+    evaluator = LocalEvaluator(metrics=["accuracy"], detailed=True)
+    with caplog.at_level(logging.WARNING, logger="traigent"):
+        for _ in range(2):
+            await evaluator.evaluate(_raise_value_error, {"m": "a"}, _dataset())
+
+    failures = [r for r in caplog.records if "Function call failed" in r.getMessage()]
+    assert len(failures) == 2

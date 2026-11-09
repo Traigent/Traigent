@@ -2377,6 +2377,10 @@ class OptimizationOrchestrator:
         if trial_result.status != TrialStatus.FAILED or not trial_result.error_message:
             return None
 
+        if trial_result.error_message.startswith("No examples succeeded"):
+            # Aggregate all-failed message: provider failures were already
+            # summarised into metadata from the per-example errors above.
+            return None
         category = classify_systematic_provider_failure(trial_result.error_message)
         if category is None:
             return None
