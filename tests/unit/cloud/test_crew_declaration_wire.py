@@ -758,3 +758,47 @@ def test_legacy_session_body_drops_a_raw_crew_declaration_in_metadata():
     assert "crew_declaration" not in payload["metadata"]
     assert payload["metadata"]["evaluation_set"] == "evalset-x"
     assert not _has_canary(json.dumps(payload, default=repr))
+
+
+@pytest.mark.asyncio
+async def test_hybrid_session_body_drops_a_raw_crew_declaration_in_metadata():
+    """A direct caller's raw metadata value never crosses on /hybrid/sessions."""
+    from unittest.mock import Mock
+
+    from traigent.cloud.session_operations import SessionOperations
+
+    raw = {"crew_key": CANARY_CREW, "role_key": CANARY_ROLE}
+    metadata = {"evaluation_set": "evalset-x", "crew_declaration": raw}
+    sent: list[Any] = []
+
+    class _Resp:
+        status = 500
+
+        async def text(self):
+            return "x"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    def _post(url, **kwargs):
+        sent.append(kwargs.get("json"))
+        return _Resp()
+
+    client = Mock()
+    client._ensure_session = AsyncMock(return_value=Mock(post=_post))
+    client.auth_manager.auth.get_headers = AsyncMock(return_value={})
+    ops = SessionOperations(client)
+    ops._reset_client_session = AsyncMock()
+    with patch("traigent.cloud.session_operations.AIOHTTP_AVAILABLE", True):
+        with pytest.raises(Exception):
+            await ops.create_hybrid_session(
+                "p", {"a": [1]}, {"max_trials": 1}, metadata
+            )
+    assert sent
+    assert "crew_declaration" not in sent[0]["metadata"]
+    assert sent[0]["metadata"]["evaluation_set"] == "evalset-x"
+    assert not _has_canary(json.dumps(sent, default=repr))
+    assert "crew_declaration" in metadata  # caller's dict not mutated
