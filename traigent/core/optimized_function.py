@@ -916,6 +916,56 @@ def _guard_cost_objective_without_usage(
     )
 
 
+def _preflight_save_to(save_to: object) -> None:
+    """Reject an unusable ``save_to`` before any trial runs (#3195).
+
+    ``save_to`` is only written after the last trial, so a typo would otherwise
+    discard a fully paid run. Checks the type, that the target is not an
+    existing directory, and that the parent directory exists and is writable
+    (the writer does not create directories). Never reads file contents.
+    ``None`` and ``""`` mean "no save" and pass.
+    """
+    if save_to is None or save_to == "":
+        return
+    if not isinstance(save_to, (str, os.PathLike)):
+        raise ConfigurationError(
+            f"save_to must be a str or path-like, got {type(save_to).__name__}"
+        )
+    given = os.fspath(save_to)
+    if not isinstance(given, str):
+        raise ConfigurationError("save_to must be a text path, not bytes")
+    target = Path(given).expanduser()
+    if not target.is_absolute():
+        target = Path.cwd() / target
+    # The path is customer-controlled text: it stays out of every rendering
+    # (exception, log, warning), per the best-config leak-class contract.
+    if target.is_dir():
+        raise ConfigurationError(
+            "save_to is a directory; give a file path (for example <dir>/results.json)"
+        )
+    parent = target.parent
+    if not parent.is_dir():
+        raise ConfigurationError(
+            "save_to: the parent directory of the save_to path does not exist; "
+            "create it before optimizing"
+        )
+    if not os.access(parent, os.W_OK | os.X_OK):
+        raise ConfigurationError(
+            "save_to: the parent directory of the save_to path is not writable"
+        )
+    # Same containment rule as the writer (relative paths stay under the cwd).
+    from traigent.utils.secure_path import validate_path
+
+    base_dir = target.parent if Path(given).expanduser().is_absolute() else Path.cwd()
+    try:
+        validate_path(target, base_dir, must_exist=False)
+    except Exception:
+        raise ConfigurationError(
+            "save_to is not an allowed location (relative paths must stay "
+            "inside the current directory)"
+        ) from None
+
+
 def _record_pricing_provenance(
     result: Any, *, strict_effective: bool, strict_origin: str
 ) -> None:
@@ -2597,6 +2647,11 @@ class OptimizedFunction[**P, R]:
         algorithm_kwargs: dict[str, Any],
     ) -> OptimizationResult:
         """Body of :meth:`optimize` for one advancing run."""
+        # #3195: fail before the first trial, not after the last one, and before
+        # any per-call state (objective schema, TVL options) is installed.
+        _preflight_save_to(
+            save_to if save_to is not None else getattr(self, "save_to", None)
+        )
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
         # Per-call dataset (#2541): resolved before any run state changes, so a bad
@@ -3912,7 +3967,7 @@ class OptimizedFunction[**P, R]:
 
             # Save results if requested
             if save_to:
-                self.save_optimization_results(save_to)
+                self._save_results_best_effort(result, save_to)
 
             logger.info(
                 f"Optimization completed: {len(result.trials)} trials, "
@@ -3946,6 +4001,36 @@ class OptimizedFunction[**P, R]:
                 orchestrator, post_orchestrator_failure, result
             )
             raise
+
+    def _save_results_best_effort(
+        self, result: OptimizationResult, save_to: str | os.PathLike[str]
+    ) -> None:
+        """Persist ``result`` to ``save_to`` without discarding a finished run (#3195).
+
+        The path was validated before the first trial, so a failure here is a
+        late environmental one (disk full, directory removed mid-run). The
+        completed result is still returned; the failure is logged, warned about
+        and recorded on ``result.metadata["save_to_error"]``. The explicit
+        ``save_optimization_results`` method still raises.
+        """
+        try:
+            self.save_optimization_results(save_to)  # type: ignore[arg-type]
+        except Exception as exc:
+            reason = type(exc).__name__
+            message = (
+                "Optimization finished but its results could not be saved to the "
+                f"save_to path ({reason}). The result is still returned; call "
+                "save_optimization_results(<path>) to retry."
+            )
+            if isinstance(result.metadata, dict):
+                result.metadata["save_to_error"] = {"error_type": reason}
+            logger.warning(message)
+            try:
+                warnings.warn(message, RuntimeWarning, stacklevel=2)
+            except Warning:
+                # ``-W error`` turns the warning into an exception; the
+                # finished result must still be returned.
+                pass
 
     def _carry_result_sync_session_id(
         self,
