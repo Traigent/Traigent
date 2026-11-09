@@ -14,14 +14,6 @@ from typing import Any, ClassVar, TypeVar
 from urllib.parse import urlparse
 
 from traigent.security.config import get_security_flags
-
-try:
-    import bleach
-
-    BLEACH_AVAILABLE = True
-except ImportError:  # pragma: no cover - optional dependency
-    BLEACH_AVAILABLE = False
-
 from traigent.utils.exceptions import ValidationError
 from traigent.utils.logging import get_logger
 
@@ -244,24 +236,14 @@ class InputValidator:
         flags = get_security_flags()
 
         # First, remove dangerous tags and their content using regex
-        # This handles script/iframe/etc content that bleach's strip=True preserves
+        # This handles script/iframe/etc content before the escape below
         sanitized = html_content
         for pattern in cls.XSS_PATTERNS:
             sanitized = re.sub(pattern, "", sanitized, flags=re.IGNORECASE | re.DOTALL)
 
-        if BLEACH_AVAILABLE:
-            # Use bleach to strip any remaining HTML tags
-            sanitized = str(
-                bleach.clean(
-                    sanitized,
-                    tags=[],
-                    attributes={},
-                    strip=True,
-                )
-            )
-        else:
-            # Escape remaining HTML entities
-            sanitized = html.escape(sanitized)
+        # Escape remaining HTML entities. Deterministic: output never depends on
+        # whether an optional sanitizer package (bleach) happens to be installed.
+        sanitized = html.escape(sanitized)
 
         if flags.emit_security_telemetry and sanitized != html_content:
             logger.info("HTML content sanitized under profile %s", flags.profile.value)
