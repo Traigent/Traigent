@@ -1216,7 +1216,9 @@ class _Scan(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         callee = node.func
-        name = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", "")
+        name = (
+            callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", "")
+        )
         if name == "raise_detached" and node.args:
             # ``raise_detached(X)`` raises X (see traigent/cloud/_detached_raise.py):
             # judge X exactly as a ``raise X`` expression, keyed on the call's text
