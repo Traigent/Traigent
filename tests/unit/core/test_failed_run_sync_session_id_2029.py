@@ -767,7 +767,7 @@ async def test_save_to_failure_after_the_orchestrator_returns_carries_the_id(
 
     # #3195: a late save failure no longer raises; the finished result is
     # returned and still carries the completed run's sync id.
-    with pytest.warns(RuntimeWarning, match="could not be saved"):
+    with pytest.warns(RuntimeWarning, match="could not be saved to the save_to path"):
         returned = await answer.optimize(
             algorithm="grid", save_to=str(tmp_path / "out.json")
         )

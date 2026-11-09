@@ -55,11 +55,13 @@ def test_bad_save_to_fails_before_any_trial(tmp_path, bad):
     assert calls == []  # zero trials ran
 
 
-def test_error_names_the_given_path(tmp_path):
-    bad = str(tmp_path / "nope" / "out.json")
+def test_messages_never_render_the_path(tmp_path, caplog):
+    canary = "zq-acme-private-canary-91"
+    bad = str(tmp_path / canary / "out.json")
     with pytest.raises(ConfigurationError) as ei:
         _make([]).optimize_sync(max_trials=1, save_to=bad)
-    assert bad in str(ei.value)
+    assert canary not in str(ei.value) and canary not in repr(ei.value)
+    assert "save_to" in str(ei.value)
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
@@ -84,7 +86,7 @@ def test_valid_save_to_still_saves(tmp_path):
     assert "save_to_error" not in result.metadata
 
 
-def test_late_save_failure_still_returns_result(tmp_path, monkeypatch):
+def test_late_save_failure_still_returns_result(tmp_path, monkeypatch, caplog):
     def _boom(self, path):
         raise OSError(28, "No space left on device")
 
@@ -95,11 +97,10 @@ def test_late_save_failure_still_returns_result(tmp_path, monkeypatch):
         result = _make([]).optimize_sync(max_trials=2, save_to=str(out))
     assert len(result.trials) == 2
     assert result.best_config is not None
-    assert result.metadata["save_to_error"] == {
-        "path": str(out),
-        "error_type": "OSError",
-    }
-    assert any(str(out) in str(w.message) for w in caught)
+    assert result.metadata["save_to_error"] == {"error_type": "OSError"}
+    assert any("save_to path" in str(w.message) for w in caught)
+    assert not any(str(tmp_path) in str(w.message) for w in caught)
+    assert str(tmp_path) not in caplog.text
 
 
 def test_relative_path_escaping_cwd_fails_before_any_trial(tmp_path, monkeypatch):

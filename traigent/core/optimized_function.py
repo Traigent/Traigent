@@ -937,20 +937,21 @@ def _preflight_save_to(save_to: object) -> None:
     target = Path(given).expanduser()
     if not target.is_absolute():
         target = Path.cwd() / target
+    # The path is customer-controlled text: it stays out of every rendering
+    # (exception, log, warning), per the best-config leak-class contract.
     if target.is_dir():
         raise ConfigurationError(
-            f"save_to={given!r} is a directory; give a file path such as "
-            f"{given.rstrip('/')!r}/results.json"
+            "save_to is a directory; give a file path (for example <dir>/results.json)"
         )
     parent = target.parent
     if not parent.is_dir():
         raise ConfigurationError(
-            f"save_to={given!r}: parent directory {str(parent)!r} does not exist; "
+            "save_to: the parent directory of the save_to path does not exist; "
             "create it before optimizing"
         )
     if not os.access(parent, os.W_OK | os.X_OK):
         raise ConfigurationError(
-            f"save_to={given!r}: parent directory {str(parent)!r} is not writable"
+            "save_to: the parent directory of the save_to path is not writable"
         )
     # Same containment rule as the writer (relative paths stay under the cwd).
     from traigent.utils.secure_path import validate_path
@@ -960,8 +961,8 @@ def _preflight_save_to(save_to: object) -> None:
         validate_path(target, base_dir, must_exist=False)
     except Exception:
         raise ConfigurationError(
-            f"save_to={given!r} is not an allowed location (relative paths "
-            "must stay inside the current directory)"
+            "save_to is not an allowed location (relative paths must stay "
+            "inside the current directory)"
         ) from None
 
 
@@ -4017,15 +4018,12 @@ class OptimizedFunction[**P, R]:
         except Exception as exc:
             reason = type(exc).__name__
             message = (
-                f"Optimization finished but its results could not be saved to "
-                f"save_to={os.fspath(save_to)!r} ({reason}). The result is still "
-                "returned; call save_optimization_results(<path>) to retry."
+                "Optimization finished but its results could not be saved to the "
+                f"save_to path ({reason}). The result is still returned; call "
+                "save_optimization_results(<path>) to retry."
             )
             if isinstance(result.metadata, dict):
-                result.metadata["save_to_error"] = {
-                    "path": os.fspath(save_to),
-                    "error_type": reason,
-                }
+                result.metadata["save_to_error"] = {"error_type": reason}
             logger.warning(message)
             try:
                 warnings.warn(message, RuntimeWarning, stacklevel=2)
