@@ -123,9 +123,7 @@ class ObjectiveDefinition:
         # Validate bounds if provided
         if self.bounds is not None:
             if len(self.bounds) != 2:
-                raise ValueError(
-                    f"Bounds must be a tuple of (min, max), got {self.bounds}"
-                )
+                raise ValueError("Bounds must be a tuple of (min, max)")
             if self.bounds[0] >= self.bounds[1]:
                 raise ValueError(
                     f"Invalid bounds: min ({self.bounds[0]}) must be less than max ({self.bounds[1]})"
@@ -209,16 +207,35 @@ class ObjectiveDefinition:
             raise ValueError(f"{path}.name must be a non-empty string")
         raw_bounds = data.get("bounds")
         if raw_bounds and (
-            not isinstance(raw_bounds, (list, tuple)) or len(raw_bounds) != 2
+            not isinstance(raw_bounds, (list, tuple))
+            or len(raw_bounds) != 2
+            or any(
+                isinstance(b, bool) or not isinstance(b, (int, float))
+                for b in raw_bounds
+            )
         ):
-            raise ValueError(f"{path}.bounds must be a [low, high] pair")
+            raise ValueError(f"{path}.bounds must be a [low, high] pair of numbers")
+        orientation = data.get("orientation")
+        if orientation is not None and orientation not in (
+            "maximize",
+            "minimize",
+            "band",
+        ):
+            raise ValueError(
+                f"{path}.orientation must be 'maximize', 'minimize' or 'band'"
+            )
         weight = data.get("weight")
         if weight is not None and (
             isinstance(weight, bool) or not isinstance(weight, (int, float))
         ):
             raise ValueError(f"{path}.weight must be a number")
-        if data.get("band") is not None and not isinstance(data["band"], dict):
+        band = data.get("band")
+        if band is not None and not isinstance(band, dict):
             raise ValueError(f"{path}.band must be a mapping")
+        if isinstance(band, dict) and "alpha" in band:
+            alpha = band["alpha"]
+            if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
+                raise ValueError(f"{path}.band.alpha must be a number")
         try:
             return cls._from_dict_unchecked(data)
         except (KeyError, TypeError, AttributeError):
@@ -426,8 +443,11 @@ class ObjectiveSchema:
         if "weights_normalized" not in data:
             raise ValueError("weights_normalized is required")
         weights_normalized = data["weights_normalized"]
-        if not isinstance(weights_normalized, dict):
-            raise ValueError("weights_normalized must be a mapping")
+        if not isinstance(weights_normalized, dict) or any(
+            isinstance(v, bool) or not isinstance(v, (int, float))
+            for v in weights_normalized.values()
+        ):
+            raise ValueError("weights_normalized must be a mapping of numbers")
         version = data.get("schema_version", "1.0.0")
         if not isinstance(version, str):
             raise ValueError("schema_version must be a string")
