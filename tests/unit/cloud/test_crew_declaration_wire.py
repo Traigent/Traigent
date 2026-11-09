@@ -765,6 +765,7 @@ async def test_hybrid_session_body_drops_a_raw_crew_declaration_in_metadata():
     """A direct caller's raw metadata value never crosses on /hybrid/sessions."""
     from unittest.mock import Mock
 
+    from traigent.cloud.client import CloudServiceError
     from traigent.cloud.session_operations import SessionOperations
 
     raw = {"crew_key": CANARY_CREW, "role_key": CANARY_ROLE}
@@ -793,7 +794,7 @@ async def test_hybrid_session_body_drops_a_raw_crew_declaration_in_metadata():
     ops = SessionOperations(client)
     ops._reset_client_session = AsyncMock()
     with patch("traigent.cloud.session_operations.AIOHTTP_AVAILABLE", True):
-        with pytest.raises(Exception):
+        with pytest.raises(CloudServiceError, match="Failed to create hybrid session"):
             await ops.create_hybrid_session(
                 "p", {"a": [1]}, {"max_trials": 1}, metadata
             )
