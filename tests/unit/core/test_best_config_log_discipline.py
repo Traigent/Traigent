@@ -174,15 +174,6 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
     ),
     (
         "backend_client.py",
-        "BackendIntegratedClient._protected_request",
-        "raise",
-        "d9d06232d3947c89",  # pragma: allowlist secret
-    ): (
-        1,
-        _COUNT,
-    ),
-    (
-        "backend_client.py",
         "BackendIntegratedClient._register_security_session",
         "log",
         "89a621867608b974",  # pragma: allowlist secret
