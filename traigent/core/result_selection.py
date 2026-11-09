@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from traigent.api.types import TrialResult
+from traigent.evaluators.base import OBJECTIVE_SOURCE_METRICS
 from traigent.utils.objectives import (
     classify_objective,
     coerce_finite_objective_score,
@@ -435,11 +436,15 @@ def _resolve_primary_coverage(
 
     per_metric = comparability.get("per_metric_coverage")
     if isinstance(per_metric, dict):
-        result = _lookup_per_metric_coverage(
-            per_metric, objective_key, objective_key_lower, total_examples
-        )
-        if result is not None:
-            return result
+        for name in (
+            objective_key,
+            *OBJECTIVE_SOURCE_METRICS.get(objective_key_lower, ()),
+        ):
+            result = _lookup_per_metric_coverage(
+                per_metric, name, name.lower(), total_examples
+            )
+            if result is not None:
+                return result
 
     primary_value = trial.get_metric(objective_key)
     if primary_value is not None and total_examples > 0:

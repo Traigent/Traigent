@@ -173,12 +173,12 @@ def count_timed_out_examples(example_results: Any) -> int:
 MEASURED_ONLY_METRICS = frozenset({"cost", "input_cost", "output_cost", "total_cost"})
 
 # Per-example metric that backs an SDK-measured objective whose trial-level name
-# differs (trial ``cost`` <- per-example ``total_cost``; trial ``latency`` <-
-# per-example ``response_time_ms``). Single source for the aggregator and for
-# primary-objective coverage (Traigent#3217).
+# differs (trial ``cost`` <- per-example ``total_cost``). Single source for the
+# aggregator and for primary-objective coverage (Traigent#3217). ``latency`` is
+# deliberately absent: the trial score is the mean wall-clock ``execution_time``
+# of the example results, not a per-example metric (see _compute_latency).
 OBJECTIVE_SOURCE_METRICS: dict[str, tuple[str, ...]] = {
     "cost": ("total_cost",),
-    "latency": ("response_time_ms",),
 }
 
 

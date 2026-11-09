@@ -897,7 +897,6 @@ def _eval_with_example_metrics(rows: list[dict[str, float]]):
     ("objective", "row"),
     [
         ("cost", {"total_cost": 0.01, "input_cost": 0.004, "output_cost": 0.006}),
-        ("latency", {"response_time_ms": 120.0}),
         ("accuracy", {"accuracy": 1.0}),
     ],
 )
@@ -957,3 +956,73 @@ def test_cost_primary_objective_selects_cheapest_trial():
 
     assert result.best_config == {"x": 1}
     assert result.best_score == pytest.approx(0.001)
+
+
+def test_primary_objective_counts_rows_once_across_mixed_cost_names():
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    comp = _build_fallback_comparability(
+        _eval_with_example_metrics(
+            [{"cost": 0.01}, {"total_cost": 0.02}, {"cost": 0.1, "total_cost": 0.1}]
+        ),
+        "cost",
+    )
+
+    assert comp["total_examples"] == 3
+    assert comp["examples_with_primary_metric"] == 3
+    assert comp["ranking_eligible"] is True
+
+
+def test_selection_partial_source_metric_coverage_is_not_promoted_to_full():
+    from traigent.core.result_selection import _resolve_primary_coverage
+
+    class _Trial:
+        metrics = {"cost": 0.01}
+
+        def get_metric(self, name, default=None):
+            return self.metrics.get(name, default)
+
+    comparability = {
+        "primary_objective": "accuracy",
+        "total_examples": 2,
+        "per_metric_coverage": {
+            "total_cost": {"present": 1, "total": 2, "ratio": 0.5},
+        },
+    }
+
+    assert _resolve_primary_coverage(_Trial(), comparability, "cost") == (1, 2, 0.5)
+
+
+def test_latency_primary_objective_counts_timed_example_results():
+    from types import SimpleNamespace
+
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    examples = [
+        SimpleNamespace(metrics={"accuracy": 1.0}, execution_time=0.12),
+        SimpleNamespace(metrics={"accuracy": 1.0}, execution_time=0.3),
+    ]
+    eval_result = SimpleNamespace(
+        total_examples=2, example_results=examples, metrics={}
+    )
+
+    comp = _build_fallback_comparability(eval_result, "latency")
+
+    assert comp["examples_with_primary_metric"] == 2
+    assert comp["ranking_eligible"] is True
+
+
+def test_latency_primary_objective_without_timing_stays_ineligible():
+    from types import SimpleNamespace
+
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    examples = [SimpleNamespace(metrics={"accuracy": 1.0}, execution_time=0.0)]
+    eval_result = SimpleNamespace(
+        total_examples=1, example_results=examples, metrics={}
+    )
+
+    comp = _build_fallback_comparability(eval_result, "latency")
+
+    assert comp["examples_with_primary_metric"] == 0
+    assert "MCI-004" in comp["warning_codes"]

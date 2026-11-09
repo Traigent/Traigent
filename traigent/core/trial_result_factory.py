@@ -223,6 +223,44 @@ def _build_warning_codes(
     return []
 
 
+def _was_timed(example_result: Any) -> bool:
+    """True when the example has a measured wall-clock time (what latency averages)."""
+    execution_time = getattr(example_result, "execution_time", 0)
+    return (
+        isinstance(execution_time, (int, float))
+        and not isinstance(execution_time, bool)
+        and execution_time > 0
+    )
+
+
+def _count_primary_objective_rows(
+    primary_objective: str,
+    per_metric_counts: dict[str, int],
+    example_results: list[Any] | None,
+) -> int:
+    """Count examples carrying the primary objective under any of its names.
+
+    cost/latency objectives are reported per example under their source metric
+    (``total_cost``, ...), never under the objective name itself, and rows may
+    mix names; a row counts once however many names it carries (Traigent#3217).
+    """
+    names = (primary_objective, *OBJECTIVE_SOURCE_METRICS.get(primary_objective, ()))
+    if example_results is None:
+        return max((per_metric_counts.get(name, 0) for name in names), default=0)
+    count = 0
+    for example_result in example_results:
+        metrics = getattr(example_result, "metrics", {}) or {}
+        if not isinstance(metrics, dict):
+            continue
+        if any(
+            isinstance(metrics.get(name), (int, float))
+            and not isinstance(metrics.get(name), bool)
+            for name in names
+        ) or (primary_objective == "latency" and _was_timed(example_result)):
+            count += 1
+    return count
+
+
 def _build_fallback_comparability(
     eval_result: Any, run_primary_objective: str | None = None
 ) -> dict[str, Any]:
@@ -262,18 +300,11 @@ def _build_fallback_comparability(
         per_metric_counts,
     )
 
-    examples_with_primary_metric = per_metric_counts.get(primary_objective, 0)
-    if examples_with_primary_metric == 0:
-        # cost/latency objectives are reported per example under their source
-        # metric (total_cost, response_time_ms), never under the objective
-        # name itself (Traigent#3217).
-        examples_with_primary_metric = max(
-            (
-                per_metric_counts.get(source, 0)
-                for source in OBJECTIVE_SOURCE_METRICS.get(primary_objective, ())
-            ),
-            default=0,
-        )
+    examples_with_primary_metric = _count_primary_objective_rows(
+        primary_objective,
+        per_metric_counts,
+        example_results if has_detailed_example_results else None,
+    )
     coverage_ratio = (
         examples_with_primary_metric / total_examples
         if total_examples > 0 and examples_with_primary_metric > 0
