@@ -353,6 +353,21 @@ os.environ["TRAIGENT_DISABLE_TELEMETRY"] = "true"
 import traigent
 ```
 
+### Usage Analytics
+
+Usage analytics is a separate, default-on lane: when a backend API key is set,
+local runs and `traigent sessions list` can send one anonymous-id session of
+aggregate counts (session and trial totals, SDK version) to the Traigent
+backend. It carries no prompts, outputs, dataset content or configuration
+values. Every one of these stops it, on all three send paths (post-run
+orchestrator, the incentive/hint manager, and the CLI):
+
+- `TRAIGENT_DISABLE_TELEMETRY=true` (same accepted values as below)
+- `TRAIGENT_OFFLINE_MODE=true` or `offline=True` on the decorator
+- `TraigentConfig(no_egress=True)`
+- `traigent.initialize(enable_usage_analytics=False)` or
+  `TraigentConfig(enable_usage_analytics=False)`; the default stays `True`
+
 ### Accepted Values
 
 The following values are recognized as "opt-out" (case-insensitive):

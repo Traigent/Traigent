@@ -3842,16 +3842,16 @@ class OptimizationOrchestrator:
     async def _submit_usage_analytics(self) -> None:
         """Submit usage analytics if enabled."""
 
-        if not self.traigent_config.enable_usage_analytics:
-            return
+        from traigent.utils.local_analytics import (
+            LocalAnalytics,
+            usage_analytics_allowed,
+        )
 
-        if is_backend_offline() or backend_egress_disabled(self.traigent_config):
-            logger.debug("Skipping analytics submission: backend egress is disabled")
+        if not usage_analytics_allowed(self.traigent_config):
+            logger.debug("Skipping analytics submission: usage analytics is gated off")
             return
 
         try:
-            from traigent.utils.local_analytics import LocalAnalytics
-
             analytics = LocalAnalytics(self.traigent_config)
             await asyncio.wait_for(analytics.submit_usage_stats(), timeout=10.0)
             logger.debug("Analytics submitted after optimization completion")

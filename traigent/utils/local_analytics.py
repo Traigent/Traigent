@@ -90,6 +90,24 @@ def _analytics_api_key_error(api_key: str | None) -> str | None:
     return None
 
 
+def usage_analytics_allowed(config: TraigentConfig) -> bool:
+    """Single gate in front of every usage-analytics send (#3184).
+
+    Refuses when ``enable_usage_analytics`` is False, backend egress is disabled
+    (``no_egress`` or an offline policy / ``TRAIGENT_OFFLINE_MODE``), or the
+    documented ``TRAIGENT_DISABLE_TELEMETRY`` opt-out is set. The default of
+    ``enable_usage_analytics`` is unchanged.
+    """
+    from traigent.core.execution_policy_runtime import backend_egress_disabled
+    from traigent.observability.config import _read_observability_offline_mode
+
+    if not config.enable_usage_analytics:
+        return False
+    if _read_observability_offline_mode():
+        return False
+    return not backend_egress_disabled(config)
+
+
 class LocalAnalytics:
     """Handles privacy-safe analytics collection for Edge Analytics mode."""
 
@@ -252,7 +270,8 @@ class LocalAnalytics:
         Returns:
             Result dictionary with success status and details
         """
-        if not self.enabled:
+        # Re-evaluate the gate at send time: the environment can change after init.
+        if not self.enabled or not usage_analytics_allowed(self.config):
             return {"success": False, "reason": "Analytics disabled"}
 
         # Check if submission is due (daily by default)
@@ -514,7 +533,7 @@ def collect_and_submit_analytics(config: TraigentConfig) -> None:
     """
     from traigent.utils.env_config import is_mock_llm
 
-    if not config.enable_usage_analytics or config.execution_mode not in {
+    if not usage_analytics_allowed(config) or config.execution_mode not in {
         ExecutionMode.LOCAL.value,
     }:
         return
