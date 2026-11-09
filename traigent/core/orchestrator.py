@@ -159,6 +159,7 @@ from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
 from traigent.utils.mock_provenance import MockProvenanceRecorder
 from traigent.utils.money import format_usd
+from traigent.utils.numeric_validation import validate_positive_int
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
     is_minimization_objective,
@@ -629,7 +630,12 @@ class OptimizationOrchestrator:
         self.optimizer = optimizer
         self.evaluator = evaluator
         self._max_trials = max_trials
-        self._max_total_examples = max_total_examples
+        # Store the normalised int so 3.0 behaves exactly like 3 (Traigent#2898).
+        self._max_total_examples = (
+            validate_positive_int("max_total_examples", max_total_examples)
+            if max_total_examples is not None
+            else None
+        )
         self.timeout = timeout
         self.traigent_config = config or TraigentConfig()
         self.config = kwargs

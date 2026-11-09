@@ -190,6 +190,17 @@ class TestValidateConstructorArguments:
         assert result is None
 
 
+class TestMaxTotalExamplesNormalization:
+    """Traigent#2898: integral floats are stored as ints."""
+
+    def test_integral_float_is_stored_as_int(self):
+        orchestrator = OptimizationOrchestrator(
+            MockOptimizer(), MockEvaluator(), max_total_examples=3.0
+        )
+        assert orchestrator.max_total_examples == 3
+        assert type(orchestrator.max_total_examples) is int
+
+
 class TestParallelTrialsNormalization:
     """Tests for parallel_trials validation in Initialization."""
 
