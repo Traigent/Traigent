@@ -89,7 +89,21 @@ def _chain(exc: BaseException) -> list[BaseException]:
     return seen
 
 
+def _traceback_locals_exceptions(exc: BaseException) -> list[BaseException]:
+    """Exceptions held in the locals of frames the raised error's traceback keeps."""
+    found: list[BaseException] = []
+    tb = exc.__traceback__
+    while tb is not None:
+        for value in tb.tb_frame.f_locals.values():
+            if isinstance(value, BaseException) and value is not exc:
+                found.append(value)
+        tb = tb.tb_next
+    return found
+
+
 def _assert_clean(exc: BaseException) -> None:
+    for held in _traceback_locals_exceptions(exc):
+        assert CANARY not in repr(held), type(held).__name__
     assert isinstance(exc, CloudServiceError)
     for item in _chain(exc):
         assert CANARY not in repr(item), type(item).__name__
@@ -209,6 +223,8 @@ def test_standardized_session_errors_hold_no_key(stub_url, monkeypatch, method):
     assert str(exc).startswith("Failed to")
     for item in _chain(exc):
         assert CANARY not in repr(item)
+    for held in _traceback_locals_exceptions(exc):
+        assert CANARY not in repr(held), type(held).__name__
     assert exc.__cause__ is None and exc.__context__ is None
 
 
@@ -242,4 +258,29 @@ def test_optimizer_client_response_error_holds_no_key(stub_url, status, text, ca
     assert text in str(exc)
     for item in _chain(exc):
         assert CANARY not in repr(item)
+    for held in _traceback_locals_exceptions(exc):
+        assert CANARY not in repr(held), type(held).__name__
     assert exc.__cause__ is None and exc.__context__ is None
+
+
+@pytest.mark.parametrize("handler", ["_handle_client_error", "_handle_connector_error"])
+def test_api_operations_handlers_hold_no_key(handler):
+    from traigent.cloud.api_operations import ApiOperations
+
+    err = _response_error(500)
+    with pytest.raises(CloudServiceError) as info:
+        try:
+            raise err
+        except Exception as caught:
+            getattr(ApiOperations, handler)(object(), caught)
+    exc = info.value
+    del err
+    assert exc.__cause__ is None and exc.__context__ is None
+    tb = exc.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code.co_name == handler:
+            assert not any(
+                isinstance(v, BaseException) and v is not exc
+                for v in tb.tb_frame.f_locals.values()
+            )
+        tb = tb.tb_next

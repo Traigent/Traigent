@@ -1323,12 +1323,17 @@ class ApiOperations:
     def _handle_connector_error(self, error: aiohttp.ClientConnectorError) -> None:
         """Handle aiohttp connector errors — DEBUG only."""
         logger.debug("Backend connection failed: %s", error)
+        # Drop the frame's only reference: the raised error's traceback keeps this
+        # frame (and its locals) alive for locals-capturing reporters (#3264).
+        del error
         raise_detached(CloudServiceError("Backend unavailable (connection failed)"))
 
     def _handle_client_error(self, error: aiohttp.ClientError) -> None:
         """Handle generic aiohttp client errors — DEBUG only."""
         logger.debug("Network error connecting to backend: %s", error)
-        raise_detached(CloudServiceError(f"Network error: {error}"))
+        failure = CloudServiceError(f"Network error: {error}")
+        del error  # see _handle_connector_error (#3264)
+        raise_detached(failure)
 
     def _handle_generic_session_exception(self, error: Exception) -> None:
         """Handle unexpected exceptions during session creation — DEBUG only."""
