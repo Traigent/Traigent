@@ -150,7 +150,8 @@ tracked (created elsewhere, or already closed) resolves purely against the
 client-level policy, same as a bare `start_trace()`.
 
 Deprecated boolean variables (use `TRAIGENT_OBSERVABILITY_CONTENT` instead).
-Two spellings exist, one per SDK, and both are honoured by both SDKs:
+Two spellings exist, one per SDK. The Python SDK honours both; the JS SDK
+currently honours only `TRAIGENT_OBSERVABILITY_PRIVACY_MODE`:
 `TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT` (`true` = `record`, `false` =
 `metadata`) and `TRAIGENT_OBSERVABILITY_PRIVACY_MODE` (`true` = `metadata`,
 `false` = no opinion). The most restrictive explicit setting wins; if the two
