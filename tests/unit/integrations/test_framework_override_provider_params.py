@@ -53,6 +53,32 @@ def _http_client(response_body: dict, bodies: list[dict], sdk: str = "openai"):
     return lib.Client(transport=lib.MockTransport(handler))
 
 
+@pytest.fixture(autouse=True)
+def _real_sdk_clients_with_in_process_transport(monkeypatch):
+    """Run with mock mode off so the in-process MockTransport is what answers.
+
+    The root conftest turns ``TRAIGENT_MOCK_LLM`` on for every test, and the
+    process-wide provider-host transport guard stays installed once any earlier
+    test (e.g. tests/unit/testing) has installed it. With mock mode on, the guard
+    blocks these requests to api.openai.com / api.anthropic.com before the
+    MockTransport sees them. These tests never reach the network, so turn mock
+    mode off for their duration and restore the in-code flag afterwards. The
+    guard itself is left untouched.
+    """
+    from traigent.testing import (
+        disable_mock_mode,
+        enable_mock_mode_for_quickstart,
+        is_mock_mode_enabled,
+    )
+
+    was_enabled = is_mock_mode_enabled()
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+    disable_mock_mode()
+    yield
+    if was_enabled:
+        enable_mock_mode_for_quickstart()
+
+
 @pytest.fixture
 def manager():
     mgr = FrameworkOverrideManager()
