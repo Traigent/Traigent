@@ -80,15 +80,25 @@ def test_auto_detect_tvars_mode_off_respects_explicit_configuration_space() -> N
 @pytest.mark.parametrize(
     ("min_confidence", "expected_space"),
     [
-        pytest.param("high", {"temperature": (0.0, 2.0)}, id="high"),
+        pytest.param(
+            "high",
+            {"temperature": {"type": "float", "low": 0.0, "high": 2.0}},
+            id="high",
+        ),
         pytest.param(
             "medium",
-            {"temperature": (0.0, 2.0), "model": ["gpt-4o-mini"]},
+            {
+                "temperature": {"type": "float", "low": 0.0, "high": 2.0},
+                "model": ["gpt-4o-mini"],
+            },
             id="medium",
         ),
         pytest.param(
             "low",
-            {"temperature": (0.0, 2.0), "model": ["gpt-4o-mini"]},
+            {
+                "temperature": {"type": "float", "low": 0.0, "high": 2.0},
+                "model": ["gpt-4o-mini"],
+            },
             id="low",
         ),
     ],

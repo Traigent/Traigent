@@ -125,6 +125,50 @@ def stepped_float_cardinality(low: float, high: float, step: float) -> int:
     return count
 
 
+def sample_stepped_int(rng: Any, low: int, high: int, step: int) -> int:
+    """Draw from the integer grid without materializing it.
+
+    The grid is ``low, low+step, ...`` plus the inclusive ``high`` endpoint when
+    it is off-grid. Uses one ``randrange`` call, so seeded sequences match
+    ``rng.choice`` over the materialized grid.
+    """
+
+    count = stepped_int_cardinality(low, high, step)
+    if count <= 0:
+        raise ValueError("integer range has no values")
+    index = rng.randrange(count)
+    regular = (high - low) // step + 1
+    return low + index * step if index < regular else high
+
+
+def uniform_within(rng: Any, low: float, high: float, digits: int = 6) -> float:
+    """Uniform draw rounded to ``digits``, never leaving ``[low, high]``.
+
+    The raw draw is kept when rounding would push it outside the bounds
+    (e.g. a range narrower than the rounding precision).
+    """
+
+    raw = rng.uniform(low, high)
+    rounded = round(raw, digits)
+    return float(rounded if low <= rounded <= high else raw)
+
+
+def sample_range_dict(rng: Any, definition: dict[Any, Any]) -> int | float:
+    """Sample one value from a typed ``{"low", "high", ...}`` range dict."""
+
+    low, high = definition["low"], definition["high"]
+    step = definition.get("step")
+    if str(definition.get("type", "")).lower() in _INT_TYPES:
+        return sample_stepped_int(rng, int(low), int(high), int(step or 1))
+    low_f, high_f = float(low), float(high)
+    if step is not None:
+        values = stepped_float_values(low_f, high_f, float(step))
+        if not values:
+            raise ValueError("float range has no values")
+        return float(rng.choice(values))
+    return uniform_within(rng, low_f, high_f)
+
+
 _CATEGORICAL_TYPES = {"categorical", "choice"}
 _FIXED_TYPES = {"fixed", "constant"}
 _INT_TYPES = {"int", "integer"}
