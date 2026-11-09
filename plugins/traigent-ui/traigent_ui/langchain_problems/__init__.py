@@ -6,33 +6,32 @@ that demonstrate Traigent's capabilities across different domains and use cases.
 """
 
 import logging
-from typing import Dict, List, Type
 
 from .base import BaseLangChainProblem, ProblemConfig, ProblemDefinition, ProblemMetric
 
 logger = logging.getLogger(__name__)
 
 # Problem registry - will be populated as problems are imported
-_PROBLEM_REGISTRY: Dict[str, Type[ProblemDefinition]] = {}
+_PROBLEM_REGISTRY: dict[str, type[ProblemDefinition]] = {}
 
 # Registrations made by problem modules at import time, keyed by the module's
 # full name. A cached module does not re-run its register_problem() call, so
 # load_all_problems() replays these to keep repeated loads identical.
-_MODULE_REGISTRATIONS: Dict[str, Dict[str, Type[ProblemDefinition]]] = {}
+_MODULE_REGISTRATIONS: dict[str, dict[str, type[ProblemDefinition]]] = {}
 
 
-def register_problem(name: str, problem_class: Type[ProblemDefinition]):
+def register_problem(name: str, problem_class: type[ProblemDefinition]):
     """Register a problem class with the global registry."""
     _PROBLEM_REGISTRY[name] = problem_class
     _MODULE_REGISTRATIONS.setdefault(problem_class.__module__, {})[name] = problem_class
 
 
-def get_available_problems() -> List[str]:
+def get_available_problems() -> list[str]:
     """Get list of available problem names."""
     return list(_PROBLEM_REGISTRY.keys())
 
 
-def get_problem_class(name: str) -> Type[ProblemDefinition]:
+def get_problem_class(name: str) -> type[ProblemDefinition]:
     """Get problem class by name."""
     if name not in _PROBLEM_REGISTRY:
         raise ValueError(
