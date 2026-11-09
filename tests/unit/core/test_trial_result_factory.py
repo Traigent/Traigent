@@ -1026,3 +1026,22 @@ def test_latency_primary_objective_without_timing_stays_ineligible():
 
     assert comp["examples_with_primary_metric"] == 0
     assert "MCI-004" in comp["warning_codes"]
+
+
+def test_latency_primary_objective_ignores_zero_filled_untimed_row():
+    from types import SimpleNamespace
+
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    examples = [
+        SimpleNamespace(metrics={"latency": 0.0}, execution_time=0.0),
+        SimpleNamespace(metrics={"latency": 120.0}, execution_time=0.12),
+    ]
+    eval_result = SimpleNamespace(
+        total_examples=2, example_results=examples, metrics={}
+    )
+
+    comp = _build_fallback_comparability(eval_result, "latency")
+
+    assert comp["examples_with_primary_metric"] == 1
+    assert comp["ranking_eligible"] is False

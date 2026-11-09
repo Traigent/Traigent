@@ -252,11 +252,17 @@ def _count_primary_objective_rows(
         metrics = getattr(example_result, "metrics", {}) or {}
         if not isinstance(metrics, dict):
             continue
-        if any(
-            isinstance(metrics.get(name), (int, float))
-            and not isinstance(metrics.get(name), bool)
-            for name in names
-        ) or (primary_objective == "latency" and _was_timed(example_result)):
+        if primary_objective == "latency":
+            # Only timed rows feed the latency average; a zero-filled
+            # ``latency`` on a failed row is not a measurement.
+            covered = _was_timed(example_result)
+        else:
+            covered = any(
+                isinstance(metrics.get(name), (int, float))
+                and not isinstance(metrics.get(name), bool)
+                for name in names
+            )
+        if covered:
             count += 1
     return count
 
