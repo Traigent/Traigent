@@ -114,8 +114,12 @@ def create_traigent_config(
     result_source: str | None = None,
     fallback_reason: str | None = None,
     persistence_status: str | None = None,
+    enable_usage_analytics: bool | None = None,
 ) -> TraigentConfig:
     """Create TraigentConfig for the optimization run.
+
+    ``enable_usage_analytics`` defaults to the global ``traigent.initialize()``
+    setting when one was made; an explicit value wins over it (#3184).
 
     Args:
         execution_mode: Execution mode string
@@ -126,7 +130,15 @@ def create_traigent_config(
     Returns:
         Configured TraigentConfig instance
     """
+    if enable_usage_analytics is None:
+        from traigent.api.functions import _GLOBAL_CONFIG
+
+        global_value = _GLOBAL_CONFIG.get("enable_usage_analytics")
+        enable_usage_analytics = (
+            global_value if isinstance(global_value, bool) else True
+        )
     return TraigentConfig(
+        enable_usage_analytics=enable_usage_analytics,
         execution_mode=cast(
             Literal[
                 "local",
