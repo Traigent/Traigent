@@ -1045,3 +1045,76 @@ def test_latency_primary_objective_ignores_zero_filled_untimed_row():
 
     assert comp["examples_with_primary_metric"] == 1
     assert comp["ranking_eligible"] is False
+
+
+def test_selection_aggregate_latency_is_not_full_coverage_with_untimed_row():
+    from types import SimpleNamespace
+
+    from traigent.core.result_selection import _resolve_primary_coverage
+
+    class _Trial:
+        metrics = {"latency": 60.0}
+        metadata = {
+            "example_results": [
+                SimpleNamespace(execution_time=0.12),
+                SimpleNamespace(execution_time=0.0),
+            ]
+        }
+
+        def get_metric(self, name, default=None):
+            return self.metrics.get(name, default)
+
+    comparability = {"primary_objective": "accuracy", "total_examples": 2}
+
+    assert _resolve_primary_coverage(_Trial(), comparability, "latency") == (1, 2, 0.5)
+
+
+def test_selection_aggregate_latency_without_rows_is_not_full_coverage():
+    from traigent.core.result_selection import _resolve_primary_coverage
+
+    class _Trial:
+        metrics = {"latency": 60.0}
+        metadata: dict = {}
+
+        def get_metric(self, name, default=None):
+            return self.metrics.get(name, default)
+
+    comparability = {"primary_objective": "accuracy", "total_examples": 2}
+
+    present, total, ratio = _resolve_primary_coverage(
+        _Trial(), comparability, "latency"
+    )
+    assert (present, ratio) == (0, 0.0)
+
+
+def test_no_ranking_eligible_trial_logs_warning_with_reason(caplog):
+    import logging
+
+    from traigent.api.types import TrialResult
+    from traigent.core.result_selection import select_best_configuration
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    comp = _build_fallback_comparability(
+        _eval_with_example_metrics([{"accuracy": 1.0}]), "cost"
+    )
+    trial = TrialResult(
+        trial_id="t0",
+        config={"x": 0},
+        metrics={"cost": 0.01},
+        status=TrialStatus.COMPLETED,
+        duration=0.1,
+        timestamp=__import__("datetime").datetime.now(UTC),
+        metadata={"comparability": comp},
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = select_best_configuration(
+            trials=[trial],
+            primary_objective="cost",
+            config_space_keys={"x"},
+            aggregate_configs=False,
+        )
+
+    assert not result.best_config
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("'cost'" in m and "MCI-004" in m for m in messages)
