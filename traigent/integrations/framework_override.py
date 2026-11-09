@@ -26,6 +26,7 @@ import importlib
 import inspect
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager, contextmanager
+from types import SimpleNamespace
 from typing import Any, cast, get_type_hints
 
 from ..config.context import get_config
@@ -114,6 +115,18 @@ except ImportError:
 #: carry ``usage`` (Traigent#2441).
 _OPENAI_USAGE_TARGETS = frozenset({_OPENAI_CLIENT_PATH, _OPENAI_ASYNC_CLIENT_PATH})
 
+#: Raw Anthropic clients: ``messages.create`` returns a ``Message`` carrying
+#: ``usage`` (Traigent#3250).
+_ANTHROPIC_USAGE_TARGETS = frozenset(
+    {"anthropic.Anthropic", "anthropic.AsyncAnthropic"}
+)
+
+#: Provider name handed to the capture hook, per usage-bearing framework target.
+_USAGE_PROVIDER_BY_TARGET: dict[str, str] = {
+    **dict.fromkeys(_OPENAI_USAGE_TARGETS, "openai"),
+    **dict.fromkeys(_ANTHROPIC_USAGE_TARGETS, "anthropic"),
+}
+
 
 def _unwrap_raw_openai_response(response: Any) -> Any:
     """Return the parsed object behind a ``with_raw_response`` result.
@@ -133,7 +146,20 @@ def _unwrap_raw_openai_response(response: Any) -> Any:
 
 
 def _capture_openai_usage(response: Any, call_kwargs: dict[str, Any]) -> None:
-    """Record a raw OpenAI SDK response so the trial is charged for it.
+    """Record a raw OpenAI SDK response so the trial is charged for it."""
+    _capture_provider_usage(response, call_kwargs, "openai")
+
+
+def _capture_provider_usage(
+    response: Any,
+    call_kwargs: dict[str, Any],
+    provider: str,
+    *,
+    record_unmeasured: bool = False,
+) -> None:
+    """Record a raw provider SDK response so the trial is charged for it.
+
+    Shared by the raw OpenAI and raw Anthropic (``messages.create``) paths.
 
     Only a response that carries ``usage`` is recorded: without it there is
     nothing to measure, and recording it would let the legacy text-length
@@ -146,13 +172,22 @@ def _capture_openai_usage(response: Any, call_kwargs: dict[str, Any]) -> None:
     ``chat.completions.create``/``parse`` (also reached through
     ``beta.chat.completions`` and ``with_raw_response``) and
     ``responses.create``/``parse``. Never raises into the caller's LLM call.
+
+    With ``record_unmeasured`` (raw Anthropic) a call that has no usage, or a
+    streaming call, is still recorded as a usage-less marker: the evaluator
+    then knows the example contains an unknown spend and keeps its cost
+    unknown even when another call in the same example was measured. The
+    marker carries no tokens, so nothing is estimated from text length.
     """
-    if call_kwargs.get("stream"):
+    streaming = bool(call_kwargs.get("stream"))
+    if streaming and not record_unmeasured:
         return
     try:
         response = _unwrap_raw_openai_response(response)
-        if getattr(response, "usage", None) is None:
-            return
+        if streaming or getattr(response, "usage", None) is None:
+            if not record_unmeasured:
+                return
+            response = SimpleNamespace(usage=None)
         from traigent.utils.langchain_interceptor import (
             capture_observed_response,
             inside_instrumented_provider_call,
@@ -162,11 +197,78 @@ def _capture_openai_usage(response: Any, call_kwargs: dict[str, Any]) -> None:
             return
         capture_observed_response(
             response,
-            provider="openai",
+            provider=provider,
             requested_model=call_kwargs.get("model"),
         )
     except Exception:  # noqa: BLE001 - capture is best-effort metadata
-        logger.debug("Could not capture OpenAI response usage", exc_info=True)
+        logger.debug("Could not capture %s response usage", provider, exc_info=True)
+
+
+def _finished_stream_message(stream: Any) -> Any | None:
+    """The accumulated Anthropic message of a stream that ran to completion.
+
+    ``stop_reason`` is set by the final ``message_delta`` event, the same event
+    that carries the final ``usage``; before it the snapshot holds partial
+    token counts, which must not be charged. Reads the snapshot only: it never
+    pulls more bytes off the wire (``get_final_message`` would).
+    """
+    try:
+        message = stream.current_message_snapshot
+    except Exception:  # noqa: BLE001 - no snapshot yet: nothing was streamed
+        return None
+    if getattr(message, "stop_reason", None) is None:
+        return None
+    return message
+
+
+class _AnthropicStreamManagerCapture:
+    """Proxy for ``messages.stream(...)``'s context manager that records usage.
+
+    The usage of a streamed message is only known once the stream is consumed,
+    so it is recorded when the ``with`` block exits, from the final message.
+    A stream abandoned part-way (no ``stop_reason``) stays unmeasured.
+    """
+
+    def __init__(self, manager: Any, call_kwargs: dict[str, Any]) -> None:
+        self._manager = manager
+        self._call_kwargs = call_kwargs
+        self._stream: Any = None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._manager, name)
+
+    def _record(self) -> None:
+        if self._stream is None:
+            return
+        # An unfinished stream is billed for what was generated but its final
+        # usage never arrived: record it as an unmeasured call.
+        message = _finished_stream_message(self._stream)
+        _capture_provider_usage(
+            message,
+            self._call_kwargs,
+            "anthropic",
+            record_unmeasured=True,
+        )
+
+    def __enter__(self) -> Any:
+        self._stream = self._manager.__enter__()
+        return self._stream
+
+    def __exit__(self, *exc_info: Any) -> Any:
+        try:
+            return self._manager.__exit__(*exc_info)
+        finally:
+            self._record()
+
+    async def __aenter__(self) -> Any:
+        self._stream = await self._manager.__aenter__()
+        return self._stream
+
+    async def __aexit__(self, *exc_info: Any) -> Any:
+        try:
+            return await self._manager.__aexit__(*exc_info)
+        finally:
+            self._record()
 
 
 def _constructor_keyword_names(
@@ -193,12 +295,19 @@ def _constructor_keyword_names(
     return frozenset(names)
 
 
+def _record_usage(response: Any, call_kwargs: dict[str, Any], provider: str) -> None:
+    if provider == "openai":
+        _capture_openai_usage(response, call_kwargs)
+    else:
+        _capture_provider_usage(response, call_kwargs, provider, record_unmeasured=True)
+
+
 async def _capture_openai_usage_when_awaited(
-    pending: Any, call_kwargs: dict[str, Any]
+    pending: Any, call_kwargs: dict[str, Any], provider: str = "openai"
 ) -> Any:
-    """Await an async OpenAI call, then record its usage like the sync path."""
+    """Await an async provider call, then record its usage like the sync path."""
     response = await pending
-    _capture_openai_usage(response, call_kwargs)
+    _record_usage(response, call_kwargs, provider)
     return response
 
 
@@ -417,17 +526,26 @@ class FrameworkOverrideManager(BaseOverrideManager):
         # Raw OpenAI SDK responses carry ``usage``; record it for the trial's
         # cost/token metrics (Traigent#2441). Other frameworks are captured
         # by their own interceptors, or not at all.
-        capture_usage = class_name in _OPENAI_USAGE_TARGETS
+        usage_provider = _USAGE_PROVIDER_BY_TARGET.get(class_name)
+        stream_manager_method = (
+            usage_provider == "anthropic" and method_name == "messages.stream"
+        )
 
         def finish(response: Any, call_kwargs: dict[str, Any]) -> Any:
-            if not capture_usage:
+            if usage_provider is None:
                 return response
+            if stream_manager_method:
+                # ``messages.stream`` returns a context manager; usage is read
+                # from its final message when the ``with`` block exits.
+                return _AnthropicStreamManagerCapture(response, call_kwargs)
             if inspect.isawaitable(response):
                 # ``AsyncCompletions.create`` is a plain function (wrapped by
                 # the SDK's ``required_args``) that returns a coroutine, so
                 # the sync wrapper sees the coroutine, not the completion.
-                return _capture_openai_usage_when_awaited(response, call_kwargs)
-            _capture_openai_usage(response, call_kwargs)
+                return _capture_openai_usage_when_awaited(
+                    response, call_kwargs, usage_provider
+                )
+            _record_usage(response, call_kwargs, usage_provider)
             return response
 
         def call_kwargs_for(kwargs: dict[str, Any]) -> dict[str, Any]:
