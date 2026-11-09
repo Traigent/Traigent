@@ -20,5 +20,8 @@ filelock>=4.2.1,<5           # CVE-2026-112940/112913/112907; transitive via lit
 tenacity>=8.1.0
 rank-bm25
 psutil>=5.8.0
+pyyaml>=6.0                   # imported directly (#3169); was only transitive via traigent-schema
+packaging>=23.0              # imported directly (#3169); was only transitive via litellm
+urllib3>=2.8.0               # imported directly (#3169); was only transitive via requests
 pydantic>=2.0.0
 traigent-schema==7.1.0
