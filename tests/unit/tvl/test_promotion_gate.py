@@ -919,7 +919,7 @@ class TestChanceConstraintFailsClosedWithoutScipy:
     keeps the objective (non-inferiority/superiority) path working on a core,
     no-scipy install via the pure-python paired test, but the exact beta
     Clopper-Pearson quantile has no reliable pure-python implementation:
-    ``statistics._beta_quantile_approx`` clamps to ``0.001`` on
+    the former ``statistics._beta_quantile_approx`` (since replaced by an exact bisection) clamped to ``0.001`` on
     high-violation / high-confidence inputs and would silently UNDER-estimate
     the violation-rate upper bound, flipping a chance-constraint verdict to
     "promote" when it must reject. So when scipy is unavailable AND a chance

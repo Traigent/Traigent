@@ -343,27 +343,6 @@ def _log_beta(a: float, b: float) -> float:
     return math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
 
 
-def _beta_pdf(x: float, a: float, b: float) -> float:
-    """Beta distribution PDF.
-
-    Args:
-        x: Point to evaluate.
-        a: First shape parameter.
-        b: Second shape parameter.
-
-    Returns:
-        PDF value at x.
-    """
-    if x <= 0 or x >= 1:
-        return 0.0
-
-    try:
-        log_pdf = (a - 1) * math.log(x) + (b - 1) * math.log(1 - x) - _log_beta(a, b)
-        return math.exp(log_pdf)
-    except (ValueError, OverflowError):
-        return 0.0
-
-
 def paired_comparison_test(
     x_samples: Sequence[float],
     y_samples: Sequence[float],
@@ -534,55 +513,58 @@ def _compute_test_statistics(
 
 
 def _t_cdf_lower(t: float, df: int) -> float:
-    """Lower tail probability P(T <= t)."""
-    return _t_cdf_approx(t, df)
+    """Lower tail probability P(T <= t), computed directly (no 1 - upper)."""
+    return _t_sf(-t, df)
 
 
 def _t_cdf_upper(t: float, df: int) -> float:
-    """Upper tail probability P(T >= t) = 1 - P(T <= t)."""
-    return 1.0 - _t_cdf_approx(t, df)
+    """Upper tail probability P(T >= t), computed directly (never as 1 - CDF)."""
+    return _t_sf(t, df)
 
 
 def _t_cdf_approx(t: float, df: int) -> float:
-    """Compute CDF of t-distribution using regularized incomplete beta.
+    """CDF of the t-distribution, P(T <= t), exact for every ``df``.
 
-    The t-distribution CDF is related to the regularized incomplete beta:
-    F(t; df) = 1 - 0.5 * I_x(df/2, 0.5) where x = df/(df + t^2) for t > 0
-    F(t; df) = 0.5 * I_x(df/2, 0.5) where x = df/(df + t^2) for t < 0
+    Equal to the lower tail; use :func:`_t_cdf_upper` for upper-tail p-values,
+    since ``1 - _t_cdf_approx`` loses the tail to rounding (#3223).
+    """
+    return _t_sf(-t, df)
 
-    Args:
-        t: t-statistic value.
-        df: Degrees of freedom.
 
-    Returns:
-        Cumulative probability P(T <= t).
+def _t_sf(t: float, df: int) -> float:
+    """Survival function P(T >= t) of Student's t with ``df`` degrees of freedom.
+
+    Uses :func:`scipy.stats.t.sf` when scipy is importable. Otherwise it uses
+    ``sf(t) = 0.5 * I_x(df / 2, 1 / 2)`` with ``x = df / (df + t**2)`` for
+    ``t > 0`` (and ``1`` minus that for ``t < 0``) on the regularized incomplete
+    beta, for every ``df`` -- there is no normal-approximation switch, and the
+    tail is never obtained as ``1 - CDF`` so it neither loses precision nor
+    underflows to 0.0 before the true value does (#3223).
     """
     if df <= 0:
         return 0.5
-
-    # Handle infinities
     if t == float("inf"):
-        return 1.0
-    if t == float("-inf"):
         return 0.0
-
-    # For large df, use normal approximation
-    if df > 100:
-        return _normal_cdf(t)
-
-    # For t = 0, CDF is exactly 0.5
-    if abs(t) < 1e-15:
+    if t == float("-inf"):
+        return 1.0
+    if t == 0:
         return 0.5
-
-    # Use relationship with regularized incomplete beta function
-    # F(t; df) = I_{x}(df/2, 1/2) where x = df/(df + t^2) for lower tail
-    x = df / (df + t * t)
-    beta_val = _regularized_beta(x, df / 2.0, 0.5)
-
-    if t > 0:
-        return 1.0 - 0.5 * beta_val
-    else:
-        return 0.5 * beta_val
+    if abs(t) > 1e100:
+        # t * t would overflow and scipy returns 0.0 for a representable tail.
+        # For x = df / (df + t**2) -> 0, I_x(a, 1/2) ~ x**a / (a * B(a, 1/2)).
+        a = df / 2.0
+        log_tail = (
+            math.log(0.5)
+            + a * (math.log(df) - 2.0 * math.log(abs(t)))
+            - math.log(a)
+            - _log_beta(a, 0.5)
+        )
+        tail = math.exp(log_tail) if log_tail > -745 else 0.0
+        return tail if t > 0 else 1.0 - tail
+    if _scipy_stats is not None:
+        return float(_scipy_stats.t.sf(t, df))
+    tail = 0.5 * _regularized_beta(df / (df + t * t), df / 2.0, 0.5)
+    return tail if t > 0 else 1.0 - tail
 
 
 def _normal_cdf(x: float) -> float:
