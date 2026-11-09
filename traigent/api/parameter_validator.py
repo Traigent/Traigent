@@ -7,6 +7,7 @@ Traceability: CONC-Layer-API CONC-Quality-Reliability CONC-Quality-Usability CON
 """
 
 import logging
+import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any
@@ -160,7 +161,7 @@ class ParameterValidator:
         if eval_dataset is None:
             return
 
-        if isinstance(eval_dataset, (str, Dataset)):
+        if isinstance(eval_dataset, (str, os.PathLike, Dataset)):
             return
 
         if isinstance(eval_dataset, Sequence) and not isinstance(

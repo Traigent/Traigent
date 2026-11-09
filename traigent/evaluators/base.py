@@ -1015,7 +1015,7 @@ def _parse_jsonl_examples(resolved_path: Path, source: str) -> list[EvaluationEx
     examples: list[EvaluationExample] = []
 
     try:
-        with resolved_path.open(encoding="utf-8") as handle:
+        with resolved_path.open(encoding="utf-8-sig") as handle:
             for line_num, line in enumerate(handle, 1):
                 text = line.strip()
                 if not text:
@@ -1086,7 +1086,7 @@ def _parse_json_dataset(
     resolved_path: Path, source: str
 ) -> tuple[list[EvaluationExample], str | None, str | None, dict[str, Any] | None]:
     try:
-        with resolved_path.open(encoding="utf-8") as handle:
+        with resolved_path.open(encoding="utf-8-sig") as handle:
             data = json.load(handle)
     except json.JSONDecodeError as exc:
         raise ValidationError(f"Invalid JSON in {source}: {exc}") from exc
@@ -1281,7 +1281,7 @@ class Dataset:
             seen_example_ids[example_id] = i
 
     @classmethod
-    def from_jsonl(cls, file_path: str) -> Dataset:
+    def from_jsonl(cls, file_path: str | os.PathLike[str]) -> Dataset:
         """Load dataset from JSONL file.
 
         Args:
@@ -1293,6 +1293,12 @@ class Dataset:
         Raises:
             ValidationError: If file format is invalid
         """
+        if not isinstance(file_path, (str, os.PathLike)):
+            raise ValidationError(
+                "file_path must be a str or os.PathLike, "
+                f"got {type(file_path).__name__}"
+            )
+        file_path = os.fspath(file_path)
         resolved_path, registry_entry = _resolve_dataset_source(file_path)
 
         # Additional security: Check file extension

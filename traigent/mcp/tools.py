@@ -594,10 +594,10 @@ def scaffold_eval_tool(
 
 def _count_dataset_examples(path: Path) -> int:
     if path.suffix == ".jsonl":
-        with path.open(encoding="utf-8") as handle:
+        with path.open(encoding="utf-8-sig") as handle:
             return sum(1 for line in handle if line.strip())
 
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
     if isinstance(payload, list):
         return len(payload)
     if isinstance(payload, dict) and isinstance(payload.get("examples"), list):

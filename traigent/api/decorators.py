@@ -186,6 +186,14 @@ class EvaluationOptions(BaseModel):
     #: overrides this decorator value.
     surrogate_evaluator_name: str | None = None
 
+    @field_validator("eval_dataset", mode="before")
+    @classmethod
+    def _eval_dataset_path_to_str(cls, value: Any) -> Any:
+        """Accept ``pathlib.Path`` (any ``os.PathLike``) like a str path (#3199)."""
+        if isinstance(value, os.PathLike):
+            return os.fspath(value)
+        return value
+
     @field_validator("dataset_id", mode="before")
     @classmethod
     def validate_dataset_id(cls, value: Any) -> str | None:
