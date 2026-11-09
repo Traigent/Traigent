@@ -2646,6 +2646,11 @@ class OptimizedFunction[**P, R]:
         algorithm_kwargs: dict[str, Any],
     ) -> OptimizationResult:
         """Body of :meth:`optimize` for one advancing run."""
+        # #3195: fail before the first trial, not after the last one, and before
+        # any per-call state (objective schema, TVL options) is installed.
+        _preflight_save_to(
+            save_to if save_to is not None else getattr(self, "save_to", None)
+        )
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
         # Per-call dataset (#2541): resolved before any run state changes, so a bad
@@ -2701,12 +2706,6 @@ class OptimizedFunction[**P, R]:
             sample_config = self._representative_seamless_config(configuration_space)
             if sample_config:
                 self._provider.assert_injectable(self.func, sample_config)
-
-        # #3195: fail before the first trial, not after the last one, and before
-        # any per-call state (objective schema) is installed.
-        _preflight_save_to(
-            save_to if save_to is not None else getattr(self, "save_to", None)
-        )
 
         original_schema = self.objective_schema
         runtime_objective_input = (
