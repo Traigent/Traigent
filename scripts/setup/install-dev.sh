@@ -45,7 +45,7 @@ pytest tests/ -v
 
 # Check code quality
 echo "🔍 Running code quality checks..."
-black --check traigent tests examples
+ruff format --check traigent tests examples
 isort --check-only traigent tests examples
 flake8 traigent tests examples
 mypy traigent
@@ -59,7 +59,7 @@ echo ""
 echo "🎯 Next steps:"
 echo "  1. Activate the virtual environment: source venv/bin/activate"
 echo "  2. Run tests: pytest"
-echo "  3. Check code style: black traigent tests"
+echo "  3. Check code style: ruff format traigent tests"
 echo "  4. Try the example: python examples/basic_optimization.py"
 echo "  5. Verify tokencost: python scripts/verify_tokencost_integration.py"
 echo "  6. Start developing! 🚀"

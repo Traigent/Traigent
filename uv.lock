@@ -5758,7 +5758,6 @@ deepeval = [
 ]
 dev = [
     { name = "bandit" },
-    { name = "black" },
     { name = "flake8" },
     { name = "hypothesis" },
     { name = "isort" },
@@ -5993,7 +5992,6 @@ requires-dist = [
     { name = "azure-storage-blob", marker = "extra == 'snapshot-azure'", specifier = ">=12.20.0" },
     { name = "backoff", specifier = ">=2.2.0" },
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7.0" },
-    { name = "black", marker = "extra == 'dev'", specifier = ">=26.10.1" },
     { name = "boto3", marker = "extra == 'cloud'", specifier = ">=1.28.0" },
     { name = "boto3", marker = "extra == 'integrations'", specifier = ">=1.28.0" },
     { name = "boto3", marker = "extra == 'snapshot-s3'", specifier = ">=1.35.2" },

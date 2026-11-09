@@ -216,7 +216,7 @@ def mock_successful_install() -> MockSubprocess:
     mock.set_output("pytest tests/ -v", "All tests passed")
 
     # Code quality
-    mock.set_output("black --check traigent tests examples", "All files formatted")
+    mock.set_output("ruff format --check traigent tests examples", "All files formatted")
     mock.set_output("isort --check-only traigent tests examples", "All imports sorted")
     mock.set_output("flake8 traigent tests examples", "No issues found")
     mock.set_output("mypy traigent", "Success: no issues found")

@@ -38,7 +38,7 @@ def analyze_script_coverage(
         "package_install": False,
         "precommit_install": False,
         "run_tests": False,
-        "black_check": False,
+        "format_check": False,
         "isort_check": False,
         "flake8_check": False,
         "mypy_check": False,
@@ -84,8 +84,8 @@ def analyze_script_coverage(
 
     # Check for code quality tests
     if "test_code_quality_checks" in test_content:
-        if "black" in test_content:
-            coverage_map["black_check"] = True
+        if "ruff" in test_content:
+            coverage_map["format_check"] = True
         if "isort" in test_content:
             coverage_map["isort_check"] = True
         if "flake8" in test_content:
