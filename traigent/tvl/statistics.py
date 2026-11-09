@@ -15,6 +15,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+try:  # scipy ships only in the optional ``[bayesian]`` extra
+    from scipy import stats as _scipy_stats
+except ImportError:  # pragma: no cover - exercised by hiding scipy in tests
+    _scipy_stats = None  # type: ignore[assignment]
+
 
 @dataclass(slots=True)
 class PairedComparisonResult:
@@ -142,15 +147,19 @@ def clopper_pearson_lower_bound(
     trials: int,
     confidence: float,
 ) -> float:
-    """Compute binomial confidence interval lower bound.
+    """Compute the exact Clopper-Pearson lower confidence bound.
 
-    For small samples (n < 30), uses exact Clopper-Pearson method via beta
-    quantile. For large samples (n >= 30), uses Wilson score interval which
-    provides a good approximation with better computational stability.
+    The bound is the ``(1 - confidence) / 2`` quantile of
+    ``Beta(successes, trials - successes + 1)`` at every ``trials`` (the
+    two-sided convention). With scipy installed (the ``[bayesian]`` extra) the
+    quantile comes from :func:`scipy.stats.beta.ppf`; without it a bisection on
+    the regularized incomplete beta (:func:`_beta_quantile`) gives the same
+    value to about 1e-12 relative accuracy for practical sample sizes. ``successes == 0`` returns 0.0 and
+    ``successes == trials`` is the closed form ``(alpha/2) ** (1/trials)``.
 
-    Note: Wilson intervals may be slightly less conservative than exact
-    Clopper-Pearson for borderline cases. For strict safety-critical
-    applications requiring exact bounds, consider using scipy.stats.
+    Earlier versions used a Wilson interval for ``trials >= 30`` (looser than
+    exact at small counts, e.g. 1/40 at 95%: 0.004425 vs 0.000633) and a
+    non-converging Newton iteration for ``trials < 30`` (#3222, #3051).
 
     Args:
         successes: Number of successes (non-negative).
@@ -172,33 +181,19 @@ def clopper_pearson_lower_bound(
     if confidence <= 0 or confidence >= 1:  # NOSONAR - defensive validation
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
 
-    # Special cases
     if successes == 0:
         return 0.0
 
-    alpha = 1 - confidence
+    tail = (1 - confidence) / 2
     k = successes
     n = trials
+    if k == n:
+        # Beta(n, 1) has CDF x**n, so the quantile is exact in closed form.
+        return float(tail ** (1.0 / n))
 
-    # For small samples, use exact Clopper-Pearson via beta quantile
-    # For large samples, use Wilson score interval for computational efficiency
-    # Wilson is accurate and more stable for large n
-
-    if n < 30:
-        # Exact Clopper-Pearson: beta.ppf(alpha/2, k, n-k+1)
-        return _beta_quantile_approx(alpha / 2, k, n - k + 1)
-    else:
-        # Wilson score interval lower bound
-        # For lower bound, we need the (1-alpha/2) quantile (positive z)
-        z = _inverse_normal_cdf(1 - alpha / 2)
-        p_hat = k / n
-
-        denominator = 1 + z * z / n
-        center = (p_hat + z * z / (2 * n)) / denominator
-        margin = z * math.sqrt(p_hat * (1 - p_hat) / n + z * z / (4 * n * n))
-        margin = margin / denominator
-
-        return max(0.0, center - margin)
+    if _scipy_stats is not None:
+        return float(_scipy_stats.beta.ppf(tail, k, n - k + 1))
+    return _beta_quantile(tail, k, n - k + 1)
 
 
 def _inverse_normal_cdf(p: float) -> float:
@@ -231,51 +226,31 @@ def _inverse_normal_cdf(p: float) -> float:
     )
 
 
-def _beta_quantile_approx(p: float, alpha: float, beta: float) -> float:
-    """Approximate beta distribution quantile.
+def _beta_quantile(p: float, a: float, b: float) -> float:
+    """Beta quantile by bisection on the regularized incomplete beta.
 
-    Uses Newton-Raphson iteration with a normal approximation as starting point.
-
-    Args:
-        p: Probability (quantile level).
-        alpha: First shape parameter.
-        beta: Second shape parameter.
+    I_x(a, b) is strictly increasing in x, so bisection on (0, 1) converges
+    monotonically. Stops when the bracket is below 1e-13 of its upper end (relative, so
+    extreme tails stay accurate) or after 200 halvings, so it always terminates.
 
     Returns:
-        x such that P(X <= x) = p for X ~ Beta(alpha, beta).
+        x such that P(X <= x) = p for X ~ Beta(a, b).
     """
     if p <= 0:
         return 0.0
     if p >= 1:  # NOSONAR - defensive boundary check
         return 1.0
 
-    # Use normal approximation for starting point
-    mean = alpha / (alpha + beta)
-    var = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1))
-    std = math.sqrt(var)
-
-    # Initial estimate using normal approximation
-    z = _inverse_normal_cdf(p)
-    x = max(0.001, min(0.999, mean + z * std))
-
-    # Newton-Raphson refinement (limited iterations)
-    for _ in range(10):
-        # Compute beta CDF at x using regularized incomplete beta
-        fx = _regularized_beta(x, alpha, beta) - p
-        if abs(fx) < 1e-10:
+    lo, hi = 0.0, 1.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if _regularized_beta(mid, a, b) < p:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo <= 1e-13 * hi:
             break
-
-        # Compute beta PDF at x
-        fpx = _beta_pdf(x, alpha, beta)
-        if fpx < 1e-15:
-            break
-
-        # Newton step with damping
-        step = fx / fpx
-        x = x - 0.5 * step  # Damped step for stability
-        x = max(0.001, min(0.999, x))
-
-    return x
+    return 0.5 * (lo + hi)
 
 
 def _compute_beta_coefficient(x: float, a: float, b: float) -> float:
@@ -335,7 +310,7 @@ def _regularized_beta(x: float, a: float, b: float) -> float:
     d = 1.0 / d
     h = d
 
-    for m in range(1, 100):
+    for m in range(1, 10000):
         m2 = 2 * m
         # Even step
         aa_even = m * (b - m) * x / ((a + m2 - 1) * (a + m2))
