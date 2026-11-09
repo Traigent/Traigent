@@ -279,6 +279,8 @@ class TestCreateAppRoutes:
         """Test POST execute endpoint."""
         request_body = json.dumps(
             {
+                "request_id": "550e8400-e29b-41d4-a716-446655440000",
+                "tunable_id": "test_svc",
                 "config": {"model": "gpt-4"},
                 "examples": [{"example_id": "i1", "data": {"q": "hi"}}],
             }
@@ -300,6 +302,8 @@ class TestCreateAppRoutes:
         """Test POST evaluate endpoint."""
         request_body = json.dumps(
             {
+                "request_id": "550e8400-e29b-41d4-a716-446655440000",
+                "tunable_id": "test_svc",
                 "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
             }
         ).encode()
@@ -429,7 +433,14 @@ class TestCreateAppErrorHandling:
         # No execute handler -> handle_execute raises ValueError
         app = create_app(svc)
         send = _SendCollector()
-        request_body = json.dumps({"examples": []}).encode()
+        request_body = json.dumps(
+            {
+                "request_id": "550e8400-e29b-41d4-a716-446655440000",
+                "tunable_id": "default",
+                "config": {},
+                "examples": [],
+            }
+        ).encode()
         await app(
             _make_scope("POST", EXECUTE_PATH),
             _make_receive(request_body),
@@ -458,7 +469,7 @@ class TestCreateAppErrorHandling:
 
     @pytest.mark.asyncio
     async def test_empty_body_returns_400_examples_error(self) -> None:
-        """Empty execute payloads should fail because examples are missing."""
+        """Empty execute payloads should fail because request_id is missing."""
         svc = TraigentService()
 
         @svc.execute
@@ -474,7 +485,7 @@ class TestCreateAppErrorHandling:
         )
         assert send.status == 400
         assert send.body_json["error"]["code"] == "INVALID_REQUEST"
-        assert "examples" in send.body_json["error"]["message"]
+        assert "request_id" in send.body_json["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_evaluate_without_benchmark_id_succeeds(self) -> None:
@@ -489,9 +500,11 @@ class TestCreateAppErrorHandling:
         send = _SendCollector()
         request_body = json.dumps(
             {
+                "request_id": "550e8400-e29b-41d4-a716-446655440000",
+                "tunable_id": "default",
                 "evaluations": [
                     {"example_id": "e1", "output": "a", "target": "a"},
-                ]
+                ],
             }
         ).encode()
         await app(
@@ -716,7 +729,9 @@ class TestErrorHandling:
         app = create_app(svc)
         request_body = json.dumps(
             {
+                "request_id": "550e8400-e29b-41d4-a716-446655440000",
                 "tunable_id": "default",
+                "config": {},
                 "examples": [{"example_id": "i1", "data": {}}],
             }
         ).encode()
@@ -748,7 +763,9 @@ class TestErrorHandling:
         app = create_app(svc)
         request_body = json.dumps(
             {
+                "request_id": "550e8400-e29b-41d4-a716-446655440000",
                 "tunable_id": "default",
+                "config": {},
                 "timeout_ms": 1000,  # 1 second timeout
                 "examples": [{"example_id": "i1", "data": {}}],
             }
@@ -780,6 +797,7 @@ class TestErrorHandling:
         app = create_app(svc)
         request_body = json.dumps(
             {
+                "request_id": "550e8400-e29b-41d4-a716-446655440000",
                 "tunable_id": "default",
                 "timeout_ms": 1000,  # 1 second timeout
                 "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
@@ -811,7 +829,9 @@ class TestErrorHandling:
         app = create_app(svc)
         request_body = json.dumps(
             {
+                "request_id": "550e8400-e29b-41d4-a716-446655440000",
                 "tunable_id": "default",
+                "config": {},
                 "examples": [{"example_id": "i1", "data": {}}],
             }
         ).encode()
