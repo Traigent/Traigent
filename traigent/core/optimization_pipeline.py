@@ -34,6 +34,7 @@ from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import validate_positive_int
 from traigent.utils.validation import validate_config_space
 
 if TYPE_CHECKING:
@@ -197,6 +198,10 @@ def prepare_optimization_dataset(
     max_total_examples_value = algorithm_kwargs.pop("max_total_examples", None)
     if max_total_examples_value is None:
         max_total_examples_value = max_total_examples
+    if max_total_examples_value is not None:
+        max_total_examples_value = validate_positive_int(
+            "max_total_examples", max_total_examples_value
+        )
 
     samples_include_pruned_value = algorithm_kwargs.pop("samples_include_pruned", None)
     if samples_include_pruned_value is None:

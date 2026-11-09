@@ -449,7 +449,9 @@ class TestModuleValidateConstructorArguments:
 
     def test_negative_max_total_examples_raises_value_error(self):
         """Test that negative max_total_examples raises ValueError."""
-        with pytest.raises(ValueError, match="max_total_examples must be non-negative"):
+        with pytest.raises(
+            ValueError, match="max_total_examples must be a positive integer"
+        ):
             validate_constructor_arguments(
                 MockOptimizer(), MockEvaluator(), max_total_examples=-1
             )

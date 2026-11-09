@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Literal, cast, overload
 from dotenv import load_dotenv
 
 from .logging import get_logger
+from .numeric_validation import parse_positive_finite_float
 
 # ============================================================================
 # MIGRATION GUARD: Reject deprecated TRAIGENT_MOCK_MODE at import time
@@ -832,10 +833,11 @@ def get_validation_timeout() -> float:
     """
     timeout_str = get_env_var("TRAIGENT_VALIDATION_TIMEOUT", "5.0")
     try:
-        return float(timeout_str)
+        return parse_positive_finite_float("TRAIGENT_VALIDATION_TIMEOUT", timeout_str)
     except ValueError:
         logger.warning(
-            "Invalid TRAIGENT_VALIDATION_TIMEOUT '%s', using default 5.0s",
+            "Invalid TRAIGENT_VALIDATION_TIMEOUT '%s' (need a finite number > 0), "
+            "using default 5.0s",
             timeout_str,
         )
         return 5.0

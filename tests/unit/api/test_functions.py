@@ -299,7 +299,7 @@ class TestOverrideConfig:
 
     def test_override_config_invalid_max_total_examples(self):
         """Test invalid sample budget."""
-        with pytest.raises(ValueError, match="max_total_examples must be > 0"):
+        with pytest.raises(ValueError, match="max_total_examples must be a positive integer"):
             override_config(max_total_examples=0)
 
     def test_override_config_multiple(self):
