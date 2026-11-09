@@ -740,6 +740,25 @@ def test_blank_nous_urls_fall_back_to_defaults_3270(monkeypatch, blank):
         importlib.reload(nous_auth)
 
 
+def test_base_url_is_read_at_call_time_3270(monkeypatch):
+    """Changing the env after import takes effect (no reload needed)."""
+    monkeypatch.delenv("TRAIGENT_NOUS_BASE_URL", raising=False)
+    assert nous_auth.get_nous_base_url() == nous_auth._DEFAULT_NOUS_BASE_URL
+    monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", " https://example.test/v1 ")
+    assert nous_auth.get_nous_base_url() == "https://example.test/v1"
+    assert nous_auth.NOUS_BASE_URL == "https://example.test/v1"
+    monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", "  ")
+    assert nous_auth.get_nous_base_url() == nous_auth._DEFAULT_NOUS_BASE_URL
+
+
 def test_real_nous_url_overrides_are_stripped_3270(monkeypatch):
     monkeypatch.setenv("TRAIGENT_NOUS_TOKEN_URL", "  https://example.test/refresh ")
     assert nous_auth._token_url() == "https://example.test/refresh"
+
+
+def test_llms_package_nous_base_url_is_lazy_and_importable_3270(monkeypatch):
+    import traigent.integrations.llms as llms
+
+    monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", "https://lazy.test/v1")
+    assert llms.NOUS_BASE_URL == "https://lazy.test/v1"
+    assert llms.get_nous_base_url() == "https://lazy.test/v1"

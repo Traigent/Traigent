@@ -1082,6 +1082,7 @@ def _warn_degenerate_configuration_space(
 # distinguishable choice (#2025).
 _NEAR_IDENTICAL_SPAN_FRACTION = 0.01
 _NEAR_IDENTICAL_RELATIVE_FALLBACK = 0.001
+_NEAR_IDENTICAL_FLOAT_TOLERANCE = 1e-9
 
 
 def _plain_number(value: Any) -> TypeGuard[int | float]:
@@ -1137,7 +1138,8 @@ def _knob_variation_problems(name: Any, values: Any) -> list[str]:
                 floor = canonical * _NEAR_IDENTICAL_SPAN_FRACTION
             else:
                 floor = max(abs(low), abs(high)) * _NEAR_IDENTICAL_RELATIVE_FALLBACK
-            if high - low < floor:
+            # Tolerance absorbs float error (0.71 - 0.70 is 0.010000000000000009).
+            if high - low <= floor * (1 + _NEAR_IDENTICAL_FLOAT_TOLERANCE):
                 problems.append(
                     f"'{name}' has values only {high - low:g} apart, a very "
                     f"narrow gap that may not separate the trials"

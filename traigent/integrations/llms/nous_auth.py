@@ -87,12 +87,26 @@ _DEFAULT_NOUS_TOKEN_URL = "https://portal.nousresearch.com/api/auth/refresh"
 # ``tokens`` object), update the parse in :func:`_read_refresh_token_from_file`.
 _AUTH_FILE_REFRESH_KEYS = ("refresh_token", "refreshToken")
 
-# Effective inference base URL (env-overridable at import). Exported so discovery
-# and the example pass the SAME value — the single source of the base_url.
-# A blank or whitespace-only override is treated as unset (Traigent#3270).
-NOUS_BASE_URL: str = (
-    os.environ.get("TRAIGENT_NOUS_BASE_URL") or ""
-).strip() or _DEFAULT_NOUS_BASE_URL
+
+def get_nous_base_url() -> str:
+    """Return the effective inference base URL, read from the env at call time.
+
+    A blank or whitespace-only ``TRAIGENT_NOUS_BASE_URL`` is treated as unset
+    (Traigent#3270). Discovery and the example both call this so they pass the
+    SAME value, and an env change after import takes effect.
+    """
+    return (
+        os.environ.get("TRAIGENT_NOUS_BASE_URL") or ""
+    ).strip() or _DEFAULT_NOUS_BASE_URL
+
+
+def __getattr__(name: str) -> str:
+    # Back-compat: ``NOUS_BASE_URL`` stays importable but is resolved at access
+    # time rather than frozen at import. Prefer :func:`get_nous_base_url`.
+    if name == "NOUS_BASE_URL":
+        return get_nous_base_url()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Env var names, in resolution order.
 _STATIC_KEY_ENV = "NOUS_API_KEY"
@@ -492,7 +506,7 @@ def _decode_jwt_exp(token: str) -> int | None:
 
 
 __all__ = [
-    "NOUS_BASE_URL",
+    "get_nous_base_url",
     "NousAuthError",
     "get_nous_api_key",
     "has_nous_credentials",

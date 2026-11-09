@@ -16,9 +16,9 @@ from traigent.integrations.llms.litellm_plugin import LiteLLMPlugin
 from traigent.integrations.llms.llamaindex_plugin import LlamaIndexPlugin
 from traigent.integrations.llms.mistral_plugin import MistralPlugin
 from traigent.integrations.llms.nous_auth import (
-    NOUS_BASE_URL,
     NousAuthError,
     get_nous_api_key,
+    get_nous_base_url,
 )
 from traigent.integrations.llms.openai_plugin import OpenAIPlugin
 
@@ -37,7 +37,14 @@ __all__ = [
     "OpenAIPlugin",
     # Nous Portal auth helper (no plugin class — Nous uses the OpenAI-compatible
     # client with a custom base_url; see nous_auth for the JWT-refresh flow).
-    "NOUS_BASE_URL",
     "NousAuthError",
     "get_nous_api_key",
+    "get_nous_base_url",
 ]
+
+
+def __getattr__(name: str) -> str:
+    # Back-compat: ``NOUS_BASE_URL`` resolves at access time (Traigent#3270).
+    if name == "NOUS_BASE_URL":
+        return get_nous_base_url()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
