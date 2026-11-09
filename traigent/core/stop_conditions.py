@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.safety import (
     CompoundSafetyConstraint,
@@ -382,6 +382,13 @@ def validate_plateau_window(window: object) -> int:
     return value
 
 
+@dataclass(frozen=True)
+class _MetricsOnly:
+    """Minimal trial view so ``observed_metric_ranges`` can read cleaned metrics."""
+
+    metrics: dict[str, Any]
+
+
 class PlateauAfterNStopCondition(StopCondition):
     """Stop when the best weighted score plateaus over ``window_size`` values.
 
@@ -413,11 +420,100 @@ class PlateauAfterNStopCondition(StopCondition):
         self._history: deque[float] = deque(maxlen=self._window_size)
         self._best_score: float | None = None
         self._last_index = 0
+        self._ranged_metrics: list[dict[str, Any]] = []
+        self._ranged_ranges: dict[str, tuple[float, float]] = {}
+        self._ranged_scores: list[float] = []
+        self._ranged_scored = 0
+        self._ranged = self._uses_observed_ranges()
 
     def reset(self) -> None:
         self._history.clear()
         self._best_score = None
         self._last_index = 0
+        self._ranged_metrics = []
+        self._ranged_ranges = {}
+        self._ranged_scores = []
+        self._ranged_scored = 0
+
+    def _uses_observed_ranges(self) -> bool:
+        """True for multi-objective, non-banded schemas (#3219).
+
+        Those are scored with observed min-max ranges, the normalization the
+        orchestrator's incumbent tracking and terminal selection use. Single-
+        objective and banded schemas keep the range-free score, so ``epsilon``
+        stays in the metric's own units there (unchanged behaviour).
+        """
+        from traigent.core.result_selection import resolve_result_selection_schema
+
+        return resolve_result_selection_schema(self._schema) is not None
+
+    def _ranged_should_stop(self, trial_seq: Sequence[TrialResult]) -> bool:
+        """Plateau decision under the CURRENT observed ranges (#3219).
+
+        Ranges widen as trials arrive, so earlier scores are not stored as
+        history: whenever a range changes, every trial's score is recomputed
+        under the new ranges and the running best rebuilt. Unchanged ranges
+        score only the new trials. Cost per call is O(new trials) plus
+        O(trials seen) on a call where a range widens. Ranges widen rarely for
+        exchangeable data (about log T times) but on every trial for a steadily
+        improving objective, where the total is O(T^2) scorings (each a few
+        arithmetic operations per objective); that is fine for the usual
+        hundreds of trials and is the price of never using stale scores.
+        """
+        from traigent.core.result_selection import (
+            _ranking_metrics,
+            observed_metric_ranges,
+        )
+
+        names = [obj.name for obj in self._schema.objectives]
+        widened = False
+        for trial in trial_seq[self._last_index :]:
+            if not getattr(trial, "is_successful", True):
+                continue
+            # Same view of the metrics as ranking: flagged cost is dropped
+            # (never scored as a cheap zero); non-finite values are skipped.
+            clean = {
+                key: value
+                for key, value in _ranking_metrics(trial.metrics).items()
+                if not (
+                    key in names
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and not math.isfinite(value)
+                )
+            }
+            self._ranged_metrics.append(clean)
+            for name, (low, high) in observed_metric_ranges(
+                [cast("TrialResult", _MetricsOnly(clean))], names
+            ).items():
+                cur = self._ranged_ranges.get(name)
+                merged = (
+                    (low, high)
+                    if cur is None
+                    else (min(cur[0], low), max(cur[1], high))
+                )
+                if merged != cur:
+                    self._ranged_ranges[name] = merged
+                    widened = True
+        self._last_index = len(trial_seq)
+
+        if widened:
+            self._ranged_scored = 0
+            self._ranged_scores = []
+        for metrics in self._ranged_metrics[self._ranged_scored :]:
+            score = self._schema.compute_weighted_score(
+                metrics, ranges=self._ranged_ranges
+            )
+            if score is None or not math.isfinite(score):
+                continue
+            best = self._ranged_scores[-1] if self._ranged_scores else None
+            self._ranged_scores.append(score if best is None or score > best else best)
+        self._ranged_scored = len(self._ranged_metrics)
+
+        window = self._ranged_scores[-self._window_size :]
+        if len(window) < self._window_size:
+            return False
+        return abs(window[-1] - window[0]) <= self._epsilon
 
     def should_stop(self, trials: Iterable[TrialResult]) -> bool:
         if isinstance(trials, Sequence):
@@ -428,6 +524,9 @@ class PlateauAfterNStopCondition(StopCondition):
         new_trials = trial_seq[self._last_index :]
         if not new_trials:
             return False
+
+        if self._ranged:
+            return self._ranged_should_stop(trial_seq)
 
         for trial in new_trials:
             score = self._schema.compute_weighted_score(trial.metrics)
