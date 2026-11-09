@@ -525,6 +525,65 @@ class TestOptimizationOrchestrator:
         assert orchestrator._session_finalized is True
 
     @pytest.mark.asyncio
+    async def test_run_refused_before_any_trial_finalizes_once_with_stop_reason_2508(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """#2508: a created session whose first trial is refused by the cost
+        permit ends with zero trials, and its single finalize still says why."""
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        orchestrator.max_trials = 3
+        assert orchestrator.cost_enforcer is not None
+        monkeypatch.setattr(
+            orchestrator.cost_enforcer,
+            "acquire_permit_async",
+            AsyncMock(return_value=Permit(id=-1, amount=0.0, active=False)),
+        )
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert len(result.trials) == 0
+        assert result.stop_reason == "cost_limit"
+        assert len(finalize_calls) == 1
+        wire = (
+            orchestrator.backend_session_manager._backend_client.finalize_session_sync
+        )
+        assert wire.call_args.kwargs["stop_reason"] == "cost_limit"
+
+    @pytest.mark.asyncio
+    async def test_zero_timeout_run_finalizes_created_session_once_2508(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """#2508: a zero timeout ends the run before any trial; the created
+        session is finalized once, cancelled, with the timeout reason."""
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        orchestrator.timeout = 0.0
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.CANCELLED
+        assert len(result.trials) == 0
+        assert len(finalize_calls) == 1
+        wire = (
+            orchestrator.backend_session_manager._backend_client.finalize_session_sync
+        )
+        assert wire.call_args.kwargs["optimization_outcome"] == "cancelled"
+        assert wire.call_args.kwargs["stop_reason"] == "timeout"
+
+    @pytest.mark.asyncio
     async def test_mid_run_fallback_finalize_error_does_not_crash_run_2961(
         self,
         monkeypatch,

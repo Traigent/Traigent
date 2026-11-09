@@ -66,6 +66,7 @@ from traigent.core.session_types import (
 from traigent.evaluators.base import Dataset
 from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
+from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_untracked_fallback_allowed
 from traigent.utils.example_id import (
     LOCAL_MARKER_KEY,
@@ -3846,7 +3847,16 @@ class BackendSessionManager:
         report: dict[str, Any] | None,
         session_aggregation: dict[str, Any] | None,
         optimization_outcome: str,
+        stop_reason: str | None = None,
     ) -> dict[str, Any] | None:
+        # Only sent when it is a wire-vocabulary value, so clients that predate
+        # the key keep working and an internal-only reason (e.g. a producer
+        # value outside StopReason) can never make the finalize itself fail.
+        if stop_reason not in oo_egress.FINALIZE_STOP_REASONS:
+            stop_reason = None
+        extra: dict[str, Any] = (
+            {} if stop_reason is None else {"stop_reason": stop_reason}
+        )
         if hasattr(backend_client, "finalize_session_sync"):
             result: dict[str, Any] | None = backend_client.finalize_session_sync(
                 session_id,
@@ -3854,6 +3864,7 @@ class BackendSessionManager:
                 certified_selection=report,
                 session_aggregation=session_aggregation,
                 optimization_outcome=optimization_outcome,
+                **extra,
             )
         else:
             result = backend_client.finalize_session(
@@ -3862,6 +3873,7 @@ class BackendSessionManager:
                 certified_selection=report,
                 session_aggregation=session_aggregation,
                 optimization_outcome=optimization_outcome,
+                **extra,
             )
         return result
 
@@ -3906,6 +3918,7 @@ class BackendSessionManager:
         optimization_status: OptimizationStatus,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        stop_reason: str | None = None,
     ) -> dict[str, Any] | None:
         """Finalize backend session and return summary.
 
@@ -3917,6 +3930,9 @@ class BackendSessionManager:
                 (Traigent#1720/#1724, g2:agg-summary) built by
                 ``build_session_aggregation_payload``. Threaded into the
                 finalize request body exactly like ``certified_selection``.
+            stop_reason: Why the run stopped (a ``StopReason`` value), sent
+                so a run refused before any trial still explains itself
+                (#2508). ``None`` sends no key.
 
         Returns:
             Session summary metadata (or None if backend disabled)
@@ -3957,6 +3973,7 @@ class BackendSessionManager:
                     report,
                     session_aggregation,
                     self.finalize_outcome_for_status(optimization_status),
+                    stop_reason,
                 )
 
                 if _finalize_acknowledged(result):
