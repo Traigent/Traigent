@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import math
 import os
 from collections.abc import Callable
@@ -191,25 +192,75 @@ def _parse_legacy_boolean_env(raw: str, *, source: str) -> bool:
     return _LEGACY_BOOLEAN_SPELLINGS[normalized]
 
 
-def _legacy_capture_content_mode() -> str | None:
-    """Legacy `TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT` boolean env var.
+_LEGACY_CAPTURE_ENV = "TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT"
+# JS SDK spelling of the same deprecated setting, with the opposite sense
+# (true = restrict). Honoured here so one setting means the same in both SDKs.
+_LEGACY_PRIVACY_MODE_ENV = "TRAIGENT_OBSERVABILITY_PRIVACY_MODE"
 
-    `true` -> `record`, `false` -> `metadata`. Returns `None` when the env
-    var is not set at all (as opposed to set-but-falsy), so an unset legacy
-    var never counts as an explicitly-set source. An explicitly-set but
-    unrecognised value (including `""`) raises -- see
-    `_parse_legacy_boolean_env` (B6).
-    """
-    raw = os.getenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT")
-    if raw is None:
-        return None
-    return (
-        "record"
-        if _parse_legacy_boolean_env(
-            raw, source="TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT"
+_logger = logging.getLogger(__name__)
+_legacy_warned: set[tuple[str, ...]] = set()
+
+
+def _warn_legacy_once(names: tuple[str, ...], disagree: bool) -> None:
+    """One deprecation WARNING per distinct set of variable names (never values)."""
+    key = (*names, "disagree" if disagree else "")
+    if key in _legacy_warned:
+        return
+    _legacy_warned.add(key)
+    joined = ", ".join(names)
+    if disagree:
+        _logger.warning(
+            "Deprecated environment variables %s disagree about content "
+            "capture; content capture is OFF (metadata). Use "
+            "TRAIGENT_OBSERVABILITY_CONTENT instead.",
+            joined,
         )
-        else "metadata"
-    )
+    else:
+        _logger.warning(
+            "Deprecated environment variable(s) %s in use; use "
+            "TRAIGENT_OBSERVABILITY_CONTENT instead.",
+            joined,
+        )
+
+
+def _legacy_capture_content_mode() -> str | None:
+    """Legacy content-capture boolean env vars, both spellings.
+
+    `TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT`: `true` -> `record`, `false` ->
+    `metadata`. `TRAIGENT_OBSERVABILITY_PRIVACY_MODE` (the JS SDK's name,
+    inverse sense): `true` -> `metadata`, `false` -> no opinion. When both are
+    set and disagree about capturing content, the result is `metadata`
+    (capture off). Returns `None` when neither is set. An explicitly-set but
+    unrecognised value (including `""`) raises -- see
+    `_parse_legacy_boolean_env` (B6). Values are never logged.
+    """
+    names: list[str] = []
+    capture_mode: str | None = None
+    privacy_mode: str | None = None
+    raw = os.getenv(_LEGACY_CAPTURE_ENV)
+    if raw is not None:
+        names.append(_LEGACY_CAPTURE_ENV)
+        capture_mode = (
+            "record"
+            if _parse_legacy_boolean_env(raw, source=_LEGACY_CAPTURE_ENV)
+            else "metadata"
+        )
+    raw_privacy = os.getenv(_LEGACY_PRIVACY_MODE_ENV)
+    if raw_privacy is not None:
+        names.append(_LEGACY_PRIVACY_MODE_ENV)
+        if _parse_legacy_boolean_env(raw_privacy, source=_LEGACY_PRIVACY_MODE_ENV):
+            privacy_mode = "metadata"
+    if raw_privacy is not None:
+        # privacy_mode "false" means "capture allowed" in the JS sense, which
+        # contradicts a capture-off CAPTURE_CONTENT=false; "true" contradicts
+        # CAPTURE_CONTENT=true. Either way the safer result wins below.
+        disagree = capture_mode is not None and (
+            (capture_mode == "record") == (privacy_mode == "metadata")
+        )
+        _warn_legacy_once(tuple(names), disagree)
+        if disagree or privacy_mode == "metadata":
+            return "metadata"
+    return capture_mode
 
 
 def resolve_client_content_mode(constructor_value: str | None) -> tuple[str, bool]:
