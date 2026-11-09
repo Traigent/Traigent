@@ -12,6 +12,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The deprecated `TRAIGENT_OBSERVABILITY_PRIVACY_MODE` variable (the JS SDK's name) is now honoured by the Python SDK (`true` restricts to `metadata`, `false` has no opinion); if it disagrees with `TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT`, content capture is off and a deprecation warning names the variables (#3269).
 - A blank or whitespace-only `TRAIGENT_RUN_COST_LIMIT` now means "unset": the default limit applies silently instead of logging a misleading "Invalid TRAIGENT_RUN_COST_LIMIT=''" warning. Non-blank unparseable values still warn.
 - **A scorer exception is a failed trial with its spend, not an "unpriced call" (#2852).** When an objective metric raises, the rows already ran: the failed trial now keeps the spend they measured instead of reporting none, so the run no longer aborts with `Cost extraction failed ... unpriced call` and the budget counts that spend.
 - **OpenRouter responses are priced at the requested id (#2854).** OpenRouter reports `response.model` without the `openrouter/` prefix, and some of those bare ids (`anthropic/claude-haiku-4.5`, `meta-llama/llama-3.3-70b-instruct`, `mistralai/mistral-small-3.2-24b-instruct`) have no price. A call requested through OpenRouter now falls back to the prefixed id, then the requested id, before the "Unknown model ... returning zero cost" warning fires, so a correctly priced run no longer sends users to custom pricing.
