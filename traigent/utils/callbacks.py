@@ -410,9 +410,13 @@ class ProgressBarCallback(OptimizationCallback):
         """Called when optimization completes."""
         # Draw final 100% progress bar (throttle may have skipped the last update)
         if self._last_progress is not None:
+            trials = getattr(result, "trials", None)
             self._print_final_progress_bar(
                 self._last_progress,
-                executed_trials=_count_executed_trials(result.trials),
+                # Without a usable trial list keep the recorded total.
+                executed_trials=(
+                    _count_executed_trials(trials) if isinstance(trials, list) else None
+                ),
             )
 
         _safe_print("\n")

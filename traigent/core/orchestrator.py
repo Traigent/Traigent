@@ -648,7 +648,11 @@ class OptimizationOrchestrator:
             parallel_trials=self.parallel_trials,
         )
         self.progress_manager = ProgressManager(
-            total_trials=max_trials,
+            total_trials=self._expected_total_trials(
+                optimizer,
+                max_trials,
+                extra_trials=1 if kwargs.get("default_config") else 0,
+            ),
             algorithm_name=optimizer.__class__.__name__,
             objectives=(
                 [obj for obj in objectives if obj is not None] if objectives else None
@@ -2506,6 +2510,38 @@ class OptimizationOrchestrator:
         except Exception as exc:
             logger.debug("Hybrid lifecycle cleanup failed: %s", exc)
 
+    @staticmethod
+    def _expected_total_trials(
+        optimizer: BaseOptimizer,
+        max_trials: int | None,
+        extra_trials: int = 0,
+    ) -> int | None:
+        """Planned trial count: max_trials capped by a finite search space.
+
+        ``extra_trials`` are fixed trials that run on top of the optimizer's own
+        suggestions (the ``default_config`` baseline); it counts toward
+        ``max_trials`` but is not marked as an evaluated grid point. Seed
+        configs are grid points and are already inside the cardinality.
+        Only optimizers that never repeat a configuration (grid, random) are
+        capped; others may repeat, so their total stays ``max_trials``.
+
+        Reuses ``BaseOptimizer.config_space_cardinality`` (None for continuous
+        or unknown spaces, where max_trials is returned unchanged). Traigent#3207.
+        """
+        if max_trials is None:
+            return None
+        from traigent.optimizers.grid import GridSearchOptimizer
+        from traigent.optimizers.random import RandomSearchOptimizer
+
+        if not isinstance(optimizer, (GridSearchOptimizer, RandomSearchOptimizer)):
+            return max_trials
+        cardinality = getattr(optimizer, "config_space_cardinality", None)
+        if isinstance(cardinality, int) and not isinstance(cardinality, bool):
+            capped = cardinality + max(extra_trials, 0)
+            if 0 < cardinality and capped < max_trials:
+                return capped
+        return max_trials
+
     def _get_progress_info(self, current_trial: int) -> ProgressInfo:
         """Create progress information for callbacks."""
         elapsed_time = time.time() - self._start_time if self._start_time else 0.0
@@ -2531,14 +2567,19 @@ class OptimizationOrchestrator:
             if not (getattr(trial, "metadata", None) or {}).get("constraint_rejected")
         )
         avg_trial_time = elapsed_time / executed_count if executed_count else 0
-        remaining_trials = (self.max_trials or 0) - executed_count
+        planned_total = OptimizationOrchestrator._expected_total_trials(
+            self.optimizer,
+            self.max_trials,
+            extra_trials=1 if getattr(self, "_default_config", None) else 0,
+        )
+        remaining_trials = (planned_total or 0) - executed_count
         estimated_remaining = (
             avg_trial_time * remaining_trials if remaining_trials > 0 else None
         )
 
         return ProgressInfo(
             current_trial=current_trial,
-            total_trials=self.max_trials or 0,
+            total_trials=planned_total or 0,
             completed_trials=executed_count,
             successful_trials=successful_trials,
             failed_trials=failed_trials,
