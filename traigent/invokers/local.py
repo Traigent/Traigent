@@ -147,7 +147,7 @@ class LocalInvoker(BaseInvoker):
         except Exception as e:
             end_time = time.time()
             execution_time = end_time - start_time
-            error_msg = f"Function call failed: {e}"
+            error_msg = f"Function call failed: {type(e).__name__}: {e}"
 
             # Fail fast on API key errors - don't retry 309 times
             if is_provider_api_key_failure(e):
