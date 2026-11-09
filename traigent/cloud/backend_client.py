@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.cloud._detached_raise import raise_detached
 from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
 from traigent.cloud.auth import (
     AuthenticationError,
@@ -2609,7 +2610,7 @@ class BackendIntegratedClient:
         except (requests.exceptions.RequestException, ConnectionError, TimeoutError):
             # RequestException also covers InvalidHeader / InvalidURL / MissingSchema,
             # whose text quotes the offending header or URL.
-            raise CloudServiceError(f"{operation} transport failed") from None
+            raise_detached(CloudServiceError(f"{operation} transport failed"))
         finally:
             session.close()
 

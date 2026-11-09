@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
 from traigent.cloud import content_less as content_less_session
+from traigent.cloud._detached_raise import raise_detached
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import (
     CloudEgressBlockedError,
@@ -1322,12 +1323,12 @@ class ApiOperations:
     def _handle_connector_error(self, error: aiohttp.ClientConnectorError) -> None:
         """Handle aiohttp connector errors — DEBUG only."""
         logger.debug("Backend connection failed: %s", error)
-        raise CloudServiceError("Backend unavailable (connection failed)") from error
+        raise_detached(CloudServiceError("Backend unavailable (connection failed)"))
 
     def _handle_client_error(self, error: aiohttp.ClientError) -> None:
         """Handle generic aiohttp client errors — DEBUG only."""
         logger.debug("Network error connecting to backend: %s", error)
-        raise CloudServiceError(f"Network error: {error}") from error
+        raise_detached(CloudServiceError(f"Network error: {error}"))
 
     def _handle_generic_session_exception(self, error: Exception) -> None:
         """Handle unexpected exceptions during session creation — DEBUG only."""
