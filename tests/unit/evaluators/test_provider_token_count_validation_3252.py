@@ -206,3 +206,34 @@ def test_aggregated_responses_with_one_invalid_call_are_unknown(
     metrics = extract_llm_metrics(agg_cls([good, bad]), model_name="gpt-4o-mini")
     assert metrics.tokens.total_tokens == 0
     assert metrics.cost_measured is False
+
+
+@pytest.mark.parametrize(
+    "bad_call",
+    [
+        _anthropic(-5, 2),
+        _openai(-5, 2),
+        SimpleNamespace(
+            response_metadata={"usage": {"input_tokens": -5, "output_tokens": 2}}
+        ),
+    ],
+    ids=["anthropic", "openai", "langchain-usage"],
+)
+def test_aggregate_poisoned_by_invalid_call_in_any_provider_format(
+    bad_call: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.evaluators import local
+
+    monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "false")
+    good = _openai(10, 2)
+    metrics = extract_llm_metrics(
+        local._AggregatedResponses([good, bad_call]), model_name="gpt-4o-mini"
+    )
+    assert metrics.tokens.total_tokens == 0
+    assert metrics.cost_measured is False
+
+
+def test_invalid_returned_response_is_recognised_as_usage() -> None:
+    from traigent.evaluators.local import LocalEvaluator
+
+    assert LocalEvaluator._looks_like_usage_response(_openai(-5, 2)) is True

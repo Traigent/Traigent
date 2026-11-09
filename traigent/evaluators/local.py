@@ -57,7 +57,6 @@ from traigent.utils.langchain_interceptor import (
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
 from traigent.utils.logging import get_logger
-from traigent.utils.numeric_validation import validate_token_count
 from traigent.utils.response_model import (
     infer_response_model,
     resolve_pricing_model,
@@ -486,50 +485,18 @@ class _AggregatedResponses:
         unknown usage and must make the aggregate unknown, never be clamped or
         summed into a valid-looking figure.
         """
-        usage = getattr(resp, "usage_metadata", None)
-        if usage:
-            return self._validated_triple(
-                usage.get("input_tokens"),
-                usage.get("output_tokens"),
-                usage.get("total_tokens"),
-            )
-
-        usage_obj = getattr(resp, "usage", None)
-        if usage_obj is not None:
-            return self._validated_triple(
-                getattr(usage_obj, "prompt_tokens", None),
-                getattr(usage_obj, "completion_tokens", None),
-                getattr(usage_obj, "total_tokens", None),
-            )
-
-        resp_meta = getattr(resp, "response_metadata", None)
-        if not resp_meta or not isinstance(resp_meta, dict):
+        # Reuse the tracker's own handler chain so every supported provider
+        # shape (OpenAI, Anthropic, LangChain, dicts) is validated identically.
+        try:
+            extracted = ResponseHandlerFactory.create_handler_chain().handle(resp)
+        except Exception:  # noqa: BLE001 - unreadable usage is unknown usage
+            return None
+        if extracted is None:
             return (0, 0, 0)
-
-        token_usage = resp_meta.get("token_usage", {})
-        if not isinstance(token_usage, dict):
-            return (0, 0, 0)
-
-        return self._validated_triple(
-            token_usage.get("prompt_tokens"),
-            token_usage.get("completion_tokens"),
-            token_usage.get("total_tokens"),
-        )
-
-    @staticmethod
-    def _validated_triple(
-        input_raw: Any, output_raw: Any, total_raw: Any
-    ) -> tuple[int, int, int] | None:
-        counts: list[int] = []
-        for raw in (input_raw, output_raw, total_raw):
-            if raw is None:
-                counts.append(0)
-                continue
-            valid = validate_token_count(raw)
-            if valid is None:
-                return None
-            counts.append(valid)
-        return (counts[0], counts[1], counts[2])
+        tokens = extracted.tokens
+        if tokens.invalid:
+            return None
+        return (tokens.input_tokens, tokens.output_tokens, tokens.total_tokens)
 
     def _sum_token_usage(self) -> tuple[float, float, float]:
         """Sum up token usage from all responses."""
@@ -1897,7 +1864,8 @@ class LocalEvaluator(BaseEvaluator):
             return bool(
                 extracted is not None
                 and (
-                    extracted.tokens.input_tokens > 0
+                    extracted.tokens.invalid
+                    or extracted.tokens.input_tokens > 0
                     or extracted.tokens.output_tokens > 0
                     or extracted.cost.total_cost > 0
                 )
