@@ -3049,6 +3049,7 @@ def extract_llm_metrics(
     prompt_length: int | None = None,
     response_length: int | None = None,
     response_captured: bool = False,
+    estimate_from_text: bool = True,
 ) -> ExampleMetrics:
     """Extract metrics from LLM response objects with cost calculation.
 
@@ -3070,6 +3071,10 @@ def extract_llm_metrics(
             (e.g. a returned ``raw_response``) is never provider-billed: any
             cost it carries is a self-report (#2505). Defaults to False
             (fail closed).
+        estimate_from_text: When False, a response that carries no usable usage
+            and no billing evidence is left unmeasured instead of being priced
+            from ``original_prompt`` / ``response_text`` length (Traigent#3251).
+            Unlike ``response_captured`` this grants no billing trust.
 
     Returns:
         ExampleMetrics with extracted token, cost, and response metrics
@@ -3119,15 +3124,27 @@ def extract_llm_metrics(
     # model name carried on the response itself when the config supplies none
     # (multi-model/multi-step agents have no single config 'model' key; #1599).
     effective_model_name = model_name or _infer_model_name_from_response(response)
-    if metrics.tokens.invalid and not (
+    no_billing_evidence = not (
         metrics.cost.total_cost > 0 or metrics.cost.cost_explicit
-    ):
+    )
+    if metrics.tokens.invalid and no_billing_evidence:
         # The provider reported an unusable token count (Traigent#3252): usage
         # is unknown, so do not estimate a cost from text either. The example
         # falls through to the ``cost.unmeasured`` guard below.
         logger.warning(
             "Provider token usage was invalid for model %r; "
             "cost is unmeasured, not priced",
+            effective_model_name,
+        )
+    elif not estimate_from_text and not usage_captured and no_billing_evidence:
+        # A captured provider response that carried no usable usage (missing
+        # usage, or null token counts; Traigent#3251). The call happened and
+        # its spend is unknown. A length-based estimate from the
+        # prompt/answer text would be recorded as a measurement with 0 tokens,
+        # so none is made; the ``cost.unmeasured`` guard below flags it.
+        logger.warning(
+            "Response for model %r carried no usable usage; "
+            "cost is unmeasured, not estimated from text",
             effective_model_name,
         )
     else:
