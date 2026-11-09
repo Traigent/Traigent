@@ -507,6 +507,36 @@ def _all_attempted_examples_failed(
     return attempted is not None and attempted > 0
 
 
+_NO_EXAMPLES_SUCCEEDED = "No examples succeeded"
+_ERROR_MESSAGE_MAX_CHARS = 500
+
+
+def _all_failed_error_message(eval_result: Any) -> str:
+    """Name the cause when every example failed (#3213).
+
+    Uses the most common per-example error (with a count when examples differ),
+    redacted like every other error text that leaves the SDK. Falls back to the
+    generic message when no example carries an error.
+    """
+    counts: dict[str, int] = {}
+    total = 0
+    for row in getattr(eval_result, "example_results", None) or []:
+        message = getattr(row, "error_message", None)
+        if message is None and isinstance(row, dict):
+            message = row.get("error_message")
+        total += 1
+        if isinstance(message, str) and message:
+            counts[message] = counts.get(message, 0) + 1
+    if not counts:
+        return _NO_EXAMPLES_SUCCEEDED
+    top, top_count = max(counts.items(), key=lambda item: item[1])
+    text = redact_sensitive_text(top)
+    if len(text) > _ERROR_MESSAGE_MAX_CHARS:
+        text = text[:_ERROR_MESSAGE_MAX_CHARS] + "..."
+    suffix = f" ({top_count} of {total} examples)" if len(counts) > 1 else ""
+    return f"{text}{suffix}"
+
+
 def _set_metric_if_convertible(
     metrics: dict[str, Any],
     key: str,
@@ -697,7 +727,7 @@ def build_success_result(
         duration=duration,
         timestamp=datetime.now(UTC),
         error_message=(
-            "No examples succeeded"
+            _all_failed_error_message(eval_result)
             if _all_attempted_examples_failed(eval_result, examples_attempted)
             else None
         ),

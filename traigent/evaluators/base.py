@@ -15,6 +15,7 @@ import secrets
 import stat
 import threading
 import time
+import traceback
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from collections.abc import Mapping
@@ -40,6 +41,7 @@ from traigent.evaluators.metrics_tracker import (
     is_reserved_metric_key,
 )
 from traigent.identity.examples import result_identity_fields
+from traigent.security.redaction import redact_sensitive_text
 from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
@@ -3198,6 +3200,33 @@ class BaseEvaluator(ABC):
                 mark_if_agent_reported_cost(slot, unwrapped)
             return output, error
 
+    def _log_function_failure(
+        self, exc: BaseException, error_msg: str, config: dict[str, Any]
+    ) -> None:
+        """Log a user-function failure with its class and a traceback (#3274).
+
+        The traceback is logged once per (trial config, exception class) at
+        WARNING; repeats for later examples of the same trial log one line at
+        DEBUG so N failing examples do not produce N tracebacks. Text is passed
+        through the SDK redaction helper because exception messages and frames
+        come from user code and may carry customer data.
+        """
+        try:
+            trial_key = (json.dumps(config, sort_keys=True, default=repr), type(exc))
+        except (TypeError, ValueError):
+            trial_key = (repr(config), type(exc))
+        seen = self.__dict__.setdefault("_logged_function_failures", set())
+        if trial_key in seen:
+            logger.debug(redact_sensitive_text(error_msg))
+            return
+        seen.add(trial_key)
+        tb_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        logger.warning(
+            "%s\n%s",
+            redact_sensitive_text(error_msg),
+            redact_sensitive_text(tb_text),
+        )
+
     async def _execute_function_unattributed(
         self,
         func: Callable[..., Any],
@@ -3267,8 +3296,8 @@ class BaseEvaluator(ABC):
             raise
         except Exception as e:
             self._check_api_key_error(e)
-            error_msg = f"Function call failed: {e}"
-            logger.warning(error_msg)
+            error_msg = f"Function call failed: {type(e).__name__}: {e}"
+            self._log_function_failure(e, error_msg, config)
             return None, error_msg
 
     async def _evaluate_single_non_detailed(
