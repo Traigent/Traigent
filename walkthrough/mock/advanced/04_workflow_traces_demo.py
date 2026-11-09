@@ -6,8 +6,8 @@ This example simulates a LangGraph-like workflow and sends traces to the backend
 
 NOTE: This demo requires a running Traigent backend for full functionality
 (sending graph/spans to the backend). The simulation and graph-building logic
-runs without a backend, but actual ingestion calls will fail gracefully if
-no backend is reachable.
+runs without a backend, but ingestion needs TRAIGENT_API_KEY and a reachable
+backend, and the demo exits non-zero when it cannot send.
 
 Run with: python 04_workflow_traces_demo.py
 
@@ -237,7 +237,7 @@ def simulate_workflow_execution(
     return spans, graph, trace_id, config_run_id
 
 
-def main() -> None:
+def main() -> int:
     """Run the workflow traces demo."""
     # Enable mock LLM mode by default so the demo runs without API keys
     os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
@@ -286,6 +286,10 @@ def main() -> None:
         print(f"Detected loops: {[loop.to_dict() for loop in graph.loops]}")
 
     # Send to backend
+    if not auth_token:
+        print("\nERROR: TRAIGENT_API_KEY not set; cannot send traces to the backend.")
+        return 1
+
     print("\nSending traces to backend...")
     print(f"  trace_id: {trace_id}")
     print(f"  configuration_run_id: {config_run_id}")
@@ -310,15 +314,18 @@ def main() -> None:
             print(f"  Graph ID: {response.graph_id}")
         else:
             print(f"\nIngestion failed: {response.error}")
+            return 1
 
     except Exception as e:
         print(f"\nFailed to send traces: {e}")
         print("\nNote: Make sure the backend is running and accessible.")
         print("Set TRAIGENT_BACKEND_URL in .env to point to your backend.")
+        return 1
 
     print("\n" + "-" * 50)
     print("Check the frontend to see the workflow graph visualization!")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
