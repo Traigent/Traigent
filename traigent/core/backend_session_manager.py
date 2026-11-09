@@ -925,6 +925,9 @@ class BackendSessionManager:
         # that here so the run's result can be marked source="local_fallback" and a
         # single prominent warning is emitted (instead of one per trial).
         self._runtime_degraded: bool = False
+        # Whether an egress ban already existed when the runtime fallback first
+        # fired; such a ban (a user privacy setting) must keep finalize blocked.
+        self._egress_banned_before_fallback: bool = False
         self._degraded_warning_emitted: bool = False
         self._backend_rejection_reason: str | None = None
 
@@ -1078,7 +1081,8 @@ class BackendSessionManager:
         RUNNING forever (#2961). A session that was created is closed exactly
         once, so a *runtime* degradation alone does not forbid the finalize. An
         egress ban that existed before the run (manager ``no_egress``, offline
-        policy or env) still does.
+        policy or env, or ``config.no_egress`` set before the fallback fired) still
+        does: an explicit egress ban fails closed.
         """
         if bool(getattr(self, "_no_egress", False)):
             return False
@@ -1087,6 +1091,7 @@ class BackendSessionManager:
         config = getattr(self, "_traigent_config", None)
         return bool(
             getattr(self, "_runtime_degraded", False)
+            and not getattr(self, "_egress_banned_before_fallback", False)
             and config is not None
             and not is_offline_requested(policy_from_config(config))
         )
@@ -1301,6 +1306,8 @@ class BackendSessionManager:
             else:
                 detail = "required cloud tracking did not acknowledge the operation"
             raise CloudBrainUnavailableError(context, detail)
+        if not self._runtime_degraded:
+            self._egress_banned_before_fallback = self._egress_disabled()
         self._runtime_degraded = True
         self._fallback_reason = context
         # A runtime degradation carries no typed SessionCreationFailureReason.

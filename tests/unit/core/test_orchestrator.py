@@ -580,8 +580,46 @@ class TestOptimizationOrchestrator:
         manager._no_egress = False
         manager._traigent_config.no_egress = True  # ban without a runtime fallback
         assert manager.finalize_egress_allowed() is False
-        manager._runtime_degraded = True
+        manager._runtime_degraded = True  # degraded, but the ban pre-dated it
+        manager._egress_banned_before_fallback = True
+        assert manager.finalize_egress_allowed() is False
+        manager._egress_banned_before_fallback = False  # ban solely from fallback
         assert manager.finalize_egress_allowed() is True
+
+    def test_explicit_no_egress_plus_fallback_blocks_finalize_2961(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+    ):
+        """An explicit pre-run no_egress ban stays closed through a fallback."""
+        orchestrator, _calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        manager = orchestrator.backend_session_manager
+        manager._traigent_config.no_egress = True
+        manager._flag_backend_degraded("trial submission")
+        assert manager._egress_banned_before_fallback is True
+        assert manager.finalize_egress_allowed() is False
+        manager.finalize_session("sess-1", OptimizationStatus.COMPLETED)
+        assert manager._backend_client.finalize_session_sync.call_count == 0
+
+    def test_fallback_only_finalizes_once_2961(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+    ):
+        """A fallback with no prior ban still finalizes the session."""
+        orchestrator, _calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        manager = orchestrator.backend_session_manager
+        manager._flag_backend_degraded("trial submission")
+        assert manager._egress_banned_before_fallback is False
+        assert manager.finalize_egress_allowed() is True
+        manager.finalize_session("sess-1", OptimizationStatus.COMPLETED)
+        assert manager._backend_client.finalize_session_sync.call_count == 1
 
     def test_fallback_finalize_reports_cancelled_outcome_2961(
         self,
