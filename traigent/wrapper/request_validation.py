@@ -3,7 +3,7 @@
 Enforces the structural rules of the Hybrid Mode request contract before a
 request is dispatched to user handlers: ``request_id`` (required UUID),
 ``tunable_id`` (required string), ``config`` (object, at most 200 properties),
-and example ids (``^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$``).
+and example ids (looser than the contract pattern, see ``_is_valid_example_id``).
 
 Every failure raises :class:`BadRequestError` with a FIXED message: client
 supplied values, ids and keys are never echoed back (ids may be customer
@@ -24,8 +24,24 @@ MAX_TIMEOUT_MS = 600000
 _UUID_RE = re.compile(
     r"\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z"
 )
-# \Z, not $: "$" would accept a trailing newline.
-_ID_RE = re.compile(r"\A[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}\Z")
+# Example ids: DELIBERATELY LOOSER than the contract pattern
+# ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$. In hybrid mode the ids come from the
+# service's own dataset (discover_example_ids) and the SDK client sends them
+# back, so a service whose ids contain a space or a colon would start rejecting
+# its own client after an upgrade. We therefore reject only what is malformed or
+# unsafe: non-strings, empty or > 256 chars, control characters (newline
+# included), path separators (/ and \\) and a ".." segment.
+MAX_EXAMPLE_ID_LENGTH = 256
+_UNSAFE_ID_RE = re.compile(r"[\x00-\x1f\x7f-\x9f/\\]")
+
+
+def _is_valid_example_id(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= MAX_EXAMPLE_ID_LENGTH
+        and _UNSAFE_ID_RE.search(value) is None
+        and value != ".."
+    )
 
 
 def is_valid_request_id(value: Any) -> bool:
@@ -68,8 +84,8 @@ def _check_item_ids(items: Any, label: str) -> None:
             raise _fail("evaluations items must be objects")
         if isinstance(item, dict) and "example_id" in item:
             value = item["example_id"]
-            if not isinstance(value, str) or _ID_RE.match(value) is None:
-                raise _fail(f"{label} example_id must match the documented id pattern")
+            if not _is_valid_example_id(value):
+                raise _fail(f"{label} example_id is not a valid id")
 
 
 def validate_execute_request(request: dict[str, Any]) -> None:

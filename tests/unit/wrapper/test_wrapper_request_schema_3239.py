@@ -124,7 +124,12 @@ EXECUTE_BAD = {
     "id_too_long": _execute(examples=[{"example_id": LONG_ID}]),
     "id_integer": _execute(examples=[{"example_id": 1}]),
     "id_trailing_newline": _execute(examples=[{"example_id": "ok\n"}]),
-    "id_secret_bad_chars": _execute(examples=[{"example_id": f"{MARKER}/x"}]),
+    "id_slash": _execute(examples=[{"example_id": f"{MARKER}/x"}]),
+    "id_backslash": _execute(examples=[{"example_id": "a\\b"}]),
+    "id_dotdot": _execute(examples=[{"example_id": ".."}]),
+    "id_empty": _execute(examples=[{"example_id": ""}]),
+    "id_control_char": _execute(examples=[{"example_id": "a\x00b"}]),
+    "id_inner_newline": _execute(examples=[{"example_id": "a\nb"}]),
 }
 
 EVALUATE_BAD = {
@@ -183,7 +188,13 @@ async def test_execute_boundary_values_are_accepted(app) -> None:
     body = _execute(
         request_id=str(uuid.uuid4()),
         config={f"k{i}": i for i in range(200)},
-        examples=[{"example_id": "a" + "b" * 255}, {"example_id": "A.b_c-9"}],
+        examples=[
+            {"example_id": "a" + "b" * 255},
+            {"example_id": "A.b_c-9"},
+            {"example_id": "q 1"},
+            {"example_id": "a:b"},
+            {"example_id": "a..b"},
+        ],
     )
     assert (await _post(app, EXECUTE_PATH, body)).status == 200
 
