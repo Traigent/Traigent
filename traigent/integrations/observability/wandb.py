@@ -39,6 +39,7 @@ except ImportError:
 
 from ...api.types import OptimizationResult, TrialResult
 from ...core.objective_directions import resolve_objective_orientation
+from ...utils.discrete_domains import discrete_values_for_config_param
 from ...utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -566,6 +567,17 @@ def log_traigent_optimization(
     return run_id
 
 
+_WANDB_MAX_GRID_VALUES = 10_000
+
+
+def _is_unit_or_no_step(param_range: Mapping[str, Any]) -> bool:
+    step = param_range.get("step")
+    if step is None:
+        return True
+    is_int = str(param_range.get("type", "")).lower() in {"int", "integer"}
+    return is_int and step == 1
+
+
 def create_wandb_sweep_config(
     function_name: str,
     configuration_space: dict[str, Any],
@@ -608,6 +620,38 @@ def create_wandb_sweep_config(
             # Continuous parameter
             min_val, max_val = param_range
             wandb_parameters[param_name] = {"min": min_val, "max": max_val}
+        elif (
+            isinstance(param_range, dict)
+            and "low" in param_range
+            and "high" in param_range
+            and not param_range.get("log")
+            and _is_unit_or_no_step(param_range)
+        ):
+            # Typed numeric range dict without a step, or an integer range
+            # with step 1 (e.g. IntRange): a plain min/max domain
+            bounds: dict[str, Any] = {
+                "min": param_range["low"],
+                "max": param_range["high"],
+            }
+            if str(param_range.get("type", "")).lower() in {"int", "integer"}:
+                bounds["distribution"] = "int_uniform"
+            wandb_parameters[param_name] = bounds
+        elif (
+            isinstance(param_range, dict)
+            and "low" in param_range
+            and "high" in param_range
+            and param_range.get("step") is not None
+            and not param_range.get("log")
+        ):
+            # Stepped range: export the exact grid so the sweep never leaves it.
+            grid = discrete_values_for_config_param(param_range)
+            if not grid or len(grid) > _WANDB_MAX_GRID_VALUES:
+                raise ValueError(
+                    f"Parameter '{param_name}' has a stepped range with "
+                    f"{len(grid) if grid else 0} values; W&B export supports "
+                    f"1..{_WANDB_MAX_GRID_VALUES}"
+                )
+            wandb_parameters[param_name] = {"values": list(grid)}
         else:
             # Single value - treat as constant
             wandb_parameters[param_name] = {"value": param_range}

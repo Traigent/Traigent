@@ -191,9 +191,14 @@ class TestIntRange:
         assert r.log is False
 
     def test_int_range_to_config_value_simple(self):
-        """Test simple int range converts to tuple."""
+        """A step-less int range is discrete with step 1 (#3212)."""
         r = IntRange(1, 10)
-        assert r.to_config_value() == (1, 10)
+        assert r.to_config_value() == {
+            "type": "int",
+            "low": 1,
+            "high": 10,
+            "step": 1,
+        }
 
     def test_int_range_to_tuple(self):
         """Test to_tuple() method."""
@@ -220,8 +225,11 @@ class TestIntRange:
         simple = IntRange(1, 10).to_config_value()
         advanced = IntRange(1, 10, step=1).to_config_value()
 
-        assert not is_int_range_config_dict(simple)
+        float_simple = Range(1.0, 10.0).to_config_value()
+
+        assert is_int_range_config_dict(simple)
         assert is_int_range_config_dict(advanced)
+        assert not is_int_range_config_dict(float_simple)
 
     def test_int_range_type_validation_float_low(self):
         """Test validation: bounds must be integers."""
@@ -591,7 +599,7 @@ class TestNormalizeConfigValue:
 
     def test_normalize_int_range(self):
         result = normalize_config_value(IntRange(1, 10))
-        assert result == (1, 10)
+        assert result == {"type": "int", "low": 1, "high": 10, "step": 1}
 
     def test_normalize_log_range(self):
         result = normalize_config_value(LogRange(0.01, 1.0))
