@@ -280,6 +280,11 @@ def _store_surrogate_aggregate(eval_result: Any, scored: list[float]) -> None:
             aggregate["surrogate_score"] = sum(scored) / len(scored)
 
 
+# A constraint that rejects every draw must not loop forever on continuous
+# spaces: stop after this many consecutive rejections per max_trials slot.
+_CONSTRAINT_REJECTION_CAP_FACTOR = 100
+
+
 class TrialLifecycle:
     """Coordinates individual trial execution and post-processing.
 
@@ -302,6 +307,7 @@ class TrialLifecycle:
         """
         self._orchestrator = orchestrator
         self._constraint_rejection_count = 0
+        self._consecutive_constraint_rejections = 0
 
     # =========================================================================
     # Sequential Trial Execution
@@ -394,7 +400,21 @@ class TrialLifecycle:
                 )
             finally:
                 self._restore_optimizer_state(optimizer_state_before_suggest)
+            self._consecutive_constraint_rejections += 1
+            if self._constraint_rejection_cap_reached():
+                logger.warning(
+                    "Stopping: %d consecutive configs were rejected by a "
+                    "pre-evaluation constraint without any evaluation "
+                    "(cap %d). The constraint may be unsatisfiable for this "
+                    "configuration space.",
+                    self._consecutive_constraint_rejections,
+                    self._constraint_rejection_cap(),
+                )
+                orchestrator._stop_reason = "optimizer"
+                return trial_count, "break"
             return trial_count, "continue"
+
+        self._consecutive_constraint_rejections = 0
 
         # Phase 2.1: Acquire cost permit before sequential trial execution
         # This ensures sequential trials respect cost limits proactively
@@ -1151,6 +1171,18 @@ class TrialLifecycle:
         else:
             # Fallback to sequential ID for backwards compatibility
             return f"{orchestrator._optimization_id}_{trial_number}"
+
+    def _constraint_rejection_cap(self) -> int:
+        """Bound on consecutive constraint rejections (100 x max_trials)."""
+        max_trials = self._orchestrator.max_trials
+        if isinstance(max_trials, int) and max_trials > 0:
+            return _CONSTRAINT_REJECTION_CAP_FACTOR * max_trials
+        return _CONSTRAINT_REJECTION_CAP_FACTOR * 100
+
+    def _constraint_rejection_cap_reached(self) -> bool:
+        return self._consecutive_constraint_rejections >= (
+            self._constraint_rejection_cap()
+        )
 
     def _snapshot_optimizer_trial_count(self) -> int | None:
         trial_count = getattr(self._orchestrator.optimizer, "_trial_count", None)

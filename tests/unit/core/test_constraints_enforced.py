@@ -43,8 +43,8 @@ async def test_pre_constraints_prevent_evaluation() -> None:
     """Test that pre-constraints prevent evaluation without consuming trial slots.
 
     After fix for issue #27, constraint-rejected configs do NOT consume trial slots,
-    meaning they don't create trial records. The evaluator should never be called,
-    and the result should have no trials (since all configs were rejected).
+    meaning they do not count toward max_trials. The evaluator should never be called,
+    and every recorded trial is a PRUNED constraint rejection.
     """
     dataset = Dataset(
         examples=[EvaluationExample(input_data={"text": "hi"}, expected_output="hi")],
@@ -68,8 +68,11 @@ async def test_pre_constraints_prevent_evaluation() -> None:
         return "hi"
 
     result = await orchestrator.optimize(func=func, dataset=dataset)
-    # With fix for issue #27: constraint failures don't consume trial slots,
-    # so no trials are recorded (evaluator is never called)
-    assert result.trials == []
+    # Constraint failures don't consume trial slots (Traigent#27/#3210) but the
+    # rejection stays visible as a PRUNED record (Traigent#2053). The evaluator
+    # is never called: _FailIfCalledEvaluator would have raised.
+    assert result.trials
+    assert all(t.metadata.get("constraint_rejected") is True for t in result.trials)
+    assert all(t.status.value == "pruned" for t in result.trials)
     # Verify the optimization completed (optimizer's should_stop was respected)
     assert result.status.value == "completed"
