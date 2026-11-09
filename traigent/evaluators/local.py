@@ -57,6 +57,7 @@ from traigent.utils.langchain_interceptor import (
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import validate_token_count
 from traigent.utils.response_model import (
     infer_response_model,
     resolve_pricing_model,
@@ -477,31 +478,29 @@ class _AggregatedResponses:
         totals = self._sum_token_usage()
         self._build_metadata(totals)
 
-    def _extract_tokens_from_response(self, resp: Any) -> tuple[int, int, int]:
-        """Extract (input, output, total) tokens from a single response."""
+    def _extract_tokens_from_response(self, resp: Any) -> tuple[int, int, int] | None:
+        """Extract validated (input, output, total) tokens from one response.
+
+        Returns ``None`` when the response reports an invalid count (negative,
+        bool, float, string, absurdly large: Traigent#3252). Such a call has
+        unknown usage and must make the aggregate unknown, never be clamped or
+        summed into a valid-looking figure.
+        """
         usage = getattr(resp, "usage_metadata", None)
         if usage:
-            return (
-                usage.get("input_tokens", 0),
-                usage.get("output_tokens", 0),
-                usage.get("total_tokens", 0),
+            return self._validated_triple(
+                usage.get("input_tokens"),
+                usage.get("output_tokens"),
+                usage.get("total_tokens"),
             )
 
         usage_obj = getattr(resp, "usage", None)
         if usage_obj is not None:
-            input_tokens = getattr(usage_obj, "prompt_tokens", 0) or 0
-            output_tokens = getattr(usage_obj, "completion_tokens", 0) or 0
-            total_tokens = getattr(usage_obj, "total_tokens", None)
-            if isinstance(input_tokens, (int, float)) and isinstance(
-                output_tokens, (int, float)
-            ):
-                if isinstance(total_tokens, (int, float)):
-                    return (int(input_tokens), int(output_tokens), int(total_tokens))
-                return (
-                    int(input_tokens),
-                    int(output_tokens),
-                    int(input_tokens + output_tokens),
-                )
+            return self._validated_triple(
+                getattr(usage_obj, "prompt_tokens", None),
+                getattr(usage_obj, "completion_tokens", None),
+                getattr(usage_obj, "total_tokens", None),
+            )
 
         resp_meta = getattr(resp, "response_metadata", None)
         if not resp_meta or not isinstance(resp_meta, dict):
@@ -511,20 +510,42 @@ class _AggregatedResponses:
         if not isinstance(token_usage, dict):
             return (0, 0, 0)
 
-        return (
-            token_usage.get("prompt_tokens", 0),
-            token_usage.get("completion_tokens", 0),
-            token_usage.get("total_tokens", 0),
+        return self._validated_triple(
+            token_usage.get("prompt_tokens"),
+            token_usage.get("completion_tokens"),
+            token_usage.get("total_tokens"),
         )
 
-    def _sum_token_usage(self) -> tuple[int, int, int]:
+    @staticmethod
+    def _validated_triple(
+        input_raw: Any, output_raw: Any, total_raw: Any
+    ) -> tuple[int, int, int] | None:
+        counts: list[int] = []
+        for raw in (input_raw, output_raw, total_raw):
+            if raw is None:
+                counts.append(0)
+                continue
+            valid = validate_token_count(raw)
+            if valid is None:
+                return None
+            counts.append(valid)
+        return (counts[0], counts[1], counts[2])
+
+    def _sum_token_usage(self) -> tuple[float, float, float]:
         """Sum up token usage from all responses."""
         total_input = 0
         total_output = 0
         total_tokens = 0
 
         for resp in self._responses:
-            inp, out, tot = self._extract_tokens_from_response(resp)
+            extracted = self._extract_tokens_from_response(resp)
+            if extracted is None:
+                # One call reported an invalid count: the aggregate usage is
+                # unknown. NaN is rejected by ``validate_token_count`` in the
+                # downstream handler, so the whole example fails closed.
+                nan = float("nan")
+                return (nan, nan, nan)
+            inp, out, tot = extracted
             total_input += inp
             total_output += out
             total_tokens += tot
@@ -535,7 +556,7 @@ class _AggregatedResponses:
 
         return (total_input, total_output, total_tokens)
 
-    def _build_metadata(self, totals: tuple[int, int, int]) -> None:
+    def _build_metadata(self, totals: tuple[float, float, float]) -> None:
         """Build usage_metadata and response_metadata from totals."""
         total_input, total_output, total_tokens = totals
 

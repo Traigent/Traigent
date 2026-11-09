@@ -153,3 +153,56 @@ def test_valid_counts_still_priced_exactly(
     assert metrics.cost.total_cost == pytest.approx(expected_in + expected_out)
     assert metrics.cost.total_cost > 0
     assert metrics.cost_measured is True
+
+
+def test_invalid_usage_is_not_priced_from_text_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prompt/response text must not turn unknown usage into a measured cost."""
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "true")
+    monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "false")
+    metrics = extract_llm_metrics(
+        _openai(-5, 7),
+        model_name="gpt-4o-mini",
+        original_prompt="What is the capital of France?" * 20,
+        response_text="Paris" * 20,
+    )
+    assert metrics.tokens.invalid is True
+    assert metrics.cost.total_cost == 0
+    assert metrics.cost.unmeasured is True
+    assert metrics.cost_measured is False
+
+
+def test_invalid_primary_langchain_usage_does_not_fall_through_to_secondary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "false")
+    response = SimpleNamespace(
+        usage_metadata={"input_tokens": -5, "output_tokens": 7},
+        response_metadata={
+            "token_usage": {"prompt_tokens": 11, "completion_tokens": 7}
+        },
+    )
+    metrics = extract_llm_metrics(response, model_name="gpt-4o-mini")
+    assert metrics.tokens.total_tokens == 0
+    assert metrics.cost_measured is False
+
+
+def test_aggregated_responses_with_one_invalid_call_are_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """-5 from one call plus 10 from another must not sum to a valid 5."""
+    from traigent.evaluators import local
+
+    agg_cls = local._AggregatedResponses
+    good = SimpleNamespace(usage_metadata={"input_tokens": 10, "output_tokens": 2})
+    bad = SimpleNamespace(usage_metadata={"input_tokens": -5, "output_tokens": 2})
+    monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "false")
+
+    ok = extract_llm_metrics(agg_cls([good, good]), model_name="gpt-4o-mini")
+    assert (ok.tokens.input_tokens, ok.tokens.output_tokens) == (20, 4)
+    assert ok.cost_measured is True
+
+    metrics = extract_llm_metrics(agg_cls([good, bad]), model_name="gpt-4o-mini")
+    assert metrics.tokens.total_tokens == 0
+    assert metrics.cost_measured is False

@@ -458,6 +458,11 @@ class TokenMetrics:
     # pricing) must treat this as "not real usage", never merge it into the
     # same fields as a measured count without a flag.
     estimated: bool = False
+    # True when the provider reported a count that failed validation
+    # (negative, bool, float, string, absurdly large: Traigent#3252). The
+    # counts above are then zero, but zero here means UNKNOWN, not "free":
+    # cost must not be estimated from text and must stay unmeasured.
+    invalid: bool = False
 
     def __post_init__(self) -> None:
         # Ensure non-negative values and handle None
@@ -488,7 +493,7 @@ def _checked_tokens(
                 "treating usage as unknown",
                 type(raw).__name__,
             )
-            return TokenMetrics()
+            return TokenMetrics(invalid=True)
         counts.append(valid)
     input_tokens, output_tokens, total_tokens = counts
     return TokenMetrics(
@@ -2299,7 +2304,10 @@ class LangChainResponseHandler(ResponseHandler):
                 tokens.input_tokens = found.input_tokens
                 tokens.output_tokens = found.output_tokens
                 tokens.total_tokens = found.total_tokens
-                if tokens.total_tokens > 0:
+                tokens.invalid = found.invalid
+                if found.invalid or tokens.total_tokens > 0:
+                    # Invalid counts end the search: never fall through to a
+                    # different usage field and price that as measured.
                     return True
         return False
 
@@ -2311,7 +2319,7 @@ class LangChainResponseHandler(ResponseHandler):
             tokens = self._tokens_from_usage(
                 response.usage_metadata, ("input_tokens",), ("output_tokens",)
             )
-            if tokens.total_tokens > 0:
+            if tokens.invalid or tokens.total_tokens > 0:
                 return tokens
 
         # Check response_metadata for token usage (alternative format)
@@ -3111,14 +3119,26 @@ def extract_llm_metrics(
     # model name carried on the response itself when the config supplies none
     # (multi-model/multi-step agents have no single config 'model' key; #1599).
     effective_model_name = model_name or _infer_model_name_from_response(response)
-    _calculate_cost_for_metrics(
-        metrics,
-        effective_model_name,
-        original_prompt,
-        response_text,
-        prompt_length=prompt_length,
-        response_length=response_length,
-    )
+    if metrics.tokens.invalid and not (
+        metrics.cost.total_cost > 0 or metrics.cost.cost_explicit
+    ):
+        # The provider reported an unusable token count (Traigent#3252): usage
+        # is unknown, so do not estimate a cost from text either. The example
+        # falls through to the ``cost.unmeasured`` guard below.
+        logger.warning(
+            "Provider token usage was invalid for model %r; "
+            "cost is unmeasured, not priced",
+            effective_model_name,
+        )
+    else:
+        _calculate_cost_for_metrics(
+            metrics,
+            effective_model_name,
+            original_prompt,
+            response_text,
+            prompt_length=prompt_length,
+            response_length=response_length,
+        )
 
     # Nothing was captured and the length-based (privacy-mode) path priced
     # nothing either: the cost is UNKNOWN, not $0 (Traigent#2517). The global
