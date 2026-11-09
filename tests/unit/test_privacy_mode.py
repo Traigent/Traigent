@@ -218,7 +218,7 @@ class TestPrivacyCompliance:
             # content-less / optimization_only / legacy. The privacy-mode create
             # (OptimizationOrchestrator.create_session) never forwards it. Asserted below
             # on the value, and end to end in
-            # test_crew_declaration_never_reaches_privacy_mode_requests.
+            # test_crew_declaration_not_forwarded_by_privacy_session_create.
             "crew_declaration",
         }
 
@@ -232,7 +232,7 @@ class TestPrivacyCompliance:
 
     @pytest.mark.filterwarnings("ignore::UserWarning", "ignore::DeprecationWarning")
     @pytest.mark.asyncio
-    async def test_crew_declaration_never_reaches_privacy_mode_requests(
+    async def test_crew_declaration_not_forwarded_by_privacy_session_create(
         self, privacy_optimizer, dummy_server, caplog, tmp_path, monkeypatch
     ):
         """A run declaring crew/role under privacy mode sends neither key anywhere."""
@@ -281,19 +281,6 @@ class TestPrivacyCompliance:
         for call in backend.create_session.call_args_list:
             assert "crew_declaration" not in call.kwargs
             assert crew_key not in repr(call) and role_key not in repr(call)
-
-        # 2. Privacy-mode session create against the dummy server.
-        await privacy_optimizer.initialize_session("process_sensitive_data", 3)
-        creates = [
-            r
-            for r in dummy_server.received_data
-            if r["request_type"] == "SessionCreationRequest"
-        ]
-        assert creates, "premise: the dummy server saw a session create"
-        assert all(r["crew_declaration_sent"] is False for r in creates)
-        recorded = str(dummy_server.received_data)
-        assert crew_key not in recorded and role_key not in recorded
-        assert crew_key not in caplog.text and role_key not in caplog.text
 
     @pytest.mark.asyncio
     async def test_only_indices_in_suggestions(self, privacy_optimizer, dummy_server):

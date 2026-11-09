@@ -25,7 +25,7 @@ from traigent.api.types import (
     TrialStatus,
 )
 from traigent.config.types import ExecutionIntent, TraigentConfig, _read_bool_env
-from traigent.utils.crew_declaration import CONFLICT_WARNING
+from traigent.utils.crew_declaration import CONFLICT_WARNING, NOT_SENT_MESSAGE
 from traigent.utils.wire_text import filter_agent_configuration
 
 if TYPE_CHECKING:
@@ -1879,6 +1879,13 @@ class BackendSessionManager:
                 content_identity, content_less, evaluator_code_digest
             )
             g1_kwargs = self._build_g1_create_kwargs()
+            if crew_declaration is not None and bool(
+                getattr(self._traigent_config, "privacy_enabled", False)
+            ):
+                # Privacy mode withholds the declaration like content-less and
+                # optimization_only: dropped before any body is built, one keyless line.
+                logger.info(NOT_SENT_MESSAGE)
+                crew_declaration = None
             # Only when declared: a client without the kwarg is never handed it.
             crew_kwargs = (
                 {"crew_declaration": crew_declaration}

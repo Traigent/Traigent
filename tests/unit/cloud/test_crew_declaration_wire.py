@@ -559,6 +559,65 @@ async def test_real_content_less_run_sends_the_canary_nowhere(
     assert not _has_canary(repr(result))
 
 
+@pytest.mark.asyncio
+async def test_privacy_run_sends_the_canary_nowhere(monkeypatch, tmp_path, caplog):
+    """Real optimize() in privacy mode: no crew declaration on any outgoing body."""
+    requests = _e2e_env(monkeypatch, tmp_path)
+    caplog.set_level(logging.DEBUG)
+    # The decorator kwarg is dropped before it reaches the config today (see
+    # test_backend_session_manager), so set the state the manager sees in privacy
+    # mode on the real config object; everything downstream is the real path.
+    from traigent.core.backend_session_manager import BackendSessionManager
+
+    real_init = BackendSessionManager.__init__
+
+    def privacy_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        real_init(self, *args, **kwargs)
+        self._traigent_config.privacy_enabled = True
+
+    monkeypatch.setattr(BackendSessionManager, "__init__", privacy_init)
+    func = _e2e_function()
+    result = await func.optimize(algorithm="grid", max_trials=2)
+    creates = [
+        body
+        for method, url, body in requests
+        if method == "POST" and url.rstrip("/").endswith("/sessions")
+    ]
+    assert creates, "premise: a session create reached the transport"
+    for body in creates:
+        assert "crew_declaration" not in (body.get("metadata") or {})
+    for _, url, body in requests:
+        assert not _has_canary(url)
+        assert not _has_canary(body)
+        assert not _has_canary(json.dumps(body, default=repr).encode().decode())
+    assert func.crew_binding.status == "unknown"
+    assert NOT_SENT_MESSAGE in caplog.text
+    _logs_clean(caplog)
+    assert not _has_canary(repr(result))
+
+
+@pytest.mark.asyncio
+async def test_privacy_off_control_does_carry_the_declaration(
+    monkeypatch, tmp_path, caplog
+):
+    """Negative control: the same run without privacy mode DOES send it."""
+    requests = _e2e_env(monkeypatch, tmp_path)
+    caplog.set_level(logging.DEBUG)
+    func = _e2e_function()
+    await func.optimize(algorithm="grid", max_trials=2)
+    creates = [
+        body
+        for method, url, body in requests
+        if method == "POST" and url.rstrip("/").endswith("/sessions")
+    ]
+    assert creates
+    assert any(
+        (b.get("metadata") or {}).get("crew_declaration")
+        == {"crew_key": CANARY_CREW, "role_key": CANARY_ROLE}
+        for b in creates
+    )
+
+
 # ---------------------------------------------------------------------------
 # Redirects: a declaration-bearing POST is never followed (aiohttp keeps the
 # body on 307/308); other requests keep the default redirect behaviour.
