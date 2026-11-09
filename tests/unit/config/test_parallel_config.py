@@ -243,3 +243,15 @@ def test_configure_rejects_invalid_parallel_config_without_storing() -> None:
         traigent.configure(parallel_workers=10**9)
     assert _GLOBAL_CONFIG.get("parallel_config") == before.get("parallel_config")
     assert _GLOBAL_CONFIG.get("parallel_workers") == before.get("parallel_workers")
+
+
+def test_configure_rejected_parallel_config_does_not_store_parallel_workers() -> None:
+    import traigent
+    from traigent.api.functions import _GLOBAL_CONFIG
+
+    before = _GLOBAL_CONFIG.get("parallel_workers")
+    with pytest.raises(ValidationException):
+        traigent.configure(
+            parallel_workers=8, parallel_config={"trial_concurrency": "2"}
+        )
+    assert _GLOBAL_CONFIG.get("parallel_workers") == before

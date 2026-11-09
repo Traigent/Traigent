@@ -116,6 +116,13 @@ def configure(
             stacklevel=2,
         )
 
+    # Validate every parallel input before storing any of it, so a rejected call
+    # leaves global state untouched.
+    if parallel_config is not None:
+        _coerced_parallel = coerce_parallel_config(parallel_config)
+        if _coerced_parallel is not None:
+            validate_parallel_config_fields(_coerced_parallel)
+
     if parallel_workers is not None:
         result = Validators.validate_positive_int(parallel_workers, "parallel_workers")
         validate_or_raise(result)
