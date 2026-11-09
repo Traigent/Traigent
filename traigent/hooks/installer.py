@@ -18,7 +18,6 @@ from types import ModuleType
 
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import (
-    safe_read_text,
     safe_write_text,
     validate_path,
 )
@@ -114,22 +113,27 @@ HOOK_MARKER = "# Traigent pre-push hook - validates agent configurations"
 PRE_COMMIT_HOOK_MARKER = "# Traigent pre-commit hook - quick config check"
 
 
-_TRAIGENT_HOOK_BODIES = frozenset(
-    script.encode("utf-8") for script in (PRE_PUSH_HOOK_SCRIPT, PRE_COMMIT_HOOK_SCRIPT)
-)
+_TRAIGENT_HOOK_BODIES: dict[str, bytes] = {
+    "pre-push": PRE_PUSH_HOOK_SCRIPT.encode("utf-8"),
+    "pre-commit": PRE_COMMIT_HOOK_SCRIPT.encode("utf-8"),
+}
 
 
-def _is_traigent_hook(content: bytes | str) -> bool:
-    """Return True only when the hook is exactly what Traigent's installer wrote.
+def _is_traigent_hook(content: bytes | str, hook_name: str) -> bool:
+    """Return True only when the hook is exactly what Traigent writes for ``hook_name``.
 
     A marker line proves nothing about authorship: a customer may have edited
     the generated hook or reused the header in their own hook. Only a file
-    whose bytes equal a script Traigent publishes is ours to delete or
-    replace. CRLF line endings (written by text-mode I/O on Windows) are
+    whose bytes equal the script Traigent publishes for that same hook (so
+    deleting it loses nothing, the script is reproducible) is ours to delete
+    or replace. CRLF line endings (written by text-mode I/O on Windows) are
     normalised to LF before comparing.
     """
+    expected = _TRAIGENT_HOOK_BODIES.get(hook_name)
+    if expected is None:
+        return False
     raw = content.encode("utf-8") if isinstance(content, str) else content
-    return raw.replace(b"\r\n", b"\n") in _TRAIGENT_HOOK_BODIES
+    return raw.replace(b"\r\n", b"\n") == expected
 
 
 def _read_hook_bytes(path: Path, base_dir: Path) -> bytes:
@@ -290,8 +294,8 @@ class HooksInstaller:
         if hook_path.exists():
             if not force:
                 # Check if it's already a Traigent hook
-                existing_content = safe_read_text(hook_path, hooks_dir)
-                if HOOK_MARKER in existing_content:
+                existing_bytes = _read_hook_bytes(hook_path, hooks_dir)
+                if _is_traigent_hook(existing_bytes, hook_path.name):
                     logger.info(f"Traigent hook already installed at {hook_path}")
                     return True
                 else:
@@ -302,7 +306,9 @@ class HooksInstaller:
 
             # A Traigent hook is replaced without a backup. A foreign hook is
             # backed up without clobbering: os.link fails if the backup exists.
-            if not _is_traigent_hook(_read_hook_bytes(hook_path, hooks_dir)):
+            if not _is_traigent_hook(
+                _read_hook_bytes(hook_path, hooks_dir), hook_path.name
+            ):
                 backup_path = hook_path.with_suffix(".backup")
                 try:
                     os.link(hook_path, backup_path, follow_symlinks=False)
@@ -358,7 +364,7 @@ class HooksInstaller:
 
         # Only remove if it's a Traigent hook
         content = _read_hook_bytes(hook_path, self.hooks_dir)
-        if not _is_traigent_hook(content):
+        if not _is_traigent_hook(content, hook_path.name):
             logger.warning(
                 f"Hook at {hook_path} was not installed by Traigent, or has been "
                 "modified since install - leaving it untouched"
@@ -371,7 +377,9 @@ class HooksInstaller:
         # Restore backup if exists, unless it is itself a Traigent hook
         backup_path = hook_path.with_suffix(".backup")
         if backup_path.exists():
-            if _is_traigent_hook(_read_hook_bytes(backup_path, self.hooks_dir)):
+            if _is_traigent_hook(
+                _read_hook_bytes(backup_path, self.hooks_dir), hook_path.name
+            ):
                 backup_path.unlink()
                 logger.warning(
                     f"Removed {backup_path.name}: it held a Traigent hook, "
@@ -402,7 +410,7 @@ class HooksInstaller:
                 status[hook_name] = "not installed"
             else:
                 content = _read_hook_bytes(hook_path, hooks_dir)
-                if _is_traigent_hook(content):
+                if _is_traigent_hook(content, hook_name):
                     status[hook_name] = "installed (traigent)"
                 else:
                     status[hook_name] = "installed (other)"

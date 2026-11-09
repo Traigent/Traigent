@@ -201,6 +201,31 @@ class TestUninstallOwnership:
         assert hook.read_text() == edited
         assert not (installer.hooks_dir / "pre-commit.backup").exists()
 
+    def test_other_hooks_script_in_backup_is_not_deleted(
+        self, installer: HooksInstaller
+    ) -> None:
+        push = installer.hooks_dir / "pre-push"
+        backup = installer.hooks_dir / "pre-push.backup"
+        push.write_text(PRE_PUSH_HOOK_SCRIPT)
+        backup.write_text(PRE_COMMIT_HOOK_SCRIPT)
+
+        installer.uninstall()
+
+        assert push.read_text() == PRE_COMMIT_HOOK_SCRIPT
+        assert not backup.exists()
+
+    def test_install_without_force_rejects_marker_reusing_customer_hook(
+        self, installer: HooksInstaller
+    ) -> None:
+        push = installer.hooks_dir / "pre-push"
+        mine = f"#!/bin/sh\n{HOOK_MARKER}\n./tests.sh\n"
+        push.write_text(mine)
+
+        results = installer.install()
+
+        assert results["pre-push"] is False
+        assert push.read_text() == mine
+
     def test_edited_backup_is_restored_not_deleted(
         self, installer: HooksInstaller
     ) -> None:
@@ -357,11 +382,9 @@ class TestHooksInstaller:
         # Install again without force
         results = installer.install(force=False)
 
-        # pre-push has HOOK_MARKER so it's detected as Traigent hook
-        assert results["pre-push"] is True
-        # pre-commit doesn't have HOOK_MARKER so it's not re-detected
-        # This is current behavior - could be considered a bug
-        assert results["pre-commit"] is False
+        # Both hooks are byte-identical to Traigent's scripts, so both are
+        # recognised as already installed.
+        assert results == {"pre-push": True, "pre-commit": True}
 
     def test_install_without_force_preserves_non_traigent_hooks(
         self, installer: HooksInstaller
@@ -487,7 +510,7 @@ class TestHooksInstaller:
         self, installer: HooksInstaller
     ) -> None:
         """Test _uninstall_hook removes Traigent hook."""
-        hook_path = installer.hooks_dir / "test-hook"
+        hook_path = installer.hooks_dir / "pre-push"
         hook_path.write_text(PRE_PUSH_HOOK_SCRIPT)
 
         result = installer._uninstall_hook(hook_path)
