@@ -126,6 +126,13 @@ class ParetoPoint:
         return better_in_at_least_one
 
 
+def _is_exact_float_like(value: Any) -> bool:
+    """True for float, bool, or an int that converts to float without loss."""
+    if type(value) is float:
+        return True
+    return type(value) in (int, bool) and abs(value) <= 2**53
+
+
 class ParetoFrontCalculator:
     """Calculates Pareto fronts for multi-objective optimization."""
 
@@ -183,6 +190,9 @@ class ParetoFrontCalculator:
             return []
 
         # Find non-dominated points
+        fast = self._non_dominated_2d(points, objectives)
+        if fast is not None:
+            return fast
         return [
             point
             for i, point in enumerate(points)
@@ -192,6 +202,80 @@ class ParetoFrontCalculator:
                 for j, other_point in enumerate(points)
             )
         ]
+
+    def _non_dominated_2d(
+        self,
+        points: list[ParetoPoint],
+        objectives: list[str],
+        epsilon: float = 1e-10,
+    ) -> list[ParetoPoint] | None:
+        """O(n log n) front for exactly two objectives, or None to fall back.
+
+        Reproduces ``ParetoPoint.dominates`` (epsilon tolerance included) over
+        two objectives. With both axes oriented to "smaller is better"
+        (x, y), a dominates p iff x_a - x_p <= eps and y_a - y_p <= eps and
+        (x_a - x_p < -eps or y_a - y_p < -eps). Sorted by x, that splits into
+        two prefix-minimum-of-y queries (#3273):
+          (i)  some a with x_a - x_p < -eps and y_a - y_p <= eps;
+          (ii) some a with x_a - x_p <= eps and y_a - y_p < -eps.
+        The prefix boundaries use the very same float subtractions as
+        ``dominates`` (monotone in x_a), and p can never satisfy (i) or (ii)
+        against itself. Non-finite values make ``dominates`` compare as NaN, so
+        those inputs, and any other objective count, use the quadratic scan.
+        """
+        names = sorted(set(objectives))
+        if len(names) != 2:
+            return None
+        signs = [-1.0 if _should_maximize(n, self.maximize) else 1.0 for n in names]
+        coords: list[tuple[float, float]] = []
+        for point in points:
+            raw: list[float] = []
+            for n in names:
+                value = point.objectives.get(n)
+                if value is None:
+                    return None
+                raw.append(value)
+            # Only plain floats and ints exactly representable as floats keep
+            # the subtraction bit-identical to ``dominates``; anything else
+            # (numpy scalars, huge ints, non-numbers) takes the exact scan.
+            if not all(_is_exact_float_like(v) for v in raw):
+                return None
+            xy = tuple(sg * float(v) for sg, v in zip(signs, raw, strict=True))
+            if not all(math.isfinite(v) for v in xy):
+                return None
+            coords.append((xy[0], xy[1]))
+
+        order = sorted(range(len(points)), key=lambda i: coords[i][0])
+        xs = [coords[i][0] for i in order]
+        prefix_min = []
+        running = math.inf
+        for i in order:
+            running = min(running, coords[i][1])
+            prefix_min.append(running)
+
+        def count_prefix(x_p: float, inclusive: bool) -> int:
+            # xs[a] - x_p is monotone in xs[a], so the matching a form a prefix.
+            lo, hi = 0, len(xs)
+            while lo < hi:
+                mid = (lo + hi) // 2
+                diff = xs[mid] - x_p
+                if (diff <= epsilon) if inclusive else (diff < -epsilon):
+                    lo = mid + 1
+                else:
+                    hi = mid
+            return lo
+
+        front: list[ParetoPoint] = []
+        for idx, point in enumerate(points):
+            x_p, y_p = coords[idx]
+            n_strict = count_prefix(x_p, inclusive=False)
+            n_loose = count_prefix(x_p, inclusive=True)
+            dominated = (
+                n_strict > 0 and prefix_min[n_strict - 1] - y_p <= epsilon
+            ) or (n_loose > 0 and prefix_min[n_loose - 1] - y_p < -epsilon)
+            if not dominated:
+                front.append(point)
+        return front
 
     @staticmethod
     def _trial_to_pareto_point(
