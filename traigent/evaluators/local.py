@@ -1925,6 +1925,9 @@ class LocalEvaluator(BaseEvaluator):
             model_name=model,
             response_text=None,
             response_captured=response_captured,
+            # Missing/null usage is an unknown spend, never an estimate from
+            # text (parity with core/evaluator_wrapper.py).
+            estimate_from_text=False,
             **(prompt_kwargs if is_agent_call else {}),
         )
         if (
