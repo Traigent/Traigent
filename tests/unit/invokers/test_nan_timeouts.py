@@ -39,3 +39,17 @@ def test_hooks_cost_constraint_nan_rejected() -> None:
         CostConstraints(max_cost_per_query=NAN)
     with pytest.raises(ValueError, match="max_cost_per_query"):
         HooksConfig.from_dict({"constraints": {"cost": {"max_cost_per_query": NAN}}})
+
+
+def test_hooks_cost_constraint_accepts_numpy_scalars() -> None:
+    """numpy scalars are real numbers; only bool, NaN and inf are rejected."""
+    np = pytest.importorskip("numpy")
+
+    c = CostConstraints(
+        max_cost_per_query=np.float32(0.1), max_monthly_budget=np.int64(50)
+    )
+    assert float(c.max_cost_per_query) == pytest.approx(0.1)
+    with pytest.raises(ValueError, match="max_cost_per_query"):
+        CostConstraints(max_cost_per_query=np.float64("nan"))
+    with pytest.raises(ValueError, match="max_cost_per_query"):
+        CostConstraints(max_cost_per_query=True)

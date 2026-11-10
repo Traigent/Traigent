@@ -9,6 +9,7 @@ agent validation constraints.
 from __future__ import annotations
 
 import math
+import numbers
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -110,7 +111,7 @@ class CostConstraints:
                 continue
             if (
                 isinstance(value, bool)
-                or not isinstance(value, (int, float))
+                or not isinstance(value, numbers.Real)
                 or not math.isfinite(value)
             ):
                 raise ValueError(
