@@ -70,11 +70,7 @@ async def test_evaluation_kwargs_rejected_when_service_does_not_support_them() -
     transport.execute.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_evaluation_kwargs_allowed_when_advertised() -> None:
-    transport = _transport(
-        ServiceCapabilities(version="1.0", supports_evaluation_kwargs=True)
-    )
+def _kwargs_evaluator(transport: MagicMock) -> HybridAPIEvaluator:
     ev = HybridAPIEvaluator(
         transport=transport,
         tunable_id="t",
@@ -82,8 +78,93 @@ async def test_evaluation_kwargs_allowed_when_advertised() -> None:
         evaluation_kwargs={"judge": "x"},
     )
     ev._benchmark_id = "b"
-    await ev.evaluate(lambda: None, {}, _dataset(1))
-    transport.execute.assert_called_once()
+    return ev
+
+
+def _recording_budget_evaluator(transport: MagicMock):
+    ev = _kwargs_evaluator(transport)
+    leases: list[Any] = []
+    original = ev._prepare_execution_budget_evaluation
+
+    def spy(*args: Any, **kwargs: Any):
+        lease, blocked = original(*args, **kwargs)
+        leases.append(lease)
+        return lease, blocked
+
+    ev._prepare_execution_budget_evaluation = spy  # type: ignore[method-assign]
+    return ev, leases
+
+
+@pytest.mark.asyncio
+async def test_evaluation_kwargs_sent_on_two_phase_evaluate() -> None:
+    transport = _transport(
+        ServiceCapabilities(
+            version="1.0", supports_evaluate=True, supports_evaluation_kwargs=True
+        )
+    )
+    transport.execute.side_effect = None
+    transport.execute.return_value = HybridExecuteResponse(
+        request_id="r",
+        execution_id="e",
+        status="completed",
+        outputs=[{"example_id": "ex_0", "output": "x"}],
+        operational_metrics={"cost_usd": 0.0, "latency_ms": 1.0},
+    )
+    transport.evaluate = AsyncMock(
+        return_value=MagicMock(results=[], aggregate_metrics={})
+    )
+    await _kwargs_evaluator(transport).evaluate(lambda: None, {}, _dataset(1))
+    assert transport.evaluate.call_args.args[0].kwargs == {"judge": "x"}
+
+
+@pytest.mark.asyncio
+async def test_evaluation_kwargs_rejected_when_service_has_no_evaluate() -> None:
+    transport = _transport(
+        ServiceCapabilities(
+            version="1.0", supports_evaluate=False, supports_evaluation_kwargs=True
+        )
+    )
+    with pytest.raises(ConfigurationError, match="evaluate"):
+        await _kwargs_evaluator(transport).evaluate(lambda: None, {}, _dataset(1))
+    transport.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_evaluation_kwargs_rejected_when_execute_returns_combined_scores() -> (
+    None
+):
+    transport = _transport(
+        ServiceCapabilities(
+            version="1.0", supports_evaluate=True, supports_evaluation_kwargs=True
+        )
+    )  # the fake execute returns quality_metrics (combined mode)
+    with pytest.raises(ConfigurationError, match="execute response"):
+        await _kwargs_evaluator(transport).evaluate(lambda: None, {}, _dataset(1))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "caps",
+    [
+        ServiceCapabilities(version="1.0"),  # kwargs unsupported
+        ServiceCapabilities(  # no evaluate endpoint
+            version="1.0", supports_evaluation_kwargs=True
+        ),
+        ServiceCapabilities(  # combined mode rejects after execute
+            version="1.0", supports_evaluate=True, supports_evaluation_kwargs=True
+        ),
+    ],
+)
+async def test_rejection_releases_the_execution_budget_lease(caps) -> None:
+    from traigent.core.execution_budget import ExecutionBudget
+
+    ev, leases = _recording_budget_evaluator(_transport(caps))
+    with pytest.raises(ConfigurationError):
+        await ev.evaluate(
+            lambda: None, {}, _dataset(2), budget=ExecutionBudget(max_examples=5)
+        )
+    assert len(leases) == 1 and leases[0] is not None
+    assert leases[0]._closed is True
 
 
 def test_supports_benchmarks_is_parsed() -> None:

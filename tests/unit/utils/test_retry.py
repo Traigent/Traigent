@@ -623,3 +623,46 @@ def test_retry_timeout_flag_off_keeps_connection_retry():
         Mock(side_effect=ConnectionResetError("c"))
     )
     assert result.attempts == 3
+
+
+def _http_client_errors():
+    import requests
+
+    cases = [
+        ("retry_on_timeout", requests.exceptions.ReadTimeout("t")),
+        ("retry_on_connection_error", requests.exceptions.ConnectionError("c")),
+    ]
+    try:
+        import httpx
+
+        cases += [
+            ("retry_on_timeout", httpx.ReadTimeout("t")),
+            ("retry_on_connection_error", httpx.ConnectError("c")),
+        ]
+    except ImportError:  # pragma: no cover
+        pass
+    try:
+        import aiohttp
+
+        cases += [
+            ("retry_on_timeout", aiohttp.ServerTimeoutError("t")),
+            ("retry_on_connection_error", aiohttp.ClientConnectionError("c")),
+        ]
+    except ImportError:  # pragma: no cover
+        pass
+    return cases
+
+
+@pytest.mark.parametrize(("flag", "error"), _http_client_errors())
+def test_retry_flags_cover_http_client_exceptions(flag, error):
+    handler = RetryHandler(
+        RetryConfig(
+            max_attempts=3,
+            initial_delay=0,
+            jitter=False,
+            retry_on_exception={type(error)},
+            **{flag: False},
+        )
+    )
+    result = handler.execute_with_result(Mock(side_effect=error))
+    assert result.attempts == 1

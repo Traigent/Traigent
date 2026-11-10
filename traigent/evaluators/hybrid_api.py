@@ -471,6 +471,12 @@ class HybridAPIEvaluator(BaseEvaluator):
                 "honoured. Remove evaluation_kwargs or use a service that "
                 "supports them."
             )
+        if self._evaluation_kwargs and not getattr(caps, "supports_evaluate", False):
+            raise ConfigurationError(
+                "evaluation_kwargs were provided but the external service does "
+                "not support a separate evaluate call, which is the only request "
+                "that carries them; they cannot be honoured."
+            )
 
     def _effective_batch_size(self, caps: ServiceCapabilities) -> int:
         """Clamp the configured batch size to the service's max_batch_size."""
@@ -962,7 +968,11 @@ class HybridAPIEvaluator(BaseEvaluator):
         caps = await self._await_with_sample_lease_cleanup(
             self._get_capabilities(), sample_lease, execution_budget_lease
         )
-        self._require_evaluation_kwargs_support(caps)
+        try:
+            self._require_evaluation_kwargs_support(caps)
+        except ConfigurationError:
+            self._cleanup_sample_lease_on_cancel(sample_lease, execution_budget_lease)
+            raise
 
         # Initialize lifecycle manager if needed
         await self._await_with_sample_lease_cleanup(
@@ -1002,11 +1012,17 @@ class HybridAPIEvaluator(BaseEvaluator):
                 break
 
             # Execute batch
-            batch_results = await self._await_with_sample_lease_cleanup(
-                self._execute_batch(transport, caps, config, batch, batch_ids),
-                sample_lease,
-                execution_budget_lease,
-            )
+            try:
+                batch_results = await self._await_with_sample_lease_cleanup(
+                    self._execute_batch(transport, caps, config, batch, batch_ids),
+                    sample_lease,
+                    execution_budget_lease,
+                )
+            except ConfigurationError:
+                self._cleanup_sample_lease_on_cancel(
+                    sample_lease, execution_budget_lease
+                )
+                raise
             example_results.extend(batch_results)
             batch_cost = HybridAPIEvaluator._record_batch_completion(
                 sample_lease, batch_results
@@ -1142,6 +1158,13 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             # Check if combined mode (quality metrics included)
             if execute_response.quality_metrics:
+                if self._evaluation_kwargs:
+                    raise ConfigurationError(
+                        "evaluation_kwargs were provided but the service scored "
+                        "the batch in the execute response, so the separate "
+                        "evaluate request that carries them was never sent; "
+                        "they cannot be honoured."
+                    )
                 # Combined mode - use quality metrics directly
                 return self._process_combined_response(batch, inputs, execute_response)
             elif caps.supports_evaluate:
