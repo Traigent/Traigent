@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from itertools import product
 from typing import Any
@@ -230,12 +231,28 @@ class RandomSearchOptimizer(BaseOptimizer):
                 f"low ({low_i}) must be <= high ({high_i})"
             )
 
+        if param_def.get("log") and param_def.get("step") is None:
+            # Log-uniform over [low, high], rounded and clamped (#3214),
+            # as the JS SDK samples log-scaled integers.
+            sampled = self._sample_log_uniform(param_name, float(low_i), float(high_i))
+            return min(max(math.floor(sampled + 0.5), low_i), high_i)
+
         values = stepped_int_values(low_i, high_i, int_step)
         if not values:
             raise OptimizationError(
                 f"Invalid integer range for parameter '{param_name}': no values"
             )
         return self._random.choice(values)
+
+    def _sample_log_uniform(self, param_name: str, low: float, high: float) -> float:
+        """Draw ``10 ** uniform(log10(low), log10(high))`` clamped into the range."""
+        if low <= 0 or high <= 0:
+            raise OptimizationError(
+                f"Log-scale parameter '{param_name}' requires positive bounds, "
+                f"got low={low}, high={high}"
+            )
+        exponent = self._random.uniform(math.log10(low), math.log10(high))
+        return min(max(float(10.0**exponent), low), high)
 
     def _sample_range_float(self, param_name: str, param_def: dict) -> float:
         """Sample a float value from a range-dict definition."""
@@ -269,8 +286,16 @@ class RandomSearchOptimizer(BaseOptimizer):
                     f"Invalid float range for parameter '{param_name}': no values"
                 )
             return self._random.choice(values)
-        val = self._random.uniform(low_f, high_f)
-        return round(val, 6)
+        if param_def.get("log"):
+            # Log-scale ranges (LogRange / Range(log=True)) are sampled
+            # log-uniformly, not uniformly in linear space (#3214).
+            val = self._sample_log_uniform(param_name, low_f, high_f)
+        else:
+            val = self._random.uniform(low_f, high_f)
+        # 12 significant digits (the JS SDK's roundToPrecision), clamped into
+        # the declared range: fixed 6-decimal rounding collapsed sub-1e-6
+        # bounds onto a coarse lattice and even returned 0.0 (#3216).
+        return min(max(float(f"{val:.12g}"), low_f), high_f)
 
     def _sample_parameter(self, param_name: str, param_def: Any) -> Any:
         """Sample a single parameter value.

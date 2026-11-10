@@ -1064,7 +1064,9 @@ def _finite_grid_size(config_space: Any) -> int | None:
     size = 1
     for definition in config_space.values():
         if isinstance(definition, list):
-            size = min(size * max(len(definition), 1), _GRID_SIZE_COUNT_CAP)
+            # Repeated list values are enumerated once by the grid (#2954).
+            count = discrete_cardinality_for_config_param(definition)
+            size = min(size * max(count or 0, 1), _GRID_SIZE_COUNT_CAP)
         elif isinstance(definition, dict):
             # Arithmetic count: never materializes the domain (a huge IntRange
             # must not allocate before the grid optimizer's size guard runs).

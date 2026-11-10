@@ -85,6 +85,8 @@ _CONTINUOUS_NAME_MARKERS = (
     "price",
     "memory",
 )
+# Plateau tolerance used when 0 is configured (cross-SDK stop-rules contract).
+_ZERO_PLATEAU_TOLERANCE = 1e-6
 _SEMANTIC_DEFAULT_WINDOW = 4
 _SEMANTIC_DEFAULT_MIN_TRIALS = 4
 _SEMANTIC_DEFAULT_SCORE_TOLERANCE = 1e-9
@@ -365,7 +367,10 @@ class PlateauAfterNStopCondition(StopCondition):
             raise ValueError("epsilon must be non-negative")
 
         self._window_size = window_size
-        self._epsilon = float(epsilon)
+        # Cross-SDK stop-rules contract (TraigentSchema optimize.stop-rules):
+        # a tolerance of 0 is treated as 1e-6, so float noise in the running
+        # best still plateaus (#3025).
+        self._epsilon = float(epsilon) or _ZERO_PLATEAU_TOLERANCE
         self._schema = objective_schema
         self._history: deque[float] = deque(maxlen=self._window_size)
         self._best_score: float | None = None

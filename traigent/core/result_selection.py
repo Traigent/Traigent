@@ -796,7 +796,13 @@ def _aggregate_trials(
 
         entry = aggregated.setdefault(
             config_hash,
-            {"config": trial.config, "metrics_sum": {}, "count": 0, "trial_ids": []},
+            {
+                "config": trial.config,
+                "metrics_sum": {},
+                "metrics_count": {},
+                "count": 0,
+                "trial_ids": [],
+            },
         )
         entry["trial_ids"].append(trial.trial_id)
         if _cost_flagged(trial.metrics):
@@ -810,6 +816,11 @@ def _aggregate_trials(
                 entry["metrics_sum"][metric_name] = entry["metrics_sum"].get(
                     metric_name, 0.0
                 ) + float(metric_value)
+                # Per-metric denominator (#2955): a replicate that did not
+                # report a metric must not pull its mean toward 0.
+                entry["metrics_count"][metric_name] = (
+                    entry["metrics_count"].get(metric_name, 0) + 1
+                )
 
         entry["count"] += 1
 
@@ -817,11 +828,16 @@ def _aggregate_trials(
 
 
 def _compute_mean_metrics(entry: dict[str, Any]) -> dict[str, float]:
-    """Compute mean metrics from an aggregated entry."""
+    """Compute mean metrics from an aggregated entry.
+
+    Each metric is averaged over the replicates that reported it (#2955); an
+    entry without per-metric counts falls back to the replicate count.
+    """
     count = entry["count"] or 1
+    metric_counts = entry.get("metrics_count") or {}
     omit = _cost_objective_names() if entry.get("cost_flagged") else frozenset()
     return {
-        metric: value / count
+        metric: value / (metric_counts.get(metric) or count)
         for metric, value in entry.get("metrics_sum", {}).items()
         if metric not in omit
     }

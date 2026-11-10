@@ -833,10 +833,13 @@ class MetricsTracker:
             logger.exception(f"Error calculating statistics: {e}")
             return {"mean": 0.0, "median": 0.0, "std": 0.0}
 
+        # Unrounded: these feed objectives such as cost_per_example_mean,
+        # where 6-decimal rounding zeroed cheap per-call costs (#3220).
+        # Rounding is a display concern.
         return {
-            "mean": round(mean_val, 6),
-            "median": round(median_val, 6),
-            "std": round(std_val, 6),
+            "mean": float(mean_val),
+            "median": float(median_val),
+            "std": float(std_val),
         }
 
     def aggregate_metrics(self) -> dict[str, Any]:

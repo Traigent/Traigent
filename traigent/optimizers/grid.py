@@ -10,7 +10,10 @@ from typing import Any
 
 from traigent.api.types import TrialResult
 from traigent.optimizers.base import BaseOptimizer
-from traigent.utils.discrete_domains import discrete_values_for_config_param
+from traigent.utils.discrete_domains import (
+    discrete_values_for_config_param,
+    distinct_values,
+)
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
 
@@ -122,8 +125,9 @@ class GridSearchOptimizer(BaseOptimizer):
     def _discrete_values_for(param_name: str, param_def: Any) -> Sequence[Any]:
         """Return the enumerable values of one parameter definition."""
         if isinstance(param_def, list):
-            # Categorical parameter
-            return param_def
+            # Categorical parameter; repeated values would run repeated
+            # trials, so they are enumerated once (#2954).
+            return distinct_values(param_def)
         if isinstance(param_def, dict):
             values = discrete_values_for_config_param(param_def)
             if values is None:
