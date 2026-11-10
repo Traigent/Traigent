@@ -1118,3 +1118,17 @@ def test_no_ranking_eligible_trial_logs_warning_with_reason(caplog):
     assert not result.best_config
     messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any("'cost'" in m and "MCI-004" in m for m in messages)
+
+
+def test_non_finite_cost_rows_are_not_counted_as_measured() -> None:
+    from types import SimpleNamespace
+
+    from traigent.core.trial_result_factory import _count_primary_objective_rows
+
+    rows = [
+        SimpleNamespace(metrics={"total_cost": 0.5}),
+        SimpleNamespace(metrics={"total_cost": float("nan")}),
+        SimpleNamespace(metrics={"total_cost": float("inf")}),
+        SimpleNamespace(metrics={"total_cost": True}),
+    ]
+    assert _count_primary_objective_rows("cost", {}, rows) == 1
