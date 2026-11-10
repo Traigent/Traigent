@@ -23,6 +23,7 @@ import psutil
 
 from ..api.types import OptimizationStatus
 from ..utils.exceptions import TraigentStorageError
+from ..utils.file_lock import storage_lock
 from ..utils.function_identity import sanitize_identifier
 from ..utils.logging import get_logger
 from ..utils.objectives import is_minimization_objective
@@ -437,14 +438,27 @@ class LocalStorageManager:
         logger.info("Created optimization session")
         return session_id
 
+    @contextmanager
+    def _session_lock(self, session_id: str):
+        """Serialise load-modify-save of one session across threads and processes."""
+        session_file = validate_path(
+            self.storage_path / "sessions" / f"{session_id}.json",
+            self.storage_path,
+            must_exist=False,
+        )
+        session_file.parent.mkdir(parents=True, exist_ok=True)
+        with storage_lock(session_file):
+            yield
+
     def update_session_status(self, session_id: str, status: str) -> None:
         """Update session status."""
-        session = self.load_session(session_id)
-        if session:
-            session.status = status
-            session.updated_at = datetime.now(UTC).isoformat()
-            self._save_session(session)
-            logger.debug("Updated session status")
+        with self._session_lock(session_id):
+            session = self.load_session(session_id)
+            if session:
+                session.status = status
+                session.updated_at = datetime.now(UTC).isoformat()
+                self._save_session(session)
+                logger.debug("Updated session status")
 
     def _session_summary_orientation(self, session: Any) -> str | None:
         """Direction of the session's primary objective, or None when unknown."""
@@ -474,7 +488,9 @@ class LocalStorageManager:
         orientation = self._resolve_primary_objective_orientation(
             session.optimization_config, primary_objective
         )
-        if session.best_score is None:
+        if not math.isfinite(score):
+            return False
+        if session.best_score is None or not math.isfinite(session.best_score):
             return True
         if orientation == "band":
             low, high = self._resolve_primary_objective_band(
@@ -520,58 +536,59 @@ class LocalStorageManager:
             input_cost: Optional input-token cost in USD
             output_cost: Optional output-token cost in USD
         """
-        session = self.load_session(session_id)
-        if not session:
-            raise TraigentStorageError(
-                "Session <id> not found", details={"session_id": session_id}
-            ) from None
+        with self._session_lock(session_id):
+            session = self.load_session(session_id)
+            if not session:
+                raise TraigentStorageError(
+                    "Session <id> not found", details={"session_id": session_id}
+                ) from None
 
-        if session.trials is None:
-            session.trials = []
+            if session.trials is None:
+                session.trials = []
 
-        extracted_costs = extract_trial_cost_fields(metadata)
-        explicit_costs = {
-            "cost": cost,
-            "total_cost": total_cost,
-            "input_cost": input_cost,
-            "output_cost": output_cost,
-        }
-        for field, value in explicit_costs.items():
-            coerced_value = _coerce_optional_cost(value)
-            if coerced_value is not None:
-                extracted_costs[field] = coerced_value
+            extracted_costs = extract_trial_cost_fields(metadata)
+            explicit_costs = {
+                "cost": cost,
+                "total_cost": total_cost,
+                "input_cost": input_cost,
+                "output_cost": output_cost,
+            }
+            for field, value in explicit_costs.items():
+                coerced_value = _coerce_optional_cost(value)
+                if coerced_value is not None:
+                    extracted_costs[field] = coerced_value
 
-        _complete_total_and_cost(extracted_costs)
+            _complete_total_and_cost(extracted_costs)
 
-        trial_result = TrialResult(
-            trial_id=len(session.trials) + 1,
-            config=config,
-            score=score,
-            timestamp=datetime.now(UTC).isoformat(),
-            metadata=metadata,
-            error=error,
-            cost=extracted_costs["cost"],
-            total_cost=extracted_costs["total_cost"],
-            input_cost=extracted_costs["input_cost"],
-            output_cost=extracted_costs["output_cost"],
-        )
+            trial_result = TrialResult(
+                trial_id=len(session.trials) + 1,
+                config=config,
+                score=score,
+                timestamp=datetime.now(UTC).isoformat(),
+                metadata=metadata,
+                error=error,
+                cost=extracted_costs["cost"],
+                total_cost=extracted_costs["total_cost"],
+                input_cost=extracted_costs["input_cost"],
+                output_cost=extracted_costs["output_cost"],
+            )
 
-        session.trials.append(trial_result)
-        session.completed_trials = len(session.trials)
-        # total_trials counts recorded trials, so it moves with the trial list
-        # rather than staying at the 0 stamped at construction (#2032).
-        session.total_trials = len(session.trials)
-        session.updated_at = datetime.now(UTC).isoformat()
+            session.trials.append(trial_result)
+            session.completed_trials = len(session.trials)
+            # total_trials counts recorded trials, so it moves with the trial list
+            # rather than staying at the 0 stamped at construction (#2032).
+            session.total_trials = len(session.trials)
+            session.updated_at = datetime.now(UTC).isoformat()
 
-        # Update best score if this is better
-        if score is not None:
-            is_better = self._is_better_trial_score(session, score)
-            if is_better:
-                session.best_score = score
-                session.best_config = config.copy()
+            # Update best score if this is better
+            if score is not None:
+                is_better = self._is_better_trial_score(session, score)
+                if is_better:
+                    session.best_score = score
+                    session.best_config = config.copy()
 
-        self._save_session(session)
-        logger.debug("Added trial result to session")
+            self._save_session(session)
+            logger.debug("Added trial result to session")
 
     @staticmethod
     def _extract_objective_name_candidate(candidate: Any) -> str | None:
@@ -750,27 +767,28 @@ class LocalStorageManager:
         Returns:
             The finalized session data or None if not found
         """
-        session = self.load_session(session_id)
-        if not session:
-            logger.error("Session to finalize not found")
-            return None
+        with self._session_lock(session_id):
+            session = self.load_session(session_id)
+            if not session:
+                logger.error("Session to finalize not found")
+                return None
 
-        session.status = status or OptimizationStatus.COMPLETED.value
-        if apply_best:
-            session.best_config = dict(best_config) if best_config else None
-            session.best_score = best_score if best_config else None
-        elif best_config is not None:
-            session.best_config = dict(best_config)
-            session.best_score = best_score
-        # Re-assert the recorded-trial invariant at the end of the run: an
-        # early-stopped run records fewer trials than it planned, and the count
-        # that persists is the one that actually happened (#2032).
-        session.total_trials = len(session.trials or [])
-        session.updated_at = datetime.now(UTC).isoformat()
-        self._save_session(session)
+            session.status = status or OptimizationStatus.COMPLETED.value
+            if apply_best:
+                session.best_config = dict(best_config) if best_config else None
+                session.best_score = best_score if best_config else None
+            elif best_config is not None:
+                session.best_config = dict(best_config)
+                session.best_score = best_score
+            # Re-assert the recorded-trial invariant at the end of the run: an
+            # early-stopped run records fewer trials than it planned, and the count
+            # that persists is the one that actually happened (#2032).
+            session.total_trials = len(session.trials or [])
+            session.updated_at = datetime.now(UTC).isoformat()
+            self._save_session(session)
 
-        logger.info("Finalized session")
-        return session
+            logger.info("Finalized session")
+            return session
 
     def update_sync_state(
         self,
@@ -787,25 +805,26 @@ class LocalStorageManager:
         across resumable sync attempts. Returns the updated session, or None if
         the session is missing.
         """
-        session = self.load_session(session_id)
-        if not session:
-            logger.warning("Cannot update sync_state: session not found")
-            return None
+        with self._session_lock(session_id):
+            session = self.load_session(session_id)
+            if not session:
+                logger.warning("Cannot update sync_state: session not found")
+                return None
 
-        state: dict[str, Any] = dict(session.sync_state or {})
-        state.update(patch)
-        if trial_updates:
-            trials_state: dict[str, Any] = dict(state.get("trials") or {})
-            for trial_key, trial_patch in trial_updates.items():
-                merged = dict(trials_state.get(trial_key) or {})
-                merged.update(trial_patch)
-                trials_state[trial_key] = merged
-            state["trials"] = trials_state
+            state: dict[str, Any] = dict(session.sync_state or {})
+            state.update(patch)
+            if trial_updates:
+                trials_state: dict[str, Any] = dict(state.get("trials") or {})
+                for trial_key, trial_patch in trial_updates.items():
+                    merged = dict(trials_state.get(trial_key) or {})
+                    merged.update(trial_patch)
+                    trials_state[trial_key] = merged
+                state["trials"] = trials_state
 
-        session.sync_state = state
-        session.updated_at = datetime.now(UTC).isoformat()
-        self._save_session(session)
-        return session
+            session.sync_state = state
+            session.updated_at = datetime.now(UTC).isoformat()
+            self._save_session(session)
+            return session
 
     def load_session(self, session_id: str) -> OptimizationSession | None:
         """Load a session from storage."""
@@ -1148,7 +1167,7 @@ class LocalStorageManager:
 
             # Atomic write: write to temp file, then rename
             temp_path = validate_path(
-                session_file.with_suffix(f".json.tmp.{os.getpid()}"),
+                session_file.with_suffix(f".json.tmp.{os.getpid()}.{uuid4().hex}"),
                 session_file.parent,
                 must_exist=False,
             )
