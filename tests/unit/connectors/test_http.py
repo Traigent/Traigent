@@ -779,3 +779,20 @@ def test_http_kernel_aclose_releases_pool():
 def test_cursor_paging_yields_items():
     pages = iter_pages(lambda cursor: {"items": ["first"], "next_cursor": None}, None)
     assert list(pages) == ["first"]
+
+
+def test_cursor_paging_refuses_echoed_start_cursor_before_refetch():
+    # #3070: a server that answers the start cursor with itself must be refused
+    # before the same page is fetched (and yielded) a second time.
+    calls: list = []
+
+    def fetch(cursor):
+        calls.append(cursor)
+        return {"items": [f"i{len(calls)}"], "next_cursor": "A"}
+
+    received: list = []
+    with pytest.raises(ValueError, match="repeated page cursor"):
+        for item in iter_pages(fetch, "A"):
+            received.append(item)
+    assert calls == ["A"]
+    assert received == ["i1"]

@@ -1508,7 +1508,10 @@ class ConfigStateManager:
         """
         log_dirs = [
             Path.cwd() / ".traigent" / "optimization_logs",
-            Path(os.environ.get("TRAIGENT_RESULTS_FOLDER", Path.home() / ".traigent"))
+            # expanduser: the optimizer's writer expands ``~``, so must the reader (#3013).
+            Path(
+                os.environ.get("TRAIGENT_RESULTS_FOLDER", Path.home() / ".traigent")
+            ).expanduser()
             / "optimization_logs",
         ]
 

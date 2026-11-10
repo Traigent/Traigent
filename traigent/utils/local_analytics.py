@@ -24,7 +24,10 @@ from traigent.config.backend_config import (
     is_strict_endpoint_mode,
 )
 from traigent.config.types import ExecutionMode, TraigentConfig
-from traigent.storage.local_storage import LocalStorageManager
+from traigent.storage.local_storage import (
+    LocalStorageManager,
+    parse_session_created_at,
+)
 
 # Import constant with fallback for base-only installs (cloud module not available)
 try:
@@ -166,11 +169,14 @@ class LocalAnalytics:
 
             # Time-based aggregations
             now = datetime.now(UTC)
-            recent_sessions = [
-                s
-                for s in sessions
-                if datetime.fromisoformat(s.created_at) > now - timedelta(days=30)
-            ]
+            # parse_session_created_at reads naive as UTC (#3099): comparing a
+            # naive value with the aware ``now`` raised and emptied every stat.
+            cutoff = now - timedelta(days=30)
+            recent_sessions = []
+            for s in sessions:
+                created = parse_session_created_at(s.created_at)
+                if created is not None and created > cutoff:
+                    recent_sessions.append(s)
 
             avg_config_space_size = _average_config_space_size(completed_sessions)
 
@@ -230,11 +236,15 @@ class LocalAnalytics:
             if not sessions:
                 return 0
 
-            earliest_session = min(
-                sessions, key=lambda s: datetime.fromisoformat(s.created_at)
-            )
-
-            first_use = datetime.fromisoformat(earliest_session.created_at)
+            # Naive created_at is read as UTC (#3099), like cleanup_old_sessions.
+            created = [
+                parsed
+                for parsed in (parse_session_created_at(s.created_at) for s in sessions)
+                if parsed is not None
+            ]
+            if not created:
+                return 0
+            first_use = min(created)
             return (datetime.now(UTC) - first_use).days
 
         except Exception as e:

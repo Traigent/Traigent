@@ -106,10 +106,12 @@ def setup_logging(
         # Scoped opt-in: our handler now emits these records; stop them from
         # bubbling up to the host's root handlers (double emission).
         target_logger.propagate = False
-
-    # Set specific levels for third-party libraries
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    else:
+        # Legacy ROOT mode only: quiet third-party HTTP loggers. A scoped call
+        # (including TRAIGENT_LOG_LEVEL at import) must leave the host's own
+        # httpx/urllib3 levels untouched (#3017).
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+        logging.getLogger("httpx").setLevel(logging.WARNING)
     configure_litellm_logging(resolved_level)
 
 

@@ -42,6 +42,17 @@ from ..utils.secure_path import safe_open, validate_path
 
 logger = logging.getLogger(__name__)
 
+
+def result_created_at(result_info: dict[str, Any]) -> str:
+    """A listing entry's ``created_at`` when it is a string, else "" (sort and display).
+
+    A missing, null or numeric ``created_at`` sorts as oldest instead of making
+    the sort raise and hide every other result (#3131).
+    """
+    value = result_info.get("created_at")
+    return value if isinstance(value, str) else ""
+
+
 # File name constants
 _INTEGRITY_FILES = ("metadata.json", "trials.json.gz")
 METADATA_FILE = "metadata.json"
@@ -473,6 +484,8 @@ class PersistenceManager:
         """
         self.base_dir = Path(base_dir).expanduser().resolve()
         self.base_dir.mkdir(exist_ok=True)
+        # Entries the last ``list_results()`` call could not read (#3026).
+        self.last_skipped_results = 0
 
     def _resolve_path(self, path: Path, must_exist: bool = False) -> Path:
         return cast(Path, validate_path(path, self.base_dir, must_exist=must_exist))
@@ -892,8 +905,13 @@ class PersistenceManager:
             are dropped — they are for ``load_result``, and a listing must not
             carry a second copy of every result's metadata, metrics and
             best_config).
+
+        A result whose metadata cannot be read is skipped with a WARNING naming
+        its directory (never its contents) and counted in
+        ``last_skipped_results`` so callers can say how many were unreadable.
         """
         results = []
+        skipped = 0
 
         for result_dir in self.base_dir.iterdir():
             if result_dir.is_dir():
@@ -902,6 +920,10 @@ class PersistenceManager:
                     try:
                         with safe_open(metadata_file, self.base_dir, mode="r") as f:
                             metadata = json.load(f)
+                        # #3131: valid JSON of the wrong type is as unreadable as
+                        # invalid JSON; the loop below assumes an object.
+                        if not isinstance(metadata, dict):
+                            raise ValueError("metadata is not a JSON object")
                         # #2666: surface the run outcome for the CLI list
                         # from the full field set; absent on legacy results
                         # (never guessed), so renderers show "unknown".
@@ -917,11 +939,21 @@ class PersistenceManager:
                         metadata.pop(SCHEMA_VERSION_KEY, None)
                         metadata["name"] = result_dir.name
                         results.append(metadata)
-                    except (json.JSONDecodeError, FileNotFoundError):
+                    # ValueError covers JSONDecodeError, UnicodeDecodeError and
+                    # the non-object check above; OSError covers a vanished or
+                    # unreadable file (#3131). PathTraversalError stays loud.
+                    except (ValueError, OSError) as exc:
+                        skipped += 1
+                        logger.warning(
+                            "Skipping unreadable optimization result %r (%s)",
+                            result_dir.name,
+                            type(exc).__name__,
+                        )
                         continue
 
+        self.last_skipped_results = skipped
         # Sort by creation time, newest first
-        results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        results.sort(key=result_created_at, reverse=True)
         return results
 
     def delete_result(self, name: str) -> bool:

@@ -907,6 +907,18 @@ class TrialOperations:
                         "(degraded, not a full submission failure).",
                         trial_id,
                     )
+        else:
+            # Same reasoning as the measures branch above (#1724): the trial
+            # result POST succeeded, so this stays True, but a failed status
+            # PUT leaves the portal run at its previous status and must not
+            # look like a clean submission (#3016).
+            result_data.setdefault("metadata", {})["status_update_degraded"] = True
+            logger.warning(
+                "⚠️ Config run status update failed for trial %s after the "
+                "trial result was submitted; the backend may still show its "
+                "previous status (degraded, not a full submission failure).",
+                trial_id,
+            )
 
         return True
 

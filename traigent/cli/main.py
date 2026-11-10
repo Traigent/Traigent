@@ -31,7 +31,7 @@ from traigent.security.redaction import redact_sensitive_text
 from traigent.storage.local_storage import LocalStorageManager, OptimizationSession
 from traigent.utils.console import configure_stdout_encoding
 from traigent.utils.logging import setup_logging
-from traigent.utils.persistence import PersistenceManager
+from traigent.utils.persistence import PersistenceManager, result_created_at
 from traigent.utils.removed_params import (
     REMOVED_MOCK_PARAMETERS,
     removed_mock_parameter_message,
@@ -1755,7 +1755,7 @@ def _merge_result_infos(
     for result_info in [*legacy_results, *local_results]:
         merged_by_name[result_info["name"]] = result_info
     merged = list(merged_by_name.values())
-    merged.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    merged.sort(key=result_created_at, reverse=True)
     return merged
 
 
@@ -1886,6 +1886,11 @@ def results_list(storage_dir: str | None) -> None:
     legacy_storage_dir = storage_dir or ".traigent"
     persistence = PersistenceManager(legacy_storage_dir)
     legacy_results = persistence.list_results()
+    if persistence.last_skipped_results:
+        console.print(
+            f"[yellow]{persistence.last_skipped_results} result(s) unreadable "
+            f"in {persistence.base_dir} (see log warnings)[/yellow]"
+        )
     local_results, local_storage_path = _list_local_session_results(storage_dir)
     all_results = _merge_result_infos(legacy_results, local_results)
 
@@ -1916,7 +1921,7 @@ def results_list(storage_dir: str | None) -> None:
             str(result_info["total_trials"]),
             f"{result_info.get('success_rate', 0):.1%}",
             _result_status_label(result_info.get("status")),
-            result_info.get("created_at", "").split("T")[0],  # Just date part
+            result_created_at(result_info).split("T")[0],  # Just date part
         )
 
     console.print(table)

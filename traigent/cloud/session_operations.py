@@ -926,7 +926,14 @@ class SessionOperations:
                 logger.debug("Created local fallback session: %s", session_id)
                 return cast(str, session_id)
             except Exception as storage_e:
-                logger.debug("Local storage fallback failed: %s", storage_e)
+                # WARNING (#3016): the run continues on an ephemeral id with no
+                # local record. Type name only: the text can quote a full path.
+                logger.warning(
+                    "Local storage fallback failed (%s); continuing with an "
+                    "ephemeral session that is not persisted locally.",
+                    type(storage_e).__name__,
+                )
+                logger.debug("Local storage fallback failure detail: %s", storage_e)
 
         fallback_id = f"local_session_{uuid.uuid4()}"
         self.client._register_security_session(
@@ -1587,12 +1594,16 @@ class SessionOperations:
             try:
                 local_storage.finalize_session(session_id, local_status)
             except Exception as _ls_err:
-                logger.debug(
-                    "Could not persist %s status for session %s to local storage: %s",
+                # WARNING (#3016): local status stays unsynced (#1344 symptom).
+                # Type name only: the text can quote a full local path.
+                logger.warning(
+                    "Could not persist %s status for session %s to local "
+                    "storage (%s); local listings may show it unfinished.",
                     local_status,
                     session_id,
-                    _ls_err,
+                    type(_ls_err).__name__,
                 )
+                logger.debug("Local status persist failure detail: %s", _ls_err)
 
         # Revoke security session
         self.client._revoke_security_session(session_id)

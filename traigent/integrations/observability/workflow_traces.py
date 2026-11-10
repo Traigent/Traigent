@@ -801,7 +801,9 @@ def _extract_tunable_params(node_func: Any) -> list[str]:
     except Exception:
         pass
 
-    return list(set(params))
+    # sorted, not list(set()): set order follows the per-process string hash
+    # seed, which made the payload and compute_hash() unstable (#3129).
+    return sorted(set(params))
 
 
 # =============================================================================
