@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import threading
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -359,6 +358,9 @@ class SLAMonitor:
         self.running = False
         self.monitor_thread: threading.Thread | None = None
         self._lock = threading.RLock()
+        # Set by stop_monitoring(). One Event per run, so a thread left over
+        # from an earlier run can never be revived by a restart (#3147).
+        self._stop_event = threading.Event()
 
     def add_alert_handler(self, handler: Callable[[str, dict[str, Any]], None]) -> None:
         """Add alert handler (thread-safe)."""
@@ -367,34 +369,51 @@ class SLAMonitor:
 
     def start_monitoring(self, interval_seconds: int = 60) -> None:
         """Start SLA monitoring"""
-        if self.running:
-            return
+        with self._lock:
+            if self.running:
+                return
 
-        self.running = True
-        self.monitor_thread = threading.Thread(
-            target=self._monitor_loop, args=(interval_seconds,), daemon=True
-        )
-        self.monitor_thread.start()
+            self.running = True
+            self._stop_event = threading.Event()
+            self.monitor_thread = threading.Thread(
+                target=self._monitor_loop,
+                args=(interval_seconds, self._stop_event),
+                daemon=True,
+            )
+            self.monitor_thread.start()
         logger.info("Started SLA monitoring")
 
     def stop_monitoring(self) -> None:
         """Stop SLA monitoring"""
-        self.running = False
-        if self.monitor_thread:
-            self.monitor_thread.join(timeout=5.0)
-            if self.monitor_thread.is_alive():
+        with self._lock:
+            self.running = False
+            self._stop_event.set()
+            thread = self.monitor_thread
+        # Join outside the lock: the loop takes it to record history.
+        if thread:
+            thread.join(timeout=5.0)
+            if thread.is_alive():
                 logger.warning("SLA monitor thread did not stop within 5 seconds")
         logger.info("Stopped SLA monitoring")
 
-    def _monitor_loop(self, interval_seconds: int) -> None:
-        """Main monitoring loop"""
-        while self.running:
+    def _monitor_loop(
+        self, interval_seconds: int, stop_event: threading.Event | None = None
+    ) -> None:
+        """Main monitoring loop.
+
+        Waits on ``stop_event`` between passes instead of sleeping, so
+        stop_monitoring() takes effect at once rather than after the interval.
+        """
+        stop = stop_event if stop_event is not None else self._stop_event
+        while self.running and not stop.is_set():
             try:
                 metrics = self.metrics_collector.collect_system_metrics()
                 sla_status = self._check_sla_compliance(metrics)
 
                 # Store SLA history
                 with self._lock:
+                    if stop.is_set():
+                        return  # stopped during collection; record nothing
                     self.sla_history.append(
                         {
                             "timestamp": datetime.now(UTC).isoformat(),
@@ -414,11 +433,11 @@ class SLAMonitor:
                 # Check for alerts
                 self._check_alerts(metrics, sla_status)
 
-                time.sleep(interval_seconds)
+                stop.wait(interval_seconds)
 
             except Exception as e:
                 logger.error(f"Error in SLA monitoring loop: {e}")
-                time.sleep(interval_seconds)
+                stop.wait(interval_seconds)
 
     def _check_sla_compliance(self, metrics: SystemMetrics) -> dict[str, Any]:
         """Check SLA compliance for current metrics"""
