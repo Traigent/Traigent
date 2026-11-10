@@ -58,7 +58,7 @@ def _write_json_file(path: Path, data: Any) -> None:
             os.fsync(file_obj.fileno())
         os.replace(tmp_path, path)
     finally:
-        with suppress(OSError):
+        with suppress(OSError):  # silent-ok: best-effort temp-file cleanup
             tmp_path.unlink()
 
 
