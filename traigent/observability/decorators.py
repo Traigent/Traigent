@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextvars
 import functools
 import inspect
+import itertools
 import threading
 from collections.abc import Callable
 from datetime import datetime
@@ -449,6 +450,15 @@ def _is_async_callable(func: Callable[..., Any]) -> bool:
     )
 
 
+# Contexts entered through a shared ``observe(...)`` factory, per execution
+# context and factory. Keeping them on the factory instance made a second
+# concurrent ``with`` overwrite the first, so the first exit ended the wrong one.
+_FACTORY_KEYS = itertools.count()
+_ENTERED_CONTEXTS: contextvars.ContextVar[dict[int, tuple[Any, ...]] | None] = (
+    contextvars.ContextVar("traigent_observe_entered_contexts", default=None)
+)
+
+
 class _ObserveFactory:
     """Object that acts as both decorator factory and context manager."""
 
@@ -494,14 +504,23 @@ class _ObserveFactory:
         # `__aenter__` below), which could be long after `observe(...)` ran.
         validate_content_mode_override(content_mode)
         self.content_mode = content_mode
-        self._context: ObserveContext | None = None
+        self._factory_key = next(_FACTORY_KEYS)
 
-    def _require_context(self) -> ObserveContext:
-        if self._context is None:
+    def _push_context(self, ctx: ObserveContext) -> None:
+        entered = _ENTERED_CONTEXTS.get() or {}
+        stack = entered.get(self._factory_key, ())
+        _ENTERED_CONTEXTS.set({**entered, self._factory_key: (*stack, ctx)})
+
+    def _pop_context(self) -> ObserveContext:
+        entered = _ENTERED_CONTEXTS.get() or {}
+        stack = entered.get(self._factory_key, ())
+        if not stack:
             raise RuntimeError(
                 "observe context has not been entered; __exit__ called before __enter__"
             )
-        return self._context
+        _ENTERED_CONTEXTS.set({**entered, self._factory_key: stack[:-1]})
+        popped: ObserveContext = stack[-1]
+        return popped
 
     def __call__(self, func: Callable[..., Any]):
         observation_name = self.name or func.__name__
@@ -571,7 +590,7 @@ class _ObserveFactory:
         return wrapper
 
     def __enter__(self) -> ObserveContext:
-        self._context = ObserveContext(
+        ctx = ObserveContext(
             name=self.name or "observation",
             client=self.client,
             observation_type=self.observation_type,
@@ -588,13 +607,15 @@ class _ObserveFactory:
             redact_output=self.redact_output,
             content_mode=self.content_mode,
         )
-        return self._context.__enter__()
+        entered = ctx.__enter__()
+        self._push_context(ctx)
+        return entered
 
     def __exit__(self, exc_type, exc, exc_tb) -> bool:
-        return self._require_context().__exit__(exc_type, exc, exc_tb)
+        return self._pop_context().__exit__(exc_type, exc, exc_tb)
 
     async def __aenter__(self) -> ObserveContext:
-        self._context = ObserveContext(
+        ctx = ObserveContext(
             name=self.name or "observation",
             client=self.client,
             observation_type=self.observation_type,
@@ -611,10 +632,12 @@ class _ObserveFactory:
             redact_output=self.redact_output,
             content_mode=self.content_mode,
         )
-        return await self._context.__aenter__()
+        entered = await ctx.__aenter__()
+        self._push_context(ctx)
+        return entered
 
     async def __aexit__(self, exc_type, exc, exc_tb) -> bool:
-        return await self._require_context().__aexit__(exc_type, exc, exc_tb)
+        return await self._pop_context().__aexit__(exc_type, exc, exc_tb)
 
 
 def observe(
