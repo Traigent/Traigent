@@ -80,3 +80,11 @@ def test_validate_number_accepts_numpy_scalars() -> None:
     assert Validators.validate_number(np.int64(3), "x", 0, 5).is_valid
     assert not Validators.validate_number(np.float64("nan"), "x").is_valid
     assert not Validators.validate_number(True, "x").is_valid
+
+
+def test_validate_number_huge_int_is_an_error_result_not_an_exception() -> None:
+    """math.isfinite(10**400) raises OverflowError; the validator must report."""
+    from traigent.utils.validation import Validators
+
+    result = Validators.validate_number(10**400, "x", 0, 1)
+    assert not result.is_valid

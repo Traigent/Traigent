@@ -352,7 +352,11 @@ class Validators:
             )
             return result
 
-        if not math.isfinite(value):
+        try:
+            finite = math.isfinite(value)
+        except OverflowError:  # an int too large for a float
+            finite = False
+        if not finite:
             result.add_error(
                 field_name,
                 f"Expected a finite number, got {value}",
