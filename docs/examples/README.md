@@ -22,11 +22,13 @@ examples/
 |  `- chunking-long-context/
 |
 |- advanced/                # Patterns and deep dives
-|  |- execution-modes/
-|  |- results-analysis/
 |  |- ai-engineering-tasks/
+|  |- composite-knobs/
+|  |- local-guards/
+|  |- metric-registry/
+|  |- optimization-routing/
 |  |- ragas/
-|  `- metric-registry/
+|  `- results-analysis/
 |
 |- integrations/           # CI/CD and Bedrock samples
 |- datasets/               # Shared evaluation data
@@ -68,7 +70,7 @@ python examples/core/multi-objective-tradeoff/run_openai.py
 ```
 
 ## Pick by goal
-- Lower cost/latency: `multi-objective-tradeoff`, `token-budget-summarization`, `execution-modes` (advanced).
+- Lower cost/latency: `multi-objective-tradeoff`, `token-budget-summarization`.
 - Improve accuracy: `few-shot-classification`, `prompt-style-optimization`, `ai-engineering-tasks/p0_few_shot_selection`.
 - Safer outputs: `safety-guardrails`, `ai-engineering-tasks/p1_safety_guardrails`.
 - Structured JSON: `structured-output-json`, `ai-engineering-tasks/p0_structured_output`.
