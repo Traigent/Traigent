@@ -45,22 +45,35 @@ def test_examples_do_not_import_removed_langchain_schema() -> None:
     assert not offenders, offenders
 
 
-@pytest.mark.timeout(180)
-def test_local_search_example_builds_messages_langchain_accepts(
-    tmp_path: Path,
-) -> None:
-    """The message object must be a real LangChain message (#2934).
+LANGCHAIN_MESSAGE_EXAMPLES = (
+    "advanced/optimization-routing/ex01-local-search/local_search.py",
+    "advanced/optimization-routing/ex02-offline-no-egress/offline_no_egress.py",
+    "advanced/results-analysis/ex01-viewing-results/viewing_results.py",
+    "advanced/results-analysis/ex02-performance-metrics/performance_metrics.py",
+    "gallery/page-inline/best-practices/ex01-small-space/small_space.py",
+    "gallery/page-inline/best-practices/ex02-weighted-objectives/weighted_objectives.py",
+    "gallery/page-inline/common-tasks/p0-context-engineering/context_engineering.py",
+    "gallery/page-inline/common-tasks/p0-few-shot-selection/few_shot_selection.py",
+    "gallery/page-inline/common-tasks/p0-structured-output/structured_output.py",
+)
 
-    Standalone, this script still reaches the provider-host guard in mock mode
-    (it calls the LLM outside an optimization run), so only the message
-    coercion failure is asserted absent here.
+
+@pytest.mark.timeout(180)
+@pytest.mark.parametrize("relative", LANGCHAIN_MESSAGE_EXAMPLES)
+def test_langchain_message_examples_run_in_mock_mode(
+    relative: str, tmp_path: Path
+) -> None:
+    """Each script builds a message LangChain accepts and finishes in mock mode (#2934).
+
+    The scripts call their LLM function directly, outside an optimization run,
+    so they switch on the in-code mock interception themselves when the
+    documented ``TRAIGENT_MOCK_LLM`` switch is set; otherwise the provider-host
+    guard (correctly) blocks the real call.
     """
-    script = (
-        EXAMPLES / "advanced/optimization-routing/ex01-local-search/local_search.py"
-    )
-    result = _run(script, tmp_path)
+    result = _run(EXAMPLES / relative, tmp_path)
     assert "Unsupported message type" not in result.stderr, result.stderr[-2000:]
     assert "MESSAGE_COERCION_FAILURE" not in result.stderr
+    assert result.returncode == 0, result.stderr[-2000:]
 
 
 @pytest.mark.timeout(180)
