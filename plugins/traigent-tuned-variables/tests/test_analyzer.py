@@ -945,3 +945,46 @@ class TestMultiObjectiveAnalysis:
         assert var_analysis.aggregate_importance == pytest.approx(0.4)
         assert var_analysis.pareto_dominated_values is None
         assert var_analysis.suggestion is None
+
+
+class TestUnknownImportanceKeepsDomain:
+    """Variables whose importance is unknown are never pruned or narrowed."""
+
+    @staticmethod
+    def _analyzer(n_trials: int):
+        from datetime import datetime
+
+        from traigent_tuned_variables import VariableAnalyzer
+
+        from traigent.api.types import TrialResult, TrialStatus
+
+        trials = [
+            TrialResult(
+                trial_id=f"t{i}",
+                config={"model": "ab"[i % 2], "temp": 0.1 * (i + 1)},
+                metrics={"acc": 0.9 if i % 2 == 0 else 0.5},
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime(2026, 1, 1),
+            )
+            for i in range(n_trials)
+        ]
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"model": ["a", "b"], "temp": (0.0, 1.0)},
+        )
+        return VariableAnalyzer(result, elimination_threshold=0.5)
+
+    def test_too_few_trials_marks_variables_unknown_not_zero(self):
+        analyzer = self._analyzer(4)
+        assert set(analyzer.get_unknown_importance("acc")) == {"model", "temp"}
+        assert analyzer.get_variable_importance("acc") == {}
+
+    def test_too_few_trials_does_not_eliminate_variables(self):
+        refined = self._analyzer(4).get_refined_space(["acc"], return_typed=False)
+        assert set(refined) == {"model", "temp"}
+
+    def test_unknown_numeric_variable_keeps_original_range(self):
+        refined = self._analyzer(4).get_refined_space(["acc"], return_typed=False)
+        assert tuple(refined["temp"]) == (0.0, 1.0)
+        assert list(refined["model"]) == ["a", "b"]

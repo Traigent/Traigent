@@ -572,9 +572,15 @@ class VariableAnalyzer:
                     if result.importance_score is None
                 }
 
-                # If core analyzer returned no results (insufficient data), use fallback
+                # The core analyzer returns nothing when there are too few
+                # trials. A variance estimate from that little data would
+                # score variables 0.0 and get them eliminated, so they stay
+                # unknown (never pruned) instead.
                 if not importance and not unknown:
-                    importance = self._compute_variance_importance(objective)
+                    unknown = dict.fromkeys(
+                        self._get_config_space(),
+                        "insufficient trials for importance analysis",
+                    )
                 self._unknown_importance[objective] = unknown
         except (ImportError, AttributeError, TypeError) as e:
             # Fallback to simple variance-based importance if core analyzer fails
@@ -830,6 +836,17 @@ class VariableAnalyzer:
                         f"Eliminating {var_name}: low importance ({importance:.3f})"
                     )
                     continue
+
+            if any(var_name in self.get_unknown_importance(obj) for obj in objectives):
+                # Unknown importance: keep the original domain untouched.
+                kept = self._normalize_config_value(var_config)
+                kept_type = "numeric" if var_type == "numeric" else "categorical"
+                refined[var_name] = (
+                    self._to_parameter_range(var_name, kept, kept_type)
+                    if return_typed
+                    else kept
+                )
+                continue
 
             if var_type == "categorical":
                 # Normalize config to list for value manipulation
