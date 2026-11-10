@@ -64,6 +64,8 @@ except ImportError:
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
+from traigent.cloud.url_security import same_host_redirect_trace_configs
+
 logger = get_logger(__name__)
 _SESSION_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
 
@@ -1918,6 +1920,7 @@ class SessionOperations:
 
             async with gate_session(
                 aiohttp.ClientSession(
+                    trace_configs=same_host_redirect_trace_configs(),
                     connector=connector,
                     trust_env=True,
                 ),

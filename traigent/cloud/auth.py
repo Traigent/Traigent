@@ -31,7 +31,10 @@ from traigent.cloud.credential_resolver import CredentialResolver
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 from traigent.cloud.session_types import SessionCreationFailureDetail
 from traigent.cloud.token_manager import TokenManager
-from traigent.cloud.url_security import validate_cloud_base_url_async
+from traigent.cloud.url_security import (
+    same_host_redirect_trace_configs,
+    validate_cloud_base_url_async,
+)
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.labels.transport_gate import (
     freeze_json_body,
@@ -1822,6 +1825,7 @@ class AuthManager:
         try:
             async with gate_session(
                 aiohttp.ClientSession(
+                    trace_configs=same_host_redirect_trace_configs(),
                     timeout=aiohttp.ClientTimeout(total=15),
                     trust_env=True,
                 )
@@ -2144,6 +2148,7 @@ class AuthManager:
 
         async with gate_session(
             aiohttp.ClientSession(
+                trace_configs=same_host_redirect_trace_configs(),
                 timeout=aiohttp.ClientTimeout(total=30),
                 trust_env=True,
             )

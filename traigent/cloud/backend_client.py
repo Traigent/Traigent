@@ -84,6 +84,7 @@ from traigent.cloud.trial_operations import (
 from traigent.cloud.url_security import (
     CloudUrlUnreachableError,
     is_plain_http_origin_parts,
+    same_host_redirect_trace_configs,
     validate_cloud_base_url,
 )
 from traigent.cloud.user_agent import get_sdk_user_agent
@@ -1514,7 +1515,11 @@ class BackendIntegratedClient:
             ).rstrip("/")
             url = f"{backend_origin}/api/v1/auth/me/interaction-policy"
 
-            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+            async with gate_session(
+                aiohttp.ClientSession(
+                    trace_configs=same_host_redirect_trace_configs(), trust_env=True
+                )
+            ) as session:
                 async with session.get(
                     url,
                     headers=headers,
@@ -1731,6 +1736,7 @@ class BackendIntegratedClient:
             await self._retire_primary_pool()
             self._session = gate_session(
                 aiohttp.ClientSession(
+                    trace_configs=same_host_redirect_trace_configs(),
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
                     # Session-default headers are long-lived: never freeze a
                     # traceparent/tracestate into them (stale span context).
@@ -1791,6 +1797,7 @@ class BackendIntegratedClient:
 
         return gate_session(
             aiohttp.ClientSession(
+                trace_configs=same_host_redirect_trace_configs(),
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 # Non-credential defaults only (see above).
                 headers=defaults,
