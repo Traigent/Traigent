@@ -102,6 +102,7 @@ from __future__ import annotations
 import bisect
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -281,6 +282,13 @@ def model_family(model: Any) -> str:
             return family
         for prefix in prefixes:
             if tail.startswith(prefix) or name.startswith(prefix):
+                return family
+    # Router ids (``bedrock/anthropic.claude-...``, ``us.anthropic.claude-...``,
+    # ``openrouter/<vendor>/<model>``) bury the vendor and model in later
+    # ``/``- or ``.``-separated segments (#3104).
+    for segment in re.split(r"[/.]", name):
+        for family, prefixes in _FAMILY_PREFIXES:
+            if segment == family or segment.startswith(prefixes):
                 return family
     return UNKNOWN_FAMILY
 

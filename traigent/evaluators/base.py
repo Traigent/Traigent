@@ -562,6 +562,25 @@ def _normalize_output_for_accuracy_comparison(
     return output
 
 
+def unwrap_with_usage_output(output: Any) -> Any:
+    """Return the function's own output when it is a ``with_usage()`` wrapper.
+
+    ``with_usage()`` wraps the output as ``{"text": <output>, "__traigent_meta__":
+    {...}}`` during optimization. Only that reserved-marker shape is unwrapped;
+    any other mapping (including one with a plain ``text`` key) is returned
+    unchanged. Custom metric functions get this value so adopting cost
+    reporting does not change what they see (Traigent#2870); the usage stays
+    available through their ``llm_metrics`` parameter.
+    """
+    if (
+        isinstance(output, CollectionsMapping)
+        and _TRAIGENT_META_KEY in output
+        and "text" in output
+    ):
+        return output["text"]
+    return output
+
+
 def _accuracy_value_for_example(actual: Any, expected: Any) -> float | None:
     """Per-example built-in accuracy, using the same comparison as the aggregate.
 

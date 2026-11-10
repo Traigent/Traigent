@@ -53,11 +53,11 @@ def _schema_issues(payload: Any) -> list[ValidationIssue]:
 
 
 def _semantic_issues(payload: dict[str, Any]) -> list[ValidationIssue]:
+    issues = _provenance_issues(payload)
     stages = payload.get("stages")
     if not isinstance(stages, dict):
-        return []
+        return issues
 
-    issues: list[ValidationIssue] = []
     for stage_name, stage in stages.items():
         if not isinstance(stage, dict):
             continue
@@ -89,6 +89,22 @@ def _semantic_issues(payload: dict[str, Any]) -> list[ValidationIssue]:
                 )
             )
     return issues
+
+
+def _provenance_issues(payload: dict[str, Any]) -> list[ValidationIssue]:
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, dict) or "created_at" not in provenance:
+        return []
+    # The schema declares ``format: date-time`` but Draft7Validator does not
+    # enforce formats, so check it the way pinned_at is checked (#3167).
+    if _is_parseable_datetime(provenance["created_at"]):
+        return []
+    return [
+        ValidationIssue(
+            location="$.provenance.created_at",
+            message="created_at must be a parseable ISO datetime",
+        )
+    ]
 
 
 def _load_schema() -> dict[str, Any]:
