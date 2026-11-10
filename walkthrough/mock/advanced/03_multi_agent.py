@@ -108,11 +108,19 @@ async def method_1_per_parameter_agent() -> None:
         # Retriever agent parameters - use agent= on Range/Choices directly
         k=IntRange(1, 10, default=3, name="k", agent="retriever"),
         retrieval_method=Choices(
-            ["similarity", "mmr", "bm25"], name="retrieval_method", agent="retriever"
+            ["similarity", "mmr", "bm25"],
+            default="similarity",
+            name="retrieval_method",
+            agent="retriever",
         ),
         # Generator agent parameters
         temperature=Range(0.0, 1.0, default=0.7, name="temperature", agent="generator"),
-        model=Choices(["gpt-4.1-mini", "gpt-4.1"], name="model", agent="generator"),
+        model=Choices(
+            ["gpt-4.1-mini", "gpt-4.1"],
+            default="gpt-4.1-mini",
+            name="model",
+            agent="generator",
+        ),
         objectives=["accuracy", "cost"],
         eval_dataset=DATASET_PATH,
         offline=True,
@@ -125,11 +133,15 @@ async def method_1_per_parameter_agent() -> None:
         docs = mock_retrieve(k=config["k"], method=config["retrieval_method"])
 
         # Generation phase - uses temperature and model
-        return mock_generate(
-            question=question,
-            context=docs,
-            temperature=config["temperature"],
-            model=config["model"],
+        # The mock agent makes no model call, so its measured cost is exactly $0.
+        return traigent.with_usage(
+            mock_generate(
+                question=question,
+                context=docs,
+                temperature=config["temperature"],
+                model=config["model"],
+            ),
+            total_cost=0.0,
         )
 
     print("\nParameter-to-agent mapping:")
@@ -157,9 +169,13 @@ async def method_2_prefix_grouping() -> None:
     @traigent.optimize(
         # Parameters grouped by prefix (retriever_, generator_)
         retriever_k=IntRange(1, 10, default=3, name="retriever_k"),
-        retriever_method=Choices(["dense", "sparse"], name="retriever_method"),
+        retriever_method=Choices(
+            ["dense", "sparse"], default="dense", name="retriever_method"
+        ),
         generator_temp=Range(0.0, 1.0, default=0.7, name="generator_temp"),
-        generator_model=Choices(["gpt-4.1-mini", "gpt-4.1"], name="generator_model"),
+        generator_model=Choices(
+            ["gpt-4.1-mini", "gpt-4.1"], default="gpt-4.1-mini", name="generator_model"
+        ),
         # Enable prefix-based grouping
         agent_prefixes=["retriever_", "generator_"],
         objectives=["accuracy"],
@@ -219,10 +235,14 @@ async def method_3_explicit_agents() -> None:
         # Define parameters (without agent= since we use explicit agents dict)
         k=IntRange(1, 10, default=3, name="k"),
         retrieval_strategy=Choices(
-            ["similarity", "mmr", "hybrid"], name="retrieval_strategy"
+            ["similarity", "mmr", "hybrid"],
+            default="similarity",
+            name="retrieval_strategy",
         ),
         temperature=Range(0.0, 1.0, default=0.7, name="temperature"),
-        model=Choices(["gpt-4.1-mini", "gpt-4.1"], name="model"),
+        model=Choices(
+            ["gpt-4.1-mini", "gpt-4.1"], default="gpt-4.1-mini", name="model"
+        ),
         # Pass explicit agent definitions
         agents={
             "retriever": retriever_agent,
@@ -240,11 +260,15 @@ async def method_3_explicit_agents() -> None:
         docs = mock_retrieve(k=config["k"], method=config["retrieval_strategy"])
 
         # Generation phase - uses temperature and model
-        return mock_generate(
-            question=question,
-            context=docs,
-            temperature=config["temperature"],
-            model=config["model"],
+        # The mock agent makes no model call, so its measured cost is exactly $0.
+        return traigent.with_usage(
+            mock_generate(
+                question=question,
+                context=docs,
+                temperature=config["temperature"],
+                model=config["model"],
+            ),
+            total_cost=0.0,
         )
 
     print("\nExplicit agent definitions:")

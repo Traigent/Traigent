@@ -473,7 +473,8 @@ class TestCreateAppErrorHandling:
             send,
         )
         assert send.status == 400
-        assert send.body_json["error"]["code"] == "INVALID_REQUEST"
+        # The published contract requires INVALID_INPUTS for a missing input array.
+        assert send.body_json["error"]["code"] == "INVALID_INPUTS"
         assert "examples" in send.body_json["error"]["message"]
 
     @pytest.mark.asyncio

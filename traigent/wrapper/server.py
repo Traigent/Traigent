@@ -12,6 +12,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import parse_qs
 
 from traigent.utils.logging import get_logger
 from traigent.wrapper.errors import HybridAPIError, RequestTimeoutError
@@ -52,6 +53,13 @@ def _extract_trace_headers(scope: dict[str, Any]) -> dict[str, str]:
         if name in {"traceparent", "tracestate"}:
             headers[name] = header_value.decode("latin-1")
     return headers
+
+
+def _parse_query(scope: dict[str, Any]) -> dict[str, str]:
+    """Return the first value of each non-empty query parameter."""
+    raw = scope.get("query_string") or b""
+    parsed = parse_qs(raw.decode("latin-1"), keep_blank_values=False)
+    return {name: values[0] for name, values in parsed.items() if values}
 
 
 def _response_headers_with_request_id(
@@ -163,6 +171,7 @@ async def _route_capabilities(
     send: Callable,
     trace_headers: dict[str, str],
     request_box: list[dict[str, Any] | None],
+    query: dict[str, str],
 ) -> None:
     await send_json_response(
         send, 200, service.get_capabilities(), headers=trace_headers
@@ -175,10 +184,15 @@ async def _route_config_space(
     send: Callable,
     trace_headers: dict[str, str],
     request_box: list[dict[str, Any] | None],
+    query: dict[str, str],
 ) -> None:
-    await send_json_response(
-        send, 200, service.get_config_space(), headers=trace_headers
+    requested = query.get("tunable_id")
+    config_space = (
+        service.get_config_space()
+        if requested is None
+        else service.get_config_space(requested)
     )
+    await send_json_response(send, 200, config_space, headers=trace_headers)
 
 
 async def _route_execute(
@@ -187,6 +201,7 @@ async def _route_execute(
     send: Callable,
     trace_headers: dict[str, str],
     request_box: list[dict[str, Any] | None],
+    query: dict[str, str],
 ) -> None:
     request = await _parse_request(receive)
     request_box[0] = request
@@ -206,6 +221,7 @@ async def _route_evaluate(
     send: Callable,
     trace_headers: dict[str, str],
     request_box: list[dict[str, Any] | None],
+    query: dict[str, str],
 ) -> None:
     request = await _parse_request(receive)
     request_box[0] = request
@@ -225,6 +241,7 @@ async def _route_health(
     send: Callable,
     trace_headers: dict[str, str],
     request_box: list[dict[str, Any] | None],
+    query: dict[str, str],
 ) -> None:
     await send_json_response(send, 200, service.get_health(), headers=trace_headers)
 
@@ -235,6 +252,7 @@ async def _route_keep_alive(
     send: Callable,
     trace_headers: dict[str, str],
     request_box: list[dict[str, Any] | None],
+    query: dict[str, str],
 ) -> None:
     request = await _parse_request(receive)
     request_box[0] = request
@@ -260,10 +278,11 @@ async def _dispatch(
     send: Callable,
     trace_headers: dict[str, str],
     request_box: list[dict[str, Any] | None],
+    query: dict[str, str],
 ) -> None:
     for route_method, route_path, handler in _ROUTES:
         if path == route_path and method == route_method:
-            await handler(service, receive, send, trace_headers, request_box)
+            await handler(service, receive, send, trace_headers, request_box, query)
             return
 
     await send_json_response(
@@ -326,11 +345,12 @@ def create_app(service: TraigentService) -> Callable[..., Any]:
         trace_headers = _extract_trace_headers(scope)
         # Holds the parsed request (once available) for error correlation.
         request_box: list[dict[str, Any] | None] = [None]
+        query = _parse_query(scope)
 
         # Route to handler
         try:
             await _dispatch(
-                service, path, method, receive, send, trace_headers, request_box
+                service, path, method, receive, send, trace_headers, request_box, query
             )
 
         except HybridAPIError as e:
