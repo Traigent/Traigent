@@ -120,3 +120,46 @@ def test_mock_response_litellm_exception_class_is_raised_not_a_typeerror_2798(
     """litellm's own exceptions need provider/model args; the class form works."""
     with pytest.raises(litellm.RateLimitError):
         call(mock_response=litellm.RateLimitError)  # type: ignore[operator]
+
+
+@pytest.fixture
+def _fresh_ignored_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
+    from traigent.utils import litellm_interceptor
+
+    monkeypatch.setattr(litellm_interceptor, "_WARNED_IGNORED_SHAPE", set())
+
+
+@pytest.mark.parametrize("call", [_complete, _acomplete])
+def test_ignored_request_shape_is_named_in_a_warning_2798(
+    call, caplog: pytest.LogCaptureFixture, _fresh_ignored_warnings: None
+) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        reply = call(response_format={"type": "json_object"}, tools=[{"type": "x"}])
+    assert reply.choices[0].message.content == CANNED
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "response_format" in text and "tools" in text
+    assert "mock_response" in text  # tells the caller how to get a structured reply
+
+
+def test_ignored_request_shape_warns_once_per_argument_2798(
+    caplog: pytest.LogCaptureFixture, _fresh_ignored_warnings: None
+) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        _complete(response_format={"type": "json_object"})
+        _complete(response_format={"type": "json_object"})
+    assert sum("response_format" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_supplied_mock_response_does_not_warn_about_request_shape_2798(
+    caplog: pytest.LogCaptureFixture, _fresh_ignored_warnings: None
+) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        reply = _complete(response_format={"type": "json_object"}, mock_response="{}")
+    assert reply.choices[0].message.content == "{}"
+    assert not [r for r in caplog.records if "response_format" in r.getMessage()]
