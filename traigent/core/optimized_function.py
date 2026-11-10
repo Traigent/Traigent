@@ -5627,8 +5627,7 @@ Remediation:
             raise ConfigurationError(
                 "Invalid dataset type: eval_dataset was not provided (None). "
                 'Pass eval_dataset="data.jsonl" to @traigent.optimize, or '
-                "EvaluationOptions(eval_dataset=...), or supply a custom "
-                "evaluator that provides its own data. Each JSONL line looks like "
+                "EvaluationOptions(eval_dataset=...). Each JSONL line looks like "
                 '{"input": {"question": "..."}, "expected_output": "..."}.'
             )
 
