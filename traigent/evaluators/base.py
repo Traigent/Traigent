@@ -4204,7 +4204,7 @@ class BaseEvaluator(ABC):
         if metric_functions:
             metrics = self._call_progress_metric_functions(
                 metric_functions=metric_functions,
-                output=result.actual_output,
+                output=unwrap_with_usage_output(result.actual_output),
                 example=example,
                 config=config,
                 dataset=dataset,
@@ -4217,7 +4217,7 @@ class BaseEvaluator(ABC):
         scoring_function = getattr(self, "scoring_function", None)
         if scoring_function is not None:
             metrics = self._call_progress_scoring_function(
-                output=result.actual_output,
+                output=unwrap_with_usage_output(result.actual_output),
                 example=example,
                 config=config,
                 dataset=dataset,
@@ -5003,12 +5003,21 @@ class SimpleScoringEvaluator(BaseEvaluator):
         import inspect
 
         example_metrics = {}
+        # Metric functions see the function's own output, not the
+        # ``with_usage()`` wrapper (Traigent#2870).
+        metric_output = unwrap_with_usage_output(output)
         for metric_name, metric_func in self.metric_functions.items():
             try:
                 sig = inspect.signature(metric_func)
                 params = list(sig.parameters.keys())
                 kwargs = self._build_metric_kwargs(
-                    params, output, example, config, dataset, example_index, llm_metrics
+                    params,
+                    metric_output,
+                    example,
+                    config,
+                    dataset,
+                    example_index,
+                    llm_metrics,
                 )
                 score = metric_func(**kwargs)
                 example_metrics[metric_name] = score

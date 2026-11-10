@@ -61,3 +61,45 @@ async def test_plain_dict_with_text_key_is_not_unwrapped() -> None:
     await evaluator.evaluate(lambda _x: dict(plain), {}, _dataset())
 
     assert seen == [plain]
+
+
+@pytest.mark.asyncio
+async def test_progress_payload_metric_sees_unwrapped_output() -> None:
+    """The running score sent with progress updates uses the unwrapped output too.
+
+    Cloud smart pruning acts on these progress scores, so a wrapper-shaped
+    input would score 0.0 here while the final aggregate scores 1.0.
+    """
+
+    def recall_at_budget(output: Any, expected: Any) -> float:
+        return len(set(output) & set(expected)) / len(expected)
+
+    evaluator = LocalEvaluator(
+        metrics=["recall_at_budget"],
+        metric_functions={"recall_at_budget": recall_at_budget},
+        detailed=True,
+    )
+
+    payloads: list[dict[str, Any]] = []
+
+    def progress_callback(_index: int, payload: dict[str, Any]) -> None:
+        payloads.append(payload)
+
+    def agent(_x: Any) -> Any:
+        return with_usage(["t1", "t2"], total_cost=0.002)
+
+    token = trial_context.set({"trial_id": "t-2870-progress"})
+    try:
+        await evaluator.evaluate(
+            agent, {}, _dataset(), progress_callback=progress_callback
+        )
+    finally:
+        trial_context.reset(token)
+
+    metric_values = [
+        payload["metrics"]["recall_at_budget"]
+        for payload in payloads
+        if "recall_at_budget" in payload.get("metrics", {})
+    ]
+    assert metric_values, "progress callback never reported the metric"
+    assert metric_values == [1.0] * len(metric_values)

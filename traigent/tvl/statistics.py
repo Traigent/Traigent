@@ -11,6 +11,7 @@ Sync: SYNC-OptimizationFlow
 from __future__ import annotations
 
 import math
+import numbers
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -44,7 +45,7 @@ def _validate_p_values(p_values: Sequence[float]) -> None:
     for i, p in enumerate(p_values):
         if (
             isinstance(p, bool)
-            or not isinstance(p, (int, float))
+            or not isinstance(p, numbers.Real)
             or not 0 <= p < math.inf
         ):
             raise ValueError(

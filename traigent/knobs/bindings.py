@@ -63,7 +63,7 @@ class Ref:
     field: str | None = None
 
     def __post_init__(self) -> None:
-        if not _IDENT_RE.match(self.knob):
+        if not _IDENT_RE.fullmatch(self.knob):
             raise ValueError(f"Ref.knob is not a valid identifier: {self.knob!r}")
 
 
@@ -118,7 +118,7 @@ class Knob[TValue]:
     description: str | None = None
 
     def __post_init__(self) -> None:
-        if not _IDENT_RE.match(self.name):
+        if not _IDENT_RE.fullmatch(self.name):
             raise ValueError(f"Knob.name is not a valid identifier: {self.name!r}")
         if not isinstance(self.binding, (Tuned, Fixed, Calibrated)):
             raise TypeError(

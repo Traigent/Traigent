@@ -8,6 +8,8 @@ Provides TTL-based caching with file persistence and manual refresh support.
 import hashlib
 import json
 import logging
+import math
+import numbers
 import threading
 import time
 from collections.abc import Callable
@@ -53,6 +55,15 @@ _CLOCK_SKEW_TOLERANCE_SECONDS = 300
 _MAX_PERSISTED_TTL_SECONDS = 7 * 86400
 
 
+def _is_finite_number(value: object) -> bool:
+    """Return True for a real, finite, non-bool number."""
+    return (
+        isinstance(value, numbers.Real)
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
 @dataclass
 class CacheEntry:
     """A single cache entry with TTL support.
@@ -73,9 +84,11 @@ class CacheEntry:
     def is_expired(self) -> bool:
         """Check if this cache entry has expired."""
         age = time.time() - self.timestamp
-        # A timestamp in the future (clock stepped back, copied cache) must not
-        # read as fresh; a little skew is tolerated (#3165).
-        return age < -_CLOCK_SKEW_TOLERANCE_SECONDS or age > self.ttl_seconds
+        # Accepting form: a NaN timestamp or ttl makes the comparisons False,
+        # so the entry reads as expired. A timestamp in the future (clock
+        # stepped back, copied cache) must not read as fresh either; a little
+        # skew is tolerated (#3165).
+        return not (-_CLOCK_SKEW_TOLERANCE_SECONDS <= age <= self.ttl_seconds)
 
     def age_seconds(self) -> float:
         """Return the age of this cache entry in seconds."""
@@ -309,6 +322,17 @@ class ModelCache:
             ) as f:
                 data = json.load(f)
                 entry = CacheEntry.from_dict(data)
+                # The file is untrusted: a non-numeric or non-finite timestamp
+                # or ttl (NaN is accepted by json.load) is treated as expired.
+                if not (
+                    _is_finite_number(entry.timestamp)
+                    and _is_finite_number(entry.ttl_seconds)
+                ):
+                    logger.warning(
+                        f"Ignoring cache file for {key}: non-finite or "
+                        "non-numeric timestamp/ttl"
+                    )
+                    return None
                 # The file's ttl is untrusted: bound it by the larger of the
                 # caller's default and the longest ttl the SDK writes (#3165).
                 entry.ttl_seconds = min(

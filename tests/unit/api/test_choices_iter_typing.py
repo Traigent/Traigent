@@ -11,8 +11,10 @@ def test_choices_iter_has_iterator_return_annotation() -> None:
     assert typing.get_origin(hints["return"]).__name__ == "Iterator"
 
 
-def test_choices_contains_item_annotated() -> None:
-    assert "item" in typing.get_type_hints(Choices.__contains__)
+def test_choices_contains_item_annotated_as_object() -> None:
+    # __contains__ accepts any object (#3191); the old element-typed annotation
+    # would reject a membership test against an unrelated type.
+    assert typing.get_type_hints(Choices.__contains__)["item"] is object
 
 
 def test_choices_iteration_behaviour_unchanged() -> None:

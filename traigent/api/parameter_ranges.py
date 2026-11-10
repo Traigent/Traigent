@@ -39,7 +39,7 @@ import os
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import InitVar, dataclass, replace
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -205,6 +205,15 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
             )
         if self.step is not None and self.step <= 0:
             raise ValueError(f"Range step must be positive, got {self.step}")
+        if self.log and self.low <= 0:
+            raise ValueError(f"log=True requires positive bounds, got low={self.low}")
+        if self.log and self.step is not None:
+            raise ValueError(
+                "Cannot use log=True with step (Optuna limitation). "
+                "Use either log-scale OR discrete steps, not both."
+            )
+        # stacklevel=3 attributes the warning to the caller: frame 1 is this
+        # method, frame 2 the dataclass-generated __init__.
         if self.step is not None and not float_step_divides_span(
             float(self.low), float(self.high), float(self.step)
         ):
@@ -213,14 +222,7 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
                 f"[{self.low}, {self.high}]; upper bound {self.high} will be "
                 "included as an extra discrete point with uneven spacing.",
                 UserWarning,
-                stacklevel=2,
-            )
-        if self.log and self.low <= 0:
-            raise ValueError(f"log=True requires positive bounds, got low={self.low}")
-        if self.log and self.step is not None:
-            raise ValueError(
-                "Cannot use log=True with step (Optuna limitation). "
-                "Use either log-scale OR discrete steps, not both."
+                stacklevel=3,
             )
         if self.default is not None and not (self.low <= self.default <= self.high):
             raise ValueError(
@@ -409,8 +411,11 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
     unit: str | None = None
     # Multi-agent support
     agent: str | None = None
+    # Private: lets a built-in preset with a known uneven step skip the warning.
+    # InitVar keeps it out of the dataclass fields, repr, equality and asdict().
+    _suppress_step_warning: InitVar[bool] = False
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _suppress_step_warning: bool) -> None:
         if not isinstance(self.low, int) or not isinstance(self.high, int):
             raise TypeError(
                 f"IntRange bounds must be integers, got low={type(self.low).__name__}, "
@@ -434,20 +439,26 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
         if self.step is not None:
             # numpy scalars pass the checks above but fail config validation.
             object.__setattr__(self, "step", int(self.step))
-        if self.step is not None and (self.high - self.low) % self.step != 0:
-            warnings.warn(
-                f"IntRange step {self.step} does not evenly divide span "
-                f"[{self.low}, {self.high}]; upper bound {self.high} will be "
-                "included as an extra discrete point with uneven spacing.",
-                UserWarning,
-                stacklevel=2,
-            )
         if self.log and self.low <= 0:
             raise ValueError(f"log=True requires positive bounds, got low={self.low}")
         if self.log and self.step is not None:
             raise ValueError(
                 "Cannot use log=True with step (Optuna limitation). "
                 "Use either log-scale OR discrete steps, not both."
+            )
+        # stacklevel=3 attributes the warning to the caller: frame 1 is this
+        # method, frame 2 the dataclass-generated __init__.
+        if (
+            self.step is not None
+            and (self.high - self.low) % self.step != 0
+            and not _suppress_step_warning
+        ):
+            warnings.warn(
+                f"IntRange step {self.step} does not evenly divide span "
+                f"[{self.low}, {self.high}]; upper bound {self.high} will be "
+                "included as an extra discrete point with uneven spacing.",
+                UserWarning,
+                stacklevel=3,
             )
         if self.default is not None and not (self.low <= self.default <= self.high):
             raise ValueError(
@@ -515,12 +526,17 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
         if task not in ranges:
             raise ValueError(f"task must be 'short', 'medium', or 'long', got '{task}'")
         low, high, default = ranges[task]
-        with warnings.catch_warnings():
-            # The "short" preset keeps its documented 50 and 256 endpoints, so
-            # its step of 64 does not divide the span by design; the warning
-            # is for user-built ranges.
-            warnings.filterwarnings("ignore", message=".*does not evenly divide span.*")
-            return cls(low, high, step=64, default=default, name="max_tokens")
+        # The presets keep their documented endpoints, so the step of 64 does
+        # not always divide the span by design; the warning is for user-built
+        # ranges only.
+        return cls(
+            low,
+            high,
+            step=64,
+            default=default,
+            name="max_tokens",
+            _suppress_step_warning=True,
+        )
 
     @classmethod
     def k_retrieval(cls, *, max_k: int = 10) -> IntRange:

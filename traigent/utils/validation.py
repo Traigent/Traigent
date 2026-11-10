@@ -32,6 +32,11 @@ from traigent.utils.secure_path import safe_open
 
 logger = get_logger(__name__)
 
+# Measure/metric key contract (TraigentSchema MeasuresDict). ``re.ASCII`` pins
+# ``\w`` to ASCII so Unicode word characters are rejected. Lives in this
+# cloud-free module so core can import it without loading traigent.cloud.
+MEASURE_KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$", re.ASCII)
+
 # Dataset content validation inspects EVERY row (issue #2022): a sample must
 # never be mistakable for a guarantee. Only the number of individually
 # *reported* row errors is bounded, so a badly broken file does not produce a
@@ -202,7 +207,7 @@ def validate_max_trials_value(value: Any) -> None:
     """
     if value is None:
         return
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
         raise TypeError(
             f"max_trials must be a positive integer, got {value!r} "
             f"({type(value).__name__})"
@@ -220,7 +225,7 @@ def validate_timeout_value(value: Any) -> None:
     """
     if value is None:
         return
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
         raise TypeError(
             f"timeout must be a non-negative number of seconds, got {value!r} "
             f"({type(value).__name__})"

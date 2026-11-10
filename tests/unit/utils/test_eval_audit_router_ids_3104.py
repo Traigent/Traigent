@@ -35,3 +35,30 @@ def test_router_ids_resolve_to_vendor_family(model: str, family: str) -> None:
 )
 def test_unrecognised_router_ids_stay_unknown(model: str) -> None:
     assert model_family(model) == UNKNOWN_FAMILY
+
+
+@pytest.mark.parametrize(
+    ("model", "family"),
+    [
+        ("openrouter/x-ai/grok-2", "xai"),
+        ("fireworks/accounts/fireworks/models/llama-v3p1-8b", "meta"),
+        ("openrouter/meta-llama/llama-3-70b", "meta"),
+    ],
+)
+def test_router_vendor_segments_still_classify(model: str, family: str) -> None:
+    assert model_family(model) == family
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        # Non-vendor orgs whose later segment happens to start with a family
+        # prefix ("gpt", "claude"): these must not anchor a family.
+        "together/EleutherAI/gpt-j-6b",
+        "huggingface/openai-community/gpt2",
+        "hf/EleutherAI/gpt-neox-20b",
+        "sagemaker/my-endpoint.claude-proxy",
+    ],
+)
+def test_non_vendor_orgs_with_family_like_model_stay_unknown(model: str) -> None:
+    assert model_family(model) == UNKNOWN_FAMILY
