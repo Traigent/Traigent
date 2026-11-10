@@ -392,6 +392,11 @@ def _validate_choice_membership(
     return issues
 
 
+def _is_int_bound(value: Any) -> bool:
+    """True for an int bound (not a bool): the domain is an int range."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _range_bounds_from_domain(domain: dict[str, Any]) -> tuple[Any, Any] | None:
     if "range" in domain:
         range_value = domain["range"]
@@ -435,6 +440,16 @@ def _validate_range_membership(
         not _is_numeric(resolution) or cast(float, resolution) <= 0
     ):
         issues.append(f"TVAR '{name}' range resolution must be a positive number")
+    elif (
+        resolution is not None
+        and _is_int_bound(lower)
+        and _is_int_bound(upper)
+        and not float(resolution).is_integer()
+    ):
+        issues.append(
+            f"TVAR '{name}' int range resolution must be a positive integer, "
+            f"got {resolution!r}"
+        )
 
     if default is _MISSING:
         return issues

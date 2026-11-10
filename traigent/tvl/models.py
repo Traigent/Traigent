@@ -98,14 +98,15 @@ class DomainSpec:
                 raise ValueError("Range domain has no range defined")
             lo, hi = self.range
             if self.resolution is not None and _is_plain_int(lo) and _is_plain_int(hi):
-                if not _is_plain_int(self.resolution) or self.resolution <= 0:
+                int_step = _integral_step(self.resolution)
+                if int_step is None or int_step <= 0:
                     raise ValueError(
                         "Int range domain resolution must be a positive integer"
                     )
                 # A step of 1 enumerates exactly the integers of the continuous
                 # range, so it keeps the (min, max) form it always had.
-                if self.resolution > 1:
-                    return _int_grid_entry(int(lo), int(hi), int(self.resolution))
+                if int_step > 1:
+                    return _int_grid_entry(int(lo), int(hi), int_step)
                 return self.range
             if (
                 self.resolution is not None
@@ -836,6 +837,19 @@ def _real_number(value: object, field_name: str) -> float:
 def _is_plain_int(value: object) -> bool:
     """True for an int that is not a bool (bool is an int subclass in Python)."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _integral_step(value: object) -> int | None:
+    """``value`` as an int step: an int, or an integral float such as ``2.0``.
+
+    JSON Schema reads ``2.0`` as an integer, so a spec that writes it that way
+    keeps loading. ``None`` for bool, NaN, inf, fractions and non-numbers.
+    """
+    if _is_plain_int(value):
+        return cast(int, value)
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    return None
 
 
 def _int_grid_entry(lo: int, hi: int, step: int) -> dict[str, Any]:

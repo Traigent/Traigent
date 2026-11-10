@@ -2901,6 +2901,19 @@ objectives:
             assert 0 <= value <= 10**12
             assert value % 2 == 0
 
+    def test_integral_float_resolution_is_accepted(self, tmp_path: Path) -> None:
+        """2.0 is an integer step (JSON Schema reads it as one); base loaded it."""
+        artifact = self._load(tmp_path, "      range: [0, 10]\n      resolution: 2.0\n")
+        assert artifact.configuration_space["ti10"] == {
+            "type": "int",
+            "low": 0,
+            "high": 10,
+            "step": 2,
+        }
+
+        artifact = self._load(tmp_path, "      range: [0, 10]\n      resolution: 1.0\n")
+        assert artifact.configuration_space["ti10"] == (0, 10)
+
     def test_int_range_resolution_with_inverted_bounds_is_rejected(self) -> None:
         """The schema rejects inverted bounds on load; the domain itself must too."""
         domain = DomainSpec(kind="range", range=(100, 0), resolution=10)
@@ -2919,7 +2932,8 @@ objectives:
     def test_non_integer_resolution_on_int_range_is_rejected(
         self, tmp_path: Path
     ) -> None:
-        with pytest.raises(ValueError, match="positive integer"):
+        """The spec check names the TVAR (it used to be a bare ValueError)."""
+        with pytest.raises(TVLValidationError, match="'ti10'.*positive integer"):
             self._load(tmp_path, "      range: [0, 100]\n      resolution: 2.5\n")
 
 
