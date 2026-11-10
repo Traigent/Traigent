@@ -73,7 +73,11 @@ from traigent.cloud.session_budgets import (
     is_cost_budget_armed_session,
     remember_cost_budget_armed_session,
 )
-from traigent.cloud.session_operations import OptimizationOutcome, SessionOperations
+from traigent.cloud.session_operations import (
+    OptimizationOutcome,
+    SessionOperations,
+    _run_on_private_loop,
+)
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import (
@@ -2315,7 +2319,9 @@ class BackendIntegratedClient:
                     future = executor.submit(_run_in_new_loop)
                     headers = future.result(timeout=min(self.timeout, 30.0))
             except RuntimeError:
-                headers = asyncio.run(_get_headers_async())
+                # Private loop: asyncio.run would clear a loop the caller had set
+                # on this thread (#3143).
+                headers = _run_on_private_loop(_get_headers_async())
         except AuthenticationError:
             # Re-raise: a backend-rejected key must NEVER be downgraded to a
             # silent unauthenticated POST. Callers (e.g.

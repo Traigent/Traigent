@@ -12,7 +12,9 @@ from typing import Any
 import pytest
 
 from traigent.cloud import session_operations as session_ops_module
+from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.cloud.session_operations import SessionOperations
+from traigent.cloud.trial_operations import TrialOperations
 
 
 @pytest.fixture
@@ -95,3 +97,27 @@ def test_wrappers_still_work_inside_a_running_loop(monkeypatch, call: str) -> No
         return invoke()
 
     assert asyncio.run(main()) in (True, "finalized")
+
+
+def test_register_trial_start_sync_keeps_caller_loop(monkeypatch, user_loop) -> None:
+    ops = TrialOperations(SimpleNamespace())
+
+    async def fake_register(session_id: str, trial_id: str, config: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(ops, "register_trial_start", fake_register)
+    assert ops.register_trial_start_sync("s1", "t1", {"x": 1}) is True
+    _assert_user_loop_intact(user_loop)
+
+
+def test_get_sync_auth_headers_keeps_caller_loop(user_loop) -> None:
+    class _Auth:
+        async def get_headers(self, target: str = "backend") -> dict[str, str]:
+            return {"Authorization": f"Bearer {target}"}
+
+    fake_client = SimpleNamespace(
+        auth_manager=SimpleNamespace(auth=_Auth()), timeout=5.0
+    )
+    headers = BackendIntegratedClient._get_sync_auth_headers(fake_client, "backend")
+    assert headers["Authorization"] == "Bearer backend"
+    _assert_user_loop_intact(user_loop)

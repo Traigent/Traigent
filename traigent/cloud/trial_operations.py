@@ -29,6 +29,7 @@ from traigent.cloud.dtos import MeasuresDict
 from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
 )
+from traigent.cloud.session_operations import _run_on_private_loop
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import (
@@ -601,8 +602,9 @@ class TrialOperations:
                     return future.result(timeout=60)
 
             except RuntimeError:
-                # No running loop, safe to use asyncio.run()
-                return asyncio.run(_register_async())
+                # No running loop: use a private loop. asyncio.run would clear a
+                # loop the caller had set on this thread (#3143).
+                return _run_on_private_loop(_register_async())
         except Exception:
             logger.exception(
                 "Failed to register trial start synchronously for session %s trial %s (%s)",
