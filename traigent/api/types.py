@@ -2544,14 +2544,14 @@ class OptimizationResult:
 
         # Config keys that collide with an identity/derived column or a metric
         # are exported as ``config.<name>``; metrics that collide with an
-        # identity column are exported as ``metric.<name>``. Nothing is
+        # identity or derived column are exported as ``metric.<name>``. Nothing is
         # silently overwritten.
         metric_names = {str(k) for t in self.trials for k in (t.metrics or {})}
         config_names = {str(k) for t in self.trials for k in (t.config or {})}
         metric_renames, config_renames = _metric_and_config_renames(
             metric_names,
             config_names,
-            _TRIAL_IDENTITY_COLUMNS,
+            _TRIAL_IDENTITY_COLUMNS | _TRIAL_DERIVED_COLUMNS,
             _TRIAL_IDENTITY_COLUMNS | _TRIAL_DERIVED_COLUMNS,
         )
 
@@ -2581,8 +2581,11 @@ class OptimizationResult:
             _apply_example_count_columns(row, metadata)
             if "total_example_cost" in metadata:
                 row["total_cost"] = metadata.get("total_example_cost")
-            elif "total_cost" not in row:
-                # Fall back to metrics if already present
+            elif "total_cost" in (trial.metrics or {}):
+                # The raw metric is exported as ``metric.total_cost``; the
+                # derived column falls back to it when metadata has no total.
+                row["total_cost"] = trial.metrics["total_cost"]
+            else:
                 row["total_cost"] = metadata.get("total_cost")
             data.append(row)
         return pd.DataFrame(data)

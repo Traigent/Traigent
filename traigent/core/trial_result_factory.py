@@ -20,7 +20,9 @@ from traigent.api.types import (
 )
 from traigent.core.exception_handler import classify_systematic_provider_failure
 from traigent.evaluators.base import (
+    MEASURED_ONLY_METRICS,
     OBJECTIVE_SOURCE_METRICS,
+    _measured_value,
     count_timed_out_examples,
 )
 from traigent.evaluators.metrics_tracker import enforce_user_metric_ceiling
@@ -258,9 +260,15 @@ def _count_primary_objective_rows(
             # ``latency`` on a failed row is not a measurement.
             covered = _was_timed(example_result)
         else:
+            # Count what the aggregator counts: cost rows with a non-finite
+            # value are excluded from the mean, so they are not coverage.
             covered = any(
-                isinstance(metrics.get(name), (int, float))
-                and not isinstance(metrics.get(name), bool)
+                (
+                    _measured_value(metrics.get(name)) is not None
+                    if name in MEASURED_ONLY_METRICS
+                    else isinstance(metrics.get(name), (int, float))
+                    and not isinstance(metrics.get(name), bool)
+                )
                 for name in names
             )
         if covered:
