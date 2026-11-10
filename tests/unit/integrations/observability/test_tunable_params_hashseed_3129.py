@@ -66,3 +66,36 @@ def test_tunable_params_are_sorted_and_unique():
     params = _extract_tunable_params(Node())
     assert params == sorted(set(params))
     assert params == ["max_tokens", "model", "temperature"]
+
+
+def _hash_seeded_calls(path: Path) -> list[int]:
+    """Line numbers of ``random.seed(...)`` calls whose argument uses ``hash()``."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    lines = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "seed"
+            and any(
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Name)
+                and sub.func.id == "hash"
+                for arg in node.args
+                for sub in ast.walk(arg)
+            )
+        ):
+            lines.append(node.lineno)
+    return lines
+
+
+def test_shipped_demos_do_not_seed_from_the_salted_str_hash() -> None:
+    """Mock demos seed from crc32, so their numbers repeat across runs (#3129)."""
+    offenders = []
+    for root in ("examples", "walkthrough"):
+        for path in sorted((_REPO_ROOT / root).rglob("*.py")):
+            for line in _hash_seeded_calls(path):
+                offenders.append(f"{path.relative_to(_REPO_ROOT)}:{line}")
+    assert offenders == []
