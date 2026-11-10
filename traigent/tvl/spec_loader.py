@@ -366,6 +366,20 @@ def _validate_choice_membership(
     if not values and normalized_type != "callable":
         issues.append(f"TVAR '{name}' declared domain values must be non-empty")
 
+    # A repeated value is a duplicate configuration in grid search. Compare by
+    # type and value so that 1 and True stay distinct; quadratic is fine for
+    # the handful of values a domain declares.
+    seen_values: list[Any] = []
+    reported: list[Any] = []
+    for value in values:
+        key = (type(value), value)
+        if key in seen_values:
+            if key not in reported:
+                issues.append(f"TVAR '{name}' declared domain repeats {value!r}")
+                reported.append(key)
+        else:
+            seen_values.append(key)
+
     if default is not _MISSING:
         issues.extend(_default_type_issues(name, raw_type, default))
     if default is not _MISSING and default not in values:
@@ -833,6 +847,7 @@ def _validate_tvar_type_field(name: str, tvar_def: dict[str, Any]) -> list[str]:
 def _validate_tvars_list_structure(tvars: list[Any]) -> list[str]:
     """Validate structure of tvars section (TVL 0.9 array format)."""
     issues: list[str] = []
+    first_index: dict[str, int] = {}
 
     for idx, tvar_def in enumerate(tvars):
         if not isinstance(tvar_def, dict):
@@ -845,6 +860,15 @@ def _validate_tvars_list_structure(tvars: list[Any]) -> list[str]:
         if not isinstance(name, str) or not name:
             issues.append(f"TVAR at index {idx} missing required 'name' string")
             name = f"<index {idx}>"
+        elif name in first_index:
+            # Last-wins would silently drop the earlier domain from
+            # configuration_space while both entries stay in tvars.
+            issues.append(
+                f"duplicate TVAR name '{name}' at tvars[{idx}] "
+                f"(first declared at tvars[{first_index[name]}])"
+            )
+        else:
+            first_index[name] = idx
 
         issues.extend(_validate_tvar_type_field(name, tvar_def))
         raw_type = tvar_def.get("type")

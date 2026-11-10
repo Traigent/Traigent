@@ -2761,3 +2761,66 @@ objectives:
         assert len(msgs) == 1
         assert "987654" not in msgs[0]
         assert "secret_marker" not in msgs[0]
+
+
+class TestDuplicateTvarsAndValuesRejected:
+    """Duplicate TVAR names and repeated enum values fail loudly (#3240).
+
+    A silent last-wins on a duplicate name drops a searched domain, and a repeated
+    value costs a duplicate trial in grid search. tvl-validate rejects both.
+    """
+
+    _HEADER = """
+tvars:
+"""
+    _OBJECTIVES = """
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+
+    def _load(self, tmp_path: Path, tvars_block: str):
+        spec_file = tmp_path / "dup.tvl.yml"
+        spec_file.write_text(self._HEADER + tvars_block + self._OBJECTIVES)
+        return load_tvl_spec(spec_path=spec_file)
+
+    def test_duplicate_tvar_name_is_rejected(self, tmp_path: Path) -> None:
+        tvars = """  - name: model
+    type: enum
+    domain: [model-a, model-b]
+  - name: model
+    type: enum
+    domain: [model-c]
+"""
+        with pytest.raises(TVLValidationError) as exc_info:
+            self._load(tmp_path, tvars)
+
+        message = str(exc_info.value)
+        assert "duplicate TVAR name 'model'" in message
+        assert "tvars[1]" in message
+
+    def test_distinct_tvar_names_still_load(self, tmp_path: Path) -> None:
+        """Control: the same two domains under distinct names are accepted."""
+        tvars = """  - name: model
+    type: enum
+    domain: [model-a, model-b]
+  - name: prompt_style
+    type: enum
+    domain: [terse, verbose]
+"""
+        artifact = self._load(tmp_path, tvars)
+
+        assert artifact.configuration_space["model"] == ["model-a", "model-b"]
+        assert artifact.configuration_space["prompt_style"] == ["terse", "verbose"]
+
+    def test_repeated_enum_value_is_rejected(self, tmp_path: Path) -> None:
+        tvars = """  - name: model
+    type: enum
+    domain: [model-a, model-b, model-a]
+"""
+        with pytest.raises(TVLValidationError) as exc_info:
+            self._load(tmp_path, tvars)
+
+        message = str(exc_info.value)
+        assert "model" in message
+        assert "repeats 'model-a'" in message
