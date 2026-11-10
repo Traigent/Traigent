@@ -106,3 +106,45 @@ def test_offline_run_scope_gates_trackers(
     with offline_run_scope(True), pytest.raises(OfflineModeError):
         tracker.start_optimization_run("fn", ["accuracy"], {"p": ["a"]})
     assert mlflow_stub.calls == []
+
+
+def test_mlflow_autolog_built_outside_run_contacts_nothing_when_run_is_offline(
+    monkeypatch: pytest.MonkeyPatch, mlflow_stub: _Recorder
+) -> None:
+    """enable_mlflow_autolog() runs before the offline=True scope starts."""
+    from traigent.utils.env_config import offline_run_scope
+
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    callback = mlflow_module.enable_mlflow_autolog(
+        tracking_uri="http://127.0.0.1:1", experiment_name="exp"
+    )
+    assert set(mlflow_stub.calls) <= {"set_tracking_uri"}
+    with offline_run_scope(True), pytest.raises(OfflineModeError):
+        callback.on_optimization_start("fn", ["accuracy"], {"p": ["a"]})
+    assert set(mlflow_stub.calls) <= {"set_tracking_uri"}
+
+
+def test_mlflow_experiment_is_resolved_on_first_online_run(
+    monkeypatch: pytest.MonkeyPatch, mlflow_stub: _Recorder
+) -> None:
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    tracker = mlflow_module.TraigentMLflowTracker(experiment_name="exp")
+    tracker.start_optimization_run("fn", ["accuracy"], {"p": ["a"]})
+    assert "get_experiment_by_name" in mlflow_stub.calls
+    assert "set_experiment" in mlflow_stub.calls
+
+
+def test_wandb_autolog_built_outside_run_contacts_nothing_when_run_is_offline(
+    monkeypatch: pytest.MonkeyPatch, wandb_stub: _Recorder
+) -> None:
+    from traigent.utils.env_config import offline_run_scope
+
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    callback = wandb_module.enable_wandb_autolog(project="p")
+    assert wandb_stub.calls == []
+    with offline_run_scope(True), pytest.raises(OfflineModeError):
+        callback.on_optimization_start("fn", ["accuracy"], {"p": ["a"]})
+    assert wandb_stub.calls == []
