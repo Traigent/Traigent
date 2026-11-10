@@ -97,3 +97,47 @@ def test_unmeasured_cost_backfill_omits_every_cost_derived_objective() -> None:
     assert "cost_efficiency" not in measures
     assert "accuracy_per_1k_cost" not in measures
     assert measures["quality"] == 0.5
+
+
+@pytest.mark.parametrize(
+    ("name", "tokens"),
+    [
+        ("totalCost", ("total", "cost")),
+        ("costPerCall", ("cost", "per", "call")),
+        ("accuracyPer1kCost", ("accuracy", "per", "1k", "cost")),
+        ("TokenF1", ("token", "f1")),
+        ("latencyP95", ("latency", "p95")),
+        ("f1_score", ("f1", "score")),
+        ("top95_recall", ("top95", "recall")),
+    ],
+)
+def test_camel_case_names_are_tokenized(name: str, tokens: tuple[str, ...]) -> None:
+    from traigent.utils.metric_name_tokens import metric_name_tokens
+
+    assert metric_name_tokens(name) == tokens
+
+
+def test_camel_case_classifiers() -> None:
+    assert is_usd_cost_metric("totalCost")
+    assert is_usd_cost_metric("costPerCall")
+    assert not is_usd_cost_metric("accuracyPer1kCost")
+    assert not is_usd_cost_metric("costCount")
+    assert _looks_like_quality_metric("tokenF1")
+    assert _looks_like_continuous_metric("costPerAccuracyPoint")
+    assert _looks_like_continuous_metric("responseTime")
+    detector = RegressionDetector(sensitivity=0.1)
+    assert detector._is_significant_regression("totalCost", 0.3) is True
+    assert detector._is_significant_regression("errorFreeRate", -0.3) is True
+
+
+def test_unmeasured_cost_backfill_omits_camel_case_cost_objectives() -> None:
+    from traigent.cloud.sync_manager import SyncManager
+
+    measures: dict[str, float] = {}
+    SyncManager._backfill_trial_objectives(
+        measures,
+        ["totalCost", "costEfficiency", "accuracyPer1kCost", "quality"],
+        0.5,
+        True,
+    )
+    assert set(measures) == {"quality"}

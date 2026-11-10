@@ -24,6 +24,8 @@ MEAN = sum(VALUES) / len(VALUES)
         ("p90_latency", 0.90),
         ("p50_latency", 0.50),
         ("max_latency", 1.0),
+        ("latencyP95", 0.95),
+        ("maxLatency", 1.0),
         ("latency_max", 1.0),
         ("step95_score", None),
         ("p950_score", None),

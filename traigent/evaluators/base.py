@@ -58,6 +58,7 @@ from traigent.utils.langchain_interceptor import (
     mark_capture_incomplete,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.metric_name_tokens import metric_name_tokens
 from traigent.utils.removed_params import reject_removed_mock_parameters
 from traigent.utils.response_model import resolve_pricing_model
 from traigent.utils.trial_costs import (
@@ -126,7 +127,6 @@ _QUANTILE_NAME_TOKENS = {
     "p99": 0.99,
     "max": 1.0,
 }
-_QUANTILE_NAME_RE = re.compile(r"(?<![a-z0-9])(p50|p90|p95|p99|max)(?![a-z0-9])")
 
 
 def quantile_for_metric_name(metric_name: str) -> float | None:
@@ -136,8 +136,10 @@ def quantile_for_metric_name(metric_name: str) -> float | None:
     ``max_latency``); a substring such as the ``95`` in ``step95_score`` does
     not select a percentile. ``max`` maps to the 1.0 quantile.
     """
-    match = _QUANTILE_NAME_RE.search(metric_name.lower())
-    return _QUANTILE_NAME_TOKENS[match.group(1)] if match else None
+    for token in metric_name_tokens(metric_name):
+        if token in _QUANTILE_NAME_TOKENS:
+            return _QUANTILE_NAME_TOKENS[token]
+    return None
 
 
 def count_timed_out_examples(example_results: Any) -> int:

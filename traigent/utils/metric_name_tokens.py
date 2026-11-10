@@ -31,9 +31,23 @@ _NON_AMOUNT_TOKENS = frozenset(
 )
 
 
+_CAMEL_DIGIT_RE = re.compile(r"([A-Z][a-z]+)(?=[0-9])")
+_CAMEL_LOWER_UPPER_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_CAMEL_ACRONYM_RE = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])")
+
+
 def metric_name_tokens(name: str) -> tuple[str, ...]:
-    """Lower-cased tokens of ``name`` split on every non-alphanumeric run."""
-    return tuple(tok for tok in _SPLIT_RE.split(name.lower()) if tok)
+    """Lower-cased tokens of ``name``.
+
+    Splits on every non-alphanumeric run and on camelCase / PascalCase
+    boundaries (``totalCost`` -> total, cost; ``accuracyPer1kCost`` ->
+    accuracy, per, 1k, cost). An all-lowercase letter+digit token such as
+    ``f1`` or ``p95`` stays whole.
+    """
+    spaced = _CAMEL_DIGIT_RE.sub(r"\1_", name)
+    spaced = _CAMEL_LOWER_UPPER_RE.sub("_", spaced)
+    spaced = _CAMEL_ACRONYM_RE.sub("_", spaced)
+    return tuple(tok for tok in _SPLIT_RE.split(spaced.lower()) if tok)
 
 
 def _token_matches(token: str, markers: frozenset[str]) -> bool:
