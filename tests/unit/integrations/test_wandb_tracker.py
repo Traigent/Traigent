@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import types
 from datetime import datetime
 from pathlib import Path
@@ -11,10 +12,14 @@ import pytest
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.integrations.observability import wandb as wandb_module
 
+# Real directory standing in for wandb.run.dir: artifacts are written here (#3042).
+_RUN_DIR = tempfile.TemporaryDirectory(prefix="traigent-wandb-run-")
+
 
 class DummyRun:
     def __init__(self, run_id: str = "run-123") -> None:
         self.id = run_id
+        self.dir = _RUN_DIR.name
 
 
 class DummyWandB:
@@ -31,7 +36,7 @@ class DummyWandB:
         self.logged.append((data, step))
 
     def save(self, path, **_kwargs):
-        # Artifacts are staged in a temp dir; record the artifact name only.
+        # Artifacts are written into the run dir; record the artifact name only.
         self.saved.append(Path(path).name)
 
     def finish(self):
