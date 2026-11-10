@@ -202,7 +202,7 @@ def validate_max_trials_value(value: Any) -> None:
     """
     if value is None:
         return
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
         raise TypeError(
             f"max_trials must be a positive integer, got {value!r} "
             f"({type(value).__name__})"
@@ -220,7 +220,7 @@ def validate_timeout_value(value: Any) -> None:
     """
     if value is None:
         return
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
         raise TypeError(
             f"timeout must be a non-negative number of seconds, got {value!r} "
             f"({type(value).__name__})"

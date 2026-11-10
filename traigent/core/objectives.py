@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import numbers
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -116,7 +117,7 @@ class ObjectiveDefinition:
             for bound in self.bounds:
                 if (
                     isinstance(bound, bool)
-                    or not isinstance(bound, (int, float))
+                    or not isinstance(bound, numbers.Real)
                     or not math.isfinite(bound)
                 ):
                     raise ValueError(
