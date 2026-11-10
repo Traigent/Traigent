@@ -2,12 +2,6 @@ name: Traigent CI Gates
 
 on:
   workflow_dispatch:
-    inputs:
-      base_ref:
-        description: "Ref (branch, tag or SHA) to use as the regression baseline; the head is the ref this run is dispatched on"
-        required: false
-        default: develop
-        type: string
 
 permissions:
   contents: read
@@ -30,7 +24,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.base_ref }}
+          ref: develop  # fixed baseline: a dispatch input here would be a user-controlled checkout
           path: baseline
 
       - name: Checkout head (the ref this workflow was dispatched on)
@@ -40,15 +34,13 @@ jobs:
           path: work
 
       - name: Require distinct baseline and head commits
-        env:
-          BASE_REF: ${{ inputs.base_ref }}
         run: |
           base_sha="$(git -C baseline rev-parse HEAD)"
           head_sha="$(git -C work rev-parse HEAD)"
-          echo "baseline ($BASE_REF): $base_sha"
+          echo "baseline (develop): $base_sha"
           echo "head: $head_sha"
           if [ "$base_sha" = "$head_sha" ]; then
-            echo "::error::Baseline ($BASE_REF) and head resolve to the same commit ($head_sha). The regression gate would compare the code with itself. Dispatch this workflow on the branch under test and pass a different base_ref."
+            echo "::error::Baseline (develop) and head resolve to the same commit ($head_sha). The regression gate would compare the code with itself. Dispatch this workflow on the branch under test."
             exit 1
           fi
 
@@ -74,7 +66,7 @@ jobs:
       - name: Copy dataset to baseline if missing
         run: |
           # Reachable now that the baseline is a distinct ref: the head may add the dataset
-          # that an older base_ref does not have yet.
+          # that an older develop does not have yet.
           if [ ! -f "baseline/examples/integrations/ci-cd/math-qa/math_qa.jsonl" ]; then
             echo "Dataset missing in baseline, copying from PR branch..."
             cp work/examples/integrations/ci-cd/math-qa/math_qa.jsonl baseline/examples/integrations/ci-cd/math-qa/
