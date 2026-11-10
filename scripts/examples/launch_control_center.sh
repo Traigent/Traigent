@@ -24,4 +24,5 @@ echo ""
 echo "Press Ctrl+C to stop the server"
 echo ""
 
-streamlit run examples/traigent_control_center.py
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+streamlit run "$REPO_ROOT/plugins/traigent-ui/traigent_ui/traigent_control_center.py"

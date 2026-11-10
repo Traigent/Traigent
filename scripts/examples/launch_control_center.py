@@ -9,6 +9,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+#: The Playground app ships in the traigent-ui plugin.
+APP_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "plugins"
+    / "traigent-ui"
+    / "traigent_ui"
+    / "traigent_control_center.py"
+)
+
 
 def main():
     """Launch the Traigent Playground Streamlit app."""
@@ -35,8 +44,7 @@ def main():
         print()
 
     # Find the streamlit app
-    script_dir = Path(__file__).parent
-    app_path = script_dir / "examples" / "traigent_control_center.py"
+    app_path = APP_PATH
 
     if not app_path.exists():
         print(f"❌ Error: Could not find {app_path}")
@@ -49,8 +57,8 @@ def main():
     print("Press Ctrl+C to stop the server")
     print()
 
-    # Change to project directory to ensure imports work
-    os.chdir(script_dir)
+    # Run from the app's directory so its relative imports resolve
+    os.chdir(app_path.parent)
 
     # Run streamlit
     try:
