@@ -27,9 +27,10 @@ class _RecordingWandb:
         self.saved: dict[str, dict] = {}
         self.save_kwargs: list[dict] = []
         self.saved_paths: list[str] = []
+        self.run_dir: Path | None = None  # set by the fixture; stands in for run.dir
 
     def init(self, **_kwargs):
-        return SimpleNamespace(id="run-1")
+        return SimpleNamespace(id="run-1", dir=str(self.run_dir))
 
     def log(self, *_args, **_kwargs) -> None:
         pass
@@ -49,6 +50,8 @@ def project_dir(monkeypatch, tmp_path):
     work.mkdir()
     for name in USER_FILES:
         (work / name).write_text(USER_CONTENT)
+    fake.run_dir = tmp_path / "wandb-run"
+    fake.run_dir.mkdir()
     monkeypatch.chdir(work)
     return work, fake
 
@@ -94,7 +97,7 @@ def test_start_run_leaves_user_files_alone(project_dir) -> None:
 def test_log_trial_leaves_user_files_alone(project_dir) -> None:
     work, fake = project_dir
     tracker = wandb_module.TraigentWandBTracker()
-    tracker.current_run = SimpleNamespace(id="run-1")
+    tracker.current_run = SimpleNamespace(id="run-1", dir=str(fake.run_dir))
 
     tracker.log_trial(_trial(), 1)
 
@@ -105,7 +108,7 @@ def test_log_trial_leaves_user_files_alone(project_dir) -> None:
 def test_log_result_leaves_user_files_alone(project_dir) -> None:
     work, fake = project_dir
     tracker = wandb_module.TraigentWandBTracker()
-    tracker.current_run = SimpleNamespace(id="run-1")
+    tracker.current_run = SimpleNamespace(id="run-1", dir=str(fake.run_dir))
 
     tracker.log_optimization_result(_result())
 
@@ -113,7 +116,7 @@ def test_log_result_leaves_user_files_alone(project_dir) -> None:
     _assert_user_files_intact(work)
 
 
-def test_artifacts_are_staged_outside_cwd_and_cleaned_up(project_dir) -> None:
+def test_artifacts_are_written_to_run_dir_not_cwd(project_dir) -> None:
     work, fake = project_dir
     tracker = wandb_module.TraigentWandBTracker()
     tracker.start_optimization_run("fn", ["accuracy"], {"model": ["a"]})
@@ -123,7 +126,8 @@ def test_artifacts_are_staged_outside_cwd_and_cleaned_up(project_dir) -> None:
     assert len(fake.saved_paths) == 3
     for saved in fake.saved_paths:
         assert os.path.isabs(saved)
-        assert Path(saved).parent != work
-        assert not Path(saved).exists()  # staging dir removed after the call
-    # Uploaded immediately, before the staging directory disappears.
+        assert Path(saved).parent == fake.run_dir  # wandb's run dir, kept in place
+        assert Path(saved).is_file()
+    # Uploaded immediately under the requested name, relative to the run dir.
     assert all(kw.get("policy") == "now" for kw in fake.save_kwargs)
+    assert all(kw.get("base_path") == str(fake.run_dir) for kw in fake.save_kwargs)

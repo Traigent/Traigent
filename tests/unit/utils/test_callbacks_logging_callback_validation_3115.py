@@ -30,3 +30,30 @@ def test_logging_callback_sanitizes_algorithm(
     msgs = [r.getMessage() for r in caplog.records if r.name == "x_3115"]
     assert msgs
     assert all("\r" not in m and "\n" not in m for m in msgs)
+
+
+# --- #3115 stdlib aliases ---------------------------------------------------
+@pytest.mark.parametrize(
+    ("alias", "level"),
+    [
+        ("WARN", logging.WARNING),
+        ("warn", logging.WARNING),
+        ("FATAL", logging.CRITICAL),
+        ("fatal", logging.CRITICAL),
+    ],
+)
+def test_logging_callback_accepts_stdlib_level_aliases(
+    alias: str, level: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    lg = logging.getLogger("alias_3115")
+    cb = LoggingCallback(lg, alias)
+    with caplog.at_level(logging.DEBUG, logger="alias_3115"):
+        cb.on_optimization_start({}, ["a"], "grid")
+    levels = [r.levelno for r in caplog.records if r.name == "alias_3115"]
+    assert levels == [level]
+
+
+@pytest.mark.parametrize("bad", ["NOTSET", "notset", "VERBOSE"])
+def test_logging_callback_rejects_notset_and_unknown_names(bad: str) -> None:
+    with pytest.raises(ValueError, match="log_level"):
+        LoggingCallback(logging.getLogger("x"), bad)

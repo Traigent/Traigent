@@ -1294,6 +1294,17 @@ class OptimizedFunction[**P, R]:
                 TraigentWarning,
                 stacklevel=2,
             )
+        if "pydantic_ai.Agent" in self.framework_targets:
+            warnings.warn(
+                "Tuned parameters are not injected through framework_targets "
+                "for PydanticAI (pydantic_ai.Agent): Agent.run() takes them "
+                "inside model_settings, which this path does not build, so the "
+                "model never receives the tuned values. Read the trial values "
+                "with traigent.get_trial_config() and pass model_settings=... "
+                "to agent.run() yourself.",
+                TraigentWarning,
+                stacklevel=2,
+            )
 
         # Execution mode configuration
         if self.execution_policy is None:
@@ -5641,8 +5652,7 @@ Remediation:
             raise ConfigurationError(
                 "Invalid dataset type: eval_dataset was not provided (None). "
                 'Pass eval_dataset="data.jsonl" to @traigent.optimize, or '
-                "EvaluationOptions(eval_dataset=...), or supply a custom "
-                "evaluator that provides its own data. Each JSONL line looks like "
+                "EvaluationOptions(eval_dataset=...). Each JSONL line looks like "
                 '{"input": {"question": "..."}, "expected_output": "..."}.'
             )
 

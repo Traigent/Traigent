@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import MagicMock, patch
@@ -33,9 +34,13 @@ def wb(monkeypatch, tmp_path):
     return m
 
 
+# Real directory standing in for wandb.run.dir: artifacts are written here (#3042).
+_RUN_DIR = tempfile.TemporaryDirectory(prefix="traigent-wandb-run-")
+
+
 def _tracker(active=True):
     t = object.__new__(TraigentWandBTracker)
-    t.current_run = NS(id="rid") if active else None
+    t.current_run = NS(id="rid", dir=_RUN_DIR.name) if active else None
     return t
 
 

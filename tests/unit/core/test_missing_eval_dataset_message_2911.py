@@ -36,3 +36,13 @@ def test_wrong_type_names_received_type_and_accepted_forms() -> None:
     msg = str(exc.value)
     assert "int" in msg
     assert "JSONL" in msg
+
+
+def test_missing_eval_dataset_names_only_remedies_that_avoid_the_error() -> None:
+    """A custom evaluator does not avoid this error, so it must not be suggested."""
+    with pytest.raises(ConfigurationError) as exc:
+        _fn(None)._load_dataset()
+    msg = str(exc.value)
+    assert "custom evaluator" not in msg.lower()
+    assert 'eval_dataset="data.jsonl"' in msg
+    assert "EvaluationOptions(eval_dataset=...)" in msg

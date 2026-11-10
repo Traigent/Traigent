@@ -14,6 +14,7 @@ from traigent.security.enterprise import (
     SLAConfiguration,
     SLAMonitor,
     SLATier,
+    SystemMetrics,
 )
 
 
@@ -73,3 +74,38 @@ def test_restart_runs_exactly_one_loop() -> None:
     finally:
         monitor.stop_monitoring()
     assert _monitor_threads(monitor) == []
+
+
+def _instant_monitor() -> tuple[SLAMonitor, Mock]:
+    """Monitor whose collection returns at once, so the loop parks in its wait."""
+    collector = MetricsCollector()
+    collect = Mock(return_value=SystemMetrics())
+    collector.collect_system_metrics = collect  # type: ignore[method-assign]
+    sla = SLAConfiguration.from_tier(SLATier.STANDARD, "admin@test.com")
+    return SLAMonitor(sla, collector), collect
+
+
+@pytest.mark.timeout(30)
+def test_stop_interrupts_a_long_interval_wait() -> None:
+    """Stop must wake the loop out of its interval wait, not after the interval.
+
+    With the interval wait done as time.sleep, stop_monitoring() waits out the
+    5 s join timeout and leaves the thread alive.
+    """
+    monitor, _collect = _instant_monitor()
+    monitor.start_monitoring(interval_seconds=60)
+    # Wait for one completed pass (history is appended before the interval
+    # wait), then let the loop park in that wait. A stop that lands during
+    # collection takes the in-lock early return and proves nothing.
+    assert _wait_for(lambda: len(monitor.sla_history) >= 1)
+    time.sleep(0.2)
+    thread = monitor.monitor_thread
+    assert thread is not None
+    assert thread.is_alive()
+
+    started = time.monotonic()
+    monitor.stop_monitoring()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0, f"stop took {elapsed:.2f}s with a 60s interval"
+    assert not thread.is_alive()
