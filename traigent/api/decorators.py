@@ -3319,9 +3319,12 @@ def optimize(  # NOSONAR(S107)
             - reset(): Reset to default configuration
 
     Raises:
-        ConfigurationError: If configuration is invalid or incompatible, the
-            evaluation dataset cannot be loaded, or a framework override
-            target is invalid
+        ConfigurationError: If configuration is invalid or incompatible, or a
+            framework override target is invalid.
+        ValidationError: If the evaluation dataset path cannot be loaded (for
+            example, the file does not exist). Raised at decoration time.
+            ``ValidationError`` is not a subclass of ``ConfigurationError``;
+            import it from ``traigent.utils.exceptions``.
 
     Examples:
         Basic usage with automatic framework override:

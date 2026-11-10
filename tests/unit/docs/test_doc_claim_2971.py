@@ -30,3 +30,30 @@ def test_optimize_docstring_raises_only_real_exceptions_2971() -> None:
     assert names
     unresolved = [n for n in names if not hasattr(exc_mod, n)]
     assert not unresolved, unresolved
+
+
+def test_missing_dataset_raises_a_documented_exception_2971(monkeypatch) -> None:
+    """Running the issue's reproduction raises a class the Raises section lists."""
+    import traigent
+    import traigent.utils.exceptions as exc_mod
+
+    # The SDK skips the dataset-path check while PYTEST_CURRENT_TEST is set.
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    raised: BaseException | None = None
+    try:
+
+        @traigent.optimize(
+            eval_dataset="does_not_exist_2971.jsonl",
+            objectives=["accuracy"],
+            configuration_space={"temperature": [0.1, 0.2]},
+        )
+        def f(question: str) -> str:
+            return question
+
+    except Exception as exc:  # noqa: BLE001 - we assert on the concrete class below
+        raised = exc
+
+    assert raised is not None, "a missing dataset must fail loudly"
+    names = _raises_names(_read("traigent/api/decorators.py"), "optimize")
+    documented = tuple(getattr(exc_mod, n) for n in names)
+    assert isinstance(raised, documented), (type(raised).__name__, names)
