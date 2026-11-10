@@ -7,6 +7,7 @@ import copy
 import hashlib
 import io
 import json
+import math
 import sys
 import threading
 import time
@@ -4256,7 +4257,20 @@ class ObservabilityClient:
     def _flush_deadline(self, timeout: float | None) -> float | None:
         if timeout is None:
             return None
-        return time.monotonic() + max(0.0, timeout)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            raise ValueError(
+                f"timeout must be a number of seconds or None, got {timeout!r}"
+            )
+        if isinstance(timeout, int) and timeout > threading.TIMEOUT_MAX:
+            timeout = threading.TIMEOUT_MAX  # huge ints overflow float()
+        if math.isnan(timeout) or timeout < 0:
+            raise ValueError(
+                f"timeout must be a non-negative number of seconds, got {timeout!r}"
+            )
+        if math.isinf(timeout):
+            return None  # "wait forever" is the unbounded path
+        # Keep within what threading.Lock.acquire(timeout=...) accepts.
+        return time.monotonic() + min(float(timeout), threading.TIMEOUT_MAX / 2)
 
     def _acquire_client_lock_until(self, deadline: float | None) -> bool:
         """Acquire client state without allowing a bounded call to exceed its budget."""
