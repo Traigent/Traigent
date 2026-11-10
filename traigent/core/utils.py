@@ -22,6 +22,7 @@ from traigent.core.constants import (
     RESPONSE_TIME_METRIC,
     TOKEN_METRICS,
 )
+from traigent.utils.env_config import is_truthy
 
 logger = logging.getLogger(__name__)
 
@@ -351,11 +352,7 @@ def strict_metrics_nulls_enabled() -> bool:
     """
     if _CONFIGURED_STRICT_METRICS_NULLS:
         return True
-    return os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    )
+    return is_truthy(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
 
 
 def safe_float_convert(value: Any, default: float = 0.0) -> float | None:

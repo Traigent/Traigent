@@ -5051,11 +5051,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         example_metrics["completion_tokens"] = llm_metrics.get("completion_tokens", 0)
         example_metrics["total_tokens"] = llm_metrics.get("total_tokens", 0)
 
-        strict_nulls = os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+        strict_nulls = is_truthy(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
         missing_default = None if strict_nulls else 0.0
 
         if llm_metrics.get("cost_unmeasured") or llm_metrics.get("cost_unpriced"):
@@ -5139,11 +5135,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         ):
             # Nothing measured this cost: it is unknown, never a
             # fabricated 0.0 (#2517). None under strict nulls.
-            if os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-                "true",
-                "1",
-                "yes",
-            ):
+            if is_truthy(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS")):
                 aggregated[metric] = None
             return
         aggregated[metric] = aggregate_measured_metric(metric, all_metrics)
@@ -5171,9 +5163,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         example_results: list[Any],
     ) -> None:
         # Aggregate cost metrics (total, not average)
-        strict_nulls_cost = os.environ.get(
-            "TRAIGENT_STRICT_METRICS_NULLS", ""
-        ).lower() in ("true", "1", "yes")
+        strict_nulls_cost = is_truthy(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
         cost_metrics = ["input_cost", "output_cost", "total_cost"]
         # One shared classifier decides (traigent.utils.trial_costs): a flagged
         # row, a successful row with no cost, or a trial where no row measured

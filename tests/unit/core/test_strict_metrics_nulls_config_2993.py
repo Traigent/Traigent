@@ -49,3 +49,19 @@ def test_status_line_does_not_claim_automatic_sync(monkeypatch) -> None:
     status = _portal_sync_status(TraigentConfig(auto_sync=True))
     assert "not implemented" in status
     assert "automatic for eligible" not in status
+
+
+@pytest.mark.parametrize("raw", [" true", "on", "ON", "yes", "1", "True "])
+def test_env_var_uses_shared_boolean_grammar(monkeypatch, raw: str) -> None:
+    from traigent.core.utils import strict_metrics_nulls_enabled
+
+    monkeypatch.setenv("TRAIGENT_STRICT_METRICS_NULLS", raw)
+    assert strict_metrics_nulls_enabled() is True
+
+
+@pytest.mark.parametrize("raw", ["", "off", "0", "false", "maybe"])
+def test_env_var_falsy_values_stay_off(monkeypatch, raw: str) -> None:
+    from traigent.core.utils import strict_metrics_nulls_enabled
+
+    monkeypatch.setenv("TRAIGENT_STRICT_METRICS_NULLS", raw)
+    assert strict_metrics_nulls_enabled() is False
