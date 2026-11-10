@@ -225,7 +225,10 @@ def sql_evaluator(func, config, example):
     db_id = example.metadata.get("db_id", "default")
     gold_sql = example.metadata.get("gold_sql", "")
 
-    predicted_sql = func(example.input_data)
+    if isinstance(example.input_data, dict):
+        predicted_sql = func(**example.input_data)
+    else:
+        predicted_sql = func(example.input_data)
     correct = predicted_sql.strip().lower() == gold_sql.strip().lower()
     return ExampleResult(
         example_id=str(example.metadata.get("id", "example")),

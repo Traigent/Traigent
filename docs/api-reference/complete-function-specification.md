@@ -795,7 +795,10 @@ from traigent.api.types import ExampleResult
 
 def custom_eval(func, config, example):
     # Custom evaluation logic
-    result = func(example.input_data)
+    if isinstance(example.input_data, dict):
+        result = func(**example.input_data)
+    else:
+        result = func(example.input_data)
     accuracy = compute_accuracy(result, example.expected_output)
     return ExampleResult(
         example_id=str(example.metadata.get("id", "example")),
