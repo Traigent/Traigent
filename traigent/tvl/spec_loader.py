@@ -942,6 +942,48 @@ def _validate_constraints_structure(constraints: Any) -> list[str]:
     return []
 
 
+def _positive_number_issues(field: str, value: Any, *, integer: bool) -> list[str]:
+    """Report a value that is not a finite positive number (bool is rejected)."""
+    kind = "integer" if integer else "number"
+    if isinstance(value, dict) and set(value) == {"value"}:
+        value = value["value"]
+    valid_type = isinstance(value, int) if integer else isinstance(value, (int, float))
+    if isinstance(value, bool) or not valid_type:
+        return [f"{field} should be {kind}, got {value!r}"]
+    if not math.isfinite(value) or value <= 0:
+        return [f"{field} should be a positive {kind}, got {value!r}"]
+    return []
+
+
+def _validate_exploration_budget(budget: Any) -> list[str]:
+    """Validate exploration.budget values (no silent dropping of bad values)."""
+    if budget is None:
+        return []
+    if not isinstance(budget, dict):
+        return ["exploration.budget should be a mapping"]
+    issues: list[str] = []
+    for key, integer in (
+        ("max_trials", True),
+        ("timeout_seconds", False),
+        ("max_total_examples", True),
+        ("parallel_trials", True),
+    ):
+        if key in budget:
+            issues.extend(
+                _positive_number_issues(
+                    f"exploration.budget.{key}", budget[key], integer=integer
+                )
+            )
+    if "samples_include_pruned" in budget and not isinstance(
+        budget["samples_include_pruned"], bool
+    ):
+        issues.append(
+            "exploration.budget.samples_include_pruned should be boolean, "
+            f"got {budget['samples_include_pruned']!r}"
+        )
+    return issues
+
+
 def _validate_exploration_structure(exploration: dict[str, Any]) -> list[str]:
     """Validate structure of exploration section."""
     issues: list[str] = []
@@ -964,10 +1006,21 @@ def _validate_exploration_structure(exploration: dict[str, Any]) -> list[str]:
 
     # Validate budget if present
     if "budget" in exploration:
-        budget = exploration["budget"]
-        if isinstance(budget, dict):
-            if "max_trials" in budget and not isinstance(budget["max_trials"], int):
-                issues.append("exploration.budget.max_trials should be integer")
+        issues.extend(_validate_exploration_budget(exploration["budget"]))
+
+    # Validate parallelism if present
+    if "parallelism" in exploration:
+        parallelism = exploration["parallelism"]
+        if parallelism is not None and not isinstance(parallelism, dict):
+            issues.append("exploration.parallelism should be a mapping")
+        elif isinstance(parallelism, dict) and "max_parallel_trials" in parallelism:
+            issues.extend(
+                _positive_number_issues(
+                    "exploration.parallelism.max_parallel_trials",
+                    parallelism["max_parallel_trials"],
+                    integer=True,
+                )
+            )
 
     # Validate convergence if present
     if "convergence" in exploration:
