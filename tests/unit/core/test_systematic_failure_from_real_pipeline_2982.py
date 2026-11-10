@@ -102,16 +102,74 @@ def _raise_user_value_provider_words(_q: str) -> str:
     raise ValueError("insufficient_quota: Error code: 401 invalid_api_key")
 
 
-class _StructuredNonSdkError(Exception):
-    """Not from a provider SDK module but carries a structured response."""
+class _UserCodedError(Exception):
+    """A user exception with its own error code and provider-looking words."""
 
     def __init__(self) -> None:
-        super().__init__("insufficient_quota")
+        super().__init__("insufficient_quota invalid_api_key Error code: 429")
+        self.code = "E42"
         self.response = object()
 
 
-def _raise_structured(_q: str) -> str:
-    raise _StructuredNonSdkError()
+class _NonSdkQuotaCodeError(Exception):
+    """Non-SDK exception carrying a known provider error-code value."""
+
+    def __init__(self) -> None:
+        super().__init__("billing refused")
+        self.code = "insufficient_quota"
+
+
+class _NonSdkStatusError(Exception):
+    def __init__(self, status: int, text: str = "x") -> None:
+        super().__init__(text)
+        self.status_code = status
+
+
+def _raise_user_coded(_q: str) -> str:
+    raise _UserCodedError()
+
+
+def _raise_quota_code(_q: str) -> str:
+    raise _NonSdkQuotaCodeError()
+
+
+def test_non_sdk_exception_classified_from_structure_only() -> None:
+    from traigent.core.exception_handler import classify_vendor_error
+
+    assert (
+        classify_vendor_error(_NonSdkStatusError(429), provider_text_only=True)
+        == VendorErrorCategory.RATE_LIMIT
+    )
+    # words never decide, even next to a structured status
+    assert (
+        classify_vendor_error(
+            _NonSdkStatusError(429, "insufficient_quota"), provider_text_only=True
+        )
+        == VendorErrorCategory.RATE_LIMIT
+    )
+    assert classify_vendor_error(_UserCodedError(), provider_text_only=True) is None
+    assert (
+        classify_vendor_error(_NonSdkQuotaCodeError(), provider_text_only=True)
+        == VendorErrorCategory.QUOTA_EXHAUSTED
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detailed", [False, True])
+async def test_user_exception_with_own_code_and_provider_words_does_not_abort(
+    detailed: bool,
+) -> None:
+    result = await _run(_raise_user_coded, detailed)
+    assert _provider_failure_summary(result, 3) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detailed", [False, True])
+async def test_non_sdk_known_provider_code_still_aborts(detailed: bool) -> None:
+    result = await _run(_raise_quota_code, detailed)
+    summary = _provider_failure_summary(result, 3)
+    assert summary is not None
+    assert summary["category"] == VendorErrorCategory.QUOTA_EXHAUSTED.value
 
 
 @pytest.mark.asyncio
@@ -124,15 +182,6 @@ async def test_user_error_with_provider_marker_words_does_not_abort(
 ) -> None:
     result = await _run(func, detailed)
     assert _provider_failure_summary(result, 3) is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("detailed", [False, True])
-async def test_exception_with_structured_response_still_aborts(detailed: bool) -> None:
-    result = await _run(_raise_structured, detailed)
-    summary = _provider_failure_summary(result, 3)
-    assert summary is not None
-    assert summary["category"] == VendorErrorCategory.QUOTA_EXHAUSTED.value
 
 
 @pytest.mark.asyncio

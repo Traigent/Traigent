@@ -154,7 +154,32 @@ _PROVIDER_MARKER_RE = re.compile(
     r"(?:error code|status(?: code)?)[: ]+[45]\d\d|invalid_api_key|insufficient_quota"
 )
 
-_STRUCTURED_ERROR_ATTRS = ("status_code", "code", "response")
+#: Provider error codes a non-SDK exception may carry in ``.code`` / ``.error_code``.
+_KNOWN_PROVIDER_ERROR_CODES = {
+    "insufficient_quota": VendorErrorCategory.QUOTA_EXHAUSTED,
+    "invalid_api_key": VendorErrorCategory.AUTHENTICATION,
+    "rate_limit_exceeded": VendorErrorCategory.RATE_LIMIT,
+}
+
+
+def _structured_only_category(exc: Exception) -> VendorErrorCategory | None:
+    """Classify a non-SDK exception from structured fields only, never its words.
+
+    A numeric HTTP status (402/429/5xx; 401/403 count only from SDK exceptions)
+    or a known provider error-code value. The message text is not read, so
+    ``ValueError("insufficient_quota")`` or a user exception with
+    ``.code = "E42"`` is an ordinary per-example failure.
+    """
+    status = http_status_of(exc)
+    if status is not None and _status_is_vendor_signal(exc, status):
+        return _STATUS_CATEGORIES[status]
+    for attr in ("code", "error_code"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, str) and value in _KNOWN_PROVIDER_ERROR_CODES:
+            return _KNOWN_PROVIDER_ERROR_CODES[value]
+    return None
+
+
 _HTTP_LIBRARY_ROOTS = frozenset({"requests", "urllib3", "httpx", "aiohttp", "httpcore"})
 
 
@@ -352,6 +377,9 @@ def classify_vendor_error(
     if typed is not None:
         return typed
 
+    if provider_text_only and not _is_provider_sdk_exception(exc):
+        return _structured_only_category(exc)
+
     status = http_status_of(exc)
     if status is not None and _status_is_vendor_signal(exc, status):
         return _category_from_status(exc, status)
@@ -362,14 +390,6 @@ def classify_vendor_error(
     # Fallback: pattern-match the error message
     msg = str(exc).lower()
     if _LOCAL_ERROR_TEXT_RE.search(msg) and not _PROVIDER_MARKER_RE.search(msg):
-        return None
-    if (
-        provider_text_only
-        and not _is_provider_sdk_exception(exc)
-        and not any(hasattr(exc, attr) for attr in _STRUCTURED_ERROR_ATTRS)
-    ):
-        # Text alone, even provider-shaped text, proves nothing when it comes
-        # from an arbitrary user exception that carries no structured fields.
         return None
     # Terminal account wording wins over an earlier generic "code: 429" pattern,
     # so the string-based abort net still sees an exhausted account.
