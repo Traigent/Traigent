@@ -202,7 +202,11 @@ def _create_eval_dataset() -> str:
         {"input": {"question": "What is AI?"}, "output": "Artificial Intelligence"},
         {"input": {"question": "How to reduce cost?"}, "output": "Use smaller context"},
     ]
-    root = Path(__file__).resolve().parent
+    # Write under the effective dataset root: the configured one, else this
+    # script's directory (which is then made the root).
+    configured = os.environ.get("TRAIGENT_DATASET_ROOT")
+    root = Path(configured) if configured else Path(__file__).resolve().parent
+    root.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(root))
     path = root / "_demo_eval_dataset.jsonl"
     path.write_text("".join(json.dumps(x) + "\n" for x in samples), encoding="utf-8")

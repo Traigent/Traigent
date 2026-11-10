@@ -176,7 +176,11 @@ def _write_eval_dataset(samples: list[dict]) -> str:
     TRAIGENT_DATASET_ROOT, so the system temp dir is not usable. Default the
     root to this script's directory so the example runs from any cwd.
     """
-    root = Path(__file__).resolve().parent
+    # Write under the effective dataset root: the configured one, else this
+    # script's directory (which is then made the root).
+    configured = os.environ.get("TRAIGENT_DATASET_ROOT")
+    root = Path(configured) if configured else Path(__file__).resolve().parent
+    root.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(root))
     path = root / "_demo_eval_dataset.jsonl"
     path.write_text("".join(json.dumps(s) + "\n" for s in samples), encoding="utf-8")
