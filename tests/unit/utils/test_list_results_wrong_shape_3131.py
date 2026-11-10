@@ -95,3 +95,55 @@ def test_cli_results_list_survives_non_string_created_at(tmp_path):
     result = CliRunner().invoke(cli, ["results", "list", "--storage-dir", str(store)])
     assert result.exit_code == 0, result.output
     assert "odd" in result.output
+
+
+@pytest.fixture
+def wide_console(monkeypatch):
+    """Render the CLI table wide enough that no cell is cut to an ellipsis."""
+    from rich.console import Console
+
+    import traigent.cli.main as cli_main
+
+    monkeypatch.setattr(cli_main, "console", Console(width=200))
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        {
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "function_name": "f",
+            "algorithm": "grid",
+            "total_trials": 1,
+            "success_rate": None,
+        },
+    ],
+    ids=["empty-object", "null-success-rate"],
+)
+def test_cli_lists_results_with_missing_or_null_fields(
+    tmp_path, metadata, wide_console
+):
+    """An incomplete metadata object shows N/A cells; it does not abort the list."""
+    store = tmp_path / "store"
+    store.mkdir()
+    _good(store, "a")
+    _write(store, "partial", json.dumps(metadata).encode())
+
+    result = CliRunner().invoke(cli, ["results", "list", "--storage-dir", str(store)])
+
+    assert result.exit_code == 0, result.output
+    assert "partial" in result.output
+    assert "N/A" in result.output
+
+
+def test_cli_does_not_invent_a_success_rate(tmp_path, wide_console):
+    """A result without success_rate shows N/A, not a made-up 0.0%."""
+    store = tmp_path / "store"
+    store.mkdir()
+    _good(store, "a")
+
+    result = CliRunner().invoke(cli, ["results", "list", "--storage-dir", str(store)])
+
+    assert result.exit_code == 0, result.output
+    assert "0.0%" not in result.output

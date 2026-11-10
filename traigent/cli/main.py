@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import numbers
 import re
 import sys
 from datetime import datetime
@@ -1913,13 +1914,16 @@ def results_list(storage_dir: str | None) -> None:
 
     for result_info in all_results:
         best_score = result_info.get("best_score")
+        success_rate = result_info.get("success_rate")
+        # A field missing from a hand-edited or partly written result shows
+        # N/A; it must not hide the other results (#3131) or read as 0.0%.
         table.add_row(
-            result_info["name"],
-            result_info["function_name"],
-            result_info["algorithm"],
-            (f"{best_score:.3f}" if isinstance(best_score, (int, float)) else "N/A"),
-            str(result_info["total_trials"]),
-            f"{result_info.get('success_rate', 0):.1%}",
+            str(result_info.get("name", "N/A")),
+            str(result_info.get("function_name") or "N/A"),
+            str(result_info.get("algorithm") or "N/A"),
+            (f"{best_score:.3f}" if _is_finite_real(best_score) else "N/A"),
+            str(result_info.get("total_trials", "N/A")),
+            (f"{success_rate:.1%}" if _is_finite_real(success_rate) else "N/A"),
             _result_status_label(result_info.get("status")),
             result_created_at(result_info).split("T")[0],  # Just date part
         )
@@ -1929,6 +1933,15 @@ def results_list(storage_dir: str | None) -> None:
         console.print(
             f"\n[dim]Local session rows are loaded from: {local_storage_path}[/dim]"
         )
+
+
+def _is_finite_real(value: Any) -> bool:
+    """True for a finite real number that is not a bool."""
+    return (
+        isinstance(value, numbers.Real)
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 @results.command("show")
