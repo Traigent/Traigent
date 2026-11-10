@@ -292,7 +292,6 @@ def _build_submission_dict(trial, *, privacy: bool) -> dict:
         trial.config,
         clean_metrics,
         "completed",
-        "offline",
         metadata=wire_metadata,
     )
 

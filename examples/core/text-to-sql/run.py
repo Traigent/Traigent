@@ -192,8 +192,10 @@ _MOCK_ANSWERS: dict[str, str] = {
 }
 
 
-def _mock_generate_sql(question: str) -> str:
+def _mock_generate_sql(question: str, *, include_schema: bool = True) -> str:
     key = question.strip().lower()
+    if not include_schema:
+        return f"SELECT * FROM customers -- no schema: {question}"
     return _MOCK_ANSWERS.get(key, f"SELECT * FROM customers -- unknown: {question}")
 
 
@@ -213,7 +215,7 @@ def _mock_generate_sql(question: str) -> str:
         "include_schema": [True, False],
     },
     metric_functions={"sql_accuracy": sql_accuracy},
-    injection_mode="seamless",
+    injection_mode="context",
     offline=True,
 )
 def generate_sql(question: str) -> str:
@@ -225,8 +227,15 @@ def generate_sql(question: str) -> str:
     Returns:
         A syntactically valid SQL query string.
     """
+    config = traigent.get_config()
+    include_schema = config.get("include_schema", True)
+    if not isinstance(include_schema, bool):
+        raise TypeError("include_schema config value must be a bool")
+
     if MOCK:
-        return _mock_generate_sql(question)
+        # Canned answers stand in for the model; without the schema in the
+        # prompt the mock falls back to a generic query, so trials differ.
+        return _mock_generate_sql(question, include_schema=include_schema)
 
     assert os.getenv("ANTHROPIC_API_KEY"), (
         "Set ANTHROPIC_API_KEY or run with TRAIGENT_MOCK_LLM=true"
@@ -235,12 +244,8 @@ def generate_sql(question: str) -> str:
     from langchain_anthropic import ChatAnthropic
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    config = traigent.get_config()
     model = str(config.get("model", "claude-sonnet-4-6"))
     temperature = float(config.get("temperature", 0.0))
-    include_schema = config.get("include_schema", True)
-    if not isinstance(include_schema, bool):
-        raise TypeError("include_schema config value must be a bool")
 
     system_parts = [
         "You are an expert SQL assistant. Convert the user's question into a valid SQL query.",

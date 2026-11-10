@@ -114,7 +114,7 @@ def solve_arithmetic(expression: str) -> str:
             return "42"
 
     # Production mode would use LLM here
-    from langchain.schema import HumanMessage
+    from langchain_core.messages import HumanMessage
     from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(

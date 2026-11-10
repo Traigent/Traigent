@@ -23,6 +23,7 @@ import traigent
 from traigent.api.parameter_ranges import Choices, Range
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")  # mock run spends nothing
 
 # Compute dataset path relative to this script
 SCRIPT_DIR = Path(__file__).parent

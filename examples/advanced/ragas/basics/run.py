@@ -17,9 +17,9 @@ except ImportError:  # pragma: no cover
     )
     import traigent
 
+from traigent.core.objectives import create_default_objectives  # noqa: E402
 from traigent.metrics import configure_ragas_defaults  # noqa: E402
 from traigent.metrics.ragas_metrics import POPULAR_RAGAS_METRICS  # noqa: E402
-from traigent.core.objectives import create_default_objectives  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -100,6 +100,12 @@ async def main() -> None:
     print(f"  best_config: {result.best_config}")
     print(f"  metrics: {result.metrics}")
 
+    if result.best_config is None or result.status == "failed":
+        raise SystemExit(
+            f"Optimization produced no usable result (status={result.status}, "
+            "best_config=None): every trial failed. See the trial errors above."
+        )
+
     if raw is not None and not raw.empty:
         print("\n=== Raw trial results ===")
         print(raw.to_string(index=False))
@@ -120,7 +126,7 @@ async def main() -> None:
     ):
         evaluation_result = best_trial.metadata["evaluation_result"]
         print("Best trial metrics:")
-        for metric, value in sorted(evaluation_result.metrics.items()):
+        for metric, value in sorted(evaluation_result["aggregated_metrics"].items()):
             print(f"  {metric}: {value:.3f}")
 
 

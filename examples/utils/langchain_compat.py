@@ -40,7 +40,7 @@ else:  # pragma: no cover - real dependency path
     ChatOpenAI = _ChatOpenAI  # type: ignore[assignment]
 
 try:  # pragma: no cover
-    from langchain.schema import HumanMessage as _HumanMessage  # type: ignore
+    from langchain_core.messages import HumanMessage as _HumanMessage  # type: ignore
 except Exception:  # pragma: no cover - fallback stub
 
     class HumanMessage:  # type: ignore[override]

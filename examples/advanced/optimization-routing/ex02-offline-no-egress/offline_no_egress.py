@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover - simple mock for offline envs
 
 
 try:
-    from langchain.schema import HumanMessage  # type: ignore
+    from langchain_core.messages import HumanMessage  # type: ignore
 except Exception:  # pragma: no cover
 
     class HumanMessage:  # type: ignore
