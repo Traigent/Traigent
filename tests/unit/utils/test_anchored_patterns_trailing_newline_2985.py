@@ -33,6 +33,9 @@ CASES = [
     ("traigent.labels.types", "_REL_PATH", "pkg/mod.py"),
     ("traigent.labels.types", "_CODE_ID", "pkg.mod:fn"),
     ("traigent.labels.trust_anchor", "_FINGERPRINT", H64),
+    ("traigent.labels.token_store", "_HEX64", H64),
+    ("traigent.utils.optimization_only_egress", "SHA256_RE", H64),
+    ("traigent.evaluators.metrics_tracker", "USER_METRIC_KEY_PATTERN", "ok_key"),
     ("traigent.labels.trust_anchor", "_TENANT", "tenant_" + H32),
     ("traigent.labels.trust_anchor", "_PROJECT", "project_" + H32),
 ]

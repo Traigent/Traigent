@@ -64,3 +64,29 @@ def test_exit_without_enter_still_raises() -> None:
     factory = decorators.observe("handle", client=client)
     with pytest.raises(RuntimeError):
         factory.__exit__(None, None, None)
+
+
+def test_entered_mapping_is_empty_after_exit_across_many_factories(monkeypatch) -> None:
+    class FakeContext:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc) -> bool:
+            return False
+
+    monkeypatch.setattr(decorators, "ObserveContext", FakeContext)
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000", enable_atexit_flush=False
+        ),
+        sender=lambda _batch: None,
+    )
+    for _ in range(50):
+        factory = decorators.observe("handle", client=client)
+        with factory:
+            with factory:
+                pass
+    assert not decorators._ENTERED_CONTEXTS.get()

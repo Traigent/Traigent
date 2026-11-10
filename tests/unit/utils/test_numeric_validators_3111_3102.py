@@ -72,3 +72,11 @@ def test_membership_constraints_do_not_raise_on_unhashable_values() -> None:
     assert dependency.validate({"a": 1, "b": ["x"]}) is False
     assert dependency.validate({"a": 1, "b": {"k": 1}}) is False
     assert dependency.validate({"a": 1, "b": "x"}) is True
+
+
+@pytest.mark.parametrize(
+    "name", ["max_buffer_age", "flush_timeout", "request_timeout", "per_trace_timeout"]
+)
+def test_observability_config_float_fields_reject_bool(name: str) -> None:
+    with pytest.raises(TypeError):
+        ObservabilityConfig(offline_mode=True, backend_origin="", **{name: True})

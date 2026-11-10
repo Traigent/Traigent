@@ -870,7 +870,11 @@ class _StartedTrials:
         self._started.append((number, copy.deepcopy(config)))
 
     def take(self, config: Any, fallback: int) -> int:
-        """Number of the oldest started trial with ``config``, else ``fallback``."""
+        """Number of the oldest started trial with ``config``, else ``fallback``.
+
+        The completion hook carries no trial index, so identical configs are
+        matched in start order (a per-config FIFO).
+        """
         for index, (number, started_config) in enumerate(self._started):
             if started_config == config:
                 del self._started[index]

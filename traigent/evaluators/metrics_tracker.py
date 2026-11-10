@@ -39,7 +39,7 @@ logger = get_logger(__name__)
 #: ``test_user_metric_pattern_matches_measuresdict_pattern`` so any drift fails a
 #: test rather than silently reopening the bypass. ``re.ASCII`` keeps ``\w`` to
 #: ``[A-Za-z0-9_]`` so Unicode identifiers (e.g. ``"π_metric"``) are rejected.
-USER_METRIC_KEY_PATTERN: re.Pattern[str] = re.compile(r"^[a-zA-Z_]\w*$", re.ASCII)
+USER_METRIC_KEY_PATTERN: re.Pattern[str] = re.compile(r"^[a-zA-Z_]\w*\Z", re.ASCII)
 
 # Expose TOKENCOST availability and backward compatibility functions for tests
 try:

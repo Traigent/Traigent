@@ -63,3 +63,16 @@ def test_detailed_callback_reports_each_completed_trial_number(capsys) -> None:
         line for line in capsys.readouterr().out.splitlines() if "completed" in line
     ]
     assert [line.split()[2].split("/")[0] for line in completed] == ["2", "1", "3"]
+
+
+def test_identical_configs_complete_in_start_order() -> None:
+    lines: list[str] = []
+    callback = SimpleProgressCallback(output=lines.append, show_details=True)
+    same = {"m": "a"}
+    for number in range(3):
+        callback.on_trial_start(number, dict(same))
+    lines.clear()
+    for index in range(3):
+        trial = _trial(0)
+        callback.on_trial_complete(trial, _progress(index + 1))
+    assert [line.split("]")[0] for line in lines] == ["[1/0", "[2/0", "[3/0"]

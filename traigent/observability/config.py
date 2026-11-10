@@ -429,11 +429,9 @@ def _require_positive_up_to(
         raise ValueError(f"{name} must be a finite number")
     if value > maximum:
         raise ValueError(f"{name} must be less than or equal to {maximum}")
-    if integer:
-        # After the bounds, so the characterised messages for NaN/inf/<=0 hold.
-        if isinstance(value, bool):
-            raise TypeError(f"{name} must be an integer")
-        require_finite_number(name, value, integer=True)
+    # After the bounds, so the characterised messages for NaN/inf/<=0 hold.
+    # bool is an int subclass, so True would otherwise pass as 1 (float fields too).
+    require_finite_number(name, value, integer=integer)
 
 
 @dataclass
@@ -551,6 +549,8 @@ class ObservabilityConfig:
         _require_positive_up_to(
             "request_timeout", self.request_timeout, MAX_TIMEOUT_SECONDS
         )
+        if isinstance(self.per_trace_timeout, bool):
+            raise TypeError("per_trace_timeout must be a number")
         if not math.isfinite(self.per_trace_timeout):
             raise ValueError("per_trace_timeout must be a finite number")
         if self.per_trace_timeout < 0:

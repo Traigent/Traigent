@@ -518,7 +518,10 @@ class _ObserveFactory:
             raise RuntimeError(
                 "observe context has not been entered; __exit__ called before __enter__"
             )
-        _ENTERED_CONTEXTS.set({**entered, self._factory_key: stack[:-1]})
+        remaining = {k: v for k, v in entered.items() if k != self._factory_key}
+        if stack[:-1]:
+            remaining[self._factory_key] = stack[:-1]
+        _ENTERED_CONTEXTS.set(remaining)
         popped: ObserveContext = stack[-1]
         return popped
 
