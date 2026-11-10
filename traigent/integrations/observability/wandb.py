@@ -40,7 +40,10 @@ except ImportError:
 from ...api.types import OptimizationResult, TrialResult
 from ...core.objective_directions import resolve_objective_orientation
 from ...utils.callbacks import OptimizationCallback
-from ...utils.discrete_domains import discrete_values_for_config_param
+from ...utils.discrete_domains import (
+    discrete_cardinality_for_config_param,
+    discrete_values_for_config_param,
+)
 from ...utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -685,13 +688,15 @@ def create_wandb_sweep_config(
             and not param_range.get("log")
         ):
             # Stepped range: export the exact grid so the sweep never leaves it.
-            grid = discrete_values_for_config_param(param_range)
-            if not grid or len(grid) > _WANDB_MAX_GRID_VALUES:
+            # Bound the size arithmetically before materializing the grid.
+            count = discrete_cardinality_for_config_param(param_range) or 0
+            if count < 1 or count > _WANDB_MAX_GRID_VALUES:
                 raise ValueError(
                     f"Parameter '{param_name}' has a stepped range with "
-                    f"{len(grid) if grid else 0} values; W&B export supports "
+                    f"{count} values; W&B export supports "
                     f"1..{_WANDB_MAX_GRID_VALUES}"
                 )
+            grid = discrete_values_for_config_param(param_range) or ()
             wandb_parameters[param_name] = {"values": list(grid)}
         else:
             # Single value - treat as constant
