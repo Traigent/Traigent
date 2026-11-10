@@ -1361,6 +1361,19 @@ class OptimizedFunction[**P, R]:
             self.callbacks = normalized_callbacks
             kwargs["callbacks"] = list(normalized_callbacks)
 
+    def _config_privacy_enabled(self) -> bool | None:
+        """Privacy value to forward to TraigentConfig, or None when unset.
+
+        The SDK's internal default is not a user-supplied setting, so it is
+        withheld; forwarding it would surface a deprecation the user never
+        triggered (#2966).
+        """
+        if not getattr(self, "_privacy_enabled_supplied", False):
+            return None
+        return bool(getattr(self, "privacy_enabled", False)) and not bool(
+            getattr(self, "_privacy_alias_enabled", False)
+        )
+
     def _store_optional_param(
         self,
         kwargs: dict[str, Any],
@@ -1481,6 +1494,7 @@ class OptimizedFunction[**P, R]:
         self.parallel_config = combined_parallel
         kwargs["parallel_config"] = combined_parallel
 
+        self._privacy_enabled_supplied = "privacy_enabled" in kwargs
         self.privacy_enabled = self._store_optional_param(
             kwargs, sentinel, "privacy_enabled", False, as_bool=True
         )
@@ -2924,10 +2938,7 @@ class OptimizedFunction[**P, R]:
                 execution_mode=self.execution_mode,
                 local_storage_path=self.local_storage_path,
                 minimal_logging=self.minimal_logging,
-                privacy_enabled=(
-                    bool(getattr(self, "privacy_enabled", False))
-                    and not bool(getattr(self, "_privacy_alias_enabled", False))
-                ),
+                privacy_enabled=self._config_privacy_enabled(),
                 execution_policy=execution_policy,
                 # compare() never opens a backend session or client: no backend
                 # construction, hostname resolution or Redis ping. Provider calls
@@ -4670,10 +4681,7 @@ Remediation:
             execution_mode=self.execution_mode,
             local_storage_path=self.local_storage_path,
             minimal_logging=self.minimal_logging,
-            privacy_enabled=(
-                bool(getattr(self, "privacy_enabled", False))
-                and not bool(getattr(self, "_privacy_alias_enabled", False))
-            ),
+            privacy_enabled=self._config_privacy_enabled(),
             execution_policy=execution_policy,
             no_egress=no_egress,
             result_source=result_source,
@@ -4791,10 +4799,14 @@ Remediation:
             algorithm, effective_config_space, self.objectives, **optimizer_kwargs
         )
 
-        # Update TraigentConfig with final privacy setting
-        traigent_config.privacy_enabled = effective_privacy_enabled and not bool(
-            getattr(self, "_privacy_alias_enabled", False)
-        )
+        # Update TraigentConfig with final privacy setting. Only a user-supplied
+        # value is assigned: assigning the internal default would trip the
+        # privacy_enabled deprecation on a run that never set it (#2966). An
+        # unsupplied setting resolves to False, which TraigentConfig already holds.
+        if getattr(self, "_privacy_enabled_supplied", False):
+            traigent_config.privacy_enabled = effective_privacy_enabled and not bool(
+                getattr(self, "_privacy_alias_enabled", False)
+            )
 
         # Phase 8: Build orchestrator
         orchestrator = self._build_optimization_orchestrator(

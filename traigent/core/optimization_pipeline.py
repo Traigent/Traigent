@@ -107,7 +107,7 @@ def create_traigent_config(
     execution_mode: str,
     local_storage_path: str | None,
     minimal_logging: bool,
-    privacy_enabled: bool,
+    privacy_enabled: bool | None = None,
     execution_policy: ResolvedExecutionPolicy | None = None,
     no_egress: bool = False,
     result_source: str | None = None,
@@ -120,11 +120,16 @@ def create_traigent_config(
         execution_mode: Execution mode string
         local_storage_path: Optional local storage path
         minimal_logging: Whether minimal logging is enabled
-        privacy_enabled: Whether privacy mode is enabled
+        privacy_enabled: Whether privacy mode is enabled. ``None`` means the
+            user never set it; the flag is then omitted so TraigentConfig does
+            not report a deprecated, user-supplied privacy_enabled (#2966).
 
     Returns:
         Configured TraigentConfig instance
     """
+    privacy_kwargs: dict[str, Any] = {}
+    if privacy_enabled is not None:
+        privacy_kwargs["privacy_enabled"] = privacy_enabled
     return TraigentConfig(
         execution_mode=cast(
             Literal[
@@ -138,7 +143,7 @@ def create_traigent_config(
         ),
         local_storage_path=local_storage_path,
         minimal_logging=minimal_logging,
-        privacy_enabled=privacy_enabled,
+        **privacy_kwargs,
         execution_policy=execution_policy,
         no_egress=no_egress,
         result_source=result_source,
