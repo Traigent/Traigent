@@ -52,7 +52,11 @@ def test_hybrid_flat_kwarg_timeout_rejected_at_decoration():
 
 @pytest.mark.parametrize(
     ("kwarg", "bad"),
-    [("hybrid_api_timeout", 0), ("hybrid_api_batch_size", True), ("hybrid_api_heartbeat_interval", NAN)],
+    [
+        ("hybrid_api_timeout", 0),
+        ("hybrid_api_batch_size", True),
+        ("hybrid_api_heartbeat_interval", NAN),
+    ],
 )
 def test_direct_optimized_function_flat_hybrid_kwargs_are_validated(kwarg, bad):
     """Direct OptimizedFunction(...) construction uses the same checks as the decorator (sibling of #2900)."""

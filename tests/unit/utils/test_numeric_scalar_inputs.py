@@ -45,7 +45,10 @@ def test_timeout_still_rejects_nan_inf_and_bool(value: object) -> None:
 
 def test_objective_bounds_accept_numpy_scalars() -> None:
     objective = ObjectiveDefinition(
-        name="accuracy", orientation="maximize", weight=1.0, bounds=(np.float32(0.0), np.int64(1))
+        name="accuracy",
+        orientation="maximize",
+        weight=1.0,
+        bounds=(np.float32(0.0), np.int64(1)),
     )
     assert objective.bounds is not None
 

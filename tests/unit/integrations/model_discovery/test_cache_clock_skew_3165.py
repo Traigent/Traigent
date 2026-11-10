@@ -63,5 +63,7 @@ def test_non_numeric_timestamp_in_file_is_expired(tmp_path: Path) -> None:
 
 
 def test_nan_fields_never_read_as_fresh_in_memory() -> None:
-    assert CacheEntry(data=["m"], timestamp=time.time(), ttl_seconds=float("nan")).is_expired()
+    assert CacheEntry(
+        data=["m"], timestamp=time.time(), ttl_seconds=float("nan")
+    ).is_expired()
     assert CacheEntry(data=["m"], timestamp=float("nan")).is_expired()

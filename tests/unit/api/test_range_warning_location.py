@@ -16,9 +16,15 @@ import pytest
 from traigent.api.parameter_ranges import IntRange, Range
 
 
-def _uneven_warnings(records: list[warnings.WarningMessage]) -> list[warnings.WarningMessage]:
-    return [w for w in records if issubclass(w.category, UserWarning)
-            and "does not evenly divide span" in str(w.message)]
+def _uneven_warnings(
+    records: list[warnings.WarningMessage],
+) -> list[warnings.WarningMessage]:
+    return [
+        w
+        for w in records
+        if issubclass(w.category, UserWarning)
+        and "does not evenly divide span" in str(w.message)
+    ]
 
 
 def test_int_range_uneven_step_warning_points_at_caller() -> None:
