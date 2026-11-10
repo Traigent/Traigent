@@ -506,6 +506,7 @@ def cli(verbose: bool, debug: bool, quiet: bool) -> None:
     Traigent makes it effortless to optimize your LLM applications with
     a simple decorator.
 
+    \b
     Examples:
         traigent info              # Show version information
         traigent algorithms        # List available algorithms
@@ -997,6 +998,7 @@ def optimize(
     This command will execute the optimization for functions decorated with
     @traigent.optimize in the specified Python file.
 
+    \b
     Args:
         file_path: Path to Python file containing optimizable functions
     """
@@ -1857,6 +1859,7 @@ def _result_not_found_error(result_name: str) -> click.ClickException:
 def results() -> None:
     """Browse, compare, and manage optimization results.
 
+    \b
     Examples:
         traigent results list                    # List all runs
         traigent results show my_run             # Show detailed view
@@ -1935,6 +1938,7 @@ def results_list(storage_dir: str | None) -> None:
 def results_show(result_name: str, storage_dir: str | None, trials: bool) -> None:
     """Show detailed view of a specific optimization run.
 
+    \b
     Examples:
         traigent results show my_run              # Summary view
         traigent results show my_run --trials     # Include all trials
@@ -1970,6 +1974,7 @@ def results_show(result_name: str, storage_dir: str | None, trials: bool) -> Non
 def results_compare(result1: str, result2: str, storage_dir: str | None) -> None:
     """Compare two optimization runs side-by-side.
 
+    \b
     Examples:
         traigent results compare run_v1 run_v2
     """
@@ -2099,6 +2104,7 @@ def results_rerank(
 
     This re-scores all trials using new weights without re-running optimization.
 
+    \b
     Examples:
         traigent results rerank my_run --weights accuracy=0.8,cost=0.2
         traigent results rerank my_run -w "accuracy=0.5,latency=0.3,cost=0.2"
@@ -2281,6 +2287,7 @@ def results_export_failures(
     row, or matches more than one row, nothing is written. Rows without a metadata example_id gain their source id
     (example_<index>). Everything stays local: nothing is uploaded.
 
+    \b
     Examples:
         traigent results export-failures my_run --dataset eval.jsonl --out regressions.jsonl
         traigent results export-failures my_run --dataset eval.jsonl \\
@@ -2372,6 +2379,7 @@ def export(
     - Optimization metadata
     - Configuration space
 
+    \b
     Examples:
         traigent export my_run -o configs/prod.json      # Export for git
         traigent export my_run --format=full              # Include all data
@@ -3077,10 +3085,12 @@ def check(
     and validates that optimization actually improves over the function's default parameters
     using Pareto efficiency analysis.
 
+    \b
     Args:
         module_path: Path to a Python file, or a dotted module path
             (``pkg.module``) importable from the current directory
 
+    \b
     Examples:
         traigent check my_module.py                    # Check all functions
         traigent check my_module.py --functions="func1,func2"  # Check specific functions
