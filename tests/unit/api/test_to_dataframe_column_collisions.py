@@ -169,3 +169,27 @@ def test_aggregated_sort_uses_renamed_metric_column() -> None:
     df = _result(trials).to_aggregated_dataframe(primary_objective="duration")
     # "duration" is a minimize metric by name -> metric 1 first.
     assert list(df["metric.duration"]) == [1.0, 2.0]
+
+
+def test_metric_named_like_derived_column_is_not_overwritten() -> None:
+    df = _result(
+        [
+            _trial(
+                "t1",
+                {"x": 1},
+                {"avg_response_time": 9.5, "total_cost": 0.25, "score": 1.0},
+                metadata={"total_example_cost": 0.75},
+            ),
+        ]
+    ).to_dataframe()
+    assert list(df["metric.avg_response_time"]) == [9.5]
+    assert list(df["metric.total_cost"]) == [0.25]
+    # Derived columns keep their own meaning.
+    assert list(df["total_cost"]) == [0.75]
+    assert df["avg_response_time"].isna().all()
+
+
+def test_total_cost_metric_still_feeds_derived_column_without_metadata() -> None:
+    df = _result([_trial("t1", {"x": 1}, {"total_cost": 0.25})]).to_dataframe()
+    assert list(df["total_cost"]) == [0.25]
+    assert list(df["metric.total_cost"]) == [0.25]
