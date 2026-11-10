@@ -367,8 +367,10 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
     },
     # PydanticAI is intentionally absent: Agent.run*/run_stream* take sampling
     # params inside ``model_settings``, not as keyword arguments, and this table
-    # only injects top-level kwargs. PydanticAIPlugin.apply_overrides owns the
-    # nesting (issue #2924).
+    # only injects top-level kwargs. Tuned values are NOT injected for
+    # pydantic_ai.Agent through framework_targets (OptimizedFunction warns about
+    # this, #2924). PydanticAIPlugin.apply_overrides does the nesting but this
+    # path never calls it; read the trial values with traigent.get_trial_config().
 }
 
 # Method-level parameter name translations.
