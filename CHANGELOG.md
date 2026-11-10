@@ -52,7 +52,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `validate_number` and objective bounds reject NaN, infinity and `bool` (#2893, #3135). Multiple-testing adjusters reject NaN, infinite and negative p-values; p-values above 1 are still capped (#3224).
   - `HybridAPIOptions` and the flat `hybrid_api_*` keyword arguments (including `hybrid_api_timeout` on a directly constructed `OptimizedFunction`) reject a zero, negative or NaN timeout and `bool`/string numerics (#2900).
   - `traigent plan` rejects `--dataset-size` and `--max-trials` below 1 and a `--cost-limit` that is `0`, negative, NaN or infinite (#2929).
-  - Invoker and batch timeouts reject NaN; hook cost constraints (`max_cost_per_query`, `max_monthly_budget`, `warn_threshold_pct`) must be finite; `coverage_ratio` rejects NaN (#3132).
+  - Invoker, batch and chunk timeouts reject NaN and `bool` (`True` was a one-second timeout); hook cost constraints (`max_cost_per_query`, `max_monthly_budget`, `warn_threshold_pct`) must be finite; `coverage_ratio` rejects NaN (#3132).
   - Observability `close()` / `flush()` reject a negative or NaN timeout; `float("inf")` means wait without a bound (#3247).
 - **Behaviour change: the TVL loader is stricter (#3240, #3241, #3243).** A spec that loaded before can now fail.
   - Duplicate TVAR names and repeated enum values are rejected, naming the TVAR index, matching `tvl-validate` (#3240).
@@ -65,6 +65,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`traigent doctor` and `diagnose()` honour `TRAIGENT_OFFLINE_MODE` (#3185).** With the variable set they skip the network check and treat model checks as offline, as `--offline` does.
 - **Framework mapping tables (#2924, #2926, #2939).** LangChain `invoke` no longer maps a `streaming` parameter and the OpenAI legacy `completions.create` no longer maps `tools` (neither call accepts them, so tuning them failed every trial). Cohere tables use the canonical `top_p` / `top_k` names. A bare target name such as `"OpenAI"` raises `ConfigurationError` at construction on every route (`framework_targets=`, `InjectionOptions`, an `injection` dict, `OptimizedFunction`). `framework_targets=["pydantic_ai.Agent"]` injects nothing on this path and now emits a `TraigentWarning` that says so and names the remedy (read `traigent.get_trial_config()` and pass `model_settings` to `agent.run()`).
 - **W&B artifacts upload under their own names (#3042).** The tracker writes artifact JSON into `wandb.run.dir` and saves it with `base_path` set to the run dir; it no longer writes to the current directory or to a temp dir that was deleted before upload. With `WANDB_MODE=disabled` no artifact file is written.
+- **`traigent results list` lists every readable result (#3131).** A result whose metadata is incomplete (for example `{}` or a null `success_rate`) shows `N/A` cells instead of stopping the list, and a missing success rate shows `N/A`, not `0.0%`.
 - **`OptimizationResult` repr redacts tuned configs (#2973).** It prints counts and redacted config markers, matching `TrialResult`, instead of the full best and runner-up configs.
 
 ## [0.32.0] - 2026-10-31
