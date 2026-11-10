@@ -2872,3 +2872,43 @@ objectives:
     ) -> None:
         with pytest.raises(ValueError, match="positive integer"):
             self._load(tmp_path, "      range: [0, 100]\n      resolution: 2.5\n")
+
+
+class TestPromotionAlphaMustBeNumber:
+    """promotion_policy.alpha must be a real number, not a quoted string (#3243).
+
+    The reference model and the JavaScript SDK reject ``alpha: "0.05"``; the Python
+    SDK used to coerce it to 0.05.
+    """
+
+    _SPEC = """
+objectives:
+  - name: accuracy
+    direction: maximize
+tvars:
+  - name: model
+    type: enum
+    domain: [model-a, model-b]
+promotion_policy:
+  alpha: {alpha}
+  min_effect:
+    accuracy: 0.01
+"""
+
+    def _load(self, tmp_path: Path, alpha_literal: str):
+        spec_file = tmp_path / "alpha.tvl.yml"
+        spec_file.write_text(self._SPEC.format(alpha=alpha_literal))
+        return load_tvl_spec(spec_path=spec_file)
+
+    def test_quoted_alpha_is_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(TVLValidationError) as exc_info:
+            self._load(tmp_path, '"0.05"')
+
+        assert "alpha" in str(exc_info.value)
+
+    def test_numeric_alpha_still_loads(self, tmp_path: Path) -> None:
+        """Control: the unquoted number is accepted with the same value."""
+        artifact = self._load(tmp_path, "0.05")
+
+        assert artifact.promotion_policy is not None
+        assert artifact.promotion_policy.alpha == 0.05

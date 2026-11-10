@@ -429,7 +429,7 @@ class PromotionPolicy:
 
         return cls(
             dominance=data.get("dominance", "epsilon_pareto"),
-            alpha=float(data.get("alpha", 0.05)),
+            alpha=_real_number(data.get("alpha", 0.05), "alpha"),
             min_effect=data.get("min_effect", {}),
             adjust=data.get("adjust", "holm"),
             chance_constraints=chance_constraints,
@@ -819,6 +819,16 @@ def _parse_range_domain(
 
 
 _MAX_TUPLE_PRODUCT = 10_000  # guard against combinatorial explosion
+
+
+def _real_number(value: object, field_name: str) -> float:
+    """Return ``value`` as a float, rejecting strings and booleans.
+
+    A quoted number such as ``"0.05"`` is a spec error, not a value to coerce.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a real number, got {value!r}")
+    return float(value)
 
 
 def _is_plain_int(value: object) -> bool:
