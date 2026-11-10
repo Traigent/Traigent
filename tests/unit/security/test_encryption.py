@@ -480,17 +480,34 @@ class TestDataProtectionManager:
         with pytest.raises(RuntimeError, match="Decryption operation failed"):
             manager.unprotect_data(result)
 
-    def test_unprotect_data_ignores_flipped_encrypted_flag(self):
-        """Flipping or dropping is_encrypted must not return the envelope."""
+    def test_unprotect_data_unencrypted_json_with_envelope_keys_round_trips(self):
         manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
-        sensitive = "patient record 4471 diagnosis X"
-        result = manager.protect_data(sensitive, encrypt=True)
+        payload = '{"ciphertext": "ab", "iv": "cd", "tag": "ef", "key_id": "k"}'
+
+        result = manager.protect_data(payload, encrypt=False)
+
+        assert manager.unprotect_data(result) == payload
+
+    def test_unprotect_data_require_encrypted_rejects_flipped_flag(self):
+        manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+        result = manager.protect_data("patient record 4471", encrypt=True)
+        no_tag = json.loads(result["protected_data"])
+        del no_tag["tag"]
 
         flipped = {**result, "is_encrypted": False}
+        flipped_no_tag = {
+            **result,
+            "is_encrypted": False,
+            "protected_data": json.dumps(no_tag),
+        }
         removed = {k: v for k, v in result.items() if k != "is_encrypted"}
 
-        assert manager.unprotect_data(flipped) == sensitive
-        assert manager.unprotect_data(removed) == sensitive
+        for record in (flipped, flipped_no_tag, removed):
+            with pytest.raises(SecurityError, match="Expected encrypted data"):
+                manager.unprotect_data(record, require_encrypted=True)
+        assert manager.unprotect_data(result, require_encrypted=True) == (
+            "patient record 4471"
+        )
 
     def test_unprotect_data_encrypted_flag_without_envelope_raises(self):
         manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())

@@ -1235,35 +1235,53 @@ class DataProtectionManager:
         expiry_date = created_date + timedelta(days=retention_days)
         return datetime.now(UTC) > expiry_date
 
-    def unprotect_data(self, protected_result: dict[str, Any]) -> str:
+    def unprotect_data(
+        self,
+        protected_result: dict[str, Any],
+        *,
+        require_encrypted: bool = False,
+    ) -> str:
         """Unprotect data from protection result.
 
-        The ``is_encrypted`` flag is not trusted: if ``protected_data`` is an
-        encryption envelope it is always decrypted and authenticated.
-        Decryption needs the same key store that encrypted the data; an
-        unknown key raises ``EncryptionKeyNotFoundError`` naming the key id.
+        Behaviour is decided by the ``is_encrypted`` flag only. If it is true,
+        ``protected_data`` must be a complete, valid encryption envelope, which
+        is decrypted and authenticated. If it is false or absent,
+        ``protected_data`` is returned unchanged.
+
+        The returned record is not self-authenticating: the flag travels with
+        the data and can be altered by whoever holds it. Callers that stored
+        encrypted data should pass ``require_encrypted=True``.
+
+        Decryption needs the same key store that encrypted the data.
 
         Args:
             protected_result: Result from protect_data() method
+            require_encrypted: Reject records whose ``is_encrypted`` is not true
 
         Returns:
             Unprotected data as string
 
         Raises:
-            ValueError: ``is_encrypted`` is true but the envelope is missing
-                or malformed.
+            SecurityError: ``require_encrypted`` is set and the record is not
+                marked encrypted.
+            ValueError: the record is marked encrypted but the envelope is
+                missing or malformed.
             EncryptionKeyNotFoundError: the key id is not in the key store.
+            RuntimeError: authentication failed (tampered data).
         """
+        encrypted = protected_result.get("is_encrypted") is True
+        if require_encrypted and not encrypted:
+            raise SecurityError("Expected encrypted data but record is not encrypted")
         protected = protected_result["protected_data"]
-        envelope = self._parse_envelope(protected)
-        if envelope is None:
-            if protected_result.get("is_encrypted"):
-                raise ValueError(
-                    "Result is marked encrypted but protected_data is not a "
-                    "valid encryption envelope"
-                )
+        if not encrypted:
             return cast(str, protected)
 
+        envelope = self._parse_envelope(protected)
+        if envelope is None:
+            raise ValueError(
+                "Result is marked encrypted but protected_data is not a "
+                "valid encryption envelope"
+            )
         try:
             parts = {
                 "ciphertext": bytes.fromhex(envelope["ciphertext"]),
@@ -1278,14 +1296,15 @@ class DataProtectionManager:
 
     @staticmethod
     def _parse_envelope(protected: Any) -> dict[str, Any] | None:
-        """Return the envelope dict if ``protected`` looks like one, else None."""
+        """Return the envelope dict if complete, else None."""
         if not isinstance(protected, str):
             return None
         try:
             parsed = json.loads(protected)
         except ValueError:
             return None
-        if isinstance(parsed, dict) and {"ciphertext", "iv", "tag"} <= parsed.keys():
+        required = {"ciphertext", "iv", "tag", "key_id"}
+        if isinstance(parsed, dict) and required <= parsed.keys():
             return parsed
         return None
 
