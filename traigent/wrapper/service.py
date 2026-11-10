@@ -1375,18 +1375,26 @@ class TraigentService:
 
     def _compute_aggregate_metrics(
         self, metrics_list: list[dict[str, float]]
-    ) -> dict[str, dict[str, float | int | None]]:
-        """Compute aggregate statistics (mean, std, n); std is None for n < 2 for each metric."""
+    ) -> dict[str, dict[str, float | int]]:
+        """Compute wire aggregate statistics (mean, std, n) for each metric.
+
+        The published hybrid schemas (docs/hybrid-mode-schemas.json,
+        docs/hybrid-mode-openapi.yaml) require ``std`` to be a number, so a
+        single observation (n == 1) is emitted as 0.0 on the wire. Sample std
+        is undefined there; the client-side describe statistics
+        (``hybrid_api.py``) keep it as None internally. A nullable ``std`` is a
+        later cross-repo schema change.
+        """
         if not metrics_list:
             return {}
 
         import statistics
 
-        aggregates: dict[str, dict[str, float | int | None]] = {}
+        aggregates: dict[str, dict[str, float | int]] = {}
         for name, values in self._collect_numeric_values(metrics_list).items():
             n = len(values)
             mean = sum(values) / n
-            std = statistics.stdev(values) if n > 1 else None
+            std = statistics.stdev(values) if n > 1 else 0.0
             aggregates[name] = {"mean": mean, "std": std, "n": n}
         return aggregates
 
