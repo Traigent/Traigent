@@ -182,3 +182,39 @@ async def test_discovery_does_not_probe_when_service_opted_out() -> None:
     with pytest.raises(ConfigurationError, match="supports_benchmarks"):
         await ev.discover_example_ids()
     transport.benchmarks.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("reported_cost", "expected_untracked"), [(0.5, 0), (None, 1)])
+async def test_combined_mode_rejection_still_accounts_executed_batch(
+    reported_cost, expected_untracked
+) -> None:
+    """The batch already ran, so its examples and cost are debited before refusing."""
+    from traigent.core.execution_budget import ExecutionBudget
+
+    transport = _transport(
+        ServiceCapabilities(
+            version="1.0", supports_evaluate=True, supports_evaluation_kwargs=True
+        )
+    )
+    original = transport.execute.side_effect
+
+    async def execute(request: Any) -> HybridExecuteResponse:
+        response = await original(request)
+        response.operational_metrics = (
+            {"cost_usd": reported_cost, "latency_ms": 1.0}
+            if reported_cost is not None
+            else {"latency_ms": 1.0}
+        )
+        return response
+
+    transport.execute.side_effect = execute
+    budget = ExecutionBudget(max_examples=10)
+    with pytest.raises(ConfigurationError, match="execute response"):
+        await _kwargs_evaluator(transport).evaluate(
+            lambda: None, {}, _dataset(2), budget=budget
+        )
+    snap = budget.snapshot()
+    assert snap.consumed_examples == 1  # default batch_size=1: one batch ran
+    assert snap.consumed_cost == pytest.approx(reported_cost or 0.0)
+    assert snap.untracked_trials == expected_untracked

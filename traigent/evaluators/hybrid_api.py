@@ -158,6 +158,14 @@ _TRAIGENT_COMPUTED_METRIC_KEYS: frozenset[str] = frozenset(
 _COST_UNMEASURED_KEY = "cost_unmeasured"
 
 
+class _EvaluationKwargsAfterExecutionError(ConfigurationError):
+    """evaluation_kwargs cannot be honoured, but the batch was already executed."""
+
+    def __init__(self, message: str, batch_results: list[Any]) -> None:
+        super().__init__(message)
+        self.batch_results = batch_results
+
+
 class HybridAPIEvaluator(BaseEvaluator):
     """Evaluator that executes trials via external API endpoints.
 
@@ -1018,6 +1026,30 @@ class HybridAPIEvaluator(BaseEvaluator):
                     sample_lease,
                     execution_budget_lease,
                 )
+            except _EvaluationKwargsAfterExecutionError as exc:
+                # The batch already ran: account its examples and reported cost
+                # (unmeasured when the response carries none) before refusing.
+                executed = [*example_results, *exc.batch_results]
+                batch_cost = HybridAPIEvaluator._record_batch_completion(
+                    sample_lease, exc.batch_results
+                )
+                aggregated, _ = self._compute_aggregated_metrics_with_comparability(
+                    executed, total_cost + batch_cost
+                )
+                self._finalize_execution_budget_evaluation(
+                    budget,
+                    EvaluationResult(
+                        config=config,
+                        example_results=executed,
+                        aggregated_metrics=aggregated,
+                        total_examples=len(executed),
+                        successful_examples=sum(1 for r in executed if r.success),
+                        duration=time.time() - start_time,
+                        examples_consumed=len(executed),
+                    ),
+                    execution_budget_lease,
+                )
+                raise ConfigurationError(str(exc)) from None
             except ConfigurationError:
                 self._cleanup_sample_lease_on_cancel(
                     sample_lease, execution_budget_lease
@@ -1159,11 +1191,14 @@ class HybridAPIEvaluator(BaseEvaluator):
             # Check if combined mode (quality metrics included)
             if execute_response.quality_metrics:
                 if self._evaluation_kwargs:
-                    raise ConfigurationError(
+                    raise _EvaluationKwargsAfterExecutionError(
                         "evaluation_kwargs were provided but the service scored "
                         "the batch in the execute response, so the separate "
                         "evaluate request that carries them was never sent; "
-                        "they cannot be honoured."
+                        "they cannot be honoured.",
+                        self._process_combined_response(
+                            batch, inputs, execute_response
+                        ),
                     )
                 # Combined mode - use quality metrics directly
                 return self._process_combined_response(batch, inputs, execute_response)
