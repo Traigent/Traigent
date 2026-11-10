@@ -319,7 +319,10 @@ class Client:
         assert "model" in invoke_params
         assert "temperature" in invoke_params
         assert "max_tokens" in invoke_params
-        assert "streaming" in invoke_params
+        # 'streaming' was removed from LangChain invoke on purpose (#2939):
+        # tuning it raised TypeError, so it is no longer mapped.
+        assert "streaming" not in invoke_params
+        assert invoke_params == ["model", "temperature", "max_tokens"]
 
 
 class TestOverrideContext:
