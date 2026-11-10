@@ -2432,8 +2432,10 @@ class OptimizedFunction[**P, R]:
         strategy_params: Mapping[str, Any] | None,
         algorithm: str | None,
     ) -> str | None:
-        """Refuse the retired ``strategy_params``; ``algorithm`` passes through.
+        """Refuse the retired ``strategy_params`` and normalise ``algorithm``.
 
+        ``algorithm`` gets the decorator's normalisation (case and spacing; an
+        empty name becomes ``"auto"``) unless it is a name registered verbatim.
         ``strategy`` is no longer a parameter; see ``_REMOVED_ALIAS_MESSAGES``.
         """
         if strategy_params is not None:
