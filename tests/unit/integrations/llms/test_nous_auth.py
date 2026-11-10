@@ -727,17 +727,12 @@ def test_first_use_logs_one_value_free_unverified_warning(monkeypatch, caplog):
 @pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
 def test_blank_nous_urls_fall_back_to_defaults_3270(monkeypatch, blank):
     """A set-but-blank override is treated as unset, not used as a real URL."""
-    import importlib
-
     monkeypatch.setenv("TRAIGENT_NOUS_TOKEN_URL", blank)
     assert nous_auth._token_url() == nous_auth._DEFAULT_NOUS_TOKEN_URL
     monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", blank)
-    try:
-        reloaded = importlib.reload(nous_auth)
-        assert reloaded.NOUS_BASE_URL == reloaded._DEFAULT_NOUS_BASE_URL
-    finally:
-        monkeypatch.delenv("TRAIGENT_NOUS_BASE_URL")
-        importlib.reload(nous_auth)
+    # NOUS_BASE_URL is resolved at access time, so no module reload is needed
+    # (a reload would redefine the exception classes for later tests).
+    assert nous_auth.NOUS_BASE_URL == nous_auth._DEFAULT_NOUS_BASE_URL
 
 
 def test_base_url_is_read_at_call_time_3270(monkeypatch):

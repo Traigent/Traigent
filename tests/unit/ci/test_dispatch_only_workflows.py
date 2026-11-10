@@ -116,13 +116,17 @@ def _run_guard(tmp_path: Path, same: bool) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_ci_gates_base_is_an_input() -> None:
+def test_ci_gates_base_is_fixed_to_develop() -> None:
     doc = yaml.safe_load((_WORKFLOWS / "traigent-ci-gates.yml").read_text("utf-8"))
     on = doc.get(True, doc.get("on"))
-    assert on["workflow_dispatch"]["inputs"]["base_ref"]["default"] == "develop"
+    # No dispatch input may feed a checkout ref (user-controlled checkout).
+    assert not (on["workflow_dispatch"] or {}).get("inputs")
     steps = doc["jobs"]["optimization-gates"]["steps"]
+    for step in steps:
+        ref = str(step.get("with", {}).get("ref", ""))
+        assert "inputs." not in ref
     base = next(s for s in steps if s.get("with", {}).get("path") == "baseline")
-    assert base["with"]["ref"] == "${{ inputs.base_ref }}"
+    assert base["with"]["ref"] == "develop"
 
 
 def test_ci_gates_guard_fails_when_base_equals_head(tmp_path: Path) -> None:
