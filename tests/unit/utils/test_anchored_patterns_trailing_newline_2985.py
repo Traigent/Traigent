@@ -32,6 +32,9 @@ CASES = [
     ("traigent.labels.types", "_KEY_MATERIAL", "key_1"),
     ("traigent.labels.types", "_REL_PATH", "pkg/mod.py"),
     ("traigent.labels.types", "_CODE_ID", "pkg.mod:fn"),
+    ("traigent.observability.otel.contract", "_SAFE_SCOPE_NAME", "pkg.mod"),
+    ("traigent.observability.agent_spans", "_MODEL_ID_PATTERN", "gpt-4o"),
+    ("traigent.security.redaction", "_COMPACT_TIMESTAMP_PATTERN", "20250101123456"),
     ("traigent.labels.trust_anchor", "_FINGERPRINT", H64),
     ("traigent.labels.token_store", "_HEX64", H64),
     ("traigent.utils.optimization_only_egress", "SHA256_RE", H64),
@@ -57,3 +60,40 @@ def test_dto_key_patterns_reject_trailing_newline(name: str) -> None:
         if pattern is not None:
             assert pattern.match("key_1")
             assert pattern.match("key_1\n") is None
+
+
+@pytest.mark.parametrize(
+    ("name", "valid"),
+    [
+        ("email", "a@b.co"),
+        ("username", "user_1"),
+        ("alphanumeric", "abc123"),
+        ("numeric", "123"),
+        ("uuid", "12345678-1234-1234-1234-123456789abc"),
+        ("url", "https://example.com/x"),
+        ("hostname_label", "host-1"),
+        ("phone", "+14155550123"),
+        ("safe_filename", "file.txt"),
+    ],
+)
+def test_input_validator_patterns_reject_trailing_newline(
+    name: str, valid: str
+) -> None:
+    from traigent.security.input_validation import InputValidator
+
+    pattern = InputValidator.PATTERNS[name]
+    assert pattern.match(valid)
+    assert pattern.match(valid + "\n") is None
+
+
+def test_user_model_rejects_username_with_trailing_newline() -> None:
+    from traigent.security.auth.models import User
+
+    with pytest.raises(ValueError):
+        User(
+            user_id="u1",
+            username="user_1\n",
+            email="a@b.co",
+            roles=[],
+            metadata={},
+        )

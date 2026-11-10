@@ -230,7 +230,7 @@ _SEGMENT_SPLIT = re.compile(r"[:/.]")
 # spaces, slashes) is rejected; a dotted identifier that merely *looks* like a
 # module path cannot be told apart from one (documented residual).
 _SAFE_SCOPE_NAME = re.compile(
-    r"^[A-Za-z_][A-Za-z0-9_]{0,63}(\.[A-Za-z_][A-Za-z0-9_]{0,63}){0,7}$"
+    r"^[A-Za-z_][A-Za-z0-9_]{0,63}(\.[A-Za-z_][A-Za-z0-9_]{0,63}){0,7}\Z"
 )
 _SAFE_SCOPE_VERSION = re.compile(r"^[A-Za-z0-9_.\-+]{1,32}\Z")
 _SAFE_KEY = re.compile(r"^[A-Za-z0-9_.\-]{1,128}\Z")

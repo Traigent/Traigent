@@ -866,8 +866,18 @@ class _StartedTrials:
     def __init__(self) -> None:
         self._started: list[tuple[int, Any]] = []
 
+    @staticmethod
+    def _normalise(config: Any) -> Any:
+        # Results carry the config with internal keys removed (Optuna ids,
+        # subset indices); strip them the same way so both sides compare equal.
+        from ..core.orchestrator_helpers import prepare_evaluation_config
+
+        return copy.deepcopy(prepare_evaluation_config(config))
+
     def start(self, number: int, config: Any) -> None:
-        self._started.append((number, copy.deepcopy(config)))
+        # Only keep a reference: start-time handlers must not read the config
+        # (characterised); it is normalised when a completion looks it up.
+        self._started.append((number, config))
 
     def take(self, config: Any, fallback: int) -> int:
         """Number of the oldest started trial with ``config``, else ``fallback``.
@@ -875,8 +885,9 @@ class _StartedTrials:
         The completion hook carries no trial index, so identical configs are
         matched in start order (a per-config FIFO).
         """
+        wanted = self._normalise(config)
         for index, (number, started_config) in enumerate(self._started):
-            if started_config == config:
+            if self._normalise(started_config) == wanted:
                 del self._started[index]
                 return number
         return fallback

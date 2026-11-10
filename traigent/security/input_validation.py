@@ -37,20 +37,20 @@ class InputValidator:
 
     # Regex patterns for validation
     PATTERNS = {
-        "email": re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"),
-        "username": re.compile(r"^[a-zA-Z0-9_-]{3,32}$"),
-        "alphanumeric": re.compile(r"^[a-zA-Z0-9]+$"),
-        "numeric": re.compile(r"^[0-9]+$"),
+        "email": re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\Z"),
+        "username": re.compile(r"^[a-zA-Z0-9_-]{3,32}\Z"),
+        "alphanumeric": re.compile(r"^[a-zA-Z0-9]+\Z"),
+        "numeric": re.compile(r"^[0-9]+\Z"),
         "uuid": re.compile(
-            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z",
             re.IGNORECASE,
         ),
-        "url": re.compile(r"^https?://[^\s\"'<>]+$"),
+        "url": re.compile(r"^https?://[^\s\"'<>]+\Z"),
         "hostname_label": re.compile(
-            r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
+            r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\Z"
         ),
-        "phone": re.compile(r"^\+?[1-9]\d{1,14}$"),  # E.164 format
-        "safe_filename": re.compile(r"^[a-zA-Z0-9._-]+$"),
+        "phone": re.compile(r"^\+?[1-9]\d{1,14}\Z"),  # E.164 format
+        "safe_filename": re.compile(r"^[a-zA-Z0-9._-]+\Z"),
     }
 
     # SQL injection patterns (common attack vectors)

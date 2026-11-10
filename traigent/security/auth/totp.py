@@ -85,7 +85,7 @@ class TOTPAuthProvider:
                 logger.warning("Invalid TOTP code format")
                 return False
 
-            if not secret or not re.match(r"^[A-Z2-7]+=*$", secret):
+            if not secret or not re.match(r"^[A-Z2-7]+=*\Z", secret):
                 logger.warning("Invalid TOTP secret format")
                 return False
 
