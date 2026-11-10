@@ -34,6 +34,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from traigent.security.config import get_security_flags
+from traigent.utils.env_config import is_truthy, resolve_environment_name
 from traigent.utils.exceptions import AuthenticationError as SecurityError
 from traigent.utils.logging import get_logger
 
@@ -1094,10 +1095,10 @@ class EnhancedCredentialStore:
 def get_secure_credential_store() -> EnhancedCredentialStore:
     """Get production-ready credential store with secure defaults."""
     # Detect environment
-    environment = os.getenv("TRAIGENT_ENVIRONMENT", "production").lower()
+    environment = resolve_environment_name(default="production")
 
     # Set security level based on environment
-    if environment == "production":
+    if environment in ("production", "prod"):
         security_level = SecurityLevel.MAXIMUM
     elif environment == "staging":
         security_level = SecurityLevel.HIGH
@@ -1106,7 +1107,7 @@ def get_secure_credential_store() -> EnhancedCredentialStore:
         logger.info(f"Credential store in {environment} mode - reduced security")
 
     # Check for HSM availability
-    enable_hsm = os.getenv("TRAIGENT_ENABLE_HSM", "false").lower() == "true"
+    enable_hsm = is_truthy(os.getenv("TRAIGENT_ENABLE_HSM"))
 
     return EnhancedCredentialStore(
         security_level=security_level,
