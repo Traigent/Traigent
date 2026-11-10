@@ -542,3 +542,27 @@ def test_hosted_grant_valid_aware_future_passes_3164() -> None:
         "expires_at": future,
     }
     _validate_hosted_grant(grant, {"attempt_ref": "a1"}, manifest.utcnow)
+
+
+def test_hosted_grant_without_expiry_is_expired_3164() -> None:
+    from traigent.runtime.respond import _validate_hosted_grant
+
+    grant = {"state": "granted", "effect": "optimize", "attempt_ref": "a1"}
+    with pytest.raises(RuntimeRequirementError) as err:
+        _validate_hosted_grant(grant, {"attempt_ref": "a1"}, manifest.utcnow)
+    assert err.value.code == "approval_expired"
+
+
+def test_hosted_grant_past_expiry_is_expired_3164() -> None:
+    from traigent.runtime.respond import _validate_hosted_grant
+
+    past = (manifest.utcnow() - timedelta(hours=1)).isoformat()
+    grant = {
+        "state": "granted",
+        "effect": "optimize",
+        "attempt_ref": "a1",
+        "expires_at": past,
+    }
+    with pytest.raises(RuntimeRequirementError) as err:
+        _validate_hosted_grant(grant, {"attempt_ref": "a1"}, manifest.utcnow)
+    assert err.value.code == "approval_expired"
