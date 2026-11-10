@@ -62,3 +62,23 @@ def test_explicit_max_trials_equal_to_default_wins_over_spec(tmp_path) -> None:
     agent = _decorate(tmp_path, max_trials=DEFAULT_MAX_TRIALS)
 
     assert agent.max_trials == DEFAULT_MAX_TRIALS
+
+
+def test_explicit_auto_conflicts_with_different_legacy_algorithm(tmp_path) -> None:
+    import pytest
+
+    from traigent.api.decorators import LegacyOptimizeArgs
+
+    spec = tmp_path / "budget.tvl.yml"
+    spec.write_text(SPEC)
+
+    with pytest.raises(TypeError, match="algorithm"):
+
+        @optimize(
+            tvl_spec=spec,
+            eval_dataset=DATA,
+            algorithm="auto",
+            legacy=LegacyOptimizeArgs(algorithm="grid"),
+        )
+        def agent(q: str) -> str:
+            return q

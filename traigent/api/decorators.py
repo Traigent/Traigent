@@ -1634,6 +1634,8 @@ def _build_settings_recorder(
                 source == "optimize parameter"
                 and default_value is not _DEFAULT_SENTINEL
                 and value == default_value
+                # An explicit algorithm="auto" is a real choice, not the default.
+                and not (key == "algorithm" and value is not _AUTO_ALGORITHM_DEFAULT)
             ):
                 return
             if existing_value != value:

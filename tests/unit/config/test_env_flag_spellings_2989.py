@@ -67,3 +67,33 @@ def test_any_production_variable_keeps_maximum_security(
     monkeypatch.setattr(credentials, "EnhancedCredentialStore", fake_store)
     get_secure_credential_store()
     assert captured["level"] == SecurityLevel.MAXIMUM
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, SecurityLevel.MAXIMUM),
+        ({"ENVIRONMENT": "banana"}, SecurityLevel.MAXIMUM),
+        ({"TRAIGENT_ENVIRONMENT": "banana"}, SecurityLevel.MAXIMUM),
+        (
+            {"ENVIRONMENT": "development", "TRAIGENT_ENV": "banana"},
+            SecurityLevel.MAXIMUM,
+        ),
+        ({"ENVIRONMENT": "development"}, SecurityLevel.STANDARD),
+        ({"TRAIGENT_ENVIRONMENT": "test"}, SecurityLevel.STANDARD),
+        ({"TRAIGENT_ENVIRONMENT": "staging"}, SecurityLevel.HIGH),
+    ],
+)
+def test_unknown_or_unset_environment_fails_closed(monkeypatch, env, expected) -> None:
+    for name in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    captured: dict[str, SecurityLevel] = {}
+
+    def fake_store(*, security_level, **_kwargs):
+        captured["level"] = security_level
+
+    monkeypatch.setattr(credentials, "EnhancedCredentialStore", fake_store)
+    get_secure_credential_store()
+    assert captured["level"] == expected

@@ -1103,16 +1103,14 @@ def get_secure_credential_store() -> EnhancedCredentialStore:
         for key in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")
         if (value := os.getenv(key)) is not None and value.strip()
     ]
-    environment: str | None
-    if any(value in ("production", "prod") for value in declared):
-        environment = "production"
-    else:
-        environment = resolve_environment_name(default="production")
-
-    # Set security level based on environment
-    if environment in ("production", "prod"):
+    # Unset or unrecognised names also fail closed: reduced security needs every
+    # declared variable to be an explicitly recognised non-production name.
+    non_production = ("dev", "development", "local", "test", "testing")
+    staging = ("stage", "staging")
+    environment = resolve_environment_name(default=None)
+    if not declared or any(value not in non_production + staging for value in declared):
         security_level = SecurityLevel.MAXIMUM
-    elif environment == "staging":
+    elif environment in staging:
         security_level = SecurityLevel.HIGH
     else:
         security_level = SecurityLevel.STANDARD

@@ -73,6 +73,11 @@ def test_bad_budget_value_raises_naming_field(tmp_path, exploration, field) -> N
         ("budgets:\n    max_spend_usd: .nan", "max_spend_usd"),
         ("budgets:\n    max_spend_usd: '5'", "max_spend_usd"),
         ("budgets: 3", "budgets"),
+        ("budgets:\n    max_spend_usd: true", "max_spend_usd"),
+        ("budgets:\n    max_trials: true", "budgets.max_trials"),
+        ("budgets:\n    max_wallclock_s: false", "max_wallclock_s"),
+        ("budget:\n    timeout_seconds: true", "timeout_seconds"),
+        ("budget:\n    max_total_examples:\n      value: true", "max_total_examples"),
     ],
 )
 def test_wrapper_and_budgets_values_rejected(tmp_path, exploration, field) -> None:

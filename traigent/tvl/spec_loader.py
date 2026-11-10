@@ -984,7 +984,12 @@ def _validate_exploration_budgets(budgets: Any) -> list[str]:
         if value is None:
             continue
         field = f"exploration.budgets.{key}"
-        if not isinstance(value, (int, float)):
+        if isinstance(value, bool):
+            # ExplorationBudgets rejects bool for the integer fields with its own
+            # message (#1616); max_spend_usd would otherwise coerce True to 1.0.
+            if key == "max_spend_usd":
+                issues.append(f"{field} should be a number, got {value!r}")
+        elif not isinstance(value, (int, float)):
             issues.append(f"{field} should be a number, got {value!r}")
         elif key == "max_spend_usd" and not math.isfinite(value):
             issues.append(f"{field} should be a finite number, got {value!r}")
