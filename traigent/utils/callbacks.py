@@ -645,6 +645,14 @@ class ManagedProgressCallback(OptimizationCallback):
 
 
 _LOGGING_CALLBACK_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+# stdlib aliases that logging has always accepted (Logger.warn / Logger.fatal).
+_LOGGING_CALLBACK_ALIASES = {"WARN": "WARNING", "FATAL": "CRITICAL"}
+
+
+def _canonical_logging_level(name: str) -> str:
+    """Upper-case level name with stdlib aliases resolved (WARN -> WARNING)."""
+    upper = name.upper()
+    return _LOGGING_CALLBACK_ALIASES.get(upper, upper)
 
 
 class LoggingCallback(OptimizationCallback):
@@ -659,7 +667,7 @@ class LoggingCallback(OptimizationCallback):
         """
         if (
             not isinstance(log_level, str)
-            or log_level.upper() not in _LOGGING_CALLBACK_LEVELS
+            or _canonical_logging_level(log_level) not in _LOGGING_CALLBACK_LEVELS
         ):
             raise ValueError(
                 f"log_level must be one of {', '.join(_LOGGING_CALLBACK_LEVELS)} "
@@ -671,10 +679,12 @@ class LoggingCallback(OptimizationCallback):
     def _log(self, message: str) -> None:
         """Log message."""
         if self.logger:
-            getattr(self.logger, self.log_level.lower())(message)
+            getattr(self.logger, _canonical_logging_level(self.log_level).lower())(
+                message
+            )
         else:
             # Fallback to module logger if no logger provided
-            getattr(logger, self.log_level.lower())(message)
+            getattr(logger, _canonical_logging_level(self.log_level).lower())(message)
 
     def on_optimization_start(
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str
