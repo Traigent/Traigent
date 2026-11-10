@@ -188,7 +188,10 @@ def test_no_measured_rows_omit_the_key_by_default(rows: list[Any]) -> None:
     assert "cost" not in result
 
 
-@pytest.mark.parametrize("value", ["true", "TRUE", "True", "1", "yes", "YES", "Yes"])
+@pytest.mark.parametrize(
+    "value",
+    ["true", "TRUE", "True", "1", "yes", "YES", "Yes", "on", "ON", " true", "true "],
+)
 def test_strict_nulls_records_none_when_nothing_measured(
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
@@ -200,9 +203,7 @@ def test_strict_nulls_records_none_when_nothing_measured(
     assert list(result) == ["cost", "accuracy"]
 
 
-@pytest.mark.parametrize(
-    "value", ["", "false", "0", "no", "on", " true", "true ", "y", "2", "tru"]
-)
+@pytest.mark.parametrize("value", ["", "false", "0", "no", "off", "y", "2", "tru"])
 def test_other_env_values_leave_the_key_out(
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
