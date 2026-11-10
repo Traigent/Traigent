@@ -27,7 +27,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
-from traigent.core.exception_handler import is_provider_api_key_failure
+from traigent.core.exception_handler import (
+    function_call_failure_text,
+    is_provider_api_key_failure,
+    preserve_error_text,
+)
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
@@ -3139,7 +3143,7 @@ class BaseEvaluator(ABC):
             raise
         except Exception as e:
             self._check_api_key_error(e)
-            error_msg = f"Function call failed: {e}"
+            error_msg = function_call_failure_text(e, f"Function call failed: {e}")
             logger.warning(error_msg)
             return None, error_msg
 
@@ -3381,7 +3385,7 @@ class BaseEvaluator(ABC):
                 metrics={},
                 execution_time=0.0,
                 success=False,
-                error_message=str(error),
+                error_message=preserve_error_text(error),
                 metadata=example.metadata.copy() if example.metadata else {},
             ),
             index,
@@ -4468,7 +4472,7 @@ class BaseEvaluator(ABC):
             metrics=failed_row_metrics(self.metrics),
             execution_time=execution_time,
             success=False,
-            error_message=str(error),
+            error_message=preserve_error_text(error),
             metadata=example.metadata.copy() if example.metadata else {},
         )
 
@@ -5924,7 +5928,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 metrics=failed_row_metrics(self.metrics),
                 execution_time=0.0,
                 success=False,
-                error_message=str(error),
+                error_message=preserve_error_text(error),
                 metadata=example.metadata.copy() if example.metadata else {},
             ),
             index,

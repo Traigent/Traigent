@@ -17,7 +17,10 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
-from traigent.core.exception_handler import classify_systematic_provider_failure
+from traigent.core.exception_handler import (
+    classify_systematic_provider_failure,
+    preserve_error_text,
+)
 from traigent.evaluators.base import count_timed_out_examples
 from traigent.evaluators.metrics_tracker import enforce_user_metric_ceiling
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
@@ -411,7 +414,7 @@ def _provider_failure_summary(
     for error in errors:
         if not error:
             continue
-        category = classify_systematic_provider_failure(str(error))
+        category = classify_systematic_provider_failure(preserve_error_text(error))
         if category is None:
             continue
         fatal_failures += 1

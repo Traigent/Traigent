@@ -13,7 +13,10 @@ from collections.abc import Callable
 from typing import Any
 
 from traigent.config.providers import get_provider
-from traigent.core.exception_handler import is_provider_api_key_failure
+from traigent.core.exception_handler import (
+    function_call_failure_text,
+    is_provider_api_key_failure,
+)
 from traigent.invokers.base import BaseInvoker, InvocationResult
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import InvocationError
@@ -147,7 +150,7 @@ class LocalInvoker(BaseInvoker):
         except Exception as e:
             end_time = time.time()
             execution_time = end_time - start_time
-            error_msg = f"Function call failed: {e}"
+            error_msg = function_call_failure_text(e, f"Function call failed: {e}")
 
             # Fail fast on API key errors - don't retry 309 times
             if is_provider_api_key_failure(e):

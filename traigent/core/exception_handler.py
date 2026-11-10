@@ -325,7 +325,9 @@ def _category_from_status(exc: Exception, status: int) -> VendorErrorCategory:
     return _STATUS_CATEGORIES[status]
 
 
-def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
+def classify_vendor_error(
+    exc: Exception, *, provider_text_only: bool = False
+) -> VendorErrorCategory | None:
     """Classify an exception as a vendor-pausable error category.
 
     Order: known Traigent exception types, then a structured HTTP status, then
@@ -336,6 +338,11 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
 
     Args:
         exc: The exception to classify.
+        provider_text_only: Match message wording only for provider-SDK
+            exceptions or text that carries structured provider markers
+            (``Error code: 429``, ``invalid_api_key``...). Used for errors
+            raised inside the user's own function, whose domain text
+            ("authentication header missing") is not a provider verdict.
 
     Returns:
         VendorErrorCategory if the error is vendor-pausable, None otherwise.
@@ -354,6 +361,12 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
     # Fallback: pattern-match the error message
     msg = str(exc).lower()
     if _LOCAL_ERROR_TEXT_RE.search(msg) and not _PROVIDER_MARKER_RE.search(msg):
+        return None
+    if (
+        provider_text_only
+        and not _is_provider_sdk_exception(exc)
+        and not _PROVIDER_MARKER_RE.search(msg)
+    ):
         return None
     # Terminal account wording wins over an earlier generic "code: 429" pattern,
     # so the string-based abort net still sees an exhausted account.
@@ -491,11 +504,49 @@ def is_provider_api_key_failure(exc: BaseException) -> bool:
     return _MISSING_KEY_RE.search(str(exc)) is not None
 
 
+class ClassifiedErrorText(str):
+    """Error text that carries the verdict decided from the real exception.
+
+    The evaluators only keep the message string once a function call fails, so
+    re-classifying that string cannot see the exception type or status. The
+    verdict is decided once, where the exception is in hand, and travels with
+    the text (``str`` subclass: survives list copies, ``copy`` and ``pickle``).
+    ``systematic_category`` is already restricted to run-aborting categories.
+    """
+
+    systematic_category: VendorErrorCategory | None
+
+    def __new__(
+        cls, text: str, systematic_category: VendorErrorCategory | None = None
+    ) -> ClassifiedErrorText:
+        obj = super().__new__(cls, text)
+        obj.systematic_category = systematic_category
+        return obj
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (ClassifiedErrorText, (str(self), self.systematic_category))
+
+
+def function_call_failure_text(exc: Exception, text: str) -> ClassifiedErrorText:
+    """Wrap ``text`` for a failure raised inside the user's function call."""
+    category = classify_vendor_error(exc, provider_text_only=True)
+    if category not in _SYSTEMATIC_FATAL_CATEGORIES:
+        category = None
+    return ClassifiedErrorText(text, category)
+
+
+def preserve_error_text(error: object) -> str:
+    """``str(error)`` that keeps a :class:`ClassifiedErrorText` verdict intact."""
+    return error if isinstance(error, ClassifiedErrorText) else str(error)
+
+
 def classify_systematic_provider_failure(
     error: Exception | str,
 ) -> VendorErrorCategory | None:
     """Classify non-transient provider failures that should abort when systematic."""
 
+    if isinstance(error, ClassifiedErrorText):
+        return error.systematic_category
     exc = error if isinstance(error, Exception) else RuntimeError(str(error))
     category = classify_vendor_error(exc)
     if category in _SYSTEMATIC_FATAL_CATEGORIES:
