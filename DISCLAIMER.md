@@ -156,7 +156,9 @@ its own curated fallback prices.
 
 ### Custom Pricing for Private or Unsupported Models
 
-Give explicit per-token prices with either environment variable (both are read; prices from them take precedence):
+Give explicit per-token prices with either environment variable. They apply when LiteLLM has no
+price for the model and override Traigent's built-in fallback; a model listed in both uses the
+`_JSON` price:
 
 - `TRAIGENT_CUSTOM_MODEL_PRICING_FILE`: path to a JSON file
 - `TRAIGENT_CUSTOM_MODEL_PRICING_JSON`: the same JSON inline
