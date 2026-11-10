@@ -133,3 +133,30 @@ async def test_simple_scoring_evaluator_metric_function_receives_unwrapped_outpu
         trial_context.reset(token)
 
     assert seen == [["t1", "t2"]]
+
+
+@pytest.mark.asyncio
+async def test_simple_scoring_evaluator_scoring_function_receives_unwrapped_output() -> (
+    None
+):
+    """SimpleScoringEvaluator's single scoring_function gets the unwrapped value."""
+    from traigent.evaluators.base import SimpleScoringEvaluator
+
+    seen: list[Any] = []
+
+    def score(output: Any, expected: Any) -> float:
+        seen.append(output)
+        return 1.0
+
+    evaluator = SimpleScoringEvaluator(scoring_function=score)
+
+    def agent(*_args: Any, **_kwargs: Any) -> Any:
+        return with_usage(["t1", "t2"], total_cost=0.002)
+
+    token = trial_context.set({"trial_id": "t-2870-scoring"})
+    try:
+        await evaluator.evaluate(agent, {}, _dataset())
+    finally:
+        trial_context.reset(token)
+
+    assert seen == [["t1", "t2"]]

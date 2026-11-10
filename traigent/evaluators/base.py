@@ -5057,7 +5057,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
             params = list(sig.parameters.keys())
             kwargs = {}
             if "output" in params or "actual" in params:
-                kwargs["output"] = output
+                # The function's own output, not the with_usage() wrapper,
+                # as the metric_functions path gets (Traigent#2870).
+                kwargs["output"] = unwrap_with_usage_output(output)
             if "expected" in params:
                 kwargs["expected"] = example.expected_output
             if "llm_metrics" in params and llm_metrics:
