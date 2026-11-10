@@ -124,3 +124,15 @@ def test_keyword_start_call_still_works(cls) -> None:
     started = tracker.started[0]
     assert started["function_name"] == "f"
     assert started["configuration_space"] == {"x": [1]}
+
+
+@pytest.mark.parametrize("cls", [WandBOptimizationCallback, MLflowOptimizationCallback])
+def test_legacy_positional_start_order_still_works(cls) -> None:
+    """The old order (function_name, objectives, configuration_space) still works."""
+    tracker = _RecordingTracker()
+    cls(tracker).on_optimization_start("my_fn", ["accuracy"], {"x": [1, 2]})
+
+    started = tracker.started[0]
+    assert started["function_name"] == "my_fn"
+    assert started["configuration_space"] == {"x": [1, 2]}
+    assert started["objectives"] == ["accuracy"]

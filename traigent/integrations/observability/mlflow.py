@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -509,7 +510,7 @@ class MLflowOptimizationCallback:
         self,
         config_space: dict[str, Any] | None = None,
         objectives: list[str] | None = None,
-        algorithm: str | None = None,
+        algorithm: str | Mapping[str, Any] | None = None,
         *,
         function_name: str | None = None,
         configuration_space: dict[str, Any] | None = None,
@@ -521,6 +522,11 @@ class MLflowOptimizationCallback:
         algorithm)``, the same contract as every other callback. The keyword
         form ``function_name=..., configuration_space=...`` is also accepted.
         """
+        if isinstance(config_space, str) and isinstance(algorithm, Mapping):
+            # Legacy positional order (function_name, objectives,
+            # configuration_space), used before CallbackManager's contract.
+            function_name = function_name or config_space
+            config_space, algorithm = dict(algorithm), None
         space = configuration_space if configuration_space is not None else config_space
         name = function_name or self.function_name or _DEFAULT_RUN_FUNCTION_NAME
         self.tracker.start_optimization_run(
