@@ -180,7 +180,9 @@ def advanced_evaluator(func, config, example) -> ExampleResult:
         actual_output=output,
         metrics={"accuracy": exact, "length_score": length_penalty},
         execution_time=0.0,  # replace with the measured call latency if you track it
-        success=exact == 1.0,
+        # The evaluator ran, so the row is a success even when the answer is wrong.
+        # Correctness is carried by metrics["accuracy"], not by success.
+        success=True,
     )
 
 @traigent.optimize(

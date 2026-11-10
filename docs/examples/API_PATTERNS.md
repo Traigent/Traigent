@@ -237,7 +237,9 @@ def sql_evaluator(func, config, example):
         actual_output=predicted_sql,
         metrics={"accuracy": 1.0 if correct else 0.0},
         execution_time=0.0,  # replace with the measured call latency if you track it
-        success=correct,
+        # The evaluator ran, so the row is a success even when the SQL is wrong.
+        # Correctness is carried by metrics["accuracy"], not by success.
+        success=True,
     )
 
 
