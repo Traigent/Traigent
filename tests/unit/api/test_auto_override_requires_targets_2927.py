@@ -54,3 +54,58 @@ def test_auto_override_warning_points_at_the_user_decorator_2927() -> None:
     assert all(Path(w.filename).resolve() == Path(__file__).resolve() for w in hits), [
         w.filename for w in hits
     ]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(
+            lambda f: optimize(
+                configuration_space=_CFG,
+                injection=__import__(
+                    "traigent.api.decorators", fromlist=["InjectionOptions"]
+                ).InjectionOptions(
+                    auto_override_frameworks=True, framework_targets=["OpenAI"]
+                ),
+            )(f),
+            id="InjectionOptions",
+        ),
+        pytest.param(
+            lambda f: optimize(
+                configuration_space=_CFG,
+                injection={
+                    "auto_override_frameworks": True,
+                    "framework_targets": ["OpenAI"],
+                },
+            )(f),
+            id="injection-dict",
+        ),
+        pytest.param(
+            lambda f: __import__(
+                "traigent.core.optimized_function", fromlist=["OptimizedFunction"]
+            ).OptimizedFunction(
+                f,
+                configuration_space=_CFG,
+                auto_override_frameworks=True,
+                framework_targets=["OpenAI"],
+            ),
+            id="OptimizedFunction",
+        ),
+    ],
+)
+def test_bare_framework_target_is_a_configuration_error_on_every_route(
+    build,
+) -> None:
+    """A bare name raises ConfigurationError at construction on every route.
+
+    The flat ``framework_targets=`` keyword was checked at decoration, but the
+    InjectionOptions, injection-dict and direct-constructor routes were not, so
+    the error surfaced at run time as an OptimizationError.
+    """
+    from traigent.utils.exceptions import ConfigurationError
+
+    def f(q):
+        return q
+
+    with pytest.raises(ConfigurationError, match="dotted 'module.ClassName'"):
+        build(f)

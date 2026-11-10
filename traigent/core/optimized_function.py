@@ -1284,6 +1284,13 @@ class OptimizedFunction[**P, R]:
         self.config_param = config_param
         self.auto_override_frameworks = auto_override_frameworks
         self.framework_targets = framework_targets or []
+        # Every route (flat kwarg, InjectionOptions, injection dict, direct
+        # construction) reaches here, so a bare name fails at construction
+        # with ConfigurationError, not at run time (#2927). Imported here:
+        # api.decorators imports this module at load time.
+        from traigent.api.decorators import _validate_framework_targets
+
+        _validate_framework_targets(self.framework_targets)
         if self.auto_override_frameworks and not self.framework_targets:
             warnings.warn(
                 "auto_override_frameworks=True has no effect without "
