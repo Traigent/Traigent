@@ -10,6 +10,7 @@ import pytest
 
 from traigent.cloud import billing
 from traigent.cloud.billing import BillingManager, UsageStorageError, UsageTracker
+from traigent.utils import file_lock
 
 
 def _record(tracker: UsageTracker, name: str) -> None:
@@ -125,8 +126,8 @@ def test_lock_falls_back_to_msvcrt_when_fcntl_missing(
         def locking(_fd: int, mode: int, _n: int) -> None:
             calls.append(mode)
 
-    monkeypatch.setattr(billing, "fcntl", None)
-    monkeypatch.setattr(billing, "msvcrt", FakeMsvcrt)
+    monkeypatch.setattr(file_lock, "fcntl", None)
+    monkeypatch.setattr(file_lock, "msvcrt", FakeMsvcrt)
     with billing._storage_lock(tmp_path / "usage.json"):
         pass
     assert calls == [1, 2]
@@ -135,9 +136,9 @@ def test_lock_falls_back_to_msvcrt_when_fcntl_missing(
 def test_no_lock_support_warns_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    monkeypatch.setattr(billing, "fcntl", None)
-    monkeypatch.setattr(billing, "msvcrt", None)
-    monkeypatch.setattr(billing, "_lock_warning_emitted", False)
+    monkeypatch.setattr(file_lock, "fcntl", None)
+    monkeypatch.setattr(file_lock, "msvcrt", None)
+    monkeypatch.setattr(file_lock, "_lock_warning_emitted", False)
     with caplog.at_level("WARNING"):
         for _ in range(2):
             with billing._storage_lock(tmp_path / "usage.json"):

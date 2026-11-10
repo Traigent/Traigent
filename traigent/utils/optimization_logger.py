@@ -25,6 +25,7 @@ from traigent._version import __version__ as TRAIGENT_VERSION
 from traigent.api.types import OptimizationResult, TrialResult
 from traigent.config.types import ExecutionMode, resolve_execution_mode
 from traigent.core.objectives import ObjectiveSchema, normalize_objectives
+from traigent.utils.file_lock import storage_lock
 from traigent.utils.file_versioning import FileVersionManager, RunVersionInfo
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import (
@@ -36,6 +37,10 @@ from traigent.utils.secure_path import (
 from traigent.utils.trial_costs import coerce_finite_cost, is_cost_unmeasured
 
 logger = get_logger(__name__)
+
+# One lock per path for the whole process: loggers of one log root share files.
+_FILE_LOCKS: dict[Path, threading.Lock] = {}
+_FILE_LOCKS_GUARD = threading.Lock()
 
 
 def _validate_run_child_dir(
@@ -501,7 +506,6 @@ class OptimizationLogger:
         )
         self.experiment_path = self.run_path.parent.parent
 
-        self._file_locks: dict[Path, threading.Lock] = {}
         self._trial_buffer: list[TrialResult] = []
         self._buffer_lock = threading.Lock()
 
@@ -709,15 +713,27 @@ class OptimizationLogger:
             logger.debug("Could not write .gitignore to %s", self.base_path)
 
     @contextmanager
-    def _file_lock(self, file_path: Path):
-        if file_path not in self._file_locks:
-            self._file_locks[file_path] = threading.Lock()
-        with self._file_locks[file_path]:
-            yield
+    def _file_lock(self, file_path: Path, *, cross_process: bool = False):
+        """Serialise access to ``file_path`` across every logger in this process.
+
+        ``cross_process`` also takes an OS file lock, for files shared by
+        several runs of one log root (the experiment index).
+        """
+        with _FILE_LOCKS_GUARD:
+            lock = _FILE_LOCKS.setdefault(file_path, threading.Lock())
+        with lock:
+            if cross_process:
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                with storage_lock(file_path):
+                    yield
+            else:
+                yield
 
     def _atomic_write(self, file_path: Path, data: Any) -> None:
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = file_path.with_suffix(f"{file_path.suffix}.tmp.{os.getpid()}")
+        temp_path = file_path.with_suffix(
+            f"{file_path.suffix}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+        )
         sanitized = sanitize_for_logging(data)
         try:
             # nosec - temp_path derives from caller-supplied file_path which the
@@ -1222,7 +1238,7 @@ class OptimizationLogger:
 
     def _update_experiment_index(self) -> None:
         index_file = self.base_path / "index.json"
-        with self._file_lock(index_file):
+        with self._file_lock(index_file, cross_process=True):
             if index_file.exists():
                 with open(index_file) as handle:
                     index_data = json.load(handle)

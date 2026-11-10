@@ -64,7 +64,7 @@ PAYLOAD_HASH_VERSION = 3
 _MAX_EXAMPLE_MEASURES = 1000
 _MAX_EXAMPLE_METRICS = 50
 _MAX_EXAMPLE_METRIC_KEY_LENGTH = 100
-_EXAMPLE_METRIC_KEY_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_EXAMPLE_METRIC_KEY_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*\Z")
 
 # SDK-minted example ids (traigent/core/metadata_helpers.py, utils/example_id):
 # only the index digits are ever read from them.

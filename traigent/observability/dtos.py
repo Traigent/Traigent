@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from traigent.utils.numeric_checks import require_finite_number
+
 MAX_IDENTIFIER_LENGTH = 128
 MAX_NAME_LENGTH = 255
 MAX_ENVIRONMENT_LENGTH = 64
@@ -69,8 +71,13 @@ def _validate_optional_string(name: str, value: str | None, *, max_length: int) 
         )
 
 
-def _validate_non_negative(name: str, value: int | float | None) -> None:
-    if value is not None and value < 0:
+def _validate_non_negative(
+    name: str, value: int | float | None, *, integer: bool = False
+) -> None:
+    if value is None:
+        return
+    require_finite_number(name, value, integer=integer)
+    if value < 0:
         raise ValueError(f"{name} must be non-negative")
 
 
@@ -161,8 +168,10 @@ class PromptReferenceDTO:
     def __post_init__(self) -> None:
         _validate_required_string("name", self.name, max_length=MAX_NAME_LENGTH)
         _validate_optional_string("label", self.label, max_length=MAX_LABEL_LENGTH)
-        if self.version is not None and self.version < 1:
-            raise ValueError("version must be greater than or equal to 1")
+        if self.version is not None:
+            require_finite_number("version", self.version, integer=True)
+            if self.version < 1:
+                raise ValueError("version must be greater than or equal to 1")
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -400,9 +409,9 @@ class ObservationDTO:
             "tool_name", self.tool_name, max_length=MAX_NAME_LENGTH
         )
         _validate_non_negative("latency_ms", self.latency_ms)
-        _validate_non_negative("input_tokens", self.input_tokens)
-        _validate_non_negative("output_tokens", self.output_tokens)
-        _validate_non_negative("total_tokens", self.total_tokens)
+        _validate_non_negative("input_tokens", self.input_tokens, integer=True)
+        _validate_non_negative("output_tokens", self.output_tokens, integer=True)
+        _validate_non_negative("total_tokens", self.total_tokens, integer=True)
         _validate_non_negative("cost_usd", self.cost_usd)
         if self.type is ObservationType.EVENT and self.children:
             raise ValueError("event observations cannot have children")

@@ -14,25 +14,16 @@ import json
 import os
 import time
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
-try:  # POSIX only; elsewhere the in-process write stays atomic but unlocked
-    import fcntl
-except ImportError:  # pragma: no cover
-    fcntl = None  # type: ignore[assignment]
-try:  # Windows
-    import msvcrt
-except ImportError:  # pragma: no cover
-    msvcrt = None  # type: ignore[assignment]
-
 from traigent.config.backend_config import PRICING_URL
 from traigent.utils.exceptions import ConfigurationError, TraigentError
+from traigent.utils.file_lock import storage_lock
 from traigent.utils.logging import get_logger
 from traigent.utils.money import format_usd
 
@@ -66,37 +57,7 @@ class UsageStorageError(TraigentError):
     """The usage file cannot be read or set aside; history is left untouched."""
 
 
-_lock_warning_emitted = False
-
-
-@contextmanager
-def _storage_lock(path: Path) -> Iterator[None]:
-    """Hold an exclusive inter-process lock for read-modify-write of ``path``."""
-    global _lock_warning_emitted
-    if fcntl is None and msvcrt is None:
-        if not _lock_warning_emitted:
-            _lock_warning_emitted = True
-            logger.warning(
-                "No file-locking support on this platform; concurrent usage "
-                "writers may lose records"
-            )
-        yield
-        return
-    lock_path = path.with_name(f"{path.name}.lock")
-    with lock_path.open("a+") as lock_file:
-        if fcntl is not None:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        else:  # pragma: no cover - exercised via monkeypatched test
-            lock_file.seek(0)
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-        try:
-            yield
-        finally:
-            if fcntl is not None:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-            else:  # pragma: no cover
-                lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+_storage_lock = storage_lock
 
 
 # Cost Tracking Enums and Classes (from cost_tracking.py)

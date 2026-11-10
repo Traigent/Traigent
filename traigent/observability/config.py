@@ -15,6 +15,7 @@ from traigent.config.project import read_optional_project_env, scope_api_path
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 from traigent.identity.workload import resolve_environment
 from traigent.utils.env_config import is_backend_offline, is_truthy
+from traigent.utils.numeric_checks import require_finite_number
 
 MAX_BATCH_SIZE = 10_000
 MAX_QUEUE_SIZE = 1_000_000
@@ -418,7 +419,9 @@ def _read_default_execution_context() -> dict[str, str | None]:
     return context
 
 
-def _require_positive_up_to(name: str, value: float, maximum: float) -> None:
+def _require_positive_up_to(
+    name: str, value: float, maximum: float, *, integer: bool = False
+) -> None:
     """Reject ``value`` unless it is greater than 0 and at most ``maximum``."""
     if value <= 0:
         raise ValueError(f"{name} must be greater than 0")
@@ -426,6 +429,9 @@ def _require_positive_up_to(name: str, value: float, maximum: float) -> None:
         raise ValueError(f"{name} must be a finite number")
     if value > maximum:
         raise ValueError(f"{name} must be less than or equal to {maximum}")
+    # After the bounds, so the characterised messages for NaN/inf/<=0 hold.
+    # bool is an int subclass, so True would otherwise pass as 1 (float fields too).
+    require_finite_number(name, value, integer=integer)
 
 
 @dataclass
@@ -525,13 +531,17 @@ class ObservabilityConfig:
             self.project_id.strip() or None if self.project_id is not None else None
         )
         self.api_path = scope_api_path(self.api_path, self.project_id)
-        _require_positive_up_to("batch_size", self.batch_size, MAX_BATCH_SIZE)
+        _require_positive_up_to(
+            "batch_size", self.batch_size, MAX_BATCH_SIZE, integer=True
+        )
         _require_positive_up_to(
             "max_buffer_age", self.max_buffer_age, MAX_BUFFER_AGE_SECONDS
         )
-        _require_positive_up_to("max_queue_size", self.max_queue_size, MAX_QUEUE_SIZE)
         _require_positive_up_to(
-            "max_batch_bytes", self.max_batch_bytes, MAX_BATCH_BYTES
+            "max_queue_size", self.max_queue_size, MAX_QUEUE_SIZE, integer=True
+        )
+        _require_positive_up_to(
+            "max_batch_bytes", self.max_batch_bytes, MAX_BATCH_BYTES, integer=True
         )
         _require_positive_up_to(
             "flush_timeout", self.flush_timeout, MAX_TIMEOUT_SECONDS
@@ -539,6 +549,8 @@ class ObservabilityConfig:
         _require_positive_up_to(
             "request_timeout", self.request_timeout, MAX_TIMEOUT_SECONDS
         )
+        if isinstance(self.per_trace_timeout, bool):
+            raise TypeError("per_trace_timeout must be a number")
         if not math.isfinite(self.per_trace_timeout):
             raise ValueError("per_trace_timeout must be a finite number")
         if self.per_trace_timeout < 0:
