@@ -44,14 +44,23 @@ from ...utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def _write_run_artifact(run: Any, filename: str, payload: Any) -> tuple[str, str]:
+def _write_run_artifact(
+    run: Any, filename: str, payload: Any
+) -> tuple[str, str] | None:
     """Write ``payload`` as JSON into the run's own directory.
 
     The file goes to ``run.dir`` (wandb's per-run directory, never the user's
     CWD or a temp directory that is deleted). Returns ``(path, base_path)`` for
     ``wandb.save(path, base_path=base_path, policy="now")``: with that base the
     file is published under ``filename`` and stays in place for the run (#3042).
+
+    Returns ``None`` for a disabled run (``WANDB_MODE=disabled``): it reports a
+    ``run.dir`` that is never created and uploads nothing, so there is nothing
+    to write. Any other missing run dir is an error (``OSError``).
     """
+    if getattr(run, "disabled", False) is True:
+        logger.debug("W&B run is disabled; skipping artifact %s", filename)
+        return None
     run_dir = str(Path(run.dir))
     path = str(Path(run_dir) / filename)
     with open(path, "w", encoding="utf-8") as f:
@@ -152,10 +161,12 @@ class TraigentWandBTracker:
 
         # Log configuration space as artifact, inside the run's own directory.
         try:
-            path, base = _write_run_artifact(
+            written = _write_run_artifact(
                 run, "configuration_space.json", configuration_space
             )
-            wandb.save(path, base_path=base, policy="now")
+            if written is not None:
+                path, base = written
+                wandb.save(path, base_path=base, policy="now")
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Failed to save configuration space artifact: %s",
@@ -250,12 +261,14 @@ class TraigentWandBTracker:
         trial_file: str | None = None
         run_dir: str | None = None
         try:
-            trial_file, run_dir = _write_run_artifact(
+            written = _write_run_artifact(
                 self.current_run,
                 f"trial_{int(trial_number)}.json",
                 trial_artifact_data,
             )
-            artifact_written = True
+            if written is not None:
+                trial_file, run_dir = written
+                artifact_written = True
         except (OSError, TypeError, ValueError) as exc:  # noqa: BLE001
             logger.warning(
                 "Failed to write trial artifact for %s: %s",
@@ -404,10 +417,19 @@ class TraigentWandBTracker:
             ],
         }
 
-        path, base = _write_run_artifact(
-            self.current_run, "optimization_result.json", result_data
-        )
-        wandb.save(path, base_path=base, policy="now")
+        try:
+            written = _write_run_artifact(
+                self.current_run, "optimization_result.json", result_data
+            )
+            if written is not None:
+                path, base = written
+                wandb.save(path, base_path=base, policy="now")
+        except (OSError, TypeError, ValueError) as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to write optimization result artifact: %s",
+                exc,
+                exc_info=False,
+            )
 
         # Log dataset if provided
         if dataset_path and Path(dataset_path).exists():

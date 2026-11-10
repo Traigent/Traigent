@@ -98,3 +98,51 @@ def test_trial_artifact_is_a_real_file_under_its_name(offline_wandb) -> None:
         },
     )
     assert sorted(os.listdir(offline_wandb)) == []  # CWD untouched
+
+
+@pytest.fixture
+def disabled_wandb(offline_wandb, monkeypatch):
+    """Real wandb with logging switched off (WANDB_MODE=disabled)."""
+    monkeypatch.setenv("WANDB_MODE", "disabled")
+    # wandb caches its settings in a process-wide singleton, so an earlier
+    # offline run in this process would win over the new mode. Reset it on
+    # entry and on exit so neither mode leaks into another test.
+    wandb.teardown()
+    yield offline_wandb
+    wandb.teardown()
+
+
+def _result():
+    from traigent.api.types import OptimizationStatus
+
+    return SimpleNamespace(
+        best_config={"model": "m"},
+        best_score=0.5,
+        best_metrics={"acc": 0.5},
+        trials=[],
+        duration=1.0,
+        status=OptimizationStatus.COMPLETED,
+        metadata={},
+        total_cost=None,
+        optimization_id="opt-1",
+    )
+
+
+def test_disabled_wandb_logs_a_full_run_without_raising(disabled_wandb) -> None:
+    """A disabled run reports a run.dir that is never created (#3042 sibling).
+
+    Writing the artifacts there raised FileNotFoundError out of
+    log_optimization_result, after the optimization had finished.
+    """
+    tracker = wandb_module.TraigentWandBTracker(project="p3042")
+    tracker.start_optimization_run("fn", ["accuracy"], {"model": ["a"]})
+    run = tracker.current_run
+    # Precondition: this really is a disabled run whose dir does not exist.
+    assert run is not None and getattr(run, "disabled", False) is True
+    assert not Path(run.dir).exists()
+    tracker.log_trial(_trial(), 1)
+
+    tracker.log_optimization_result(_result())
+    tracker.end_optimization_run()
+
+    assert sorted(os.listdir(disabled_wandb)) == []  # CWD untouched
