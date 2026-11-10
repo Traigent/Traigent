@@ -121,6 +121,7 @@ else:
 
 
 from traigent.api.types import OptimizationResult, TrialResult
+from traigent.integrations.observability._offline_guard import offline_guarded
 
 from ...utils.logging import get_logger
 from ...utils.secure_path import safe_write_text
@@ -131,6 +132,7 @@ logger = get_logger(__name__)
 class TraigentMLflowTracker:
     """MLflow experiment tracker for Traigent optimizations."""
 
+    @offline_guarded("MLflow tracking")
     def __init__(
         self,
         tracking_uri: str | None = None,
@@ -177,6 +179,7 @@ class TraigentMLflowTracker:
 
         self.current_run = None
 
+    @offline_guarded("MLflow tracking")
     def start_optimization_run(
         self,
         function_name: str,
@@ -223,6 +226,7 @@ class TraigentMLflowTracker:
         logger.info(f"Started MLflow run: {self.current_run.info.run_id}")  # type: ignore[attr-defined]
         return cast(str, self.current_run.info.run_id)  # type: ignore[attr-defined]
 
+    @offline_guarded("MLflow tracking")
     def log_trial(
         self, trial: TrialResult, trial_number: int, step: int | None = None
     ) -> None:
@@ -315,6 +319,7 @@ class TraigentMLflowTracker:
                 ** 0.5,
             )
 
+    @offline_guarded("MLflow tracking")
     def log_optimization_result(
         self, result: OptimizationResult, dataset_path: str | None = None
     ) -> None:
@@ -371,6 +376,7 @@ class TraigentMLflowTracker:
             f"Logged optimization result to MLflow run: {self.current_run.info.run_id}"
         )
 
+    @offline_guarded("MLflow tracking")
     def end_optimization_run(self) -> None:
         """End current MLflow run."""
         if self.current_run:
@@ -382,6 +388,7 @@ class TraigentMLflowTracker:
             logger.info(f"Ended MLflow run: {self.current_run.info.run_id}")
             self.current_run = None
 
+    @offline_guarded("MLflow tracking")
     def compare_optimizations(
         self, run_ids: list[str], metrics: list[str] | None = None
     ) -> dict[str, Any]:
@@ -434,6 +441,7 @@ class TraigentMLflowTracker:
 
         return comparison_data
 
+    @offline_guarded("MLflow tracking")
     def get_best_run(
         self, experiment_name: str, metric_name: str, maximize: bool = True
     ) -> dict[str, Any] | None:

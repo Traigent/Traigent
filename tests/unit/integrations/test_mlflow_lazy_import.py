@@ -21,6 +21,12 @@ from __future__ import annotations
 import subprocess
 import sys
 
+import pytest
+
+# Mocked tracker transports: these tests exercise the tracker itself, which is
+# gated while offline (#3186), so run them in the connected lane.
+pytestmark = pytest.mark.backend_online
+
 
 def _run(code: str) -> list[str]:
     result = subprocess.run(
