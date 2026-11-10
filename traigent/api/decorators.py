@@ -3691,6 +3691,17 @@ def optimize(  # NOSONAR(S107)
         constraint_scope_var_names, configuration_space
     )
 
+    # A TVL spec's exploration budget/strategy applies unless the decorator
+    # supplied an explicit value (explicit arguments win).
+    tvl_algorithm = combined_runtime_overrides.pop("algorithm", None)
+    tvl_max_trials = combined_runtime_overrides.pop("max_trials", None)
+    if tvl_algorithm is not None and algorithm_value == _OPTIMIZE_DEFAULTS["algorithm"]:
+        algorithm_value = validate_algorithm_name(tvl_algorithm)
+    if tvl_max_trials is not None and not max_trials_explicit:
+        _validate_max_trials(tvl_max_trials)
+        max_trials_value = tvl_max_trials
+        max_trials_explicit = True
+
     if samples_include_pruned is None:
         samples_include_pruned = True
 
