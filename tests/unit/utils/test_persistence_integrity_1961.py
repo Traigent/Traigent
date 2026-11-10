@@ -361,3 +361,22 @@ def test_recovery_waits_for_publish_lock(mgr):
         assert not done.wait(0.3)  # blocked while a publish holds the lock
     t.join(2)
     assert done.is_set()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX flock")
+def test_recovery_waits_for_other_process_publish_lock(mgr, tmp_path):
+    """A swap in another process (holding the directory flock) blocks recovery."""
+    import fcntl
+    import threading
+
+    done = threading.Event()
+    fd = os.open(tmp_path, os.O_RDONLY)  # separate open file description
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        t = threading.Thread(target=lambda: (mgr._recover_displaced(), done.set()))
+        t.start()
+        assert not done.wait(0.3)
+    finally:
+        os.close(fd)
+    t.join(2)
+    assert done.is_set()

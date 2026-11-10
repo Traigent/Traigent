@@ -227,8 +227,13 @@ class TraigentMLflowTracker:
         logger.info(f"Started MLflow run: {self.current_run.info.run_id}")  # type: ignore[attr-defined]
         return cast(str, self.current_run.info.run_id)  # type: ignore[attr-defined]
 
-    def _ensure_run_active(self) -> None:
+    def _ensure_run_active(self) -> bool:
         """Re-activate ``current_run`` on the calling thread if needed.
+
+        Returns True when this call pushed the run onto the calling thread's
+        stack; the caller must then hand it back with ``_release_resumed_run``
+        unless it is about to end the run (otherwise a pooled worker keeps the
+        run active and its next ``start_run`` fails).
 
         MLflow's active-run stack is thread-local, while ``CallbackManager`` may
         dispatch successive hooks on different worker threads. Resuming by run
@@ -237,11 +242,21 @@ class TraigentMLflowTracker:
         run = self.current_run
         active_run = getattr(mlflow, "active_run", None)
         if run is None or not callable(active_run):
-            return
+            return False
         active = active_run()
         if active is not None and active.info.run_id == run.info.run_id:
-            return
+            return False
         mlflow.start_run(run_id=run.info.run_id)
+        return True
+
+    @staticmethod
+    def _release_resumed_run() -> None:
+        """Pop a run resumed on this thread without finishing it.
+
+        ``end_run(status="RUNNING")`` clears the thread-local entry and keeps the
+        run open; ``end_optimization_run`` still finishes it.
+        """
+        mlflow.end_run(status="RUNNING")
 
     def log_trial(
         self, trial: TrialResult, trial_number: int, step: int | None = None
@@ -256,8 +271,16 @@ class TraigentMLflowTracker:
         if not self.current_run:
             logger.warning("No active MLflow run. Call start_optimization_run first.")
             return
-        self._ensure_run_active()
+        resumed = self._ensure_run_active()
+        try:
+            self._log_trial_body(trial, trial_number, step)
+        finally:
+            if resumed:
+                self._release_resumed_run()
 
+    def _log_trial_body(
+        self, trial: TrialResult, trial_number: int, step: int | None
+    ) -> None:
         if step is None:
             step = trial_number
 
@@ -348,8 +371,16 @@ class TraigentMLflowTracker:
         if not self.current_run:
             logger.warning("No active MLflow run. Call start_optimization_run first.")
             return
-        self._ensure_run_active()
+        resumed = self._ensure_run_active()
+        try:
+            self._log_result_body(result, dataset_path)
+        finally:
+            if resumed:
+                self._release_resumed_run()
 
+    def _log_result_body(
+        self, result: OptimizationResult, dataset_path: str | None
+    ) -> None:
         # Log best configuration as parameters
         if result.best_config:
             for param_name, param_value in result.best_config.items():
@@ -389,9 +420,9 @@ class TraigentMLflowTracker:
         if dataset_path and Path(dataset_path).exists():
             mlflow.log_artifact(dataset_path, "datasets")
 
-        logger.info(
-            f"Logged optimization result to MLflow run: {self.current_run.info.run_id}"
-        )
+        run = self.current_run
+        if run is not None:
+            logger.info(f"Logged optimization result to MLflow run: {run.info.run_id}")
 
     def end_optimization_run(self) -> None:
         """End current MLflow run."""
