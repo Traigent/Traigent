@@ -23,6 +23,7 @@ from traigent.config.feature_flags import _coerce_bool as _coerce_config_bool_va
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.utils import extract_examples_attempted
 from traigent.utils.logging import get_logger
+from traigent.utils.metric_name_tokens import classify_metric_kind
 from traigent.utils.money import cost_cap_reached, format_usd
 
 if TYPE_CHECKING:
@@ -279,13 +280,17 @@ def _coerce_numeric_or_bool(value: Any) -> float | None:
 
 
 def _looks_like_quality_metric(name: str) -> bool:
-    lowered = name.lower()
-    return any(marker in lowered for marker in _QUALITY_NAME_MARKERS)
+    return (
+        classify_metric_kind(name, _QUALITY_NAME_MARKERS, _CONTINUOUS_NAME_MARKERS)
+        == "quality"
+    )
 
 
 def _looks_like_continuous_metric(name: str) -> bool:
-    lowered = name.lower()
-    return any(marker in lowered for marker in _CONTINUOUS_NAME_MARKERS)
+    return (
+        classify_metric_kind(name, _QUALITY_NAME_MARKERS, _CONTINUOUS_NAME_MARKERS)
+        == "continuous"
+    )
 
 
 def _infer_direction_from_name(name: str) -> str:
