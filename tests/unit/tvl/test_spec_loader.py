@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import warnings
 from pathlib import Path
 
 import pytest
 
+from traigent.optimizers.random import RandomSearchOptimizer
+from traigent.tvl.models import DomainSpec
 from traigent.tvl.spec_loader import (
     _parse_exploration_parallelism,
     _resolve_algorithm,
     compile_constraint_expression,
     load_tvl_spec,
 )
+from traigent.utils.discrete_domains import discrete_values_for_config_param
 from traigent.utils.exceptions import TVLValidationError
 
 FIXTURE_SPEC = Path("tests/fixtures/tvl/rag_campus_orientation.yml")
@@ -2851,13 +2855,58 @@ objectives:
     def test_int_range_with_resolution_is_the_grid(self, tmp_path: Path) -> None:
         artifact = self._load(tmp_path, "      range: [0, 100]\n      resolution: 10\n")
 
-        assert artifact.configuration_space["ti10"] == list(range(0, 101, 10))
+        entry = artifact.configuration_space["ti10"]
+        assert entry == {"type": "int", "low": 0, "high": 100, "step": 10}
+        assert discrete_values_for_config_param(entry) == tuple(range(0, 101, 10))
 
     def test_grid_never_exceeds_upper_bound(self, tmp_path: Path) -> None:
         """Span 25 with step 10 stops at the last multiple not above 25."""
         artifact = self._load(tmp_path, "      range: [0, 25]\n      resolution: 10\n")
 
-        assert artifact.configuration_space["ti10"] == [0, 10, 20]
+        entry = artifact.configuration_space["ti10"]
+        assert entry == {"type": "int", "low": 0, "high": 20, "step": 10}
+        assert discrete_values_for_config_param(entry) == (0, 10, 20)
+
+    def test_huge_int_range_with_resolution_is_not_materialised(
+        self, tmp_path: Path
+    ) -> None:
+        """A 5e11-point grid loads as a lazy dict in well under a second (#3241).
+
+        Materialising the list would allocate about 500 billion Python ints.
+        """
+        started = time.perf_counter()
+        artifact = self._load(
+            tmp_path, "      range: [0, 1000000000000]\n      resolution: 2\n"
+        )
+        elapsed = time.perf_counter() - started
+
+        entry = artifact.configuration_space["ti10"]
+        assert isinstance(entry, dict)
+        assert entry == {"type": "int", "low": 0, "high": 10**12, "step": 2}
+        assert elapsed < 1.0
+
+    def test_random_search_samples_huge_int_grid_without_materialising(
+        self, tmp_path: Path
+    ) -> None:
+        """Sampling the 5e11-point grid must not build it per draw (#3241)."""
+        artifact = self._load(
+            tmp_path, "      range: [0, 1000000000000]\n      resolution: 2\n"
+        )
+        optimizer = RandomSearchOptimizer(
+            artifact.configuration_space, ["accuracy"], max_trials=5, random_seed=1
+        )
+
+        for _ in range(5):
+            value = optimizer.suggest_next_trial([])["ti10"]
+            assert 0 <= value <= 10**12
+            assert value % 2 == 0
+
+    def test_int_range_resolution_with_inverted_bounds_is_rejected(self) -> None:
+        """The schema rejects inverted bounds on load; the domain itself must too."""
+        domain = DomainSpec(kind="range", range=(100, 0), resolution=10)
+
+        with pytest.raises(ValueError, match="must not exceed max"):
+            domain.to_configuration_space_entry()
 
     def test_int_range_without_resolution_stays_continuous(
         self, tmp_path: Path

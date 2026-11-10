@@ -71,6 +71,16 @@ def stepped_int_values(low: int, high: int, step: int) -> tuple[int, ...]:
     return values
 
 
+def stepped_int_at(low: int, high: int, step: int, index: int) -> int:
+    """Return point ``index`` of :func:`stepped_int_values` without building it.
+
+    ``index`` must lie in ``range(stepped_int_cardinality(low, high, step))``.
+    """
+
+    on_grid = ((high - low) // step) + 1
+    return low + (index * step) if index < on_grid else high
+
+
 def stepped_int_contains(low: int, high: int, step: int, value: int) -> bool:
     """True when ``value`` is on the integer grid, including the high endpoint.
 
