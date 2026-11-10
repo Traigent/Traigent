@@ -3,6 +3,7 @@
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability CONC-Quality-Observability FUNC-EVAL-METRICS REQ-EVAL-005 SYNC-OptimizationFlow
 
 import math
+import numbers
 import os
 import re
 import statistics
@@ -2200,11 +2201,11 @@ class AnthropicResponseHandler(ResponseHandler):
 
 def _token_count(value: Any) -> int:
     """Coerce a provider-reported token count; null or non-numeric is unmeasured (0)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return 0
-    if value != value or value in (float("inf"), float("-inf")):
+    if not math.isfinite(value):
         return 0
-    return int(value)
+    return int(float(value))
 
 
 def _token_metrics_from_counts(

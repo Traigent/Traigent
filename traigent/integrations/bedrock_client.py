@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import numbers
 import time
 from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
 from dataclasses import dataclass
@@ -85,9 +86,9 @@ def _resolve_model_id(method: str, model_id: str | None, model: str | None) -> s
 
 
 def _int_or_none(value: Any) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return None
-    return int(value)
+    return int(float(value))
 
 
 class _StreamState:

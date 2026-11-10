@@ -87,3 +87,17 @@ def test_dict_response_valid_counts_unchanged() -> None:
     tokens = _tokens({"input_tokens": 3, "output_tokens": 4})
 
     assert (tokens.input_tokens, tokens.output_tokens, tokens.total_tokens) == (3, 4, 7)
+
+
+def test_numpy_token_counts_are_counted() -> None:
+    """numpy integer counts are real counts, not unmeasured (base counted them)."""
+    np = pytest.importorskip("numpy")
+    from traigent.evaluators.metrics_tracker import _token_count
+    from traigent.integrations.bedrock_client import _int_or_none
+
+    assert _token_count(np.int64(7)) == 7
+    assert _token_count(np.float32(3.0)) == 3
+    assert _token_count(np.float64("nan")) == 0
+    assert _token_count(True) == 0
+    assert _int_or_none(np.int64(7)) == 7
+    assert _int_or_none(True) is None
