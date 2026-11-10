@@ -52,7 +52,13 @@ from traigent.hybrid.protocol import (
     ScalarValue,
 )
 from traigent.utils.logging import get_logger
-from traigent.wrapper.errors import BadRequestError, HybridAPIError
+from traigent.wrapper.errors import (
+    BadRequestError,
+    HybridAPIError,
+    IdempotencyConflictError,
+    InvalidInputsError,
+    UnknownTunableIdError,
+)
 
 logger = get_logger(__name__)
 
@@ -699,12 +705,22 @@ class TraigentService:
         ):
             raise ValueError("measures must be a list of strings")
 
-    def get_config_space(self) -> dict[str, Any]:
+    def get_config_space(self, tunable_id: str | None = None) -> dict[str, Any]:
         """Get TVAR definitions.
+
+        Args:
+            tunable_id: Optional tunable the caller asked for. A tunable this
+                service does not serve is rejected with ``UNKNOWN_TUNABLE_ID``
+                rather than answered with the default space.
 
         Returns:
             Dictionary with schema_version, tunable_id, and tunables.
         """
+        if tunable_id is not None and tunable_id != self.config.tunable_id:
+            raise UnknownTunableIdError(
+                "Unknown tunable_id. Use GET /traigent/v1/capabilities to list "
+                "valid tunable_ids."
+            )
         if self._cached_tvars is None and self._tvars_handler is not None:
             tvars_dict = self._tvars_handler()
             if not isinstance(tvars_dict, dict):
@@ -847,7 +863,7 @@ class TraigentService:
             return None
         cached_fingerprint, cached_response = cached
         if cached_fingerprint != fingerprint:
-            raise ValueError(
+            raise IdempotencyConflictError(
                 f"request_id reuse with different payload in {operation} request"
             )
         return copy.deepcopy(cached_response)
@@ -920,9 +936,12 @@ class TraigentService:
 
     @staticmethod
     def _parse_example_input(inp: Any) -> tuple[str, Any]:
-        """Extract (example_id, data) from a single execute input."""
+        """Extract (input id, data) from a single execute input.
+
+        The contract key is ``input_id``; ``example_id`` is the deprecated alias.
+        """
         if isinstance(inp, dict):
-            raw_id = inp.get("example_id")
+            raw_id = inp.get("input_id") or inp.get("example_id")
             example_id = str(raw_id) if raw_id else str(uuid.uuid4())
             return example_id, inp.get("data", inp)
         return str(uuid.uuid4()), inp
@@ -998,6 +1017,8 @@ class TraigentService:
         example_id: str, unpacked: dict[str, Any]
     ) -> dict[str, Any]:
         output_item: dict[str, Any] = {
+            "input_id": example_id,
+            # Deprecated alias, kept for the SDK's own legacy HTTP client.
             "example_id": example_id,
             "output": unpacked["output"],
         }
@@ -1031,9 +1052,20 @@ class TraigentService:
             "failed_examples": failed_example_ids,
         }
 
-    def _validate_execute_batch(self, examples: Any, tunable_id: Any) -> None:
+    @staticmethod
+    def _select_execute_inputs(request: dict[str, Any]) -> tuple[str, Any]:
+        """Pick the input array: ``inputs`` wins over the deprecated ``examples``."""
+        if request.get("inputs") is not None:
+            return "inputs", request["inputs"]
+        if request.get("examples") is not None:
+            return "examples", request["examples"]
+        return "inputs (or the deprecated alias examples)", None
+
+    def _validate_execute_batch(
+        self, examples: Any, tunable_id: Any, field_name: str = "examples"
+    ) -> None:
         if not isinstance(examples, list) or len(examples) == 0:
-            raise ValueError("examples must be a non-empty list")
+            raise InvalidInputsError(f"{field_name} must be a non-empty list")
 
         if tunable_id != self.config.tunable_id:
             raise ValueError(
@@ -1097,10 +1129,10 @@ class TraigentService:
 
         tunable_id = request.get("tunable_id", self.config.tunable_id)
         config = request.get("config", {})
-        examples = request.get("examples")
+        input_field, examples = self._select_execute_inputs(request)
         session_id = request.get("session_id")
 
-        TraigentService._validate_execute_batch(self, examples, tunable_id)
+        TraigentService._validate_execute_batch(self, examples, tunable_id, input_field)
 
         if session_id:
             self._touch_or_create_session(session_id)
@@ -1143,7 +1175,9 @@ class TraigentService:
                 # A handler that raised may have spent before it did: a
                 # failure alone does not establish zero cost.
                 cost_complete = False
-                outputs.append({"example_id": example_id, "error": str(e)})
+                outputs.append(
+                    {"input_id": example_id, "example_id": example_id, "error": str(e)}
+                )
 
         elapsed_ms = (time.time() - start_time) * 1000
         status = self._determine_batch_status(len(outputs), len(failed_example_ids))
@@ -1180,7 +1214,7 @@ class TraigentService:
     @staticmethod
     def _resolve_evaluation_fields(evaluation: dict[str, Any]) -> tuple[str, Any, Any]:
         """Extract (example_id, output, target) from an evaluation item."""
-        raw_id = evaluation.get("example_id")
+        raw_id = evaluation.get("input_id") or evaluation.get("example_id")
         example_id = str(raw_id) if raw_id else str(uuid.uuid4())
 
         output = evaluation.get("output")
@@ -1312,7 +1346,14 @@ class TraigentService:
 
                 metrics = result if isinstance(result, dict) else {"score": result}
                 all_metrics.append(metrics)
-                results.append({"example_id": example_id, "metrics": metrics})
+                results.append(
+                    {
+                        "input_id": example_id,
+                        # Deprecated alias, kept for the legacy HTTP client.
+                        "example_id": example_id,
+                        "metrics": metrics,
+                    }
+                )
 
             except HybridAPIError:
                 raise
@@ -1322,7 +1363,12 @@ class TraigentService:
                 logger.exception(f"Evaluate failed for {example_id}: {e}")
                 failed_example_ids.append(example_id)
                 results.append(
-                    {"example_id": example_id, "metrics": {}, "error": str(e)}
+                    {
+                        "input_id": example_id,
+                        "example_id": example_id,
+                        "metrics": {},
+                        "error": str(e),
+                    }
                 )
 
         status = self._determine_batch_status(len(results), len(failed_example_ids))
