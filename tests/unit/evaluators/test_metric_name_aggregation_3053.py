@@ -54,7 +54,8 @@ def _local(name: str) -> tuple[LocalEvaluator, list[object]]:
         ("p95_latency", 55.45),
         ("p99_latency", 1.0 + 0.91 * 99.0),
         ("max_latency", 100.0),
-        ("step95_score", MEAN),
+        ("top95_recall", MEAN),
+        ("p950_score", MEAN),
     ],
 )
 def test_local_custom_metric_aggregation(name: str, expected: float) -> None:
@@ -65,7 +66,12 @@ def test_local_custom_metric_aggregation(name: str, expected: float) -> None:
 
 @pytest.mark.parametrize(
     ("name", "expected"),
-    [("max_latency", 100.0), ("step95_score", MEAN), ("latency_p95", 55.45)],
+    [
+        ("max_latency", 100.0),
+        ("top95_recall", MEAN),
+        ("p950_score", MEAN),
+        ("latency_p95", 55.45),
+    ],
 )
 def test_simple_scoring_aggregation(name: str, expected: float) -> None:
     evaluator = SimpleScoringEvaluator(
