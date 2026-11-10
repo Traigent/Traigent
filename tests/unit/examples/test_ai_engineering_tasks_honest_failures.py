@@ -133,3 +133,48 @@ runpy.run_path(sys.argv[2], run_name="__main__")
     assert "simulated" not in out.lower()
     assert "Best Configuration" not in out
     assert "Optimization completed" not in out
+
+
+def _import_with_root(main: Path, root: Path) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env.update(
+        {
+            "TRAIGENT_MOCK_LLM": "true",
+            "TRAIGENT_OFFLINE_MODE": "true",
+            "PYTHONPATH": str(REPO_ROOT),
+            "TRAIGENT_DATASET_ROOT": str(root),
+        }
+    )
+    return subprocess.run(
+        [sys.executable, "-c", _PROBE, str(main)],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def test_two_examples_under_one_root_keep_separate_files(tmp_path: Path) -> None:
+    first = EXAMPLES_DIR / "p0_few_shot_selection" / "main.py"
+    second = EXAMPLES_DIR / "p1_token_budget" / "main.py"
+    assert _import_with_root(first, tmp_path).returncode == 0
+    assert _import_with_root(second, tmp_path).returncode == 0
+    names = sorted(p.name for p in tmp_path.glob("*.jsonl"))
+    assert names == [
+        "_demo_p0_few_shot_selection_eval_dataset.jsonl",
+        "_demo_p1_token_budget_eval_dataset.jsonl",
+    ]
+    # A rerun regenerates the example's own file without complaint.
+    assert _import_with_root(first, tmp_path).returncode == 0
+
+
+def test_foreign_existing_file_is_not_overwritten(tmp_path: Path) -> None:
+    main = EXAMPLES_DIR / "p0_few_shot_selection" / "main.py"
+    target = tmp_path / "_demo_p0_few_shot_selection_eval_dataset.jsonl"
+    target.write_text("someone else's data\n", encoding="utf-8")
+    proc = _import_with_root(main, tmp_path)
+    assert proc.returncode != 0
+    assert "Refusing to overwrite" in proc.stderr
+    assert target.read_text(encoding="utf-8") == "someone else's data\n"

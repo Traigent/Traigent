@@ -182,8 +182,16 @@ def _write_eval_dataset(samples: list[dict]) -> str:
     root = Path(configured) if configured else Path(__file__).resolve().parent
     root.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(root))
-    path = root / "_demo_eval_dataset.jsonl"
-    path.write_text("".join(json.dumps(s) + "\n" for s in samples), encoding="utf-8")
+    path = root / f"_demo_{Path(__file__).resolve().parent.name}_eval_dataset.jsonl"
+    text = "".join(json.dumps(s) + "\n" for s in samples)
+    # Never clobber a file this example did not create: a rerun regenerates
+    # identical content, anything else at this path belongs to someone else.
+    if path.exists() and path.read_text(encoding="utf-8") != text:
+        raise SystemExit(
+            f"Refusing to overwrite {path}: it exists and was not written by this "
+            "example. Delete it or point TRAIGENT_DATASET_ROOT at another directory."
+        )
+    path.write_text(text, encoding="utf-8")
     return str(path)
 
 
