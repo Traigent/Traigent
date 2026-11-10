@@ -89,7 +89,9 @@ Use `offline=True` when your policy requires no Traigent backend egress at all:
 No-egress runs keep Traigent optimization metadata local while still allowing your
 own function to call LLM providers or other services.
 
-`offline=True` also disables OpenTelemetry export, the langfuse client and the
+`offline=True` also disables OpenTelemetry export, the langfuse client, the
+MLflow and W&B trackers (they raise `OfflineModeError` instead of sending run
+names, tags or tuned values to the tracking server) and the
 standalone API clients while the run is in flight, even if
 `TRAIGENT_TRACE_ENABLED` and `OTEL_EXPORTER_OTLP_ENDPOINT` are set. Outside an
 `offline=True` run, the observability lanes (`@observe`,

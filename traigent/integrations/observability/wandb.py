@@ -40,6 +40,7 @@ except ImportError:
 from ...api.types import OptimizationResult, TrialResult
 from ...core.objective_directions import resolve_objective_orientation
 from ...utils.logging import get_logger
+from ._offline_guard import offline_guarded
 
 logger = get_logger(__name__)
 
@@ -47,6 +48,7 @@ logger = get_logger(__name__)
 class TraigentWandBTracker:
     """Weights & Biases experiment tracker for Traigent optimizations."""
 
+    @offline_guarded("W&B tracking")
     def __init__(
         self,
         project: str = "traigent-optimization",
@@ -76,6 +78,7 @@ class TraigentWandBTracker:
         self.auto_log = auto_log
         self.current_run = None
 
+    @offline_guarded("W&B tracking")
     def start_optimization_run(
         self,
         function_name: str,
@@ -150,6 +153,7 @@ class TraigentWandBTracker:
         logger.info(f"Started W&B run: {run.id}")
         return cast(str, run.id)
 
+    @offline_guarded("W&B tracking")
     def log_trial(
         self, trial: TrialResult, trial_number: int, step: int | None = None
     ) -> None:
@@ -324,6 +328,7 @@ class TraigentWandBTracker:
             summary_data[f"statistics/{metric_name}_min"] = min(metric_values)
             summary_data[f"statistics/{metric_name}_max"] = max(metric_values)
 
+    @offline_guarded("W&B tracking")
     def log_optimization_result(
         self, result: OptimizationResult, dataset_path: str | None = None
     ) -> None:
@@ -398,6 +403,7 @@ class TraigentWandBTracker:
 
         logger.info(f"Logged optimization result to W&B run: {self.current_run.id}")
 
+    @offline_guarded("W&B tracking")
     def end_optimization_run(self) -> None:
         """End current W&B run."""
         if self.current_run:
@@ -405,6 +411,7 @@ class TraigentWandBTracker:
             logger.info(f"Ended W&B run: {self.current_run.id}")
             self.current_run = None
 
+    @offline_guarded("W&B tracking")
     def log_hyperparameter_sweep(
         self, sweep_config: dict[str, Any], function_name: str
     ) -> str:

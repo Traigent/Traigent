@@ -10,6 +10,10 @@ import pytest
 import traigent.integrations.observability.mlflow as mod
 from traigent.integrations.observability.mlflow import TraigentMLflowTracker
 
+# Mocked tracker transports: these tests exercise the tracker itself, which is
+# gated while offline (#3186), so run them in the connected lane.
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.fixture
 def ml(monkeypatch):

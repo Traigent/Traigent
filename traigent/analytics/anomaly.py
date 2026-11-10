@@ -20,7 +20,11 @@ from ..core.constants import (
     MAX_REGRESSION_HISTORY_SIZE,
 )
 from ..utils.logging import get_logger
+from ..utils.metric_name_tokens import classify_metric_kind, has_marker_token
 from ..utils.relative_change import signed_relative_delta
+
+_REGRESSION_QUALITY_MARKERS = ("accuracy", "score", "precision", "recall", "f1")
+_REGRESSION_UNIT_MARKERS = ("error", "loss", "cost", "duration", "time")
 
 logger = get_logger(__name__)
 
@@ -259,7 +263,10 @@ class StatisticalDetector:
         """Get recommendations for statistical anomalies."""
         recommendations = []
 
-        if "cost" in metric_name.lower():
+        kind = classify_metric_kind(
+            metric_name, _REGRESSION_QUALITY_MARKERS, _REGRESSION_UNIT_MARKERS
+        )
+        if kind == "continuous" and has_marker_token(metric_name, ("cost",)):
             if z_score > 3.0:
                 recommendations.append(
                     "Investigate sudden cost increase - check for resource usage spikes"
@@ -270,11 +277,13 @@ class StatisticalDetector:
             else:
                 recommendations.append("Monitor cost trends closely")
 
-        elif "duration" in metric_name.lower() or "time" in metric_name.lower():
+        elif kind == "continuous" and has_marker_token(
+            metric_name, ("duration", "time")
+        ):
             recommendations.append("Check system performance and resource availability")
             recommendations.append("Review evaluation function complexity")
 
-        elif "score" in metric_name.lower() or "accuracy" in metric_name.lower():
+        elif kind == "quality" and has_marker_token(metric_name, ("score", "accuracy")):
             recommendations.append("Investigate data quality and model configuration")
             recommendations.append("Check for changes in evaluation criteria")
 
@@ -728,17 +737,14 @@ class RegressionDetector:
         """Determine if change represents significant regression."""
 
         # Different thresholds for different metric types
-        if any(
-            keyword in metric_name.lower()
-            for keyword in ["accuracy", "score", "precision", "recall", "f1"]
-        ):
+        kind = classify_metric_kind(
+            metric_name, _REGRESSION_QUALITY_MARKERS, _REGRESSION_UNIT_MARKERS
+        )
+        if kind == "quality":
             # Performance metrics - degradation is negative change
             return change_ratio < -self.sensitivity
 
-        elif any(
-            keyword in metric_name.lower()
-            for keyword in ["error", "loss", "cost", "duration", "time"]
-        ):
+        elif kind == "continuous":
             # Cost/error metrics - degradation is positive change
             return change_ratio > self.sensitivity
 
@@ -767,7 +773,10 @@ class RegressionDetector:
 
         recommendations = []
 
-        if "accuracy" in metric_name.lower() or "score" in metric_name.lower():
+        kind = classify_metric_kind(
+            metric_name, _REGRESSION_QUALITY_MARKERS, _REGRESSION_UNIT_MARKERS
+        )
+        if kind == "quality" and has_marker_token(metric_name, ("accuracy", "score")):
             recommendations.append(
                 "Accuracy regression detected - check data quality and model configuration"
             )
@@ -775,7 +784,7 @@ class RegressionDetector:
                 "Review evaluation dataset for changes or corruption"
             )
 
-        elif "cost" in metric_name.lower():
+        elif kind == "continuous" and has_marker_token(metric_name, ("cost",)):
             recommendations.append(
                 "Cost increase detected - review resource usage and optimization efficiency"
             )
@@ -783,7 +792,9 @@ class RegressionDetector:
                 "Check for algorithm configuration changes that increase computational cost"
             )
 
-        elif "duration" in metric_name.lower() or "time" in metric_name.lower():
+        elif kind == "continuous" and has_marker_token(
+            metric_name, ("duration", "time")
+        ):
             recommendations.append(
                 "Performance slowdown detected - check system resources and algorithm efficiency"
             )

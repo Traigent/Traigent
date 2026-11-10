@@ -10,6 +10,10 @@ import pytest
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.integrations.observability import wandb as wandb_module
 
+# Mocked tracker transports: these tests exercise the tracker itself, which is
+# gated while offline (#3186), so run them in the connected lane.
+pytestmark = pytest.mark.backend_online
+
 
 class DummyRun:
     def __init__(self, run_id: str = "run-123") -> None:
