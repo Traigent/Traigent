@@ -610,9 +610,7 @@ def test_retry_flags_off_stop_after_first_attempt(flag, error):
     assert result.attempts == 1
 
 
-@pytest.mark.parametrize(
-    "error", [TimeoutError("t"), ConnectionResetError("c")]
-)
+@pytest.mark.parametrize("error", [TimeoutError("t"), ConnectionResetError("c")])
 def test_retry_flags_default_still_retry(error):
     result = RetryHandler(_no_sleep_config()).execute_with_result(
         Mock(side_effect=error)
@@ -621,7 +619,7 @@ def test_retry_flags_default_still_retry(error):
 
 
 def test_retry_timeout_flag_off_keeps_connection_retry():
-    result = RetryHandler(
-        _no_sleep_config(retry_on_timeout=False)
-    ).execute_with_result(Mock(side_effect=ConnectionResetError("c")))
+    result = RetryHandler(_no_sleep_config(retry_on_timeout=False)).execute_with_result(
+        Mock(side_effect=ConnectionResetError("c"))
+    )
     assert result.attempts == 3
