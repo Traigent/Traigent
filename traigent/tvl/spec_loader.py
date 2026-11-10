@@ -34,6 +34,7 @@ from .models import (
     TVarDecl,
     TVarType,
     TVLHeader,
+    _real_number,
     normalize_tvar_type,
     parse_domain_spec,
 )
@@ -2078,7 +2079,10 @@ def _parse_banded_objective(
             f"Banded objective '{name}' test must be 'TOST', got '{test_type}'"
         )
 
-    alpha = float(band_spec.get("alpha", 0.05))
+    try:
+        alpha = _real_number(band_spec.get("alpha", 0.05), "alpha")
+    except ValueError as exc:
+        raise TVLValidationError(f"Banded objective '{name}' {exc}") from exc
     if not 0 < alpha < 1:
         raise TVLValidationError(
             f"Banded objective '{name}' alpha must be in (0, 1), got {alpha}"

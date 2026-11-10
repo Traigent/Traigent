@@ -2923,6 +2923,52 @@ objectives:
             self._load(tmp_path, "      range: [0, 100]\n      resolution: 2.5\n")
 
 
+class TestBandAlphaMustBeNumber:
+    """A banded objective's alpha must be a real number, not a quoted string (#3243).
+
+    Same rule as ``promotion_policy.alpha``: ``"0.05"`` and booleans are spec
+    errors, not values to coerce.
+    """
+
+    _SPEC = """
+tvars:
+  - name: ti10
+    type: int
+    domain:
+      range: [0, 100]
+objectives:
+  - name: response_length
+    band:
+      target: [100, 200]
+      test: TOST
+      alpha: {alpha}
+"""
+
+    def _load(self, tmp_path: Path, alpha_literal: str):
+        spec_file = tmp_path / "band-alpha.tvl.yml"
+        spec_file.write_text(self._SPEC.format(alpha=alpha_literal))
+        return load_tvl_spec(spec_path=spec_file)
+
+    def test_quoted_band_alpha_is_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(TVLValidationError, match="alpha must be a real number"):
+            self._load(tmp_path, '"0.05"')
+
+    @pytest.mark.parametrize("alpha_literal", ["true", "false"])
+    def test_boolean_band_alpha_is_rejected(
+        self, tmp_path: Path, alpha_literal: str
+    ) -> None:
+        """Booleans fail the type rule, not the (0, 1) range check (true == 1.0)."""
+        with pytest.raises(TVLValidationError, match="alpha must be a real number"):
+            self._load(tmp_path, alpha_literal)
+
+    def test_numeric_band_alpha_still_loads(self, tmp_path: Path) -> None:
+        """Control: the unquoted number is accepted with the same value."""
+        artifact = self._load(tmp_path, "0.05")
+
+        obj = artifact.objective_schema.objectives[0]
+        assert obj.band_alpha == 0.05
+
+
 class TestPromotionAlphaMustBeNumber:
     """promotion_policy.alpha must be a real number, not a quoted string (#3243).
 
