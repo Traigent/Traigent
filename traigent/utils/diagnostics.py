@@ -73,7 +73,14 @@ _REDACTED = "***redacted***"
 #:     scheme://token@host          ->  scheme://***@host
 #: The userinfo run is greedy up to the LAST "@" before the host, so a password
 #: that itself contains "@" is masked whole rather than leaving its tail behind.
+#: The lookbehind lets a match start only at the start of a run of scheme-legal
+#: characters, and the optional ``lead`` group takes digits and ``+.-`` that come
+#: before the scheme's first letter. Without the boundary the engine retried the
+#: scheme from every position of a long run, which is quadratic. ``lead`` is
+#: emitted unchanged, so output is the same as before for every input.
 _URL_CREDENTIALS_RE = re.compile(
+    r"(?<![A-Za-z0-9+.\-])"
+    r"(?P<lead>[0-9+.\-]*)"
     r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)"
     r"(?:(?P<user>[^/\s:@]+):)?"
     r"(?P<secret>[^/\s]+)"
@@ -163,10 +170,11 @@ def _mask_userinfo(match: re.Match[str]) -> str:
     user = match.group("user")
     # Keep the username when there is one -- it is diagnostically useful and is
     # not the credential. With no username the whole userinfo IS the token.
+    lead = match.group("lead")
     return (
-        f"{match.group('scheme')}{user}:{_REDACTED}@"
+        f"{lead}{match.group('scheme')}{user}:{_REDACTED}@"
         if user
-        else f"{match.group('scheme')}{_REDACTED}@"
+        else f"{lead}{match.group('scheme')}{_REDACTED}@"
     )
 
 
