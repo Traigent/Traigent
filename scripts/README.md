@@ -146,10 +146,6 @@ Code quality and linting automation:
 - **`install_linters.sh`** - Installs all required linters and formatters
 - **`run_linters.sh`** - Runs comprehensive linting checks across the project
 
-### 💻 Workspace (`workspace/`)
-IDE and workspace setup:
-- **`open_workspace.sh`** - VSCode workspace setup with proper configuration
-
 ## Core Scripts Overview
 
 ### Development Setup
@@ -166,7 +162,7 @@ Sets up the test environment for Traigent development. Run this after cloning th
 
 **Usage:**
 ```bash
-python scripts/setup_test_environment.py
+python scripts/setup/setup_test_environment.py
 ```
 
 ### Testing
@@ -195,9 +191,9 @@ Launches the interactive Traigent Playground UI.
 
 **Usage:**
 ```bash
-python scripts/launch_control_center.py
+python scripts/examples/launch_control_center.py
 # Or use the shell script:
-./scripts/launch_control_center.sh
+./scripts/examples/launch_control_center.sh
 ```
 
 ### Migration Scripts - **ARCHIVED**
@@ -209,16 +205,6 @@ Migration scripts have been moved to `scripts/archive/` as they are completed on
 - `migrate_analytics.py` - ✅ Completed - Analytics code updated
 
 **Use the new maintenance tools instead** for ongoing code quality and cleanup needs.
-
-### Validation
-
-#### `validate_implementation.py`
-Validates that implementation files have correct syntax and structure.
-
-**Usage:**
-```bash
-python scripts/validate_implementation.py
-```
 
 ### Utilities
 
@@ -246,9 +232,6 @@ python scripts/setup/setup_test_environment.py
 
 # Install all linters and formatters
 ./scripts/linting/install_linters.sh
-
-# Open properly configured workspace
-./scripts/workspace/open_workspace.sh
 ```
 
 ### Code Quality Management - **NEW TOOLS**
@@ -381,7 +364,7 @@ All new maintenance tools include:
 
 1. **Always activate virtual environment**: `source venv/bin/activate`
 2. **Install development dependencies**: `pip install -e ".[dev]"`
-3. **Run setup after fresh clone**: `python scripts/setup_test_environment.py`
+3. **Run setup after fresh clone**: `python scripts/setup/setup_test_environment.py`
 4. **🛠️ Use new maintenance tools**: Always use tools in `scripts/maintenance/` for ongoing work
 5. **Always run with --dry-run first**: Preview changes before applying them
 6. **Keep backups**: Maintenance tools create automatic backups

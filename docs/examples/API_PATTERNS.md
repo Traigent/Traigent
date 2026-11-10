@@ -228,8 +228,12 @@ def sql_evaluator(func, config, example):
     predicted_sql = func(example.input_data)
     correct = predicted_sql.strip().lower() == gold_sql.strip().lower()
     return ExampleResult(
+        example_id=str(example.metadata.get("id", "example")),
+        input_data=example.input_data,
+        expected_output=example.expected_output,
         actual_output=predicted_sql,
-        score=1.0 if correct else 0.0,
+        metrics={"accuracy": 1.0 if correct else 0.0},
+        execution_time=0.0,  # replace with the measured call latency if you track it
         success=correct,
     )
 

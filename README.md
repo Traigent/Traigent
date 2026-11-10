@@ -135,7 +135,7 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 | **Get started quickly** | [Quick Start Guide](https://github.com/Traigent/Traigent/blob/main/docs/getting-started/GETTING_STARTED.md) | 5 min |
 | **Understand the architecture** | [Architecture Overview](https://github.com/Traigent/Traigent/blob/main/docs/architecture/ARCHITECTURE.md) | 5 min |
 | **Track runs in the portal** | [Portal tracking](#portal-tracking) | 5 min |
-| **Try examples locally, then make runs portal-visible** | [Mock walkthrough](https://github.com/Traigent/Traigent/tree/main/walkthrough/mock) (8 steps) → [Portal](https://portal.traigent.ai) | 15 min |
+| **Try examples locally, then make runs portal-visible** | [Mock walkthrough](https://github.com/Traigent/Traigent/tree/main/walkthrough/mock) (9 steps) → [Portal](https://portal.traigent.ai) | 15 min |
 | **Read the full API reference** | [Decorator Reference →](https://github.com/Traigent/Traigent/blob/main/docs/api-reference/decorator-reference.md) | — |
 
 <details>
@@ -183,12 +183,12 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 
 ---
 
-## 🚀 Walkthrough — 8 runnable examples
+## 🚀 Walkthrough — 9 runnable examples
 
 The walkthrough examples use local mock mode through the quickstart/testing helpers with cost approval pre-set for dry runs — no provider API keys needed when calls go through LiteLLM or LangChain.
 
 <details>
-<summary>Show all 8 walkthrough steps</summary>
+<summary>Show all 9 walkthrough steps</summary>
 
 | # | Run | What you'll learn |
 |---|-----|-------------------|
@@ -200,6 +200,7 @@ The walkthrough examples use local mock mode through the quickstart/testing help
 | 6 | `python walkthrough/mock/06_custom_evaluator.py` | Define your own success metrics |
 | 7 | `python walkthrough/mock/07_multi_provider.py` | Compare OpenAI, Anthropic, Google in one run |
 | 8 | `python walkthrough/mock/08_privacy_modes.py` | No-egress local execution |
+| 9 | `python walkthrough/mock/09_rag_multi_objective.py` | RAG multi-objective: accuracy, cost, and latency |
 
 </details>
 
@@ -263,7 +264,7 @@ def multi_provider_agent(question: str) -> str:
 | **Multi-algorithm** | Random and Grid locally; managed search algorithms via the Traigent cloud |
 | **Multi-objective** | Optimize accuracy, latency, cost, and custom metrics simultaneously |
 | **Framework support** | LangChain, OpenAI SDK, Anthropic, LiteLLM, and any LLM provider |
-| **Cost tracking** | Integrated tokencost library with 500+ model pricing |
+| **Cost tracking** | Prices from LiteLLM's model-cost table, with custom pricing for private models |
 | **Parallel execution** | Concurrent trials and example-level parallelism |
 | **Error resilience** | Interactive pause on rate limits and budget caps — resume or stop gracefully |
 | **Live progress** | Auto-enabled progress bar in interactive terminals (`progress_bar=False` to disable) |

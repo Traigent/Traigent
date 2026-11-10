@@ -169,13 +169,18 @@ from traigent.api.types import ExampleResult
 
 def advanced_evaluator(func, config, example) -> ExampleResult:
     """Full control over evaluation with access to function, config, and example."""
-    output = func(**example.input)
+    output = func(**example.input_data)
     exact = 1.0 if output == example.expected_output else 0.0
     length_penalty = max(0.0, 1.0 - abs(len(output) - len(example.expected_output)) / 100)
 
     return ExampleResult(
-        accuracy=exact,
-        metrics={"exact_match": exact, "length_score": length_penalty},
+        example_id=str(example.metadata.get("id", "example")),
+        input_data=example.input_data,
+        expected_output=example.expected_output,
+        actual_output=output,
+        metrics={"accuracy": exact, "length_score": length_penalty},
+        execution_time=0.0,  # replace with the measured call latency if you track it
+        success=exact == 1.0,
     )
 
 @traigent.optimize(
@@ -186,7 +191,7 @@ def strict_agent(query: str) -> str:
     ...
 ```
 
-Keys in `ExampleResult.metrics` that are not objectives (here `exact_match` and `length_score`) are averaged over the successful rows and appear in `trial.metrics`, the same as keys returned through the `(output, metrics)` tuple or a non-objective `metric_functions` entry. They are diagnostics only: they do not change the score or the ranking. Names the SDK computes itself (such as `cost`, `success_rate`, or your objectives) are never overwritten, and the total is capped at 50 keys by dropping user keys first.
+Keys in `ExampleResult.metrics` that are not objectives (here `length_score`; `accuracy` is the default objective) are averaged over the successful rows and appear in `trial.metrics`, the same as keys returned through the `(output, metrics)` tuple or a non-objective `metric_functions` entry. They are diagnostics only: they do not change the score or the ranking. Names the SDK computes itself (such as `cost`, `success_rate`, or your objectives) are never overwritten, and the total is capped at 50 keys by dropping user keys first.
 
 #### Failure semantics: `custom_evaluator` vs `metric_functions`
 
