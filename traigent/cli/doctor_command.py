@@ -36,7 +36,7 @@ from traigent.utils.diagnostics import (
     diagnose,
     scrub,
 )
-from traigent.utils.env_config import is_strict_cost_accounting
+from traigent.utils.env_config import is_backend_offline, is_strict_cost_accounting
 
 #: LiteLLM lists some models both bare ("gpt-4o") and provider-qualified
 #: ("openai/gpt-4o"). Only these exact forms count as a price hit -- never a
@@ -546,6 +546,9 @@ def doctor(
     (and on WARN too when --strict is given).
     """
     report = DoctorReport()
+    # The offline environment settings count too: TRAIGENT_OFFLINE_MODE means
+    # "skip all communication", so doctor must not dial out under it (#3185).
+    offline = offline or is_backend_offline()
 
     # --offline is threaded into diagnose() rather than discarded. It used to
     # carry a `noqa: ARG001` and do nothing, so the command opened sockets to

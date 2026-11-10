@@ -625,8 +625,13 @@ class TestTraigentDiagnostics:
         mock_pkg: MagicMock,
         mock_venv: MagicMock,
         mock_py: MagicMock,
+        monkeypatch,
     ) -> None:
         """Test run_diagnostics calls all check methods."""
+        # The unit lane sets TRAIGENT_OFFLINE_MODE=true; this test asserts the
+        # online network check runs, so opt into the online lane explicitly.
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
         report = TraigentDiagnostics.run_diagnostics()
 
         assert isinstance(report, DiagnosticReport)
