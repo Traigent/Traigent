@@ -264,7 +264,7 @@ def multi_provider_agent(question: str) -> str:
 | **Multi-algorithm** | Random and Grid locally; managed search algorithms via the Traigent cloud |
 | **Multi-objective** | Optimize accuracy, latency, cost, and custom metrics simultaneously |
 | **Framework support** | LangChain, OpenAI SDK, Anthropic, LiteLLM, and any LLM provider |
-| **Cost tracking** | Integrated tokencost library with 500+ model pricing |
+| **Cost tracking** | Prices from LiteLLM's model-cost table, with custom pricing for private models |
 | **Parallel execution** | Concurrent trials and example-level parallelism |
 | **Error resilience** | Interactive pause on rate limits and budget caps — resume or stop gracefully |
 | **Live progress** | Auto-enabled progress bar in interactive terminals (`progress_bar=False` to disable) |
