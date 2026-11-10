@@ -170,6 +170,10 @@ from traigent.utils.validation import (
 
 _NAME_WITH_DETAIL_FMT = "%s (%s)"
 
+
+#: The installed traigent package directory, for warnings that should name the
+#: caller's frame rather than an SDK frame.
+_SDK_PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
 logger = get_logger(__name__)
 
 # Guards every wrapper's exclusive slot (check-and-set of ``_exclusive_slot``
@@ -1299,9 +1303,9 @@ class OptimizedFunction[**P, R]:
                 "framework_targets=['module.ClassName', ...] "
                 "(e.g. ['openai.OpenAI']).",
                 TraigentWarning,
-                # _store_core_parameters -> __init__ -> decorator -> user's
-                # @traigent.optimize line, so the warning points at the user.
-                stacklevel=4,
+                # Attribute it to the first frame outside the SDK: the user's
+                # @traigent.optimize line or their OptimizedFunction(...) call.
+                skip_file_prefixes=(_SDK_PACKAGE_DIR,),
             )
         if "pydantic_ai.Agent" in self.framework_targets:
             warnings.warn(
@@ -1312,8 +1316,7 @@ class OptimizedFunction[**P, R]:
                 "with traigent.get_trial_config() and pass model_settings=... "
                 "to agent.run() yourself.",
                 TraigentWarning,
-                # Same frame chain as the warning above: point at the user.
-                stacklevel=4,
+                skip_file_prefixes=(_SDK_PACKAGE_DIR,),
             )
 
         # Execution mode configuration

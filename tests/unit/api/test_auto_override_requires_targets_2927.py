@@ -109,3 +109,40 @@ def test_bare_framework_target_is_a_configuration_error_on_every_route(
 
     with pytest.raises(ConfigurationError, match="dotted 'module.ClassName'"):
         build(f)
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"auto_override_frameworks": True}, "framework_targets"),
+        (
+            {
+                "auto_override_frameworks": True,
+                "framework_targets": ["pydantic_ai.Agent"],
+            },
+            "pydantic_ai",
+        ),
+    ],
+    ids=["no-targets", "pydantic-ai"],
+)
+def test_framework_warnings_point_at_a_direct_constructor_call(kwargs, match) -> None:
+    """Built directly, OptimizedFunction warns at the caller's line, not sys:1."""
+    import warnings
+    from pathlib import Path
+
+    from traigent.core.optimized_function import OptimizedFunction
+
+    def f(q):
+        return q
+
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        OptimizedFunction(f, configuration_space=_CFG, **kwargs)
+
+    hits = [
+        w
+        for w in record
+        if match in str(w.message) and issubclass(w.category, TraigentWarning)
+    ]
+    assert hits
+    assert {Path(w.filename).resolve() for w in hits} == {Path(__file__).resolve()}
