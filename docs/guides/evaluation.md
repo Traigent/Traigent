@@ -165,6 +165,9 @@ def my_agent(query: str) -> str:
 For full control over evaluation logic, use `custom_evaluator` which receives the full context:
 
 ```python
+import hashlib
+import json
+
 from traigent.api.types import ExampleResult
 
 def advanced_evaluator(func, config, example) -> ExampleResult:
@@ -172,9 +175,13 @@ def advanced_evaluator(func, config, example) -> ExampleResult:
     output = func(**example.input_data)
     exact = 1.0 if output == example.expected_output else 0.0
     length_penalty = max(0.0, 1.0 - abs(len(output) - len(example.expected_output)) / 100)
+    # One id per example: the dataset's id when it has one, else a stable hash of the input.
+    example_id = str(example.metadata.get("id") or hashlib.sha256(
+        json.dumps(example.input_data, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16])
 
     return ExampleResult(
-        example_id=str(example.metadata.get("id", "example")),
+        example_id=example_id,
         input_data=example.input_data,
         expected_output=example.expected_output,
         actual_output=output,
