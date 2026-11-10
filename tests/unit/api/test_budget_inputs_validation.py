@@ -77,3 +77,11 @@ async def test_call_time_overrides_validated_with_field_name(kw):
     fn = _decorate(max_trials=2)
     with pytest.raises((ValueError, TypeError), match=next(iter(kw))):
         await fn.optimize(algorithm="random", **kw)
+
+
+def test_timeout_too_large_for_a_float_names_the_field() -> None:
+    """math.isfinite(10**400) raises OverflowError; the error must name timeout."""
+    from traigent.utils.validation import validate_timeout_value
+
+    with pytest.raises(ValueError, match="timeout"):
+        validate_timeout_value(10**400)

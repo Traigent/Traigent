@@ -230,7 +230,11 @@ def validate_timeout_value(value: Any) -> None:
             f"timeout must be a non-negative number of seconds, got {value!r} "
             f"({type(value).__name__})"
         )
-    if not math.isfinite(value) or value < 0:
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:  # an int too large for a float
+        finite = False
+    if not finite or value < 0:
         raise ValueError(
             f"timeout must be non-negative and finite (seconds), got {value!r}"
         )
