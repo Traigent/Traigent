@@ -232,3 +232,103 @@ async def test_config_space_known_or_absent_tunable_id_is_200() -> None:
     assert (await _call(svc, "GET", CONFIG_SPACE_PATH))[0] == 200
     status, _ = await _call(svc, "GET", CONFIG_SPACE_PATH, query="tunable_id=my_agent")
     assert status == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inputs", [None, "x", [], {"input_id": "a"}])
+async def test_present_inputs_win_even_when_null_or_wrong_shaped(inputs: Any) -> None:
+    svc = _service()
+    status, payload = await _call(
+        svc,
+        "POST",
+        EXECUTE_PATH,
+        _execute_body(inputs=inputs, examples=[{"example_id": "legacy"}]),
+    )
+    assert status == 400
+    assert payload["error"]["code"] == "INVALID_INPUTS"
+    assert svc.seen == []
+
+
+@pytest.mark.asyncio
+async def test_absent_inputs_key_falls_back_to_examples() -> None:
+    svc = _service()
+    status, body = await _call(
+        svc, "POST", EXECUTE_PATH, _execute_body(examples=[{"example_id": "legacy"}])
+    )
+    assert status == 200, body
+    assert svc.seen == ["legacy"]
+
+
+def _gated_service() -> tuple[TraigentService, Any, Any, list[str]]:
+    import asyncio
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    runs: list[str] = []
+    svc = TraigentService(tunable_id="my_agent")
+
+    @svc.execute
+    async def run(example_id, data, config):
+        runs.append(example_id)
+        started.set()
+        await release.wait()
+        return {"output": {"ok": True}}
+
+    return svc, started, release, runs
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_id_different_payload_is_409_while_first_runs() -> None:
+    import asyncio
+
+    svc, started, release, runs = _gated_service()
+    first = asyncio.create_task(
+        svc.handle_execute(_execute_body(inputs=[{"input_id": "a"}]))
+    )
+    await started.wait()
+    from traigent.wrapper.errors import IdempotencyConflictError
+
+    with pytest.raises(IdempotencyConflictError):
+        await svc.handle_execute(_execute_body(inputs=[{"input_id": "b"}]))
+    release.set()
+    result = await first
+    assert result["outputs"][0]["input_id"] == "a"
+    assert runs == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_id_same_payload_runs_handler_once() -> None:
+    import asyncio
+
+    svc, started, release, runs = _gated_service()
+    body = _execute_body(inputs=[{"input_id": "a"}])
+    first = asyncio.create_task(svc.handle_execute(body))
+    await started.wait()
+    second = asyncio.create_task(svc.handle_execute(dict(body)))
+    await asyncio.sleep(0)
+    release.set()
+    r1, r2 = await asyncio.gather(first, second)
+    assert r1 == r2
+    assert runs == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_reservation_released_when_handler_raises_so_retry_runs() -> None:
+    from traigent.wrapper.errors import ServiceUnavailableError
+
+    calls: list[int] = []
+    svc = TraigentService(tunable_id="my_agent")
+
+    @svc.execute
+    def run(example_id, data, config):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ServiceUnavailableError("down")
+        return {"output": {}}
+
+    body = _execute_body(inputs=[{"input_id": "a"}])
+    with pytest.raises(ServiceUnavailableError):
+        await svc.handle_execute(body)
+    result = await svc.handle_execute(body)
+    assert result["status"] == "completed"
+    assert len(calls) == 2

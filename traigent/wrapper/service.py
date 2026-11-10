@@ -42,7 +42,7 @@ import os
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -290,6 +290,10 @@ class TraigentService:
         self._idempotency_cache_max_size = 1000
         self._execute_idempotency_cache: dict[str, tuple[str, dict[str, Any]]] = {}
         self._evaluate_idempotency_cache: dict[str, tuple[str, dict[str, Any]]] = {}
+        # request_id -> (payload fingerprint, future) for requests still running.
+        self._inflight_requests: dict[
+            tuple[str, str], tuple[str, asyncio.Future[dict[str, Any] | None]]
+        ] = {}
         self._execution_context_cache: dict[str, _ExecutionContextEntry] = {}
 
         # Cached config space
@@ -1055,7 +1059,8 @@ class TraigentService:
     @staticmethod
     def _select_execute_inputs(request: dict[str, Any]) -> tuple[str, Any]:
         """Pick the input array: ``inputs`` wins over the deprecated ``examples``."""
-        if request.get("inputs") is not None:
+        if "inputs" in request:
+            # Present wins, even when null or wrong-shaped: that is INVALID_INPUTS.
             return "inputs", request["inputs"]
         if request.get("examples") is not None:
             return "examples", request["examples"]
@@ -1101,7 +1106,64 @@ class TraigentService:
         if session_id:
             response["session_id"] = session_id
 
-    async def handle_execute(
+    async def _run_idempotent(
+        self,
+        operation: str,
+        request: dict[str, Any],
+        impl: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Run ``impl`` once per ``request_id``, including concurrent requests.
+
+        The request_id is reserved (with its payload fingerprint) before the
+        handler runs. A concurrent request with the same id and a different
+        payload gets 409 immediately; one with the same payload waits for the
+        first result and never runs the handler a second time. If the first
+        run raises, the reservation is released so a retry can proceed.
+        """
+        if "request_id" not in request:
+            return await impl(request)
+        request_id = str(request["request_id"])
+        fingerprint = self._fingerprint_request(request)
+        key = (operation, request_id)
+        while True:
+            reserved = self._inflight_requests.get(key)
+            if reserved is None:
+                break
+            reserved_fingerprint, future = reserved
+            if reserved_fingerprint != fingerprint:
+                raise IdempotencyConflictError(
+                    f"request_id reuse with different payload in {operation} request"
+                )
+            result = await asyncio.shield(future)
+            if result is not None:
+                return copy.deepcopy(result)
+            # The first run failed and released its reservation: retry as first.
+        future = asyncio.get_running_loop().create_future()
+        self._inflight_requests[key] = (fingerprint, future)
+        outcome: dict[str, Any] | None = None
+        try:
+            outcome = await impl(request)
+            return outcome
+        finally:
+            self._inflight_requests.pop(key, None)
+            if not future.done():
+                future.set_result(copy.deepcopy(outcome) if outcome else None)
+
+    async def handle_execute(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle execute request (see ``_handle_execute_impl``)."""
+        if self._execute_handler is None:
+            raise ValueError("No execute handler registered")
+        return await self._run_idempotent("execute", request, self._handle_execute_impl)
+
+    async def handle_evaluate(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle evaluate request (see ``_handle_evaluate_impl``)."""
+        if self._evaluate_handler is None:
+            raise ValueError("No evaluate handler registered")
+        return await self._run_idempotent(
+            "evaluate", request, self._handle_evaluate_impl
+        )
+
+    async def _handle_execute_impl(
         self,
         request: dict[str, Any],
     ) -> dict[str, Any]:
@@ -1285,7 +1347,7 @@ class TraigentService:
                 output, target, effective_kwargs, evaluation_context
             )
 
-    async def handle_evaluate(
+    async def _handle_evaluate_impl(
         self,
         request: dict[str, Any],
     ) -> dict[str, Any]:
