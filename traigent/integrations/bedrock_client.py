@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import math
 import numbers
 import time
 from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
@@ -88,7 +89,9 @@ def _resolve_model_id(method: str, model_id: str | None, model: str | None) -> s
 def _int_or_none(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return None
-    return int(float(value))
+    number = float(value)
+    # json.loads accepts NaN/Infinity: a non-finite count is unmeasured.
+    return int(number) if math.isfinite(number) else None
 
 
 class _StreamState:

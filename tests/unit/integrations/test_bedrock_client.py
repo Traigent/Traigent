@@ -1381,3 +1381,18 @@ class TestStreamingParsesAnthropicEvents:
         captured = get_captured_response()
         assert captured.text == "Hello world"
         assert captured.usage == {"input_tokens": 12, "output_tokens": 7}
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+def test_non_finite_stream_usage_is_unmeasured_not_a_crash(literal: str) -> None:
+    """json.loads accepts NaN/Infinity; such a count must not abort the stream."""
+    from traigent.integrations.bedrock_client import _int_or_none, _StreamState
+
+    state = _StreamState()
+    event = json.loads(
+        '{"type": "message_delta", "usage": {"output_tokens": ' + literal + "}}"
+    )
+
+    assert state.feed(event) == ""
+    assert state.usage is None
+    assert _int_or_none(float(literal.lower().replace("infinity", "inf"))) is None
