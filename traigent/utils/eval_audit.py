@@ -183,6 +183,25 @@ _FAMILY_PREFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("xai", ("grok",)),
 )
 
+#: Vendor segments that name a family wherever they appear in a router id.
+_VENDOR_SEGMENT_FAMILIES: dict[str, str] = {
+    "openai": "openai",
+    "anthropic": "anthropic",
+    "google": "google",
+    "meta": "meta",
+    "meta-llama": "meta",
+    "mistral": "mistral",
+    "cohere": "cohere",
+    "deepseek": "deepseek",
+    "qwen": "qwen",
+    "x-ai": "xai",
+}
+
+#: Router hosts whose later segments carry the real vendor and model id.
+_ROUTER_SEGMENTS: frozenset[str] = frozenset(
+    {"openrouter", "bedrock", "fireworks", "groq", "azure", "vertex_ai", "ollama"}
+)
+
 #: Family assigned when no prefix matches. Never anchors D7 consensus (D7 needs
 #: >=2 *known, distinct* families).
 UNKNOWN_FAMILY = "unknown"
@@ -286,10 +305,18 @@ def model_family(model: Any) -> str:
     # Router ids (``bedrock/anthropic.claude-...``, ``us.anthropic.claude-...``,
     # ``openrouter/<vendor>/<model>``) bury the vendor and model in later
     # ``/``- or ``.``-separated segments (#3104).
+    # A prefix match on a later segment counts only after a router or vendor
+    # segment has been seen, so "together/EleutherAI/gpt-j-6b" stays unknown.
+    trusted = False
     for segment in re.split(r"[/.]", name):
-        for family, prefixes in _FAMILY_PREFIXES:
-            if segment == family or segment.startswith(prefixes):
-                return family
+        if segment in _VENDOR_SEGMENT_FAMILIES:
+            return _VENDOR_SEGMENT_FAMILIES[segment]
+        if trusted:
+            for family, prefixes in _FAMILY_PREFIXES:
+                if segment.startswith(prefixes):
+                    return family
+        if segment in _ROUTER_SEGMENTS:
+            trusted = True
     return UNKNOWN_FAMILY
 
 
