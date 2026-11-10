@@ -54,6 +54,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `traigent plan` rejects `--dataset-size` and `--max-trials` below 1 and a `--cost-limit` that is `0`, negative, NaN or infinite (#2929).
   - Invoker, batch and chunk timeouts reject NaN and `bool` (`True` was a one-second timeout); hook cost constraints (`max_cost_per_query`, `max_monthly_budget`, `warn_threshold_pct`) must be finite; `coverage_ratio` rejects NaN (#3132).
   - Observability `close()` / `flush()` reject a negative or NaN timeout; `float("inf")` means wait without a bound (#3247).
+- **Behaviour change: custom metric functions receive the unwrapped `with_usage()` value (#2870).** `metric_functions` and `scoring_function` (local, progress and `SimpleScoringEvaluator` paths) now get the function's own output, not the `{"text": ..., "__traigent_meta__": ...}` wrapper the `with_usage` docstring used to describe; usage still reaches the cost and token metrics. A metric written against the old contract that reads `output["text"]` must read `output` instead.
+- **Behaviour change: scoring, identifiers, search and retry edge cases (#2890, #2918, #2949, #2965, #3006, #3017, #3025, #3033, #3046, #3082, #3108, #3147, #3221).**
+  - Typed accuracy no longer matches a zero-padded (`"007"`), underscored (`"1_000"`) or non-ASCII-digit string against a numeric gold value (#3221).
+  - Metric keys, measure keys, TVAR, kwarg, knob, agent and composite-prefix names must fully match an ASCII identifier; a trailing newline or a Unicode letter is rejected at the call (#2965, #3006).
+  - A NaN or infinite objective value is treated as missing on the Pareto front and in hypervolume convergence (#2949).
+  - An `IntRange` step that does not divide the span emits a `UserWarning` (a `-W error` run fails on it), and the small-argument presets are legal (#2890, #2891).
+  - `optimize(algorithm=...)` at call time normalises case and spacing like the decorator (`""` means `"auto"`) (#2918).
+  - A plateau stop tolerance of 0 is treated as 1e-6 (#3025).
+  - A call rejected by an OPEN circuit breaker raises the new `CircuitBreakerOpenError` (a `ServiceUnavailableError`) and is not retried; a failed half-open probe re-opens the breaker at once (#3033, #3082).
+  - `generate_optimization_report(save_plots=False)` writes no files; plot methods take an `output_dir` (#3108).
+  - `SLAMonitor.stop_monitoring()` returns promptly and a restart never runs two monitor loops (#3147).
+  - Scoped `setup_logging` no longer changes the host's httpx/urllib3 log levels (#3017).
+  - Sessions with an unparseable `created_at` are skipped and counted by `list_sessions()` and cleanup instead of raising (#3046).
 - **Behaviour change: the TVL loader is stricter (#3240, #3241, #3243).** A spec that loaded before can now fail.
   - Duplicate TVAR names and repeated enum values are rejected, naming the TVAR index, matching `tvl-validate` (#3240).
   - An int range with a `resolution` above 1 becomes a lazy `{"type": "int", "low", "high", "step"}` entry (high is the last grid point), so the declared step is kept and no grid list is built. An integral float such as `2.0` counts as `2`; a fractional resolution is reported as a `TVLValidationError` naming the TVAR, and a non-positive resolution or inverted bounds are rejected. A resolution of 1 keeps the `(min, max)` form (#3241).
