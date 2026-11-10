@@ -94,6 +94,17 @@ class DomainSpec:
             if self.range is None:
                 raise ValueError("Range domain has no range defined")
             lo, hi = self.range
+            if self.resolution is not None and _is_plain_int(lo) and _is_plain_int(hi):
+                if not _is_plain_int(self.resolution) or self.resolution <= 0:
+                    raise ValueError(
+                        "Int range domain resolution must be a positive integer"
+                    )
+                # A step of 1 enumerates exactly the integers of the continuous
+                # range, so it keeps the (min, max) form it always had.
+                if self.resolution > 1:
+                    # Same step rule as the float grid: lo, lo+step, ... <= hi.
+                    return list(range(int(lo), int(hi) + 1, int(self.resolution)))
+                return self.range
             if (
                 self.resolution is not None
                 and isinstance(lo, float)
@@ -418,7 +429,7 @@ class PromotionPolicy:
 
         return cls(
             dominance=data.get("dominance", "epsilon_pareto"),
-            alpha=float(data.get("alpha", 0.05)),
+            alpha=_real_number(data.get("alpha", 0.05), "alpha"),
             min_effect=data.get("min_effect", {}),
             adjust=data.get("adjust", "holm"),
             chance_constraints=chance_constraints,
@@ -808,6 +819,21 @@ def _parse_range_domain(
 
 
 _MAX_TUPLE_PRODUCT = 10_000  # guard against combinatorial explosion
+
+
+def _real_number(value: object, field_name: str) -> float:
+    """Return ``value`` as a float, rejecting strings and booleans.
+
+    A quoted number such as ``"0.05"`` is a spec error, not a value to coerce.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a real number, got {value!r}")
+    return float(value)
+
+
+def _is_plain_int(value: object) -> bool:
+    """True for an int that is not a bool (bool is an int subclass in Python)."""
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _float_grid(lo: float, hi: float, step: float, label: str) -> list[float]:

@@ -793,7 +793,11 @@ async def health_check_tool() -> dict[str, Any]:
     Reports SDK/import readiness and resolved (sanitized) backend URL. Does NOT
     make a network call or return any credential material.
     """
-    from traigent.config.backend_config import BackendConfig
+    from traigent.config.backend_config import (
+        BackendConfig,
+        EndpointNotConfiguredError,
+        endpoint_missing_message,
+    )
 
     httpx_ready = False
     try:
@@ -811,11 +815,18 @@ async def health_check_tool() -> dict[str, Any]:
     except Exception:  # pragma: no cover - defensive
         matplotlib_ready = False
 
-    backend_url = _sanitize_url(BackendConfig.get_backend_url())
+    endpoint_not_configured = False
+    try:
+        backend_url = _sanitize_url(BackendConfig.get_backend_url())
+    except EndpointNotConfiguredError:
+        logger.warning(endpoint_missing_message("backend URL lookup"))
+        backend_url = None
+        endpoint_not_configured = True
     return {
         "ok": True,
         "service": "traigent-analytics-mcp",
         "backend_url": backend_url,
+        "endpoint_not_configured": endpoint_not_configured,
         "httpx_available": httpx_ready,
         "chart_rendering_available": matplotlib_ready,
         "supported_chart_kinds": list(_SUPPORTED_CHART_KINDS),

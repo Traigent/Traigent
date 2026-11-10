@@ -625,8 +625,13 @@ class TestTraigentDiagnostics:
         mock_pkg: MagicMock,
         mock_venv: MagicMock,
         mock_py: MagicMock,
+        monkeypatch,
     ) -> None:
         """Test run_diagnostics calls all check methods."""
+        # The unit lane sets TRAIGENT_OFFLINE_MODE=true; this test asserts the
+        # online network check runs, so opt into the online lane explicitly.
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
         report = TraigentDiagnostics.run_diagnostics()
 
         assert isinstance(report, DiagnosticReport)
@@ -711,3 +716,36 @@ class TestDiagnoseFunctions:
         call_args = mock_file.call_args
         assert "traigent_diagnostic_report.json" in str(call_args)
         assert "w" in call_args[0] or "w" in call_args[1].get("mode", "")
+
+
+class TestUrlCredentialScanIsLinear:
+    """The userinfo pattern must not rescan a long run of scheme-legal characters
+    from every start position (#3245: 80,000 'a' took about 7 s)."""
+
+    def test_long_scheme_legal_run_is_fast(self) -> None:
+        import time
+
+        from traigent.utils.diagnostics import scrub
+
+        started = time.perf_counter()
+        scrub("a" * 80000)
+        elapsed = time.perf_counter() - started
+
+        assert elapsed < 0.5, f"scrub took {elapsed:.2f}s on an 80,000-char run"
+
+    def test_digit_prefixed_credential_is_still_masked(self) -> None:
+        """Control: a digit before the scheme must not hide the credential."""
+        from traigent.utils.diagnostics import redact_url_credentials
+
+        masked = redact_url_credentials("1https://user:hunter2@example.com/x")
+
+        assert "hunter2" not in masked
+        assert masked.startswith("1https://user:")
+        assert masked.endswith("@example.com/x")
+
+    def test_plain_credential_url_is_unchanged_by_the_boundary(self) -> None:
+        from traigent.utils.diagnostics import redact_url_credentials
+
+        masked = redact_url_credentials("https://user:hunter2@example.com/x")
+
+        assert masked == "https://user:***redacted***@example.com/x"

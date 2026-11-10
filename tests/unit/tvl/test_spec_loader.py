@@ -2761,3 +2761,154 @@ objectives:
         assert len(msgs) == 1
         assert "987654" not in msgs[0]
         assert "secret_marker" not in msgs[0]
+
+
+class TestDuplicateTvarsAndValuesRejected:
+    """Duplicate TVAR names and repeated enum values fail loudly (#3240).
+
+    A silent last-wins on a duplicate name drops a searched domain, and a repeated
+    value costs a duplicate trial in grid search. tvl-validate rejects both.
+    """
+
+    _HEADER = """
+tvars:
+"""
+    _OBJECTIVES = """
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+
+    def _load(self, tmp_path: Path, tvars_block: str):
+        spec_file = tmp_path / "dup.tvl.yml"
+        spec_file.write_text(self._HEADER + tvars_block + self._OBJECTIVES)
+        return load_tvl_spec(spec_path=spec_file)
+
+    def test_duplicate_tvar_name_is_rejected(self, tmp_path: Path) -> None:
+        tvars = """  - name: model
+    type: enum
+    domain: [model-a, model-b]
+  - name: model
+    type: enum
+    domain: [model-c]
+"""
+        with pytest.raises(TVLValidationError) as exc_info:
+            self._load(tmp_path, tvars)
+
+        message = str(exc_info.value)
+        assert "duplicate TVAR name 'model'" in message
+        assert "tvars[1]" in message
+
+    def test_distinct_tvar_names_still_load(self, tmp_path: Path) -> None:
+        """Control: the same two domains under distinct names are accepted."""
+        tvars = """  - name: model
+    type: enum
+    domain: [model-a, model-b]
+  - name: prompt_style
+    type: enum
+    domain: [terse, verbose]
+"""
+        artifact = self._load(tmp_path, tvars)
+
+        assert artifact.configuration_space["model"] == ["model-a", "model-b"]
+        assert artifact.configuration_space["prompt_style"] == ["terse", "verbose"]
+
+    def test_repeated_enum_value_is_rejected(self, tmp_path: Path) -> None:
+        tvars = """  - name: model
+    type: enum
+    domain: [model-a, model-b, model-a]
+"""
+        with pytest.raises(TVLValidationError) as exc_info:
+            self._load(tmp_path, tvars)
+
+        message = str(exc_info.value)
+        assert "model" in message
+        assert "repeats 'model-a'" in message
+
+
+class TestIntRangeResolutionGrid:
+    """An int range that declares ``resolution`` is a grid, as a float range is (#3241).
+
+    The reference model reads ``[0, 100]`` with resolution 10 as 0, 10, ..., 100.
+    """
+
+    _OBJECTIVES = """
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+
+    def _load(self, tmp_path: Path, domain_block: str):
+        spec_file = tmp_path / "int-grid.tvl.yml"
+        spec_file.write_text(
+            "tvars:\n"
+            "  - name: ti10\n"
+            "    type: int\n"
+            "    domain:\n" + domain_block + self._OBJECTIVES
+        )
+        return load_tvl_spec(spec_path=spec_file)
+
+    def test_int_range_with_resolution_is_the_grid(self, tmp_path: Path) -> None:
+        artifact = self._load(tmp_path, "      range: [0, 100]\n      resolution: 10\n")
+
+        assert artifact.configuration_space["ti10"] == list(range(0, 101, 10))
+
+    def test_grid_never_exceeds_upper_bound(self, tmp_path: Path) -> None:
+        """Span 25 with step 10 stops at the last multiple not above 25."""
+        artifact = self._load(tmp_path, "      range: [0, 25]\n      resolution: 10\n")
+
+        assert artifact.configuration_space["ti10"] == [0, 10, 20]
+
+    def test_int_range_without_resolution_stays_continuous(
+        self, tmp_path: Path
+    ) -> None:
+        """Control: no resolution keeps the (min, max) range the optimizer samples."""
+        artifact = self._load(tmp_path, "      range: [0, 100]\n")
+
+        assert artifact.configuration_space["ti10"] == (0, 100)
+
+    def test_non_integer_resolution_on_int_range_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(ValueError, match="positive integer"):
+            self._load(tmp_path, "      range: [0, 100]\n      resolution: 2.5\n")
+
+
+class TestPromotionAlphaMustBeNumber:
+    """promotion_policy.alpha must be a real number, not a quoted string (#3243).
+
+    The reference model and the JavaScript SDK reject ``alpha: "0.05"``; the Python
+    SDK used to coerce it to 0.05.
+    """
+
+    _SPEC = """
+objectives:
+  - name: accuracy
+    direction: maximize
+tvars:
+  - name: model
+    type: enum
+    domain: [model-a, model-b]
+promotion_policy:
+  alpha: {alpha}
+  min_effect:
+    accuracy: 0.01
+"""
+
+    def _load(self, tmp_path: Path, alpha_literal: str):
+        spec_file = tmp_path / "alpha.tvl.yml"
+        spec_file.write_text(self._SPEC.format(alpha=alpha_literal))
+        return load_tvl_spec(spec_path=spec_file)
+
+    def test_quoted_alpha_is_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(TVLValidationError) as exc_info:
+            self._load(tmp_path, '"0.05"')
+
+        assert "alpha" in str(exc_info.value)
+
+    def test_numeric_alpha_still_loads(self, tmp_path: Path) -> None:
+        """Control: the unquoted number is accepted with the same value."""
+        artifact = self._load(tmp_path, "0.05")
+
+        assert artifact.promotion_policy is not None
+        assert artifact.promotion_policy.alpha == 0.05

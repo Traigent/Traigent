@@ -2805,6 +2805,33 @@ class OptimizationResult:
             "reflect run order rather than the configurations."
         )
 
+    def __repr__(self) -> str:
+        """Bounded repr that never prints tuned config values (#2973).
+
+        The dataclass default printed best_config, the runner-up config and every
+        trial, so a tuned value reached logs and REPL echoes. Counts stand in for
+        the trials; configs are redacted as TrialResult does. Use get_summary()
+        for detail.
+        """
+
+        def _redacted(value: Any) -> str | None:
+            return "'<redacted>'" if value is not None else None
+
+        return (
+            "OptimizationResult("
+            f"optimization_id={self.optimization_id!r}, "
+            f"status={self.status!r}, "
+            f"algorithm={self.algorithm!r}, "
+            f"objectives={self.objectives!r}, "
+            f"trials={len(self.trials)}, "
+            f"best_score={self.best_score!r}, "
+            f"best_config={_redacted(self.best_config)}, "
+            f"best_config_margin={_redacted(self.best_config_margin)}, "
+            f"stop_reason={self.stop_reason!r}, "
+            f"duration={self.duration!r}"
+            ")"
+        )
+
     def get_summary(self) -> dict[str, Any]:
         """Compute high-level summary statistics about the optimization run."""
 
