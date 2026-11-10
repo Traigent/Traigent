@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import types
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -29,8 +30,9 @@ class DummyWandB:
     def log(self, data, step=None):
         self.logged.append((data, step))
 
-    def save(self, path):
-        self.saved.append(path)
+    def save(self, path, **_kwargs):
+        # Artifacts are staged in a temp dir; record the artifact name only.
+        self.saved.append(Path(path).name)
 
     def finish(self):
         pass

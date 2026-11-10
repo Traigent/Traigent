@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 import time
 from collections.abc import Mapping, Sequence
 from numbers import Number
@@ -42,6 +44,8 @@ from ...core.objective_directions import resolve_objective_orientation
 from ...utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+_STAGING_PREFIX = "traigent_wandb_"
 
 
 class TraigentWandBTracker:
@@ -131,18 +135,24 @@ class TraigentWandBTracker:
             reinit=True,
         )
 
-        # Log configuration space as artifact
-        config_file = "configuration_space.json"
-        with open(config_file, "w") as f:
-            json.dump(configuration_space, f, indent=2)
-
+        # Log configuration space as artifact. Staged in a private temp
+        # directory so no file in the user's working directory is touched.
+        staging = tempfile.mkdtemp(prefix=_STAGING_PREFIX)
         try:
-            wandb.save(config_file)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed to save configuration space artifact: %s", exc, exc_info=False
-            )
-        Path(config_file).unlink(missing_ok=True)
+            config_file = str(Path(staging) / "configuration_space.json")
+            with open(config_file, "w", encoding="utf-8") as f:
+                json.dump(configuration_space, f, indent=2)
+
+            try:
+                wandb.save(config_file, policy="now")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to save configuration space artifact: %s",
+                    exc,
+                    exc_info=False,
+                )
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
 
         run = self.current_run
         if run is None:
@@ -232,8 +242,12 @@ class TraigentWandBTracker:
         # path as I/O / serialisation errors instead of crashing log_trial().
         artifact_written = False
         trial_file: str | None = None
+        staging: str | None = None
         try:
-            trial_file = f"trial_{int(trial_number)}.json"
+            # Staged in a private temp dir: a fixed relative name in the CWD
+            # would truncate and then delete a same-named user file (#3042).
+            staging = tempfile.mkdtemp(prefix=_STAGING_PREFIX)
+            trial_file = str(Path(staging) / f"trial_{int(trial_number)}.json")
             with open(trial_file, "w", encoding="utf-8") as f:
                 json.dump(trial_artifact_data, f, indent=2)
                 artifact_written = True
@@ -245,15 +259,19 @@ class TraigentWandBTracker:
                 exc_info=False,
             )
 
-        if artifact_written and trial_file is not None:
-            try:
-                wandb.save(trial_file)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Failed to save trial artifact to W&B: %s", exc, exc_info=False
-                )
-        if trial_file is not None:
-            Path(trial_file).unlink(missing_ok=True)
+        try:
+            if artifact_written and trial_file is not None:
+                try:
+                    wandb.save(trial_file, policy="now")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to save trial artifact to W&B: %s",
+                        exc,
+                        exc_info=False,
+                    )
+        finally:
+            if staging is not None:
+                shutil.rmtree(staging, ignore_errors=True)
 
     @staticmethod
     def _mapping_or_warn(
@@ -385,12 +403,15 @@ class TraigentWandBTracker:
             ],
         }
 
-        result_file = "optimization_result.json"
-        with open(result_file, "w") as f:
-            json.dump(result_data, f, indent=2)
+        staging = tempfile.mkdtemp(prefix=_STAGING_PREFIX)
+        try:
+            result_file = str(Path(staging) / "optimization_result.json")
+            with open(result_file, "w", encoding="utf-8") as f:
+                json.dump(result_data, f, indent=2)
 
-        wandb.save(result_file)
-        Path(result_file).unlink(missing_ok=True)
+            wandb.save(result_file, policy="now")
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
 
         # Log dataset if provided
         if dataset_path and Path(dataset_path).exists():

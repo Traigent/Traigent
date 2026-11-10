@@ -34,10 +34,10 @@ class _FakeWandb:
             raise self.log_error
         self.logged.append((data, step))
 
-    def save(self, path):
+    def save(self, path, **_kwargs):
         if self.save_error:
             raise self.save_error
-        self.saved.append((path, json.loads(Path(path).read_text())))
+        self.saved.append((Path(path).name, json.loads(Path(path).read_text())))
 
 
 class _BadIso:
