@@ -4,7 +4,9 @@ import re
 
 from traigent.integrations.llms.langchain import base as langchain_base
 
-_FROM_TRAIGENT_IMPORT = re.compile(r"^\s*(from traigent[\w.]* import .+)$", re.MULTILINE)
+_FROM_TRAIGENT_IMPORT = re.compile(
+    r"^\s*(from traigent[\w.]* import .+)$", re.MULTILINE
+)
 
 
 def test_docstring_import_of_enable_langchain_optimization_resolves() -> None:
