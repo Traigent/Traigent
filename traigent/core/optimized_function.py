@@ -163,7 +163,9 @@ from traigent.utils.removed_params import (
 from traigent.utils.validation import (
     validate_config_space,
     validate_dataset_path,
+    validate_max_trials_value,
     validate_objectives,
+    validate_timeout_value,
 )
 
 _NAME_WITH_DETAIL_FMT = "%s (%s)"
@@ -1754,11 +1756,8 @@ class OptimizedFunction[**P, R]:
         if not callable(self.func):
             raise TypeError("func must be callable") from None
 
-        if self.max_trials is not None and self.max_trials <= 0:
-            raise ValueError("max_trials must be a positive integer")
-
-        if self.timeout is not None and self.timeout < 0:
-            raise ValueError("timeout must be non-negative")
+        validate_max_trials_value(self.max_trials)
+        validate_timeout_value(self.timeout)
 
     def _validate_configuration(self) -> None:
         """Validate optimization configuration."""
@@ -2381,7 +2380,17 @@ class OptimizedFunction[**P, R]:
             raise TypeError(
                 "strategy_params is no longer supported; use algorithm or objectives."
             )
-        return algorithm
+        if algorithm is None:
+            return None
+        # Same strip/lower normalisation as the decorator path, so 'RANDOM' and
+        # ' random ' resolve identically at decoration and at call time. A name
+        # a user registered verbatim is kept as-is; unknown names still reach the
+        # registry, which lists the available optimizers.
+        from traigent.optimizers.registry import list_optimizers
+
+        if algorithm in list_optimizers():
+            return algorithm
+        return str(normalize_algorithm_name(algorithm))
 
     async def optimize(
         self,
@@ -2553,6 +2562,10 @@ class OptimizedFunction[**P, R]:
     ) -> OptimizationResult:
         """Body of :meth:`optimize` for one advancing run."""
         logger.info(f"Starting optimization of {self.func.__name__}")
+        # Per-call overrides: fail at the call with the field named, before cost
+        # estimation can turn a NaN into an unrelated cost error.
+        validate_max_trials_value(max_trials)
+        validate_timeout_value(timeout)
         _emit_cost_warning_once()
         # Per-call dataset (#2541): resolved before any run state changes, so a bad
         # dataset fails the same way it does at decoration time.
