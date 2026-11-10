@@ -27,9 +27,9 @@ import yaml
 CONFIG_FILE_NAMES = ("traigent.yml", "traigent.yaml", ".traigent.yml", ".traigent.yaml")
 CONFIG_KEY_PATH = "labels.trust_anchor"
 
-_FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
-_TENANT = re.compile(r"^tenant_[0-9a-f]{32}$")
-_PROJECT = re.compile(r"^project_[0-9a-f]{32}$")
+_FINGERPRINT = re.compile(r"^[0-9a-f]{64}\Z")
+_TENANT = re.compile(r"^tenant_[0-9a-f]{32}\Z")
+_PROJECT = re.compile(r"^project_[0-9a-f]{32}\Z")
 
 
 class TrustAnchorError(ValueError):

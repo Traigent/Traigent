@@ -58,7 +58,7 @@ logger = get_logger(__name__)
 
 
 # OpenAPI contract: tunable and objective names must be valid Python identifiers.
-_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*$")
+_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*\Z")
 _ESTIMATED_INPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE"
 _ESTIMATED_OUTPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE"
 

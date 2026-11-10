@@ -161,7 +161,7 @@ class ExampleMeasure:
     """
 
     MAX_METRICS = 50
-    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$")
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*\Z")
 
     def __init__(self, data: dict[str, Any]) -> None:
         """Initialize from a nested measure dict.
@@ -279,7 +279,7 @@ class MeasuresDict(UserDict):
     # Unicode-identifier bypass closed in the composite-knobs metrics channel.
     # ``traigent.evaluators.metrics_tracker.USER_METRIC_KEY_PATTERN`` mirrors this
     # exactly; the consistency test pins the two together.
-    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$", re.ASCII)
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*\Z", re.ASCII)
 
     def __init__(self, data: dict[str, Any] | None = None) -> None:
         """Initialize with optional data dictionary.
