@@ -60,7 +60,8 @@ def test_failed_replace_leaves_original_intact(
         raise OSError("replace failed")
 
     monkeypatch.setattr(billing.os, "replace", boom)
-    _record(tracker, "b")  # write failure is logged, not raised
+    with pytest.raises(UsageStorageError):
+        _record(tracker, "b")
     monkeypatch.undo()
 
     assert path.read_text() == before
