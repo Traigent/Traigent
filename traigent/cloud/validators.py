@@ -149,7 +149,7 @@ def _validate_metric_entries(entries: dict, key_label: str, value_label: str) ->
         value_label: Label for error messages about values.
     """
     for key, value in entries.items():
-        if not _IDENTIFIER_PATTERN.match(key):
+        if not _IDENTIFIER_PATTERN.fullmatch(key):
             raise ValueError(
                 f"Invalid {key_label} key '{key}': must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$"
             )
