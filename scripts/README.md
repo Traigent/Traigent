@@ -111,7 +111,6 @@ python scripts/maintenance/safe_cleanup_manager.py --cleanup --interactive
 ### ✅ **Validation (`validation/`)**
 **Code and installation validation:**
 - **`verify_installation.py`** - Installation verification and diagnostics
-- **`verify_tokencost_integration.py`** - TokenCost integration verification
 
 ### ⚙️ Configuration (`config/`)
 Configuration files moved from root for better organization:

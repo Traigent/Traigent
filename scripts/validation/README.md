@@ -5,7 +5,6 @@ Scripts for validating code, documentation, examples, and installation.
 ## Scripts
 
 - **`verify_installation.py`** - Installation verification and diagnostics
-- **`verify_tokencost_integration.py`** - TokenCost integration verification
 
 ## Usage
 
