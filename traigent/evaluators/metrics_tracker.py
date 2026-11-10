@@ -476,7 +476,11 @@ def _checked_tokens(
 ) -> TokenMetrics:
     """Build ``TokenMetrics`` from provider-reported counts, failing closed.
 
-    ``None`` means "not reported" and counts as 0. Any other value must pass
+    ``None`` means "not reported". A missing total is derived. When exactly one
+    of input/output is missing the usage is incomplete and would be priced on
+    the reported side only, so it is unknown (``invalid``) unless the reported
+    total equals the reported side (e.g. input-only endpoints that report
+    ``prompt_tokens == total_tokens``). Any other value must pass
     ``validate_token_count``; if one does not (negative, bool, float, string,
     absurdly large), the whole usage is unknown: an empty ``TokenMetrics`` is
     returned so nothing invalid is stored or priced (Traigent#3252).
@@ -496,6 +500,14 @@ def _checked_tokens(
             return TokenMetrics(invalid=True)
         counts.append(valid)
     input_tokens, output_tokens, total_tokens = counts
+    if (input_raw is None) != (output_raw is None):
+        known = output_tokens if input_raw is None else input_tokens
+        if total_raw is None or total_tokens != known:
+            logger.warning(
+                "Provider usage reported only one of input/output tokens "
+                "without a matching total; treating usage as unknown"
+            )
+            return TokenMetrics(invalid=True)
     return TokenMetrics(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
