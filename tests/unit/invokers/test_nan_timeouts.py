@@ -53,3 +53,30 @@ def test_hooks_cost_constraint_accepts_numpy_scalars() -> None:
         CostConstraints(max_cost_per_query=np.float64("nan"))
     with pytest.raises(ValueError, match="max_cost_per_query"):
         CostConstraints(max_cost_per_query=True)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda v: LocalInvoker(timeout=v),
+        lambda v: BatchInvoker(batch_timeout=v),
+        lambda v: StreamingInvoker(chunk_timeout=v),
+    ],
+    ids=["timeout", "batch_timeout", "chunk_timeout"],
+)
+def test_invoker_timeouts_accept_numpy_and_reject_bool(build) -> None:
+    np = pytest.importorskip("numpy")
+    build(np.int64(2))
+    build(np.float32(1.5))
+    with pytest.raises(InvocationError):
+        build(True)
+
+
+def test_validate_number_accepts_numpy_scalars() -> None:
+    np = pytest.importorskip("numpy")
+    from traigent.utils.validation import Validators
+
+    assert Validators.validate_number(np.float32(0.5), "x", 0, 1).is_valid
+    assert Validators.validate_number(np.int64(3), "x", 0, 5).is_valid
+    assert not Validators.validate_number(np.float64("nan"), "x").is_valid
+    assert not Validators.validate_number(True, "x").is_valid

@@ -344,7 +344,7 @@ class Validators:
 
         # bool is an int subclass (True would pass as 1) and NaN fails every
         # comparison below, so both must be rejected explicitly.
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
             result.add_error(
                 field_name,
                 f"Expected number, got {type(value).__name__}",
@@ -361,7 +361,8 @@ class Validators:
             )
             return result
 
-        if min_value is not None and value < min_value:
+        number = float(value)  # numpy scalars and Fraction compare as floats
+        if min_value is not None and number < min_value:
             result.add_error(
                 field_name,
                 f"Value {value} is below minimum {min_value}",
@@ -369,7 +370,7 @@ class Validators:
                 suggestions=[f"Use a value >= {min_value}"],
             )
 
-        if max_value is not None and value > max_value:
+        if max_value is not None and number > max_value:
             result.add_error(
                 field_name,
                 f"Value {value} exceeds maximum {max_value}",
