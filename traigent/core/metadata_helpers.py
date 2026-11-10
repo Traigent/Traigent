@@ -9,7 +9,6 @@ from typing import Any, cast
 
 from traigent._version import get_version
 from traigent.api.types import OptimizationResult, TrialResult
-from traigent.cloud.dtos import MeasuresDict
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.utils.example_id import (
     SDK_MINTED_EXAMPLE_ID,
@@ -25,6 +24,7 @@ from traigent.utils.outcome_signals import (
     _example_field,
     build_example_signals,
 )
+from traigent.utils.validation import MEASURE_KEY_PATTERN
 from traigent.utils.wire_text import (
     filter_summary_stats_metadata,
     filter_surrogate_evaluator,
@@ -110,7 +110,7 @@ def _validate_metrics_field(measure: dict[str, Any], example_index: int) -> dict
 
 def _validate_metric_entry(key: str, value: Any, example_index: int) -> None:
     """Validate a single metric key-value pair."""
-    if not MeasuresDict.KEY_PATTERN.fullmatch(key):
+    if not MEASURE_KEY_PATTERN.fullmatch(key):
         raise ValueError(
             f"Example {example_index}: Invalid metric key '{key}', "
             f"must be an ASCII identifier (^[a-zA-Z_][a-zA-Z0-9_]*$)"

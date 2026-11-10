@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from traigent.utils.logging import get_logger
+from traigent.utils.validation import MEASURE_KEY_PATTERN
 
 logger = get_logger(__name__)
 
@@ -279,7 +280,7 @@ class MeasuresDict(UserDict):
     # Unicode-identifier bypass closed in the composite-knobs metrics channel.
     # ``traigent.evaluators.metrics_tracker.USER_METRIC_KEY_PATTERN`` mirrors this
     # exactly; the consistency test pins the two together.
-    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$", re.ASCII)
+    KEY_PATTERN = MEASURE_KEY_PATTERN
 
     def __init__(self, data: dict[str, Any] | None = None) -> None:
         """Initialize with optional data dictionary.
