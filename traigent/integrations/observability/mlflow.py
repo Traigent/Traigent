@@ -484,30 +484,49 @@ class TraigentMLflowTracker:
             return None
 
 
+#: Run name used when neither the hook nor the constructor names the function.
+_DEFAULT_RUN_FUNCTION_NAME = "traigent_optimization"
+
+
 class MLflowOptimizationCallback:
     """Callback for automatic MLflow logging during optimization."""
 
-    def __init__(self, tracker: TraigentMLflowTracker) -> None:
+    def __init__(
+        self, tracker: TraigentMLflowTracker, function_name: str | None = None
+    ) -> None:
         """Initialize callback with MLflow tracker.
 
         Args:
             tracker: TraigentMLflowTracker instance
+            function_name: Name the run is logged under when the start hook is
+                called by ``CallbackManager``, which does not pass one.
         """
         self.tracker = tracker
         self.trial_count = 0
+        self.function_name = function_name
 
     def on_optimization_start(
         self,
-        function_name: str,
-        objectives: list[str],
-        configuration_space: dict[str, Any],
+        config_space: dict[str, Any] | None = None,
+        objectives: list[str] | None = None,
+        algorithm: str | None = None,
+        *,
+        function_name: str | None = None,
+        configuration_space: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
-        """Called when optimization starts."""
+        """Called when optimization starts.
+
+        ``CallbackManager`` calls this as ``(config_space, objectives,
+        algorithm)``, the same contract as every other callback. The keyword
+        form ``function_name=..., configuration_space=...`` is also accepted.
+        """
+        space = configuration_space if configuration_space is not None else config_space
+        name = function_name or self.function_name or _DEFAULT_RUN_FUNCTION_NAME
         self.tracker.start_optimization_run(
-            function_name=function_name,
-            objectives=objectives,
-            configuration_space=configuration_space,
+            function_name=name,
+            objectives=list(objectives or []),
+            configuration_space=dict(space or {}),
             tags=kwargs.get("mlflow_tags", {}),
         )
 
