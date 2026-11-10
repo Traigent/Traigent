@@ -17,7 +17,7 @@ from traigent.core.exception_handler import (
     classify_systematic_provider_failure,
 )
 from traigent.core.trial_result_factory import _provider_failure_summary
-from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.evaluators.base import Dataset, EvaluationExample, SimpleScoringEvaluator
 from traigent.evaluators.local import LocalEvaluator
 
 
@@ -92,3 +92,70 @@ async def test_verdict_survives_copy_and_pickle() -> None:
     error = result.errors[0]
     for clone in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
         assert classify_systematic_provider_failure(clone) is None
+
+
+def _raise_user_provider_words(_q: str) -> str:
+    raise RuntimeError("Error code: 429 - insufficient_quota invalid_api_key")
+
+
+def _raise_user_value_provider_words(_q: str) -> str:
+    raise ValueError("insufficient_quota: Error code: 401 invalid_api_key")
+
+
+class _StructuredNonSdkError(Exception):
+    """Not from a provider SDK module but carries a structured response."""
+
+    def __init__(self) -> None:
+        super().__init__("insufficient_quota")
+        self.response = object()
+
+
+def _raise_structured(_q: str) -> str:
+    raise _StructuredNonSdkError()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detailed", [False, True])
+@pytest.mark.parametrize(
+    "func", [_raise_user_provider_words, _raise_user_value_provider_words]
+)
+async def test_user_error_with_provider_marker_words_does_not_abort(
+    func, detailed: bool
+) -> None:
+    result = await _run(func, detailed)
+    assert _provider_failure_summary(result, 3) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detailed", [False, True])
+async def test_exception_with_structured_response_still_aborts(detailed: bool) -> None:
+    result = await _run(_raise_structured, detailed)
+    summary = _provider_failure_summary(result, 3)
+    assert summary is not None
+    assert summary["category"] == VendorErrorCategory.QUOTA_EXHAUSTED.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "func", [_raise_value, _raise_state, _raise_user_provider_words]
+)
+async def test_simple_scoring_evaluator_user_errors_do_not_abort(func) -> None:
+    dataset = Dataset([EvaluationExample({"_q": f"q{i}"}, "x") for i in range(3)])
+    evaluator = SimpleScoringEvaluator(
+        scoring_function=lambda output, expected: 1.0, metrics=["accuracy"]
+    )
+    result = await evaluator.evaluate(func, {}, dataset)
+    assert result.errors and all(result.errors)
+    assert _provider_failure_summary(result, 3) is None
+
+
+@pytest.mark.asyncio
+async def test_simple_scoring_evaluator_provider_failure_still_aborts() -> None:
+    dataset = Dataset([EvaluationExample({"_q": f"q{i}"}, "x") for i in range(3)])
+    evaluator = SimpleScoringEvaluator(
+        scoring_function=lambda output, expected: 1.0, metrics=["accuracy"]
+    )
+    result = await evaluator.evaluate(_raise_provider_quota, {}, dataset)
+    summary = _provider_failure_summary(result, 3)
+    assert summary is not None
+    assert summary["category"] == VendorErrorCategory.QUOTA_EXHAUSTED.value

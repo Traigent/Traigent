@@ -154,6 +154,7 @@ _PROVIDER_MARKER_RE = re.compile(
     r"(?:error code|status(?: code)?)[: ]+[45]\d\d|invalid_api_key|insufficient_quota"
 )
 
+_STRUCTURED_ERROR_ATTRS = ("status_code", "code", "response")
 _HTTP_LIBRARY_ROOTS = frozenset({"requests", "urllib3", "httpx", "aiohttp", "httpcore"})
 
 
@@ -365,8 +366,10 @@ def classify_vendor_error(
     if (
         provider_text_only
         and not _is_provider_sdk_exception(exc)
-        and not _PROVIDER_MARKER_RE.search(msg)
+        and not any(hasattr(exc, attr) for attr in _STRUCTURED_ERROR_ATTRS)
     ):
+        # Text alone, even provider-shaped text, proves nothing when it comes
+        # from an arbitrary user exception that carries no structured fields.
         return None
     # Terminal account wording wins over an earlier generic "code: 429" pattern,
     # so the string-based abort net still sees an exhausted account.
@@ -537,7 +540,11 @@ def function_call_failure_text(exc: Exception, text: str) -> ClassifiedErrorText
 
 def preserve_error_text(error: object) -> str:
     """``str(error)`` that keeps a :class:`ClassifiedErrorText` verdict intact."""
-    return error if isinstance(error, ClassifiedErrorText) else str(error)
+    if isinstance(error, ClassifiedErrorText):
+        return error
+    if isinstance(error, Exception):
+        return function_call_failure_text(error, str(error))
+    return str(error)
 
 
 def classify_systematic_provider_failure(

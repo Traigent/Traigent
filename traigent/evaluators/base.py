@@ -3421,7 +3421,7 @@ class BaseEvaluator(ABC):
             failed_result = self._create_failed_example_result(example, index, result)
             example_results.append(failed_result)
         outputs.append(None)
-        errors.append(str(result))
+        errors.append(preserve_error_text(result))
         if progress_callback:
             progress_callback(index, {"success": False, "error": str(result)})
         return False
@@ -3545,7 +3545,7 @@ class BaseEvaluator(ABC):
                 example, index, exc
             )
         outputs_by_index[index] = None
-        errors_by_index[index] = str(exc)
+        errors_by_index[index] = preserve_error_text(exc)
 
     def _store_success_result(
         self,
@@ -5601,7 +5601,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
             )
             all_metrics.append(failed_result.metrics)
             outputs.append(None)
-            errors.append(str(e))
+            errors.append(failed_result.error_message)
 
     async def evaluate(
         self,
