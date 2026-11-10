@@ -35,3 +35,15 @@ def test_non_numeric_timeout_rejected(method) -> None:
     c = ObservabilityClient()
     with pytest.raises(ValueError, match="timeout"):
         getattr(c, method)(timeout="5")
+
+
+@pytest.mark.parametrize("method", ["close", "flush"])
+def test_numpy_and_fraction_timeouts_accepted(method) -> None:
+    """numpy and Fraction timeouts are real numbers; base accepted them."""
+    from fractions import Fraction
+
+    np = pytest.importorskip("numpy")
+    for value in (np.int64(5), np.float32(2.5), Fraction(3, 2)):
+        assert getattr(ObservabilityClient(), method)(timeout=value).success is True
+    with pytest.raises(ValueError, match="timeout"):
+        getattr(ObservabilityClient(), method)(timeout=np.float64("nan"))

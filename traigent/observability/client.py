@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import math
+import numbers
 import sys
 import threading
 import time
@@ -4269,12 +4270,14 @@ class ObservabilityClient:
     def _flush_deadline(self, timeout: float | None) -> float | None:
         if timeout is None:
             return None
-        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        # numbers.Real accepts numpy scalars and Fraction; bool is excluded.
+        if isinstance(timeout, bool) or not isinstance(timeout, numbers.Real):
             raise ValueError(
                 f"timeout must be a number of seconds or None, got {timeout!r}"
             )
-        if isinstance(timeout, int) and timeout > threading.TIMEOUT_MAX:
+        if isinstance(timeout, numbers.Integral) and timeout > threading.TIMEOUT_MAX:
             timeout = threading.TIMEOUT_MAX  # huge ints overflow float()
+        timeout = float(timeout)
         if math.isnan(timeout) or timeout < 0:
             raise ValueError(
                 f"timeout must be a non-negative number of seconds, got {timeout!r}"
