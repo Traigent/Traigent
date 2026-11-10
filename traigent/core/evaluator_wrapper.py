@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import math
-import os
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
-from traigent.core.utils import safe_get_nested_attr
+from traigent.core.utils import safe_get_nested_attr, strict_metrics_nulls_enabled
 from traigent.evaluators.base import (
     EXAMPLE_TIMEOUT_ERROR_PREFIX,
     MEASURED_ONLY_METRICS,
@@ -58,12 +57,8 @@ def _truthy_flag(value: Any) -> bool:
 
 
 def _strict_metrics_nulls() -> bool:
-    """TRAIGENT_STRICT_METRICS_NULLS: report a missing metric as None, not 0.0."""
-    return os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    )
+    """Strict nulls (config or TRAIGENT_STRICT_METRICS_NULLS): None, not 0.0."""
+    return strict_metrics_nulls_enabled()
 
 
 def _measured_number(value: Any) -> float | None:

@@ -13,9 +13,9 @@ import pytest
 
 from traigent.utils.exceptions import AuthenticationError, ClientError
 from traigent.utils.retry import (
+    CLOUD_API_RETRY_CONFIG,
     CircuitBreaker,
     CircuitBreakerState,
-    CLOUD_API_RETRY_CONFIG,
     NetworkError,
     NonRetryableError,
     RateLimitError,
@@ -589,3 +589,80 @@ class TestRetryIntegration:
         assert elapsed >= 0.25  # Allow some tolerance
         assert result.success is False
         assert result.attempts == 3
+
+
+def _no_sleep_config(**kwargs) -> RetryConfig:
+    return RetryConfig(max_attempts=3, initial_delay=0, jitter=False, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("flag", "error"),
+    [
+        ("retry_on_timeout", TimeoutError("t")),
+        ("retry_on_connection_error", ConnectionResetError("c")),
+    ],
+)
+def test_retry_flags_off_stop_after_first_attempt(flag, error):
+    result = RetryHandler(_no_sleep_config(**{flag: False})).execute_with_result(
+        Mock(side_effect=error)
+    )
+    assert result.success is False
+    assert result.attempts == 1
+
+
+@pytest.mark.parametrize("error", [TimeoutError("t"), ConnectionResetError("c")])
+def test_retry_flags_default_still_retry(error):
+    result = RetryHandler(_no_sleep_config()).execute_with_result(
+        Mock(side_effect=error)
+    )
+    assert result.attempts == 3
+
+
+def test_retry_timeout_flag_off_keeps_connection_retry():
+    result = RetryHandler(_no_sleep_config(retry_on_timeout=False)).execute_with_result(
+        Mock(side_effect=ConnectionResetError("c"))
+    )
+    assert result.attempts == 3
+
+
+def _http_client_errors():
+    import requests
+
+    cases = [
+        ("retry_on_timeout", requests.exceptions.ReadTimeout("t")),
+        ("retry_on_connection_error", requests.exceptions.ConnectionError("c")),
+    ]
+    try:
+        import httpx
+
+        cases += [
+            ("retry_on_timeout", httpx.ReadTimeout("t")),
+            ("retry_on_connection_error", httpx.ConnectError("c")),
+        ]
+    except ImportError:  # pragma: no cover
+        pass
+    try:
+        import aiohttp
+
+        cases += [
+            ("retry_on_timeout", aiohttp.ServerTimeoutError("t")),
+            ("retry_on_connection_error", aiohttp.ClientConnectionError("c")),
+        ]
+    except ImportError:  # pragma: no cover
+        pass
+    return cases
+
+
+@pytest.mark.parametrize(("flag", "error"), _http_client_errors())
+def test_retry_flags_cover_http_client_exceptions(flag, error):
+    handler = RetryHandler(
+        RetryConfig(
+            max_attempts=3,
+            initial_delay=0,
+            jitter=False,
+            retry_on_exception={type(error)},
+            **{flag: False},
+        )
+    )
+    result = handler.execute_with_result(Mock(side_effect=error))
+    assert result.attempts == 1

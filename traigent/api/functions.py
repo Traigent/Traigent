@@ -22,6 +22,7 @@ from traigent.config.parallel import (
 )
 from traigent.config.types import TraigentConfig, validate_execution_mode
 from traigent.core.cache_usage import normalize_cache_usage
+from traigent.core.utils import set_configured_strict_metrics_nulls
 from traigent.optimizers import list_optimizers
 from traigent.optimizers.registry import _is_smart_algorithm
 from traigent.utils.exceptions import (
@@ -349,6 +350,8 @@ def _apply_config_settings(config: TraigentConfig) -> None:
 
     if config.auto_sync is not None:
         _GLOBAL_CONFIG["auto_sync"] = config.auto_sync
+
+    set_configured_strict_metrics_nulls(config.is_strict_metrics_nulls_enabled())
 
     _GLOBAL_CONFIG["default_storage_backend"] = (
         "local" if config.is_local_mode() else "cloud"

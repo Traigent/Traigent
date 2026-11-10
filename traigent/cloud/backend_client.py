@@ -8,6 +8,7 @@ for better maintainability and adherence to software engineering principles.
 
 import asyncio
 import concurrent.futures
+import dataclasses
 import json
 import logging
 import math
@@ -472,8 +473,12 @@ def _raise_for_transient_backend_response(response: Any, operation: str) -> None
 def _run_sync_backend_request_with_retry(
     operation: str,
     request_call: Callable[[], Any],
+    max_retries: int | None = None,
 ) -> Any:
-    retry = RetryHandler(_SYNC_BACKEND_RETRY_CONFIG)
+    config = _SYNC_BACKEND_RETRY_CONFIG
+    if max_retries is not None:
+        config = dataclasses.replace(config, max_attempts=max(0, max_retries) + 1)
+    retry = RetryHandler(config)
     result = retry.execute_with_result(request_call)
     if result.success:
         return result.result
@@ -2508,7 +2513,9 @@ class BackendIntegratedClient:
             _raise_for_transient_backend_response(response, AGENT_HEAD_FETCH)
             return response
 
-        response = _run_sync_backend_request_with_retry(AGENT_HEAD_FETCH, _get_head)
+        response = _run_sync_backend_request_with_retry(
+            AGENT_HEAD_FETCH, _get_head, self.max_retries
+        )
         _refuse_redirect_response(response, AGENT_HEAD_FETCH)
         if response.status_code >= 400:
             raise CloudServiceError(
@@ -2656,7 +2663,9 @@ class BackendIntegratedClient:
                 )
             return response
 
-        response = _run_sync_backend_request_with_retry(AGENT_HEAD_FETCH, _get_head)
+        response = _run_sync_backend_request_with_retry(
+            AGENT_HEAD_FETCH, _get_head, self.max_retries
+        )
         if response.status_code >= 400:
             raise self._head_refusal_from_response(response)
         try:
@@ -2922,6 +2931,7 @@ class BackendIntegratedClient:
         response = _run_sync_backend_request_with_retry(
             BEST_CONFIG_PUBLISH,
             _post_best_config,
+            self.max_retries,
         )
         _refuse_redirect_response(response, BEST_CONFIG_PUBLISH)
 
@@ -3077,6 +3087,7 @@ class BackendIntegratedClient:
         response = _run_sync_backend_request_with_retry(
             BEST_CONFIG_FETCH,
             _get_best_config,
+            self.max_retries,
         )
         if response.status_code == 304:
             # Not Modified answers the If-None-Match conditional fetch. It is not a
@@ -3347,6 +3358,7 @@ class BackendIntegratedClient:
             response = _run_sync_backend_request_with_retry(
                 EXAMPLE_FEATURE_UPLOAD,
                 _post_example_features,
+                self.max_retries,
             )
             _refuse_redirect_response(response, EXAMPLE_FEATURE_UPLOAD)
         except Exception as exc:

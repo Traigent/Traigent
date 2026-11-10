@@ -71,6 +71,42 @@ class ServiceUnavailableError(RetryableError):
     """Service temporarily unavailable (retryable variant for circuit breaker)."""
 
 
+def _optional_exception_types(*dotted: str) -> tuple[type[BaseException], ...]:
+    """Resolve exception classes from optionally installed HTTP clients."""
+    import importlib
+
+    found: list[type[BaseException]] = []
+    for path in dotted:
+        module_name, _, attr = path.rpartition(".")
+        try:
+            cls = getattr(importlib.import_module(module_name), attr)
+        except (ImportError, AttributeError):
+            continue
+        if isinstance(cls, type) and issubclass(cls, BaseException):
+            found.append(cls)
+    return tuple(found)
+
+
+# Exceptions the retry_on_timeout / retry_on_connection_error flags cover:
+# the builtins plus the HTTP clients the SDK uses (requests, httpx, aiohttp).
+_TIMEOUT_EXCEPTION_TYPES: tuple[type[BaseException], ...] = (
+    TimeoutError,
+    *_optional_exception_types(
+        "requests.exceptions.Timeout",
+        "httpx.TimeoutException",
+        "aiohttp.ServerTimeoutError",
+    ),
+)
+_CONNECTION_EXCEPTION_TYPES: tuple[type[BaseException], ...] = (
+    ConnectionError,
+    *_optional_exception_types(
+        "requests.exceptions.ConnectionError",
+        "httpx.ConnectError",
+        "aiohttp.ClientConnectionError",
+    ),
+)
+
+
 @dataclass
 class RetryConfig:
     """Configuration for retry behavior.
@@ -449,6 +485,16 @@ class RetryHandler:
             return False
 
         if isinstance(exception, AuthenticationError):
+            return False
+
+        if not self.config.retry_on_timeout and isinstance(
+            exception, _TIMEOUT_EXCEPTION_TYPES
+        ):
+            return False
+
+        if not self.config.retry_on_connection_error and isinstance(
+            exception, _CONNECTION_EXCEPTION_TYPES
+        ):
             return False
 
         status_code = getattr(exception, "status_code", None)

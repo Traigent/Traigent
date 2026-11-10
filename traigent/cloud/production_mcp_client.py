@@ -273,8 +273,8 @@ class ProductionMCPClient:
 
         # Configure retry handler for MCP operations
         retry_config = RetryConfig(
-            max_attempts=3,
-            initial_delay=1.0,
+            max_attempts=self.server_config.max_retries + 1,
+            initial_delay=self.server_config.retry_delay,
             strategy=RetryStrategy.EXPONENTIAL,
             exponential_base=2.0,
             jitter=True,
@@ -547,7 +547,10 @@ class ProductionMCPClient:
 
         # Call tool via MCP
         try:
-            result = await self._session.call_tool(tool_name, arguments)
+            result = await asyncio.wait_for(
+                self._session.call_tool(tool_name, arguments),
+                timeout=self.server_config.timeout,
+            )
 
             response = MCPResponse(
                 success=True,
@@ -586,7 +589,9 @@ class ProductionMCPClient:
 
             if self._session is None:
                 raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
-            resources = await self._session.list_resources()
+            resources = await asyncio.wait_for(
+                self._session.list_resources(), timeout=self.server_config.timeout
+            )
 
             return MCPResponse(
                 success=True,
@@ -612,7 +617,9 @@ class ProductionMCPClient:
 
             if self._session is None:
                 raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
-            resource = await self._session.read_resource(uri)
+            resource = await asyncio.wait_for(
+                self._session.read_resource(uri), timeout=self.server_config.timeout
+            )
 
             return MCPResponse(
                 success=True,
@@ -1137,7 +1144,7 @@ _production_client: ProductionMCPClient | None = None
 
 
 def get_production_mcp_client(
-    server_path: str = "python", server_args: list[str] | None = None, **kwargs
+    server_path: str | None = None, server_args: list[str] | None = None, **kwargs
 ) -> ProductionMCPClient:
     """Get or create global production MCP client.
 
@@ -1148,8 +1155,35 @@ def get_production_mcp_client(
 
     Returns:
         ProductionMCPClient instance
+
+    Raises:
+        ValidationException: if a client already exists and the requested
+            arguments differ from its configuration (they would otherwise be
+            silently ignored).
     """
     global _production_client
+
+    if _production_client is not None:
+        existing = _production_client.server_config
+        conflicts = [
+            name
+            for name, value in (
+                ("server_path", server_path),
+                ("server_args", server_args),
+                *kwargs.items(),
+            )
+            if value is not None and getattr(existing, name, object()) != value
+        ]
+        if conflicts:
+            raise ValidationException(
+                "A global MCP client already exists with a different configuration "
+                f"for: {', '.join(sorted(conflicts))}; use set_production_mcp_client "
+                "to replace it"
+            )
+        return _production_client
+
+    if server_path is None:
+        server_path = "python"
 
     if _production_client is None:
         # Default server args for Traigent Backend MCP
