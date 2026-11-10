@@ -1078,6 +1078,15 @@ def _warn_degenerate_configuration_space(
 
 
 _DEFAULT_SENTINEL = object()
+
+
+class _AutoAlgorithmDefault(str):
+    """The ``algorithm`` default; identity distinguishes "not passed" from "auto"."""
+
+    __slots__ = ()
+
+
+_AUTO_ALGORITHM_DEFAULT = _AutoAlgorithmDefault("auto")
 _AUTO_DETECT_TVARS_MODES = frozenset({"off", "suggest", "apply"})
 
 _OPTIMIZE_DEFAULTS: dict[str, Any] = {
@@ -3035,7 +3044,7 @@ def optimize(  # NOSONAR(S107)
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None,
-    algorithm: str = "auto",
+    algorithm: str = _AUTO_ALGORITHM_DEFAULT,
     offline: bool = False,
     strategy_params: Mapping[str, Any] | None = None,
     smart_pruning: SmartPruningOptions | dict[str, Any] | None = None,
@@ -3386,6 +3395,9 @@ def optimize(  # NOSONAR(S107)
 
     legacy_args = _parse_legacy_args(legacy)
     max_trials_explicit = _is_max_trials_explicit(runtime_overrides, legacy_args)
+    algorithm_explicit = algorithm is not _AUTO_ALGORITHM_DEFAULT or (
+        legacy_args is not None and legacy_args.algorithm is not None
+    )
 
     direct_inputs = {
         "objectives": objectives,
@@ -3565,6 +3577,11 @@ def optimize(  # NOSONAR(S107)
         combined_settings["execution"], ExecutionOptions, "execution"
     )
     tvl_bundle = _coerce_bundle(combined_settings["tvl"], TVLOptions, "tvl")
+    if (
+        execution_bundle is not None
+        and "algorithm" in execution_bundle.model_fields_set
+    ):
+        algorithm_explicit = True
 
     # Resolve options from bundles
     eval_dataset, custom_evaluator, scoring_function, metric_functions = (
@@ -3695,7 +3712,7 @@ def optimize(  # NOSONAR(S107)
     # supplied an explicit value (explicit arguments win).
     tvl_algorithm = combined_runtime_overrides.pop("algorithm", None)
     tvl_max_trials = combined_runtime_overrides.pop("max_trials", None)
-    if tvl_algorithm is not None and algorithm_value == _OPTIMIZE_DEFAULTS["algorithm"]:
+    if tvl_algorithm is not None and not algorithm_explicit:
         algorithm_value = validate_algorithm_name(tvl_algorithm)
     if tvl_max_trials is not None and not max_trials_explicit:
         _validate_max_trials(tvl_max_trials)

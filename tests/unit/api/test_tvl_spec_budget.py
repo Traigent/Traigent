@@ -47,3 +47,18 @@ def test_explicit_decorator_values_win_over_tvl_spec(tmp_path) -> None:
 
     assert agent.max_trials == 7
     assert agent.algorithm == "grid"
+
+
+def test_explicit_auto_algorithm_is_not_overridden_by_spec(tmp_path) -> None:
+    agent = _decorate(tmp_path, algorithm="auto")
+
+    assert agent.algorithm == "auto"
+    assert agent.max_trials == 3
+
+
+def test_explicit_max_trials_equal_to_default_wins_over_spec(tmp_path) -> None:
+    from traigent.api.decorators import DEFAULT_MAX_TRIALS
+
+    agent = _decorate(tmp_path, max_trials=DEFAULT_MAX_TRIALS)
+
+    assert agent.max_trials == DEFAULT_MAX_TRIALS

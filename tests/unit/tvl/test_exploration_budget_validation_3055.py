@@ -57,3 +57,34 @@ def test_valid_budget_still_loads(tmp_path) -> None:
 def test_bad_budget_value_raises_naming_field(tmp_path, exploration, field) -> None:
     with pytest.raises(TVLValidationError, match=field):
         _load(tmp_path, "exploration:\n  " + exploration + "\n")
+
+
+@pytest.mark.parametrize(
+    ("exploration", "field"),
+    [
+        ("budget:\n    parallel_trials:\n      value: 2", "parallel_trials"),
+        (
+            "parallelism:\n    max_parallel_trials:\n      value: 2",
+            "max_parallel_trials",
+        ),
+        ("budgets:\n    max_trials: '20'", "budgets.max_trials"),
+        ("budgets:\n    max_wallclock_s: '60'", "max_wallclock_s"),
+        ("budgets:\n    max_spend_usd: .inf", "max_spend_usd"),
+        ("budgets:\n    max_spend_usd: .nan", "max_spend_usd"),
+        ("budgets:\n    max_spend_usd: '5'", "max_spend_usd"),
+        ("budgets: 3", "budgets"),
+    ],
+)
+def test_wrapper_and_budgets_values_rejected(tmp_path, exploration, field) -> None:
+    with pytest.raises(TVLValidationError, match=field):
+        _load(tmp_path, "exploration:\n  " + exploration + "\n")
+
+
+def test_valid_budgets_still_load(tmp_path) -> None:
+    artifact = _load(
+        tmp_path,
+        "exploration:\n  budgets:\n    max_trials: 4\n    max_spend_usd: 0.5\n"
+        "    max_wallclock_s: 60\n",
+    )
+
+    assert artifact.runtime_overrides()["max_trials"] == 4

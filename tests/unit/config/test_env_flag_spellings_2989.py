@@ -46,3 +46,24 @@ def test_credential_store_production_spellings_get_maximum(monkeypatch, value) -
     monkeypatch.setattr(credentials, "EnhancedCredentialStore", fake_store)
     get_secure_credential_store()
     assert captured["level"] == SecurityLevel.MAXIMUM
+
+
+@pytest.mark.parametrize(
+    ("key", "other"),
+    [("ENVIRONMENT", "TRAIGENT_ENVIRONMENT"), ("TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")],
+)
+def test_any_production_variable_keeps_maximum_security(
+    monkeypatch, key, other
+) -> None:
+    for name in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(key, "development")
+    monkeypatch.setenv(other, "production")
+    captured: dict[str, SecurityLevel] = {}
+
+    def fake_store(*, security_level, **_kwargs):
+        captured["level"] = security_level
+
+    monkeypatch.setattr(credentials, "EnhancedCredentialStore", fake_store)
+    get_secure_credential_store()
+    assert captured["level"] == SecurityLevel.MAXIMUM

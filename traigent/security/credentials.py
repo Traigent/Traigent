@@ -1095,7 +1095,19 @@ class EnhancedCredentialStore:
 def get_secure_credential_store() -> EnhancedCredentialStore:
     """Get production-ready credential store with secure defaults."""
     # Detect environment
-    environment = resolve_environment_name(default="production")
+    # Fail closed: if ANY environment variable says production, treat the
+    # process as production (ENVIRONMENT=development must not downgrade a
+    # TRAIGENT_ENVIRONMENT=production setting).
+    declared = [
+        value.strip().lower()
+        for key in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")
+        if (value := os.getenv(key)) is not None and value.strip()
+    ]
+    environment: str | None
+    if any(value in ("production", "prod") for value in declared):
+        environment = "production"
+    else:
+        environment = resolve_environment_name(default="production")
 
     # Set security level based on environment
     if environment in ("production", "prod"):
