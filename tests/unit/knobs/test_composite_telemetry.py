@@ -294,7 +294,9 @@ class TestCodexRoundBlockers:
         deterministically (logged) so the TOTAL never exceeds 50."""
         from traigent.knobs.telemetry import merge_composite_measures
 
-        run = _run_with_measures({"gate_margin_pass_rate": {i: 1.0 for i in range(30)}})
+        run = _run_with_measures(
+            {"gate_margin_pass_rate": dict.fromkeys(range(30), 1.0)}
+        )
         user_metrics = {f"user_metric_{i}": float(i) for i in range(45)}
         merged = merge_composite_measures(dict(user_metrics), run)
         assert len(merged) <= 50
@@ -332,3 +334,14 @@ class TestCodexConfirmResiduals:
         over = {f"user_metric_{i}": float(i) for i in range(51)}
         with pytest.raises(ValueError, match="ceiling|50"):
             merge_composite_measures(over, run)
+
+
+@pytest.mark.parametrize("prefix", ["précision", "ａbc", "x\n"])
+def test_non_ascii_or_newline_prefix_is_rejected_at_call_time(prefix: str) -> None:
+    """The prefix must match the ASCII measure-key contract (#3006).
+
+    ``str.isidentifier()`` accepts Unicode letters, so ``précision`` produced
+    keys MeasuresDict rejects later instead of failing at the call.
+    """
+    with pytest.raises(ValueError, match="composite_measures prefix"):
+        composite_measures(object(), prefix=prefix)  # type: ignore[arg-type]
