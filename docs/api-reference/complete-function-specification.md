@@ -791,13 +791,20 @@ custom_objectives = ObjectiveSchema.from_objectives([
     ObjectiveDefinition("custom_metric", orientation="maximize", weight=1.0),
 ])
 
+from traigent.api.types import ExampleResult
+
 def custom_eval(func, config, example):
     # Custom evaluation logic
     result = func(example.input_data)
     accuracy = compute_accuracy(result, example.expected_output)
     return ExampleResult(
-        example_id=example.example_id,
-        metrics={"accuracy": accuracy, "custom_metric": compute_custom(result)}
+        example_id=str(example.metadata.get("id", "example")),
+        input_data=example.input_data,
+        expected_output=example.expected_output,
+        actual_output=result,
+        metrics={"accuracy": accuracy, "custom_metric": compute_custom(result)},
+        execution_time=0.0,  # replace with the measured call latency if you track it
+        success=True,
     )
 
 @traigent.optimize(
