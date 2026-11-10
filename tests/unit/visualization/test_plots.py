@@ -1142,3 +1142,69 @@ class TestCreateQuickPlot:
 
             # Should be called with use_matplotlib=False
             mock_generator.assert_called_once_with(use_matplotlib=False)
+
+
+class TestReportPlotOutputLocation:
+    """Where report plots are written: never the CWD when save_plots is False."""
+
+    @pytest.fixture
+    def result(self) -> OptimizationResult:
+        trials = [_make_trial("t1", 0.9, 0.5), _make_trial("t2", 0.85, 0.3)]
+        return _make_result(trials, {}, objectives=["accuracy", "cost"])
+
+    def test_save_plots_false_writes_no_png_to_cwd(
+        self, result: OptimizationResult, tmp_path, monkeypatch
+    ) -> None:
+        pytest.importorskip("matplotlib")
+        monkeypatch.chdir(tmp_path)
+        plotter = PlotGenerator(use_matplotlib=True)
+
+        report = plotter.generate_optimization_report(result, save_plots=False)
+
+        assert list(tmp_path.glob("*.png")) == []
+        assert "Plot saved" not in report
+        assert "Optimization Progress" in report
+
+    def test_save_plots_writes_into_output_dir_not_cwd(
+        self, result: OptimizationResult, tmp_path, monkeypatch
+    ) -> None:
+        pytest.importorskip("matplotlib")
+        cwd = tmp_path / "cwd"
+        out = tmp_path / "out"
+        cwd.mkdir()
+        out.mkdir()
+        monkeypatch.chdir(cwd)
+        plotter = PlotGenerator(use_matplotlib=True)
+
+        plotter.generate_optimization_report(result, output_dir=str(out))
+
+        assert (out / "optimization_progress_accuracy.png").is_file()
+        assert (out / "pareto_front_accuracy_cost.png").is_file()
+        assert list(cwd.glob("*.png")) == []
+
+    def test_objective_name_is_sanitised_in_filename(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        pytest.importorskip("matplotlib")
+        monkeypatch.chdir(tmp_path)
+        trials = [
+            TrialResult(
+                trial_id=f"t{i}",
+                config={"trial": i},
+                metrics={"acc/top": score},
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime.now(UTC),
+                metadata={},
+            )
+            for i, score in enumerate([0.9, 0.85], start=1)
+        ]
+        result = _make_result(trials, {"acc/top": "maximize"}, objectives=["acc/top"])
+        plotter = PlotGenerator(use_matplotlib=True)
+
+        plotter.plot_optimization_progress(result, objective="acc/top")
+
+        assert (tmp_path / "optimization_progress_acc_top.png").is_file()
+        assert [p.name for p in tmp_path.glob("*.png")] == [
+            "optimization_progress_acc_top.png"
+        ]
