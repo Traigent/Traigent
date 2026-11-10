@@ -199,6 +199,22 @@ def ensure_finite_config_space(config_space: Any) -> None:
             )
 
 
+def _short_repr(value: Any) -> str:
+    """``repr(value)`` for an error message, bounded in length.
+
+    ``repr`` of an int past Python's digit limit (4300) raises ValueError, so
+    a huge int is described by its digit count instead.
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        try:
+            text = repr(value)
+        except ValueError:
+            return f"<int with about {int(value.bit_length() * 0.30103)} digits>"
+    else:
+        text = repr(value)
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
 def validate_max_trials_value(value: Any) -> None:
     """Reject a ``max_trials`` that is not ``None`` or a positive integer.
 
@@ -209,11 +225,13 @@ def validate_max_trials_value(value: Any) -> None:
         return
     if isinstance(value, bool) or not isinstance(value, numbers.Integral):
         raise TypeError(
-            f"max_trials must be a positive integer, got {value!r} "
+            f"max_trials must be a positive integer, got {_short_repr(value)} "
             f"({type(value).__name__})"
         )
     if value <= 0:
-        raise ValueError(f"max_trials must be a positive integer, got {value!r}")
+        raise ValueError(
+            f"max_trials must be a positive integer, got {_short_repr(value)}"
+        )
 
 
 def validate_timeout_value(value: Any) -> None:
@@ -227,7 +245,7 @@ def validate_timeout_value(value: Any) -> None:
         return
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         raise TypeError(
-            f"timeout must be a non-negative number of seconds, got {value!r} "
+            f"timeout must be a non-negative number of seconds, got {_short_repr(value)} "
             f"({type(value).__name__})"
         )
     try:
@@ -236,7 +254,7 @@ def validate_timeout_value(value: Any) -> None:
         finite = False
     if not finite or value < 0:
         raise ValueError(
-            f"timeout must be non-negative and finite (seconds), got {value!r}"
+            f"timeout must be non-negative and finite (seconds), got {_short_repr(value)}"
         )
 
 
@@ -363,7 +381,7 @@ class Validators:
         if not finite:
             result.add_error(
                 field_name,
-                f"Expected a finite number, got {value}",
+                f"Expected a finite number, got {_short_repr(value)}",
                 error_code="RANGE_ERROR",
                 suggestions=["Use a finite number (not NaN or infinity)"],
             )

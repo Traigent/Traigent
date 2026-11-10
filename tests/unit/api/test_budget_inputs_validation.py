@@ -85,3 +85,12 @@ def test_timeout_too_large_for_a_float_names_the_field() -> None:
 
     with pytest.raises(ValueError, match="timeout"):
         validate_timeout_value(10**400)
+
+
+def test_timeout_with_more_digits_than_str_allows_still_names_the_field() -> None:
+    """repr() of an int past Python's 4300-digit limit raises; the message must not."""
+    from traigent.utils.validation import Validators, validate_timeout_value
+
+    with pytest.raises(ValueError, match="timeout"):
+        validate_timeout_value(10**5000)
+    assert not Validators.validate_number(10**5000, "x").is_valid
