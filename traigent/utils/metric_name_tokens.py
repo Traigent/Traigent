@@ -85,6 +85,12 @@ def classify_metric_kind(
     return None
 
 
+def depends_on_cost(name: str) -> bool:
+    """True when ``name`` is derived from cost on either side (``cost_efficiency``,
+    ``accuracy_per_1k_cost``, ``total_cost``): unknowable while cost is unmeasured."""
+    return has_marker_token(name, ("cost",))
+
+
 def is_usd_cost_metric(name: str) -> bool:
     """True when ``name`` denotes an amount of money (``total_cost``).
 

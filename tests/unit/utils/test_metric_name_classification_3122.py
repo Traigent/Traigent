@@ -83,12 +83,17 @@ def test_regression_direction(name: str, change: float, regressed: bool) -> None
     assert detector._is_significant_regression(name, change) is regressed
 
 
-def test_unmeasured_cost_backfill_only_omits_amount_objectives() -> None:
+def test_unmeasured_cost_backfill_omits_every_cost_derived_objective() -> None:
     from traigent.cloud.sync_manager import SyncManager
 
     measures: dict[str, float] = {}
     SyncManager._backfill_trial_objectives(
-        measures, ["total_cost", "cost_efficiency"], 0.5, True
+        measures,
+        ["total_cost", "cost_efficiency", "accuracy_per_1k_cost", "quality"],
+        0.5,
+        True,
     )
     assert "total_cost" not in measures
-    assert measures["cost_efficiency"] == 0.5
+    assert "cost_efficiency" not in measures
+    assert "accuracy_per_1k_cost" not in measures
+    assert measures["quality"] == 0.5

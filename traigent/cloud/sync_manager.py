@@ -53,7 +53,7 @@ from ..storage.local_storage import (
 )
 from ..utils.exceptions import TraigentStorageError
 from ..utils.logging import get_logger
-from ..utils.metric_name_tokens import is_usd_cost_metric
+from ..utils.metric_name_tokens import depends_on_cost
 from ..utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
@@ -645,8 +645,9 @@ class SyncManager:
         for objective in objectives:
             value = measures.get(objective)
             if not isinstance(value, (int, float)) or isinstance(value, bool):
-                if cost_unmeasured and is_usd_cost_metric(objective):
-                    # Unknown cost is omitted, never the score or 0.0.
+                if cost_unmeasured and depends_on_cost(objective):
+                    # Unknown cost (or anything derived from it) is omitted, never
+                    # the score or 0.0.
                     continue
                 measures[objective] = fallback
 
