@@ -1312,7 +1312,8 @@ class OptimizedFunction[**P, R]:
                 "with traigent.get_trial_config() and pass model_settings=... "
                 "to agent.run() yourself.",
                 TraigentWarning,
-                stacklevel=2,
+                # Same frame chain as the warning above: point at the user.
+                stacklevel=4,
             )
 
         # Execution mode configuration
