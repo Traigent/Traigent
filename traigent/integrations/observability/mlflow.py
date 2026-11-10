@@ -522,11 +522,13 @@ class MLflowOptimizationCallback:
         algorithm)``, the same contract as every other callback. The keyword
         form ``function_name=..., configuration_space=...`` is also accepted.
         """
-        if isinstance(config_space, str) and isinstance(algorithm, Mapping):
-            # Legacy positional order (function_name, objectives,
-            # configuration_space), used before CallbackManager's contract.
+        if isinstance(config_space, str):
+            # Legacy order (function_name, objectives, configuration_space),
+            # used before CallbackManager's contract; the space may come
+            # third by position or as configuration_space=.
             function_name = function_name or config_space
-            config_space, algorithm = dict(algorithm), None
+            config_space = dict(algorithm) if isinstance(algorithm, Mapping) else None
+            algorithm = None
         space = configuration_space if configuration_space is not None else config_space
         name = function_name or self.function_name or _DEFAULT_RUN_FUNCTION_NAME
         self.tracker.start_optimization_run(

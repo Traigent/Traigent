@@ -136,3 +136,24 @@ def test_legacy_positional_start_order_still_works(cls) -> None:
     assert started["function_name"] == "my_fn"
     assert started["configuration_space"] == {"x": [1, 2]}
     assert started["objectives"] == ["accuracy"]
+
+
+@pytest.mark.parametrize("cls", [WandBOptimizationCallback, MLflowOptimizationCallback])
+@pytest.mark.parametrize(
+    "args, kwargs",
+    [
+        (("my_fn", ["accuracy"]), {"configuration_space": {"x": [1]}}),
+        (("my_fn",), {"objectives": ["accuracy"], "configuration_space": {"x": [1]}}),
+    ],
+    ids=["two-positional", "one-positional"],
+)
+def test_legacy_mixed_positional_keyword_start_keeps_the_name(
+    cls, args, kwargs
+) -> None:
+    tracker = _RecordingTracker()
+    cls(tracker).on_optimization_start(*args, **kwargs)
+
+    started = tracker.started[0]
+    assert started["function_name"] == "my_fn"
+    assert started["configuration_space"] == {"x": [1]}
+    assert started["objectives"] == ["accuracy"]
