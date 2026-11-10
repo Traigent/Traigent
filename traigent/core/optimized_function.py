@@ -1485,6 +1485,26 @@ class OptimizedFunction[**P, R]:
         self.hybrid_api_auto_discover_tvars = bool(
             kwargs.pop("hybrid_api_auto_discover_tvars", False)
         )
+        # Validate the flat values with the same rules as the decorator route
+        # (sibling of #2900); a direct constructor call must not bypass them.
+        _flat_hybrid_values = {
+            option_key: value
+            for option_key, value in (
+                ("endpoint", self.hybrid_api_endpoint),
+                ("tunable_id", self.hybrid_api_tunable_id),
+                ("transport_type", self.hybrid_api_transport_type),
+                ("batch_size", self.hybrid_api_batch_size),
+                ("batch_parallelism", self.hybrid_api_batch_parallelism),
+                ("heartbeat_interval", self.hybrid_api_heartbeat_interval),
+                ("timeout", self.hybrid_api_timeout),
+                ("auth_header", self.hybrid_api_auth_header),
+            )
+            if value is not None
+        }
+        # Imported here: api.decorators imports this module at load time.
+        from traigent.api.decorators import HybridAPIOptions
+
+        HybridAPIOptions.model_validate(_flat_hybrid_values)
 
         # Execution knobs
         provided_parallel = coerce_parallel_config(kwargs.pop("parallel_config", None))
