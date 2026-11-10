@@ -115,6 +115,27 @@ logger = get_logger(__name__)
 EXAMPLE_TIMEOUT_ERROR_PREFIX = "Function call timed out after"
 
 
+_QUANTILE_NAME_TOKENS = {
+    "p50": 0.50,
+    "p90": 0.90,
+    "p95": 0.95,
+    "p99": 0.99,
+    "max": 1.0,
+}
+_QUANTILE_NAME_RE = re.compile(r"(?<![a-z0-9])(p50|p90|p95|p99|max)(?![a-z0-9])")
+
+
+def quantile_for_metric_name(metric_name: str) -> float | None:
+    """Return the quantile a metric name asks for, or ``None`` for the mean.
+
+    Only whole name tokens count (``p95_latency``, ``latency-p99``,
+    ``max_latency``); a substring such as the ``95`` in ``step95_score`` does
+    not select a percentile. ``max`` maps to the 1.0 quantile.
+    """
+    match = _QUANTILE_NAME_RE.search(metric_name.lower())
+    return _QUANTILE_NAME_TOKENS[match.group(1)] if match else None
+
+
 def count_timed_out_examples(example_results: Any) -> int:
     """Count example results whose error records a per-example timeout."""
     if not isinstance(example_results, list):
@@ -5151,8 +5172,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         if not metric_values:
             aggregated[metric] = 0.0
             return
-        if "p95" in metric.lower():
-            aggregated[metric] = self._compute_percentile(metric_values, 0.95)
+        quantile = quantile_for_metric_name(metric)
+        if quantile is not None:
+            aggregated[metric] = self._compute_percentile(metric_values, quantile)
         else:
             aggregated[metric] = sum(metric_values) / len(metric_values)
 

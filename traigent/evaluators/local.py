@@ -27,6 +27,7 @@ from traigent.evaluators.base import (
     _example_correlation_key,
     _is_empty_expected_output,
     coercion_log_scope,
+    quantile_for_metric_name,
 )
 from traigent.evaluators.metrics_tracker import (
     COST_SOURCE_MIXED,
@@ -3397,8 +3398,9 @@ class LocalEvaluator(BaseEvaluator):
             )
 
             if values:
-                if "p95" in metric_name.lower():
-                    aggregated[metric_name] = self._compute_percentile(values, 0.95)
+                quantile = quantile_for_metric_name(metric_name)
+                if quantile is not None:
+                    aggregated[metric_name] = self._compute_percentile(values, quantile)
                 else:
                     aggregated[metric_name] = sum(values) / len(values)
             elif saw_metric_name or not self.detailed:
