@@ -32,6 +32,7 @@ Example::
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import numbers
@@ -39,7 +40,7 @@ import os
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import InitVar, dataclass, replace
+from dataclasses import InitVar, dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -48,7 +49,6 @@ from typing import (
     TypedDict,
     TypeGuard,
     TypeVar,
-    cast,
     overload,
 )
 
@@ -1262,10 +1262,14 @@ def _process_param_entry(
                 param = TextDocument(param.values[0], name=key)
             else:
                 try:
-                    # Cast to Any since all ParameterRange subclasses are dataclasses
-                    param = replace(cast(Any, param), name=key)
-                except TypeError:
-                    # Fallback if replace fails (shouldn't happen with our dataclasses)
+                    # Copy and set the name without re-running __post_init__:
+                    # the range was validated (and warned about) when the user
+                    # built it, so replace() would warn a second time.
+                    renamed = copy.copy(param)
+                    object.__setattr__(renamed, "name", key)
+                    param = renamed
+                except (TypeError, AttributeError):
+                    # Fallback if the copy cannot be renamed (not expected here)
                     logger.debug(
                         f"Could not auto-assign name '{key}' to {type(value).__name__}"
                     )

@@ -65,3 +65,19 @@ def test_user_built_uneven_range_still_warns_under_always_filter() -> None:
 def test_private_preset_flag_is_not_a_dataclass_field() -> None:
     names = {f.name for f in dataclasses.fields(IntRange)}
     assert not any("suppress" in name for name in names)
+
+
+def test_unnamed_uneven_range_in_decorator_warns_once_at_the_caller() -> None:
+    """Auto-naming the range must not re-run validation and warn again."""
+    import traigent
+
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        k_range = IntRange(0, 10, step=3)  # the one warning belongs here
+
+        @traigent.optimize(configuration_space={"k": k_range}, objectives=["accuracy"])
+        def f(q):
+            return q
+
+    hits = _uneven_warnings(record)
+    assert [w.filename for w in hits] == [__file__]
