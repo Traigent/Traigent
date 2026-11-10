@@ -1481,12 +1481,40 @@ class TestComputeAggregateMetrics:
         assert svc._compute_aggregate_metrics([]) == {}
 
     def test_single_metric_zero_std(self) -> None:
-        """A single value has an undefined sample std: None (#3226)."""
+        """Wire payload: n == 1 emits numeric 0.0 (published schemas require a number)."""
         svc = TraigentService()
         result = svc._compute_aggregate_metrics([{"accuracy": 0.9}])
         assert result["accuracy"]["mean"] == pytest.approx(0.9)
-        assert result["accuracy"]["std"] is None
+        assert isinstance(result["accuracy"]["std"], float)
+        assert result["accuracy"]["std"] == 0.0
         assert result["accuracy"]["n"] == 1
+
+    @pytest.mark.asyncio
+    async def test_handle_evaluate_single_example_wire_std_is_number(self) -> None:
+        """End to end: a one-example evaluate response carries std == 0.0."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        resp = await svc.handle_evaluate(
+            {
+                "request_id": "eval-single",
+                "config": {},
+                "evaluations": [{"example_id": "e1", "output": "a", "target": "a"}],
+            }
+        )
+        std = resp["aggregate_metrics"]["accuracy"]["std"]
+        assert isinstance(std, float)
+        assert std == 0.0
+
+    def test_internal_describe_stats_keep_none_std(self) -> None:
+        """Internal describe statistics stay nullable for n < 2."""
+        from traigent.evaluators.hybrid_api import HybridAPIEvaluator
+
+        describe = HybridAPIEvaluator._compute_describe_stats
+        assert describe([0.9])["std"] is None
 
     def test_multiple_values(self) -> None:
         """Test aggregate stats with multiple values."""
