@@ -63,6 +63,9 @@ except ImportError as exc:  # pragma: no cover - dependency guidance
         "to run this walkthrough."
     ) from exc
 
+# Mock dry run: the supported preflight exemption, not TRAIGENT_COST_APPROVED.
+os.environ.setdefault("ENVIRONMENT", "development")
+os.environ.setdefault("TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT", "true")  # mock dry run
 import traigent
 from traigent.config.backend_config import BackendConfig
 from traigent.integrations.observability.workflow_traces import (
