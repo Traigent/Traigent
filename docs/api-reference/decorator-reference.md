@@ -465,7 +465,7 @@ from traigent.api.decorators import InjectionOptions
         injection_mode="context",  # or "parameter", "seamless"
         config_param="config",  # required when injection_mode="parameter"
         auto_override_frameworks=True,
-        framework_targets=["OpenAI", "Anthropic"],
+        framework_targets=["openai.OpenAI", "anthropic.Anthropic"],
     ),
     ...
 )
@@ -475,8 +475,8 @@ from traigent.api.decorators import InjectionOptions
 
 - `injection_mode`: How to inject config ("context", "parameter", "seamless")
 - `config_param`: Parameter name when using "parameter" mode
-- `auto_override_frameworks`: Auto-detect framework classes
-- `framework_targets`: Explicit list of framework classes
+- `auto_override_frameworks`: Enables the framework override. It does not auto-detect classes: it only takes effect together with `framework_targets`, and with no targets it overrides nothing (a warning is emitted)
+- `framework_targets`: Explicit list of framework classes as dotted `module.ClassName` paths (for example `"openai.OpenAI"`). Bare names such as `"OpenAI"` raise `ConfigurationError`
 
 #### `execution`
 

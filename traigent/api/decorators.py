@@ -3301,9 +3301,9 @@ def optimize(  # NOSONAR(S107)
             - reset(): Reset to default configuration
 
     Raises:
-        ConfigurationError: If configuration is invalid or incompatible
-        DatasetError: If evaluation dataset cannot be loaded
-        FrameworkError: If framework override fails
+        ConfigurationError: If configuration is invalid or incompatible, the
+            evaluation dataset cannot be loaded, or a framework override
+            target is invalid
 
     Examples:
         Basic usage with automatic framework override:

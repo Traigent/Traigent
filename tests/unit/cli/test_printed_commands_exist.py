@@ -71,14 +71,7 @@ ALLOWED_TEXT: dict[str, tuple[str, str]] = {
 
 # Commands printed today that do not resolve and are not yet fixed. Remove an
 # entry when it is fixed (the test fails on stale entries).
-KNOWN_BROKEN: dict[str, str] = {
-    "validate-dataset": (
-        "evaluators/base.py docstring names `traigent validate-dataset`, "
-        "which is not registered. Tracked in "
-        "https://github.com/Traigent/Traigent/issues/2719: change the docstring "
-        "at evaluators/base.py to `traigent validate`, then delete this entry"
-    ),
-}
+KNOWN_BROKEN: dict[str, str] = {}
 
 
 def _resolve(words: list[str]) -> bool:

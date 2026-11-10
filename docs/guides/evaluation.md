@@ -468,11 +468,14 @@ Best accuracy: 0.00
    )
    ```
 
-2. **Use Streaming Evaluation**
+2. **Cap the Examples Evaluated per Run**
    ```python
-   from traigent.evaluators.base import StreamingDataset
+   from traigent.api.decorators import ExecutionOptions
 
-   dataset = StreamingDataset.from_jsonl("large_dataset.jsonl")
+   @traigent.optimize(
+       eval_dataset="large_dataset.jsonl",
+       execution=ExecutionOptions(max_total_examples=500),
+   )
    ```
 
 ## Best Practices

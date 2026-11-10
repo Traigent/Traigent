@@ -148,6 +148,7 @@ from traigent.utils.exceptions import (
     CostLimitExceeded,
     OptimizationError,
     OverlappingOptimizationError,
+    TraigentWarning,
     TVLValidationError,
     ValidationError,
 )
@@ -1279,6 +1280,16 @@ class OptimizedFunction[**P, R]:
         self.config_param = config_param
         self.auto_override_frameworks = auto_override_frameworks
         self.framework_targets = framework_targets or []
+        if self.auto_override_frameworks and not self.framework_targets:
+            warnings.warn(
+                "auto_override_frameworks=True has no effect without "
+                "framework_targets: the override only runs when both are set, "
+                "so no framework calls will receive the tuned values. Pass "
+                "framework_targets=['module.ClassName', ...] "
+                "(e.g. ['openai.OpenAI']).",
+                TraigentWarning,
+                stacklevel=2,
+            )
 
         # Execution mode configuration
         if self.execution_policy is None:
