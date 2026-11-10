@@ -548,6 +548,10 @@ class UsageTracker:
             )
             try:
                 os.replace(self.storage_path, quarantine)
+                logger.error(
+                    "Prior usage history was unreadable and has been quarantined "
+                    f"as {quarantine.name}; local usage limits restart from zero"
+                )
                 logger.warning(
                     f"Usage data unreadable ({e}); moved to {quarantine} and "
                     "starting a fresh usage file"
@@ -573,13 +577,16 @@ class UsageTracker:
         _write_json_file(self.storage_path, data)
 
     def _refresh_from_disk(self) -> None:
-        """Reload so other trackers' writes count; keep our unsaved records."""
+        """Reload so other trackers' writes count; keep our unsaved records.
+
+        Fails closed: a lock or read error raises ``UsageStorageError`` rather
+        than answering limit questions from stale memory.
+        """
         try:
             with _storage_lock(self.storage_path):
                 records = self._read_records_from_disk()
         except OSError as e:
-            logger.warning(f"Could not refresh usage data, using memory: {e}")
-            return
+            raise UsageStorageError(f"Could not refresh usage data: {e}") from e
         self._usage_records = records + self._pending_records
 
     def _append_record_and_save(self, record: UsageRecord) -> None:
@@ -602,6 +609,10 @@ class UsageTracker:
         except Exception as e:
             self._usage_records.append(record)
             logger.exception(f"Failed to save usage data: {e}")
+            raise UsageStorageError(
+                "Usage record was not saved; it is kept pending and will be "
+                "written with the next successful save"
+            ) from e
 
     async def _save_usage_data(self) -> None:
         """Save usage data to storage."""

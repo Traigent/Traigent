@@ -76,7 +76,9 @@ def test_unsaved_record_survives_next_reload(
     monkeypatch.setattr(
         billing.os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("x"))
     )
-    _record(tracker, "lost?")
+    with pytest.raises(UsageStorageError) as excinfo:
+        _record(tracker, "lost?")
+    assert isinstance(excinfo.value.__cause__, OSError)
     monkeypatch.setattr(billing.os, "replace", real_replace)
     _record(tracker, "next")
     assert sorted(r["function_name"] for r in _on_disk(path)) == ["lost?", "next"]
@@ -140,3 +142,31 @@ def test_no_lock_support_warns_once(
             with billing._storage_lock(tmp_path / "usage.json"):
                 pass
     assert sum("file-locking" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_stats_fail_closed_when_refresh_raises_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracker = UsageTracker(storage_path=str(tmp_path / "usage.json"))
+    _record(tracker, "a")
+
+    def boom(_path: Path) -> None:
+        raise OSError("lock failed")
+
+    monkeypatch.setattr(billing, "_storage_lock", boom)
+    with pytest.raises(UsageStorageError):
+        asyncio.run(tracker.get_usage_stats())
+    with pytest.raises(UsageStorageError):
+        asyncio.run(BillingManager(tracker).check_usage_limits(1, 1))
+
+
+def test_quarantine_logs_error_with_file_name_only(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = tmp_path / "usage.json"
+    path.write_text("{not json")
+    with caplog.at_level("ERROR"):
+        UsageTracker(storage_path=str(path))
+    msgs = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert any("quarantined" in m and "usage.json.corrupt-" in m for m in msgs)
+    assert not any(str(tmp_path) in m for m in msgs)
