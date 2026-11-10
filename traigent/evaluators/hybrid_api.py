@@ -39,7 +39,7 @@ from traigent.hybrid import (
     TransportTimeoutError,
     create_transport,
 )
-from traigent.utils.exceptions import ValidationError
+from traigent.utils.exceptions import ConfigurationError, ValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import classify_objective
 from traigent.utils.retry import RetryConfig, RetryHandler
@@ -264,6 +264,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         self._lifecycle_manager: AgentLifecycleManager | None = None
         self._discovery: ConfigSpaceDiscovery | None = None
         self._capabilities: ServiceCapabilities | None = None
+        self._batch_clamp_warned = False
         self._session_id: str | None = None
         self._optimization_spec: dict[str, Any] | None = None
         self._benchmark_id: str | None = None
@@ -384,6 +385,13 @@ class HybridAPIEvaluator(BaseEvaluator):
             )
 
         transport = await self._get_transport()
+        caps = await self._get_capabilities()
+        if getattr(caps, "supports_benchmarks", None) is False:
+            raise ConfigurationError(
+                "The external service advertises supports_benchmarks=false, so "
+                "benchmark/dataset discovery is unavailable. Provide example IDs "
+                "explicitly."
+            )
         resp: BenchmarksResponse = await transport.benchmarks(tunable_id=tid)
         selected_dataset_id = dataset_id
 
@@ -451,6 +459,34 @@ class HybridAPIEvaluator(BaseEvaluator):
             if self._benchmark_id:
                 return  # another coroutine resolved it while we waited
             await self.discover_example_ids()
+
+    def _require_evaluation_kwargs_support(self, caps: ServiceCapabilities) -> None:
+        """Refuse evaluation_kwargs the service has not advertised support for."""
+        if self._evaluation_kwargs and not getattr(
+            caps, "supports_evaluation_kwargs", False
+        ):
+            raise ConfigurationError(
+                "evaluation_kwargs were provided but the external service does "
+                "not advertise supports_evaluation_kwargs; they cannot be "
+                "honoured. Remove evaluation_kwargs or use a service that "
+                "supports them."
+            )
+
+    def _effective_batch_size(self, caps: ServiceCapabilities) -> int:
+        """Clamp the configured batch size to the service's max_batch_size."""
+        limit = getattr(caps, "max_batch_size", None)
+        if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 1:
+            if self._batch_size > limit:
+                if not self._batch_clamp_warned:
+                    logger.warning(
+                        "batch_size=%d exceeds the service max_batch_size=%d; using %d",
+                        self._batch_size,
+                        limit,
+                        limit,
+                    )
+                    self._batch_clamp_warned = True
+                return limit
+        return self._batch_size
 
     async def _ensure_lifecycle_manager(self) -> None:
         """Ensure lifecycle manager is initialized if keep-alive enabled."""
@@ -926,6 +962,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         caps = await self._await_with_sample_lease_cleanup(
             self._get_capabilities(), sample_lease, execution_budget_lease
         )
+        self._require_evaluation_kwargs_support(caps)
 
         # Initialize lifecycle manager if needed
         await self._await_with_sample_lease_cleanup(
@@ -953,8 +990,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         example_results: list[HybridExampleResult] = []
         total_cost = 0.0
 
-        for batch_start in range(0, len(examples), self._batch_size):
-            batch_end = min(batch_start + self._batch_size, len(examples))
+        batch_size = self._effective_batch_size(caps)
+        for batch_start in range(0, len(examples), batch_size):
+            batch_end = min(batch_start + batch_size, len(examples))
             batch = examples[batch_start:batch_end]
             batch_ids = example_ids[batch_start:batch_end]
 

@@ -277,6 +277,8 @@ class ServiceCapabilities:
         supports_streaming: Whether streaming responses are supported
         max_batch_size: Maximum inputs per execute request
         max_payload_bytes: Maximum request payload size (None = unlimited)
+        supports_benchmarks: Whether /datasets and /benchmarks discovery is
+            offered (None = not advertised, False = opted out)
     """
 
     version: str
@@ -287,6 +289,9 @@ class ServiceCapabilities:
     max_batch_size: int = 100
     max_payload_bytes: int | None = None
     tunable_ids: list[str] | None = None
+    #: ``None`` = the service did not advertise the flag (clients keep probing);
+    #: ``False`` = the service opted out of benchmark/dataset discovery.
+    supports_benchmarks: bool | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ServiceCapabilities:
@@ -300,6 +305,7 @@ class ServiceCapabilities:
             max_batch_size=data.get("max_batch_size", 100),
             max_payload_bytes=data.get("max_payload_bytes"),
             tunable_ids=data.get("tunable_ids"),
+            supports_benchmarks=data.get("supports_benchmarks"),
         )
 
 
