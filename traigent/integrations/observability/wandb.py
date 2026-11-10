@@ -476,8 +476,12 @@ class WandBOptimizationCallback:
             config=kwargs.get("wandb_config", {}),
         )
 
-    def on_trial_complete(self, trial: TrialResult) -> None:
-        """Called when trial completes."""
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts. No-op: W&B/MLflow log per completed trial."""
+        return None
+
+    def on_trial_complete(self, trial: TrialResult, progress: Any = None) -> None:
+        """Called when trial completes; ``progress`` is passed by CallbackManager."""
         self.trial_count += 1
         self.tracker.log_trial(trial, self.trial_count)
 
