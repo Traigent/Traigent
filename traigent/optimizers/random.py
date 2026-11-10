@@ -292,7 +292,10 @@ class RandomSearchOptimizer(BaseOptimizer):
             val = self._sample_log_uniform(param_name, low_f, high_f)
         else:
             val = self._random.uniform(low_f, high_f)
-        return round(val, 6)
+        # 12 significant digits (the JS SDK's roundToPrecision), clamped into
+        # the declared range: fixed 6-decimal rounding collapsed sub-1e-6
+        # bounds onto a coarse lattice and even returned 0.0 (#3216).
+        return min(max(float(f"{val:.12g}"), low_f), high_f)
 
     def _sample_parameter(self, param_name: str, param_def: Any) -> Any:
         """Sample a single parameter value.
