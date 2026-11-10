@@ -14,12 +14,18 @@ import json
 import os
 import time
 import uuid
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, cast
+
+try:  # POSIX only; elsewhere the in-process write stays atomic but unlocked
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 from traigent.config.backend_config import PRICING_URL
 from traigent.utils.exceptions import ConfigurationError
@@ -39,9 +45,32 @@ def _read_json_file(path: Path) -> Any:
 
 
 def _write_json_file(path: Path, data: Any) -> None:
-    """Write JSON data to disk."""
-    with path.open("w") as file_obj:
-        json.dump(data, file_obj, indent=2)
+    """Write JSON data to disk atomically (temp file, then replace)."""
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        with tmp_path.open("w") as file_obj:
+            json.dump(data, file_obj, indent=2)
+            file_obj.flush()
+            os.fsync(file_obj.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        with suppress(OSError):
+            tmp_path.unlink()
+
+
+@contextmanager
+def _storage_lock(path: Path) -> Iterator[None]:
+    """Hold an exclusive inter-process lock for read-modify-write of ``path``."""
+    if fcntl is None:  # pragma: no cover - non-POSIX platforms
+        yield
+        return
+    lock_path = path.with_name(f"{path.name}.lock")
+    with lock_path.open("a") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 # Cost Tracking Enums and Classes (from cost_tracking.py)
@@ -294,8 +323,7 @@ class UsageTracker:
             billing_tier=billing_tier,
         )
 
-        self._usage_records.append(usage_record)
-        await self._save_usage_data()
+        self._append_record_and_save(usage_record)
 
         logger.info(
             f"Recorded optimization: {function_name} "
@@ -474,33 +502,63 @@ class UsageTracker:
             "cost_per_credit": plan.cost_per_credit,
         }
 
+    def _read_records_from_disk(self) -> list[UsageRecord]:
+        """Read the stored records; quarantine an unreadable file, never drop it."""
+        if not self.storage_path.exists():
+            return []
+        try:
+            with open(self.storage_path) as f:
+                data = json.load(f)
+            return [
+                UsageRecord.from_dict(record_data)
+                for record_data in data.get("usage_records", [])
+            ]
+        except Exception as e:
+            quarantine = self.storage_path.with_name(
+                f"{self.storage_path.name}.corrupt-{time.time_ns()}"
+            )
+            try:
+                os.replace(self.storage_path, quarantine)
+                logger.warning(
+                    f"Usage data unreadable ({e}); moved to {quarantine} and "
+                    "starting a fresh usage file"
+                )
+            except OSError:
+                logger.warning(f"Failed to load usage data: {e}")
+            return []
+
     def _load_usage_data(self) -> None:
         """Load usage data from storage."""
+        with _storage_lock(self.storage_path):
+            self._usage_records = self._read_records_from_disk()
+        logger.debug(f"Loaded {len(self._usage_records)} usage records")
+
+    def _write_records(self, records: list[UsageRecord]) -> None:
+        data = {
+            "usage_records": [record.to_dict() for record in records],
+            "last_updated": datetime.now(UTC).isoformat(),
+        }
+        _write_json_file(self.storage_path, data)
+
+    def _append_record_and_save(self, record: UsageRecord) -> None:
+        """Append under an inter-process lock, merging what other writers saved."""
         try:
-            if self.storage_path.exists():
-                with open(self.storage_path) as f:
-                    data = json.load(f)
-                    self._usage_records = [
-                        UsageRecord.from_dict(record_data)
-                        for record_data in data.get("usage_records", [])
-                    ]
-                logger.debug(f"Loaded {len(self._usage_records)} usage records")
-            else:
-                self._usage_records = []
+            with _storage_lock(self.storage_path):
+                records = self._read_records_from_disk()
+                records.append(record)
+                self._write_records(records)
+                self._usage_records = records
         except Exception as e:
-            logger.warning(f"Failed to load usage data: {e}")
-            self._usage_records = []
+            self._usage_records.append(record)
+            logger.exception(f"Failed to save usage data: {e}")
 
     async def _save_usage_data(self) -> None:
         """Save usage data to storage."""
         try:
-            data = {
-                "usage_records": [record.to_dict() for record in self._usage_records],
-                "last_updated": datetime.now(UTC).isoformat(),
-            }
             # Keep billing persistence synchronous to avoid leaking threadpool
             # executors across many short-lived asyncio.run() calls in tests/CLI usage.
-            _write_json_file(self.storage_path, data)
+            with _storage_lock(self.storage_path):
+                self._write_records(self._usage_records)
         except Exception as e:
             logger.exception(f"Failed to save usage data: {e}")
 
