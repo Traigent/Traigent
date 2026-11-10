@@ -127,6 +127,18 @@ class DataRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+class EncryptionKeyNotFoundError(SecurityError):
+    """Raised when the key needed to decrypt is absent, expired or inactive."""
+
+    def __init__(self, key_id: str) -> None:
+        self.key_id = key_id
+        super().__init__(
+            f"Encryption key '{key_id}' is not available in this key store "
+            "(missing, expired or inactive); data can only be decrypted with "
+            "the key store that encrypted it."
+        )
+
+
 class EncryptionManager:
     """Manages data encryption and key lifecycle."""
 
@@ -271,6 +283,8 @@ class EncryptionManager:
             raise ValueError("Authentication tag must be 16 bytes for AES-GCM")
 
         key_data: bytes | None = self.key_manager.get_key(key_id)
+        if key_data is None:
+            raise EncryptionKeyNotFoundError(key_id)
         key_buffer = self._to_mutable_key_buffer(key_data)
 
         if self.crypto_available and key_buffer:
@@ -1107,7 +1121,12 @@ class DataProtectionManager:
             encrypt: Whether to encrypt the data
 
         Returns:
-            Dictionary with protection results and metadata
+            Dictionary with protection results and metadata. When encrypted,
+            ``protected_data`` is a JSON envelope (hex ciphertext, iv, tag and
+            ``key_id``); the key itself is held only by this manager's key
+            store. The default ``KeyManager`` is in-memory, so the envelope
+            can be decrypted only while that key store is alive, or with a
+            manager sharing the same (persisted) key store.
         """
         if classification is None:
             if isinstance(data, str):
@@ -1219,26 +1238,56 @@ class DataProtectionManager:
     def unprotect_data(self, protected_result: dict[str, Any]) -> str:
         """Unprotect data from protection result.
 
+        The ``is_encrypted`` flag is not trusted: if ``protected_data`` is an
+        encryption envelope it is always decrypted and authenticated.
+        Decryption needs the same key store that encrypted the data; an
+        unknown key raises ``EncryptionKeyNotFoundError`` naming the key id.
+
         Args:
             protected_result: Result from protect_data() method
 
         Returns:
             Unprotected data as string
-        """
-        if not protected_result.get("is_encrypted"):
-            return cast(str, protected_result["protected_data"])
 
-        envelope = json.loads(protected_result["protected_data"])
-        plaintext = self.encryption_manager.decrypt(
-            {
+        Raises:
+            ValueError: ``is_encrypted`` is true but the envelope is missing
+                or malformed.
+            EncryptionKeyNotFoundError: the key id is not in the key store.
+        """
+        protected = protected_result["protected_data"]
+        envelope = self._parse_envelope(protected)
+        if envelope is None:
+            if protected_result.get("is_encrypted"):
+                raise ValueError(
+                    "Result is marked encrypted but protected_data is not a "
+                    "valid encryption envelope"
+                )
+            return cast(str, protected)
+
+        try:
+            parts = {
                 "ciphertext": bytes.fromhex(envelope["ciphertext"]),
                 "iv": bytes.fromhex(envelope["iv"]),
                 "tag": bytes.fromhex(envelope["tag"]),
                 "key_id": envelope["key_id"],
-                "algorithm": envelope["algorithm"],
+                "algorithm": envelope.get("algorithm", "AES-256-GCM"),
             }
-        )
-        return plaintext.decode("utf-8")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Malformed encryption envelope") from exc
+        return self.encryption_manager.decrypt(parts).decode("utf-8")
+
+    @staticmethod
+    def _parse_envelope(protected: Any) -> dict[str, Any] | None:
+        """Return the envelope dict if ``protected`` looks like one, else None."""
+        if not isinstance(protected, str):
+            return None
+        try:
+            parsed = json.loads(protected)
+        except ValueError:
+            return None
+        if isinstance(parsed, dict) and {"ciphertext", "iv", "tag"} <= parsed.keys():
+            return parsed
+        return None
 
 
 @dataclass

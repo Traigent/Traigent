@@ -12,6 +12,7 @@ from traigent.security.credentials import SecurityError
 from traigent.security.encryption import (
     DataClassification,
     DataProtectionManager,
+    EncryptionKeyNotFoundError,
     EncryptionManager,
     KeyManager,
     PIIDetector,
@@ -478,6 +479,38 @@ class TestDataProtectionManager:
 
         with pytest.raises(RuntimeError, match="Decryption operation failed"):
             manager.unprotect_data(result)
+
+    def test_unprotect_data_ignores_flipped_encrypted_flag(self):
+        """Flipping or dropping is_encrypted must not return the envelope."""
+        manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+        sensitive = "patient record 4471 diagnosis X"
+        result = manager.protect_data(sensitive, encrypt=True)
+
+        flipped = {**result, "is_encrypted": False}
+        removed = {k: v for k, v in result.items() if k != "is_encrypted"}
+
+        assert manager.unprotect_data(flipped) == sensitive
+        assert manager.unprotect_data(removed) == sensitive
+
+    def test_unprotect_data_encrypted_flag_without_envelope_raises(self):
+        manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+        forged = {"is_encrypted": True, "protected_data": "plain text"}
+
+        with pytest.raises(ValueError, match="not a valid encryption envelope"):
+            manager.unprotect_data(forged)
+
+    def test_unprotect_data_unknown_key_names_key_id(self):
+        """A different key store must raise a typed error naming the key."""
+        sensitive = "patient record 4471 diagnosis X"
+        result = DataProtectionManager(
+            EncryptionManager(KeyManager()), PIIDetector()
+        ).protect_data(sensitive, encrypt=True)
+        key_id = json.loads(result["protected_data"])["key_id"]
+        other = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+
+        with pytest.raises(EncryptionKeyNotFoundError, match=key_id) as exc_info:
+            other.unprotect_data(result)
+        assert exc_info.value.key_id == key_id
 
     def test_protect_data_without_encryption(self):
         """Test data protection without encryption"""
