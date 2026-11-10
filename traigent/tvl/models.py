@@ -79,14 +79,17 @@ class DomainSpec:
 
     def to_configuration_space_entry(
         self,
-    ) -> list[Any] | tuple[int, int] | tuple[float, float]:
+    ) -> list[Any] | tuple[int, int] | tuple[float, float] | dict[str, Any]:
         """Convert to Traigent configuration space format.
 
         Returns:
             List of values for categorical types, or (min, max) tuple for
             numeric. A float range that declares ``resolution`` returns the
-            discrete grid ``min, min+resolution, ...`` (never above ``max``);
-            without ``resolution`` it stays the continuous ``(min, max)``.
+            discrete grid ``min, min+resolution, ...`` (never above ``max``).
+            An int range with a ``resolution`` above 1 returns the lazy grid
+            ``{"type": "int", "low", "high", "step"}`` (``high`` is the last
+            grid point), which the optimizers enumerate without building it.
+            Without ``resolution`` it stays the continuous ``(min, max)``.
         """
         if self.kind in ("enum", "set"):
             return self.values or []
@@ -102,8 +105,7 @@ class DomainSpec:
                 # A step of 1 enumerates exactly the integers of the continuous
                 # range, so it keeps the (min, max) form it always had.
                 if self.resolution > 1:
-                    # Same step rule as the float grid: lo, lo+step, ... <= hi.
-                    return list(range(int(lo), int(hi) + 1, int(self.resolution)))
+                    return _int_grid_entry(int(lo), int(hi), int(self.resolution))
                 return self.range
             if (
                 self.resolution is not None
@@ -147,7 +149,7 @@ class TVarDecl:
 
     def to_configuration_space_entry(
         self,
-    ) -> tuple[str, list[Any] | tuple[int, int] | tuple[float, float]]:
+    ) -> tuple[str, list[Any] | tuple[int, int] | tuple[float, float] | dict[str, Any]]:
         """Convert to Traigent configuration space format.
 
         Returns:
@@ -834,6 +836,20 @@ def _real_number(value: object, field_name: str) -> float:
 def _is_plain_int(value: object) -> bool:
     """True for an int that is not a bool (bool is an int subclass in Python)."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _int_grid_entry(lo: int, hi: int, step: int) -> dict[str, Any]:
+    """Lazy form of the int grid ``lo, lo+step, ... <= hi`` (#3241).
+
+    Materialising the grid is unbounded in the span, so the entry stays a
+    ``{"type", "low", "high", "step"}`` dict. ``high`` is rewritten to the last
+    grid point: the optimizers append ``high`` when it is off the grid, which
+    would add a point the list form never had.
+    """
+    if hi < lo:
+        raise ValueError("Range domain range min must not exceed max")
+    last = lo + ((hi - lo) // step) * step
+    return {"type": "int", "low": lo, "high": last, "step": step}
 
 
 def _float_grid(lo: float, hi: float, step: float, label: str) -> list[float]:

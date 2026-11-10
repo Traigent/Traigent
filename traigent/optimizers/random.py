@@ -14,7 +14,8 @@ from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.discrete_domains import (
     discrete_values_for_config_param,
     stepped_float_values,
-    stepped_int_values,
+    stepped_int_at,
+    stepped_int_cardinality,
 )
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
@@ -237,12 +238,11 @@ class RandomSearchOptimizer(BaseOptimizer):
             sampled = self._sample_log_uniform(param_name, float(low_i), float(high_i))
             return min(max(math.floor(sampled + 0.5), low_i), high_i)
 
-        values = stepped_int_values(low_i, high_i, int_step)
-        if not values:
-            raise OptimizationError(
-                f"Invalid integer range for parameter '{param_name}': no values"
-            )
-        return self._random.choice(values)
+        # Draw a grid index rather than building the grid: a span of 1e12 at
+        # step 2 must not allocate per trial (#3241). randrange(n) consumes the
+        # same random draw as choice() over an n-element grid.
+        count = stepped_int_cardinality(low_i, high_i, int_step)
+        return stepped_int_at(low_i, high_i, int_step, self._random.randrange(count))
 
     def _sample_log_uniform(self, param_name: str, low: float, high: float) -> float:
         """Draw ``10 ** uniform(log10(low), log10(high))`` clamped into the range."""

@@ -607,6 +607,30 @@ class TestEnvOfflineModeIsReal:
 
         assert opened == [], f"doctor with TRAIGENT_OFFLINE opened sockets: {opened}"
 
+    def test_doctor_model_check_under_offline_env_sets_litellm_cost_map(
+        self, runner, monkeypatch
+    ) -> None:
+        """Under --model the env-driven offline mode reaches the LiteLLM import (#3185).
+
+        The doctor-level offline flag is what sets LITELLM_LOCAL_MODEL_COST_MAP
+        before litellm's cold import fetches its cost map. Without the flag the
+        model checks dial out even though TRAIGENT_OFFLINE_MODE is set.
+        """
+        opened = self._record_sockets(monkeypatch)
+        self._clear_offline_env(monkeypatch)
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+        # Register the variable so monkeypatch restores its absence afterwards,
+        # then unset it: the code under test uses setdefault and must see it absent.
+        monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "")
+        monkeypatch.delenv("LITELLM_LOCAL_MODEL_COST_MAP")
+
+        result = runner.invoke(doctor, ["--json", "--model", "gpt-4o"])
+
+        assert os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP") == "True", result.output
+        assert opened == [], (
+            f"doctor --model under offline env opened sockets: {opened}"
+        )
+
     def test_control_without_env_var_diagnose_opens_sockets(self, monkeypatch) -> None:
         """Without the env var the same probe must see sockets, or the tests above
         pass for the wrong reason."""
