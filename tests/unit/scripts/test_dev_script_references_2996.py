@@ -51,3 +51,32 @@ def test_shell_launcher_app_path_exists() -> None:
     target = re.search(r'streamlit run "\$REPO_ROOT/([^"]+)"', text)
     assert target is not None, "launcher must run the app relative to the repo root"
     assert (_REPO / target.group(1)).is_file()
+
+
+_README = _REPO / "scripts" / "README.md"
+# A scripts/ path, or a bold backticked file name such as **`tool.py`**.
+_README_PATH_RE = re.compile(r"(?<![\w/.-])(scripts/[\w./-]*[\w/])")
+_README_NAME_RE = re.compile(r"\*\*`([\w.-]+\.\w+)`\*\*|^#### `([\w.-]+\.\w+)`", re.M)
+# Written by the maintenance tools at run time, not shipped in the repo.
+_GENERATED = {"scripts/maintenance/logs"}
+
+
+def test_scripts_readme_paths_exist() -> None:
+    text = _README.read_text(encoding="utf-8")
+    missing = sorted(
+        {
+            p.rstrip("/.")
+            for p in _README_PATH_RE.findall(text)
+            if p.rstrip("/.") not in _GENERATED
+            and not (_REPO / p.rstrip("/.")).exists()
+        }
+    )
+    assert missing == []
+
+
+def test_scripts_readme_named_files_exist() -> None:
+    text = _README.read_text(encoding="utf-8")
+    names = {a or b for a, b in _README_NAME_RE.findall(text)}
+    scripts = _REPO / "scripts"
+    missing = sorted(n for n in names if next(scripts.rglob(n), None) is None)
+    assert missing == []

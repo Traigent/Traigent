@@ -7,7 +7,6 @@ This directory contains all automation, development, and utility scripts for the
 ```
 scripts/
 ├── README.md                    # This file - comprehensive script documentation
-├── archive/                     # 📦 Completed one-time scripts (DO NOT RUN)
 ├── maintenance/                 # 🛠️ Active maintenance tools (RECOMMENDED)
 ├── analysis/                    # 🔍 Code analysis and pattern detection
 ├── documentation/               # 📚 Documentation management and dashboards
@@ -18,15 +17,12 @@ scripts/
 ├── validation/                  # ✅ Code and documentation validation
 ├── auto_tune/                   # 🎯 Auto-tuning and optimization scripts
 ├── config/                      # ⚙️ Configuration files
-├── data/                        # 📊 Data and tracking files
 ├── development/                 # 🔨 Development utilities
 ├── hooks/                       # 🪝 Git hooks and automation
 ├── linting/                     # 🧹 Code quality and linting
 ├── quality/                     # 📈 Code quality analysis tools
 ├── smoke/                       # 💨 Smoke testing scripts
-├── tools/                       # 🔧 Development tools
-├── utilities/                   # 🛠️ General utilities
-└── workspace/                   # 💻 Workspace and IDE setup
+└── utilities/                   # 🛠️ General utilities
 ```
 
 ## ⚠️ **IMPORTANT - New Maintenance Structure**
@@ -35,8 +31,6 @@ scripts/
 - **`traigent_quality_manager.py`** - Unified code quality management
 - **`safe_cleanup_manager.py`** - Comprehensive project cleanup
 - **`performance_monitor.py`** - Performance monitoring and profiling
-
-**DO NOT run scripts in `scripts/archive/`** - they are completed one-time migrations.
 
 ## Script Categories by Directory
 
@@ -85,11 +79,6 @@ python scripts/maintenance/safe_cleanup_manager.py --cleanup --interactive
 - Track performance metrics over time
 - Generate performance reports
 
-### 📦 **Archive (`archive/`)** - **DO NOT RUN THESE**
-**Completed one-time scripts** preserved for historical reference. These scripts were designed for one-time use and have already been executed. Running them again could cause syntax errors or breaking changes.
-
-See `scripts/archive/README.md` for complete list of archived scripts and their purpose.
-
 ### 🔍 **Analysis (`analysis/`)**
 **Code analysis and pattern detection scripts:**
 - **`find_deprecated_patterns.py`** - Find deprecated patterns after refactoring
@@ -129,16 +118,9 @@ Configuration files moved from root for better organization:
 - **`mkdocs.yml`** - MkDocs documentation site configuration
 - **`tox.ini`** - Tox testing automation configuration
 - **`.pre-commit-config.yaml`** - Pre-commit hooks configuration
-- **`.pylance-settings.json`** - Pylance language server settings
-
-### 📊 Data (`data/`)
-Data files and tracking information:
-- **`code_quality_remediation_tracker.json`** - Tracks code quality fixes applied
-- **`coverage.json`** - Test coverage data from previous runs
 
 ### 🛠️ Development (`development/`)
 Development and testing utilities:
-- **`code_quality_remediation.py`** - Systematic code quality fix automation
 - **`test_imports.py`** - Security and module import verification script
 
 ### 🔍 Linting (`linting/`)
@@ -196,20 +178,7 @@ python scripts/examples/launch_control_center.py
 ./scripts/examples/launch_control_center.sh
 ```
 
-### Migration Scripts - **ARCHIVED**
-
-Migration scripts have been moved to `scripts/archive/` as they are completed one-time operations:
-- `migrate_tests.py` - ✅ Completed - Test files migrated
-- `migrate_validation.py` - ✅ Completed - Validation code updated
-- `migrate_retry.py` - ✅ Completed - Retry logic consolidated
-- `migrate_analytics.py` - ✅ Completed - Analytics code updated
-
-**Use the new maintenance tools instead** for ongoing code quality and cleanup needs.
-
 ### Utilities
-
-#### `cleanup_traigent.py`
-Cleans up temporary files and caches.
 
 #### `test_setup.py`
 Additional test setup utilities.
@@ -328,8 +297,6 @@ These files were organized from project root:
 - Configuration files → `scripts/config/`
 - Development utilities → `scripts/development/`
 - Linting automation → `scripts/linting/`
-- Data files → `scripts/data/`
-- Workspace setup → `scripts/workspace/`
 
 ### Updated References
 All scripts updated with:
@@ -346,11 +313,6 @@ All scripts updated with:
 - **`scripts/maintenance/traigent_quality_manager.py`** - For all code quality needs
 - **`scripts/maintenance/safe_cleanup_manager.py`** - For all cleanup needs
 - **`scripts/maintenance/performance_monitor.py`** - For performance monitoring
-
-### ❌ **What NOT to Use**
-- **`scripts/archive/`** - Contains completed one-time scripts that should NOT be run again
-- Individual cleanup scripts like `cleanup_traigent.py` (superseded by safe_cleanup_manager.py)
-- Individual quality scripts like `check_code_quality.py` (superseded by traigent_quality_manager.py)
 
 ### 🔒 **Safety Features**
 All new maintenance tools include:
