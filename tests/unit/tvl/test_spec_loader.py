@@ -2824,3 +2824,51 @@ objectives:
         message = str(exc_info.value)
         assert "model" in message
         assert "repeats 'model-a'" in message
+
+
+class TestIntRangeResolutionGrid:
+    """An int range that declares ``resolution`` is a grid, as a float range is (#3241).
+
+    The reference model reads ``[0, 100]`` with resolution 10 as 0, 10, ..., 100.
+    """
+
+    _OBJECTIVES = """
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+
+    def _load(self, tmp_path: Path, domain_block: str):
+        spec_file = tmp_path / "int-grid.tvl.yml"
+        spec_file.write_text(
+            "tvars:\n"
+            "  - name: ti10\n"
+            "    type: int\n"
+            "    domain:\n" + domain_block + self._OBJECTIVES
+        )
+        return load_tvl_spec(spec_path=spec_file)
+
+    def test_int_range_with_resolution_is_the_grid(self, tmp_path: Path) -> None:
+        artifact = self._load(tmp_path, "      range: [0, 100]\n      resolution: 10\n")
+
+        assert artifact.configuration_space["ti10"] == list(range(0, 101, 10))
+
+    def test_grid_never_exceeds_upper_bound(self, tmp_path: Path) -> None:
+        """Span 25 with step 10 stops at the last multiple not above 25."""
+        artifact = self._load(tmp_path, "      range: [0, 25]\n      resolution: 10\n")
+
+        assert artifact.configuration_space["ti10"] == [0, 10, 20]
+
+    def test_int_range_without_resolution_stays_continuous(
+        self, tmp_path: Path
+    ) -> None:
+        """Control: no resolution keeps the (min, max) range the optimizer samples."""
+        artifact = self._load(tmp_path, "      range: [0, 100]\n")
+
+        assert artifact.configuration_space["ti10"] == (0, 100)
+
+    def test_non_integer_resolution_on_int_range_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(ValueError, match="positive integer"):
+            self._load(tmp_path, "      range: [0, 100]\n      resolution: 2.5\n")
