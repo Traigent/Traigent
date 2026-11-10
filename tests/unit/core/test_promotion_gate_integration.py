@@ -416,8 +416,10 @@ class TestPromotionGateDecisionLogging:
         orchestrator._config_metrics_history["incumbent_hash"] = {
             "accuracy": [0.70, 0.71, 0.72, 0.70, 0.71]
         }
+        # Paired differences must vary: a constant difference is a zero-variance
+        # sample, which the promotion gate treats as inconclusive (fails closed).
         orchestrator._config_metrics_history["candidate_hash"] = {
-            "accuracy": [0.90, 0.91, 0.92, 0.90, 0.91]
+            "accuracy": [0.90, 0.93, 0.91, 0.89, 0.92]
         }
 
         trial = TrialResult(

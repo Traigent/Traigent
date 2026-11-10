@@ -9,6 +9,7 @@ length. These tests drive the REAL ``anthropic`` client against an
 
 from __future__ import annotations
 
+import importlib
 import json
 from typing import Any
 
@@ -16,12 +17,12 @@ import pytest
 
 anthropic = pytest.importorskip("anthropic")
 
-# Newer anthropic releases ship their own ``httpx2`` and reject ``httpx``
-# clients; older ones need ``httpx``. Use whichever the installed SDK uses.
-try:
-    import httpx2 as httpx
-except ImportError:  # pragma: no cover - depends on the installed SDK
-    import httpx
+# anthropic rejects ``http_client`` objects from any other httpx distribution
+# (newer releases ship their own ``httpx2``). Use the module that defines the
+# client class the installed SDK subclasses, whatever else is importable.
+httpx = importlib.import_module(
+    anthropic.DefaultHttpxClient.__mro__[1].__module__.split(".")[0]
+)
 
 from traigent.api.types import ExampleResult  # noqa: E402
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper  # noqa: E402

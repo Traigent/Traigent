@@ -5,6 +5,7 @@ Mocked transport; only sessions whose search_space type is "analytics" count.
 
 from __future__ import annotations
 
+import importlib
 import json
 from typing import Any
 
@@ -54,8 +55,13 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
     monkeypatch.setattr("traigent.utils.env_config.is_mock_llm", lambda: False)
+    # Resolve the module through importlib, not a dotted path: tests that
+    # re-import traigent.cloud (plugin import-blocker tests) can leave the
+    # package attribute pointing at a different module object.
     monkeypatch.setattr(
-        "traigent.cloud.backend_client.get_backend_client", lambda **k: _Recorder()
+        importlib.import_module("traigent.cloud.backend_client"),
+        "get_backend_client",
+        lambda **k: _Recorder(),
     )
     monkeypatch.setattr(
         "traigent.utils.local_analytics._analytics_api_key_error", lambda key: None

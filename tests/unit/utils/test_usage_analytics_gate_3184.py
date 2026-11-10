@@ -8,6 +8,7 @@ the incentive/CLI callers; a control test proves the default still sends.
 from __future__ import annotations
 
 import asyncio
+import importlib
 from types import SimpleNamespace
 from typing import Any
 
@@ -56,8 +57,12 @@ def transport(monkeypatch, tmp_path):
         monkeypatch.delenv(name, raising=False)
     # The in-code mock flag can leak from earlier tests in a shared process.
     monkeypatch.setattr("traigent.utils.env_config.is_mock_llm", lambda: False)
+    # Resolve the module through importlib, not a dotted path: tests that
+    # re-import traigent.cloud (plugin import-blocker tests) can leave the
+    # package attribute pointing at a different module object.
     monkeypatch.setattr(
-        "traigent.cloud.backend_client.get_backend_client",
+        importlib.import_module("traigent.cloud.backend_client"),
+        "get_backend_client",
         lambda **k: _Recorder(),
     )
     monkeypatch.setattr(
