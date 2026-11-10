@@ -57,6 +57,7 @@ from traigent.wrapper.errors import (
     HybridAPIError,
     IdempotencyConflictError,
     InvalidInputsError,
+    ServiceUnavailableError,
     UnknownTunableIdError,
 )
 
@@ -64,6 +65,11 @@ logger = get_logger(__name__)
 
 
 # OpenAPI contract: tunable and objective names must be valid Python identifiers.
+#: Most distinct request_ids that may be running at once; further new requests
+#: get a retryable 503 instead of growing the in-flight map. Completed results
+#: live in the separate FIFO cache bounded by ``_idempotency_cache_max_size``.
+MAX_INFLIGHT_REQUESTS = 512
+
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*\Z")
 _ESTIMATED_INPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE"
 _ESTIMATED_OUTPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE"
@@ -292,7 +298,7 @@ class TraigentService:
         self._evaluate_idempotency_cache: dict[str, tuple[str, dict[str, Any]]] = {}
         # request_id -> (payload fingerprint, future) for requests still running.
         self._inflight_requests: dict[
-            tuple[str, str], tuple[str, asyncio.Future[dict[str, Any] | None]]
+            tuple[str, str], tuple[str, asyncio.Future[dict[str, Any]]]
         ] = {}
         self._execution_context_cache: dict[str, _ExecutionContextEntry] = {}
 
@@ -1117,37 +1123,58 @@ class TraigentService:
         The request_id is reserved (with its payload fingerprint) before the
         handler runs. A concurrent request with the same id and a different
         payload gets 409 immediately; one with the same payload waits for the
-        first result and never runs the handler a second time. If the first
-        run raises, the reservation is released so a retry can proceed.
+        first outcome and never runs the handler a second time. If the first run
+        raises, waiters get the same exception; if it is cancelled they get a
+        retryable 503. The reservation is always removed afterwards, so only a
+        new request arriving later may run again.
         """
         if "request_id" not in request:
             return await impl(request)
         request_id = str(request["request_id"])
         fingerprint = self._fingerprint_request(request)
         key = (operation, request_id)
-        while True:
-            reserved = self._inflight_requests.get(key)
-            if reserved is None:
-                break
-            reserved_fingerprint, future = reserved
+        reserved = self._inflight_requests.get(key)
+        if reserved is not None:
+            reserved_fingerprint, existing = reserved
             if reserved_fingerprint != fingerprint:
                 raise IdempotencyConflictError(
                     f"request_id reuse with different payload in {operation} request"
                 )
-            result = await asyncio.shield(future)
-            if result is not None:
-                return copy.deepcopy(result)
-            # The first run failed and released its reservation: retry as first.
-        future = asyncio.get_running_loop().create_future()
+            # Same payload: share the first run's outcome, success or failure.
+            # A waiter never re-runs the batch (that could repeat cost or side
+            # effects); it re-raises the first run's exception.
+            return copy.deepcopy(await asyncio.shield(existing))
+        if len(self._inflight_requests) >= MAX_INFLIGHT_REQUESTS:
+            raise ServiceUnavailableError(
+                "Too many in-flight requests; retry shortly",
+                retry_after=1,
+                error_code="TOO_MANY_IN_FLIGHT_REQUESTS",
+            )
+        future: asyncio.Future[dict[str, Any]] = (
+            asyncio.get_running_loop().create_future()
+        )
         self._inflight_requests[key] = (fingerprint, future)
-        outcome: dict[str, Any] | None = None
         try:
             outcome = await impl(request)
-            return outcome
+        except asyncio.CancelledError:
+            future.set_exception(
+                ServiceUnavailableError(
+                    "The original request was cancelled before it finished; "
+                    "retry the request",
+                    retry_after=1,
+                    error_code="REQUEST_CANCELLED",
+                )
+            )
+            future.exception()  # mark retrieved when nobody is waiting
+            raise
+        except BaseException as exc:
+            future.set_exception(exc)
+            future.exception()
+            raise
         finally:
             self._inflight_requests.pop(key, None)
-            if not future.done():
-                future.set_result(copy.deepcopy(outcome) if outcome else None)
+        future.set_result(copy.deepcopy(outcome))
+        return outcome
 
     async def handle_execute(self, request: dict[str, Any]) -> dict[str, Any]:
         """Handle execute request (see ``_handle_execute_impl``)."""

@@ -332,3 +332,91 @@ async def test_reservation_released_when_handler_raises_so_retry_runs() -> None:
     result = await svc.handle_execute(body)
     assert result["status"] == "completed"
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_waiter_gets_the_first_failure_and_handler_runs_once() -> None:
+    import asyncio
+
+    from traigent.wrapper.errors import ServiceUnavailableError
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    runs: list[str] = []
+    svc = TraigentService(tunable_id="my_agent")
+
+    @svc.execute
+    async def run(example_id, data, config):
+        runs.append(example_id)
+        started.set()
+        await release.wait()
+        raise ServiceUnavailableError("upstream down")
+
+    body = _execute_body(inputs=[{"input_id": "a"}])
+    first = asyncio.create_task(svc.handle_execute(body))
+    await started.wait()
+    waiter = asyncio.create_task(svc.handle_execute(dict(body)))
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(ServiceUnavailableError):
+        await first
+    with pytest.raises(ServiceUnavailableError):
+        await waiter
+    assert runs == ["a"]
+    assert svc._inflight_requests == {}
+
+
+@pytest.mark.asyncio
+async def test_waiter_gets_retryable_error_when_first_is_cancelled() -> None:
+    import asyncio
+
+    from traigent.wrapper.errors import ServiceUnavailableError
+
+    svc, started, release, runs = _gated_service()
+    body = _execute_body(inputs=[{"input_id": "a"}])
+    first = asyncio.create_task(svc.handle_execute(body))
+    await started.wait()
+    waiter = asyncio.create_task(svc.handle_execute(dict(body)))
+    await asyncio.sleep(0)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    with pytest.raises(ServiceUnavailableError) as info:
+        await waiter
+    assert info.value.error_code == "REQUEST_CANCELLED"
+    assert runs == ["a"]
+    assert svc._inflight_requests == {}
+
+
+@pytest.mark.asyncio
+async def test_inflight_reservations_are_capped_and_cleaned_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    import traigent.wrapper.service as service_module
+    from traigent.wrapper.errors import ServiceUnavailableError
+
+    monkeypatch.setattr(service_module, "MAX_INFLIGHT_REQUESTS", 2)
+    svc, started, release, runs = _gated_service()
+    tasks = [
+        asyncio.create_task(
+            svc.handle_execute(
+                _execute_body(request_id=f"id-{i}", inputs=[{"input_id": f"x{i}"}])
+            )
+        )
+        for i in range(2)
+    ]
+    await started.wait()
+    await asyncio.sleep(0)
+    assert len(svc._inflight_requests) == 2
+    with pytest.raises(ServiceUnavailableError) as info:
+        await svc.handle_execute(
+            _execute_body(request_id="id-3", inputs=[{"input_id": "x3"}])
+        )
+    assert info.value.error_code == "TOO_MANY_IN_FLIGHT_REQUESTS"
+    assert len(svc._inflight_requests) == 2
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    assert svc._inflight_requests == {}
