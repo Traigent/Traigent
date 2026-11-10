@@ -103,7 +103,7 @@ async def main() -> None:
     if result.best_config is None or result.status == "failed":
         raise SystemExit(
             f"Optimization produced no usable result (status={result.status}, "
-            "best_config=None): every trial failed. See the trial errors above."
+            f"best_config={result.best_config}): every trial failed. See the trial errors above."
         )
 
     if raw is not None and not raw.empty:

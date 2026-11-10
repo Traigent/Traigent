@@ -1292,7 +1292,9 @@ class OptimizedFunction[**P, R]:
                 "framework_targets=['module.ClassName', ...] "
                 "(e.g. ['openai.OpenAI']).",
                 TraigentWarning,
-                stacklevel=2,
+                # _store_core_parameters -> __init__ -> decorator -> user's
+                # @traigent.optimize line, so the warning points at the user.
+                stacklevel=4,
             )
         if "pydantic_ai.Agent" in self.framework_targets:
             warnings.warn(

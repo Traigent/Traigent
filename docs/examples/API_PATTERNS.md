@@ -221,20 +221,35 @@ import traigent
 from traigent.api.types import ExampleResult
 
 
+import hashlib
+import json
+
+
 def sql_evaluator(func, config, example):
     db_id = example.metadata.get("db_id", "default")
     gold_sql = example.metadata.get("gold_sql", "")
 
-    predicted_sql = func(example.input_data)
+    # A plain-string row passes the string; a dict row ({"question": ...}) is
+    # passed as keyword arguments, as described in "Multi-field input dict".
+    if isinstance(example.input_data, dict):
+        predicted_sql = func(**example.input_data)
+    else:
+        predicted_sql = func(example.input_data)
     correct = predicted_sql.strip().lower() == gold_sql.strip().lower()
+    # One id per example: the dataset's id when it has one, else a stable hash of the input.
+    example_id = str(example.metadata.get("id") or hashlib.sha256(
+        json.dumps(example.input_data, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16])
     return ExampleResult(
-        example_id=str(example.metadata.get("id", "example")),
+        example_id=example_id,
         input_data=example.input_data,
         expected_output=example.expected_output,
         actual_output=predicted_sql,
         metrics={"accuracy": 1.0 if correct else 0.0},
         execution_time=0.0,  # replace with the measured call latency if you track it
-        success=correct,
+        # The evaluator ran, so the row is a success even when the SQL is wrong.
+        # Correctness is carried by metrics["accuracy"], not by success.
+        success=True,
     )
 
 

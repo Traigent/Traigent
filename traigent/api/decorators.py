@@ -238,7 +238,9 @@ class InjectionOptions(BaseModel):
             - "seamless": Zero code change, AST transformation
         config_param: Parameter name for injection_mode="parameter".
         auto_override_frameworks: Whether to auto-override framework calls.
-        framework_targets: List of framework names to target.
+        framework_targets: Explicit list of framework classes as dotted
+            ``module.ClassName`` paths (for example ``"openai.OpenAI"``). Bare
+            names such as ``"OpenAI"`` raise ``ConfigurationError``.
         effectuation: Opt-in executable TVAR effectuation. Defaults to False,
             preserving existing trial-call behavior.
 
@@ -3197,9 +3199,13 @@ def optimize(  # NOSONAR(S107)
                 "parameter" adds explicit config param, "seamless" uses AST
                 transformation for zero code changes.
             config_param: Parameter name used when ``injection_mode="parameter"``.
-            auto_override_frameworks: Toggle to auto-detect supported frameworks
-                (LangChain, OpenAI, Anthropic, etc.) and override their parameters.
-            framework_targets: Explicit list of framework classes to override.
+            auto_override_frameworks: Enables the framework override. It does not
+                auto-detect classes: it only takes effect together with
+                ``framework_targets``, and with no targets it overrides nothing
+                (a warning is emitted).
+            framework_targets: Explicit list of framework classes as dotted
+                ``module.ClassName`` paths (for example ``"openai.OpenAI"``). Bare
+                names such as ``"OpenAI"`` raise ``ConfigurationError``.
             effectuation: Opt-in executable TVAR effectuation. Defaults to False.
 
         Execution options:
@@ -3319,9 +3325,12 @@ def optimize(  # NOSONAR(S107)
             - reset(): Reset to default configuration
 
     Raises:
-        ConfigurationError: If configuration is invalid or incompatible, the
-            evaluation dataset cannot be loaded, or a framework override
-            target is invalid
+        ConfigurationError: If configuration is invalid or incompatible, or a
+            framework override target is invalid.
+        ValidationError: If the evaluation dataset path cannot be loaded (for
+            example, the file does not exist). Raised at decoration time.
+            ``ValidationError`` is not a subclass of ``ConfigurationError``;
+            import it from ``traigent.utils.exceptions``.
 
     Examples:
         Basic usage with automatic framework override:
