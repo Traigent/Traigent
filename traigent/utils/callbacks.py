@@ -885,6 +885,8 @@ class _StartedTrials:
         The completion hook carries no trial index, so identical configs are
         matched in start order (a per-config FIFO).
         """
+        if config is None:
+            return fallback
         wanted = self._normalise(config)
         for index, (number, started_config) in enumerate(self._started):
             if self._normalise(started_config) == wanted:
@@ -967,7 +969,9 @@ class SimpleProgressCallback(OptimizationCallback):
 
     def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
         """Called when a trial completes."""
-        trial_number = self._started_trials.take(trial.config, self.current_trial)
+        trial_number = self._started_trials.take(
+            getattr(trial, "config", None), self.current_trial
+        )
         if progress.best_score is not None:
             self.best_score = progress.best_score
 
@@ -1474,7 +1478,9 @@ class DetailedProgressCallback(OptimizationCallback):
     def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
         """Called when a trial completes."""
         status_icon = "✅" if trial.status == "completed" else "❌"
-        trial_number = self._started_trials.take(trial.config, self.trial_count)
+        trial_number = self._started_trials.take(
+            getattr(trial, "config", None), self.trial_count
+        )
 
         total_display = self.total_trials or progress.total_trials
         if not total_display or total_display <= 0:
