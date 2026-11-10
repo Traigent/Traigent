@@ -29,7 +29,7 @@ Useful options:
 - `--skip-coverage` / `--skip-lint` / `--skip-owners` – bypass expensive steps when pytest, Ruff, or CODEOWNERS data are unavailable.
 - `--source-root`, `--tests-root`, `--output-root` – override default paths if the project layout changes.
 
-> **Tip:** Ensure your virtualenv is active (`python -m venv venv && source venv/bin/activate`) and run `make install-smart` so `pytest` and `ruff` are on PATH. Otherwise the coverage run will log a warning (`coverage.log`) and coverage percentages will be blank.
+> **Tip:** Ensure your virtualenv is active (`python -m venv venv && source venv/bin/activate`) and run `make install-dev` so `pytest` and `ruff` are on PATH. Otherwise the coverage run will log a warning (`coverage.log`) and coverage percentages will be blank.
 
 ## Report Outputs
 
@@ -93,20 +93,6 @@ python -m scripts.code_analysis.viz_heatmap \
   --csv reports/risk/risk_heatmap.csv \
   --out reports/risk/risk_heatmap.png
 
-# Phase 4 refactoring proposals
-python -m scripts.refactor.suggest_capabilities \
-  --clusters reports/viz/clusters/clusters.json \
-  --metrics reports/code_analysis/rerun_smoke/metrics.csv \
-  --out reports/refactor/capabilities.json
-python -m scripts.refactor.find_shared_libs \
-  --clones reports/clones/jscpd.json \
-  --out reports/refactor/shared_lib_candidates.md
-python -m scripts.refactor.shape_facades \
-  --capabilities reports/refactor/capabilities.json \
-  --out reports/refactor/abstractions_proposal.md
-python -m scripts.refactor.extraction_plan \
-  --proposal reports/refactor/abstractions_proposal.md \
-  --out reports/refactor/extraction_plan.md
 ```
 
 Each script exposes `--project-root`, `--source-root`, and (where relevant) `--tests-root` arguments; check `--help` for the full list.

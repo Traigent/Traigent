@@ -74,7 +74,7 @@ envsubst < configs/env-templates/.env.production.template > .env
 - Use environment variable injection in production
 - Keep `.env` gitignored (already configured)
 - Rotate API keys regularly
-- Use the helper scripts in `scripts/secrets/` to sync `.env.local`
+- Keep `.env.local` in sync (see `docs/guides/secrets_management.md`)
   from AWS Secrets Manager instead of keeping long‑lived keys locally.
 
 ### ❌ DON'T
@@ -121,15 +121,13 @@ To keep secrets out of local files and CI logs:
 
 1. Store the canonical JSON blob in AWS Secrets Manager
    (e.g., `traigent/dev/env`).
-2. For local development, run:
+2. For local development, fill `.env.local` from the secret (no helper script ships in
+   this repo; see `docs/guides/secrets_management.md`), then:
    ```bash
-   scripts/secrets/pull_secret.sh .env.local
    set -a && source .env.local && set +a
    ```
-3. After rotating keys, push the updated `.env.local` back to AWS:
-   ```bash
-   scripts/secrets/push_secret.sh .env.local
-   ```
+3. After rotating keys, update the secret in AWS from the updated `.env.local`
+   (see `docs/guides/secrets_management.md`).
 4. CI pipelines should fetch the same secret at runtime and map each
    key into environment variables (see `docs/guides/secrets_management.md`).
 
