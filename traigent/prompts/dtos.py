@@ -371,7 +371,7 @@ class PromptAnalytics:
     totals: PromptAnalyticsTotals
     versions: list[PromptVersionAnalytics]
     recent_links: list[PromptUsageLinkRecord]
-    recent_links_pagination: PaginationInfo
+    recent_links_pagination: CursorPagination
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> PromptAnalytics:
@@ -388,7 +388,7 @@ class PromptAnalytics:
                 PromptUsageLinkRecord.from_dict(item)
                 for item in payload.get("recent_links") or []
             ],
-            recent_links_pagination=PaginationInfo.from_dict(
+            recent_links_pagination=CursorPagination.from_dict(
                 payload.get("recent_links_pagination") or {}
             ),
         )

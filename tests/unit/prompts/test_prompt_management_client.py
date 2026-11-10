@@ -96,17 +96,11 @@ def test_prompt_management_client_lists_and_gets_prompts():
 
     client = PromptManagementClient(request_sender=request_sender)
 
-    prompt_list = client.list_prompts(
-        search="support", prompt_type=PromptType.TEXT, label="production"
-    )
-    detail = client.get_prompt("support/welcome")
+    prompt_list = client.list_prompts(prompt_type=PromptType.TEXT)
+    detail = client.get_prompt("prompt_1")
 
-    assert calls[0] == (
-        "GET",
-        "?limit=20&search=support&prompt_type=text&label=production",
-        None,
-    )
-    assert calls[1] == ("GET", "/support%2Fwelcome", None)
+    assert calls[0] == ("GET", "?limit=20&prompt_type=text", None)
+    assert calls[1] == ("GET", "/prompt_1", None)
     assert prompt_list.items[0].name == "support/welcome"
     assert prompt_list.pagination.has_more is False
     assert prompt_list.pagination.next_cursor is None
@@ -160,7 +154,7 @@ def test_prompt_management_client_creates_versions_and_labels():
         labels=["production"],
     )
     updated = client.create_prompt_version(
-        "chat/support-agent",
+        "prompt_chat",
         chat_messages=[
             {"role": "system", "content": "You are a premium support assistant."},
         ],
@@ -169,7 +163,7 @@ def test_prompt_management_client_creates_versions_and_labels():
         labels=["staging"],
     )
     relabeled = client.update_prompt_labels(
-        "chat/support-agent",
+        "prompt_chat",
         {"production": 1, "staging": 2},
     )
 
@@ -178,7 +172,7 @@ def test_prompt_management_client_creates_versions_and_labels():
     assert calls[0][2]["prompt_type"] == "chat"
     assert calls[1] == (
         "POST",
-        "/chat%2Fsupport-agent/versions",
+        "/prompt_chat/versions",
         {
             "config": {"model": "gpt-4.1"},
             "commit_message": "Premium support variant",
@@ -193,7 +187,7 @@ def test_prompt_management_client_creates_versions_and_labels():
     )
     assert calls[2] == (
         "PATCH",
-        "/chat%2Fsupport-agent/labels",
+        "/prompt_chat/labels",
         {"labels": {"production": 1, "staging": 2}},
     )
     assert created.prompt_type == PromptType.CHAT
@@ -203,9 +197,9 @@ def test_prompt_management_client_creates_versions_and_labels():
 
 def test_prompt_management_client_resolves_prompt_versions():
     def request_sender(method: str, path: str, payload: dict | None):
-        assert method == "GET"
-        assert payload is None
-        assert path == "/ops%2Frunbook/resolve?version=2"
+        assert method == "POST"
+        assert payload == {"version": 2}
+        assert path == "/prompt_ops/resolve"
         return {
             "data": {
                 "name": "ops/runbook",
@@ -223,7 +217,7 @@ def test_prompt_management_client_resolves_prompt_versions():
         }
 
     client = PromptManagementClient(request_sender=request_sender)
-    resolved = client.resolve_prompt("ops/runbook", version=2, label=None)
+    resolved = client.resolve_prompt("prompt_ops", version=2, label=None)
 
     assert resolved.version == 2
     assert resolved.prompt_text == "Investigate {{ incident_id }} quickly."
@@ -239,7 +233,7 @@ def test_prompt_management_client_fetches_prompt_analytics():
     def request_sender(method: str, path: str, payload: dict | None):
         assert method == "GET"
         assert payload is None
-        assert path == "/support%2Fwelcome/analytics?recent_limit=10&recent_page=2"
+        assert path == "/prompt_1/analytics?limit=10&cursor=cursor_1"
         return {
             "data": {
                 "prompt_id": "prompt_1",
@@ -296,25 +290,23 @@ def test_prompt_management_client_fetches_prompt_analytics():
                     }
                 ],
                 "recent_links_pagination": {
-                    "page": 2,
-                    "per_page": 10,
-                    "total": 11,
-                    "total_pages": 2,
-                    "has_next": False,
-                    "has_prev": True,
+                    "limit": 10,
+                    "next_cursor": "cursor_2",
+                    "has_more": True,
                 },
             }
         }
 
     client = PromptManagementClient(request_sender=request_sender)
-    analytics = client.get_prompt_analytics(
-        "support/welcome", recent_limit=10, recent_page=2
-    )
+    analytics = client.get_prompt_analytics("prompt_1", limit=10, cursor="cursor_1")
 
     assert analytics.totals.link_count == 2
     assert analytics.versions[0].version == 2
     assert analytics.recent_links[0].prompt_name == "support/welcome"
-    assert analytics.recent_links_pagination.page == 2
+    assert analytics.recent_links_pagination.limit == 10
+    assert analytics.recent_links_pagination.next_cursor == "cursor_2"
+    assert analytics.recent_links_pagination.has_more is True
+    assert not hasattr(analytics.recent_links_pagination, "total_pages")
 
 
 def test_prompt_management_client_runs_playground():
@@ -353,7 +345,7 @@ def test_prompt_management_client_runs_playground():
 
     client = PromptManagementClient(request_sender=request_sender)
     result = client.run_playground(
-        "support/welcome",
+        "prompt_1",
         version=2,
         variables={"customer_name": "Ada"},
         prompt_text="Hello {{ customer_name }}",
@@ -366,7 +358,7 @@ def test_prompt_management_client_runs_playground():
     assert calls == [
         (
             "POST",
-            "/support%2Fwelcome/playground/run",
+            "/prompt_1/playground/run",
             {
                 "variables": {"customer_name": "Ada"},
                 "dry_run": False,
@@ -386,7 +378,7 @@ def test_prompt_management_client_runs_playground():
     assert result.token_usage.total_tokens == 15
 
 
-def test_prompt_management_client_encodes_route_like_prompt_names():
+def test_prompt_management_client_addresses_by_ref_not_name():
     calls: list[str] = []
 
     def request_sender(method: str, path: str, payload: dict | None):
@@ -421,9 +413,9 @@ def test_prompt_management_client_encodes_route_like_prompt_names():
 
     client = PromptManagementClient(request_sender=request_sender)
 
-    detail = client.get_prompt("ops/analytics")
+    detail = client.get_prompt("prompt_analytics")
 
-    assert calls == ["/ops%2Fanalytics"]
+    assert calls == ["/prompt_analytics"]
     assert detail.name == "ops/analytics"
 
 
@@ -448,7 +440,7 @@ def test_prompt_management_client_raises_authentication_error_on_401(monkeypatch
     monkeypatch.setattr("traigent.prompts.client.open_no_redirect", raise_http_error)
 
     with pytest.raises(AuthenticationError, match="status 401"):
-        client.get_prompt("support/welcome")
+        client.get_prompt("prompt_1")
 
 
 def test_prompt_management_client_raises_connection_error_on_url_error(monkeypatch):
@@ -510,13 +502,13 @@ def test_iter_prompts_follows_cursor_with_unchanged_filters():
         }
 
     client = PromptManagementClient(request_sender=request_sender)
-    names = [p.name for p in client.iter_prompts(limit=2, label="production")]
+    names = [p.name for p in client.iter_prompts(limit=2, prompt_type="text")]
 
     assert names == ["a", "b", "c", "d", "e"]
     assert calls == [
-        "?limit=2&label=production",
-        "?limit=2&cursor=cursor_1&label=production",
-        "?limit=2&cursor=cursor_2&label=production",
+        "?limit=2&prompt_type=text",
+        "?limit=2&cursor=cursor_1&prompt_type=text",
+        "?limit=2&cursor=cursor_2&prompt_type=text",
     ]
 
 
@@ -652,11 +644,11 @@ def test_delete_prompt_and_get_prompt_version_paths():
 
     client = PromptManagementClient(request_sender=request_sender)
 
-    assert client.delete_prompt("ops/runbook") is None
-    assert client.get_prompt_version("ops/runbook", 3).version == 3
+    assert client.delete_prompt("prompt_ops") is None
+    assert client.get_prompt_version("prompt_ops", 3).version == 3
     assert calls == [
-        ("DELETE", "/ops%2Frunbook"),
-        ("GET", "/ops%2Frunbook/versions/3"),
+        ("DELETE", "/prompt_ops"),
+        ("GET", "/prompt_ops/versions/3"),
     ]
 
 
@@ -905,3 +897,135 @@ def test_list_without_pagination_metadata_raises(monkeypatch, pagination):
 
     with pytest.raises(PromptPaginationError):
         PromptListResponse.from_dict(body)
+
+
+def test_list_prompts_never_sends_search_or_label_query():
+    calls: list[tuple[str, str, dict | None]] = []
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        calls.append((method, path, payload))
+        return {
+            "data": {
+                "items": [],
+                "pagination": {"limit": 20, "next_cursor": None, "has_more": False},
+            }
+        }
+
+    client = PromptManagementClient(request_sender=request_sender)
+    with pytest.raises(TypeError):
+        client.list_prompts(search="x")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        client.list_prompts(label="x")  # type: ignore[call-arg]
+    assert calls == []
+
+
+def test_search_prompts_posts_body_and_follows_cursor():
+    calls: list[tuple[str, str, dict | None]] = []
+    pages = {
+        None: (["a"], "cursor_1", True),
+        "cursor_1": (["b"], None, False),
+    }
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        calls.append((method, path, payload))
+        names, next_cursor, has_more = pages[payload.get("cursor")]
+        return {
+            "data": {
+                "items": [_summary(n) for n in names],
+                "pagination": {
+                    "limit": 5,
+                    "next_cursor": next_cursor,
+                    "has_more": has_more,
+                },
+            }
+        }
+
+    client = PromptManagementClient(request_sender=request_sender)
+    names = [
+        p.name
+        for p in client.iter_search_prompts(
+            search="supp", prompt_type="chat", label="production", limit=5
+        )
+    ]
+
+    assert names == ["a", "b"]
+    base = {
+        "limit": 5,
+        "search": "supp",
+        "prompt_type": "chat",
+        "label": "production",
+    }
+    assert calls == [
+        ("POST", "/search", base),
+        ("POST", "/search", {**base, "cursor": "cursor_1"}),
+    ]
+
+
+def _summary_with_id(name: str, prompt_id: str) -> dict:
+    return {**_summary(name), "id": prompt_id}
+
+
+def test_get_prompt_ref_picks_the_exact_name_among_substring_matches():
+    calls: list[tuple[str, str, dict | None]] = []
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        calls.append((method, path, payload))
+        return {
+            "data": {
+                "items": [
+                    _summary_with_id("support/welcome-v2", "ref_other"),
+                    _summary_with_id("support/welcome", "ref_exact"),
+                ],
+                "pagination": {"limit": 100, "next_cursor": None, "has_more": False},
+            }
+        }
+
+    client = PromptManagementClient(request_sender=request_sender)
+
+    assert client.get_prompt_ref("support/welcome") == "ref_exact"
+    assert calls == [
+        ("POST", "/search", {"limit": 100, "search": "support/welcome"}),
+    ]
+
+
+def test_get_prompt_ref_raises_not_found_without_exact_match():
+    def request_sender(method: str, path: str, payload: dict | None):
+        return {
+            "data": {
+                "items": [_summary_with_id("support/welcome-v2", "ref_other")],
+                "pagination": {"limit": 100, "next_cursor": None, "has_more": False},
+            }
+        }
+
+    client = PromptManagementClient(request_sender=request_sender)
+
+    assert client.find_prompt("support/welcome") is None
+    with pytest.raises(PromptNotFoundError):
+        client.get_prompt_ref("support/welcome")
+
+
+@pytest.mark.parametrize("bad", ["", ".", ".."])
+def test_get_prompt_ref_rejects_unusable_names_before_any_request(bad):
+    def request_sender(method, path, payload):
+        raise AssertionError("no request may be sent")
+
+    client = PromptManagementClient(request_sender=request_sender)
+    with pytest.raises(ValidationError):
+        client.get_prompt_ref(bad)
+
+
+def test_resolve_prompt_posts_label_in_body_not_query():
+    calls: list[tuple[str, str, dict | None]] = []
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        calls.append((method, path, payload))
+        return {"data": {"name": "n", "version": 1, "prompt_type": "text"}}
+
+    client = PromptManagementClient(request_sender=request_sender)
+    client.resolve_prompt("ref_1")
+    client.resolve_prompt("ref_1", label="production")
+
+    assert calls == [
+        ("POST", "/ref_1/resolve", {"label": "latest"}),
+        ("POST", "/ref_1/resolve", {"label": "production"}),
+    ]

@@ -22,12 +22,23 @@ from traigent.prompts import PromptManagementClient, PromptManagementConfig
 
 client = PromptManagementClient(PromptManagementConfig(project_id="my-project"))
 
-page = client.list_prompts(limit=50, label="production")
+page = client.list_prompts(limit=50, prompt_type="text")
 print(page.pagination.has_more, page.pagination.next_cursor)
 
 # Walk every page; the cursor is followed for you and filters are kept.
-for prompt in client.iter_prompts(label="production"):
+for prompt in client.iter_prompts(prompt_type="text"):
     print(prompt.name)
+
+# Filter by name, text or label with POST search (a substring match).
+for prompt in client.iter_search_prompts(search="welcome", label="production"):
+    print(prompt.name)
+
+# Prompts are addressed by their server-issued ref (the prompt id), not the name.
+# Look the ref up from an exact name once, then use it for every call.
+ref = client.get_prompt_ref("support/welcome")
+detail = client.get_prompt(ref)
+resolved = client.resolve_prompt(ref, label="production")
+analytics = client.get_prompt_analytics(ref, limit=20)  # page with next_cursor
 ```
 
 Lists are newest first and have no total count. A cursor only works with the
