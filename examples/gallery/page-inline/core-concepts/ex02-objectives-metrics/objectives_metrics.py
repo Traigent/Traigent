@@ -28,8 +28,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 try:
     import traigent
@@ -102,7 +102,7 @@ BALANCED_SUPPORT_OBJECTIVES = ObjectiveSchema.from_objectives(
     [
         ObjectiveDefinition("cost", orientation="minimize", weight=0.3),
         ObjectiveDefinition("quality", orientation="maximize", weight=0.5),
-        ObjectiveDefinition("response_time", orientation="minimize", weight=0.2),
+        ObjectiveDefinition("response_time_ms", orientation="minimize", weight=0.2),
     ]
 )
 
@@ -260,7 +260,7 @@ def demonstrate_objective_types() -> None:
 
     # Built-in objectives
     print("\n1. Built-in Objectives:")
-    built_in = ["cost", "latency", "accuracy", "quality", "response_time"]
+    built_in = ["cost", "latency", "accuracy", "quality", "response_time_ms"]
     for obj in built_in:
         print(f"   - {obj}")
 

@@ -110,7 +110,7 @@ solve_arithmetic.apply_best_config(results)
 Default tracked metrics:
 - **accuracy** (maximize): Exact match percentage
 - **cost** (minimize): LLM API cost per evaluation
-- **response_time** (minimize): Average latency in ms
+- **response_time_ms** (minimize): Average latency in ms
 
 ## 🔧 Configuration
 
@@ -178,8 +178,8 @@ from traigent.core.objectives import create_default_objectives
     configuration_space={...},
     eval_dataset="your_dataset.jsonl",
     objectives=create_default_objectives(
-        ["accuracy", "cost", "response_time"],
-        orientations={"response_time": "minimize"},
+        ["accuracy", "cost", "response_time_ms"],
+        orientations={"response_time_ms": "minimize"},
     ),
     offline=True
 )

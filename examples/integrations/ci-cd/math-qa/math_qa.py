@@ -42,8 +42,8 @@ DATASET_FILE = os.path.join(os.path.dirname(__file__), "math_qa.jsonl")
     },
     eval_dataset=DATASET_FILE,
     objectives=create_default_objectives(
-        ["accuracy", "cost", "response_time"],
-        orientations={"response_time": "minimize"},
+        ["accuracy", "cost", "response_time_ms"],
+        orientations={"response_time_ms": "minimize"},
     ),
     offline=True,
     max_trials=10,

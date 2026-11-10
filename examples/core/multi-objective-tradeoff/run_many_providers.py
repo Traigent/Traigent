@@ -27,6 +27,25 @@ if MOCK:
     results_dir = BASE / ".traigent_local"
     results_dir.mkdir(parents=True, exist_ok=True)
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(results_dir)
+# Import traigent before litellm: traigent pins the offline LiteLLM price map
+# only if it runs first (see traigent/__init__.py).
+try:
+    import traigent
+except ImportError:  # pragma: no cover - support IDE execution paths
+    import importlib
+
+    _sdk = os.environ.get("TRAIGENT_SDK_PATH")
+    if _sdk:
+        sys.path.insert(0, _sdk)
+    else:
+        module_path = Path(__file__).resolve()
+        for depth in (2, 3):
+            try:
+                sys.path.append(str(module_path.parents[depth]))
+            except IndexError:
+                continue
+    traigent = importlib.import_module("traigent")
+
 try:
     import litellm
     from litellm import completion
@@ -66,23 +85,6 @@ except ImportError:  # pragma: no cover - tracing is optional
     Status = None  # type: ignore[assignment]
     StatusCode = None  # type: ignore[assignment]
     _OTEL_AVAILABLE = False
-
-try:
-    import traigent
-except ImportError:  # pragma: no cover - support IDE execution paths
-    import importlib
-
-    _sdk = os.environ.get("TRAIGENT_SDK_PATH")
-    if _sdk:
-        sys.path.insert(0, _sdk)
-    else:
-        module_path = Path(__file__).resolve()
-        for depth in (2, 3):
-            try:
-                sys.path.append(str(module_path.parents[depth]))
-            except IndexError:
-                continue
-    traigent = importlib.import_module("traigent")
 
 from traigent.api.types import OptimizationResult  # noqa: E402
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
