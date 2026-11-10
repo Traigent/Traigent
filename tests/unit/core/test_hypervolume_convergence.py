@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 
 import pytest
@@ -463,3 +464,43 @@ class TestHypervolumeConvergenceStopCondition:
 
         # Pareto front should only have the dominating point
         assert len(condition._pareto_front) == 1
+
+
+class TestNonFiniteObjectiveValues:
+    """A non-finite objective value is treated as missing, never as a point."""
+
+    @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
+    def test_extract_point_skips_non_finite_value(self, bad_value: float) -> None:
+        condition = HypervolumeConvergenceStopCondition(
+            window=5,
+            threshold=0.01,
+            objective_names=["accuracy", "latency"],
+            directions=["maximize", "minimize"],
+        )
+
+        missing_accuracy = make_trial({"accuracy": bad_value, "latency": 10.0})
+        missing_latency = make_trial({"accuracy": 0.9, "latency": bad_value})
+        assert condition._extract_point(missing_accuracy) is None
+        assert condition._extract_point(missing_latency) is None
+
+    @pytest.mark.parametrize("bad_value", [float("nan"), float("inf")])
+    def test_non_finite_trial_does_not_poison_reference_point(
+        self, bad_value: float
+    ) -> None:
+        condition = HypervolumeConvergenceStopCondition(
+            window=5,
+            threshold=0.01,
+            objective_names=["accuracy", "latency"],
+            directions=["maximize", "minimize"],
+        )
+
+        trials = [
+            make_trial({"accuracy": bad_value, "latency": 10.0}),
+            make_trial({"accuracy": 0.9, "latency": 50.0}),
+        ]
+        condition.should_stop(trials)
+
+        assert condition._computed_reference is not None
+        assert all(math.isfinite(v) for v in condition._computed_reference)
+        assert condition._hypervolume_history
+        assert all(math.isfinite(h) for h in condition._hypervolume_history)

@@ -1414,7 +1414,12 @@ class HypervolumeConvergenceStopCondition(StopCondition):
             value = trial.metrics.get(name)
             if value is None:
                 return None
-            point.append(float(value))
+            number = float(value)
+            # NaN/inf would poison the reference point and hypervolume history;
+            # a non-finite objective is treated as missing.
+            if not math.isfinite(number):
+                return None
+            point.append(number)
         return point
 
     def _update_reference_point(self, point: list[float]) -> None:
