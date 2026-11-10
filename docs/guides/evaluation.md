@@ -482,15 +482,44 @@ Best accuracy: 0.00
    )
    ```
 
-2. **Cap the Examples Evaluated per Run**
-   ```python
-   from traigent.api.decorators import ExecutionOptions
+2. **Write a Smaller Subset File, Once, Before the Run**
 
+   `ExecutionOptions(max_total_examples=...)` does not reduce memory. It is a
+   sample budget shared by all trials: the run stops when the total number of
+   evaluated examples reaches the cap, so a cap of 5 with 10 examples and 3
+   trials stops after the first trial. The whole dataset file is still loaded.
+
+   To cut what the SDK loads, write a subset file. This script streams the
+   file and keeps a random sample of 500 rows, so it never holds the full file:
+   ```python
+   import random
+
+   rng = random.Random(42)
+   keep, seen = [], 0
+   with open("large_dataset.jsonl", encoding="utf-8") as f:
+       for line in f:
+           if not line.strip():
+               continue
+           seen += 1
+           if len(keep) < 500:
+               keep.append(line)
+           else:
+               j = rng.randrange(seen)  # reservoir sampling
+               if j < 500:
+                   keep[j] = line
+   with open("large_dataset_subset.jsonl", "w", encoding="utf-8") as out:
+       out.writelines(line if line.endswith("\n") else line + "\n" for line in keep)
+   ```
+
+   Then point the optimization at the subset:
+   ```python
    @traigent.optimize(
-       eval_dataset="large_dataset.jsonl",
-       execution=ExecutionOptions(max_total_examples=500),
+       eval_dataset="large_dataset_subset.jsonl",
    )
    ```
+
+   Use `max_total_examples` only when you want to bound the total number of
+   evaluated examples across all trials, for example to cap cost.
 
 ## Best Practices
 
