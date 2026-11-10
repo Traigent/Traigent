@@ -201,9 +201,10 @@ class _ThreadLocalMLflow:
         stack = self._stack()
         return stack[-1] if stack else None
 
-    def end_run(self) -> None:
+    def end_run(self, status: str | None = None) -> None:
         active = self.active_run()
-        self.ended_run = active.info.run_id if active else None
+        if status != "RUNNING":
+            self.ended_run = active.info.run_id if active else None
         self._stack().pop()
 
     def log_param(self, *a, **k) -> None:
@@ -238,6 +239,47 @@ def test_mlflow_hooks_on_different_threads_stay_bound_to_the_run(monkeypatch) ->
     assert not errors
     assert fake.resumed == ["run-A"]
     assert fake.ended_run == "run-A"
+
+
+def test_worker_thread_logging_does_not_leave_run_active_on_that_thread(
+    monkeypatch,
+) -> None:
+    """A pooled worker that logged a trial must not keep the run on its stack."""
+    import threading
+
+    fake = _ThreadLocalMLflow()
+    monkeypatch.setattr(mlflow_module, "mlflow", fake)
+    monkeypatch.setattr(mlflow_module, "MLFLOW_AVAILABLE", True)
+    tracker = mlflow_module.TraigentMLflowTracker()
+    mlflow_module.MLflowOptimizationCallback(tracker).on_optimization_start(
+        CONFIG_SPACE, ["accuracy"], "grid"
+    )
+    from types import SimpleNamespace
+
+    trial = SimpleNamespace(
+        config={"x": 1},
+        metrics={},
+        duration=0.1,
+        trial_id="t1",
+        error_message=None,
+        timestamp=None,
+        status=SimpleNamespace(value="completed"),
+        metadata={},
+    )
+    seen: list[Any] = []
+
+    def worker() -> None:
+        tracker.log_trial(trial, 1)
+        seen.append(fake.active_run())
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    assert fake.resumed == ["run-A"]
+    assert seen == [None]
+    assert set(fake.logged_to) == {"run-A"}
+    assert fake.ended_run is None  # still open for the owner to finish
+    assert tracker.current_run is not None
 
 
 @pytest.mark.parametrize("cls", CALLBACK_CLASSES)

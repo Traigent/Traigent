@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import dataclasses
 import gzip
@@ -55,6 +56,12 @@ _STAGING_PREFIX = ".traigent-staging-"
 _ASIDE_PREFIX = _STAGING_PREFIX + "old."
 _PUBLISH_LOCK = threading.Lock()
 _SEQ_LAST = 0
+
+
+try:  # POSIX only; elsewhere the in-process lock is the only guard
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 
 def _next_seq() -> int:
@@ -557,6 +564,30 @@ class PersistenceManager:
             if temp_path.exists():
                 temp_path.unlink()
 
+    @contextlib.contextmanager
+    def _publish_guard(self) -> Any:
+        """Serialise swaps and recovery across threads AND processes.
+
+        The thread lock covers this process; an exclusive ``flock`` on the base
+        directory itself (no lock file, so nothing extra is listed) covers other
+        processes sharing it.
+        """
+        with _PUBLISH_LOCK:
+            fd = None
+            if fcntl is not None:
+                try:
+                    fd = os.open(self.base_dir, os.O_RDONLY)
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                except OSError:
+                    if fd is not None:
+                        os.close(fd)
+                    fd = None
+            try:
+                yield
+            finally:
+                if fd is not None:
+                    os.close(fd)  # closing releases the flock
+
     def _recover_displaced(self) -> None:
         """Restore generations displaced by a save that died mid-swap.
 
@@ -570,11 +601,11 @@ class PersistenceManager:
         removed. Runs under the publish lock so it cannot restore a copy a
         concurrent in-process save is about to replace.
 
-        Known limits: a reader racing an overwrite can still see a mixed
-        generation (readers are not locked), and savers in different processes
-        are not synchronised with each other.
+        Savers and recovery in different processes are serialised by an
+        ``flock`` on the base directory (POSIX). Known limit: a reader racing
+        an overwrite can still see a mixed generation (readers are not locked).
         """
-        with _PUBLISH_LOCK:
+        with self._publish_guard():
             groups: dict[str, list[tuple[str, Path]]] = {}
             for aside in self.base_dir.glob(f"{_ASIDE_PREFIX}*"):
                 parts = aside.name[len(_ASIDE_PREFIX) :].rsplit(".", 3)
@@ -645,7 +676,7 @@ class PersistenceManager:
         so an existing generation is renamed aside first and restored if the
         final rename fails.
         """
-        with _PUBLISH_LOCK:
+        with self._publish_guard():
             if result_dir.exists():
                 # the new generation must not be more permissive than the one
                 # it replaces (e.g. a private 0700 result directory)
