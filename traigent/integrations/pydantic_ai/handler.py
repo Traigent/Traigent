@@ -68,7 +68,7 @@ class PydanticAIHandler:
         if not PYDANTICAI_AVAILABLE:
             raise ImportError(
                 "PydanticAI is required for PydanticAIHandler. "
-                "Install with: pip install 'pydantic-ai-slim>=1,<2'"
+                "Install with: pip install 'pydantic-ai-slim>=2.53.0,<3'"
             )
 
         self._agent = agent
@@ -218,7 +218,11 @@ class PydanticAIHandler:
         """Extract usage from result and record metrics."""
         end_time = time.time()
         try:
-            usage = result.usage()
+            # pydantic-ai 2.x exposes ``usage`` as a property returning RunUsage;
+            # older shapes (and test doubles) expose a method. Accept both.
+            usage = result.usage
+            if callable(usage):
+                usage = usage()
             input_tokens = self._usage_counter(usage, "input_tokens")
             output_tokens = self._usage_counter(usage, "output_tokens")
             if input_tokens is None or output_tokens is None:

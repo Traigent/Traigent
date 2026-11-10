@@ -46,8 +46,8 @@ class PydanticAIPlugin(LLMPlugin):
             priority=IntegrationPriority.NORMAL,
             description="PydanticAI agent framework integration",
             author="Traigent Team",
-            requires_packages=["pydantic-ai>=1,<2"],
-            supports_versions={"pydantic_ai": "1."},
+            requires_packages=["pydantic-ai>=2.53.0,<3"],
+            supports_versions={"pydantic_ai": "2."},
         )
 
     def _get_supported_canonical_params(self) -> set[str]:
