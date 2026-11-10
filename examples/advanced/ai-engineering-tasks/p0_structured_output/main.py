@@ -13,7 +13,6 @@ import asyncio
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
@@ -43,6 +42,20 @@ from traigent.core.objectives import create_default_objectives
 
 # Mock mode for demo
 os.environ["TRAIGENT_MOCK_LLM"] = "true"
+
+
+def _write_eval_dataset(samples: list[dict]) -> str:
+    """Write the demo dataset next to this script and return its path.
+
+    The SDK only loads datasets under the current directory or
+    TRAIGENT_DATASET_ROOT, so the system temp dir is not usable. Default the
+    root to this script's directory so the example runs from any cwd.
+    """
+    root = Path(__file__).resolve().parent
+    os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(root))
+    path = root / "_demo_eval_dataset.jsonl"
+    path.write_text("".join(json.dumps(s) + "\n" for s in samples), encoding="utf-8")
+    return str(path)
 
 
 def create_extraction_dataset() -> str:
@@ -80,11 +93,7 @@ def create_extraction_dataset() -> str:
         },
     ]
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-        for sample in samples:
-            json.dump(sample, f)
-            f.write("\n")
-        return f.name
+    return _write_eval_dataset(samples)
 
 
 PERSON_PATTERNS = {

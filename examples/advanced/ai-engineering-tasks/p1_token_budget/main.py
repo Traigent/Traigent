@@ -25,7 +25,6 @@ import asyncio
 import json
 import os
 import sys
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -52,8 +51,6 @@ except ImportError as e:
     print("Please install traigent and rich: pip install traigent rich")
     sys.exit(1)
 
-from traigent.core.objectives import create_default_objectives
-
 # Import local components
 from budget_config import (
     TOKEN_BUDGET_SEARCH_SPACE,
@@ -66,6 +63,8 @@ from dataset import (
     get_budget_scenarios,
 )
 from evaluator import calculate_budget_metrics, evaluate_token_budget_task
+
+from traigent.core.objectives import create_default_objectives
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -160,17 +159,27 @@ def create_evaluation_function(
 
 
 # Note: max_trials and timeout should be in .optimize() method, not decorator
+def _write_eval_dataset(samples: list[dict]) -> str:
+    """Write the demo dataset next to this script and return its path.
+
+    The SDK only loads datasets under the current directory or
+    TRAIGENT_DATASET_ROOT, so the system temp dir is not usable. Default the
+    root to this script's directory so the example runs from any cwd.
+    """
+    root = Path(__file__).resolve().parent
+    os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(root))
+    path = root / "_demo_eval_dataset.jsonl"
+    path.write_text("".join(json.dumps(s) + "\n" for s in samples), encoding="utf-8")
+    return str(path)
+
+
 def _create_dummy_eval_dataset() -> str:
     samples = [
         {"input": {"text": "Summarize project update"}, "output": "concise"},
         {"input": {"text": "Draft meeting notes"}, "output": "concise"},
         {"input": {"text": "Extract key action items"}, "output": "concise"},
     ]
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-        for s in samples:
-            json.dump(s, f)
-            f.write("\n")
-        return f.name
+    return _write_eval_dataset(samples)
 
 
 @traigent.optimize(
@@ -547,6 +556,12 @@ async def main() -> None:
             timeout=2400,  # 40 minutes
         )
 
+        if not getattr(optimization_results, "best_config", None):
+            raise RuntimeError(
+                "The optimization finished without a best configuration, so there "
+                "are no measured results to show. Nothing was simulated."
+            )
+
         # Display results
         display_results(optimization_results, baseline_results, budget_scenario)
 
@@ -558,53 +573,8 @@ async def main() -> None:
         )
 
     except Exception as e:
-        console.print(f"\\n[red]Error during optimization: {e}[/red]")
-        console.print(
-            "[yellow]Note: This is a demo that simulates optimization results[/yellow]"
-        )
-
-        # Show simulated results for demo purposes
-        console.print(
-            "\\n[dim]Showing simulated optimization results for demonstration:[/dim]"
-        )
-
-        simulated_results = {
-            "best_config": {
-                "allocation_strategy": "importance_weighted",
-                "system_prompt_pct": 0.08,
-                "examples_pct": 0.12,
-                "retrieved_context_pct": 0.65,
-                "conversation_history_pct": 0.10,
-                "buffer_pct": 0.05,
-                "truncation_strategy": "importance_scoring",
-                "context_selection": "information_density",
-                "adaptive_reallocation": True,
-                "preserve_critical_info": True,
-                "smart_compression": True,
-            },
-            "best_metrics": {
-                "avg_performance": 0.92,
-                "avg_cost_per_query": 0.004,  # 60% reduction from 0.01
-                "token_efficiency": 2300,
-                "content_preservation": 0.88,
-                "processing_speed": 0.95,
-                "cost_efficiency": 230,
-                "token_utilization": 0.94,
-            },
-        }
-
-        class SimulatedResults:
-            def __init__(self, config, metrics):
-                self.best_config = config
-                self.best_metrics = metrics
-
-        display_results(
-            SimulatedResults(
-                simulated_results["best_config"], simulated_results["best_metrics"]
-            ),
-            baseline_results,
-            budget_scenario,
-        )
+        console.print(f"\n[red]Error during optimization: {e}[/red]")
+        raise SystemExit(1) from e
 
 
 if __name__ == "__main__":

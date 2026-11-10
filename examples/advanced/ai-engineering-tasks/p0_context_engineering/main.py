@@ -27,7 +27,6 @@ import asyncio
 import json
 import os
 import sys
-import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -57,8 +56,6 @@ except ImportError as e:
     print("Please install traigent and rich: pip install traigent rich")
     sys.exit(1)
 
-from traigent.core.objectives import create_default_objectives
-
 # Import local components
 from context_config import CONTEXT_ENGINEERING_SEARCH_SPACE, create_context_config
 from dataset import (
@@ -68,6 +65,8 @@ from dataset import (
     generate_baseline_configs,
 )
 from evaluator import evaluate_answer_quality, retrieve_context
+
+from traigent.core.objectives import create_default_objectives
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -188,47 +187,32 @@ def create_evaluation_function(dataset: RAGDataset) -> Callable:
     return evaluate_rag_configuration
 
 
+def _create_eval_dataset() -> str:
+    """Write the demo dataset next to this script and return its path.
+
+    The SDK only loads datasets under the current directory or
+    TRAIGENT_DATASET_ROOT, so the system temp dir is not usable. Default the
+    root to this script's directory so the example runs from any cwd.
+    """
+    samples = [
+        {
+            "input": {"question": "What is RAG?"},
+            "output": "Retrieval Augmented Generation",
+        },
+        {"input": {"question": "What is AI?"}, "output": "Artificial Intelligence"},
+        {"input": {"question": "How to reduce cost?"}, "output": "Use smaller context"},
+    ]
+    root = Path(__file__).resolve().parent
+    os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(root))
+    path = root / "_demo_eval_dataset.jsonl"
+    path.write_text("".join(json.dumps(x) + "\n" for x in samples), encoding="utf-8")
+    return str(path)
+
+
 # CORRECT API USAGE: Only valid decorator parameters
 @traigent.optimize(
     configuration_space=CONTEXT_ENGINEERING_SEARCH_SPACE,  # Fixed: was config_space
-    eval_dataset=(
-        (
-            lambda: (lambda p: p)(
-                (
-                    lambda f: (
-                        f.write(
-                            "\n".join(
-                                [
-                                    json.dumps(
-                                        {
-                                            "input": {"question": "What is RAG?"},
-                                            "output": "Retrieval Augmented Generation",
-                                        }
-                                    ),
-                                    json.dumps(
-                                        {
-                                            "input": {"question": "What is AI?"},
-                                            "output": "Artificial Intelligence",
-                                        }
-                                    ),
-                                    json.dumps(
-                                        {
-                                            "input": {
-                                                "question": "How to reduce cost?"
-                                            },
-                                            "output": "Use smaller context",
-                                        }
-                                    ),
-                                ]
-                            ),
-                            f.flush(),
-                            f.name,
-                        )
-                    )[2]
-                )(tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False))
-            )
-        )()
-    ),
+    eval_dataset=_create_eval_dataset(),
     objectives=create_default_objectives(
         ["answer_quality", "cost_per_query", "retrieval_f1", "latency_p95_ms"],
         orientations={
@@ -569,50 +553,7 @@ async def main() -> None:
 
     except Exception as e:
         console.print(f"\n[red]Error during optimization: {e}[/red]")
-        console.print(
-            "[yellow]Note: This is a demo that simulates optimization results[/yellow]"
-        )
-
-        # Show simulated results for demo purposes
-        console.print(
-            "\n[dim]Showing simulated optimization results for demonstration:[/dim]"
-        )
-
-        simulated_results = {
-            "best_config": {
-                "retrieval_method": "hybrid",
-                "embedding_model": "sentence-transformers",
-                "chunk_size": 384,
-                "chunk_overlap": 96,
-                "n_chunks": 7,
-                "reranking": True,
-                "reranking_model": "cross-encoder",
-                "query_expansion": True,
-                "expansion_method": "llm",
-                "hyde": False,
-                "token_budget": 2500,
-                "budget_allocation": "adaptive",
-            },
-            "best_metrics": {
-                "answer_quality": 0.87,
-                "cost_per_query": 0.00045,
-                "retrieval_f1": 0.85,
-                "latency_p95_ms": 250,
-                "coverage": 0.92,
-            },
-        }
-
-        class SimulatedResults:
-            def __init__(self, config, metrics):
-                self.best_config = config
-                self.best_metrics = metrics
-
-        display_results(
-            SimulatedResults(
-                simulated_results["best_config"], simulated_results["best_metrics"]
-            ),
-            baseline_results,
-        )
+        raise SystemExit(1) from e
 
 
 if __name__ == "__main__":

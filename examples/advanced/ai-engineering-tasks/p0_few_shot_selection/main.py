@@ -22,7 +22,6 @@ import asyncio
 import json
 import os
 import sys
-import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -51,8 +50,6 @@ except ImportError as e:
     print("Please install traigent and rich: pip install traigent rich")
     sys.exit(1)
 
-from traigent.core.objectives import create_default_objectives
-
 # Import local components
 from dataset import (
     FewShotTask,
@@ -62,6 +59,8 @@ from dataset import (
 )
 from evaluator import evaluate_with_examples, select_examples
 from selection_config import EXAMPLE_SELECTION_SEARCH_SPACE, create_selection_config
+
+from traigent.core.objectives import create_default_objectives
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -168,17 +167,27 @@ def create_evaluation_function(tasks: list[FewShotTask]) -> Callable:
 
 
 # Note: max_trials and timeout should be in .optimize() method, not decorator
+def _write_eval_dataset(samples: list[dict]) -> str:
+    """Write the demo dataset next to this script and return its path.
+
+    The SDK only loads datasets under the current directory or
+    TRAIGENT_DATASET_ROOT, so the system temp dir is not usable. Default the
+    root to this script's directory so the example runs from any cwd.
+    """
+    root = Path(__file__).resolve().parent
+    os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(root))
+    path = root / "_demo_eval_dataset.jsonl"
+    path.write_text("".join(json.dumps(s) + "\n" for s in samples), encoding="utf-8")
+    return str(path)
+
+
 def _create_dummy_eval_dataset() -> str:
     samples = [
         {"input": {"text": "I loved it"}, "output": "positive"},
         {"input": {"text": "It was fine"}, "output": "neutral"},
         {"input": {"text": "This is the worst"}, "output": "negative"},
     ]
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-        for s in samples:
-            json.dump(s, f)
-            f.write("\n")
-        return f.name
+    return _write_eval_dataset(samples)
 
 
 @traigent.optimize(
@@ -459,6 +468,12 @@ async def main() -> None:
             timeout=1800,  # 30 minutes
         )
 
+        if not getattr(optimization_results, "best_config", None):
+            raise RuntimeError(
+                "The optimization finished without a best configuration, so there "
+                "are no measured results to show. Nothing was simulated."
+            )
+
         # Display results
         display_results(optimization_results, baseline_results)
 
@@ -469,46 +484,7 @@ async def main() -> None:
 
     except Exception as e:
         console.print(f"\n[red]Error during optimization: {e}[/red]")
-        console.print(
-            "[yellow]Note: This is a demo that simulates optimization results[/yellow]"
-        )
-
-        # Show simulated results for demo purposes
-        console.print(
-            "\n[dim]Showing simulated optimization results for demonstration:[/dim]"
-        )
-
-        simulated_results = {
-            "best_config": {
-                "selection_method": "mmr",
-                "n_examples": 5,
-                "similarity_metric": "cosine",
-                "diversity_weight": 0.3,
-                "ordering_strategy": "curriculum",
-                "formatting": "io_with_explanation",
-                "cache_strategy": "task_based",
-                "adaptive_selection": True,
-            },
-            "best_metrics": {
-                "accuracy": 0.85,
-                "consistency": 0.92,
-                "variance": 0.08,
-                "selection_latency_ms": 45,
-                "diversity_score": 0.75,
-            },
-        }
-
-        class SimulatedResults:
-            def __init__(self, config, metrics):
-                self.best_config = config
-                self.best_metrics = metrics
-
-        display_results(
-            SimulatedResults(
-                simulated_results["best_config"], simulated_results["best_metrics"]
-            ),
-            baseline_results,
-        )
+        raise SystemExit(1) from e
 
 
 if __name__ == "__main__":
