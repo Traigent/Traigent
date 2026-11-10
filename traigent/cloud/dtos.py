@@ -616,7 +616,15 @@ class ExperimentDTO:
         from traigent.utils.exceptions import DTOSerializationError
 
         # Check if strict validation is enabled (default: true)
-        strict_mode = os.getenv("TRAIGENT_STRICT_VALIDATION", "true").lower() == "true"
+        # Fail closed: only an explicit off-spelling disables strict mode.
+        strict_mode = os.getenv(
+            "TRAIGENT_STRICT_VALIDATION", "true"
+        ).strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
 
         try:
             validator = _get_schema_validator_class()()

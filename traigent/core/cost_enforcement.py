@@ -768,15 +768,18 @@ class CostEnforcer:
                 # Blank means "unset" (callers blank it on purpose so a later
                 # load_dotenv cannot refill it): default, no warning.
                 return DEFAULT_COST_LIMIT_USD
+            # A malformed budget must not silently widen the cap: fail fast and
+            # name the variable. A leading "$" is accepted.
             try:
-                parsed = float(raw)
+                parsed = float(raw.strip().removeprefix("$"))
             except ValueError:
-                logger.warning(
-                    "Invalid TRAIGENT_RUN_COST_LIMIT=%r, using default %s",
-                    raw,
-                    DEFAULT_COST_LIMIT_USD,
+                parsed = float("nan")
+            if not math.isfinite(parsed):
+                raise ConfigurationError(
+                    f"TRAIGENT_RUN_COST_LIMIT={raw!r} is not a finite number of "
+                    "USD (for example 0.50). Fix the value or unset the variable "
+                    f"to use the default {format_usd(DEFAULT_COST_LIMIT_USD)}."
                 )
-                return DEFAULT_COST_LIMIT_USD
             # Nonpositive limits raise at config time instead of silently
             # blocking every trial (issue #1684 item 3); validate_cost_limit
             # in CostEnforcerConfig.__post_init__ enforces this, but raising

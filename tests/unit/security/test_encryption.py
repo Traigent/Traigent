@@ -413,6 +413,27 @@ class TestPIIDetector:
         assert "555-123-4567" in anonymized  # Phone should remain
         assert "[EMAIL_REDACTED]" in anonymized
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "card 4111111111111111 end",
+            "card 4111-1111-1111-1112 end",  # fails the checksum
+            "ssn 123456789 end",
+            "acct 1234567890123 x",
+        ],
+    )
+    def test_anonymize_text_overlapping_matches_leave_no_digits(self, text):
+        detector = PIIDetector()
+
+        anonymized = detector.anonymize_text(text)
+
+        assert not any(ch.isdigit() for ch in anonymized.replace("[", ""))
+        assert anonymized.startswith(text.split()[0])
+        assert anonymized.endswith(text.split()[-1])
+        # Exactly one placeholder, never a cut-into one.
+        assert anonymized.count("_REDACTED]") == 1
+        assert anonymized.count("[") == 1
+
     def test_custom_pattern_validation(self):
         """Invalid custom patterns should raise ValueError."""
         detector = PIIDetector()

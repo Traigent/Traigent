@@ -563,19 +563,47 @@ class PIIDetector:
                 match for match in pii_matches if match.pii_type in pii_types
             ]
 
-        # Sort matches by position in reverse order to maintain indices
-        pii_matches.sort(key=lambda x: x.start_pos, reverse=True)
+        # A card-shaped number is sensitive even when its checksum fails.
+        eligible = [
+            match
+            for match in pii_matches
+            if match.confidence > 0.5 or match.pii_type == PIIType.CREDIT_CARD
+        ]
 
-        for match in pii_matches:
-            if match.confidence > 0.5:  # Only anonymize decent confidence matches
-                replacement = f"[{match.pii_type.value.upper()}_REDACTED]"
-                anonymized_text = (
-                    anonymized_text[: match.start_pos]
-                    + replacement
-                    + anonymized_text[match.end_pos :]
-                )
+        for start, end, winner in reversed(self._merge_overlapping(eligible)):
+            replacement = f"[{winner.pii_type.value.upper()}_REDACTED]"
+            anonymized_text = (
+                anonymized_text[:start] + replacement + anonymized_text[end:]
+            )
 
         return anonymized_text
+
+    @staticmethod
+    def _merge_overlapping(
+        matches: list[PIIMatch],
+    ) -> list[tuple[int, int, PIIMatch]]:
+        """Merge overlapping matches into (start, end, winning match) spans.
+
+        The winner is the highest-confidence match (credit cards win ties),
+        and the span extends to the union of all overlapping matches.
+        """
+        merged: list[list[Any]] = []
+        for match in sorted(matches, key=lambda m: (m.start_pos, -m.end_pos)):
+            if merged and match.start_pos < merged[-1][1]:
+                span = merged[-1]
+                span[1] = max(span[1], match.end_pos)
+                span[2].append(match)
+            else:
+                merged.append([match.start_pos, match.end_pos, [match]])
+
+        def rank(m: PIIMatch) -> tuple[float, bool, int]:
+            return (
+                m.confidence,
+                m.pii_type == PIIType.CREDIT_CARD,
+                m.end_pos - m.start_pos,
+            )
+
+        return [(s, e, max(group, key=rank)) for s, e, group in merged]
 
     def pseudonymize_text(
         self, text: str, pii_types: list[PIIType] | None = None
