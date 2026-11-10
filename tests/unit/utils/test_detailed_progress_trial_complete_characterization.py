@@ -25,7 +25,9 @@ def _progress(total=10, completed=5, best=None):
 
 
 def _trial(status="completed", metrics=None):
-    return SimpleNamespace(status=status, metrics=metrics)
+    # Real results always carry the config; no trial was started here, so the
+    # completion line falls back to the running trial count.
+    return SimpleNamespace(status=status, metrics=metrics, config={})
 
 
 def _callback(trial_count=3, total=0, show_metrics=True):
