@@ -9,6 +9,7 @@ configuration error and no request is ever made to a traigent.ai host.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -247,3 +248,129 @@ class TestUnreachableEndpointNoVendorRequest:
         assert raised, "unreachable explicit endpoint must surface an error"
         assert all("traigent.ai" not in u for u in seen), seen
         assert all("tg.unreachable.invalid" in u for u in seen), seen
+
+
+class _TransportTripwire:
+    """Records every attempt to reach a network transport.
+
+    Patches the aiohttp request entry point and DNS resolution so a test fails
+    loudly if the SDK tries to talk to any host (the vendor cloud included).
+    """
+
+    def __init__(self) -> None:
+        self.http_calls: list[str] = []
+        self.dns_lookups: list[str] = []
+
+    def install(self, stack: contextlib.ExitStack) -> None:
+        async def fake_request(
+            _self: object, method: str, str_or_url: object, **kw: object
+        ) -> None:
+            self.http_calls.append(f"{method} {str_or_url}")
+            raise AssertionError(f"HTTP transport reached: {method} {str_or_url}")
+
+        def fake_getaddrinfo(host: object, *args: object, **kw: object) -> None:
+            self.dns_lookups.append(str(host))
+            raise AssertionError(f"DNS lookup attempted: {host}")
+
+        stack.enter_context(
+            patch.object(aiohttp.ClientSession, "_request", fake_request)
+        )
+        stack.enter_context(patch("socket.getaddrinfo", fake_getaddrinfo))
+        stack.enter_context(
+            patch("asyncio.base_events.BaseEventLoop.getaddrinfo", fake_getaddrinfo)
+        )
+
+
+def _build_cloud_client_and_create_session() -> None:
+    import asyncio
+
+    from traigent.cloud.client import TraigentCloudClient
+
+    async def run() -> None:
+        client = TraigentCloudClient(
+            api_key="tg_" + "x" * 40,  # pragma: allowlist secret
+            max_retries=0,
+            timeout=2.0,
+        )
+        async with client:
+            await client.create_session(
+                function_name="fn",
+                configuration_space={"temperature": [0.0, 1.0]},
+                objectives=["accuracy"],
+                max_trials=1,
+            )
+
+    asyncio.run(run())
+
+
+def _build_backend_integrated_client() -> None:
+    import asyncio
+
+    from traigent.cloud.backend_client import BackendIntegratedClient
+
+    async def run() -> None:
+        client = BackendIntegratedClient(
+            api_key="tg_" + "x" * 40,  # pragma: allowlist secret
+            max_retries=0,
+            timeout=2.0,
+        )
+        async with client:
+            await client.create_hybrid_session(
+                problem_statement="p",
+                search_space={"type": "t"},
+                optimization_config={"max_trials": 1},
+            )
+
+    asyncio.run(run())
+
+
+class TestBankInstallNoVendorFallback:
+    """Bank install: strict mode and no endpoint => refuse before any transport."""
+
+    def test_bank_install_missing_endpoint_refuses_before_transport(
+        self, strict_env: None
+    ) -> None:
+
+        tripwire = _TransportTripwire()
+        with contextlib.ExitStack() as stack:
+            tripwire.install(stack)
+            with pytest.raises(ConfigurationError):
+                _build_cloud_client_and_create_session()
+        assert tripwire.http_calls == []
+        assert tripwire.dns_lookups == []
+
+    def test_bank_install_backend_integrated_client_refuses_before_transport(
+        self, strict_env: None
+    ) -> None:
+
+        tripwire = _TransportTripwire()
+        with contextlib.ExitStack() as stack:
+            tripwire.install(stack)
+            # Either construction or the first call must refuse; none may transport.
+            with pytest.raises(ConfigurationError):
+                _build_backend_integrated_client()
+        assert tripwire.http_calls == []
+        assert tripwire.dns_lookups == []
+
+    @pytest.mark.parametrize(
+        "resolver",
+        [
+            pytest.param(BackendConfig.get_backend_url, id="get_backend_url"),
+            pytest.param(
+                BackendConfig.get_cloud_backend_url, id="get_cloud_backend_url"
+            ),
+            pytest.param(BackendConfig.get_backend_api_url, id="get_backend_api_url"),
+            pytest.param(BackendConfig.get_cloud_api_url, id="get_cloud_api_url"),
+            pytest.param(BackendConfig.get_cloud_web_url, id="get_cloud_web_url"),
+            pytest.param(
+                BackendConfig.get_default_cloud_url_or_raise,
+                id="get_default_cloud_url_or_raise",
+            ),
+            pytest.param(BackendConfig.build_api_base, id="build_api_base"),
+        ],
+    )
+    def test_bank_install_every_backend_resolver_refuses(
+        self, strict_env: None, resolver: object
+    ) -> None:
+        with pytest.raises(EndpointNotConfiguredError):
+            resolver()  # type: ignore[operator]
