@@ -211,6 +211,30 @@ def test_fetch_best_config_sync_does_not_retry_422(mock_get, mock_sleep):
     mock_sleep.assert_not_called()
 
 
+@pytest.mark.parametrize(("max_retries", "expected_calls"), [(0, 1), (1, 2), (4, 5)])
+@patch("traigent.utils.retry.time.sleep", return_value=None)
+@patch("requests.get")
+def test_fetch_best_config_sync_honours_client_max_retries(
+    mock_get, mock_sleep, max_retries, expected_calls
+):
+    client = BackendIntegratedClient(
+        api_key=FAKE_TRAIGENT_API_KEY,
+        base_url="https://api.test",
+        max_retries=max_retries,
+    )
+    mock_get.return_value = _response(429, text="slow down")
+
+    with patch.object(
+        client.auth_manager.auth,
+        "get_headers",
+        AsyncMock(return_value={"Authorization": "Bearer test-token"}),
+    ):
+        with pytest.raises(CloudServiceError):
+            client.fetch_best_config_sync("answerer", environment="staging")
+
+    assert mock_get.call_count == expected_calls
+
+
 @patch("requests.get")
 def test_fetch_best_config_sync_returns_none_for_not_found(mock_get):
     client = BackendIntegratedClient(

@@ -451,6 +451,14 @@ class RetryHandler:
         if isinstance(exception, AuthenticationError):
             return False
 
+        if not self.config.retry_on_timeout and isinstance(exception, TimeoutError):
+            return False
+
+        if not self.config.retry_on_connection_error and isinstance(
+            exception, ConnectionError
+        ):
+            return False
+
         status_code = getattr(exception, "status_code", None)
         if self.config.retry_on_status and status_code in self.config.retry_on_status:
             return True
