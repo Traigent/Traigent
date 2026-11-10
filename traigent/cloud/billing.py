@@ -26,9 +26,13 @@ try:  # POSIX only; elsewhere the in-process write stays atomic but unlocked
     import fcntl
 except ImportError:  # pragma: no cover
     fcntl = None  # type: ignore[assignment]
+try:  # Windows
+    import msvcrt
+except ImportError:  # pragma: no cover
+    msvcrt = None  # type: ignore[assignment]
 
 from traigent.config.backend_config import PRICING_URL
-from traigent.utils.exceptions import ConfigurationError
+from traigent.utils.exceptions import ConfigurationError, TraigentError
 from traigent.utils.logging import get_logger
 from traigent.utils.money import format_usd
 
@@ -58,19 +62,41 @@ def _write_json_file(path: Path, data: Any) -> None:
             tmp_path.unlink()
 
 
+class UsageStorageError(TraigentError):
+    """The usage file cannot be read or set aside; history is left untouched."""
+
+
+_lock_warning_emitted = False
+
+
 @contextmanager
 def _storage_lock(path: Path) -> Iterator[None]:
     """Hold an exclusive inter-process lock for read-modify-write of ``path``."""
-    if fcntl is None:  # pragma: no cover - non-POSIX platforms
+    global _lock_warning_emitted
+    if fcntl is None and msvcrt is None:
+        if not _lock_warning_emitted:
+            _lock_warning_emitted = True
+            logger.warning(
+                "No file-locking support on this platform; concurrent usage "
+                "writers may lose records"
+            )
         yield
         return
     lock_path = path.with_name(f"{path.name}.lock")
-    with lock_path.open("a") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    with lock_path.open("a+") as lock_file:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        else:  # pragma: no cover - exercised via monkeypatched test
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
         try:
             yield
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            else:  # pragma: no cover
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 # Cost Tracking Enums and Classes (from cost_tracking.py)
@@ -249,6 +275,7 @@ class UsageTracker:
             self.storage_path = Path.cwd() / ".traigent_local" / _USAGE_STORAGE_FILENAME
             self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._usage_records: list[UsageRecord] = []
+        self._pending_records: list[UsageRecord] = []
         self._load_usage_data()
 
         # Billing plans
@@ -380,6 +407,8 @@ class UsageTracker:
             )
         if end_date is None:
             end_date = datetime.now(UTC)
+
+        self._refresh_from_disk()
 
         # Filter records by date range
         filtered_records = [
@@ -523,8 +552,11 @@ class UsageTracker:
                     f"Usage data unreadable ({e}); moved to {quarantine} and "
                     "starting a fresh usage file"
                 )
-            except OSError:
-                logger.warning(f"Failed to load usage data: {e}")
+            except OSError as move_error:
+                raise UsageStorageError(
+                    f"Usage file {self.storage_path} is unreadable ({e}) and "
+                    f"could not be set aside ({move_error}); leaving it untouched"
+                ) from e
             return []
 
     def _load_usage_data(self) -> None:
@@ -540,14 +572,33 @@ class UsageTracker:
         }
         _write_json_file(self.storage_path, data)
 
-    def _append_record_and_save(self, record: UsageRecord) -> None:
-        """Append under an inter-process lock, merging what other writers saved."""
+    def _refresh_from_disk(self) -> None:
+        """Reload so other trackers' writes count; keep our unsaved records."""
         try:
             with _storage_lock(self.storage_path):
                 records = self._read_records_from_disk()
-                records.append(record)
+        except OSError as e:
+            logger.warning(f"Could not refresh usage data, using memory: {e}")
+            return
+        self._usage_records = records + self._pending_records
+
+    def _append_record_and_save(self, record: UsageRecord) -> None:
+        """Append under an inter-process lock, merging what other writers saved.
+
+        A record that could not be written stays pending and is merged into the
+        next successful write. An unreadable, unquarantinable file raises
+        ``UsageStorageError`` and is never overwritten.
+        """
+        self._pending_records.append(record)
+        try:
+            with _storage_lock(self.storage_path):
+                records = self._read_records_from_disk() + self._pending_records
                 self._write_records(records)
                 self._usage_records = records
+                self._pending_records = []
+        except UsageStorageError:
+            self._usage_records.append(record)
+            raise
         except Exception as e:
             self._usage_records.append(record)
             logger.exception(f"Failed to save usage data: {e}")
