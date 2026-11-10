@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-import zlib
 from pathlib import Path
 from typing import TypedDict
 
@@ -64,9 +63,6 @@ except ImportError as exc:  # pragma: no cover - dependency guidance
         "to run this walkthrough."
     ) from exc
 
-# Mock dry run: the supported preflight exemption, not TRAIGENT_COST_APPROVED.
-os.environ.setdefault("ENVIRONMENT", "development")
-os.environ.setdefault("TRAIGENT_COST_PREFLIGHT_MOCK_EXEMPT", "true")  # mock dry run
 import traigent
 from traigent.config.backend_config import BackendConfig
 from traigent.integrations.observability.workflow_traces import (
@@ -440,10 +436,7 @@ def accuracy_metric(output: str, expected: str) -> float:
     if MOCK_MODE:
         # Simulate varying accuracy based on output content
         # This gives realistic-looking results in the demo
-        # crc32, not the built-in str hash, which is salted per process (#3129).
-        random.seed(
-            zlib.crc32((output + expected).encode())
-        )  # Deterministic per example
+        random.seed(hash(output + expected) % 2**32)  # Deterministic per example
         return random.uniform(0.6, 0.95)
 
     # Real mode: Normalize both strings for comparison
@@ -493,7 +486,7 @@ def cost_metric(output: str, expected: str) -> float:
         output_cost = (output_tokens / 1_000_000) * output_cost_per_1m
 
         # Add some variance for realism
-        random.seed(zlib.crc32(output.encode()))  # stable across runs (#3129)
+        random.seed(hash(output) % 2**32)
         variance = random.uniform(0.8, 1.2)
 
         return (input_cost + output_cost) * variance
