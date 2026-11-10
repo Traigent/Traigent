@@ -4,6 +4,17 @@ from __future__ import annotations
 
 import math
 
+# Relative slack for comparing a running float total to a cap. Ten
+# additions of 0.1 give 0.9999999999999999, which must count as reaching 1.0.
+COST_CAP_REL_TOLERANCE = 1e-9
+
+
+def cost_cap_reached(total: float, limit: float) -> bool:
+    """True when ``total`` has reached ``limit``, ignoring float rounding noise."""
+    return total >= limit or math.isclose(
+        total, limit, rel_tol=COST_CAP_REL_TOLERANCE, abs_tol=0.0
+    )
+
 
 def format_usd(amount: float | None) -> str:
     """Format a USD amount without hiding sub-cent values.

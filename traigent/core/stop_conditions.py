@@ -23,7 +23,7 @@ from traigent.config.feature_flags import _coerce_bool as _coerce_config_bool_va
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.utils import extract_examples_attempted
 from traigent.utils.logging import get_logger
-from traigent.utils.money import format_usd
+from traigent.utils.money import cost_cap_reached, format_usd
 
 if TYPE_CHECKING:
     from traigent.core.cost_enforcement import CostEnforcer
@@ -448,7 +448,7 @@ class MetricLimitStopCondition(StopCondition):
 
         new_trials = trial_seq[self._last_index :]
         if not new_trials:
-            return self._running_total >= self._limit
+            return cost_cap_reached(self._running_total, self._limit)
 
         for trial in new_trials:
             if not self._include_pruned and trial.status == TrialStatus.PRUNED:
@@ -467,12 +467,12 @@ class MetricLimitStopCondition(StopCondition):
 
             self._running_total += self._to_numeric(trial, value)
 
-            if self._running_total >= self._limit:
+            if cost_cap_reached(self._running_total, self._limit):
                 self._last_index = len(trial_seq)
                 return True
 
         self._last_index = len(trial_seq)
-        return self._running_total >= self._limit
+        return cost_cap_reached(self._running_total, self._limit)
 
     def _raw_metric_value(self, trial: TrialResult) -> Any:
         metrics = trial.metrics or {}

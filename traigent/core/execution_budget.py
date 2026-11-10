@@ -66,6 +66,7 @@ from traigent.core.sample_budget import (
 )
 from traigent.utils.exceptions import ConfigurationError, TrialPrunedError
 from traigent.utils.logging import get_logger
+from traigent.utils.money import cost_cap_reached
 
 logger = get_logger(__name__)
 
@@ -590,6 +591,8 @@ class ExecutionBudget:
     def _remaining_cost_locked(self) -> float:
         if self.max_cost_usd is None:
             return float("inf")
+        if cost_cap_reached(self._consumed_cost, self.max_cost_usd):
+            return 0.0
         return max(self.max_cost_usd - self._consumed_cost, 0.0)
 
     def _remaining_examples_locked(self) -> float:
