@@ -455,6 +455,30 @@ class TestDataProtectionManager:
         assert "[EMAIL_REDACTED]" in unprotected_data
         assert "[PHONE_REDACTED]" in unprotected_data
 
+    def test_protect_data_encrypted_result_holds_no_plaintext(self):
+        """is_encrypted=True must never carry the plaintext (#3058)."""
+        manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+        sensitive = "patient record 4471 diagnosis X"
+
+        result = manager.protect_data(sensitive, encrypt=True)
+
+        assert result["is_encrypted"] is True
+        assert sensitive not in repr(result)
+        assert result["protected_data"] != sensitive
+        assert manager.unprotect_data(result) == sensitive
+
+    def test_unprotect_data_rejects_tampered_ciphertext(self):
+        """Tampered ciphertext must fail closed rather than return data."""
+        manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+        result = manager.protect_data("some secret value", encrypt=True)
+        payload = json.loads(result["protected_data"])
+        first = payload["ciphertext"]
+        payload["ciphertext"] = ("0" if first[0] != "0" else "1") + first[1:]
+        result["protected_data"] = json.dumps(payload)
+
+        with pytest.raises(RuntimeError, match="Decryption operation failed"):
+            manager.unprotect_data(result)
+
     def test_protect_data_without_encryption(self):
         """Test data protection without encryption"""
         key_manager = KeyManager()

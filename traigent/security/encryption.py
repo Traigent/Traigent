@@ -1143,6 +1143,18 @@ class DataProtectionManager:
                 "key_id": encrypted_result["key_id"],
                 "algorithm": encrypted_result["algorithm"],
             }
+            # Return the ciphertext envelope, never the plaintext, when the
+            # result is labelled as encrypted.
+            protected_data = json.dumps(
+                {
+                    "ciphertext": encrypted_result["ciphertext"].hex(),
+                    "iv": encrypted_result["iv"].hex(),
+                    "tag": encrypted_result["tag"].hex(),
+                    "key_id": encrypted_result["key_id"],
+                    "algorithm": encrypted_result["algorithm"],
+                    "classification": encrypted_result["classification"],
+                }
+            )
 
         # Create result metadata
         metadata = {
@@ -1157,10 +1169,11 @@ class DataProtectionManager:
         result = {
             "is_encrypted": encrypt,
             "classification": classification.value,
-            "original_data": data,
             "protected_data": protected_data,
             "metadata": metadata,
         }
+        if not encrypt:
+            result["original_data"] = data
 
         return result
 
@@ -1212,7 +1225,20 @@ class DataProtectionManager:
         Returns:
             Unprotected data as string
         """
-        return cast(str, protected_result["protected_data"])
+        if not protected_result.get("is_encrypted"):
+            return cast(str, protected_result["protected_data"])
+
+        envelope = json.loads(protected_result["protected_data"])
+        plaintext = self.encryption_manager.decrypt(
+            {
+                "ciphertext": bytes.fromhex(envelope["ciphertext"]),
+                "iv": bytes.fromhex(envelope["iv"]),
+                "tag": bytes.fromhex(envelope["tag"]),
+                "key_id": envelope["key_id"],
+                "algorithm": envelope["algorithm"],
+            }
+        )
+        return plaintext.decode("utf-8")
 
 
 @dataclass
