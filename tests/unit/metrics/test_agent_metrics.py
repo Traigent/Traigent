@@ -591,3 +591,12 @@ class TestAgentIdValidationInFunctions:
             measures, ["grader", "generator"], ["cost"]
         )
         assert valid is True
+
+
+def test_validate_agent_id_rejects_non_ascii_identifiers() -> None:
+    """Agent ids become measure-key prefixes, so they follow the ASCII contract (#3006)."""
+    from traigent.metrics.agent_metrics import validate_agent_id
+
+    assert validate_agent_id("grader")
+    assert not validate_agent_id("précision")
+    assert not validate_agent_id("ａgent")
