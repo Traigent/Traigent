@@ -49,6 +49,7 @@ from traigent.core.namespace import (
     sanitize_metric_name,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.validation import MEASURE_KEY_PATTERN
 
 logger = get_logger(__name__)
 
@@ -79,9 +80,11 @@ def validate_agent_id(agent_id: str) -> bool:
         >>> validate_agent_id("123agent")
         False
     """
-    if not agent_id:
+    if not agent_id or not isinstance(agent_id, str):
         return False
-    return agent_id.isidentifier()
+    # The ASCII measure-key contract: str.isidentifier() accepts Unicode
+    # letters, which then fail as metric keys (#3006).
+    return MEASURE_KEY_PATTERN.fullmatch(agent_id) is not None
 
 
 def _ensure_valid_agent_ids(agents: Sequence[str], context: str = "") -> None:

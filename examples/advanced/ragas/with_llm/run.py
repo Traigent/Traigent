@@ -18,8 +18,8 @@ except ImportError:  # pragma: no cover
     )
     import traigent
 
-from traigent.metrics import configure_ragas_defaults  # noqa: E402
 from traigent.core.objectives import create_default_objectives  # noqa: E402
+from traigent.metrics import configure_ragas_defaults  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -52,10 +52,9 @@ if _RAGAS_READY and not _MOCK_MODE:
     if not os.getenv("OPENAI_API_KEY"):
         raise SystemExit("Set OPENAI_API_KEY to run this example.")
     ragas_llm = LangchainLLM(ChatOpenAI(model="gpt-4.1-mini", temperature=0.0))
-elif _MOCK_MODE:
-    # Force fallback to deterministic metrics in mock mode
-    _RAGAS_READY = False
 else:
+    # Mock mode or ragas missing: use the deterministic fallback metrics below
+    _RAGAS_READY = False
 
     def _token_overlap_score(text: str, expected: str) -> float:
         text_tokens = {token for token in text.lower().split() if token}
@@ -161,6 +160,12 @@ async def main() -> None:
     print(f"  best_config: {result.best_config}")
     print(f"  metrics: {result.metrics}")
 
+    if result.best_config is None or result.status == "failed":
+        raise SystemExit(
+            f"Optimization produced no usable result (status={result.status}, "
+            f"best_config={result.best_config}): every trial failed. See the trial errors above."
+        )
+
     if raw is not None and not raw.empty:
         print("\n=== Raw trial results ===")
         print(raw.to_string(index=False))
@@ -182,7 +187,7 @@ async def main() -> None:
     ):
         evaluation_result = best_trial.metadata["evaluation_result"]
         print("Best trial metrics:")
-        for metric, value in sorted(evaluation_result.metrics.items()):
+        for metric, value in sorted(evaluation_result["aggregated_metrics"].items()):
             print(f"  {metric}: {value:.3f}")
 
 

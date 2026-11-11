@@ -27,8 +27,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -88,8 +88,8 @@ def _calc_accuracy(
     },
     eval_dataset=DATASET,
     objectives=create_default_objectives(
-        ["accuracy", "response_time"],
-        orientations={"response_time": "minimize"},
+        ["accuracy", "response_time_ms"],
+        orientations={"response_time_ms": "minimize"},
     ),
     metric_functions={"accuracy": _calc_accuracy},
     offline=True,

@@ -45,6 +45,10 @@ if os.getenv("TRAIGENT_OFFLINE_MODE", "").lower() in {"1", "true", "yes"}:
 
 sys.path.insert(0, str(WALKTHROUGH_ROOT))
 
+# Import traigent before litellm: traigent pins the offline LiteLLM price map
+# only if it runs first (see traigent/__init__.py).
+import traigent  # noqa: E402
+
 try:
     import litellm
     from langchain_community.vectorstores import FAISS
@@ -58,7 +62,6 @@ except Exception as exc:
 
 from utils.scoring import semantic_overlap_score
 
-import traigent
 from traigent.api.parameter_ranges import Choices
 from traigent.api.types import AgentDefinition
 from traigent.observability import add_agent_span

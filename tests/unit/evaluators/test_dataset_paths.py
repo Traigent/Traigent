@@ -472,7 +472,7 @@ def test_dataset_cwd_fallback_reports_enotdir_as_validation_error(
     component of the cwd-relative spelling is a *file*, which raises
     NotADirectoryError (ENOTDIR). That is an OSError, not FileNotFoundError; if
     the retry let it escape, every caller that only handles ValidationError -
-    the MCP ``validate_dataset`` tool and ``traigent validate-dataset`` - would
+    the MCP ``validate_dataset`` tool and ``traigent validate`` - would
     see a raw OSError instead of a structured failure.
     """
     run_dir = tmp_path / "run"

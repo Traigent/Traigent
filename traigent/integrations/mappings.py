@@ -202,7 +202,6 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "max_tokens",
             "top_p",
             "stream",
-            "tools",
         ],
         "chat.completions.create": [
             "model",
@@ -225,7 +224,6 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "max_tokens",
             "top_p",
             "stream",
-            "tools",
         ],
         "chat.completions.create": [
             "model",
@@ -281,36 +279,36 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
     },
     # LangChain methods
     "langchain_openai.ChatOpenAI": {
-        "invoke": ["model", "temperature", "max_tokens", "streaming"],
+        "invoke": ["model", "temperature", "max_tokens"],
         "stream": ["model", "temperature", "max_tokens"],
         "astream": ["model", "temperature", "max_tokens"],
     },
     "langchain_anthropic.ChatAnthropic": {
-        "invoke": ["model", "temperature", "max_tokens", "streaming"],
+        "invoke": ["model", "temperature", "max_tokens"],
         "stream": ["model", "temperature", "max_tokens"],
         "astream": ["model", "temperature", "max_tokens"],
     },
     # Cohere methods
     "cohere.Client": {
-        "generate": ["model", "temperature", "max_tokens", "p", "k", "stream"],
+        "generate": ["model", "temperature", "max_tokens", "top_p", "top_k", "stream"],
         "chat": [
             "model",
             "temperature",
             "max_tokens",
-            "p",
-            "k",
+            "top_p",
+            "top_k",
             "stream",
             "tools",
         ],
     },
     "cohere.AsyncClient": {
-        "generate": ["model", "temperature", "max_tokens", "p", "k", "stream"],
+        "generate": ["model", "temperature", "max_tokens", "top_p", "top_k", "stream"],
         "chat": [
             "model",
             "temperature",
             "max_tokens",
-            "p",
-            "k",
+            "top_p",
+            "top_k",
             "stream",
             "tools",
         ],
@@ -367,14 +365,12 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "stream",
         ],
     },
-    # PydanticAI methods — params are injected via model_settings dict
-    # (see PydanticAIPlugin.apply_overrides for actual nesting logic)
-    "pydantic_ai.Agent": {
-        "run": ["temperature", "max_tokens", "top_p"],
-        "run_sync": ["temperature", "max_tokens", "top_p"],
-        "run_stream": ["temperature", "max_tokens", "top_p"],
-        "run_stream_sync": ["temperature", "max_tokens", "top_p"],
-    },
+    # PydanticAI is intentionally absent: Agent.run*/run_stream* take sampling
+    # params inside ``model_settings``, not as keyword arguments, and this table
+    # only injects top-level kwargs. Tuned values are NOT injected for
+    # pydantic_ai.Agent through framework_targets (OptimizedFunction warns about
+    # this, #2924). PydanticAIPlugin.apply_overrides does the nesting but this
+    # path never calls it; read the trial values with traigent.get_trial_config().
 }
 
 # Method-level parameter name translations.

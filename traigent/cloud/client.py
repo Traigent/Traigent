@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import math
 import os
 import time
 import uuid
@@ -13,6 +14,8 @@ import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from importlib import import_module
 from types import ModuleType
 from typing import Any, NoReturn, cast
@@ -758,17 +761,31 @@ async def _get_error_text(response: Any) -> str:
 
 
 def _get_retry_delay(response: Any) -> float:
-    """Get retry delay from Retry-After header."""
-    headers = getattr(response, "headers", {}) or {}
-    if not isinstance(headers, dict):
+    """Seconds from the Retry-After header (delta-seconds or HTTP-date); 0.0 if none.
+
+    Accepts any Mapping: aiohttp responses carry a CIMultiDictProxy, never a
+    dict, so a dict-only check ignored every real Retry-After (#3079).
+    """
+    headers = getattr(response, "headers", None)
+    if not isinstance(headers, Mapping):
         return 0.0
     retry_after = headers.get("Retry-After")
-    if retry_after is not None:
+    if retry_after is None:
+        return 0.0
+    try:
+        delay = float(retry_after)
+    except (TypeError, ValueError):
         try:
-            return float(retry_after)
-        except (TypeError, ValueError):
+            retry_at = parsedate_to_datetime(str(retry_after))
+        # silent-ok: an unparsable Retry-After is no hint, same as an absent one
+        except (TypeError, ValueError, IndexError, OverflowError):
             return 0.0
-    return 0.0
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        delay = (retry_at - datetime.now(UTC)).total_seconds()
+    if not math.isfinite(delay) or delay < 0:
+        return 0.0
+    return delay
 
 
 def _resolve_fallback_function(

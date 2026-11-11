@@ -25,6 +25,7 @@ def hooks() -> None:
     Traigent hooks validate agent configurations against constraints
     defined in traigent.yml before allowing Git pushes.
 
+    \b
     Examples:
         traigent hooks install         # Install pre-push hooks
         traigent hooks status          # Check hook status
@@ -260,6 +261,7 @@ def validate(
     Scans TARGET (file or directory) for @traigent.optimize decorated
     functions and validates them against constraints in traigent.yml.
 
+    \b
     Examples:
         traigent hooks validate              # Validate current directory
         traigent hooks validate my_agent.py  # Validate specific file

@@ -17,7 +17,7 @@ import functools
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from random import SystemRandom
@@ -69,6 +69,16 @@ class CircuitBreakerState(Enum):
 # to integrate with the retry logic in this module.
 class ServiceUnavailableError(RetryableError):
     """Service temporarily unavailable (retryable variant for circuit breaker)."""
+
+
+class CircuitBreakerOpenError(ServiceUnavailableError):
+    """The circuit breaker is OPEN and rejected the call without running it.
+
+    ``RetryHandler`` does not retry it (#3033): no request was sent, and every
+    shipped retry config backs off for less than ``recovery_timeout`` in total,
+    so sleeping through the attempts could never reach HALF_OPEN. It still
+    subclasses ``ServiceUnavailableError`` so existing handlers keep matching.
+    """
 
 
 @dataclass
@@ -219,7 +229,7 @@ class CircuitBreaker:
                     self._half_open_in_flight = True
                     logger.info("Circuit breaker entering HALF_OPEN state")
                 else:
-                    raise ServiceUnavailableError("Circuit breaker is OPEN")
+                    raise CircuitBreakerOpenError("Circuit breaker is OPEN")
             elif self.state == CircuitBreakerState.HALF_OPEN:
                 if self._half_open_in_flight:
                     raise ServiceUnavailableError("Circuit breaker is HALF_OPEN")
@@ -284,7 +294,13 @@ class CircuitBreaker:
             self.success_count = 0
             self._half_open_in_flight = False
 
-            if self.failure_count >= self.failure_threshold:
+            # A failed half-open probe re-opens at once (#3082): the success
+            # of an earlier probe reset failure_count, so the threshold check
+            # alone would keep admitting probes against a failing service.
+            if (
+                self.state == CircuitBreakerState.HALF_OPEN
+                or self.failure_count >= self.failure_threshold
+            ):
                 self.state = CircuitBreakerState.OPEN
                 self.last_state_change = datetime.now(UTC)
                 logger.warning(
@@ -446,6 +462,10 @@ class RetryHandler:
             return False
 
         if isinstance(exception, NonRetryableError):
+            return False
+
+        # A breaker rejection sent nothing; retrying it only sleeps (#3033).
+        if isinstance(exception, CircuitBreakerOpenError):
             return False
 
         if isinstance(exception, AuthenticationError):
@@ -626,9 +646,9 @@ class RetryWithCircuitBreaker:
 
     def __init__(self, retry_config: RetryConfig) -> None:
         """Initialize with retry configuration."""
-        # Ensure circuit breaker is enabled
-        retry_config.enable_circuit_breaker = True
-        self.handler = RetryHandler(retry_config)
+        # Enable the breaker on a copy: the caller's config is often a shared
+        # module preset (DEFAULT_RETRY, ...) that other handlers use (#3084).
+        self.handler = RetryHandler(replace(retry_config, enable_circuit_breaker=True))
 
     def __call__[T](self, func: Callable[..., T]) -> Callable[..., T]:
         """Decorator implementation."""

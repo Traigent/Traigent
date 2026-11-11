@@ -63,7 +63,7 @@ def _validate_comparability_coverage_ratio(comparability: dict) -> None:
         raise ValueError(
             f"comparability.coverage_ratio must be numeric, got {type(ratio)}"
         )
-    if ratio < 0 or ratio > 1:
+    if not 0 <= ratio <= 1:  # also rejects NaN
         raise ValueError("comparability.coverage_ratio must be between 0 and 1")
 
 
@@ -149,7 +149,7 @@ def _validate_metric_entries(entries: dict, key_label: str, value_label: str) ->
         value_label: Label for error messages about values.
     """
     for key, value in entries.items():
-        if not _IDENTIFIER_PATTERN.match(key):
+        if not _IDENTIFIER_PATTERN.fullmatch(key):
             raise ValueError(
                 f"Invalid {key_label} key '{key}': must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$"
             )

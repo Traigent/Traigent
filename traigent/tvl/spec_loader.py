@@ -34,6 +34,7 @@ from .models import (
     TVarDecl,
     TVarType,
     TVLHeader,
+    _real_number,
     normalize_tvar_type,
     parse_domain_spec,
 )
@@ -366,6 +367,20 @@ def _validate_choice_membership(
     if not values and normalized_type != "callable":
         issues.append(f"TVAR '{name}' declared domain values must be non-empty")
 
+    # A repeated value is a duplicate configuration in grid search. Compare by
+    # type and value so that 1 and True stay distinct; quadratic is fine for
+    # the handful of values a domain declares.
+    seen_values: list[Any] = []
+    reported: list[Any] = []
+    for value in values:
+        key = (type(value), value)
+        if key in seen_values:
+            if key not in reported:
+                issues.append(f"TVAR '{name}' declared domain repeats {value!r}")
+                reported.append(key)
+        else:
+            seen_values.append(key)
+
     if default is not _MISSING:
         issues.extend(_default_type_issues(name, raw_type, default))
     if default is not _MISSING and default not in values:
@@ -375,6 +390,11 @@ def _validate_choice_membership(
         )
 
     return issues
+
+
+def _is_int_bound(value: Any) -> bool:
+    """True for an int bound (not a bool): the domain is an int range."""
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _range_bounds_from_domain(domain: dict[str, Any]) -> tuple[Any, Any] | None:
@@ -420,6 +440,16 @@ def _validate_range_membership(
         not _is_numeric(resolution) or cast(float, resolution) <= 0
     ):
         issues.append(f"TVAR '{name}' range resolution must be a positive number")
+    elif (
+        resolution is not None
+        and _is_int_bound(lower)
+        and _is_int_bound(upper)
+        and not float(resolution).is_integer()
+    ):
+        issues.append(
+            f"TVAR '{name}' int range resolution must be a positive integer, "
+            f"got {resolution!r}"
+        )
 
     if default is _MISSING:
         return issues
@@ -833,6 +863,7 @@ def _validate_tvar_type_field(name: str, tvar_def: dict[str, Any]) -> list[str]:
 def _validate_tvars_list_structure(tvars: list[Any]) -> list[str]:
     """Validate structure of tvars section (TVL 0.9 array format)."""
     issues: list[str] = []
+    first_index: dict[str, int] = {}
 
     for idx, tvar_def in enumerate(tvars):
         if not isinstance(tvar_def, dict):
@@ -845,6 +876,15 @@ def _validate_tvars_list_structure(tvars: list[Any]) -> list[str]:
         if not isinstance(name, str) or not name:
             issues.append(f"TVAR at index {idx} missing required 'name' string")
             name = f"<index {idx}>"
+        elif name in first_index:
+            # Last-wins would silently drop the earlier domain from
+            # configuration_space while both entries stay in tvars.
+            issues.append(
+                f"duplicate TVAR name '{name}' at tvars[{idx}] "
+                f"(first declared at tvars[{first_index[name]}])"
+            )
+        else:
+            first_index[name] = idx
 
         issues.extend(_validate_tvar_type_field(name, tvar_def))
         raw_type = tvar_def.get("type")
@@ -2054,7 +2094,10 @@ def _parse_banded_objective(
             f"Banded objective '{name}' test must be 'TOST', got '{test_type}'"
         )
 
-    alpha = float(band_spec.get("alpha", 0.05))
+    try:
+        alpha = _real_number(band_spec.get("alpha", 0.05), "alpha")
+    except ValueError as exc:
+        raise TVLValidationError(f"Banded objective '{name}' {exc}") from exc
     if not 0 < alpha < 1:
         raise TVLValidationError(
             f"Banded objective '{name}' alpha must be in (0, 1), got {alpha}"

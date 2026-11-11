@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import zlib
 from pathlib import Path
 from typing import TypedDict
 
@@ -436,7 +437,10 @@ def accuracy_metric(output: str, expected: str) -> float:
     if MOCK_MODE:
         # Simulate varying accuracy based on output content
         # This gives realistic-looking results in the demo
-        random.seed(hash(output + expected) % 2**32)  # Deterministic per example
+        # crc32, not the built-in str hash, which is salted per process (#3129).
+        random.seed(
+            zlib.crc32((output + expected).encode())
+        )  # Deterministic per example
         return random.uniform(0.6, 0.95)
 
     # Real mode: Normalize both strings for comparison
@@ -486,7 +490,7 @@ def cost_metric(output: str, expected: str) -> float:
         output_cost = (output_tokens / 1_000_000) * output_cost_per_1m
 
         # Add some variance for realism
-        random.seed(hash(output) % 2**32)
+        random.seed(zlib.crc32(output.encode()))  # stable across runs (#3129)
         variance = random.uniform(0.8, 1.2)
 
         return (input_cost + output_cost) * variance

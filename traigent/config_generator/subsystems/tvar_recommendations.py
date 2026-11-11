@@ -26,7 +26,11 @@ if TYPE_CHECKING:
 # Recommendation hints returned by the optimization service are consumed as
 # provided; the SDK does not rank or filter them.
 _RECOMMENDATIONS_FETCH_TIMEOUT_SECONDS = 2.0
-_RECOMMENDATIONS_CACHE: dict[tuple[str, tuple[str, ...]], RecommendationBundle] = {}
+# Only successful, non-empty bundles are cached: the client returns an empty
+# bundle for every failure, so caching one would pin "no hints" for the process
+# (#3157). The key carries the backend and a credential fingerprint.
+_RECOMMENDATIONS_CACHE: dict[tuple[str, ...], RecommendationBundle] = {}
+_RECOMMENDATIONS_CACHE_MAX = 64
 
 
 def generate_recommendations(
@@ -561,7 +565,7 @@ def _fetch_backend_recommendations(
     if not names or not _should_fetch_backend_recommendations():
         return RecommendationBundle.empty()
 
-    cache_key = (agent_type, names)
+    cache_key = (agent_type, *names, *_backend_cache_identity())
     cached = _RECOMMENDATIONS_CACHE.get(cache_key)
     if cached is not None:
         return cached
@@ -586,10 +590,56 @@ def _fetch_backend_recommendations(
     try:
         bundle = asyncio.run(_fetch())
     except Exception:
-        bundle = RecommendationBundle.empty()
+        return RecommendationBundle.empty()
 
-    _RECOMMENDATIONS_CACHE[cache_key] = bundle
+    if not bundle.is_empty:
+        if len(_RECOMMENDATIONS_CACHE) >= _RECOMMENDATIONS_CACHE_MAX:
+            _RECOMMENDATIONS_CACHE.pop(next(iter(_RECOMMENDATIONS_CACHE)))
+        _RECOMMENDATIONS_CACHE[cache_key] = bundle
     return bundle
+
+
+#: Fixed label for the credential fingerprint below. The versioned text keeps this
+#: construction apart from any other HMAC the SDK computes.
+_CACHE_IDENTITY_DOMAIN = b"traigent:tvar-recommendations-cache:v1"
+#: Random per interpreter start (a forked child inherits it). It is part of the
+#: HMAC message, so a fingerprint that leaked out of this process cannot be
+#: checked against guessed credentials.
+_CACHE_IDENTITY_NONCE = os.urandom(16)
+
+
+def _backend_cache_identity() -> tuple[str, str]:
+    """Backend URL and a credential fingerprint, so a switch never reuses hints.
+
+    The fingerprint is HMAC-SHA256 with the credentials (API key and JWT,
+    length-prefixed so no pair reads as another) as the KEY and a fixed label
+    plus a random per-interpreter nonce as the message, truncated to 12 hex digits.
+    It exists only to partition this process's in-memory cache: it is held only as
+    part of an in-memory dict key and is never persisted, logged or sent. What it gives: a change of either credential changes
+    the partition, and a fingerprint seen outside this process cannot be tested
+    against guessed credentials without this process's nonce. What it does not
+    give: protection if the nonce and the fingerprint both leak from the same
+    process. CodeQL's ``py/weak-sensitive-data-hashing`` models a hash input, not
+    an HMAC key, so this form is not reported; that is a property of the scanner's
+    model, not a claim that it approved the design.
+    """
+    import hashlib
+    import hmac
+
+    from traigent.config.backend_config import BackendConfig
+
+    try:
+        url = BackendConfig.get_configured_backend_url() or ""
+        key_value = BackendConfig.get_api_key() or ""
+        jwt_value = os.getenv("TRAIGENT_JWT_TOKEN") or ""
+    except Exception:
+        return ("", "")
+    # "surrogatepass": an undecodable environment value must not raise here.
+    material = (f"{len(key_value)}:{key_value}{len(jwt_value)}:{jwt_value}").encode(
+        "utf-8", errors="surrogatepass"
+    )
+    message = _CACHE_IDENTITY_DOMAIN + _CACHE_IDENTITY_NONCE
+    return (url, hmac.new(material, message, hashlib.sha256).hexdigest()[:12])
 
 
 def _should_fetch_backend_recommendations() -> bool:

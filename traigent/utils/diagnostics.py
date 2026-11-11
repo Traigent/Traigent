@@ -17,7 +17,7 @@ from typing import Any
 
 from traigent.config.provider_support import PROVIDER_SPECS
 from traigent.utils.console import _safe_print
-from traigent.utils.env_config import is_mock_llm
+from traigent.utils.env_config import is_backend_offline, is_mock_llm
 
 # ---------------------------------------------------------------------------
 # Redaction.
@@ -73,7 +73,14 @@ _REDACTED = "***redacted***"
 #:     scheme://token@host          ->  scheme://***@host
 #: The userinfo run is greedy up to the LAST "@" before the host, so a password
 #: that itself contains "@" is masked whole rather than leaving its tail behind.
+#: The lookbehind lets a match start only at the start of a run of scheme-legal
+#: characters, and the optional ``lead`` group takes digits and ``+.-`` that come
+#: before the scheme's first letter. Without the boundary the engine retried the
+#: scheme from every position of a long run, which is quadratic. ``lead`` is
+#: emitted unchanged, so output is the same as before for every input.
 _URL_CREDENTIALS_RE = re.compile(
+    r"(?<![A-Za-z0-9+.\-])"
+    r"(?P<lead>[0-9+.\-]*)"
     r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)"
     r"(?:(?P<user>[^/\s:@]+):)?"
     r"(?P<secret>[^/\s]+)"
@@ -163,10 +170,11 @@ def _mask_userinfo(match: re.Match[str]) -> str:
     user = match.group("user")
     # Keep the username when there is one -- it is diagnostically useful and is
     # not the credential. With no username the whole userinfo IS the token.
+    lead = match.group("lead")
     return (
-        f"{match.group('scheme')}{user}:{_REDACTED}@"
+        f"{lead}{match.group('scheme')}{user}:{_REDACTED}@"
         if user
-        else f"{match.group('scheme')}{_REDACTED}@"
+        else f"{lead}{match.group('scheme')}{_REDACTED}@"
     )
 
 
@@ -455,7 +463,9 @@ class TraigentDiagnostics:
                 The ``traigent doctor --offline`` flag depends on this actually
                 being honoured -- it previously reached the CLI and was
                 discarded, so the command opened sockets to github.com and
-                pypi.org while telling the user it would not.
+                pypi.org while telling the user it would not. The offline
+                environment settings (TRAIGENT_OFFLINE_MODE / TRAIGENT_OFFLINE)
+                are honoured the same way.
         """
         report = DiagnosticReport()
 
@@ -485,9 +495,11 @@ class TraigentDiagnostics:
         cls._check_permissions(report)
 
         # Check network connectivity
-        if offline:
+        if offline or is_backend_offline():
             report.add_success(
-                "Network", "skipped (offline requested); no sockets were opened"
+                "Network",
+                "skipped (offline requested or offline mode set); "
+                "no sockets were opened",
             )
         else:
             cls._check_network(report)

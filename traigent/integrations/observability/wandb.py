@@ -44,6 +44,30 @@ from ...utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _write_run_artifact(
+    run: Any, filename: str, payload: Any
+) -> tuple[str, str] | None:
+    """Write ``payload`` as JSON into the run's own directory.
+
+    The file goes to ``run.dir`` (wandb's per-run directory, never the user's
+    CWD or a temp directory that is deleted). Returns ``(path, base_path)`` for
+    ``wandb.save(path, base_path=base_path, policy="now")``: with that base the
+    file is published under ``filename`` and stays in place for the run (#3042).
+
+    Returns ``None`` for a disabled run (``WANDB_MODE=disabled``): it reports a
+    ``run.dir`` that is never created and uploads nothing, so there is nothing
+    to write. Any other missing run dir is an error (``OSError``).
+    """
+    if getattr(run, "disabled", False) is True:
+        logger.debug("W&B run is disabled; skipping artifact %s", filename)
+        return None
+    run_dir = str(Path(run.dir))
+    path = str(Path(run_dir) / filename)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    return path, run_dir
+
+
 class TraigentWandBTracker:
     """Weights & Biases experiment tracker for Traigent optimizations."""
 
@@ -131,22 +155,25 @@ class TraigentWandBTracker:
             reinit=True,
         )
 
-        # Log configuration space as artifact
-        config_file = "configuration_space.json"
-        with open(config_file, "w") as f:
-            json.dump(configuration_space, f, indent=2)
-
-        try:
-            wandb.save(config_file)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed to save configuration space artifact: %s", exc, exc_info=False
-            )
-        Path(config_file).unlink(missing_ok=True)
-
         run = self.current_run
         if run is None:
             raise RuntimeError("W&B run initialization failed")
+
+        # Log configuration space as artifact, inside the run's own directory.
+        try:
+            written = _write_run_artifact(
+                run, "configuration_space.json", configuration_space
+            )
+            if written is not None:
+                path, base = written
+                wandb.save(path, base_path=base, policy="now")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to save configuration space artifact: %s",
+                exc,
+                exc_info=False,
+            )
+
         logger.info(f"Started W&B run: {run.id}")
         return cast(str, run.id)
 
@@ -232,10 +259,15 @@ class TraigentWandBTracker:
         # path as I/O / serialisation errors instead of crashing log_trial().
         artifact_written = False
         trial_file: str | None = None
+        run_dir: str | None = None
         try:
-            trial_file = f"trial_{int(trial_number)}.json"
-            with open(trial_file, "w", encoding="utf-8") as f:
-                json.dump(trial_artifact_data, f, indent=2)
+            written = _write_run_artifact(
+                self.current_run,
+                f"trial_{int(trial_number)}.json",
+                trial_artifact_data,
+            )
+            if written is not None:
+                trial_file, run_dir = written
                 artifact_written = True
         except (OSError, TypeError, ValueError) as exc:  # noqa: BLE001
             logger.warning(
@@ -245,15 +277,15 @@ class TraigentWandBTracker:
                 exc_info=False,
             )
 
-        if artifact_written and trial_file is not None:
+        if artifact_written and trial_file is not None and run_dir is not None:
             try:
-                wandb.save(trial_file)
+                wandb.save(trial_file, base_path=run_dir, policy="now")
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "Failed to save trial artifact to W&B: %s", exc, exc_info=False
+                    "Failed to save trial artifact to W&B: %s",
+                    exc,
+                    exc_info=False,
                 )
-        if trial_file is not None:
-            Path(trial_file).unlink(missing_ok=True)
 
     @staticmethod
     def _mapping_or_warn(
@@ -385,12 +417,19 @@ class TraigentWandBTracker:
             ],
         }
 
-        result_file = "optimization_result.json"
-        with open(result_file, "w") as f:
-            json.dump(result_data, f, indent=2)
-
-        wandb.save(result_file)
-        Path(result_file).unlink(missing_ok=True)
+        try:
+            written = _write_run_artifact(
+                self.current_run, "optimization_result.json", result_data
+            )
+            if written is not None:
+                path, base = written
+                wandb.save(path, base_path=base, policy="now")
+        except (OSError, TypeError, ValueError) as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to write optimization result artifact: %s",
+                exc,
+                exc_info=False,
+            )
 
         # Log dataset if provided
         if dataset_path and Path(dataset_path).exists():
@@ -431,36 +470,66 @@ class TraigentWandBTracker:
         return cast(str, sweep_id)
 
 
+#: Run name used when neither the hook nor the constructor names the function.
+_DEFAULT_RUN_FUNCTION_NAME = "traigent_optimization"
+
+
 class WandBOptimizationCallback:
     """Callback for automatic W&B logging during optimization."""
 
-    def __init__(self, tracker: TraigentWandBTracker) -> None:
+    def __init__(
+        self, tracker: TraigentWandBTracker, function_name: str | None = None
+    ) -> None:
         """Initialize callback with W&B tracker.
 
         Args:
             tracker: TraigentWandBTracker instance
+            function_name: Name the run is logged under when the start hook is
+                called by ``CallbackManager``, which does not pass one.
         """
         self.tracker = tracker
         self.trial_count = 0
+        self.function_name = function_name
 
     def on_optimization_start(
         self,
-        function_name: str,
-        objectives: list[str],
-        configuration_space: dict[str, Any],
+        config_space: dict[str, Any] | None = None,
+        objectives: list[str] | None = None,
+        algorithm: str | Mapping[str, Any] | None = None,
+        *,
+        function_name: str | None = None,
+        configuration_space: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
-        """Called when optimization starts."""
+        """Called when optimization starts.
+
+        ``CallbackManager`` calls this as ``(config_space, objectives,
+        algorithm)``, the same contract as every other callback. The keyword
+        form ``function_name=..., configuration_space=...`` is also accepted.
+        """
+        if isinstance(config_space, str):
+            # Legacy order (function_name, objectives, configuration_space),
+            # used before CallbackManager's contract; the space may come
+            # third by position or as configuration_space=.
+            function_name = function_name or config_space
+            config_space = dict(algorithm) if isinstance(algorithm, Mapping) else None
+            algorithm = None
+        space = configuration_space if configuration_space is not None else config_space
+        name = function_name or self.function_name or _DEFAULT_RUN_FUNCTION_NAME
         self.tracker.start_optimization_run(
-            function_name=function_name,
-            objectives=objectives,
-            configuration_space=configuration_space,
+            function_name=name,
+            objectives=list(objectives or []),
+            configuration_space=dict(space or {}),
             additional_tags=kwargs.get("wandb_tags", []),
             config=kwargs.get("wandb_config", {}),
         )
 
-    def on_trial_complete(self, trial: TrialResult) -> None:
-        """Called when trial completes."""
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts. No-op: W&B/MLflow log per completed trial."""
+        return None
+
+    def on_trial_complete(self, trial: TrialResult, progress: Any = None) -> None:
+        """Called when trial completes; ``progress`` is passed by CallbackManager."""
         self.trial_count += 1
         self.tracker.log_trial(trial, self.trial_count)
 

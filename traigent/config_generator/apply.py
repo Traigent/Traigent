@@ -17,13 +17,16 @@ from traigent.config_generator.types import AutoConfigResult
 
 # Optional base directory override for path containment checks (S2083).
 # If unset, the current working directory is treated as the trusted base.
-_SAFE_BASE_DIR = os.environ.get("TRAIGENT_CONFIG_BASE_DIR")
+# ``_SAFE_BASE_DIR`` is an explicit programmatic override; when it is None the
+# environment variable is read on every call, as the CLI does (#3161).
+_SAFE_BASE_DIR: str | None = None
 
 
 def _get_safe_base_dir() -> Path:
     """Return the trusted base directory for source file edits."""
-    if _SAFE_BASE_DIR:
-        return Path(_SAFE_BASE_DIR).resolve()
+    configured = _SAFE_BASE_DIR or os.environ.get("TRAIGENT_CONFIG_BASE_DIR")
+    if configured:
+        return Path(configured).resolve()
     return Path.cwd().resolve()
 
 

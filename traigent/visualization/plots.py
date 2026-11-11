@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
 from traigent.core.objective_directions import resolve_objective_orientation
@@ -63,16 +65,28 @@ def _add_metadata_orientations(
             orientations[name] = bool(orientation)
 
 
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def _safe_filename_part(name: str) -> str:
+    """Make an objective name safe to embed in a single filename component."""
+    return _UNSAFE_FILENAME_CHARS.sub("_", name) or "objective"
+
+
 class PlotGenerator:
     """Generates plots for optimization results using ASCII and optional matplotlib."""
 
-    def __init__(self, use_matplotlib: bool = True) -> None:
+    def __init__(
+        self, use_matplotlib: bool = True, output_dir: str | None = None
+    ) -> None:
         """Initialize plot generator.
 
         Args:
             use_matplotlib: Whether to use matplotlib for rich plots
+            output_dir: Directory for saved plot files (current directory if None)
         """
         self.use_matplotlib = use_matplotlib
+        self.output_dir = output_dir
         self._matplotlib_available = False
 
         if use_matplotlib:
@@ -196,11 +210,13 @@ class PlotGenerator:
         ax.grid(True, alpha=0.3)
 
         # Save plot
-        filename = f"optimization_progress_{objective}.png"
-        fig.savefig(filename, dpi=150, bbox_inches="tight")
+        path = self._output_path(
+            f"optimization_progress_{_safe_filename_part(objective)}.png"
+        )
+        fig.savefig(path, dpi=150, bbox_inches="tight")
         self.plt.close(fig)
 
-        return f"Plot saved: {filename}"
+        return f"Plot saved: {path}"
 
     def _plot_progress_ascii(
         self,
@@ -389,11 +405,13 @@ class PlotGenerator:
         ax.grid(True, alpha=0.3)
 
         # Save plot
-        filename = f"pareto_front_{obj1}_{obj2}.png"
-        fig.savefig(filename, dpi=150, bbox_inches="tight")
+        path = self._output_path(
+            f"pareto_front_{_safe_filename_part(obj1)}_{_safe_filename_part(obj2)}.png"
+        )
+        fig.savefig(path, dpi=150, bbox_inches="tight")
         self.plt.close(fig)
 
-        return f"Plot saved: {filename}"
+        return f"Plot saved: {path}"
 
     def _plot_pareto_ascii(
         self,
@@ -538,11 +556,11 @@ class PlotGenerator:
         ax.grid(True, axis="x", alpha=0.3)
 
         # Save plot
-        filename = "parameter_importance.png"
-        fig.savefig(filename, dpi=150, bbox_inches="tight")
+        path = self._output_path("parameter_importance.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
         self.plt.close(fig)
 
-        return f"Plot saved: {filename}"
+        return f"Plot saved: {path}"
 
     def _plot_importance_ascii(self, params: list[str], scores: list[float]) -> str:
         """Create ASCII parameter importance plot."""
@@ -578,18 +596,36 @@ class PlotGenerator:
 
         return "\n".join(lines)
 
+    def _output_path(self, filename: str) -> Path:
+        """Resolve a plot filename inside the configured output directory."""
+        return Path(self.output_dir or ".") / filename
+
     def generate_optimization_report(
-        self, result: OptimizationResult, save_plots: bool = True
+        self,
+        result: OptimizationResult,
+        save_plots: bool = True,
+        output_dir: str | None = None,
     ) -> str:
         """Generate comprehensive optimization report with plots.
 
         Args:
             result: Optimization result
-            save_plots: Whether to save plot files
+            save_plots: Whether to save plot files. When False, the plots are
+                rendered as text and no files are written.
+            output_dir: Directory for saved plot files; overrides the generator's
+                output_dir for this report.
 
         Returns:
             Comprehensive report with embedded plots
         """
+        plotter = self
+        if not save_plots:
+            plotter = PlotGenerator(use_matplotlib=False)
+        elif output_dir is not None:
+            plotter = PlotGenerator(
+                use_matplotlib=self.use_matplotlib, output_dir=output_dir
+            )
+
         lines = []
         lines.append("🚀 Traigent Optimization Report")
         lines.append("=" * 50)
@@ -615,7 +651,7 @@ class PlotGenerator:
         # Progress plot
         lines.append("📈 Optimization Progress")
         lines.append("-" * 30)
-        progress_plot = self.plot_optimization_progress(result)
+        progress_plot = plotter.plot_optimization_progress(result)
         lines.append(progress_plot)
         lines.append("")
 
@@ -623,7 +659,7 @@ class PlotGenerator:
         if len(result.objectives) >= 2:
             lines.append("🎯 Pareto Front Analysis")
             lines.append("-" * 30)
-            pareto_plot = self.plot_pareto_front(
+            pareto_plot = plotter.plot_pareto_front(
                 result, result.objectives[0], result.objectives[1]
             )
             lines.append(pareto_plot)

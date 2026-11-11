@@ -148,6 +148,7 @@ from traigent.utils.exceptions import (
     CostLimitExceeded,
     OptimizationError,
     OverlappingOptimizationError,
+    TraigentWarning,
     TVLValidationError,
     ValidationError,
 )
@@ -162,11 +163,17 @@ from traigent.utils.removed_params import (
 from traigent.utils.validation import (
     validate_config_space,
     validate_dataset_path,
+    validate_max_trials_value,
     validate_objectives,
+    validate_timeout_value,
 )
 
 _NAME_WITH_DETAIL_FMT = "%s (%s)"
 
+
+#: The installed traigent package directory, for warnings that should name the
+#: caller's frame rather than an SDK frame.
+_SDK_PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
 logger = get_logger(__name__)
 
 # Guards every wrapper's exclusive slot (check-and-set of ``_exclusive_slot``
@@ -1061,7 +1068,9 @@ def _finite_grid_size(config_space: Any) -> int | None:
     size = 1
     for definition in config_space.values():
         if isinstance(definition, list):
-            size = min(size * max(len(definition), 1), _GRID_SIZE_COUNT_CAP)
+            # Repeated list values are enumerated once by the grid (#2954).
+            count = discrete_cardinality_for_config_param(definition)
+            size = min(size * max(count or 0, 1), _GRID_SIZE_COUNT_CAP)
         elif isinstance(definition, dict):
             # Arithmetic count: never materializes the domain (a huge IntRange
             # must not allocate before the grid optimizer's size guard runs).
@@ -1279,6 +1288,36 @@ class OptimizedFunction[**P, R]:
         self.config_param = config_param
         self.auto_override_frameworks = auto_override_frameworks
         self.framework_targets = framework_targets or []
+        # Every route (flat kwarg, InjectionOptions, injection dict, direct
+        # construction) reaches here, so a bare name fails at construction
+        # with ConfigurationError, not at run time (#2927). Imported here:
+        # api.decorators imports this module at load time.
+        from traigent.api.decorators import _validate_framework_targets
+
+        _validate_framework_targets(self.framework_targets)
+        if self.auto_override_frameworks and not self.framework_targets:
+            warnings.warn(
+                "auto_override_frameworks=True has no effect without "
+                "framework_targets: the override only runs when both are set, "
+                "so no framework calls will receive the tuned values. Pass "
+                "framework_targets=['module.ClassName', ...] "
+                "(e.g. ['openai.OpenAI']).",
+                TraigentWarning,
+                # Attribute it to the first frame outside the SDK: the user's
+                # @traigent.optimize line or their OptimizedFunction(...) call.
+                skip_file_prefixes=(_SDK_PACKAGE_DIR,),
+            )
+        if "pydantic_ai.Agent" in self.framework_targets:
+            warnings.warn(
+                "Tuned parameters are not injected through framework_targets "
+                "for PydanticAI (pydantic_ai.Agent): Agent.run() takes them "
+                "inside model_settings, which this path does not build, so the "
+                "model never receives the tuned values. Read the trial values "
+                "with traigent.get_trial_config() and pass model_settings=... "
+                "to agent.run() yourself.",
+                TraigentWarning,
+                skip_file_prefixes=(_SDK_PACKAGE_DIR,),
+            )
 
         # Execution mode configuration
         if self.execution_policy is None:
@@ -1360,6 +1399,19 @@ class OptimizedFunction[**P, R]:
             normalized_callbacks = [callbacks_value]
             self.callbacks = normalized_callbacks
             kwargs["callbacks"] = list(normalized_callbacks)
+
+    def _config_privacy_enabled(self) -> bool | None:
+        """Privacy value to forward to TraigentConfig, or None when unset.
+
+        The SDK's internal default is not a user-supplied setting, so it is
+        withheld; forwarding it would surface a deprecation the user never
+        triggered (#2966).
+        """
+        if not getattr(self, "_privacy_enabled_supplied", False):
+            return None
+        return bool(getattr(self, "privacy_enabled", False)) and not bool(
+            getattr(self, "_privacy_alias_enabled", False)
+        )
 
     def _store_optional_param(
         self,
@@ -1472,6 +1524,26 @@ class OptimizedFunction[**P, R]:
         self.hybrid_api_auto_discover_tvars = bool(
             kwargs.pop("hybrid_api_auto_discover_tvars", False)
         )
+        # Validate the flat values with the same rules as the decorator route
+        # (sibling of #2900); a direct constructor call must not bypass them.
+        _flat_hybrid_values = {
+            option_key: value
+            for option_key, value in (
+                ("endpoint", self.hybrid_api_endpoint),
+                ("tunable_id", self.hybrid_api_tunable_id),
+                ("transport_type", self.hybrid_api_transport_type),
+                ("batch_size", self.hybrid_api_batch_size),
+                ("batch_parallelism", self.hybrid_api_batch_parallelism),
+                ("heartbeat_interval", self.hybrid_api_heartbeat_interval),
+                ("timeout", self.hybrid_api_timeout),
+                ("auth_header", self.hybrid_api_auth_header),
+            )
+            if value is not None
+        }
+        # Imported here: api.decorators imports this module at load time.
+        from traigent.api.decorators import HybridAPIOptions
+
+        HybridAPIOptions.model_validate(_flat_hybrid_values)
 
         # Execution knobs
         provided_parallel = coerce_parallel_config(kwargs.pop("parallel_config", None))
@@ -1481,6 +1553,7 @@ class OptimizedFunction[**P, R]:
         self.parallel_config = combined_parallel
         kwargs["parallel_config"] = combined_parallel
 
+        self._privacy_enabled_supplied = "privacy_enabled" in kwargs
         self.privacy_enabled = self._store_optional_param(
             kwargs, sentinel, "privacy_enabled", False, as_bool=True
         )
@@ -1743,11 +1816,8 @@ class OptimizedFunction[**P, R]:
         if not callable(self.func):
             raise TypeError("func must be callable") from None
 
-        if self.max_trials is not None and self.max_trials <= 0:
-            raise ValueError("max_trials must be a positive integer")
-
-        if self.timeout is not None and self.timeout < 0:
-            raise ValueError("timeout must be non-negative")
+        validate_max_trials_value(self.max_trials)
+        validate_timeout_value(self.timeout)
 
     def _validate_configuration(self) -> None:
         """Validate optimization configuration."""
@@ -2362,15 +2432,27 @@ class OptimizedFunction[**P, R]:
         strategy_params: Mapping[str, Any] | None,
         algorithm: str | None,
     ) -> str | None:
-        """Refuse the retired ``strategy_params``; ``algorithm`` passes through.
+        """Refuse the retired ``strategy_params`` and normalise ``algorithm``.
 
+        ``algorithm`` gets the decorator's normalisation (case and spacing; an
+        empty name becomes ``"auto"``) unless it is a name registered verbatim.
         ``strategy`` is no longer a parameter; see ``_REMOVED_ALIAS_MESSAGES``.
         """
         if strategy_params is not None:
             raise TypeError(
                 "strategy_params is no longer supported; use algorithm or objectives."
             )
-        return algorithm
+        if algorithm is None:
+            return None
+        # Same strip/lower normalisation as the decorator path, so 'RANDOM' and
+        # ' random ' resolve identically at decoration and at call time. A name
+        # a user registered verbatim is kept as-is; unknown names still reach the
+        # registry, which lists the available optimizers.
+        from traigent.optimizers.registry import list_optimizers
+
+        if algorithm in list_optimizers():
+            return algorithm
+        return str(normalize_algorithm_name(algorithm))
 
     async def optimize(
         self,
@@ -2542,6 +2624,10 @@ class OptimizedFunction[**P, R]:
     ) -> OptimizationResult:
         """Body of :meth:`optimize` for one advancing run."""
         logger.info(f"Starting optimization of {self.func.__name__}")
+        # Per-call overrides: fail at the call with the field named, before cost
+        # estimation can turn a NaN into an unrelated cost error.
+        validate_max_trials_value(max_trials)
+        validate_timeout_value(timeout)
         _emit_cost_warning_once()
         # Per-call dataset (#2541): resolved before any run state changes, so a bad
         # dataset fails the same way it does at decoration time.
@@ -2924,10 +3010,7 @@ class OptimizedFunction[**P, R]:
                 execution_mode=self.execution_mode,
                 local_storage_path=self.local_storage_path,
                 minimal_logging=self.minimal_logging,
-                privacy_enabled=(
-                    bool(getattr(self, "privacy_enabled", False))
-                    and not bool(getattr(self, "_privacy_alias_enabled", False))
-                ),
+                privacy_enabled=self._config_privacy_enabled(),
                 execution_policy=execution_policy,
                 # compare() never opens a backend session or client: no backend
                 # construction, hostname resolution or Redis ping. Provider calls
@@ -4670,10 +4753,7 @@ Remediation:
             execution_mode=self.execution_mode,
             local_storage_path=self.local_storage_path,
             minimal_logging=self.minimal_logging,
-            privacy_enabled=(
-                bool(getattr(self, "privacy_enabled", False))
-                and not bool(getattr(self, "_privacy_alias_enabled", False))
-            ),
+            privacy_enabled=self._config_privacy_enabled(),
             execution_policy=execution_policy,
             no_egress=no_egress,
             result_source=result_source,
@@ -4791,10 +4871,14 @@ Remediation:
             algorithm, effective_config_space, self.objectives, **optimizer_kwargs
         )
 
-        # Update TraigentConfig with final privacy setting
-        traigent_config.privacy_enabled = effective_privacy_enabled and not bool(
-            getattr(self, "_privacy_alias_enabled", False)
-        )
+        # Update TraigentConfig with final privacy setting. Only a user-supplied
+        # value is assigned: assigning the internal default would trip the
+        # privacy_enabled deprecation on a run that never set it (#2966). An
+        # unsupplied setting resolves to False, which TraigentConfig already holds.
+        if getattr(self, "_privacy_enabled_supplied", False):
+            traigent_config.privacy_enabled = effective_privacy_enabled and not bool(
+                getattr(self, "_privacy_alias_enabled", False)
+            )
 
         # Phase 8: Build orchestrator
         orchestrator = self._build_optimization_orchestrator(
@@ -5579,8 +5663,20 @@ Remediation:
                 "eval_dataset list must contain only dataset paths or inline examples"
             )
 
+        elif source is None:
+            raise ConfigurationError(
+                "Invalid dataset type: eval_dataset was not provided (None). "
+                'Pass eval_dataset="data.jsonl" to @traigent.optimize, or '
+                "EvaluationOptions(eval_dataset=...). Each JSONL line looks like "
+                '{"input": {"question": "..."}, "expected_output": "..."}.'
+            )
+
         else:
-            raise ConfigurationError(f"Invalid dataset type: {type(source)}")
+            raise ConfigurationError(
+                f"Invalid dataset type: {type(source).__name__}. eval_dataset must "
+                "be a Dataset, a JSONL file path, a list of JSONL paths, or a "
+                "list of inline example dicts."
+            )
 
     def _build_empty_result(self, algorithm: str) -> OptimizationResult:
         """Create a result representing a skipped optimization run."""

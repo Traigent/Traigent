@@ -140,7 +140,7 @@ class ConfigSpace:
     tvars: Mapping[str, ParameterRange] = field(default_factory=dict)
     constraints: tuple[Constraint, ...] = field(default_factory=tuple)
     description: str | None = None
-    knobs: Mapping[str, Knob] | None = None
+    knobs: Mapping[str, Knob[Any]] | None = None
 
     def __post_init__(self) -> None:
         """Validate the configuration space after initialization.
@@ -171,7 +171,7 @@ class ConfigSpace:
                 # Note: We can't modify frozen dataclasses, so we just validate
                 pass
 
-    def _adopt_knobs(self, knobs: dict[str, Knob]) -> None:
+    def _adopt_knobs(self, knobs: dict[str, Knob[Any]]) -> None:
         """Validate ``knobs`` and derive ``tvars`` as their Tuned-only projection."""
         from traigent.knobs import Knob as _Knob
         from traigent.knobs import knob_to_parameter_range

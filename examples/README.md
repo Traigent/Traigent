@@ -22,9 +22,9 @@ The gallery provides:
 
 | Folder | Description | Count |
 | ------ | ----------- | ----- |
-| **`quickstart/`** | **Start here!** Ready-to-run README examples | 3 examples |
-| **`core/`** | Essential examples introducing core Traigent concepts | 12 examples |
-| **`advanced/`** | Advanced optimization patterns and specialized workflows | 5 categories |
+| **`quickstart/`** | **Start here!** Ready-to-run README examples | 4 examples |
+| **`core/`** | Essential examples introducing core Traigent concepts | 16 examples |
+| **`advanced/`** | Advanced optimization patterns and specialized workflows | 7 categories |
 | **`integrations/`** | Framework and platform integrations (CI/CD, Bedrock, etc.) | 2+ integrations |
 | **`datasets/`** | Shared evaluation datasets and test data | 9+ datasets |
 | **`gallery/`** | Browser-friendly example gallery and inline demo assets | Gallery site |
@@ -109,15 +109,21 @@ For users comfortable with Traigent basics who want to explore advanced patterns
 
 | Category | Examples | Focus Area |
 | -------- | -------- | ---------- |
-| **`execution-modes/`** | 2 examples | Local execution patterns with `offline=True` |
 | **`results-analysis/`** | 2 examples | Analyzing and visualizing optimization results |
-| **`ai-engineering-tasks/`** | 5 examples | Common AI engineering challenges (context, few-shot, structured output, safety, token budgets) |
+| **`ai-engineering-tasks/`** | 6 examples | Common AI engineering challenges (context, few-shot, structured output, safety, token budgets) |
 | **`ragas/`** | 3 examples | Specialized RAG metrics and evaluation |
 | **`metric-registry/`** | Custom metrics | Building and registering custom evaluation metrics |
+| **`composite-knobs/`** | 5 examples | Composite knobs: mixture-of-experts, router, tool loop and verification-gate patterns |
+| **`local-guards/`** | 1 example | Blocking destructive tool calls with local, in-process guards |
+| **`optimization-routing/`** | 2 examples | Local search and offline, no-egress optimization runs |
 
 ### Advanced Category Details
 
-- **execution-modes/**: Learn execution patterns. `offline=True` keeps runs local with no Traigent backend egress; the default `algorithm="auto"` path is cloud-first and falls back locally only when allowed.
+- **composite-knobs/**: Composite knob patterns (mixture-of-experts committee, router, tool loop, verification gate). Offline by default; no model calls.
+
+- **local-guards/**: Block a destructive tool call unless an approval was recorded first. The check runs in-process; no API keys or network.
+
+- **optimization-routing/**: `ex02-offline-no-egress` keeps runs local with no Traigent backend egress (`offline=True`); `ex01-local-search` shows local search.
 
 - **results-analysis/**: Post-optimization analysis. Visualize trial results, compare configurations, and extract insights from completed optimization runs.
 

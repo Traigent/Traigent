@@ -108,8 +108,8 @@ def _json_accuracy(
     },
     eval_dataset=DATASET,
     objectives=create_default_objectives(
-        ["accuracy", "cost", "response_time"],
-        orientations={"response_time": "minimize"},
+        ["accuracy", "cost", "response_time_ms"],
+        orientations={"response_time_ms": "minimize"},
     ),
     metric_functions={"accuracy": _json_accuracy},
     offline=True,

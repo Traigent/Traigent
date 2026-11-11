@@ -365,7 +365,7 @@ class ProgressBarCallback(OptimizationCallback):
         bar = "█" * filled_width + "░" * (self.width - filled_width)
 
         # Format time
-        elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
+        elapsed = _format_elapsed(progress.elapsed_time)
 
         # Format best score - handle None case properly
         best_score_str = (
@@ -411,7 +411,7 @@ class ProgressBarCallback(OptimizationCallback):
     def _print_final_progress_bar(self, progress: ProgressInfo) -> None:
         """Print the closing 100% progress line from the last recorded progress."""
         bar = "█" * self.width
-        elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
+        elapsed = _format_elapsed(progress.elapsed_time)
         best_score_str = (
             f"{progress.best_score:.3f}" if progress.best_score is not None else "N/A"
         )
@@ -644,6 +644,17 @@ class ManagedProgressCallback(OptimizationCallback):
         )
 
 
+_LOGGING_CALLBACK_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+# stdlib aliases that logging has always accepted (Logger.warn / Logger.fatal).
+_LOGGING_CALLBACK_ALIASES = {"WARN": "WARNING", "FATAL": "CRITICAL"}
+
+
+def _canonical_logging_level(name: str) -> str:
+    """Upper-case level name with stdlib aliases resolved (WARN -> WARNING)."""
+    upper = name.upper()
+    return _LOGGING_CALLBACK_ALIASES.get(upper, upper)
+
+
 class LoggingCallback(OptimizationCallback):
     """Callback that logs optimization progress."""
 
@@ -654,23 +665,34 @@ class LoggingCallback(OptimizationCallback):
             logger: Logger instance (uses print if None)
             log_level: Logging level
         """
+        if (
+            not isinstance(log_level, str)
+            or _canonical_logging_level(log_level) not in _LOGGING_CALLBACK_LEVELS
+        ):
+            raise ValueError(
+                f"log_level must be one of {', '.join(_LOGGING_CALLBACK_LEVELS)} "
+                f"(case-insensitive); got {log_level!r}"
+            )
         self.logger = logger
         self.log_level = log_level
 
     def _log(self, message: str) -> None:
         """Log message."""
         if self.logger:
-            getattr(self.logger, self.log_level.lower())(message)
+            getattr(self.logger, _canonical_logging_level(self.log_level).lower())(
+                message
+            )
         else:
             # Fallback to module logger if no logger provided
-            getattr(logger, self.log_level.lower())(message)
+            getattr(logger, _canonical_logging_level(self.log_level).lower())(message)
 
     def on_optimization_start(
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str
     ) -> None:
         """Called when optimization starts."""
         self._log(
-            f"Starting optimization: algorithm={algorithm}, objectives={objectives}"
+            f"Starting optimization: algorithm={_sanitize_user_label(algorithm)}, "
+            f"objectives={objectives}"
         )
 
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
@@ -936,9 +958,12 @@ class SimpleProgressCallback(OptimizationCallback):
             score = _declared_objective_score(trial, self._primary_objective)
 
             if score is not None:
+                best_str = (
+                    f"{self.best_score:.1%}" if self.best_score is not None else "n/a"
+                )
                 self._output(
                     f"[{self.current_trial}/{self.total_trials}] "
-                    f"Completed. Score: {score:.1%} | Best so far: {self.best_score:.1%}"
+                    f"Completed. Score: {score:.1%} | Best so far: {best_str}"
                 )
             elif self.best_score is not None:
                 self._output(
@@ -1025,7 +1050,10 @@ class CallbackManager:
         if max_callback_threads <= 0:
             raise ValueError("max_callback_threads must be greater than 0")
 
-        self.callbacks = callbacks or []
+        self.callbacks = []
+        for callback in callbacks or []:
+            self._validate_callback(callback)
+            self.callbacks.append(callback)
         self.timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
         self.max_callback_threads = max_callback_threads
         self.callback_failures: list[CallbackFailure] = []
@@ -1280,8 +1308,36 @@ class CallbackManager:
             ],
         }
 
+    _REQUIRED_HOOKS = (
+        "on_optimization_start",
+        "on_trial_start",
+        "on_trial_complete",
+        "on_optimization_complete",
+    )
+
+    @classmethod
+    def _validate_callback(cls, callback: Any) -> None:
+        """Reject entries that cannot receive the lifecycle hooks, at registration.
+
+        Hook lookup happens at the call site, outside the manager's failure
+        isolation, so a mistyped entry (``None``, a bare function) would escape as
+        an ``AttributeError`` from inside the run instead of a clear error here.
+        """
+        missing = [
+            hook
+            for hook in cls._REQUIRED_HOOKS
+            if not callable(getattr(callback, hook, None))
+        ]
+        if missing:
+            raise TypeError(
+                f"callbacks must be OptimizationCallback instances; got "
+                f"{type(callback).__name__} ({callback!r}) without callable "
+                f"hook(s): {', '.join(missing)}"
+            )
+
     def add_callback(self, callback: OptimizationCallback) -> None:
         """Add a callback."""
+        self._validate_callback(callback)
         self.callbacks.append(callback)
 
     def remove_callback(self, callback: OptimizationCallback) -> None:

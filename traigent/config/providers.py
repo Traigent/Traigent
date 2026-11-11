@@ -452,6 +452,12 @@ def _find_function_code(code_obj: types.CodeType, func: Callable[..., Any]) -> A
     raise ConfigurationError(f"Cannot find function {func.__name__} in compiled code")
 
 
+def _copy_kwdefaults(func: Callable[..., Any]) -> dict[str, Any] | None:
+    """Return a copy of *func*'s keyword-only defaults, or None when it has none."""
+    kwdefaults = getattr(func, "__kwdefaults__", None)
+    return dict(kwdefaults) if kwdefaults else None
+
+
 def _rebuild_function(
     func: Callable[..., Any], func_code: types.CodeType
 ) -> tuple[Any, bool]:
@@ -470,6 +476,8 @@ def _rebuild_function(
             func.__defaults__,  # Keep default arguments
             func.__closure__,  # Keep closure
         )
+        # FunctionType takes no keyword-only defaults; copy them across (#3091).
+        new_func.__kwdefaults__ = _copy_kwdefaults(func)
     except ValueError as e:
         if "closure" not in str(e):
             raise
@@ -480,6 +488,7 @@ def _rebuild_function(
             func.__defaults__,
             None,  # No closure
         )
+        new_func.__kwdefaults__ = _copy_kwdefaults(func)
         # The rewrite cannot see the original free variables, so it
         # may be analysed but must not be executed (#2841).
         return new_func, bool(func.__closure__)

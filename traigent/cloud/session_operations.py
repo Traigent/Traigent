@@ -247,6 +247,20 @@ async def _with_loop_local_session[T](client: Any, coro: Coroutine[Any, Any, T])
                 logger.debug("Loop-local session close failed: %s", exc)
 
 
+def _run_on_private_loop[T](coro: Coroutine[Any, Any, T]) -> T:
+    """Run ``coro`` to completion on a fresh loop that is never installed.
+
+    The sync wrappers may run on the caller's own thread. Installing a loop
+    there (``set_event_loop``) and closing it left the caller with a closed
+    current loop, and ``asyncio.run`` resets it to None; either way a loop the
+    caller had set was lost (#3143). A Runner with a ``loop_factory`` never
+    touches the thread's current loop and still cancels leftover tasks and
+    shuts down async generators before closing.
+    """
+    with asyncio.Runner(loop_factory=asyncio.new_event_loop) as runner:
+        return runner.run(coro)
+
+
 def _must_fail_loud(exc: Exception, governed: bool, intends_cloud_egress: bool) -> bool:
     # A DEFINITIVELY rejected credential (invalid / revoked / expired /
     # unauthorized — a key WAS configured; the no-key path returns
@@ -912,7 +926,14 @@ class SessionOperations:
                 logger.debug("Created local fallback session: %s", session_id)
                 return cast(str, session_id)
             except Exception as storage_e:
-                logger.debug("Local storage fallback failed: %s", storage_e)
+                # WARNING (#3016): the run continues on an ephemeral id with no
+                # local record. Type name only: the text can quote a full path.
+                logger.warning(
+                    "Local storage fallback failed (%s); continuing with an "
+                    "ephemeral session that is not persisted locally.",
+                    type(storage_e).__name__,
+                )
+                logger.debug("Local storage fallback failure detail: %s", storage_e)
 
         fallback_id = f"local_session_{uuid.uuid4()}"
         self.client._register_security_session(
@@ -1205,22 +1226,17 @@ class SessionOperations:
                 asyncio.get_running_loop()
 
                 def _run_in_new_loop() -> SessionCreationResult:
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(
-                            _with_loop_local_session(
-                                self.client, _create_session_async(self, context)
-                            )
+                    return _run_on_private_loop(
+                        _with_loop_local_session(
+                            self.client, _create_session_async(self, context)
                         )
-                    finally:
-                        new_loop.close()
+                    )
 
                 executor = _get_session_executor()
                 future = executor.submit(_run_in_new_loop)
                 return future.result(timeout=60)
             except RuntimeError:
-                return asyncio.run(
+                return _run_on_private_loop(
                     _with_loop_local_session(
                         self.client, _create_session_async(self, context)
                     )
@@ -1578,12 +1594,16 @@ class SessionOperations:
             try:
                 local_storage.finalize_session(session_id, local_status)
             except Exception as _ls_err:
-                logger.debug(
-                    "Could not persist %s status for session %s to local storage: %s",
+                # WARNING (#3016): local status stays unsynced (#1344 symptom).
+                # Type name only: the text can quote a full local path.
+                logger.warning(
+                    "Could not persist %s status for session %s to local "
+                    "storage (%s); local listings may show it unfinished.",
                     local_status,
                     session_id,
-                    _ls_err,
+                    type(_ls_err).__name__,
                 )
+                logger.debug("Local status persist failure detail: %s", _ls_err)
 
         # Revoke security session
         self.client._revoke_security_session(session_id)
@@ -2158,24 +2178,19 @@ class SessionOperations:
         self._validate_optimization_outcome(optimization_outcome)
 
         def _run_in_new_loop() -> OptimizationFinalizationResponse | None:
-            """Run the async operation in a fresh event loop on this thread."""
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            try:
-                return new_loop.run_until_complete(
-                    _with_loop_local_session(
-                        self.client,
-                        self.finalize_session(
-                            session_id,
-                            include_full_history,
-                            certified_selection=certified_selection,
-                            session_aggregation=session_aggregation,
-                            optimization_outcome=optimization_outcome,
-                        ),
-                    )
+            """Run the async operation on a private, never-installed loop."""
+            return _run_on_private_loop(
+                _with_loop_local_session(
+                    self.client,
+                    self.finalize_session(
+                        session_id,
+                        include_full_history,
+                        certified_selection=certified_selection,
+                        session_aggregation=session_aggregation,
+                        optimization_outcome=optimization_outcome,
+                    ),
                 )
-            finally:
-                new_loop.close()
+            )
 
         try:
             # Check if there's a running event loop
@@ -2219,17 +2234,12 @@ class SessionOperations:
         self._validate_non_empty_string(session_id, "session_id")
 
         def _run_in_new_loop() -> bool:
-            """Run the async operation in a fresh event loop on this thread."""
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            try:
-                return new_loop.run_until_complete(
-                    _with_loop_local_session(
-                        self.client, self.delete_session(session_id, cascade=cascade)
-                    )
+            """Run the async operation on a private, never-installed loop."""
+            return _run_on_private_loop(
+                _with_loop_local_session(
+                    self.client, self.delete_session(session_id, cascade=cascade)
                 )
-            finally:
-                new_loop.close()
+            )
 
         try:
             # Check if there's a running event loop

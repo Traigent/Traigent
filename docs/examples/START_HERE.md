@@ -10,7 +10,7 @@ Pick an example in under a minute.
 - 30+ min: browse `examples/advanced/` playbooks
 
 ## Choose by goal
-- Lower cost/latency: multi-objective tradeoff, token-budget summarization, execution-modes (advanced).
+- Lower cost/latency: multi-objective tradeoff, token-budget summarization.
 - Better accuracy: few-shot classification, prompt-style optimization, AI engineering tasks (few-shot selection).
 - Safety: safety-guardrails, AI engineering tasks (safety).
 - Structured JSON: structured-output-json, AI engineering tasks (structured output).
@@ -36,11 +36,13 @@ examples/
 |  `- prompt-ab-test/
 |
 |- advanced/
-|  |- execution-modes/
-|  |- results-analysis/
 |  |- ai-engineering-tasks/
+|  |- composite-knobs/
+|  |- local-guards/
+|  |- metric-registry/
+|  |- optimization-routing/
 |  |- ragas/
-|  `- metric-registry/
+|  `- results-analysis/
 |
 |- integrations/
 |  |- ci-cd/

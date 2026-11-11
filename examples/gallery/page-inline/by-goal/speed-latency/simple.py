@@ -112,7 +112,7 @@ def _calc_accuracy(
     },
     eval_dataset=DATASET,
     objectives=create_default_objectives(
-        ["response_time"], orientations={"response_time": "minimize"}
+        ["response_time_ms"], orientations={"response_time_ms": "minimize"}
     ),
     metric_functions={"accuracy": _calc_accuracy},
     offline=True,

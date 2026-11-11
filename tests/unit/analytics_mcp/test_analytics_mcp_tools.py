@@ -783,6 +783,28 @@ class TestHealthAndAuthTools:
         assert "run_pareto" in result["supported_chart_kinds"]
 
     @pytest.mark.asyncio
+    async def test_health_check_reports_missing_endpoint_instead_of_raising(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp.tools import health_check_tool
+        from traigent.config.backend_config import (
+            BackendConfig,
+            EndpointNotConfiguredError,
+        )
+
+        def _no_endpoint() -> str:
+            raise EndpointNotConfiguredError("no backend endpoint configured")
+
+        monkeypatch.setattr(BackendConfig, "get_backend_url", _no_endpoint)
+
+        result = await health_check_tool()
+
+        assert result["ok"] is True
+        assert result["backend_url"] is None
+        assert result["endpoint_not_configured"] is True
+        assert "httpx_available" in result
+
+    @pytest.mark.asyncio
     async def test_auth_status_masks_key(self, monkeypatch) -> None:
         from traigent.analytics_mcp import tools as tools_mod
 
@@ -1042,8 +1064,9 @@ def _make_analytics_client():
     from traigent.cloud.analytics_client import BackendAnalyticsClient
 
     return BackendAnalyticsClient(
-        backend_url="http://localhost:5000", api_key="uk_test_key"
-    )  # pragma: allowlist secret
+        backend_url="http://localhost:5000",
+        api_key="uk_test_key",  # pragma: allowlist secret
+    )
 
 
 def _mock_client_http(client, payload: dict):

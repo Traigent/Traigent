@@ -27,6 +27,10 @@ logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 logging.getLogger("litellm").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
+# Import traigent before litellm: traigent pins the offline LiteLLM price map
+# only if it runs first (see traigent/__init__.py).
+import traigent  # noqa: F401, E402
+
 # LiteLLM provides a unified interface for multiple LLM providers
 try:
     import litellm

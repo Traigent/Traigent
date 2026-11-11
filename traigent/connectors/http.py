@@ -439,7 +439,9 @@ def iter_pages(
 ):
     if max_pages <= 0:
         raise ValueError("max_pages must be positive")
-    seen: set[str] = set()
+    # Seed with the start cursor so a server that echoes it back is refused
+    # before the same page is fetched and yielded twice (#3070).
+    seen: set[str] = {cursor} if isinstance(cursor, str) else set()
     for _ in range(max_pages):
         page = fetch(cursor)
         items = page.get("items")

@@ -37,7 +37,12 @@ def register_discovery(
         discovery_class: ModelDiscovery subclass to register.
     """
     with _registry_lock:
-        _discovery_registry[provider.lower()] = discovery_class
+        key = provider.lower()
+        if key in _discovery_registry:
+            logger.info(f"Replacing model discovery registered for {provider}")
+        _discovery_registry[key] = discovery_class
+        # A cached instance of the replaced class must not keep being served (#3158).
+        _discovery_instances.pop(key, None)
         logger.debug(f"Registered model discovery for {provider}")
 
 

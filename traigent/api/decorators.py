@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 # bug; the alias keeps the pydantic class reachable under an unambiguous name.
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from pydantic import ValidationError as PydanticValidationError
-from pydantic import field_validator, model_validator
+from pydantic import ValidationInfo, field_validator, model_validator
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
@@ -123,6 +123,7 @@ from traigent.utils.exceptions import (
     ValidationError,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.validation import validate_max_trials_value
 
 _OFFLINE_MUST_BE_BOOL = "offline must be a bool"
 
@@ -237,7 +238,9 @@ class InjectionOptions(BaseModel):
             - "seamless": Zero code change, AST transformation
         config_param: Parameter name for injection_mode="parameter".
         auto_override_frameworks: Whether to auto-override framework calls.
-        framework_targets: List of framework names to target.
+        framework_targets: Explicit list of framework classes as dotted
+            ``module.ClassName`` paths (for example ``"openai.OpenAI"``). Bare
+            names such as ``"OpenAI"`` raise ``ConfigurationError``.
         effectuation: Opt-in executable TVAR effectuation. Defaults to False,
             preserving existing trial-call behavior.
 
@@ -292,10 +295,26 @@ class HybridAPIOptions(BaseModel):
     batch_size: int = Field(default=1, ge=1)
     batch_parallelism: int = Field(default=1, ge=1)
     keep_alive: bool = True
-    heartbeat_interval: float = Field(default=30.0, gt=0)
-    timeout: float | None = None
+    heartbeat_interval: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    timeout: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     auth_header: str | None = None
     auto_discover_tvars: bool = False
+
+    @field_validator(
+        "batch_size",
+        "batch_parallelism",
+        "heartbeat_interval",
+        "timeout",
+        mode="before",
+    )
+    @classmethod
+    def _reject_bool_numeric(cls, v: Any, info: ValidationInfo) -> Any:
+        # Pydantic lax mode accepts True as 1 and '5' as 5; both are typos here.
+        if isinstance(v, (bool, str)):
+            raise ValueError(
+                f"{info.field_name} must be a number, got {type(v).__name__}"
+            )
+        return v
 
 
 class ExternalServiceEvaluator(BaseModel):
@@ -2846,8 +2865,7 @@ def _resolve_agent_identity(combined_settings: dict[str, Any]) -> Any:
 
 
 def _validate_max_trials(max_trials_value: Any) -> None:
-    if max_trials_value is not None and max_trials_value <= 0:
-        raise ValueError("max_trials must be a positive integer")
+    validate_max_trials_value(max_trials_value)
 
 
 def _content_less_from_settings(combined_settings: dict[str, Any]) -> Any:
@@ -2933,7 +2951,9 @@ def _hybrid_api_kwargs(hybrid_api_options: Any) -> dict[str, Any]:
     }
 
 
-def _snapshot_kwargs(snapshot_store: Any, snapshot_g1_deadline_days: Any) -> dict:
+def _snapshot_kwargs(
+    snapshot_store: Any, snapshot_g1_deadline_days: Any
+) -> dict[str, Any]:
     if snapshot_store is None:
         return {}
     kwargs: dict[str, Any] = {"snapshot_store": snapshot_store}
@@ -3179,9 +3199,13 @@ def optimize(  # NOSONAR(S107)
                 "parameter" adds explicit config param, "seamless" uses AST
                 transformation for zero code changes.
             config_param: Parameter name used when ``injection_mode="parameter"``.
-            auto_override_frameworks: Toggle to auto-detect supported frameworks
-                (LangChain, OpenAI, Anthropic, etc.) and override their parameters.
-            framework_targets: Explicit list of framework classes to override.
+            auto_override_frameworks: Enables the framework override. It does not
+                auto-detect classes: it only takes effect together with
+                ``framework_targets``, and with no targets it overrides nothing
+                (a warning is emitted).
+            framework_targets: Explicit list of framework classes as dotted
+                ``module.ClassName`` paths (for example ``"openai.OpenAI"``). Bare
+                names such as ``"OpenAI"`` raise ``ConfigurationError``.
             effectuation: Opt-in executable TVAR effectuation. Defaults to False.
 
         Execution options:
@@ -3301,9 +3325,12 @@ def optimize(  # NOSONAR(S107)
             - reset(): Reset to default configuration
 
     Raises:
-        ConfigurationError: If configuration is invalid or incompatible
-        DatasetError: If evaluation dataset cannot be loaded
-        FrameworkError: If framework override fails
+        ConfigurationError: If configuration is invalid or incompatible, or a
+            framework override target is invalid.
+        ValidationError: If the evaluation dataset path cannot be loaded (for
+            example, the file does not exist). Raised at decoration time.
+            ``ValidationError`` is not a subclass of ``ConfigurationError``;
+            import it from ``traigent.utils.exceptions``.
 
     Examples:
         Basic usage with automatic framework override:

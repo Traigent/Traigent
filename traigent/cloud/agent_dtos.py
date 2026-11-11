@@ -142,8 +142,9 @@ class AgentCostBreakdown:
 class WorkflowCostSummary:
     """Aggregated cost summary across multiple agents.
 
-    Automatically aggregates token and cost totals from agent breakdowns
-    and validates the aggregation arithmetic.
+    The totals must equal the sums over ``agent_breakdowns``; the constructor
+    validates this and raises ``ValueError`` otherwise. Use
+    :meth:`from_agents` to have the totals computed for you.
 
     Attributes:
         workflow_id: Unique identifier for the workflow

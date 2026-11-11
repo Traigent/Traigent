@@ -2039,6 +2039,7 @@ def auth() -> None:
     Modern authentication management for Traigent SDK, following patterns
     from GitHub CLI and AWS CLI.
 
+    \b
     Examples:
         traigent auth login              # Interactive login
         traigent auth status            # Check authentication status
@@ -2076,6 +2077,7 @@ def login(
     3. Generate a long-lived API key
     4. Store credentials securely
 
+    \b
     Examples:
         traigent auth login
         traigent auth login --email user@example.com
@@ -2149,6 +2151,7 @@ def logout() -> None:
     1. Clear locally stored credentials
     2. Optionally revoke API keys on the backend
 
+    \b
     Examples:
         traigent auth logout
     """
@@ -2167,6 +2170,7 @@ def status() -> None:
     - Backend URL
     - Token type (API key or JWT)
 
+    \b
     Examples:
         traigent auth status
     """
@@ -2186,6 +2190,7 @@ def refresh() -> None:
 
     Note: API keys don't need refresh.
 
+    \b
     Examples:
         traigent auth refresh
     """
@@ -2203,6 +2208,7 @@ def configure() -> None:
     - Authentication method
     - Credential storage
 
+    \b
     Examples:
         traigent auth configure
     """
@@ -2224,6 +2230,7 @@ def whoami(key: str | None) -> None:
     Passing KEY on the command line still works, but exposes the key in
     the process list and shell history.
 
+    \b
     Examples:
         traigent auth whoami
     """

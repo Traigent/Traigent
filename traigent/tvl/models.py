@@ -79,14 +79,17 @@ class DomainSpec:
 
     def to_configuration_space_entry(
         self,
-    ) -> list[Any] | tuple[int, int] | tuple[float, float]:
+    ) -> list[Any] | tuple[int, int] | tuple[float, float] | dict[str, Any]:
         """Convert to Traigent configuration space format.
 
         Returns:
             List of values for categorical types, or (min, max) tuple for
             numeric. A float range that declares ``resolution`` returns the
-            discrete grid ``min, min+resolution, ...`` (never above ``max``);
-            without ``resolution`` it stays the continuous ``(min, max)``.
+            discrete grid ``min, min+resolution, ...`` (never above ``max``).
+            An int range with a ``resolution`` above 1 returns the lazy grid
+            ``{"type": "int", "low", "high", "step"}`` (``high`` is the last
+            grid point), which the optimizers enumerate without building it.
+            Without ``resolution`` it stays the continuous ``(min, max)``.
         """
         if self.kind in ("enum", "set"):
             return self.values or []
@@ -94,6 +97,17 @@ class DomainSpec:
             if self.range is None:
                 raise ValueError("Range domain has no range defined")
             lo, hi = self.range
+            if self.resolution is not None and _is_plain_int(lo) and _is_plain_int(hi):
+                int_step = _integral_step(self.resolution)
+                if int_step is None or int_step <= 0:
+                    raise ValueError(
+                        "Int range domain resolution must be a positive integer"
+                    )
+                # A step of 1 enumerates exactly the integers of the continuous
+                # range, so it keeps the (min, max) form it always had.
+                if int_step > 1:
+                    return _int_grid_entry(int(lo), int(hi), int_step)
+                return self.range
             if (
                 self.resolution is not None
                 and isinstance(lo, float)
@@ -136,7 +150,7 @@ class TVarDecl:
 
     def to_configuration_space_entry(
         self,
-    ) -> tuple[str, list[Any] | tuple[int, int] | tuple[float, float]]:
+    ) -> tuple[str, list[Any] | tuple[int, int] | tuple[float, float] | dict[str, Any]]:
         """Convert to Traigent configuration space format.
 
         Returns:
@@ -418,7 +432,7 @@ class PromotionPolicy:
 
         return cls(
             dominance=data.get("dominance", "epsilon_pareto"),
-            alpha=float(data.get("alpha", 0.05)),
+            alpha=_real_number(data.get("alpha", 0.05), "alpha"),
             min_effect=data.get("min_effect", {}),
             adjust=data.get("adjust", "holm"),
             chance_constraints=chance_constraints,
@@ -808,6 +822,48 @@ def _parse_range_domain(
 
 
 _MAX_TUPLE_PRODUCT = 10_000  # guard against combinatorial explosion
+
+
+def _real_number(value: object, field_name: str) -> float:
+    """Return ``value`` as a float, rejecting strings and booleans.
+
+    A quoted number such as ``"0.05"`` is a spec error, not a value to coerce.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a real number, got {value!r}")
+    return float(value)
+
+
+def _is_plain_int(value: object) -> bool:
+    """True for an int that is not a bool (bool is an int subclass in Python)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _integral_step(value: object) -> int | None:
+    """``value`` as an int step: an int, or an integral float such as ``2.0``.
+
+    JSON Schema reads ``2.0`` as an integer, so a spec that writes it that way
+    keeps loading. ``None`` for bool, NaN, inf, fractions and non-numbers.
+    """
+    if _is_plain_int(value):
+        return cast(int, value)
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _int_grid_entry(lo: int, hi: int, step: int) -> dict[str, Any]:
+    """Lazy form of the int grid ``lo, lo+step, ... <= hi`` (#3241).
+
+    Materialising the grid is unbounded in the span, so the entry stays a
+    ``{"type", "low", "high", "step"}`` dict. ``high`` is rewritten to the last
+    grid point: the optimizers append ``high`` when it is off the grid, which
+    would add a point the list form never had.
+    """
+    if hi < lo:
+        raise ValueError("Range domain range min must not exceed max")
+    last = lo + ((hi - lo) // step) * step
+    return {"type": "int", "low": lo, "high": last, "step": step}
 
 
 def _float_grid(lo: float, hi: float, step: float, label: str) -> list[float]:

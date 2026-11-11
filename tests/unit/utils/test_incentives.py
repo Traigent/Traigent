@@ -90,8 +90,13 @@ class TestIncentiveManagerInitialization:
 
         assert manager._state_file == Path(temp_storage_path) / "incentive_state.json"
 
-    def test_initialization_with_none_storage_path(self) -> None:
+    def test_initialization_with_none_storage_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """Test initialization falls back to home directory when storage path is None."""
+        # Hermetic: ignore a developer's results-folder setting and real home dir.
+        monkeypatch.delenv("TRAIGENT_RESULTS_FOLDER", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
         config = TraigentConfig(
             execution_mode=ExecutionMode.LOCAL.value,
             local_storage_path=None,

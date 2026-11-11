@@ -11,6 +11,7 @@ Sync: SYNC-OptimizationFlow
 from __future__ import annotations
 
 import math
+import numbers
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -35,6 +36,23 @@ class PairedComparisonResult:
     degrees_of_freedom: int
 
 
+def _validate_p_values(p_values: Sequence[float]) -> None:
+    """Raise ``ValueError`` for any p-value that is NaN, infinite or negative.
+
+    Values above 1 stay accepted and are capped at 1.0 by the adjusters
+    (existing, tested contract).
+    """
+    for i, p in enumerate(p_values):
+        if (
+            isinstance(p, bool)
+            or not isinstance(p, numbers.Real)
+            or not 0 <= p < math.inf
+        ):
+            raise ValueError(
+                f"Invalid p-value at index {i}: {p!r} (must be a finite number >= 0)"
+            )
+
+
 def benjamini_hochberg_adjust(p_values: Sequence[float]) -> list[float]:
     """Apply Benjamini-Hochberg procedure for multiple testing correction.
 
@@ -56,6 +74,7 @@ def benjamini_hochberg_adjust(p_values: Sequence[float]) -> list[float]:
         Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery
         rate: a practical and powerful approach to multiple testing.
     """
+    _validate_p_values(p_values)
     n = len(p_values)
     if n == 0:
         return []
@@ -99,6 +118,7 @@ def bonferroni_adjust(p_values: Sequence[float]) -> list[float]:
     Returns:
         List of adjusted p-values (same order as input).
     """
+    _validate_p_values(p_values)
     n = len(p_values)
     if n == 0:
         return []
@@ -115,6 +135,7 @@ def holm_bonferroni_adjust(p_values: Sequence[float]) -> list[float]:
     Returns:
         List of adjusted p-values (same order as input).
     """
+    _validate_p_values(p_values)
     n = len(p_values)
     if n == 0:
         return []

@@ -150,38 +150,36 @@ To minimize unexpected costs, we strongly recommend:
 
 ## Customizing Cost Estimates
 
-Traigent uses the [tokencost](https://github.com/AgentOps-AI/tokencost) library for LLM pricing data.
+Traigent prices LLM calls from the LiteLLM model-cost table (`litellm.model_cost`), which the SDK
+installs as a dependency. For built-in supported models that LiteLLM does not price, Traigent uses
+its own curated fallback prices.
 
-### Model Name Mappings
+### Custom Pricing for Private or Unsupported Models
 
-To add custom model name aliases, edit `traigent/utils/cost_calculator.py`:
+Give explicit per-token prices with either environment variable. They apply when LiteLLM has no
+price for the model and override Traigent's built-in fallback; a model listed in both uses the
+`_JSON` price:
 
-```python
-# In CostCalculator class
-EXACT_MODEL_MAPPING = {
-    # Add your custom mappings here
-    "my-custom-model": "gpt-4o",  # Map to a known tokencost model
-    "internal-claude": "claude-3-5-sonnet-20241022",
-}
+- `TRAIGENT_CUSTOM_MODEL_PRICING_FILE`: path to a JSON file
+- `TRAIGENT_CUSTOM_MODEL_PRICING_JSON`: the same JSON inline
+
+```json
+{"my-custom-model": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6}}
 ```
 
-### Custom Pricing for Self-Hosted Models
-
-For self-hosted or custom endpoint models not in tokencost:
-
-1. The cost calculator will return `$0.00` for unknown models
-2. Monitor actual costs via your infrastructure billing
-3. Consider contributing new model pricing to the tokencost library
+Each entry needs non-negative, finite `input_cost_per_token` and `output_cost_per_token` values.
+A model with no known price raises an error with these remediation steps; it does not report `$0.00`.
+Monitor actual costs via your infrastructure billing for any model you price yourself.
 
 ### Updating Pricing Data
 
-To get the latest pricing data:
+Prices come from the `litellm` package, so refresh them by upgrading it:
 
 ```bash
-pip install --upgrade tokencost
+pip install --upgrade litellm
 ```
 
-Note: Pricing data in tokencost may lag behind provider announcements.
+Note: pricing data may lag behind provider announcements.
 
 ## Changes to This Disclaimer
 

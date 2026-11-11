@@ -54,6 +54,11 @@ def _is_transient_submission_error(exc: BaseException) -> bool:
 # Error message for uninitialized session
 _SESSION_NOT_INITIALIZED = "Session not initialized"
 
+#: The service accepts at most this many submissions per batch request and
+#: answers 400 above it (#2988). A retained backlog can exceed it, so a
+#: session's buffered metrics are posted in chunks of this size.
+_MAX_SUBMISSIONS_PER_BATCH = 200
+
 
 def _wire_submission(submission: dict[str, Any]) -> dict[str, Any]:
     """Return a detached copy of a metric submission with metadata allowlisted (#2241)."""
@@ -63,12 +68,10 @@ def _wire_submission(submission: dict[str, Any]) -> dict[str, Any]:
 
 
 def _group_metrics_by_session(metric_buffer: list[Any]) -> dict[str, list[Any]]:
-    # Group by session
+    """Group buffer entries (``(session_id, submission)`` tuples) by session."""
     sessions: dict[str, list[Any]] = {}
-    for session_id, submission in metric_buffer:
-        if session_id not in sessions:
-            sessions[session_id] = []
-        sessions[session_id].append(submission)
+    for entry in metric_buffer:
+        sessions.setdefault(entry[0], []).append(entry)
 
     return sessions
 
@@ -79,6 +82,7 @@ def _flush_response(
     retained: list[Any],
     dropped: int,
     abandoned: int,
+    sessions_processed: int,
 ) -> dict[str, Any]:
     # Return appropriate response
     if not errors:
@@ -87,7 +91,9 @@ def _flush_response(
         else:
             return {
                 "status": "batch_flushed",
-                "sessions_processed": len(results),
+                # Sessions, not requests: one session can span several
+                # capped batch requests (#2988).
+                "sessions_processed": sessions_processed,
                 "results": results,
             }
     else:
@@ -349,16 +355,18 @@ class OptimizerDirectClient:
             if self._metric_buffer:
                 await self._flush_buffer()
 
-    def _retain_failed_metrics(self, retry_sessions: set[str]) -> tuple[list[Any], int]:
+    def _retain_failed_metrics(self, retry_entries: set[int]) -> tuple[list[Any], int]:
         # Replace, never clear: accepted submissions are dropped, retryable
-        # ones stay. Filtering the ORIGINAL buffer rather than the grouped
-        # `sessions` dict preserves chronological order, which the retention
-        # cap below depends on. Safe to rebuild wholesale because every caller
-        # of _flush_buffer holds _buffer_lock and asyncio.Lock is not
-        # reentrant, so no submit_metrics() append can interleave with the
-        # awaits above.
+        # ones stay. `retry_entries` holds the id() of each buffer entry to
+        # keep -- per entry, not per session, because one session's backlog is
+        # sent in several capped requests and an accepted chunk must not be
+        # re-sent (#2988). Filtering the ORIGINAL buffer preserves
+        # chronological order, which the retention cap below depends on. Safe
+        # to rebuild wholesale because every caller of _flush_buffer holds
+        # _buffer_lock and asyncio.Lock is not reentrant, so no
+        # submit_metrics() append can interleave with the awaits above.
         retained = [
-            entry for entry in self._metric_buffer if entry[0] in retry_sessions
+            entry for entry in self._metric_buffer if id(entry) in retry_entries
         ]
 
         dropped = 0
@@ -400,61 +408,96 @@ class OptimizerDirectClient:
         sessions = _group_metrics_by_session(self._metric_buffer)
 
         # Submit each session's metrics
-        results = []
-        errors = []
-        retry_sessions: set[str] = set()
+        results: list[dict[str, Any]] = []
+        errors: list[Any] = []
+        retry_entries: set[int] = set()
         abandoned = 0
+        sessions_processed = 0
 
-        for session_id, submissions in sessions.items():
-            try:
-                if len(submissions) == 1:
-                    # Single metric submission
-                    result = await self._submit_single(session_id, submissions[0])
-                else:
-                    # Batch submission
-                    result = await self._submit_batch(session_id, submissions)
-                results.append(result)
-
-            except Exception as e:
-                transient = _is_transient_submission_error(e)
-                logger.exception(
-                    "Failed to submit metrics for session %s (%s): %s",
-                    session_id,
-                    "will retry" if transient else "permanent, discarding",
-                    str(e),
+        for session_id, entries in sessions.items():
+            chunks = [
+                entries[start : start + _MAX_SUBMISSIONS_PER_BATCH]
+                for start in range(0, len(entries), _MAX_SUBMISSIONS_PER_BATCH)
+            ]
+            accepted_any = False
+            for chunk_index, chunk in enumerate(chunks):
+                failure = await self._submit_chunk(
+                    session_id, chunk, results, errors, single=len(entries) == 1
                 )
-                errors.append(
-                    {
-                        "session_id": session_id,
-                        "error": str(e),
-                        "metrics_count": len(submissions),
-                        "retryable": transient,
-                    }
-                )
-                if transient:
-                    # Keep this session's metrics buffered for the next flush
-                    # (#1922). Clearing the whole buffer here dropped the
-                    # metrics of the session that had just FAILED, so one
-                    # transient 5xx or timeout silently discarded up to
-                    # batch_size trials' worth of optimizer signal while the
-                    # run still reported "completed".
-                    retry_sessions.add(session_id)
-                else:
-                    # A permanent rejection (4xx, bad token, expired session)
-                    # must NOT be retained. _submit_batch is all-or-nothing and
-                    # retained entries regroup with later ones under the same
-                    # session_id, so one permanently-rejected submission would
-                    # poison every subsequent metric for that session -- losing
-                    # strictly more than the unconditional clear this fix
-                    # replaced. 413 is self-reinforcing besides: the payload
-                    # only grows on retry.
-                    abandoned += len(submissions)
+                if failure is None:
+                    accepted_any = True
+                    continue
+                if failure:
+                    # Transient: keep this chunk and every unsent chunk of the
+                    # session for the next flush, and stop posting to a
+                    # backend that just failed.
+                    for pending in chunks[chunk_index:]:
+                        retry_entries.update(id(entry) for entry in pending)
+                    break
+                # Permanent: only this chunk is abandoned; a rejection of one
+                # chunk says nothing about the others.
+                abandoned += len(chunk)
+            if accepted_any:
+                sessions_processed += 1
 
         retained, dropped = OptimizerDirectClient._retain_failed_metrics(
-            self, retry_sessions
+            self, retry_entries
         )
 
-        return _flush_response(results, errors, retained, dropped, abandoned)
+        return _flush_response(
+            results, errors, retained, dropped, abandoned, sessions_processed
+        )
+
+    async def _submit_chunk(
+        self,
+        session_id: str,
+        chunk: list[Any],
+        results: list[dict[str, Any]],
+        errors: list[Any],
+        *,
+        single: bool,
+    ) -> bool | None:
+        """POST one capped chunk of a session's buffer entries.
+
+        Returns None when the service accepted it, otherwise whether the
+        failure is transient (retain for the next flush) or permanent.
+        """
+        submissions = [submission for _, submission in chunk]
+        try:
+            if single:
+                result = await self._submit_single(session_id, submissions[0])
+            else:
+                result = await self._submit_batch(session_id, submissions)
+        except Exception as e:
+            transient = _is_transient_submission_error(e)
+            logger.exception(
+                "Failed to submit metrics for session %s (%s): %s",
+                session_id,
+                "will retry" if transient else "permanent, discarding",
+                str(e),
+            )
+            errors.append(
+                {
+                    "session_id": session_id,
+                    "error": str(e),
+                    "metrics_count": len(submissions),
+                    "retryable": transient,
+                }
+            )
+            # Transient: keep the metrics buffered for the next flush (#1922).
+            # Clearing them dropped the metrics of the session that had just
+            # FAILED, so one transient 5xx or timeout silently discarded up to
+            # batch_size trials' worth of optimizer signal while the run still
+            # reported "completed".
+            # Permanent (4xx, bad token, expired session): must NOT be
+            # retained. A batch is all-or-nothing and retained entries regroup
+            # with later ones under the same session_id, so one permanently
+            # rejected submission would poison every later metric for that
+            # session. 413 is self-reinforcing besides: the payload only grows
+            # on retry.
+            return transient
+        results.append(result)
+        return None
 
     async def _submit_single(
         self, session_id: str, submission: dict[str, Any]

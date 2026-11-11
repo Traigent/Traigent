@@ -240,7 +240,7 @@ detector = TunedVariableDetector(strategies=[
 detector = TunedVariableDetector(strategies=[
     ASTDetectionStrategy(),
     DataFlowDetectionStrategy(),
-    LLMDetectionStrategy(model="gpt-4o-mini"),
+    LLMDetectionStrategy(llm_callable=my_llm),  # my_llm: Callable[[str], str], e.g. a gpt-4o-mini wrapper
 ])
 ```
 

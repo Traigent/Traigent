@@ -29,7 +29,11 @@ from typing import Any
 
 
 def _newest_run(base: Path) -> Path:
-    runs = [p for p in base.iterdir() if (p / "metadata.json").is_file()]
+    runs = (
+        [p for p in base.iterdir() if (p / "metadata.json").is_file()]
+        if base.is_dir()
+        else []
+    )
     if not runs:
         raise SystemExit(
             "no persisted optimization result found; run the optimize step"

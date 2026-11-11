@@ -140,7 +140,7 @@ def enable_langchain_optimization(llm_types: list[str] | None = None) -> None:
     Example:
         ```python
         import traigent
-        from traigent.integrations.langchain import enable_langchain_optimization
+        from traigent.integrations import enable_langchain_optimization
 
         # Enable LangChain optimization
         enable_langchain_optimization()

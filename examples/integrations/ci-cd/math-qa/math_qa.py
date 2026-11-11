@@ -42,8 +42,8 @@ DATASET_FILE = os.path.join(os.path.dirname(__file__), "math_qa.jsonl")
     },
     eval_dataset=DATASET_FILE,
     objectives=create_default_objectives(
-        ["accuracy", "cost", "response_time"],
-        orientations={"response_time": "minimize"},
+        ["accuracy", "cost", "response_time_ms"],
+        orientations={"response_time_ms": "minimize"},
     ),
     offline=True,
     max_trials=10,
@@ -114,7 +114,7 @@ def solve_arithmetic(expression: str) -> str:
             return "42"
 
     # Production mode would use LLM here
-    from langchain.schema import HumanMessage
+    from langchain_core.messages import HumanMessage
     from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(

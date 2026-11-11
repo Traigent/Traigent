@@ -8,6 +8,8 @@ agent validation constraints.
 
 from __future__ import annotations
 
+import math
+import numbers
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -101,6 +103,20 @@ class CostConstraints:
     max_cost_per_query: float | None = None  # Maximum $ per query
     max_monthly_budget: float | None = None  # Maximum $/month
     warn_threshold_pct: float = 0.8  # Warn at this % of budget
+
+    def __post_init__(self) -> None:
+        for name in ("max_cost_per_query", "max_monthly_budget", "warn_threshold_pct"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, numbers.Real)
+                or not math.isfinite(value)
+            ):
+                raise ValueError(
+                    f"constraints.cost.{name} must be a finite number, got {value!r}"
+                )
 
 
 @dataclass

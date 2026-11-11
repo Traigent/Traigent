@@ -108,8 +108,8 @@ This is:
 | `.gte(v)` | Greater than or equal | `temp.gte(0.5)` |
 | `.lt(v)` | Less than | `temp.lt(1.0)` |
 | `.lte(v)` | Less than or equal | `temp.lte(1.0)` |
-| `.is_in([...])` | In set of values (Choices only) | `model.is_in(["gpt-4.1", "gpt-4o"])` |
-| `.not_in([...])` | Not in set (Choices only) | `model.not_in(["gpt-4.1-mini"])` |
+| `.is_in([...])` | In set of values (Choices or numeric) | `model.is_in(["gpt-4.1", "gpt-4o"])`, `top_k.is_in([5, 10])` |
+| `.not_in([...])` | Not in set (Choices or numeric) | `model.not_in(["gpt-4.1-mini"])`, `top_k.not_in([1])` |
 | `.in_range(lo, hi)` | Within range (numeric ranges) | `temp.in_range(0.3, 0.7)` |
 
 ### Constraint Builders

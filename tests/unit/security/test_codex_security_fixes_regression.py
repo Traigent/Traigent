@@ -296,14 +296,18 @@ class TestFix4CreateSessionDeadlock:
         """Verify a new event loop is created in the thread."""
         import inspect
 
+        from traigent.cloud import session_operations
         from traigent.cloud.session_operations import SessionOperations
 
         source = inspect.getsource(SessionOperations.create_session)
+        # The fresh loop may be created directly or by the shared private-loop
+        # runner (#3143), which never installs it on the calling thread.
+        helper_source = inspect.getsource(session_operations._run_on_private_loop)
 
         # The fix should create a new event loop
-        assert "new_event_loop" in source, (
-            "create_session should create new_event_loop in thread"
-        )
+        assert "new_event_loop" in source or (
+            "_run_on_private_loop" in source and "new_event_loop" in helper_source
+        ), "create_session should create new_event_loop in thread"
 
     def test_no_run_coroutine_threadsafe_result_pattern(self):
         """Verify the deadlock-prone pattern is removed."""

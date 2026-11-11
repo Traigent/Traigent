@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import MagicMock, patch
 
@@ -17,12 +19,13 @@ def wb(monkeypatch, tmp_path):
     m = MagicMock(name="wandb")
     saved = {}
 
-    def _save(path):
+    def _save(path, **_kwargs):
+        name = Path(path).name
         try:
             with open(path) as f:
-                saved[path] = json.load(f)
+                saved[name] = json.load(f)
         except FileNotFoundError:
-            saved[path] = None
+            saved[name] = None
 
     m.save.side_effect = _save
     m._saved = saved
@@ -31,9 +34,13 @@ def wb(monkeypatch, tmp_path):
     return m
 
 
+# Real directory standing in for wandb.run.dir: artifacts are written here (#3042).
+_RUN_DIR = tempfile.TemporaryDirectory(prefix="traigent-wandb-run-")
+
+
 def _tracker(active=True):
     t = object.__new__(TraigentWandBTracker)
-    t.current_run = NS(id="rid") if active else None
+    t.current_run = NS(id="rid", dir=_RUN_DIR.name) if active else None
     return t
 
 
@@ -171,16 +178,20 @@ def test_dataset_saved_only_when_it_exists(wb, tmp_path):
     ds = tmp_path / "ds.jsonl"
     ds.write_text("{}")
     _tracker().log_optimization_result(_result(), dataset_path=str(ds))
-    assert [c.args[0] for c in wb.save.call_args_list] == [
+    assert [Path(c.args[0]).name for c in wb.save.call_args_list] == [
         "optimization_result.json",
-        str(ds),
+        "ds.jsonl",
     ]
     wb.reset_mock()
     _tracker().log_optimization_result(_result(), dataset_path=str(tmp_path / "nope"))
-    assert [c.args[0] for c in wb.save.call_args_list] == ["optimization_result.json"]
+    assert [Path(c.args[0]).name for c in wb.save.call_args_list] == [
+        "optimization_result.json"
+    ]
     wb.reset_mock()
     _tracker().log_optimization_result(_result(), dataset_path="")
-    assert [c.args[0] for c in wb.save.call_args_list] == ["optimization_result.json"]
+    assert [Path(c.args[0]).name for c in wb.save.call_args_list] == [
+        "optimization_result.json"
+    ]
 
 
 def test_logs_info_with_run_id(wb):

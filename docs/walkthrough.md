@@ -1,6 +1,6 @@
-# Walkthrough - 8 Runnable Examples
+# Walkthrough - 9 Runnable Examples
 
-Step through Traigent's features with 8 progressive examples. All run in mock mode with cost approval pre-set for local dry runs - no provider API keys, no provider spend.
+Step through Traigent's features with 9 progressive examples (steps 1-8 are the core path; step 9 is an optional extra). All run in mock mode with cost approval pre-set for local dry runs - no provider API keys, no provider spend.
 
 ## Setup
 

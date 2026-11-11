@@ -289,6 +289,16 @@ def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bo
         return actual, False
 
     if isinstance(expected, (int, float)):
+        # Same identifier guard as the string-string path (Traigent#1772): a
+        # zero-padded string ("007") is an identifier, not the number 7. Also
+        # refuse what float() tolerates but a numeric label never is: digit
+        # separators ("1_000") and non-ASCII digits.
+        if (
+            _ZERO_PADDED_NUMERIC_RE.match(stripped)
+            or not stripped.isascii()
+            or "_" in stripped
+        ):
+            return actual, False
         try:
             return float(stripped), True
         except ValueError:
@@ -450,6 +460,11 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
         actual, coerced = _coerce_string_to_expected_type(actual, expected)
         if coerced:
             _report_coercion(type(expected).__name__, len(original_actual))
+        elif isinstance(expected, (int, float)) and not isinstance(expected, bool):
+            # A refused coercion (zero-padded identifier, digit separators,
+            # non-ASCII digits) must not fall through to the float-tolerant
+            # comparison below, which would re-parse the string via float().
+            return False
 
     # Container elements get zero normalization otherwise: recurse the same
     # scalar rules element-wise (list/tuple) or value-wise (dict), keyed on
@@ -543,6 +558,25 @@ def _normalize_output_for_accuracy_comparison(
     if _TRAIGENT_META_KEY in output:
         return output["text"]
     if not isinstance(expected, CollectionsMapping):
+        return output["text"]
+    return output
+
+
+def unwrap_with_usage_output(output: Any) -> Any:
+    """Return the function's own output when it is a ``with_usage()`` wrapper.
+
+    ``with_usage()`` wraps the output as ``{"text": <output>, "__traigent_meta__":
+    {...}}`` during optimization. Only that reserved-marker shape is unwrapped;
+    any other mapping (including one with a plain ``text`` key) is returned
+    unchanged. Custom metric functions get this value so adopting cost
+    reporting does not change what they see (Traigent#2870); the usage stays
+    available through their ``llm_metrics`` parameter.
+    """
+    if (
+        isinstance(output, CollectionsMapping)
+        and _TRAIGENT_META_KEY in output
+        and "text" in output
+    ):
         return output["text"]
     return output
 
@@ -712,7 +746,7 @@ def _resolve_relative_to_cwd(
     cwd-relative spelling is unusable", which is exactly ``None``; letting one
     escape would turn a structured ``ValidationError`` into a raw ``OSError``
     and break the callers that only catch ``ValidationError`` (the MCP
-    ``validate_dataset`` tool and ``traigent validate-dataset``).
+    ``validate_dataset`` tool and ``traigent validate``).
     """
 
     try:
@@ -2576,7 +2610,7 @@ class BaseEvaluator(ABC):
         when the key is fine but the value is not a finite non-bool number.
         """
         for key, value in candidate.items():
-            if not isinstance(key, str) or not USER_METRIC_KEY_PATTERN.match(key):
+            if not isinstance(key, str) or not USER_METRIC_KEY_PATTERN.fullmatch(key):
                 return key, value, True
             if (
                 isinstance(value, bool)
@@ -4170,7 +4204,7 @@ class BaseEvaluator(ABC):
         if metric_functions:
             metrics = self._call_progress_metric_functions(
                 metric_functions=metric_functions,
-                output=result.actual_output,
+                output=unwrap_with_usage_output(result.actual_output),
                 example=example,
                 config=config,
                 dataset=dataset,
@@ -4183,7 +4217,7 @@ class BaseEvaluator(ABC):
         scoring_function = getattr(self, "scoring_function", None)
         if scoring_function is not None:
             metrics = self._call_progress_scoring_function(
-                output=result.actual_output,
+                output=unwrap_with_usage_output(result.actual_output),
                 example=example,
                 config=config,
                 dataset=dataset,
@@ -4969,12 +5003,21 @@ class SimpleScoringEvaluator(BaseEvaluator):
         import inspect
 
         example_metrics = {}
+        # Metric functions see the function's own output, not the
+        # ``with_usage()`` wrapper (Traigent#2870).
+        metric_output = unwrap_with_usage_output(output)
         for metric_name, metric_func in self.metric_functions.items():
             try:
                 sig = inspect.signature(metric_func)
                 params = list(sig.parameters.keys())
                 kwargs = self._build_metric_kwargs(
-                    params, output, example, config, dataset, example_index, llm_metrics
+                    params,
+                    metric_output,
+                    example,
+                    config,
+                    dataset,
+                    example_index,
+                    llm_metrics,
                 )
                 score = metric_func(**kwargs)
                 example_metrics[metric_name] = score
@@ -5014,7 +5057,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
             params = list(sig.parameters.keys())
             kwargs = {}
             if "output" in params or "actual" in params:
-                kwargs["output"] = output
+                # The function's own output, not the with_usage() wrapper,
+                # as the metric_functions path gets (Traigent#2870).
+                kwargs["output"] = unwrap_with_usage_output(output)
             if "expected" in params:
                 kwargs["expected"] = example.expected_output
             if "llm_metrics" in params and llm_metrics:

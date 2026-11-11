@@ -32,14 +32,15 @@ Example::
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import numbers
 import os
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import InitVar, dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -48,7 +49,6 @@ from typing import (
     TypedDict,
     TypeGuard,
     TypeVar,
-    cast,
     overload,
 )
 
@@ -205,6 +205,15 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
             )
         if self.step is not None and self.step <= 0:
             raise ValueError(f"Range step must be positive, got {self.step}")
+        if self.log and self.low <= 0:
+            raise ValueError(f"log=True requires positive bounds, got low={self.low}")
+        if self.log and self.step is not None:
+            raise ValueError(
+                "Cannot use log=True with step (Optuna limitation). "
+                "Use either log-scale OR discrete steps, not both."
+            )
+        # stacklevel=3 attributes the warning to the caller: frame 1 is this
+        # method, frame 2 the dataclass-generated __init__.
         if self.step is not None and not float_step_divides_span(
             float(self.low), float(self.high), float(self.step)
         ):
@@ -213,14 +222,7 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
                 f"[{self.low}, {self.high}]; upper bound {self.high} will be "
                 "included as an extra discrete point with uneven spacing.",
                 UserWarning,
-                stacklevel=2,
-            )
-        if self.log and self.low <= 0:
-            raise ValueError(f"log=True requires positive bounds, got low={self.low}")
-        if self.log and self.step is not None:
-            raise ValueError(
-                "Cannot use log=True with step (Optuna limitation). "
-                "Use either log-scale OR discrete steps, not both."
+                stacklevel=3,
             )
         if self.default is not None and not (self.low <= self.default <= self.high):
             raise ValueError(
@@ -373,7 +375,10 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
     Args:
         low: Lower bound (inclusive)
         high: Upper bound (inclusive)
-        step: Optional step size (default: 1)
+        step: Optional step size (default: 1). When the step does not evenly
+            divide the span, the upper bound is still included as an extra
+            discrete point with uneven spacing, and a ``UserWarning`` is
+            emitted (same as ``Range``).
         log: Whether to use log-scale sampling (default: False).
              Note: Cannot be combined with step (Optuna limitation).
         default: Optional default value (populates default_config)
@@ -406,8 +411,11 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
     unit: str | None = None
     # Multi-agent support
     agent: str | None = None
+    # Private: lets a built-in preset with a known uneven step skip the warning.
+    # InitVar keeps it out of the dataclass fields, repr, equality and asdict().
+    _suppress_step_warning: InitVar[bool] = False
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _suppress_step_warning: bool) -> None:
         if not isinstance(self.low, int) or not isinstance(self.high, int):
             raise TypeError(
                 f"IntRange bounds must be integers, got low={type(self.low).__name__}, "
@@ -437,6 +445,20 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             raise ValueError(
                 "Cannot use log=True with step (Optuna limitation). "
                 "Use either log-scale OR discrete steps, not both."
+            )
+        # stacklevel=3 attributes the warning to the caller: frame 1 is this
+        # method, frame 2 the dataclass-generated __init__.
+        if (
+            self.step is not None
+            and (self.high - self.low) % self.step != 0
+            and not _suppress_step_warning
+        ):
+            warnings.warn(
+                f"IntRange step {self.step} does not evenly divide span "
+                f"[{self.low}, {self.high}]; upper bound {self.high} will be "
+                "included as an extra discrete point with uneven spacing.",
+                UserWarning,
+                stacklevel=3,
             )
         if self.default is not None and not (self.low <= self.default <= self.high):
             raise ValueError(
@@ -504,7 +526,17 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
         if task not in ranges:
             raise ValueError(f"task must be 'short', 'medium', or 'long', got '{task}'")
         low, high, default = ranges[task]
-        return cls(low, high, step=64, default=default, name="max_tokens")
+        # The presets keep their documented endpoints, so the step of 64 does
+        # not always divide the span by design; the warning is for user-built
+        # ranges only.
+        return cls(
+            low,
+            high,
+            step=64,
+            default=default,
+            name="max_tokens",
+            _suppress_step_warning=True,
+        )
 
     @classmethod
     def k_retrieval(cls, *, max_k: int = 10) -> IntRange:
@@ -514,13 +546,19 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             max_k: Maximum k value (default: 10)
 
         Returns:
-            IntRange [1, max_k] with default 3
+            IntRange [1, max_k] with default min(3, max_k)
+
+        Raises:
+            ValueError: If ``max_k`` is less than 2 (the range needs at least
+                two values).
 
         Example:
             >>> k = IntRange.k_retrieval()  # [1, 10]
             >>> k_large = IntRange.k_retrieval(max_k=20)  # [1, 20]
         """
-        return cls(1, max_k, default=3, name="k")
+        if max_k < 2:
+            raise ValueError(f"max_k must be at least 2, got {max_k}")
+        return cls(1, max_k, default=min(3, max_k), name="k")
 
     @classmethod
     def chunk_size(cls) -> IntRange:
@@ -554,13 +592,19 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             max_examples: Maximum number of examples (default: 10)
 
         Returns:
-            IntRange [0, max_examples] with default 3
+            IntRange [0, max_examples] with default min(3, max_examples)
+
+        Raises:
+            ValueError: If ``max_examples`` is less than 1 (the range needs at
+                least two values).
 
         Example:
             >>> few_shot = IntRange.few_shot_count()  # [0, 10]
             >>> few_shot_limited = IntRange.few_shot_count(max_examples=5)  # [0, 5]
         """
-        return cls(0, max_examples, default=3, name="few_shot_count")
+        if max_examples < 1:
+            raise ValueError(f"max_examples must be at least 1, got {max_examples}")
+        return cls(0, max_examples, default=min(3, max_examples), name="few_shot_count")
 
     @classmethod
     def batch_size(
@@ -568,14 +612,16 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
         *,
         min_size: int = 1,
         max_size: int = 64,
-        default: int = 16,
+        default: int | None = None,
     ) -> IntRange:
         """Batch size for parallel processing.
 
         Args:
             min_size: Minimum batch size (default: 1)
             max_size: Maximum batch size (default: 64)
-            default: Default batch size (default: 16)
+            default: Default batch size. When omitted it is 16, clamped into
+                ``[min_size, max_size]``. An explicit value outside the range
+                raises ``ValueError``.
 
         Returns:
             IntRange configured for batch processing
@@ -584,6 +630,8 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             >>> batch = IntRange.batch_size()  # [1, 64]
             >>> batch_large = IntRange.batch_size(max_size=128)  # [1, 128]
         """
+        if default is None:
+            default = max(min_size, min(16, max_size))
         return cls(min_size, max_size, default=default, name="batch_size")
 
 
@@ -782,7 +830,7 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
         """Return as list for backward compatibility."""
         return list(self.values)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[T]:
         """Allow iteration over choices."""
         return iter(self.values)
 
@@ -790,7 +838,7 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
         """Return number of choices."""
         return len(self.values)
 
-    def __contains__(self, item: T) -> bool:
+    def __contains__(self, item: object) -> bool:
         """Check if item is in choices."""
         return item in self.values
 
@@ -1214,10 +1262,14 @@ def _process_param_entry(
                 param = TextDocument(param.values[0], name=key)
             else:
                 try:
-                    # Cast to Any since all ParameterRange subclasses are dataclasses
-                    param = replace(cast(Any, param), name=key)
-                except TypeError:
-                    # Fallback if replace fails (shouldn't happen with our dataclasses)
+                    # Copy and set the name without re-running __post_init__:
+                    # the range was validated (and warned about) when the user
+                    # built it, so replace() would warn a second time.
+                    renamed = copy.copy(param)
+                    object.__setattr__(renamed, "name", key)
+                    param = renamed
+                except (TypeError, AttributeError):
+                    # Fallback if the copy cannot be renamed (not expected here)
                     logger.debug(
                         f"Could not auto-assign name '{key}' to {type(value).__name__}"
                     )

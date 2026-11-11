@@ -4,9 +4,10 @@ Traigent provides two types of integrations:
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
 1. **Zero-Code-Change Framework Integration**:
-   - Automatically optimizes LangChain, OpenAI SDK, Anthropic, Cohere, HuggingFace
-   - No code changes required - just add @traigent.optimize decorator
-   - Parameters are automatically overridden during optimization
+   - Optimizes the framework classes you name in ``framework_targets`` (for example
+     LangChain's ``langchain_openai.ChatOpenAI`` or ``openai.OpenAI``)
+   - No changes to the call sites: add the @traigent.optimize decorator
+   - Parameters of the listed classes are overridden during optimization
    - Streaming and tool/function calling support
 
 2. **Experiment Tracking Integrations**:
@@ -16,7 +17,8 @@ Traigent provides two types of integrations:
 Example of zero-code-change optimization:
 
     @traigent.optimize(
-        auto_override_frameworks=True,  # Enable automatic parameter override
+        auto_override_frameworks=True,  # Enable the framework override
+        framework_targets=["langchain_openai.ChatOpenAI"],  # Dotted module.ClassName
         configuration_space={
             "model": ["gpt-5.6-terra", "gpt-5.6-sol", "claude-3-opus"],
             "temperature": [0.1, 0.5, 0.9],
@@ -207,7 +209,7 @@ except (ImportError, KeyError, RuntimeError):
     def _pydanticai_unavailable(*args: Any, **kwargs: Any) -> Any:
         raise ImportError(
             "PydanticAI integration is unavailable. "
-            "Install with: pip install 'pydantic-ai>=1,<2'"
+            "Install with: pip install 'pydantic-ai>=2.53.0,<3'"
         )
 
     PydanticAIHandler = _pydanticai_unavailable  # type: ignore[assignment, misc]

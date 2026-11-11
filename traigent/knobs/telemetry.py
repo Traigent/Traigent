@@ -36,6 +36,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from traigent.utils.logging import get_logger
+from traigent.utils.validation import MEASURE_KEY_PATTERN
 
 if TYPE_CHECKING:  # avoid importing the runtime module at import time
     from traigent.knobs.runtime import CompositeRunResult
@@ -112,9 +113,11 @@ def composite_measures(
     Returns:
         A flat ``dict[str, float | int]`` of content-free composite measures.
     """
-    if not prefix.isidentifier():
+    # The ASCII measure-key contract, not str.isidentifier(), which accepts
+    # Unicode letters that MeasuresDict then rejects (#3006).
+    if not isinstance(prefix, str) or not MEASURE_KEY_PATTERN.fullmatch(prefix):
         raise ValueError(
-            f"composite_measures prefix {prefix!r} must be a Python identifier "
+            f"composite_measures prefix {prefix!r} must be an ASCII identifier "
             r"(^[a-zA-Z_]\w*$) so emitted keys satisfy the MeasuresDict contract"
         )
 

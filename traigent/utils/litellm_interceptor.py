@@ -206,18 +206,51 @@ def _requested_choice_count(kwargs: dict[str, Any]) -> int:
     return n if isinstance(n, int) and not isinstance(n, bool) and n > 1 else 1
 
 
+#: Request arguments mock mode cannot honour: a tool call or a schema-shaped
+#: reply needs content only the caller knows (#2798).
+_IGNORED_SHAPE_KWARGS = ("tools", "tool_choice", "response_format")
+_WARNED_IGNORED_SHAPE: set[str] = set()
+_WARNED_IGNORED_SHAPE_LOCK = threading.Lock()
+
+
+def _warn_ignored_request_shape(kwargs: dict[str, Any]) -> None:
+    """Say once per argument that mock mode ignored it, instead of staying silent.
+
+    Without this a structured-output dry run just gets the canned text and
+    fails later, in the caller's parser, with no hint why. ``mock_response=``
+    is the supported way to give such a call a reply.
+    """
+    with _WARNED_IGNORED_SHAPE_LOCK:
+        new = [
+            name
+            for name in _IGNORED_SHAPE_KWARGS
+            if kwargs.get(name) is not None and name not in _WARNED_IGNORED_SHAPE
+        ]
+        _WARNED_IGNORED_SHAPE.update(new)
+    if new:
+        logger.warning(
+            "Traigent mock mode ignores %s on this litellm call and returns its "
+            "canned text. Pass mock_response='<the reply you want>' to give the "
+            "call a structured reply. This is logged once per argument.",
+            ", ".join(new),
+        )
+
+
 def _mock_litellm_reply(
     args: tuple[Any, ...], kwargs: dict[str, Any], *, apply_delay: bool = True
 ) -> Any:
     """Mock reply shaped like the request: ``mock_response``, ``n`` and ``stream``.
 
     Not covered: ``tools``/``tool_choice`` and ``response_format`` still get the
-    plain canned message (their reply needs caller-specific content). Async
+    plain canned message (their reply needs caller-specific content), and a
+    warning names them once. Async
     callers await the delay themselves and pass ``apply_delay=False`` (#2809).
     """
     from traigent.integrations.utils.mock_adapter import MockAdapter
 
     text = _requested_mock_text(kwargs)
+    if text is None:
+        _warn_ignored_request_shape(kwargs)
     response = MockAdapter.get_mock_response(
         "litellm",
         response_text=text,

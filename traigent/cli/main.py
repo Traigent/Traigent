@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import numbers
 import re
 import sys
 from datetime import datetime
@@ -31,7 +32,7 @@ from traigent.security.redaction import redact_sensitive_text
 from traigent.storage.local_storage import LocalStorageManager, OptimizationSession
 from traigent.utils.console import configure_stdout_encoding
 from traigent.utils.logging import setup_logging
-from traigent.utils.persistence import PersistenceManager
+from traigent.utils.persistence import PersistenceManager, result_created_at
 from traigent.utils.removed_params import (
     REMOVED_MOCK_PARAMETERS,
     removed_mock_parameter_message,
@@ -506,6 +507,7 @@ def cli(verbose: bool, debug: bool, quiet: bool) -> None:
     Traigent makes it effortless to optimize your LLM applications with
     a simple decorator.
 
+    \b
     Examples:
         traigent info              # Show version information
         traigent algorithms        # List available algorithms
@@ -997,6 +999,7 @@ def optimize(
     This command will execute the optimization for functions decorated with
     @traigent.optimize in the specified Python file.
 
+    \b
     Args:
         file_path: Path to Python file containing optimizable functions
     """
@@ -1753,7 +1756,7 @@ def _merge_result_infos(
     for result_info in [*legacy_results, *local_results]:
         merged_by_name[result_info["name"]] = result_info
     merged = list(merged_by_name.values())
-    merged.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    merged.sort(key=result_created_at, reverse=True)
     return merged
 
 
@@ -1857,6 +1860,7 @@ def _result_not_found_error(result_name: str) -> click.ClickException:
 def results() -> None:
     """Browse, compare, and manage optimization results.
 
+    \b
     Examples:
         traigent results list                    # List all runs
         traigent results show my_run             # Show detailed view
@@ -1883,6 +1887,11 @@ def results_list(storage_dir: str | None) -> None:
     legacy_storage_dir = storage_dir or ".traigent"
     persistence = PersistenceManager(legacy_storage_dir)
     legacy_results = persistence.list_results()
+    if persistence.last_skipped_results:
+        console.print(
+            f"[yellow]{persistence.last_skipped_results} result(s) unreadable "
+            f"in {persistence.base_dir} (see log warnings)[/yellow]"
+        )
     local_results, local_storage_path = _list_local_session_results(storage_dir)
     all_results = _merge_result_infos(legacy_results, local_results)
 
@@ -1905,15 +1914,18 @@ def results_list(storage_dir: str | None) -> None:
 
     for result_info in all_results:
         best_score = result_info.get("best_score")
+        success_rate = result_info.get("success_rate")
+        # A field missing from a hand-edited or partly written result shows
+        # N/A; it must not hide the other results (#3131) or read as 0.0%.
         table.add_row(
-            result_info["name"],
-            result_info["function_name"],
-            result_info["algorithm"],
-            (f"{best_score:.3f}" if isinstance(best_score, (int, float)) else "N/A"),
-            str(result_info["total_trials"]),
-            f"{result_info.get('success_rate', 0):.1%}",
+            str(result_info.get("name", "N/A")),
+            str(result_info.get("function_name") or "N/A"),
+            str(result_info.get("algorithm") or "N/A"),
+            (f"{best_score:.3f}" if _is_finite_real(best_score) else "N/A"),
+            str(result_info.get("total_trials", "N/A")),
+            (f"{success_rate:.1%}" if _is_finite_real(success_rate) else "N/A"),
             _result_status_label(result_info.get("status")),
-            result_info.get("created_at", "").split("T")[0],  # Just date part
+            result_created_at(result_info).split("T")[0],  # Just date part
         )
 
     console.print(table)
@@ -1921,6 +1933,15 @@ def results_list(storage_dir: str | None) -> None:
         console.print(
             f"\n[dim]Local session rows are loaded from: {local_storage_path}[/dim]"
         )
+
+
+def _is_finite_real(value: Any) -> bool:
+    """True for a finite real number that is not a bool."""
+    return (
+        isinstance(value, numbers.Real)
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 @results.command("show")
@@ -1935,6 +1956,7 @@ def results_list(storage_dir: str | None) -> None:
 def results_show(result_name: str, storage_dir: str | None, trials: bool) -> None:
     """Show detailed view of a specific optimization run.
 
+    \b
     Examples:
         traigent results show my_run              # Summary view
         traigent results show my_run --trials     # Include all trials
@@ -1970,6 +1992,7 @@ def results_show(result_name: str, storage_dir: str | None, trials: bool) -> Non
 def results_compare(result1: str, result2: str, storage_dir: str | None) -> None:
     """Compare two optimization runs side-by-side.
 
+    \b
     Examples:
         traigent results compare run_v1 run_v2
     """
@@ -2099,6 +2122,7 @@ def results_rerank(
 
     This re-scores all trials using new weights without re-running optimization.
 
+    \b
     Examples:
         traigent results rerank my_run --weights accuracy=0.8,cost=0.2
         traigent results rerank my_run -w "accuracy=0.5,latency=0.3,cost=0.2"
@@ -2281,6 +2305,7 @@ def results_export_failures(
     row, or matches more than one row, nothing is written. Rows without a metadata example_id gain their source id
     (example_<index>). Everything stays local: nothing is uploaded.
 
+    \b
     Examples:
         traigent results export-failures my_run --dataset eval.jsonl --out regressions.jsonl
         traigent results export-failures my_run --dataset eval.jsonl \\
@@ -2372,6 +2397,7 @@ def export(
     - Optimization metadata
     - Configuration space
 
+    \b
     Examples:
         traigent export my_run -o configs/prod.json      # Export for git
         traigent export my_run --format=full              # Include all data
@@ -3077,10 +3103,12 @@ def check(
     and validates that optimization actually improves over the function's default parameters
     using Pareto efficiency analysis.
 
+    \b
     Args:
         module_path: Path to a Python file, or a dotted module path
             (``pkg.module``) importable from the current directory
 
+    \b
     Examples:
         traigent check my_module.py                    # Check all functions
         traigent check my_module.py --functions="func1,func2"  # Check specific functions

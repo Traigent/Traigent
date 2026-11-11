@@ -791,13 +791,31 @@ custom_objectives = ObjectiveSchema.from_objectives([
     ObjectiveDefinition("custom_metric", orientation="maximize", weight=1.0),
 ])
 
+import hashlib
+import json
+
+from traigent.api.types import ExampleResult
+
 def custom_eval(func, config, example):
-    # Custom evaluation logic
-    result = func(example.input_data)
+    # Custom evaluation logic. A plain-string row passes the string; a dict row
+    # is passed as keyword arguments.
+    if isinstance(example.input_data, dict):
+        result = func(**example.input_data)
+    else:
+        result = func(example.input_data)
     accuracy = compute_accuracy(result, example.expected_output)
+    # One id per example: the dataset's id when it has one, else a stable hash of the input.
+    example_id = str(example.metadata.get("id") or hashlib.sha256(
+        json.dumps(example.input_data, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16])
     return ExampleResult(
-        example_id=example.example_id,
-        metrics={"accuracy": accuracy, "custom_metric": compute_custom(result)}
+        example_id=example_id,
+        input_data=example.input_data,
+        expected_output=example.expected_output,
+        actual_output=result,
+        metrics={"accuracy": accuracy, "custom_metric": compute_custom(result)},
+        execution_time=0.0,  # replace with the measured call latency if you track it
+        success=True,
     )
 
 @traigent.optimize(

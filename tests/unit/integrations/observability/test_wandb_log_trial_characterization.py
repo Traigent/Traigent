@@ -34,10 +34,10 @@ class _FakeWandb:
             raise self.log_error
         self.logged.append((data, step))
 
-    def save(self, path):
+    def save(self, path, **_kwargs):
         if self.save_error:
             raise self.save_error
-        self.saved.append((path, json.loads(Path(path).read_text())))
+        self.saved.append((Path(path).name, json.loads(Path(path).read_text())))
 
 
 class _BadIso:
@@ -94,7 +94,11 @@ def _snapshot(name, tmp_path, caplog, monkeypatch):
     monkeypatch.setattr(wandb_module, "WANDB_AVAILABLE", True)
     monkeypatch.chdir(tmp_path)
     tracker = wandb_module.TraigentWandBTracker()
-    tracker.current_run = SimpleNamespace(id="r") if has_run else None
+    # The run dir is a sibling of the CWD so the 'leftover' snapshot still
+    # shows only what the tracker wrote into the working directory.
+    run_dir = tmp_path.with_name(tmp_path.name + "-run")
+    run_dir.mkdir()
+    tracker.current_run = SimpleNamespace(id="r", dir=str(run_dir)) if has_run else None
     caplog.clear()
     try:
         with caplog.at_level(logging.DEBUG, logger=MOD):

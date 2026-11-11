@@ -13,6 +13,8 @@ developer-friendly and user-friendly.
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 import math
 import numbers
@@ -29,6 +31,11 @@ from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_open
 
 logger = get_logger(__name__)
+
+# Measure/metric key contract (TraigentSchema MeasuresDict). ``re.ASCII`` pins
+# ``\w`` to ASCII so Unicode word characters are rejected. Lives in this
+# cloud-free module so core can import it without loading traigent.cloud.
+MEASURE_KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$", re.ASCII)
 
 # Dataset content validation inspects EVERY row (issue #2022): a sample must
 # never be mistakable for a guarantee. Only the number of individually
@@ -192,6 +199,65 @@ def ensure_finite_config_space(config_space: Any) -> None:
             )
 
 
+def _short_repr(value: Any) -> str:
+    """``repr(value)`` for an error message, bounded in length.
+
+    ``repr`` of an int past Python's digit limit (4300) raises ValueError, so
+    a huge int is described by its digit count instead.
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        try:
+            text = repr(value)
+        except ValueError:
+            return f"<int with about {int(value.bit_length() * 0.30103)} digits>"
+    else:
+        text = repr(value)
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
+def validate_max_trials_value(value: Any) -> None:
+    """Reject a ``max_trials`` that is not ``None`` or a positive integer.
+
+    bool (``True`` would silently become a 1-trial run), float/NaN/inf and
+    non-numbers are rejected with a message naming ``max_trials``.
+    """
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        raise TypeError(
+            f"max_trials must be a positive integer, got {_short_repr(value)} "
+            f"({type(value).__name__})"
+        )
+    if value <= 0:
+        raise ValueError(
+            f"max_trials must be a positive integer, got {_short_repr(value)}"
+        )
+
+
+def validate_timeout_value(value: Any) -> None:
+    """Reject a ``timeout`` that is not ``None`` or a finite number >= 0.
+
+    NaN would silently disable the wall-clock cap and bool would become a
+    1-second limit, so both are rejected with a message naming ``timeout``.
+    ``0`` stays valid (it cancels the run before the first trial).
+    """
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        raise TypeError(
+            f"timeout must be a non-negative number of seconds, got {_short_repr(value)} "
+            f"({type(value).__name__})"
+        )
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:  # an int too large for a float
+        finite = False
+    if not finite or value < 0:
+        raise ValueError(
+            f"timeout must be non-negative and finite (seconds), got {_short_repr(value)}"
+        )
+
+
 class Validators:
     """Core validation functions with consistent interface."""
 
@@ -298,7 +364,9 @@ class Validators:
         """Validate numeric value with optional range."""
         result = ValidationResult()
 
-        if not isinstance(value, (int, float)):
+        # bool is an int subclass (True would pass as 1) and NaN fails every
+        # comparison below, so both must be rejected explicitly.
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
             result.add_error(
                 field_name,
                 f"Expected number, got {type(value).__name__}",
@@ -306,7 +374,21 @@ class Validators:
             )
             return result
 
-        if min_value is not None and value < min_value:
+        try:
+            finite = math.isfinite(value)
+        except OverflowError:  # an int too large for a float
+            finite = False
+        if not finite:
+            result.add_error(
+                field_name,
+                f"Expected a finite number, got {_short_repr(value)}",
+                error_code="RANGE_ERROR",
+                suggestions=["Use a finite number (not NaN or infinity)"],
+            )
+            return result
+
+        number = float(value)  # numpy scalars and Fraction compare as floats
+        if min_value is not None and number < min_value:
             result.add_error(
                 field_name,
                 f"Value {value} is below minimum {min_value}",
@@ -314,7 +396,7 @@ class Validators:
                 suggestions=[f"Use a value >= {min_value}"],
             )
 
-        if max_value is not None and value > max_value:
+        if max_value is not None and number > max_value:
             result.add_error(
                 field_name,
                 f"Value {value} exceeds maximum {max_value}",
@@ -1002,7 +1084,7 @@ def _resolve_dataset_base(
             .expanduser()
             .resolve(strict=True)
         )
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         result.add_error(
             "dataset",
             f"Dataset base directory cannot be resolved: {exc}",
@@ -1036,12 +1118,14 @@ def _resolve_dataset_path(
         candidate = dataset_base / raw_path
 
     try:
-        return candidate.resolve(strict=True)
-    except FileNotFoundError:
-        # Keep the public validator's established NOT_FOUND result for a
-        # missing in-base target while strictly resolving existing paths.
-        return candidate.resolve()
-    except (OSError, RuntimeError) as exc:
+        try:
+            return candidate.resolve(strict=True)
+        except FileNotFoundError:
+            # Keep the public validator's established NOT_FOUND result for a
+            # missing in-base target while strictly resolving existing paths.
+            return candidate.resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        # ValueError covers an embedded NUL byte in the path.
         result.add_error(
             "dataset",
             f"Dataset path cannot be resolved: {exc}",
@@ -1641,9 +1725,13 @@ class OptimizationValidator:
 
 
 def validate_and_suggest(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Decorator to validate optimization parameters with helpful suggestions."""
+    """Decorator to validate optimization parameters with helpful suggestions.
 
-    def wrapper(*args, **kwargs):
+    The wrapper keeps the wrapped function's name, docstring and signature, and
+    stays a coroutine function when the wrapped one is.
+    """
+
+    def _check(kwargs: dict[str, Any]) -> None:
         # Extract parameters
         config_space = kwargs.get("configuration_space")
         objectives = kwargs.get("objectives")
@@ -1664,6 +1752,18 @@ def validate_and_suggest(func: Callable[..., Any]) -> Callable[..., Any]:
         if result.has_warnings:
             logger.warning(result.get_feedback(include_warnings=True))
 
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            _check(kwargs)
+            return await func(*args, **kwargs)
+
+        return async_wrapper
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        _check(kwargs)
         return func(*args, **kwargs)
 
     return wrapper

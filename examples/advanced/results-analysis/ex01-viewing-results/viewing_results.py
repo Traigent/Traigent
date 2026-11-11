@@ -66,7 +66,7 @@ except Exception:  # pragma: no cover - simple mock for offline envs
 
 
 try:
-    from langchain.schema import HumanMessage  # type: ignore
+    from langchain_core.messages import HumanMessage  # type: ignore
 except Exception:  # pragma: no cover
 
     class HumanMessage:  # type: ignore
@@ -188,6 +188,15 @@ def sentiment_classifier(text: str) -> str | dict:
 
 
 if __name__ == "__main__":
+    # These scripts call the LLM function directly, outside an optimization
+    # run, so the in-code mock interception must be on for TRAIGENT_MOCK_LLM.
+    from traigent.utils.env_config import is_mock_llm
+
+    if is_mock_llm():
+        from traigent.testing import enable_mock_mode_for_quickstart
+
+        enable_mock_mode_for_quickstart()
+
     try:
         print(sentiment_classifier("I love this!"))
     except KeyboardInterrupt:

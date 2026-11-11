@@ -165,17 +165,31 @@ def my_agent(query: str) -> str:
 For full control over evaluation logic, use `custom_evaluator` which receives the full context:
 
 ```python
+import hashlib
+import json
+
 from traigent.api.types import ExampleResult
 
 def advanced_evaluator(func, config, example) -> ExampleResult:
     """Full control over evaluation with access to function, config, and example."""
-    output = func(**example.input)
+    output = func(**example.input_data)
     exact = 1.0 if output == example.expected_output else 0.0
     length_penalty = max(0.0, 1.0 - abs(len(output) - len(example.expected_output)) / 100)
+    # One id per example: the dataset's id when it has one, else a stable hash of the input.
+    example_id = str(example.metadata.get("id") or hashlib.sha256(
+        json.dumps(example.input_data, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16])
 
     return ExampleResult(
-        accuracy=exact,
-        metrics={"exact_match": exact, "length_score": length_penalty},
+        example_id=example_id,
+        input_data=example.input_data,
+        expected_output=example.expected_output,
+        actual_output=output,
+        metrics={"accuracy": exact, "length_score": length_penalty},
+        execution_time=0.0,  # replace with the measured call latency if you track it
+        # The evaluator ran, so the row is a success even when the answer is wrong.
+        # Correctness is carried by metrics["accuracy"], not by success.
+        success=True,
     )
 
 @traigent.optimize(
@@ -186,7 +200,7 @@ def strict_agent(query: str) -> str:
     ...
 ```
 
-Keys in `ExampleResult.metrics` that are not objectives (here `exact_match` and `length_score`) are averaged over the successful rows and appear in `trial.metrics`, the same as keys returned through the `(output, metrics)` tuple or a non-objective `metric_functions` entry. They are diagnostics only: they do not change the score or the ranking. Names the SDK computes itself (such as `cost`, `success_rate`, or your objectives) are never overwritten, and the total is capped at 50 keys by dropping user keys first.
+Keys in `ExampleResult.metrics` that are not objectives (here `length_score`; `accuracy` is the default objective) are averaged over the successful rows and appear in `trial.metrics`, the same as keys returned through the `(output, metrics)` tuple or a non-objective `metric_functions` entry. They are diagnostics only: they do not change the score or the ranking. Names the SDK computes itself (such as `cost`, `success_rate`, or your objectives) are never overwritten, and the total is capped at 50 keys by dropping user keys first.
 
 #### Failure semantics: `custom_evaluator` vs `metric_functions`
 
@@ -468,12 +482,44 @@ Best accuracy: 0.00
    )
    ```
 
-2. **Use Streaming Evaluation**
-   ```python
-   from traigent.evaluators.base import StreamingDataset
+2. **Write a Smaller Subset File, Once, Before the Run**
 
-   dataset = StreamingDataset.from_jsonl("large_dataset.jsonl")
+   `ExecutionOptions(max_total_examples=...)` does not reduce memory. It is a
+   sample budget shared by all trials: the run stops when the total number of
+   evaluated examples reaches the cap, so a cap of 5 with 10 examples and 3
+   trials stops after the first trial. The whole dataset file is still loaded.
+
+   To cut what the SDK loads, write a subset file. This script streams the
+   file and keeps a random sample of 500 rows, so it never holds the full file:
+   ```python
+   import random
+
+   rng = random.Random(42)
+   keep, seen = [], 0
+   with open("large_dataset.jsonl", encoding="utf-8") as f:
+       for line in f:
+           if not line.strip():
+               continue
+           seen += 1
+           if len(keep) < 500:
+               keep.append(line)
+           else:
+               j = rng.randrange(seen)  # reservoir sampling
+               if j < 500:
+                   keep[j] = line
+   with open("large_dataset_subset.jsonl", "w", encoding="utf-8") as out:
+       out.writelines(line if line.endswith("\n") else line + "\n" for line in keep)
    ```
+
+   Then point the optimization at the subset:
+   ```python
+   @traigent.optimize(
+       eval_dataset="large_dataset_subset.jsonl",
+   )
+   ```
+
+   Use `max_total_examples` only when you want to bound the total number of
+   evaluated examples across all trials, for example to cap cost.
 
 ## Best Practices
 

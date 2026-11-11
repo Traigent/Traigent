@@ -106,9 +106,6 @@ Located in `tests/integration/`, these test cross-component functionality:
 ```bash
 # Run all integration tests
 pytest tests/integration/ -v
-
-# Run optimizer integration tests
-pytest tests/integration/optimizers/ -v
 ```
 
 The test suite does not read your `.env`: `tests/conftest.py` sets

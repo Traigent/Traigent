@@ -1291,7 +1291,8 @@ def with_usage(
         - `total_cost` is REQUIRED because cost is not recalculated from tokens
         - Token counts are informational only (for UI display)
         - Cost is injected AFTER SDK's cost calculation, overriding any calculated value
-        - Custom metric functions receive the full dict output (including __traigent_meta__)
+        - Custom metric functions receive the unwrapped output (the value under
+          ``"text"``), as built-in accuracy does; usage is in their ``llm_metrics``
         - `__traigent_meta__` is a reserved key. If your function output already contains
           this key for other purposes, it will be treated as usage metadata.
 
@@ -1325,7 +1326,7 @@ def with_usage(
         ...     input_cost=0.001, output_cost=0.002, total_cost=0.003,
         ...     model_used="gpt-4o-mini"
         ... )
-        >>> workflow = WorkflowCostSummary(
+        >>> workflow = WorkflowCostSummary.from_agents(
         ...     workflow_id="workflow-001",
         ...     workflow_name="Research",
         ...     agent_breakdowns=[agent1]

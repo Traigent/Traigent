@@ -82,8 +82,8 @@ DATASET = os.path.join(os.path.dirname(__file__), "bi_eval.jsonl")
     configuration_space={"temperature": [0.2, 0.6]},
     eval_dataset=DATASET,
     objectives=create_default_objectives(
-        ["cost", "response_time"],
-        orientations={"response_time": "minimize"},
+        ["cost", "response_time_ms"],
+        orientations={"response_time_ms": "minimize"},
     ),
     offline=True,
     max_trials=10,

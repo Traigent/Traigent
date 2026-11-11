@@ -523,6 +523,9 @@ class TestOfflineIsReal:
 
         monkeypatch.setattr(socket, "create_connection", _record)
         monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+        # The unit lane sets TRAIGENT_OFFLINE_MODE=true; opt into the online lane.
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
         runner.invoke(doctor, ["--json"])
         assert opened, "the CLI no longer reaches the network even without --offline"
 
@@ -543,11 +546,102 @@ class TestOfflineIsReal:
             raise OSError("blocked by test")
 
         monkeypatch.setattr(socket, "create_connection", _record)
+        # The unit lane sets TRAIGENT_OFFLINE_MODE=true; opt into the online lane.
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
         diagnose(offline=False)
         _failure_detail = (
             "the network check no longer goes through socket.create_connection"
         )
         assert opened, _failure_detail
+
+
+class TestEnvOfflineModeIsReal:
+    """TRAIGENT_OFFLINE_MODE means "skip all communication" for doctor too (#3185).
+
+    Sockets are stubbed, never real: any recorded connect or lookup is a failure.
+    """
+
+    @staticmethod
+    def _record_sockets(monkeypatch) -> list[object]:
+        import socket
+
+        opened: list[object] = []
+
+        def _record(*args, **kwargs):
+            opened.append(args)
+            raise OSError("blocked by test")
+
+        monkeypatch.setattr(socket, "create_connection", _record)
+        monkeypatch.setattr(socket, "getaddrinfo", _record)
+        return opened
+
+    @staticmethod
+    def _clear_offline_env(monkeypatch) -> None:
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+
+    def test_diagnose_honours_offline_mode_env_var(self, monkeypatch) -> None:
+        from traigent.utils.diagnostics import diagnose
+
+        opened = self._record_sockets(monkeypatch)
+        self._clear_offline_env(monkeypatch)
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+
+        report = diagnose()
+
+        assert opened == [], f"offline-mode diagnose opened sockets: {opened}"
+        assert any("skipped" in item["message"].lower() for item in report.successes), (
+            "the network section should say it was skipped"
+        )
+
+    def test_doctor_honours_offline_env_var_without_flag(
+        self, runner, monkeypatch
+    ) -> None:
+        opened = self._record_sockets(monkeypatch)
+        self._clear_offline_env(monkeypatch)
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "true")
+
+        runner.invoke(doctor, ["--json"])
+
+        assert opened == [], f"doctor with TRAIGENT_OFFLINE opened sockets: {opened}"
+
+    def test_doctor_model_check_under_offline_env_sets_litellm_cost_map(
+        self, runner, monkeypatch
+    ) -> None:
+        """Under --model the env-driven offline mode reaches the LiteLLM import (#3185).
+
+        The doctor-level offline flag is what sets LITELLM_LOCAL_MODEL_COST_MAP
+        before litellm's cold import fetches its cost map. Without the flag the
+        model checks dial out even though TRAIGENT_OFFLINE_MODE is set.
+        """
+        opened = self._record_sockets(monkeypatch)
+        self._clear_offline_env(monkeypatch)
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+        # Register the variable so monkeypatch restores its absence afterwards,
+        # then unset it: the code under test uses setdefault and must see it absent.
+        monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "")
+        monkeypatch.delenv("LITELLM_LOCAL_MODEL_COST_MAP")
+
+        result = runner.invoke(doctor, ["--json", "--model", "gpt-4o"])
+
+        assert os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP") == "True", result.output
+        assert opened == [], (
+            f"doctor --model under offline env opened sockets: {opened}"
+        )
+
+    def test_control_without_env_var_diagnose_opens_sockets(self, monkeypatch) -> None:
+        """Without the env var the same probe must see sockets, or the tests above
+        pass for the wrong reason."""
+        from traigent.utils.diagnostics import diagnose
+
+        opened = self._record_sockets(monkeypatch)
+        self._clear_offline_env(monkeypatch)
+
+        diagnose()
+
+        assert opened, "the network check no longer goes through the socket layer"
 
 
 class TestPermissionProbeIsNonDestructive:
@@ -788,6 +882,10 @@ class TestOfflinePinsTheLiteLLMPriceTable:
         monkeypatch.delenv("LITELLM_LOCAL_MODEL_COST_MAP", raising=False)
         monkeypatch.setenv("TRAIGENT_LITELLM_LIVE_PRICES", "1")
         monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+        # The unit lane sets TRAIGENT_OFFLINE_MODE=true; this control is about the
+        # online (non-offline) path, so opt into it explicitly.
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
 
         runner.invoke(doctor, ["--json", "--model", "gpt-4o"])
 

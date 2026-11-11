@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import math
+import numbers
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -366,10 +368,12 @@ class BaseInvoker(ABC):
         if timeout is None:
             return None
 
-        if not isinstance(timeout, (int, float)):
+        if isinstance(timeout, bool) or not isinstance(timeout, numbers.Real):
             raise InvocationError("Timeout must be a numeric value in seconds")
 
         timeout_value = float(timeout)
+        if math.isnan(timeout_value):
+            raise InvocationError("Timeout must be a number, not NaN")
         if timeout_value <= 0:
             raise InvocationError("Timeout must be greater than zero seconds")
 

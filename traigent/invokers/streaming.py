@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import math
+import numbers
 import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any
@@ -411,9 +413,11 @@ class StreamingInvoker(LocalInvoker):
         """Validate chunk timeout setting."""
         if timeout is None:
             return None
-        if not isinstance(timeout, (int, float)):
+        if isinstance(timeout, bool) or not isinstance(timeout, numbers.Real):
             raise InvocationError("chunk_timeout must be numeric or None")
         timeout_value = float(timeout)
+        if math.isnan(timeout_value):
+            raise InvocationError("chunk_timeout must be a number, not NaN")
         if timeout_value <= 0:
             raise InvocationError("chunk_timeout must be greater than zero seconds")
         if timeout_value > self.MAX_TIMEOUT_SECONDS:

@@ -58,7 +58,7 @@ logger = get_logger(__name__)
 
 
 # OpenAPI contract: tunable and objective names must be valid Python identifiers.
-_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*$")
+_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_]\w*$", re.ASCII)
 _ESTIMATED_INPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_INPUT_TOKENS_PER_EXAMPLE"
 _ESTIMATED_OUTPUT_TOKENS_ENV = "TRAIGENT_ESTIMATED_OUTPUT_TOKENS_PER_EXAMPLE"
 
@@ -479,7 +479,7 @@ class TraigentService:
                 "evaluation_kwargs entries must be dicts or EvaluationKwargDefinition instances"
             )
 
-        if not _IDENTIFIER_RE.match(definition.name):
+        if not _IDENTIFIER_RE.fullmatch(definition.name):
             raise ValueError(
                 f"Invalid evaluation kwarg name '{definition.name}': "
                 "must be a valid Python identifier"
@@ -789,7 +789,7 @@ class TraigentService:
         """Normalize TVAR definitions to TVL format."""
         normalized: dict[str, dict[str, Any]] = {}
         for name, spec in tvars.items():
-            if not _IDENTIFIER_RE.match(name):
+            if not _IDENTIFIER_RE.fullmatch(name):
                 raise ValueError(
                     f"Invalid TVAR name '{name}': must be a valid Python identifier "
                     f"(pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$)"

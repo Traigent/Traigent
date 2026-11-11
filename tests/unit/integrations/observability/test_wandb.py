@@ -9,6 +9,7 @@ Tests for Traigent W&B experiment tracking and observability.
 
 from __future__ import annotations
 
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,9 @@ from traigent.api.types import (
 )
 from traigent.integrations.observability import wandb as wandb_module
 
+# Real directory standing in for wandb.run.dir: artifacts are written here (#3042).
+_RUN_DIR = tempfile.TemporaryDirectory(prefix="traigent-wandb-run-")
+
 
 class MockWandBRun:
     """Mock W&B run object."""
@@ -31,6 +35,7 @@ class MockWandBRun:
     def __init__(self, run_id: str = "mock_run_123") -> None:
         """Initialize mock run."""
         self.id = run_id
+        self.dir = _RUN_DIR.name
         self.name = f"run_{run_id}"
         self.config: dict[str, Any] = {}
         self.summary: dict[str, Any] = {}
@@ -70,9 +75,9 @@ class MockWandB:
         """Log metrics to W&B."""
         self.logged_data.append((data, step))
 
-    def save(self, path: str) -> None:
-        """Save file to W&B."""
-        self.saved_files.append(path)
+    def save(self, path: str, **_kwargs: Any) -> None:
+        """Save file to W&B (artifacts are staged in a temp dir; keep the name)."""
+        self.saved_files.append(Path(path).name)
 
     def finish(self) -> None:
         """Finish current run."""
@@ -666,7 +671,7 @@ class TestTraigentWandBTrackerLogOptimizationResult:
 
         tracker.log_optimization_result(sample_optimization_result, str(dataset_path))
 
-        assert str(dataset_path) in mock_wandb_available.saved_files
+        assert dataset_path.name in mock_wandb_available.saved_files
 
     def test_log_optimization_result_dataset_not_exists(
         self,

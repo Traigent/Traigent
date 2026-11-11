@@ -42,6 +42,15 @@ def _disable_llm_mock_for_bedrock_client_tests(
     clear_captured_responses()
 
 
+def _text_delta(text: str) -> dict:
+    """One Anthropic messages ``content_block_delta`` streaming event."""
+    return {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {"type": "text_delta", "text": text},
+    }
+
+
 def _mock_invoke_client(payload: dict) -> MagicMock:
     mock_client = MagicMock()
     mock_client.invoke_model.return_value = {
@@ -509,9 +518,7 @@ class TestBedrockChatClientCaptureAndMock:
         assert metrics.response.response_time_ms > 0
 
     def test_invoke_stream_captures_final_response_latency(self) -> None:
-        mock_client = _mock_stream_client(
-            {"content": [{"type": "text", "text": "streamed"}]}
-        )
+        mock_client = _mock_stream_client(_text_delta("streamed"))
         client = BedrockChatClient(client=mock_client)
 
         chunks = list(
@@ -765,8 +772,7 @@ class TestBedrockChatClientInvokeStream:
         """Test BEDROCK_MOCK does not fabricate streaming chunks."""
         monkeypatch.setenv("BEDROCK_MOCK", "true")
         mock_client = _mock_stream_client(
-            {"content": [{"type": "text", "text": "Stream"}]},
-            {"content": [{"type": "text", "text": " response"}]},
+            _text_delta("Stream"), _text_delta(" response")
         )
         client = BedrockChatClient(client=mock_client)
 
@@ -778,7 +784,7 @@ class TestBedrockChatClientInvokeStream:
 
         chunks = list(gen)
 
-        assert chunks == ["Stream", "response"]
+        assert chunks == ["Stream", " response"]
         assert not any("[MOCK:" in c for c in chunks)
         mock_client.invoke_model_with_response_stream.assert_called_once()
 
@@ -813,11 +819,7 @@ class TestBedrockChatClientInvokeStream:
         mock_client = MagicMock()
 
         # Create mock stream events
-        chunk_data = [
-            {"content": [{"type": "text", "text": "First"}]},
-            {"content": [{"type": "text", "text": "second"}]},
-            {"content": [{"type": "text", "text": "third"}]},
-        ]
+        chunk_data = [_text_delta("First"), _text_delta("second"), _text_delta("third")]
         mock_events = [
             {"chunk": {"bytes": json.dumps(data).encode()}} for data in chunk_data
         ]
@@ -855,13 +857,7 @@ class TestBedrockChatClientInvokeStream:
 
         # Mix of valid and invalid chunks
         mock_events = [
-            {
-                "chunk": {
-                    "bytes": json.dumps(
-                        {"content": [{"type": "text", "text": "Valid"}]}
-                    ).encode()
-                }
-            },
+            {"chunk": {"bytes": json.dumps(_text_delta("Valid")).encode()}},
             {"chunk": {"bytes": b"invalid json"}},  # Will be skipped
             {"no_chunk": "data"},  # Will be skipped
         ]
@@ -1037,10 +1033,7 @@ class TestBedrockChatClientAsyncInvokeStream:
 
         # Create async generator for stream events
         async def mock_stream():
-            chunks_data = [
-                {"content": [{"type": "text", "text": "First"}]},
-                {"content": [{"type": "text", "text": "second"}]},
-            ]
+            chunks_data = [_text_delta("First"), _text_delta("second")]
             for data in chunks_data:
                 yield {"chunk": {"bytes": json.dumps(data).encode()}}
 
@@ -1134,3 +1127,272 @@ class TestAinvokeStreamMockWithAioboto3Installed:
         self._fake_aioboto3(monkeypatch)
         with patch.object(client, "_ainvoke_stream_aioboto3", side_effect=native):
             assert await self._collect(client) == ["native-chunk"]
+
+
+class TestModelAliasAcrossEntryPoints:
+    """#2941: model= is an alias of model_id= on every entry point."""
+
+    TEXT = {"content": [{"type": "text", "text": "ok"}]}
+
+    @staticmethod
+    def _no_aioboto3(monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setitem(__import__("sys").modules, "aioboto3", None)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [
+            ({"model": "alias-model"}, "alias-model"),
+            ({"model_id": "id-model"}, "id-model"),
+            ({"model": "alias-model", "model_id": "id-model"}, "id-model"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_ainvoke_accepts_alias(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        kwargs: dict[str, str],
+        expected: str,
+    ) -> None:
+        self._no_aioboto3(monkeypatch)
+        mock_client = _mock_invoke_client(self.TEXT)
+        client = BedrockChatClient(client=mock_client)
+
+        response = await client.ainvoke(messages="hi", **kwargs)
+
+        assert response.model == expected
+        assert mock_client.invoke_model.call_args.kwargs["modelId"] == expected
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [
+            ({"model": "alias-model"}, "alias-model"),
+            ({"model_id": "id-model"}, "id-model"),
+            ({"model": "alias-model", "model_id": "id-model"}, "id-model"),
+        ],
+    )
+    def test_invoke_stream_accepts_alias(
+        self, kwargs: dict[str, str], expected: str
+    ) -> None:
+        mock_client = _mock_stream_client()
+        client = BedrockChatClient(client=mock_client)
+
+        assert list(client.invoke_stream(messages="hi", **kwargs)) == []
+
+        call = mock_client.invoke_model_with_response_stream.call_args
+        assert call.kwargs["modelId"] == expected
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [
+            ({"model": "alias-model"}, "alias-model"),
+            ({"model_id": "id-model"}, "id-model"),
+            ({"model": "alias-model", "model_id": "id-model"}, "id-model"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_ainvoke_stream_accepts_alias(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        kwargs: dict[str, str],
+        expected: str,
+    ) -> None:
+        self._no_aioboto3(monkeypatch)
+        mock_client = _mock_stream_client()
+        client = BedrockChatClient(client=mock_client)
+
+        chunks = [c async for c in client.ainvoke_stream(messages="hi", **kwargs)]
+
+        assert chunks == []
+        call = mock_client.invoke_model_with_response_stream.call_args
+        assert call.kwargs["modelId"] == expected
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_aioboto3_path_accepts_alias(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_aioboto3 = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.invoke_model = AsyncMock(
+            return_value={"body": json.dumps(self.TEXT).encode()}
+        )
+        context = AsyncMock()
+        context.__aenter__ = AsyncMock(return_value=mock_client)
+        context.__aexit__ = AsyncMock(return_value=None)
+        mock_aioboto3.Session.return_value.client.return_value = context
+        monkeypatch.setitem(__import__("sys").modules, "aioboto3", mock_aioboto3)
+
+        response = await BedrockChatClient().ainvoke(model="alias-model", messages="hi")
+
+        assert response.model == "alias-model"
+        assert mock_client.invoke_model.call_args.kwargs["modelId"] == "alias-model"
+
+    @pytest.mark.parametrize("method", ["invoke", "invoke_stream"])
+    def test_missing_model_raises_type_error(self, method: str) -> None:
+        client = BedrockChatClient(client=MagicMock())
+
+        with pytest.raises(TypeError, match="model_id/model"):
+            result = getattr(client, method)(messages="hi")
+            list(result) if method == "invoke_stream" else None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ["ainvoke", "ainvoke_stream"])
+    async def test_async_missing_model_raises_type_error(self, method: str) -> None:
+        client = BedrockChatClient(client=MagicMock())
+
+        with pytest.raises(TypeError, match="model_id/model"):
+            if method == "ainvoke":
+                await client.ainvoke(messages="hi")
+            else:
+                _ = [c async for c in client.ainvoke_stream(messages="hi")]
+
+
+def _anthropic_stream_events() -> list[dict]:
+    """Anthropic messages streaming events as Bedrock delivers them."""
+    return [
+        {
+            "type": "message_start",
+            "message": {
+                "role": "assistant",
+                "content": [],
+                "usage": {"input_tokens": 12, "output_tokens": 1},
+            },
+        },
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "Hello"},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": " world"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {"output_tokens": 7},
+        },
+        {
+            "type": "message_stop",
+            "amazon-bedrock-invocationMetrics": {
+                "inputTokenCount": 12,
+                "outputTokenCount": 7,
+            },
+        },
+    ]
+
+
+class TestStreamingParsesAnthropicEvents:
+    """#3043: stream parsing follows the real event schema, keeps spaces, has usage."""
+
+    MODEL = "anthropic.claude-3-haiku-20240307-v1:0"
+
+    def test_invoke_stream_yields_delta_text_unstripped(self) -> None:
+        client = BedrockChatClient(
+            client=_mock_stream_client(*_anthropic_stream_events())
+        )
+
+        chunks = list(client.invoke_stream(model_id=self.MODEL, messages="hi"))
+
+        assert chunks == ["Hello", " world"]
+        assert "".join(chunks) == "Hello world"
+
+    def test_invoke_stream_final_response_has_text_and_usage(self) -> None:
+        client = BedrockChatClient(
+            client=_mock_stream_client(*_anthropic_stream_events())
+        )
+        gen = client.invoke_stream(model_id=self.MODEL, messages="hi")
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            final = stop.value
+
+        assert final.text == "Hello world"
+        assert final.usage == {"input_tokens": 12, "output_tokens": 7}
+        captured = get_captured_response()
+        assert captured.text == "Hello world"
+        assert captured.usage == {"input_tokens": 12, "output_tokens": 7}
+
+    def test_invoke_stream_usage_none_when_stream_reports_none(self) -> None:
+        events = [e for e in _anthropic_stream_events() if "delta" in e]
+        events = [e for e in events if e["type"] == "content_block_delta"]
+        client = BedrockChatClient(client=_mock_stream_client(*events))
+        gen = client.invoke_stream(model_id=self.MODEL, messages="hi")
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            final = stop.value
+
+        assert final.text == "Hello world"
+        assert final.usage is None
+
+    def test_invoke_stream_ignores_non_text_deltas(self) -> None:
+        events = [
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": "{"},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "x"},
+            },
+        ]
+        client = BedrockChatClient(client=_mock_stream_client(*events))
+
+        assert list(client.invoke_stream(model_id=self.MODEL, messages="hi")) == ["x"]
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_stream_native_path_matches_sync(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def mock_stream():
+            for event in _anthropic_stream_events():
+                yield {"chunk": {"bytes": json.dumps(event).encode()}}
+
+        mock_aioboto3 = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.invoke_model_with_response_stream = AsyncMock(
+            return_value={"body": mock_stream()}
+        )
+        context = AsyncMock()
+        context.__aenter__ = AsyncMock(return_value=mock_client)
+        context.__aexit__ = AsyncMock(return_value=None)
+        mock_aioboto3.Session.return_value.client.return_value = context
+        monkeypatch.setitem(__import__("sys").modules, "aioboto3", mock_aioboto3)
+
+        chunks = [
+            c
+            async for c in BedrockChatClient().ainvoke_stream(
+                model_id=self.MODEL, messages="hi"
+            )
+        ]
+
+        assert chunks == ["Hello", " world"]
+        captured = get_captured_response()
+        assert captured.text == "Hello world"
+        assert captured.usage == {"input_tokens": 12, "output_tokens": 7}
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+def test_non_finite_stream_usage_is_unmeasured_not_a_crash(literal: str) -> None:
+    """json.loads accepts NaN/Infinity; such a count must not abort the stream."""
+    from traigent.integrations.bedrock_client import _int_or_none, _StreamState
+
+    state = _StreamState()
+    event = json.loads(
+        '{"type": "message_delta", "usage": {"output_tokens": ' + literal + "}}"
+    )
+
+    assert state.feed(event) == ""
+    assert state.usage is None
+    assert _int_or_none(float(literal.lower().replace("infinity", "inf"))) is None

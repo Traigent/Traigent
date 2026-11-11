@@ -32,7 +32,7 @@
 - Use-case: Short QA with budget sensitivity.
 - Feature: Multi-objective optimization (accuracy vs cost).
 - Execution: Offline local
-- Injection: seamless (auto_override_frameworks=True)
+- Injection: seamless (auto_override_frameworks=True with framework_targets=[...])
 - Algorithm: bayesian
 - Dimensions:
   - `model`: ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"]
