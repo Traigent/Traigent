@@ -22,6 +22,7 @@ from traigent.hybrid.protocol import (
     HybridExecuteResponse,
     ServiceCapabilities,
 )
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 from traigent.utils.url_security import validate_outbound_url
 
 if TYPE_CHECKING:
@@ -159,7 +160,7 @@ class HybridTransport(Protocol):
         ...
 
 
-class TransportError(Exception):
+class TransportError(PicklableExceptionMixin, Exception):
     """Base exception for transport layer errors."""
 
     def __init__(

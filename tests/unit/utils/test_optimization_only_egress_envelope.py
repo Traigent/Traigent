@@ -701,7 +701,7 @@ class _OnceDict(dict):  # type: ignore[type-arg]
 def _gate_off(monkeypatch: pytest.MonkeyPatch) -> Any:
     tg.set_mode("off")
     yield
-    tg.set_mode("off")
+    tg.set_mode(None)
 
 
 def test_requests_path_sends_exactly_the_checked_bytes(
@@ -758,7 +758,7 @@ def test_mode_off_preflight_serializes_nothing(
     assert prepared.body == b'{"session_id": "s"}'
 
 
-def test_mode_off_aiohttp_wrapper_serializes_once_and_untouched() -> None:
+def test_mode_off_aiohttp_wrapper_serializes_once_and_untouched(_gate_off: Any) -> None:
     calls: list[int] = []
 
     def serializer(value: Any) -> str:

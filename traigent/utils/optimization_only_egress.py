@@ -45,6 +45,8 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 METADATA_CONTRACT_VERSION = 1
 CONTRACT_VERSION_KEY = "metadata_contract_version"
 
@@ -132,7 +134,7 @@ DEFAULT_FINALIZE_REASON = "sdk_explicit_finalization"
 DEFAULT_PROBLEM_STATEMENT = "optimization"
 
 
-class MetadataContractViolation(ValueError):
+class MetadataContractViolation(PicklableExceptionMixin, ValueError):
     """A flagged tenant's request broke the metadata contract. Carries no request data."""
 
     error_code = OPTIMIZATION_ONLY_METADATA_INVALID
@@ -2037,7 +2039,7 @@ class OptimizationOnlyConfigError(ValueError):
     """``TRAIGENT_OPTIMIZATION_ONLY`` (or the explicit argument) is not a recognised value."""
 
 
-class OptimizationOnlyRefusal(RuntimeError):
+class OptimizationOnlyRefusal(PicklableExceptionMixin, RuntimeError):
     """An operation the server refuses for ``optimization_only`` workspaces, refused locally.
 
     Raised BEFORE any transport call. Carries the operation name only, never request data.
@@ -2924,6 +2926,31 @@ FINALIZE_KEYS = frozenset(
 )
 #: Closed values of the finalize ``optimization_outcome`` member (#2853).
 FINALIZE_OUTCOMES = frozenset({"completed", "failed", "cancelled"})
+#: Closed stop-reason vocabulary for the internal finalize threading (#2508);
+#: mirrors ``traigent.api.types.StopReason`` (a unit test keeps them equal).
+#: NOT a wire key: ``stop_reason`` is not in ``FINALIZE_KEYS``.
+FINALIZE_STOP_REASONS = frozenset(
+    {
+        "max_trials_reached",
+        "max_samples_reached",
+        "timeout",
+        "cost_limit",
+        "execution_budget",
+        "metric_limit",
+        "optimizer",
+        "plateau",
+        "convergence",
+        "semantic_saturation",
+        "safety_constraint",
+        "safety_constraint_insufficient_evidence",
+        "no_usage_captured",
+        "user_cancelled",
+        "condition",
+        "error",
+        "vendor_error",
+        "network_error",
+    }
+)
 
 
 @dataclass(frozen=True)

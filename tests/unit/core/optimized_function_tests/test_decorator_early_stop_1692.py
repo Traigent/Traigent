@@ -236,3 +236,20 @@ class TestCallTimeOverridesDecorationTimePlateau:
             f"{result.stop_reason!r} with {len(result.trials)} trials"
         )
         assert len(result.trials) == _TOTAL_CONFIGS
+
+
+@pytest.mark.parametrize("window", [0, -1, 2.5, "3", True])
+def test_decorator_rejects_invalid_plateau_window_at_decoration(window: object) -> None:
+    """Invalid plateau_window fails at configuration, not mid-run."""
+    import traigent
+
+    with pytest.raises(ValueError, match="plateau_window"):
+
+        @traigent.optimize(
+            configuration_space={"x": [1, 2]},
+            objectives=["accuracy"],
+            plateau_window=window,
+            offline=True,
+        )
+        def fn(text: str) -> str:
+            return text

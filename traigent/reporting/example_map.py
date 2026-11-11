@@ -335,7 +335,7 @@ def _load_examples(path: Path) -> list[dict[str, Any]]:
 
 def _load_examples_from_jsonl(path: Path) -> list[dict[str, Any]]:
     examples: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as handle:
+    with path.open("r", encoding="utf-8-sig") as handle:
         for line_no, line in enumerate(handle, 1):
             stripped = line.strip()
             if not stripped:
@@ -354,7 +354,7 @@ def _load_examples_from_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _load_examples_from_json(path: Path) -> list[dict[str, Any]]:
     try:
-        with path.open("r", encoding="utf-8") as handle:
+        with path.open("r", encoding="utf-8-sig") as handle:
             payload = json.load(handle)
     except json.JSONDecodeError as exc:
         raise ValidationError(f"Invalid JSON in {path}: {exc}") from exc

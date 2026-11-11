@@ -2339,3 +2339,12 @@ def test_coverage_classifies_cost_not_usage_capture() -> None:
         assert "usage was captured" not in message
         assert "usage was missing" not in message
         assert "usage captured" not in message
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_validate_cost_limit_rejects_non_finite_3248(bad: float) -> None:
+    from traigent.core.cost_enforcement import validate_cost_limit
+    from traigent.utils.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="positive finite"):
+        validate_cost_limit(bad)

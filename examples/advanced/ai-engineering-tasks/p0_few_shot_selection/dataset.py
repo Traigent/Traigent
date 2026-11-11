@@ -298,7 +298,7 @@ def create_task_variations(
     # Create variations with different phrasings
     for i in range(num_variations):
         variation = FewShotTask(
-            query=f"{base_task.query} (Variation {i+1})",
+            query=f"{base_task.query} (Variation {i + 1})",
             expected_output=base_task.expected_output,
             task_type=base_task.task_type,
             domain=base_task.domain,

@@ -666,3 +666,35 @@ def test_retry_flags_cover_http_client_exceptions(flag, error):
     )
     result = handler.execute_with_result(Mock(side_effect=error))
     assert result.attempts == 1
+
+
+class TestMaxDelayCapAfterJitter:
+    """#3227: jitter must never push a delay past max_delay."""
+
+    @pytest.mark.parametrize("strategy", ["fixed", "exponential", "linear", "jitter"])
+    def test_delay_never_exceeds_max_delay(self, strategy):
+        from traigent.utils.retry import RetryConfig
+
+        cfg = RetryConfig(
+            strategy=strategy, initial_delay=10.0, max_delay=10.0, jitter=True
+        )
+        assert max(cfg.calculate_delay(10) for _ in range(500)) <= 10.0
+
+    def test_fixed_strategy_honours_cap(self):
+        from traigent.utils.retry import RetryConfig
+
+        cfg = RetryConfig(strategy="fixed", initial_delay=30.0, max_delay=10.0)
+        assert cfg.calculate_delay(1) <= 10.0
+
+    def test_huge_attempt_does_not_overflow(self):
+        from traigent.utils.retry import RetryConfig
+
+        cfg = RetryConfig(initial_delay=1.0, max_delay=10.0, jitter=True)
+        assert cfg.calculate_delay(5000) <= 10.0
+
+
+def test_zero_initial_delay_huge_attempt_stays_zero():
+    from traigent.utils.retry import RetryConfig
+
+    cfg = RetryConfig(initial_delay=0.0, max_delay=10.0, jitter=False)
+    assert cfg.calculate_delay(5000) == 0.0

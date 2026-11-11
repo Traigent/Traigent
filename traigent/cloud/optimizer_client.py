@@ -10,6 +10,7 @@ from typing import Any, cast
 import backoff
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.cloud._detached_raise import raise_detached
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.core.session_types import safe_http_error_summary
@@ -489,11 +490,11 @@ class OptimizerDirectClient:
 
         except aiohttp.ClientResponseError as e:
             if e.status == 401:
-                raise ValueError(
-                    "Authentication failed - token may be expired"
-                ) from None
+                raise_detached(
+                    ValueError("Authentication failed - token may be expired")
+                )
             elif e.status == 403:
-                raise ValueError("Session ID mismatch or access denied") from e
+                raise_detached(ValueError("Session ID mismatch or access denied"))
             else:
                 raise
 
@@ -534,11 +535,11 @@ class OptimizerDirectClient:
 
         except aiohttp.ClientResponseError as e:
             if e.status == 401:
-                raise ValueError(
-                    "Authentication failed - token may be expired"
-                ) from None
+                raise_detached(
+                    ValueError("Authentication failed - token may be expired")
+                )
             elif e.status == 403:
-                raise ValueError("Session ID mismatch or access denied") from e
+                raise_detached(ValueError("Session ID mismatch or access denied"))
             else:
                 raise
 

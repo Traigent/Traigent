@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from traigent.api.types import TrialResult
+from traigent.evaluators.base import OBJECTIVE_SOURCE_METRICS
+from traigent.utils.logging import get_logger
 from traigent.utils.objectives import (
     classify_objective,
     coerce_finite_objective_score,
@@ -31,6 +33,8 @@ __all__ = [
 TieBreaker = Literal["min_abs_deviation", "custom"]
 ComparabilityMode = Literal["legacy", "warn", "strict"]
 NO_RANKING_ELIGIBLE_TRIALS = "NO_RANKING_ELIGIBLE_TRIALS"
+
+logger = get_logger(__name__)
 NO_CERTIFIED_SELECTION = "NO_CERTIFIED_SELECTION"
 PRIMARY_SCORE_TIE_REL_TOL = 1e-9
 PRIMARY_SCORE_TIE_ABS_TOL = 1e-12
@@ -413,6 +417,24 @@ def _lookup_per_metric_coverage(
     return present, total_examples, float(ratio or 0.0)
 
 
+def _count_timed_rows(trial: TrialResult) -> tuple[int, int]:
+    """Return (rows with execution_time > 0, total rows) from trial metadata."""
+    metadata = getattr(trial, "metadata", {}) or {}
+    rows = metadata.get("example_results")
+    if not isinstance(rows, list):
+        return 0, 0
+    timed = 0
+    for row in rows:
+        value = (
+            row.get("execution_time")
+            if isinstance(row, dict)
+            else getattr(row, "execution_time", None)
+        )
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            timed += 1 if value > 0 else 0
+    return timed, len(rows)
+
+
 def _resolve_primary_coverage(
     trial: TrialResult,
     comparability: dict[str, Any],
@@ -435,11 +457,24 @@ def _resolve_primary_coverage(
 
     per_metric = comparability.get("per_metric_coverage")
     if isinstance(per_metric, dict):
-        result = _lookup_per_metric_coverage(
-            per_metric, objective_key, objective_key_lower, total_examples
-        )
-        if result is not None:
-            return result
+        for name in (
+            objective_key,
+            *OBJECTIVE_SOURCE_METRICS.get(objective_key_lower, ()),
+        ):
+            result = _lookup_per_metric_coverage(
+                per_metric, name, name.lower(), total_examples
+            )
+            if result is not None:
+                return result
+
+    if objective_key_lower == "latency":
+        # The trial latency averages only timed rows, so the aggregate's
+        # existence says nothing about coverage: count timed rows, and when
+        # the rows are unavailable do not claim full coverage.
+        timed, rows = _count_timed_rows(trial)
+        if rows > 0:
+            return timed, rows, timed / rows
+        return 0, total_examples, 0.0
 
     primary_value = trial.get_metric(objective_key)
     if primary_value is not None and total_examples > 0:
@@ -506,6 +541,28 @@ def _is_ranking_eligible(
         return False, False, blocking
 
     return True, False, []
+
+
+def _warn_no_ranking_eligible(
+    trials: list[TrialResult],
+    primary_objective: str,
+    comparability_mode: ComparabilityMode,
+) -> None:
+    """Log once that no trial could be ranked, naming the dominant reason."""
+    reasons: dict[str, int] = {}
+    for trial in trials:
+        for code in _is_ranking_eligible(trial, primary_objective, comparability_mode)[
+            2
+        ]:
+            reasons[code] = reasons.get(code, 0) + 1
+    top = max(reasons, key=lambda code: reasons[code]) if reasons else "unknown"
+    logger.warning(
+        "No ranking-eligible trial for primary objective '%s' (%d trials "
+        "excluded; most common reason %s); no best configuration was selected.",
+        primary_objective,
+        len(trials),
+        top,
+    )
 
 
 def _build_ranking_summary(
@@ -1418,6 +1475,9 @@ def select_best_configuration(
     )
 
     if not eligible_trials:
+        _warn_no_ranking_eligible(
+            successful_trials, primary_objective, comparability_mode
+        )
         return SelectionResult(
             best_config=None,
             best_score=None,

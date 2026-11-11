@@ -7,8 +7,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from traigent.api.decorators import optimize
-from traigent.core.optimized_function import OptimizedFunction
 from traigent.core.objectives import create_default_objectives
+from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import ConfigurationError
 
@@ -143,6 +143,7 @@ class TestOptimizeDecorator:
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.hybrid_api_transport is transport
 
+    @pytest.mark.usefixtures("connected_policy_env")
     def test_decorator_execution_mode_registry_matches_runtime(self):
         """Decorator validation accepts the same modes advertised by runtime."""
         import warnings

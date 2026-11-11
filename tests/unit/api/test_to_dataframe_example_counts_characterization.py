@@ -169,7 +169,7 @@ def test_falsey_single_key_is_present_without_summary(value: Any) -> None:
     assert "example_success_summary" not in df.columns
 
 
-def test_metadata_overwrites_metrics_key_without_moving_position() -> None:
+def test_metadata_count_does_not_overwrite_same_named_metric() -> None:
     df = _df(
         {"successful_examples": 3, "examples_attempted": 5},
         metrics={"successful_examples": 99, "accuracy": 0.5},
@@ -177,15 +177,17 @@ def test_metadata_overwrites_metrics_key_without_moving_position() -> None:
     assert list(df.columns) == [
         *BASE_COLUMNS,
         "model",
-        "successful_examples",
+        "metric.successful_examples",
         "accuracy",
         "avg_response_time",
         "avg_response_time_ms",
+        "successful_examples",
         "examples_attempted",
         "example_success_summary",
         "total_cost",
     ]
     assert df.loc[0, "successful_examples"] == 3
+    assert df.loc[0, "metric.successful_examples"] == 99
 
 
 def test_metadata_none_and_empty_behave_alike() -> None:
@@ -223,15 +225,13 @@ def test_multiple_trials_each_row_independent() -> None:
 # ---------------------------------------------- cost branch left unchanged
 
 
-def test_total_example_cost_overrides_metrics_total_cost_in_place() -> None:
+def test_total_example_cost_wins_derived_column_and_metric_stays_reachable() -> None:
     df = _df(
         {"total_example_cost": 7.0, "successful_examples": 1, "examples_attempted": 1},
         metrics={"total_cost": 1.5, "accuracy": 0.5},
     )
     assert df.loc[0, "total_cost"] == 7.0
-    assert list(df.columns).index("total_cost") < list(df.columns).index(
-        "avg_response_time"
-    )
+    assert df.loc[0, "metric.total_cost"] == 1.5
 
 
 def test_metrics_total_cost_kept_without_metadata_cost() -> None:

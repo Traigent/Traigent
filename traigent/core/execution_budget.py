@@ -275,7 +275,12 @@ def _validate_positive(value: object, name: str) -> float | None:
             f"{name} must be a positive number, got {value!r} ({type(value).__name__})."
         )
     numeric = float(value)
-    if math.isnan(numeric) or numeric <= 0:  # NaN or non-positive
+    if not math.isfinite(numeric):
+        raise ConfigurationError(
+            f"{name} must be a positive finite number, got {numeric!r}. "
+            "Leave it unset (None) to leave that dimension unbounded."
+        )
+    if numeric <= 0:  # non-positive
         raise ConfigurationError(
             f"{name} must be > 0, got {numeric!r}. A nonpositive limit would "
             "block every trial before it starts (silent 0-trial run). Leave it "

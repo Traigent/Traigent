@@ -206,9 +206,14 @@ def _read_bool_env(name: str) -> bool:
 
 
 def is_traigent_offline_requested() -> bool:
-    """Return whether ``TRAIGENT_OFFLINE`` requests zero-egress local mode."""
+    """Return whether ``TRAIGENT_OFFLINE`` or ``TRAIGENT_OFFLINE_MODE`` requests
+    zero-egress local mode.
 
-    return _read_bool_env("TRAIGENT_OFFLINE")
+    Both spellings are equivalent, matching ``is_backend_offline()`` (the
+    transport gate), so the execution policy and the egress gate agree (#1773).
+    """
+
+    return _read_bool_env("TRAIGENT_OFFLINE") or _read_bool_env("TRAIGENT_OFFLINE_MODE")
 
 
 def is_content_identity_requested() -> bool:
@@ -616,7 +621,10 @@ def resolve_execution_policy(
     if offline_requested and is_smart_algorithm(normalized_algorithm):
         raise ConfigurationError(
             f"algorithm={normalized_algorithm!r} requires managed optimization and "
-            "cannot be used with offline=True or TRAIGENT_OFFLINE=1."
+            "cannot be used with offline=True, TRAIGENT_OFFLINE=1 or "
+            "TRAIGENT_OFFLINE_MODE=1. Use algorithm='grid' or 'random' for "
+            "local-only runs, or unset the offline setting to use managed "
+            "optimization."
         )
 
     if offline_requested:

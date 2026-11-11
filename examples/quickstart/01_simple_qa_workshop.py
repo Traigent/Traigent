@@ -33,60 +33,6 @@ except ImportError:
 
 from traigent.api.decorators import EvaluationOptions
 
-# Workaround: the SDK's comprehensive-metrics merge overwrites custom
-# metric_functions values (e.g. "cost") with the built-in LLM cost tracker
-# which is $0 when no real API calls are made. Patch to protect custom keys.
-import math as _math
-import traigent.evaluators.local as _le
-
-
-def _patched_merge(self, aggregated_metrics, comprehensive_metrics):
-    custom_keys = set(self.metric_functions) if self.metric_functions else set()
-    if "cost" in (self.metrics or []) and "cost" in comprehensive_metrics:
-        agg_cost = float(aggregated_metrics.get("cost", 0.0) or 0.0)
-        comp_cost = float(comprehensive_metrics["cost"])
-        if _math.isclose(agg_cost, 0.0, abs_tol=1e-9) and not _math.isclose(
-            comp_cost, 0.0, abs_tol=1e-9
-        ):
-            aggregated_metrics["cost"] = comp_cost
-    for key, value in comprehensive_metrics.items():
-        if value is None:
-            continue
-        if (
-            key in {"accuracy", "score"}
-            and key in aggregated_metrics
-            and aggregated_metrics[key] not in (None, 0.0)
-        ):
-            continue
-        if key in custom_keys and key in aggregated_metrics:
-            continue
-        aggregated_metrics[key] = value
-
-
-_le.LocalEvaluator._merge_comprehensive_metrics = _patched_merge
-
-
-def _patched_agg(self, example_results, tracker_example_metrics=None):
-    aggregated = {}
-    for metric_name in self.metric_functions:
-        values = []
-        for result in example_results:
-            if result is None:
-                continue
-            v = result.metrics.get(metric_name)
-            if v is not None:
-                values.append(float(v))
-        if not values and tracker_example_metrics:
-            for em in tracker_example_metrics:
-                v = em.custom_metrics.get(metric_name)
-                if v is not None:
-                    values.append(float(v))
-        aggregated[metric_name] = (sum(values) / len(values)) if values else 0.0
-    return aggregated
-
-
-_le.LocalEvaluator._compute_aggregated_custom_metrics = _patched_agg
-
 # ---------------------------------------------------------------------------
 # Inline dataset (mirrors traigent-js/examples/datasets/simple_questions.jsonl)
 # ---------------------------------------------------------------------------
@@ -155,12 +101,20 @@ def _normalize(text: str) -> str:
 
 def exact_match(output: str, expected: str) -> float:
     """1.0 if normalised output contains the normalised expected answer."""
+    # Inside a trial, traigent.with_usage wraps the answer in a {"text": ...}
+    # envelope; unwrap it before scoring.
+    if isinstance(output, dict):
+        output = output.get("text") or ""
     return 1.0 if _normalize(expected) in _normalize(output) else 0.0
 
 
-def cost_metric(input_data: dict) -> float:
-    """Simulated cost: 0.12 for 'capital' questions, 0.05 otherwise."""
-    return 0.12 if "capital" in input_data.get("question", "") else 0.05
+def simulated_cost(question: str) -> float:
+    """Simulated per-call cost in USD: 0.0012 for 'capital' questions, else 0.0005.
+
+    Kept small so a 9-trial x 20-example run stays far below the default cost
+    limit; these are synthetic numbers, not real spend.
+    """
+    return 0.0012 if "capital" in question else 0.0005
 
 
 # ---------------------------------------------------------------------------
@@ -175,22 +129,27 @@ def cost_metric(input_data: dict) -> float:
     evaluation=EvaluationOptions(
         eval_dataset=DATASET,
         scoring_function=exact_match,
-        metric_functions={"cost": cost_metric},
     ),
     offline=True,
 )
 def answer_question(question: str) -> str:
-    """Deterministic mock agent -- no LLM calls."""
+    """Deterministic mock agent -- no LLM calls.
+
+    The simulated cost is reported through ``traigent.with_usage`` (the same
+    supported mechanism the real-model quickstarts use), so strict cost
+    accounting sees a cost for every call.
+    """
     cfg = traigent.get_config()
     model = cfg["model"]
 
     if model == "accurate":
-        return "Paris" if "capital" in question else "4"
+        answer = "Paris" if "capital" in question else "4"
+    elif model == "balanced" and "2+2" in question:
+        answer = "4"
+    else:
+        answer = "unknown"
 
-    if model == "balanced" and "2+2" in question:
-        return "4"
-
-    return "unknown"
+    return traigent.with_usage(answer, total_cost=simulated_cost(question))
 
 
 # ---------------------------------------------------------------------------

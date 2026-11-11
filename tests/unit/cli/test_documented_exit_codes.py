@@ -63,6 +63,17 @@ def files(
     yield paths
 
 
+@pytest.fixture(autouse=True)
+def _restore_mock_mode() -> Iterator[None]:
+    """`quickstart` turns the process-global mock flag on; put it back."""
+    from traigent.testing import disable_mock_mode, is_mock_mode_enabled
+
+    was_enabled = is_mock_mode_enabled()
+    yield
+    if not was_enabled:
+        disable_mock_mode()
+
+
 def _exit(args: list[str]) -> int:
     result = CliRunner().invoke(cli, args)
     return result.exit_code

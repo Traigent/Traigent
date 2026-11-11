@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 import uuid
 from contextlib import suppress
@@ -61,6 +62,9 @@ _storage_lock = storage_lock
 
 
 # Cost Tracking Enums and Classes (from cost_tracking.py)
+
+
+_CACHE_WRITE_LOCK = threading.Lock()
 
 
 class CostCategory(Enum):
@@ -1100,12 +1104,35 @@ class CostTracker:
 
         # Cache locally if enabled
         if self.config.cache_costs_locally:
-            cache_task = asyncio.create_task(self._cache_cost_item(cost_item))
-            self._register_background_task(cache_task)
+            self._schedule_local_cache(cost_item)
 
         # Check for cost alerts
         if self.config.enable_real_time_alerts:
             self._check_cost_alerts()
+
+    def _schedule_local_cache(self, cost_item: CostItem) -> None:
+        """Persist ``cost_item`` to the local cache without ever raising.
+
+        The cost is already recorded when this runs, so a failure here must not
+        propagate: a caller retry would double count it (Traigent#3246). Inside
+        a running loop the write is scheduled as a background task; outside one
+        it runs to completion synchronously.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            try:
+                asyncio.run(self._cache_cost_item(cost_item))
+            except Exception:
+                logger.warning("Local cost cache write failed", exc_info=True)
+            return
+        coro = self._cache_cost_item(cost_item)
+        try:
+            cache_task = asyncio.create_task(coro)
+            self._register_background_task(cache_task)
+        except Exception:
+            coro.close()
+            logger.warning("Could not schedule local cost cache write", exc_info=True)
 
     def _add_session_cost_item(self, cost_item: CostItem) -> None:
         """Group ``cost_item`` under its session, enforcing the session bounds.
@@ -1393,30 +1420,32 @@ class CostTracker:
             cache_path = Path(self.config.cost_cache_file)
             cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Load existing cache
-            cached_items = []
-            if cache_path.exists():
-                cached_items = _read_json_file(cache_path)
+            # Serialize the read-modify-write across threads and loops (#3246).
+            with _CACHE_WRITE_LOCK:
+                # Load existing cache
+                cached_items = []
+                if cache_path.exists():
+                    cached_items = _read_json_file(cache_path)
 
-            # Add new item
-            cached_items.append(
-                {
-                    "item_id": cost_item.item_id,
-                    "category": cost_item.category.value,
-                    "description": cost_item.description,
-                    "quantity": cost_item.quantity,
-                    "unit_cost": cost_item.unit_cost,
-                    "total_cost": cost_item.total_cost,
-                    "currency": cost_item.currency,
-                    "timestamp": cost_item.timestamp,
-                    "session_id": cost_item.session_id,
-                    "trial_id": cost_item.trial_id,
-                    "metadata": cost_item.metadata,
-                }
-            )
+                # Add new item
+                cached_items.append(
+                    {
+                        "item_id": cost_item.item_id,
+                        "category": cost_item.category.value,
+                        "description": cost_item.description,
+                        "quantity": cost_item.quantity,
+                        "unit_cost": cost_item.unit_cost,
+                        "total_cost": cost_item.total_cost,
+                        "currency": cost_item.currency,
+                        "timestamp": cost_item.timestamp,
+                        "session_id": cost_item.session_id,
+                        "trial_id": cost_item.trial_id,
+                        "metadata": cost_item.metadata,
+                    }
+                )
 
-            # Save cache
-            _write_json_file(cache_path, cached_items)
+                # Save cache
+                _write_json_file(cache_path, cached_items)
 
         except Exception as e:
             logger.warning(f"Failed to cache cost item: {e}")

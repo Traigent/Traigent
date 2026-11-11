@@ -1080,8 +1080,8 @@ class TraigentService:
 
         if tunable_id != self.config.tunable_id:
             raise ValueError(
-                f"tunable_id mismatch: request has '{tunable_id}', "
-                f"service is '{self.config.tunable_id}'"
+                "tunable_id mismatch: the request's tunable_id does not match "
+                f"this service ('{self.config.tunable_id}')"
             )
 
         max_batch = self.config.max_batch_size
@@ -1352,8 +1352,8 @@ class TraigentService:
 
         if tunable_id != self.config.tunable_id:
             raise ValueError(
-                f"tunable_id mismatch: request has '{tunable_id}', "
-                f"service is '{self.config.tunable_id}'"
+                "tunable_id mismatch: the request's tunable_id does not match "
+                f"this service ('{self.config.tunable_id}')"
             )
 
     def _invoke_evaluate_handler(
@@ -1511,7 +1511,15 @@ class TraigentService:
     def _compute_aggregate_metrics(
         self, metrics_list: list[dict[str, float]]
     ) -> dict[str, dict[str, float | int]]:
-        """Compute aggregate statistics (mean, std, n) for each metric."""
+        """Compute wire aggregate statistics (mean, std, n) for each metric.
+
+        The published hybrid schemas (docs/hybrid-mode-schemas.json,
+        docs/hybrid-mode-openapi.yaml) require ``std`` to be a number, so a
+        single observation (n == 1) is emitted as 0.0 on the wire. Sample std
+        is undefined there; the client-side describe statistics
+        (``hybrid_api.py``) keep it as None internally. A nullable ``std`` is a
+        later cross-repo schema change.
+        """
         if not metrics_list:
             return {}
 

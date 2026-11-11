@@ -53,6 +53,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 if TYPE_CHECKING:
     from traigent.api.parameter_ranges import ParameterRange
     from traigent.tvl.models import StructuralConstraint
@@ -71,7 +73,7 @@ _IMPLICATION_REQUIRES_WHEN_THEN = (
 # =============================================================================
 
 
-class ConstraintScopeError(ValueError):
+class ConstraintScopeError(PicklableExceptionMixin, ValueError):
     """Raised when a constraint references a TVAR not in the ConfigSpace scope.
 
     This error indicates that a constraint uses a ParameterRange (TVAR) that
@@ -183,6 +185,18 @@ class BoolExpr(ABC):
             True if the expression is satisfied
         """
         ...
+
+    def _evaluate_tristate(
+        self, config: dict[str, Any], var_names: dict[int, str]
+    ) -> bool | None:
+        """Three-valued evaluation: True, False, or None (unknown).
+
+        ``None`` means a referenced parameter is missing from the config or
+        cannot be resolved. Negation and implication propagate unknown so that
+        it stays a failure (fail-closed) instead of being flipped to a pass.
+        Subclasses with no notion of unknown fall back to ``evaluate_config``.
+        """
+        return self.evaluate_config(config, var_names)
 
     def __rshift__(self, other: BoolExpr) -> Constraint:
         """Implication operator: self >> other means 'self implies other'.
@@ -333,10 +347,10 @@ class Condition(BoolExpr):
             # Numeric comparisons: >, >=, <, <=
             return f"{var_name} {self.operator} {self.value}"
 
-    def evaluate_config(
+    def _evaluate_tristate(
         self, config: dict[str, Any], var_names: dict[int, str]
-    ) -> bool:
-        """Evaluate against a configuration.
+    ) -> bool | None:
+        """Evaluate against a configuration, returning None when unknown.
 
         Uses id-based lookup first, then falls back to name-based lookup
         to support cross-boundary scenarios (pickle, deepcopy, cross-space).
@@ -361,12 +375,22 @@ class Condition(BoolExpr):
                     var_name = self.tvar.name
             if var_name is None:
                 # Cannot resolve variable — fail-closed
-                return False
+                return None
         if var_name not in config:
             # Parameter missing from config — fail-closed rather than
             # silently satisfying the constraint
-            return False
+            return None
         return self.evaluate(config[var_name])
+
+    def evaluate_config(
+        self, config: dict[str, Any], var_names: dict[int, str]
+    ) -> bool:
+        """Evaluate against a configuration.
+
+        Returns False (fail-closed) when the parameter cannot be resolved
+        or is missing from the config.
+        """
+        return self._evaluate_tristate(config, var_names) is True
 
     def evaluate(self, value: Any) -> bool:
         """Evaluate this condition against a concrete value.
@@ -478,7 +502,19 @@ class AndCondition(BoolExpr):
         Returns:
             True if all conditions are satisfied.
         """
-        return all(c.evaluate_config(config, var_names) for c in self.conditions)
+        return self._evaluate_tristate(config, var_names) is True
+
+    def _evaluate_tristate(
+        self, config: dict[str, Any], var_names: dict[int, str]
+    ) -> bool | None:
+        unknown = False
+        for c in self.conditions:
+            result = c._evaluate_tristate(config, var_names)
+            if result is False:
+                return False  # short-circuit on a definite false
+            if result is None:
+                unknown = True
+        return None if unknown else True
 
     def explain(self, var_names: dict[int, str] | None = None) -> str:
         """Return plain English explanation of this conjunction."""
@@ -526,7 +562,19 @@ class OrCondition(BoolExpr):
         Returns:
             True if any condition is satisfied.
         """
-        return any(c.evaluate_config(config, var_names) for c in self.conditions)
+        return self._evaluate_tristate(config, var_names) is True
+
+    def _evaluate_tristate(
+        self, config: dict[str, Any], var_names: dict[int, str]
+    ) -> bool | None:
+        unknown = False
+        for c in self.conditions:
+            result = c._evaluate_tristate(config, var_names)
+            if result is True:
+                return True  # short-circuit on a definite true
+            if result is None:
+                unknown = True
+        return None if unknown else False
 
     def explain(self, var_names: dict[int, str] | None = None) -> str:
         """Return plain English explanation of this disjunction."""
@@ -567,9 +615,16 @@ class NotCondition(BoolExpr):
             var_names: Mapping from ParameterRange id() to config key.
 
         Returns:
-            True if the inner condition is NOT satisfied.
+            True if the inner condition is definitely NOT satisfied. A missing
+            or unresolved parameter stays a failure (fail-closed) under NOT.
         """
-        return not self.condition.evaluate_config(config, var_names)
+        return self._evaluate_tristate(config, var_names) is True
+
+    def _evaluate_tristate(
+        self, config: dict[str, Any], var_names: dict[int, str]
+    ) -> bool | None:
+        inner = self.condition._evaluate_tristate(config, var_names)
+        return None if inner is None else not inner
 
     def explain(self, var_names: dict[int, str] | None = None) -> str:
         """Return plain English explanation of this negation."""
@@ -679,17 +734,20 @@ class Constraint:
             True if the constraint is satisfied
         """
         if self.expr is not None:
-            return self.expr.evaluate_config(config, var_names)
+            return self.expr._evaluate_tristate(config, var_names) is True
 
         # Implication: not(when) or then
         if self.when is None or self.then is None:
             raise ValueError(_IMPLICATION_REQUIRES_WHEN_THEN)
 
-        when_result = self.when.evaluate_config(config, var_names)
-        if not when_result:
+        when_result = self.when._evaluate_tristate(config, var_names)
+        if when_result is False:
             return True  # When is false, implication is satisfied
+        if when_result is None:
+            # Guard unknown (missing/unresolved parameter): fail closed
+            return False
 
-        return self.then.evaluate_config(config, var_names)
+        return self.then._evaluate_tristate(config, var_names) is True
 
     def explain(self, var_names: dict[int, str] | None = None) -> str:
         """Return a plain English explanation of this constraint.

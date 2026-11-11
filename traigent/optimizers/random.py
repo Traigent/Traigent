@@ -12,8 +12,9 @@ from traigent.api.types import TrialResult
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.discrete_domains import (
     discrete_values_for_config_param,
-    stepped_float_values,
-    stepped_int_values,
+    sample_stepped_float,
+    sample_stepped_int,
+    uniform_within,
 )
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
@@ -50,6 +51,8 @@ class RandomSearchOptimizer(BaseOptimizer):
         ... )
     """
 
+    _honours_seed = True
+
     def __init__(
         self,
         config_space: dict[str, Any],
@@ -57,6 +60,7 @@ class RandomSearchOptimizer(BaseOptimizer):
         max_trials: int = 100,
         random_seed: int | None = None,
         context=None,
+        seed: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize random search optimizer.
@@ -69,9 +73,22 @@ class RandomSearchOptimizer(BaseOptimizer):
             random_seed: Random seed for reproducibility. If provided, the same
                 sequence of configurations will be generated across runs.
             context: Optional TraigentConfig for accessing global configuration.
+            seed: Alias for ``random_seed`` (the name ``.optimize(seed=...)``
+                users reach for). Supplying both with different values raises
+                ``ValueError``.
             **kwargs: Additional arguments passed to BaseOptimizer
                 (e.g., ``objective_weights``).
         """
+        if seed is not None and random_seed is not None and seed != random_seed:
+            raise ValueError(
+                "seed and random_seed are aliases but were given different "
+                f"values ({seed!r} vs {random_seed!r}); pass only one."
+            )
+        if random_seed is None:
+            random_seed = seed
+        # Keep ``seed`` in algorithm_config so run metadata records it.
+        if seed is not None:
+            kwargs["seed"] = seed
         super().__init__(config_space, objectives, context, **kwargs)
 
         self.max_trials = max_trials
@@ -208,6 +225,14 @@ class RandomSearchOptimizer(BaseOptimizer):
             raise OptimizationError(
                 f"Integer parameter '{param_name}' requires integral low/high bounds"
             )
+        # Keep exact integers as-is: a float round trip loses precision above 2**53.
+        raw_low, raw_high = param_def["low"], param_def["high"]
+        exact_ints = (
+            isinstance(raw_low, int)
+            and isinstance(raw_high, int)
+            and not isinstance(raw_low, bool)
+            and not isinstance(raw_high, bool)
+        )
 
         step_raw = param_def.get("step", 1)
         if step_raw is None:
@@ -223,19 +248,23 @@ class RandomSearchOptimizer(BaseOptimizer):
                 f"Invalid step for integer parameter '{param_name}': {step_raw}"
             )
 
-        low_i, high_i, int_step = int(low_f), int(high_f), max(int(step_f), 1)
+        low_i: int
+        high_i: int
+        if exact_ints:
+            low_i, high_i = int(raw_low), int(raw_high)
+        else:
+            low_i, high_i = int(low_f), int(high_f)
+        int_step = max(int(step_f), 1)
         if low_i > high_i:
             raise OptimizationError(
                 f"Invalid integer range for parameter '{param_name}': "
                 f"low ({low_i}) must be <= high ({high_i})"
             )
 
-        values = stepped_int_values(low_i, high_i, int_step)
-        if not values:
-            raise OptimizationError(
-                f"Invalid integer range for parameter '{param_name}': no values"
-            )
-        return self._random.choice(values)
+        # Pick a grid index arithmetically instead of materializing the grid, so
+        # a wide step-less IntRange costs O(1) per sample. The grid is low,
+        # low+step, ... plus the inclusive high endpoint when it is off-grid.
+        return sample_stepped_int(self._random, low_i, high_i, int_step)
 
     def _sample_range_float(self, param_name: str, param_def: dict) -> float:
         """Sample a float value from a range-dict definition."""
@@ -263,14 +292,13 @@ class RandomSearchOptimizer(BaseOptimizer):
                 raise OptimizationError(
                     f"Invalid step for float parameter '{param_name}': {step}"
                 )
-            values = stepped_float_values(low_f, high_f, step)
-            if not values:
+            try:
+                return sample_stepped_float(self._random, low_f, high_f, step)
+            except ValueError as exc:
                 raise OptimizationError(
-                    f"Invalid float range for parameter '{param_name}': no values"
-                )
-            return self._random.choice(values)
-        val = self._random.uniform(low_f, high_f)
-        return round(val, 6)
+                    f"Invalid float range for parameter '{param_name}': {exc}"
+                ) from exc
+        return uniform_within(self._random, low_f, high_f)
 
     def _sample_parameter(self, param_name: str, param_def: Any) -> Any:
         """Sample a single parameter value.

@@ -71,6 +71,7 @@ from traigent.utils.exceptions import (
 from traigent.utils.logging import get_logger
 from traigent.utils.pagination import iter_pages
 from traigent.utils.retry import CLOUD_API_RETRY_CONFIG, RetryHandler
+from traigent.utils.url_segments import quote_path_segment
 
 logger = get_logger(__name__)
 
@@ -3308,7 +3309,9 @@ class ObservabilityClient:
         )
 
     def list_comments(self, trace_id: str) -> TraceCommentsResponse:
-        payload = self._request_json("GET", f"/traces/{trace_id}/comments")
+        payload = self._request_json(
+            "GET", f"/traces/{quote_path_segment(trace_id, field='trace_id')}/comments"
+        )
         return TraceCommentsResponse.from_dict(
             self._unwrap_data(payload, "trace comments")
         )
@@ -3363,7 +3366,7 @@ class ObservabilityClient:
                 gated_content = _REDACTED
         payload = self._request_json(
             "POST",
-            f"/traces/{trace_id}/comments",
+            f"/traces/{quote_path_segment(trace_id, field='trace_id')}/comments",
             {"content": gated_content},
         )
         return TraceCommentRecord.from_dict(self._unwrap_data(payload, "trace comment"))
@@ -3460,7 +3463,7 @@ class ObservabilityClient:
 
         payload = self._request_json(
             "PUT",
-            f"/traces/{trace_id}/feedback",
+            f"/traces/{quote_path_segment(trace_id, field='trace_id')}/feedback",
             feedback_payload,
         )
         return TraceFeedbackResponse.from_dict(
@@ -3476,7 +3479,7 @@ class ObservabilityClient:
     ) -> TraceCollaborationState:
         payload = self._request_json(
             "PATCH",
-            f"/traces/{trace_id}/collaboration",
+            f"/traces/{quote_path_segment(trace_id, field='trace_id')}/collaboration",
             {
                 "is_bookmarked": is_bookmarked,
                 "is_published": is_published,
@@ -3572,11 +3575,16 @@ class ObservabilityClient:
         )
 
     def get_trace(self, trace_id: str) -> TraceRecord:
-        payload = self._request_json("GET", f"/traces/{trace_id}")
+        payload = self._request_json(
+            "GET", f"/traces/{quote_path_segment(trace_id, field='trace_id')}"
+        )
         return TraceRecord.from_dict(self._unwrap_data(payload, "trace detail"))
 
     def get_trace_observations(self, trace_id: str) -> TraceObservationsResponse:
-        payload = self._request_json("GET", f"/traces/{trace_id}/observations")
+        payload = self._request_json(
+            "GET",
+            f"/traces/{quote_path_segment(trace_id, field='trace_id')}/observations",
+        )
         return TraceObservationsResponse.from_dict(
             self._unwrap_data(payload, "trace observations")
         )
@@ -3645,7 +3653,9 @@ class ObservabilityClient:
         )
 
     def get_session(self, session_id: str) -> SessionRecord:
-        payload = self._request_json("GET", f"/sessions/{session_id}")
+        payload = self._request_json(
+            "GET", f"/sessions/{quote_path_segment(session_id, field='session_id')}"
+        )
         return SessionRecord.from_dict(self._unwrap_data(payload, "session detail"))
 
     def _create_transport(self) -> _SyncBatchTransport:

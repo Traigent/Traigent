@@ -82,7 +82,13 @@ def validate_cost_limit(limit: object) -> float:
             f"({type(limit).__name__})."
         )
     value = float(limit)
-    if math.isnan(value) or value <= 0:
+    if not math.isfinite(value):
+        raise ConfigurationError(
+            f"cost limit must be a positive finite number of USD, got {value!r}. "
+            "Leave it unset to use the default "
+            f"{format_usd(DEFAULT_COST_LIMIT_USD)}."
+        )
+    if value <= 0:
         raise ConfigurationError(
             f"cost limit must be > 0 USD, got {value!r}. A nonpositive limit "
             "would block every planned trial before it starts (silent 0-trial "
@@ -1159,6 +1165,7 @@ Options:
         unmeasured_examples: Sequence[str] | None = None,
         missing_usage_examples: int | None = None,
         attempted_examples: int | None = None,
+        vendor_error_only: bool = False,
     ) -> None:
         """Track actual cost after each trial (thread-safe).
 
@@ -1185,6 +1192,11 @@ Options:
             attempted_examples: Complete count of example attempts in this
                 trial, or None when not known. Both counts are needed for the
                 end-of-run message to distinguish partial from missing usage.
+            vendor_error_only: True when the trial failed and every call whose
+                cost is unknown raised before any response came back (429, 5xx,
+                connection error). Nothing returned is left unpriced, so strict
+                mode records the failed trial instead of raising (#3249). A
+                returned-but-unpriced call never sets this.
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1214,6 +1226,7 @@ Options:
                 unmeasured_examples=unmeasured_examples,
                 missing_usage_examples=missing_usage_examples,
                 attempted_examples=attempted_examples,
+                vendor_error_only=vendor_error_only,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost",
                 include_limit_in_warning=True,
@@ -1399,6 +1412,7 @@ Options:
         unmeasured_examples: Sequence[str] | None = None,
         missing_usage_examples: int | None = None,
         attempted_examples: int | None = None,
+        vendor_error_only: bool = False,
     ) -> None:
         """Async version of track_cost.
 
@@ -1425,6 +1439,11 @@ Options:
             attempted_examples: Complete count of example attempts in this
                 trial, or None when not known. Both counts are needed for the
                 end-of-run message to distinguish partial from missing usage.
+            vendor_error_only: True when the trial failed and every call whose
+                cost is unknown raised before any response came back (429, 5xx,
+                connection error). Nothing returned is left unpriced, so strict
+                mode records the failed trial instead of raising (#3249). A
+                returned-but-unpriced call never sets this.
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1456,6 +1475,7 @@ Options:
                 unmeasured_examples=unmeasured_examples,
                 missing_usage_examples=missing_usage_examples,
                 attempted_examples=attempted_examples,
+                vendor_error_only=vendor_error_only,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost_async",
                 include_limit_in_warning=False,
@@ -1581,6 +1601,7 @@ Options:
         include_limit_in_warning: bool,
         trial_failed: bool = False,
         unmeasured_examples: Sequence[str] | None = None,
+        vendor_error_only: bool = False,
     ) -> None:
         """Handle unknown cost under the lock, including strict-mode failure."""
         examples_text = ""
@@ -1590,7 +1611,19 @@ Options:
                 + ", ".join(str(e) for e in list(unmeasured_examples)[:5])
                 + "."
             )
-        if require_cost_tracking:
+        if require_cost_tracking and trial_failed and vendor_error_only:
+            # Every call of the trial raised before a response came back, so no
+            # returned call is unpriced: the trial is recorded as failed and the
+            # run continues (#3249). A request can still have been processed
+            # before the error, so the spend is unknown (never $0) and falls
+            # through to the same unknown-cost bound as any unmeasured trial.
+            logger.warning(
+                "%s failed on provider errors with no response returned; its "
+                "spend is unknown and counted as a lower bound.%s",
+                trial_desc,
+                examples_text,
+            )
+        elif require_cost_tracking:
             raise CostTrackingRequiredError(
                 f"Cost extraction failed for {trial_desc} and "
                 f"{self._require_cost_tracking_reason}. An unpriced call is "
@@ -1696,6 +1729,7 @@ Options:
         unmeasured_examples: Sequence[str] | None = None,
         missing_usage_examples: int | None = None,
         attempted_examples: int | None = None,
+        vendor_error_only: bool = False,
         require_cost_tracking: bool,
         caller: str,
         include_limit_in_warning: bool,
@@ -1743,6 +1777,7 @@ Options:
                 include_limit_in_warning=include_limit_in_warning,
                 trial_failed=trial_failed,
                 unmeasured_examples=unmeasured_examples,
+                vendor_error_only=vendor_error_only,
             )
             return
 

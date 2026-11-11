@@ -245,7 +245,7 @@ class HybridEvaluateResponse:
     request_id: str
     status: Literal["completed", "partial", "failed"]
     results: list[dict[str, Any]]
-    aggregate_metrics: dict[str, dict[str, float | int]]
+    aggregate_metrics: dict[str, dict[str, float | int | None]]
     execution_id: str | None = None
     error: dict[str, Any] | None = None
 

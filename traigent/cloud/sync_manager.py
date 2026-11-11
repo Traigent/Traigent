@@ -262,9 +262,9 @@ class SyncManager:
                 )
                 continue
 
-            if timeout_value <= 0:
+            if not math.isfinite(timeout_value) or timeout_value <= 0:
                 logger.warning(
-                    "%s provided non-positive sync HTTP timeout (%s). "
+                    "%s provided non-finite or non-positive sync HTTP timeout (%s). "
                     "Using default %s seconds.",
                     source_name,
                     timeout_value,

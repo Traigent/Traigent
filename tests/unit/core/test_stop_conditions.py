@@ -125,10 +125,10 @@ def test_plateau_after_n_invalid_parameters():
         PlateauAfterNStopCondition(window_size=0, epsilon=0.0, objective_schema=schema)
 
     with pytest.raises(ValueError):
-        PlateauAfterNStopCondition(window_size=1, epsilon=-0.1, objective_schema=schema)
+        PlateauAfterNStopCondition(window_size=2, epsilon=-0.1, objective_schema=schema)
 
     with pytest.raises(ValueError):
-        PlateauAfterNStopCondition(window_size=1, epsilon=0.0, objective_schema=None)
+        PlateauAfterNStopCondition(window_size=2, epsilon=0.0, objective_schema=None)
 
 
 def test_metric_limit_stop_condition_triggers_on_named_metric():
@@ -317,3 +317,82 @@ def test_hypervolume_convergence_stop_condition_reset_clears_state():
 
     stop_condition.reset()
     assert not stop_condition.should_stop([_make_trial("t4", {"accuracy": 0.5})])
+
+
+def _plateau_stop_index(window: int, accuracies: list[float]) -> int | None:
+    """1-based trial index at which the plateau condition fires, else None."""
+    schema = ObjectiveSchema.from_objectives(
+        [ObjectiveDefinition("accuracy", "maximize", 1.0)]
+    )
+    condition = PlateauAfterNStopCondition(
+        window_size=window, epsilon=0.01, objective_schema=schema
+    )
+    history: list[TrialResult] = []
+    for i, acc in enumerate(accuracies, start=1):
+        history.append(_make_trial(f"t{i}", {"accuracy": acc}))
+        if condition.should_stop(history):
+            return i
+    return None
+
+
+@pytest.mark.parametrize("window", [0, -1, 2.5, "3", True])
+def test_plateau_window_invalid_rejected(window):
+    schema = ObjectiveSchema.from_objectives(
+        [ObjectiveDefinition("accuracy", "maximize", 1.0)]
+    )
+    with pytest.raises(ValueError, match="plateau_window"):
+        PlateauAfterNStopCondition(
+            window_size=window, epsilon=0.0, objective_schema=schema
+        )
+
+
+@pytest.mark.parametrize(
+    ("window", "flat_after_best"),
+    [(2, 1), (5, 4)],
+)
+def test_plateau_window_n_values_per_stop_rules_contract(window, flat_after_best):
+    # Contract optimize.stop-rules.v1: the last N running-best values span
+    # <= tolerance (N values, N-1 comparisons). Best at trial 2, then flat.
+    flat = [0.5] * 10
+    stop = _plateau_stop_index(window, [0.2, *flat])
+    # running best: 0.2, 0.5, 0.5, ... -> last N values are flat from trial 2+N-1.
+    assert stop == 2 + flat_after_best
+
+
+@pytest.mark.parametrize("window", [2, 5])
+def test_plateau_window_improving_sequence_never_stops(window):
+    assert _plateau_stop_index(window, [0.1 * i for i in range(1, 10)]) is None
+
+
+def test_plateau_uses_true_running_best_not_epsilon_gated_best():
+    # Contract optimize.stop-rules.v1: running best = max so far. With
+    # eps=0.05, running best is 0.0, 0.049, 0.051, 0.098; the last three span
+    # 0.049 <= eps at trial 4 (but 0.051 at trial 3 > eps).
+    schema = ObjectiveSchema.from_objectives(
+        [ObjectiveDefinition("accuracy", "maximize", 1.0)]
+    )
+    condition = PlateauAfterNStopCondition(
+        window_size=3, epsilon=0.05, objective_schema=schema
+    )
+    history: list[TrialResult] = []
+    fired = []
+    for i, acc in enumerate([0.0, 0.049, 0.051, 0.098], start=1):
+        history.append(_make_trial(f"t{i}", {"accuracy": acc}))
+        fired.append(condition.should_stop(history))
+    assert fired == [False, False, False, True]
+
+
+def test_plateau_window_one_accepted_with_warning_and_stops_after_first_trial():
+    schema = ObjectiveSchema.from_objectives(
+        [ObjectiveDefinition("accuracy", "maximize", 1.0)]
+    )
+    with pytest.warns(UserWarning, match="plateau_window=1"):
+        condition = PlateauAfterNStopCondition(
+            window_size=1, epsilon=0.01, objective_schema=schema
+        )
+    assert condition.should_stop([_make_trial("t1", {"accuracy": 0.5})])
+
+
+def test_plateau_window_integral_float_normalised_to_int():
+    assert stop_conditions.validate_plateau_window(3.0) == 3
+    assert isinstance(stop_conditions.validate_plateau_window(3.0), int)

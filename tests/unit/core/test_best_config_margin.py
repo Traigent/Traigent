@@ -189,8 +189,8 @@ class TestContinuousPairedT:
         This pins the ONE correct verdict for these inputs. With exactly two
         distinct configs the multiplicity correction is a no-op
         (effective_alpha == alpha), and a constant non-zero paired difference has
-        zero variance -> p_value 0.0 with a point CI at +0.001 that excludes 0 and
-        favors the winner -> "clear". (Previously this test accepted either
+        zero variance -> exact sign-test p ~ 2 * 0.5**30 with a point CI at +0.001
+        that excludes 0 and favors the winner -> "clear". (Previously this test accepted either
         "clear" or "statistical_tie", which asserted nothing.)
         """
         winner = [0.50 + 0.001 * i for i in range(30)]
@@ -207,7 +207,7 @@ class TestContinuousPairedT:
             orientation="maximize",
         )
         assert margin is not None
-        assert margin["test"] == "paired_t"
+        assert margin["test"] in ("paired_t", "sign")
         assert margin["n_configs"] == 2
         assert margin["effective_alpha"] == margin["alpha"]
         assert margin["verdict"] == "clear"
@@ -511,7 +511,7 @@ class TestVerdictRequiresFavorableDirection:
             orientation="maximize",
         )
         assert margin is not None
-        assert margin["test"] == "paired_t"
+        assert margin["test"] == "sign"  # constant -0.30 gap: zero variance (#2948)
         assert margin["n_shared_examples"] == 6
         assert margin["delta"] < 0.0
         assert margin["p_value"] is not None and margin["p_value"] <= 0.05
@@ -732,3 +732,59 @@ class TestMultiplicityCorrection:
         assert margin["verdict"] == "clear"
         lo, hi = margin["ci95"]
         assert lo > 0.0 or hi < 0.0
+
+
+class TestZeroVarianceSignTest:
+    """#2948: a zero-variance paired gap must not report p=0 / "clear" at tiny n."""
+
+    @staticmethod
+    def _margin(n: int, gap: float = 0.05, n_configs: int = 2):
+        base = [0.5 + 0.01 * i for i in range(n)]
+        trials = [_trial("w", {"p": 0}, "score", [v + gap for v in base])]
+        for k in range(1, n_configs):
+            trials.append(_trial(f"r{k}", {"p": k}, "score", list(base)))
+        return compute_best_config_margin(
+            trials,
+            winner_trial_id="w",
+            winner_config={"p": 0},
+            primary_objective="score",
+            orientation="maximize",
+        )
+
+    def test_small_n_constant_gap_is_not_clear(self):
+        margin = self._margin(5, n_configs=12)
+        assert margin is not None
+        assert margin["p_value"] > 0.0
+        assert margin["p_value"] == 2 * 0.5**5
+        assert margin["verdict"] == "statistical_tie"
+
+    def test_small_n_two_configs_not_clear_at_alpha_05(self):
+        margin = self._margin(5)
+        assert margin is not None
+        assert margin["p_value"] == 0.0625
+        assert margin["verdict"] == "statistical_tie"
+        lo, hi = margin["ci95"]
+        assert lo <= 0.0 <= hi  # no falsely tight interval when undecided
+
+    def test_large_n_constant_gap_still_clear(self):
+        margin = self._margin(30)
+        assert margin is not None
+        assert 0.0 < margin["p_value"] <= 2 * 0.5**30 + 1e-18
+        assert margin["verdict"] == "clear"
+        assert margin["delta"] > 0.0
+
+    def test_large_n_constant_negative_gap_not_clear_for_winner(self):
+        margin = self._margin(30, gap=-0.05)
+        assert margin is not None
+        assert margin["p_value"] > 0.0
+        assert margin["verdict"] == "statistical_tie"
+
+    def test_ci_is_point_at_n6_and_widened_below(self):
+        m6 = self._margin(6)
+        assert m6["test"] == "sign"
+        assert m6["verdict"] == "clear"
+        assert m6["ci95"][0] == m6["ci95"][1] > 0.0
+        m5 = self._margin(5)
+        assert m5["verdict"] == "statistical_tie"
+        lo, hi = m5["ci95"]
+        assert lo == 0.0 and hi > 0.0

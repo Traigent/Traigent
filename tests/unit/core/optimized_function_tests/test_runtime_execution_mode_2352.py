@@ -23,6 +23,8 @@ performs (issue #1421).
 
 from __future__ import annotations
 
+import pytest
+
 from traigent.config.types import (
     ExecutionIntent,
     ExecutionMode,
@@ -31,6 +33,8 @@ from traigent.config.types import (
 )
 from traigent.core.optimized_function import OptimizedFunction, _resolve_callbacks
 from traigent.evaluators.base import Dataset, EvaluationExample
+
+pytestmark = pytest.mark.usefixtures("connected_policy_env")
 
 _SPACE = {"temperature": [0.0, 0.5, 1.0], "model": ["a", "b"]}
 

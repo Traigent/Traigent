@@ -323,7 +323,7 @@ ENV_OPTIMIZATION_LOG_MAX_RUNS = "TRAIGENT_OPTIMIZATION_LOG_MAX_RUNS"
 _RUN_DIR_NAME_PATTERN = re.compile(r"^\d{8}_\d{6}_.+$")
 # Terminal statuses written by log_session_end() -> _update_status(); a run
 # dir whose status file carries one of these has provably finished.
-_TERMINAL_RUN_STATUSES = {"completed", "failed"}
+_TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled"}
 # Status filenames the logger itself mints at the run-dir root:
 # FILE_PATTERNS["status"] = "status_v{version}.json" (v2) and
 # LEGACY_PATTERNS["status"] = "status.json" (v1).
@@ -334,7 +334,7 @@ def _run_dir_shows_completion_evidence(run_dir: Path) -> bool:
     """Whether ``run_dir`` provably belongs to a *finished* run.
 
     Completion evidence = a status file the run writer itself produces at run
-    end (``log_session_end()`` -> ``_update_status("completed"|"failed")``,
+    end (``log_session_end()`` -> ``_update_status("completed"|"failed"|"cancelled")``,
     written to ``<run_dir>/status_v2.json`` / legacy ``status.json``) carrying
     a terminal status. An active run has ``"running"`` (written at session
     start) or no status file at all — neither counts as evidence. Any doubt
@@ -1115,6 +1115,8 @@ class OptimizationLogger:
         with self._buffer_lock:
             self._flush_trial_buffer()
 
+        run_status = self._terminal_run_status(optimization_result, error)
+
         best_config_file = (
             self.run_path / "artifacts" / self.file_manager.get_filename("best_config")
         )
@@ -1201,7 +1203,7 @@ class OptimizationLogger:
         )
         with self._file_lock(session_file):
             if session_file.exists():
-                with open(session_file) as handle:
+                with open(session_file, encoding="utf-8") as handle:
                     session_data = json.load(handle)
             else:
                 session_data = {}
@@ -1209,7 +1211,7 @@ class OptimizationLogger:
                 {
                     "end_time": datetime.now(UTC).isoformat(),
                     "duration": optimization_result.duration,
-                    "status": "failed" if error else "completed",
+                    "status": run_status,
                     "error": error,
                 }
             )
@@ -1223,10 +1225,29 @@ class OptimizationLogger:
         )
         self._atomic_write(manifest_file, final_manifest)
 
-        status = "failed" if error else "completed"
+        status = run_status
         self._update_status(status)
         self._update_experiment_index()
         logger.info(f"Logged session end for {self.run_id} with status: {status}")
+
+    @staticmethod
+    def _terminal_run_status(
+        optimization_result: OptimizationResult, error: str | None
+    ) -> str:
+        """Real terminal status for the run log (#3258).
+
+        An explicit ``error`` or a result whose status is FAILED/CANCELLED is
+        recorded as such; only a result that really completed says "completed".
+        """
+        if error:
+            return "failed"
+        result_status = getattr(optimization_result, "status", None)
+        value = getattr(result_status, "value", result_status)
+        if value in ("failed", "cancelled", "unknown"):
+            # "unknown" is a neutral, non-terminal status: never asserted as
+            # success (types.OptimizationStatus.UNKNOWN, #1302).
+            return str(value)
+        return "completed"
 
     def _update_status(self, status: str) -> None:
         status_file = self.run_path / self.file_manager.get_filename("status")
@@ -1240,7 +1261,7 @@ class OptimizationLogger:
         index_file = self.base_path / "index.json"
         with self._file_lock(index_file, cross_process=True):
             if index_file.exists():
-                with open(index_file) as handle:
+                with open(index_file, encoding="utf-8") as handle:
                     index_data = json.load(handle)
             else:
                 index_data = {"experiments": {}, "version": "2.0.0"}
@@ -1295,7 +1316,9 @@ class OptimizationLogger:
         validated_latest_file = validate_path(
             latest_file, checkpoints_dir, must_exist=True
         )
-        with safe_open(validated_latest_file, run_path, mode="r") as handle:
+        with safe_open(
+            validated_latest_file, run_path, mode="r", encoding="utf-8"
+        ) as handle:
             latest_data = json.load(handle)
 
         # Constrain the checkpoint reference to the run's checkpoints directory.
@@ -1309,7 +1332,7 @@ class OptimizationLogger:
             raise ValueError(
                 f"Invalid checkpoint reference in {latest_file}: {exc}"
             ) from exc
-        with safe_open(checkpoint_file, run_path, mode="r") as handle:
+        with safe_open(checkpoint_file, run_path, mode="r", encoding="utf-8") as handle:
             checkpoint_data = json.load(handle)
 
         history_file = (
@@ -1318,7 +1341,9 @@ class OptimizationLogger:
         validated_history_file = validate_path(
             history_file, checkpoints_dir, must_exist=True
         )
-        with safe_open(validated_history_file, run_path, mode="r") as handle:
+        with safe_open(
+            validated_history_file, run_path, mode="r", encoding="utf-8"
+        ) as handle:
             trial_history = json.load(handle)
 
         checkpoint_data["trial_history"] = trial_history

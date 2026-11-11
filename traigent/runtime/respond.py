@@ -750,7 +750,18 @@ def _validate_hosted_grant(
         or grant["attempt_ref"] != attempt["attempt_ref"]
     ):
         raise RuntimeRequirementError(E_APPROVAL_REQUIRED, "grant")
-    if "expires_at" in grant and _parse_ts(grant["expires_at"]) <= clock():
+    # A grant without an expiry, or with an unusable one, is treated as expired.
+    try:
+        raw = grant.get("expires_at")
+        if not isinstance(raw, str):
+            raise ValueError("expires_at must be a string")
+        stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            raise ValueError("expires_at needs an explicit offset")
+        expired = stamp <= clock()
+    except (OverflowError, TypeError, ValueError):
+        expired = True
+    if expired:
         raise RuntimeRequirementError(E_APPROVAL_EXPIRED)
 
 

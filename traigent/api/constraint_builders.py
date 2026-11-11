@@ -14,13 +14,17 @@ Example:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import math
+import numbers
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
     from traigent.api.constraints import Condition
 
 T = TypeVar("T")
+
+_EQUALITY_BUILDERS = frozenset({"equals", "not_equals", "is_in", "not_in"})
 
 
 __all__ = [
@@ -41,12 +45,53 @@ def _numeric_bounds(tvar: Any) -> tuple[float, float] | None:
     return float(low), float(high)
 
 
+def _is_int_range(tvar: Any) -> bool:
+    from traigent.api.parameter_ranges import IntRange
+
+    return isinstance(tvar, IntRange)
+
+
+def _require_number(
+    tvar: Any, value: Any, builder: str, *, integral: bool = False
+) -> float:
+    """Return ``float(value)`` after checking it is a real number (#3197).
+
+    Rejects None/str/bool/list/dict (numeric strings are NOT coerced) and
+    values that overflow a float. ``integral`` additionally requires an
+    integer value, for equality-style builders on an ``IntRange``. Error text
+    carries only the type name, never the value.
+    """
+    label = _parameter_label(tvar)
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        raise TypeError(
+            f"{label}.{builder}() needs a number, got {type(value).__name__}"
+        )
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise ValueError(
+            f"{label}.{builder}() value is too large to represent as a float"
+        ) from exc
+    if math.isnan(number):
+        raise ValueError(f"{label}.{builder}() value must not be NaN")
+    if integral and not (
+        isinstance(value, numbers.Integral)
+        or (math.isfinite(number) and value == math.floor(value))
+    ):
+        raise TypeError(
+            f"{label}.{builder}() needs an integer for an IntRange, "
+            f"got {type(value).__name__}"
+        )
+    return number
+
+
 def _validate_numeric_value(tvar: Any, value: float, operator: str) -> None:
+    integral = _is_int_range(tvar) and operator in _EQUALITY_BUILDERS
+    numeric_value = _require_number(tvar, value, operator, integral=integral)
     bounds = _numeric_bounds(tvar)
     if bounds is None:
         return
     low, high = bounds
-    numeric_value = float(value)
     if not low <= numeric_value <= high:
         raise ValueError(
             f"{_parameter_label(tvar)}.{operator}({value!r}) is outside "
@@ -57,6 +102,11 @@ def _validate_numeric_value(tvar: Any, value: float, operator: str) -> None:
 def _validate_numeric_values(
     tvar: Any, values: Sequence[float], operator: str
 ) -> tuple[float, ...]:
+    if isinstance(values, (str, bytes, Mapping)) or not isinstance(values, Iterable):
+        raise TypeError(
+            f"{_parameter_label(tvar)}.{operator}() needs a sequence of numbers, "
+            f"got {type(values).__name__}"
+        )
     normalized = tuple(values)
     if not normalized:
         raise ValueError(f"{_parameter_label(tvar)}.{operator}() cannot be empty")
@@ -66,7 +116,12 @@ def _validate_numeric_values(
 
 
 def _validate_numeric_range(tvar: Any, low_value: float, high_value: float) -> None:
-    if low_value > high_value:
+    original_low, original_high = low_value, high_value
+    low_value = _require_number(tvar, low_value, "in_range")
+    high_value = _require_number(tvar, high_value, "in_range")
+    if not (math.isfinite(low_value) and math.isfinite(high_value)):
+        raise ValueError(f"{_parameter_label(tvar)}.in_range() bounds must be finite")
+    if low_value > high_value or original_low > original_high:
         raise ValueError(
             f"{_parameter_label(tvar)}.in_range() lower bound must be <= upper bound"
         )

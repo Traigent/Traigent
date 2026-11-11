@@ -15,6 +15,7 @@ from collections.abc import Coroutine
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeVar, cast
 
+from traigent.cloud._detached_raise import raise_detached
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
 from traigent.cloud.client import (
@@ -1372,8 +1373,8 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("create_hybrid_session network error")
-            logger.exception(f"Network error creating hybrid session: {e}")
-            raise CloudServiceError(f"Network error: {e}") from None
+            logger.error(f"Network error creating hybrid session: {e}")
+            raise_detached(CloudServiceError(f"Network error: {e}"))
 
     async def get_hybrid_session_status(self, session_id: str) -> dict[str, Any]:
         """Get status of a hybrid session.
@@ -1422,8 +1423,8 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("get_hybrid_session_status network error")
-            logger.exception(f"Network error getting session status: {e}")
-            raise CloudServiceError(f"Network error: {e}") from None
+            logger.error(f"Network error getting session status: {e}")
+            raise_detached(CloudServiceError(f"Network error: {e}"))
 
     async def finalize_hybrid_session(self, session_id: str) -> dict[str, Any]:
         """Finalize hybrid session and get results.
@@ -1477,8 +1478,8 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("finalize_hybrid_session network error")
-            logger.exception(f"Network error finalizing session: {e}")
-            raise CloudServiceError(f"Network error: {e}") from None
+            logger.error(f"Network error finalizing session: {e}")
+            raise_detached(CloudServiceError(f"Network error: {e}"))
 
     async def finalize_session(
         self,
@@ -1487,6 +1488,7 @@ class SessionOperations:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
 
@@ -1511,6 +1513,7 @@ class SessionOperations:
         """
         self._validate_non_empty_string(session_id, "session_id")
         self._validate_optimization_outcome(optimization_outcome)
+        self._validate_stop_reason(stop_reason)
         logger.info(f"Finalizing optimization session {session_id}")
 
         # Get session mapping for experiment_run_id, or reconstruct it from the
@@ -1533,6 +1536,7 @@ class SessionOperations:
                     certified_selection=certified_selection,
                     session_aggregation=session_aggregation,
                     optimization_outcome=optimization_outcome,
+                    stop_reason=stop_reason,
                 )
             except (CloudServiceError, EndpointNotConfiguredError):
                 raise
@@ -1884,6 +1888,7 @@ class SessionOperations:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> dict[str, Any] | None:
         """Call backend session finalization endpoint.
 
@@ -1935,6 +1940,7 @@ class SessionOperations:
                     certified_selection,
                     session_aggregation,
                     optimization_outcome,
+                    stop_reason,
                 )
                 finalize_body = oo_egress.project_for_send(
                     oo_egress.PHASE_FINALIZE,
@@ -2006,8 +2012,10 @@ class SessionOperations:
         certified_selection: dict[str, Any] | None,
         session_aggregation: dict[str, Any] | None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> dict[str, Any]:
         SessionOperations._validate_optimization_outcome(optimization_outcome)
+        SessionOperations._validate_stop_reason(stop_reason)
         finalize_body: dict[str, Any] = {
             "reason": "sdk_explicit_finalization",
         }
@@ -2018,6 +2026,8 @@ class SessionOperations:
             # An older backend ignores the unknown key and keeps its
             # COMPLETED behaviour, so deploy the Backend first.
             finalize_body["optimization_outcome"] = optimization_outcome
+        # #2508: ``stop_reason`` is deliberately NOT put on the wire yet; the
+        # field waits for the TraigentSchema finalize request contract.
         if certified_selection is not None:
             # Phase 8: the client-attested, content-free certified-
             # selection report — TOP-LEVEL key only (the backend
@@ -2140,8 +2150,8 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("delete_session network error")
-            logger.exception(f"Network error deleting session: {e}")
-            raise CloudServiceError(f"Network error: {e}") from None
+            logger.error(f"Network error deleting session: {e}")
+            raise_detached(CloudServiceError(f"Network error: {e}"))
 
     def finalize_session_sync(
         self,
@@ -2150,12 +2160,14 @@ class SessionOperations:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session."""
         import concurrent.futures
 
         self._validate_non_empty_string(session_id, "session_id")
         self._validate_optimization_outcome(optimization_outcome)
+        self._validate_stop_reason(stop_reason)
 
         def _run_in_new_loop() -> OptimizationFinalizationResponse | None:
             """Run the async operation in a fresh event loop on this thread."""
@@ -2171,6 +2183,7 @@ class SessionOperations:
                             certified_selection=certified_selection,
                             session_aggregation=session_aggregation,
                             optimization_outcome=optimization_outcome,
+                            stop_reason=stop_reason,
                         ),
                     )
                 )
@@ -2207,6 +2220,13 @@ class SessionOperations:
             raise ValueError(
                 "optimization_outcome must be completed, failed, or cancelled"
             )
+
+    @staticmethod
+    def _validate_stop_reason(value: Any) -> None:
+        if value is not None and (
+            not isinstance(value, str) or value not in oo_egress.FINALIZE_STOP_REASONS
+        ):
+            raise ValueError("stop_reason must be a known StopReason value")
 
     def delete_session_sync(self, session_id: str, cascade: bool = True) -> bool:
         """Synchronous wrapper for delete_session.
