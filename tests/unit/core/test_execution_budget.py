@@ -727,3 +727,19 @@ class TestExecutionBudgetConcurrency:
             thread.join()
 
         assert errors == []
+
+
+@pytest.mark.parametrize("bad", [INF, -INF, float("nan")])
+def test_max_cost_usd_rejects_non_finite_naming_parameter(bad: float) -> None:
+    with pytest.raises(ConfigurationError, match="max_cost_usd"):
+        ExecutionBudget(max_cost_usd=bad)
+
+
+def test_valid_budget_snapshot_as_dict_is_json_serializable() -> None:
+    import json
+
+    snap = ExecutionBudget(max_cost_usd=1.5, max_examples=3).snapshot().as_dict()
+    assert json.loads(json.dumps(snap, allow_nan=False))["max_cost_usd"] == 1.5
+    unbounded = ExecutionBudget(max_examples=3).snapshot().as_dict()
+    assert unbounded["max_cost_usd"] is None
+    json.dumps(unbounded, allow_nan=False)

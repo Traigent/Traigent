@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.cloud._detached_raise import raise_detached
 from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
 from traigent.cloud.auth import (
     AuthenticationError,
@@ -107,6 +108,7 @@ from traigent.security.session_manager import SessionManager as SecuritySessionM
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import positive_int_env
 from traigent.utils.optimization_only_egress import parse_flag
 from traigent.utils.retry import RetryConfig, RetryHandler
 
@@ -1140,8 +1142,8 @@ class BackendIntegratedClient:
 
         # Security session manager for token issuance and validation
         redis_url = os.getenv("TRAIGENT_SESSION_REDIS_URL")
-        session_ttl = int(os.getenv("TRAIGENT_SESSION_TTL", "3600"))
-        max_sessions_per_user = int(os.getenv("TRAIGENT_MAX_SESSIONS_PER_USER", "10"))
+        session_ttl = positive_int_env("TRAIGENT_SESSION_TTL", 3600)
+        max_sessions_per_user = positive_int_env("TRAIGENT_MAX_SESSIONS_PER_USER", 10)
         self._security_sessions = SecuritySessionManager(
             redis_url=redis_url,
             session_ttl=session_ttl,
@@ -2194,6 +2196,7 @@ class BackendIntegratedClient:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
         Delegates to session_operations module. Phase 8: an optional
@@ -2206,6 +2209,7 @@ class BackendIntegratedClient:
             certified_selection=certified_selection,
             session_aggregation=session_aggregation,
             optimization_outcome=optimization_outcome,
+            stop_reason=stop_reason,
         )
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
@@ -2220,6 +2224,7 @@ class BackendIntegratedClient:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session.
         Delegates to session_operations module."""
@@ -2229,6 +2234,7 @@ class BackendIntegratedClient:
             certified_selection=certified_selection,
             session_aggregation=session_aggregation,
             optimization_outcome=optimization_outcome,
+            stop_reason=stop_reason,
         )
 
     def delete_session_sync(self, session_id: str, cascade: bool = True) -> bool:
@@ -2604,7 +2610,7 @@ class BackendIntegratedClient:
         except (requests.exceptions.RequestException, ConnectionError, TimeoutError):
             # RequestException also covers InvalidHeader / InvalidURL / MissingSchema,
             # whose text quotes the offending header or URL.
-            raise CloudServiceError(f"{operation} transport failed") from None
+            raise_detached(CloudServiceError(f"{operation} transport failed"))
         finally:
             session.close()
 

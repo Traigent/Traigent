@@ -151,6 +151,37 @@ def _closed_stop_reason(reason: Any) -> str | None:
     return "unknown"
 
 
+def _as_duration_seconds(value: Any) -> float | None:
+    """Return ``value`` as finite non-negative seconds, else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number
+
+
+def _trial_duration_seconds(
+    metadata: Mapping[str, Any], metrics: Mapping[str, Any]
+) -> float | None:
+    """Measured trial duration in seconds, or None when none was measured.
+
+    Prefers the trial's own ``duration`` carried in the backend metadata, then
+    the ``duration`` metric, then ``execution_time_ms`` (milliseconds). Never
+    fabricates a value: absence stays absent so the service does not record a
+    made-up zero as a measurement.
+    """
+    for source, key, scale in (
+        (metadata, "duration", 1.0),
+        (metrics, "duration", 1.0),
+        (metrics, "execution_time_ms", 0.001),
+    ):
+        seconds = _as_duration_seconds(source.get(key))
+        if seconds is not None:
+            return seconds * scale
+    return None
+
+
 @dataclass(frozen=True)
 class TrialSlotResult:
     """Neutral result for a backend trial-slot request."""
@@ -778,6 +809,7 @@ class TrialOperations:
         caller-supplied metadata so a stray value never rides along.
         """
         result_metadata = copy.deepcopy(metadata or {})
+        duration = _trial_duration_seconds(result_metadata, clean_metrics)
         result_metadata.pop("execution_mode", None)
         result_metadata.pop("mode", None)
         result_metadata["sdk_version"] = get_version()
@@ -791,6 +823,11 @@ class TrialOperations:
             "status": backend_status,
             "metadata": result_metadata,
         }
+        if duration is not None:
+            # Top-level, in seconds: the session results contract carries
+            # ``duration`` (number >= 0) and the service sums it into the
+            # finalize ``total_duration``; omitting it reported 0.0 (#3238).
+            result_data["duration"] = duration
         return result_data
 
     def _log_measures_debug(self, trial_id: str, measures: Any) -> None:

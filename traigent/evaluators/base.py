@@ -15,6 +15,7 @@ import secrets
 import stat
 import threading
 import time
+import traceback
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from collections.abc import Mapping
@@ -40,6 +41,7 @@ from traigent.evaluators.metrics_tracker import (
     is_reserved_metric_key,
 )
 from traigent.identity.examples import result_identity_fields
+from traigent.security.redaction import redact_sensitive_text
 from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
@@ -114,16 +116,56 @@ logger = get_logger(__name__)
 #: (quality 0.0, cost unknown), not as a ``None`` score.
 EXAMPLE_TIMEOUT_ERROR_PREFIX = "Function call timed out after"
 
+#: Error-message prefix for an example that was never run because every
+#: evaluator worker lane is still held by timed-out (stuck) sync workers.  The
+#: example did not fail on its own merits; a known stuck worker caused it, so it
+#: is counted with the timeouts rather than as a generic failure (#2951).
+EXAMPLE_LANE_UNAVAILABLE_ERROR_PREFIX = "Sync evaluator worker lane unavailable"
+
+_TIMEOUT_CAUSED_ERROR_PREFIXES = (
+    EXAMPLE_TIMEOUT_ERROR_PREFIX,
+    EXAMPLE_LANE_UNAVAILABLE_ERROR_PREFIX,
+)
+
+
+class _SyncLane:
+    """One admitted sync worker lane; released at most once (#2951)."""
+
+    __slots__ = ("released", "retired", "timed_out")
+
+    def __init__(self) -> None:
+        self.released = False
+        self.retired = False
+        self.timed_out = False
+
+
+# Row-metadata key listing custom metrics left unmeasured for that example
+# (Traigent#2950). Optional: rows from older checkpoints do not carry it.
+UNMEASURED_CUSTOM_KEYS_METADATA = "unmeasured_custom_keys"
+
+
+def _stored_unmeasured_keys_metadata(stored: Mapping[str, Any]) -> dict[str, Any]:
+    marker = (stored.get("metadata") or {}).get(UNMEASURED_CUSTOM_KEYS_METADATA)
+    if isinstance(marker, (list, tuple)):
+        return {
+            UNMEASURED_CUSTOM_KEYS_METADATA: [k for k in marker if isinstance(k, str)]
+        }
+    return {}
+
 
 def count_timed_out_examples(example_results: Any) -> int:
-    """Count example results whose error records a per-example timeout."""
+    """Count example results whose error records a timeout-caused failure.
+
+    That includes examples skipped because timed-out workers still hold every
+    lane (:data:`EXAMPLE_LANE_UNAVAILABLE_ERROR_PREFIX`).
+    """
     if not isinstance(example_results, list):
         return 0
     return sum(
         1
         for result in example_results
         if isinstance(getattr(result, "error_message", None), str)
-        and result.error_message.startswith(EXAMPLE_TIMEOUT_ERROR_PREFIX)
+        and result.error_message.startswith(_TIMEOUT_CAUSED_ERROR_PREFIXES)
     )
 
 
@@ -131,6 +173,15 @@ def count_timed_out_examples(example_results: Any) -> int:
 # one has an UNKNOWN cost. Imputing 0.0 for it makes a trial look cheaper than
 # it was and can let it win a cost objective (issue #2404).
 MEASURED_ONLY_METRICS = frozenset({"cost", "input_cost", "output_cost", "total_cost"})
+
+# Per-example metric that backs an SDK-measured objective whose trial-level name
+# differs (trial ``cost`` <- per-example ``total_cost``). Single source for the
+# aggregator and for primary-objective coverage (Traigent#3217). ``latency`` is
+# deliberately absent: the trial score is the mean wall-clock ``execution_time``
+# of the example results, not a per-example metric (see _compute_latency).
+OBJECTIVE_SOURCE_METRICS: dict[str, tuple[str, ...]] = {
+    "cost": ("total_cost",),
+}
 
 
 def failed_row_metrics(metric_names: Iterable[str]) -> dict[str, float]:
@@ -964,7 +1015,7 @@ def _parse_jsonl_examples(resolved_path: Path, source: str) -> list[EvaluationEx
     examples: list[EvaluationExample] = []
 
     try:
-        with resolved_path.open(encoding="utf-8") as handle:
+        with resolved_path.open(encoding="utf-8-sig") as handle:
             for line_num, line in enumerate(handle, 1):
                 text = line.strip()
                 if not text:
@@ -1035,7 +1086,7 @@ def _parse_json_dataset(
     resolved_path: Path, source: str
 ) -> tuple[list[EvaluationExample], str | None, str | None, dict[str, Any] | None]:
     try:
-        with resolved_path.open(encoding="utf-8") as handle:
+        with resolved_path.open(encoding="utf-8-sig") as handle:
             data = json.load(handle)
     except json.JSONDecodeError as exc:
         raise ValidationError(f"Invalid JSON in {source}: {exc}") from exc
@@ -1172,9 +1223,20 @@ def _coerce_dataset_example_mapping(
 
 
 def _example_correlation_key(example: EvaluationExample, index: int) -> Any:
-    """Return the key used to correlate captured LLM responses for an example."""
+    """Return the key used to correlate captured LLM responses for an example.
+
+    ``None``, ``""`` and booleans are not real ids (same absent-id rule as the
+    hybrid lane, which also never accepts a bool as an id) and fall back to the
+    positional key.
+    """
     if example.metadata:
-        return example.metadata.get("example_id", f"example_{index}")
+        explicit = example.metadata.get("example_id")
+        if (
+            explicit is not None
+            and not isinstance(explicit, bool)
+            and not (isinstance(explicit, str) and explicit == "")
+        ):
+            return explicit
     return f"example_{index}"
 
 
@@ -1219,7 +1281,7 @@ class Dataset:
             seen_example_ids[example_id] = i
 
     @classmethod
-    def from_jsonl(cls, file_path: str) -> Dataset:
+    def from_jsonl(cls, file_path: str | os.PathLike[str]) -> Dataset:
         """Load dataset from JSONL file.
 
         Args:
@@ -1231,6 +1293,12 @@ class Dataset:
         Raises:
             ValidationError: If file format is invalid
         """
+        if not isinstance(file_path, (str, os.PathLike)):
+            raise ValidationError(
+                "file_path must be a str or os.PathLike, "
+                f"got {type(file_path).__name__}"
+            )
+        file_path = os.fspath(file_path)
         resolved_path, registry_entry = _resolve_dataset_source(file_path)
 
         # Additional security: Check file extension
@@ -1654,6 +1722,22 @@ class BaseEvaluator(ABC):
         # timed-out/cancelled call still occupies one evaluator worker until
         # its underlying thread future settles.
         self._sync_worker_slots = threading.BoundedSemaphore(max_workers)
+        # A timed-out sync call cannot be interrupted.  Its lane is retired
+        # (freed for a fresh worker thread) so later examples are not poisoned,
+        # but only up to ``max_stuck_workers`` threads may be left running at
+        # once.  At that bound a stuck worker keeps its lane, and later
+        # examples are reported as skipped (#2951).
+        configured_stuck = kwargs.get("max_stuck_workers")
+        self._max_stuck_workers = (
+            max(0, int(configured_stuck))
+            if configured_stuck is not None
+            else max(2, max_workers)
+        )
+        self._stuck_workers = 0
+        # Timed-out workers that could not be retired (bound hit) and so still
+        # hold their lane; promoted to retired as retired workers settle.
+        self._held_timed_out: list[_SyncLane] = []
+        self._stuck_lock = threading.Lock()
 
         # Initialize metric registry with defaults
         self._metric_registry: dict[str, Any] = {
@@ -2842,10 +2926,74 @@ class BaseEvaluator(ABC):
             if trial_token is not None:
                 trial_context_var.reset(trial_token)
 
+    def _retire_stuck_lane(self, lane: _SyncLane) -> bool:
+        """Free a timed-out worker's lane while its thread keeps running.
+
+        Returns False (lane stays held, remembered for later promotion) once
+        ``max_stuck_workers`` abandoned threads are already running, which
+        bounds thread accumulation.
+        """
+        with self._stuck_lock:
+            if lane.released:
+                return False
+            lane.timed_out = True
+            if self._stuck_workers >= self._max_stuck_workers:
+                self._held_timed_out.append(lane)
+                return False
+            self._mark_retired_locked(lane)
+            stuck = self._stuck_workers
+        self._release_semaphore()
+        logger.warning(
+            "Retired lane of a timed-out sync worker (%d/%d stuck workers)",
+            stuck,
+            self._max_stuck_workers,
+        )
+        return True
+
+    def _mark_retired_locked(self, lane: _SyncLane) -> None:
+        lane.retired = True
+        lane.released = True
+        self._stuck_workers += 1
+
+    def _release_semaphore(self) -> None:
+        try:
+            self._sync_worker_slots.release()
+        except ValueError:  # pragma: no cover - defensive guard
+            logger.error("Sync evaluator worker lane released twice")
+
+    def _release_sync_lane(self, lane: _SyncLane) -> None:
+        """Release a lane once; settle stuck accounting for retired lanes."""
+        release_slot = False
+        with self._stuck_lock:
+            if lane.retired:
+                self._stuck_workers -= 1
+                lane.retired = False
+                # Capacity returned: a timed-out worker still holding its lane
+                # can now be retired so later examples are not blocked.
+                while self._held_timed_out:
+                    held = self._held_timed_out.pop(0)
+                    if not held.released:
+                        self._mark_retired_locked(held)
+                        release_slot = True
+                        break
+            elif not lane.released:
+                lane.released = True
+                if lane.timed_out and lane in self._held_timed_out:
+                    self._held_timed_out.remove(lane)
+                release_slot = True
+        if release_slot:
+            self._release_semaphore()
+
+    def _lane_holding_timed_out_count(self) -> int:
+        """Timed-out sync workers that still hold a lane (not retired)."""
+        with self._stuck_lock:
+            return len(self._held_timed_out)
+
     def _on_sync_worker_done(
         self,
         done_future: Any,
         worker_done_callback: Callable[[], None] | None,
+        lane: _SyncLane,
     ) -> None:
         """Observe worker failures and release its evaluator lane."""
         try:
@@ -2854,10 +3002,7 @@ class BaseEvaluator(ABC):
             # The result is observed here; callers that were still
             # awaiting the wrapped Future receive the same failure.
             pass
-        try:
-            self._sync_worker_slots.release()
-        except ValueError:  # pragma: no cover - defensive guard
-            logger.error("Sync evaluator worker lane released twice")
+        self._release_sync_lane(lane)
         if worker_done_callback is not None:
             try:
                 worker_done_callback()
@@ -2962,17 +3107,27 @@ class BaseEvaluator(ABC):
             )
             slot_acquired = await self._acquire_sync_worker_slot(lane_timeout)
             if not slot_acquired:
-                error_msg = (
-                    f"Sync evaluator worker lane unavailable after {self.timeout}s"
-                )
+                stuck = self._lane_holding_timed_out_count()
+                if stuck:
+                    error_msg = (
+                        f"{EXAMPLE_LANE_UNAVAILABLE_ERROR_PREFIX} after "
+                        f"{self.timeout}s: {stuck} timed-out "
+                        "worker(s) still running"
+                    )
+                else:
+                    # Plain contention (no timed-out worker involved) is not
+                    # timeout-caused and must not be counted as one.
+                    error_msg = f"Sync evaluator worker lane busy after {self.timeout}s"
                 logger.warning(error_msg)
                 return None, error_msg
             future = submit_executor.submit(call_with_config)
             if worker_started_callback is not None:
                 worker_started_callback()
 
+            lane = _SyncLane()
+
             def on_worker_done(done_future: Any) -> None:
-                self._on_sync_worker_done(done_future, worker_done_callback)
+                self._on_sync_worker_done(done_future, worker_done_callback, lane)
 
             future.add_done_callback(on_worker_done)
             slot_acquired = False
@@ -2991,6 +3146,8 @@ class BaseEvaluator(ABC):
                 future, async_future, apply_timeout
             )
             if timeout_error is not None:
+                if not future.done():
+                    self._retire_stuck_lane(lane)
                 return None, timeout_error
 
             if type(output) is _TaskBoundaryInterrupt:
@@ -3048,6 +3205,44 @@ class BaseEvaluator(ABC):
                 unwrapped, _ = self._unpack_user_metrics(output, warn=False)
                 mark_if_agent_reported_cost(slot, unwrapped)
             return output, error
+
+    def _log_function_failure(
+        self, exc: BaseException, error_msg: str, config: dict[str, Any]
+    ) -> None:
+        """Log a user-function failure with its class and call stack (#3274).
+
+        The stack is logged once per (trial, exception class) at WARNING;
+        repeats for later examples of the same trial log one line at DEBUG so N
+        failing examples do not produce N tracebacks. The stack lists file,
+        line and function only -- never source lines, which can hold literals
+        the pattern-based redactor cannot recognise -- and every text goes
+        through the SDK redaction helper because exception messages come from
+        user code and may carry customer data.
+        """
+        from traigent.config.context import get_trial_context
+
+        trial_ctx = get_trial_context() or {}
+        trial_id = trial_ctx.get("trial_id")
+        if trial_id is None:
+            # No trial scope: the config object handed to every example of one
+            # evaluate() call identifies that call. The dict value keeps the
+            # config alive so its id cannot be reused by a later call.
+            trial_id = id(config)
+        key = (trial_id, type(exc))
+        seen = self.__dict__.setdefault("_logged_function_failures", {})
+        if key in seen:
+            logger.debug(redact_sensitive_text(error_msg))
+            return
+        seen[key] = config
+        frames = "\n".join(
+            f'  File "{frame.filename}", line {frame.lineno}, in {frame.name}'
+            for frame in traceback.extract_tb(exc.__traceback__)
+        )
+        logger.warning(
+            "%s\nTraceback (most recent call last):\n%s",
+            redact_sensitive_text(error_msg),
+            redact_sensitive_text(frames),
+        )
 
     async def _execute_function_unattributed(
         self,
@@ -3118,8 +3313,8 @@ class BaseEvaluator(ABC):
             raise
         except Exception as e:
             self._check_api_key_error(e)
-            error_msg = f"Function call failed: {e}"
-            logger.warning(error_msg)
+            error_msg = f"Function call failed: {type(e).__name__}: {e}"
+            self._log_function_failure(e, error_msg, config)
             return None, error_msg
 
     async def _evaluate_single_non_detailed(
@@ -3155,11 +3350,7 @@ class BaseEvaluator(ABC):
         execution_budget_lease: SampleBudgetLease | None = None,
     ) -> tuple[Any, str | None]:
         """Evaluate a single example in non-detailed mode with tracing."""
-        example_id = (
-            example.metadata.get("example_id", f"example_{index}")
-            if example.metadata
-            else f"example_{index}"
-        )
+        example_id = _example_correlation_key(example, index)
         start_time = time.time()
         cleanup_boundary = self._new_sample_lease_cleanup_boundary(
             sample_lease, execution_budget_lease
@@ -3239,6 +3430,7 @@ class BaseEvaluator(ABC):
                 metadata={
                     **(example.metadata.copy() if example.metadata else {}),
                     "resumed_example_from_prior_run": True,
+                    **_stored_unmeasured_keys_metadata(stored),
                 },
             ),
             index,
@@ -5857,6 +6049,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         metrics_obj.cost.total_cost += call_metrics.cost.total_cost
         metrics_obj.cost.unpriced = (
             metrics_obj.cost.unpriced or call_metrics.cost.unpriced
+        )
+        metrics_obj.cost.cache_rate_unknown = (
+            metrics_obj.cost.cache_rate_unknown or call_metrics.cost.cache_rate_unknown
         )
         metrics_obj.response.response_time_ms += call_metrics.response.response_time_ms
 

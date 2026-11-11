@@ -76,6 +76,14 @@ class _CaptureBucket:
     vendor_done_total: int = 0  # attempts that reached a final outcome
     vendor_retry_total: int = 0
     vendor_known_usage_total: int = 0
+    #: Attempts that raised before any response came back (429/5xx/connect
+    #: error): nothing was returned, so nothing is left unpriced (#3249).
+    vendor_no_response_total: int = 0
+    #: Responses captured for this trial by ANY capture path (LangChain,
+    #: LiteLLM, Bedrock, framework overrides), whether or not they went through
+    #: the attempt ledger above. A trial that captured one is never exempt from
+    #: strict cost accounting on the grounds that no response came back (#3249).
+    responses_captured_total: int = 0
     vendor_records_truncated: bool = False
     #: Per-example attribution (an example's agent run is a "slot"): attempts
     #: and known-usage attempts per slot, and the slots whose agent explicitly
@@ -200,6 +208,8 @@ def finish_vendor_attempt(handle: VendorAttemptHandle, **updates: Any) -> None:
         root.vendor_done_total += 1
         if updates.get("retried"):
             root.vendor_retry_total += 1
+        if updates.get("no_response"):
+            root.vendor_no_response_total += 1
         if updates.get("usage_known"):
             root.vendor_known_usage_total += 1
             if handle.slot is not None:
@@ -386,6 +396,9 @@ _MAX_THREAD_LOCAL_RESPONSES = 64
 def _capture_response_in_bucket(
     bucket: _CaptureBucket, response: Any, requested_model: Any, key: Any
 ) -> None:
+    root = bucket.root or bucket
+    with root.lock:
+        root.responses_captured_total += 1
     with bucket.lock:
         if bucket.sealed:
             if not bucket.finished:

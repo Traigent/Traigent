@@ -901,6 +901,32 @@ class TestConvenienceFunctions:
             sample_optimization_result.trials
         )
 
+    @pytest.mark.parametrize(
+        "space",
+        [
+            {"type": "int", "low": 0, "high": 10**9, "step": 2},
+            {"type": "float", "low": 0.0, "high": 1e9, "step": 0.5},
+        ],
+    )
+    def test_stepped_grid_over_cap_rejected_before_materializing(
+        self, space: dict[str, Any]
+    ) -> None:
+        """An oversized stepped range is rejected without building the grid."""
+        with patch.object(
+            wandb_module, "discrete_values_for_config_param"
+        ) as materialize:
+            with pytest.raises(ValueError, match="W&B export supports 1..10000"):
+                wandb_module.create_wandb_sweep_config("f", {"x": space}, ["accuracy"])
+        materialize.assert_not_called()
+
+    def test_stepped_grid_small_range_still_exported(self) -> None:
+        config = wandb_module.create_wandb_sweep_config(
+            "f",
+            {"x": {"type": "int", "low": 0, "high": 10, "step": 5}},
+            ["accuracy"],
+        )
+        assert config["parameters"]["x"]["values"] == [0, 5, 10]
+
     def test_create_wandb_sweep_config_categorical(
         self, mock_wandb_available: MockWandB
     ) -> None:

@@ -5,10 +5,9 @@ This module provides analysis and validation capabilities for existing problems,
 including quality assessment, bias detection, and improvement suggestions.
 """
 
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .domain_knowledge import DomainKnowledge
 from .intelligence import ProblemIntelligence
@@ -20,18 +19,18 @@ class ProblemAnalysisReport:
 
     problem_name: str
     current_count: int
-    difficulty_distribution: Dict[str, int]
+    difficulty_distribution: dict[str, int]
     quality_score: float
-    issues: List[str]
-    suggestions: List[str]
-    bias_analysis: Optional[Dict[str, Any]] = None
+    issues: list[str]
+    suggestions: list[str]
+    bias_analysis: dict[str, Any] | None = None
     completeness_score: float = 0.0
 
     def format_report(self) -> str:
         """Format the analysis report for display."""
         report = f"""
 📊 Problem Analysis Report: {self.problem_name}
-{'=' * 60}
+{"=" * 60}
 
 📈 Basic Statistics:
    Total Examples: {self.current_count}
@@ -78,9 +77,9 @@ class ValidationResult:
 
     problem_name: str
     is_valid: bool
-    issues: List[str]
-    warnings: List[str]
-    suggestions: List[str]
+    issues: list[str]
+    warnings: list[str]
+    suggestions: list[str]
 
 
 class ProblemAnalyzer:
@@ -174,8 +173,8 @@ class ProblemAnalyzer:
         return await self.analyze_problem(problem_name, detailed=False)
 
     async def validate_problems(
-        self, problem_names: List[str], fix_issues: bool = False
-    ) -> Dict[str, ValidationResult]:
+        self, problem_names: list[str], fix_issues: bool = False
+    ) -> dict[str, ValidationResult]:
         """
         Validate multiple problems.
 
@@ -203,12 +202,11 @@ class ProblemAnalyzer:
 
         return results
 
-    async def _load_problem_data(self, problem_name: str) -> Dict[str, Any]:
+    async def _load_problem_data(self, problem_name: str) -> dict[str, Any]:
         """Load problem data from module using the problem registry."""
         try:
             # Import the langchain_problems package and load all problems
-            sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-            from examples.langchain_problems import (
+            from ..langchain_problems import (
                 get_available_problems,
                 get_problem_class,
                 load_all_problems,
@@ -255,7 +253,7 @@ class ProblemAnalyzer:
         except Exception as e:
             raise ValueError(f"Failed to load problem '{problem_name}': {e}") from e
 
-    def _analyze_difficulty_distribution(self, examples: List[Any]) -> Dict[str, int]:
+    def _analyze_difficulty_distribution(self, examples: list[Any]) -> dict[str, int]:
         """Analyze difficulty distribution in examples."""
         distribution = {}
 
@@ -275,7 +273,7 @@ class ProblemAnalyzer:
 
         return distribution
 
-    def _normalize_example(self, example: Any) -> Dict[str, Any]:
+    def _normalize_example(self, example: Any) -> dict[str, Any]:
         """Normalize example to dictionary format."""
         if hasattr(example, "input_data"):  # EvaluationExample
             return {
@@ -286,12 +284,12 @@ class ProblemAnalyzer:
         else:  # Already dict format
             return example
 
-    def _normalize_examples(self, examples: List[Any]) -> List[Dict[str, Any]]:
+    def _normalize_examples(self, examples: list[Any]) -> list[dict[str, Any]]:
         """Normalize all examples to dictionary format."""
         return [self._normalize_example(ex) for ex in examples]
 
     async def _assess_quality(
-        self, problem_name: str, examples: List[Any], detailed: bool
+        self, problem_name: str, examples: list[Any], detailed: bool
     ) -> float:
         """Assess overall quality score."""
         if not examples:
@@ -330,7 +328,7 @@ class ProblemAnalyzer:
         # Convert to 0-10 scale
         return (total_score / max_score) * 10.0
 
-    def _assess_difficulty_balance(self, examples: List[Dict]) -> float:
+    def _assess_difficulty_balance(self, examples: list[dict]) -> float:
         """Assess how well-balanced the difficulty distribution is."""
         distribution = self._analyze_difficulty_distribution(examples)
 
@@ -357,7 +355,7 @@ class ProblemAnalyzer:
 
         return balance_score / len(ideal_ratios)
 
-    def _assess_example_diversity(self, examples: List[Dict]) -> float:
+    def _assess_example_diversity(self, examples: list[dict]) -> float:
         """Assess diversity of examples."""
         if not examples:
             return 0.0
@@ -395,7 +393,7 @@ class ProblemAnalyzer:
 
         return (input_diversity + output_diversity) / 2.0
 
-    async def _assess_domain_appropriateness(self, examples: List[Dict]) -> float:
+    async def _assess_domain_appropriateness(self, examples: list[dict]) -> float:
         """Assess how well examples fit the domain."""
         if not examples:
             return 0.0
@@ -440,7 +438,7 @@ class ProblemAnalyzer:
 
         return 0.5  # Neutral score for general content
 
-    def _assess_clarity(self, examples: List[Dict]) -> float:
+    def _assess_clarity(self, examples: list[dict]) -> float:
         """Assess clarity of examples."""
         if not examples:
             return 0.0
@@ -480,7 +478,7 @@ class ProblemAnalyzer:
 
         return sum(clarity_scores) / len(clarity_scores)
 
-    def _assess_example_completeness(self, examples: List[Dict]) -> float:
+    def _assess_example_completeness(self, examples: list[dict]) -> float:
         """Assess completeness of example metadata."""
         if not examples:
             return 0.0
@@ -515,7 +513,7 @@ class ProblemAnalyzer:
 
         return sum(completeness_scores) / len(completeness_scores)
 
-    def _assess_edge_case_coverage(self, examples: List[Dict]) -> float:
+    def _assess_edge_case_coverage(self, examples: list[dict]) -> float:
         """Assess coverage of edge cases."""
         distribution = self._analyze_difficulty_distribution(examples)
 
@@ -540,7 +538,7 @@ class ProblemAnalyzer:
                 0.0, 1.0 - ((edge_case_ratio - 0.25) * 2)
             )  # Penalty for too many
 
-    def _assess_completeness(self, problem_data: Dict[str, Any]) -> float:
+    def _assess_completeness(self, problem_data: dict[str, Any]) -> float:
         """Assess overall completeness of the problem."""
         score = 0.0
 
@@ -581,7 +579,7 @@ class ProblemAnalyzer:
 
         return score  # Max score is 10.0
 
-    async def _detect_issues(self, problem_name: str, examples: List[Any]) -> List[str]:
+    async def _detect_issues(self, problem_name: str, examples: list[Any]) -> list[str]:
         """Detect issues in the problem."""
         issues = []
 
@@ -632,8 +630,8 @@ class ProblemAnalyzer:
         return issues
 
     async def _generate_suggestions(
-        self, problem_name: str, examples: List[Dict], issues: List[str]
-    ) -> List[str]:
+        self, problem_name: str, examples: list[dict], issues: list[str]
+    ) -> list[str]:
         """Generate improvement suggestions."""
         suggestions = []
 
@@ -688,7 +686,7 @@ class ProblemAnalyzer:
 
         return suggestions
 
-    async def _analyze_bias(self, examples: List[Any]) -> Dict[str, Any]:
+    async def _analyze_bias(self, examples: list[Any]) -> dict[str, Any]:
         """Analyze potential biases in examples."""
         bias_analysis = {
             "potential_biases": {},
@@ -718,9 +716,9 @@ class ProblemAnalyzer:
             if std_length / avg_length > 0.5:  # High variability
                 bias_analysis["diversity_scores"]["length_diversity"] = "High"
             else:
-                bias_analysis["potential_biases"][
-                    "length_bias"
-                ] = "Examples have similar lengths"
+                bias_analysis["potential_biases"]["length_bias"] = (
+                    "Examples have similar lengths"
+                )
 
         # Check for difficulty bias
         distribution = self._analyze_difficulty_distribution(examples)
@@ -729,9 +727,9 @@ class ProblemAnalyzer:
             min_difficulty = min(distribution.values())
 
             if max_difficulty > min_difficulty * 3:
-                bias_analysis["potential_biases"][
-                    "difficulty_bias"
-                ] = "Uneven difficulty distribution"
+                bias_analysis["potential_biases"]["difficulty_bias"] = (
+                    "Uneven difficulty distribution"
+                )
 
         return bias_analysis
 
@@ -770,14 +768,14 @@ class ProblemAnalyzer:
             normalized_examples = self._normalize_examples(examples)
             for i, example in enumerate(normalized_examples):
                 if not example.get("input_data"):
-                    issues.append(f"Example {i+1}: Missing input_data")
+                    issues.append(f"Example {i + 1}: Missing input_data")
 
                 if example.get("expected_output") is None:
-                    issues.append(f"Example {i+1}: Missing expected_output")
+                    issues.append(f"Example {i + 1}: Missing expected_output")
 
                 metadata = example.get("metadata", {})
                 if not metadata.get("difficulty"):
-                    warnings.append(f"Example {i+1}: Missing difficulty metadata")
+                    warnings.append(f"Example {i + 1}: Missing difficulty metadata")
 
             # Fix issues if requested
             if fix_issues and issues:

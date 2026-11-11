@@ -28,6 +28,7 @@ from traigent.core.objective_directions import (
     resolve_objective_orientation,
     validate_objective_orientation,
 )
+from traigent.utils.discrete_domains import sample_range_dict
 from traigent.utils.exceptions import SessionError
 from traigent.utils.logging import get_logger
 
@@ -868,6 +869,9 @@ class SessionManager:
                     config[param] = _SECURE_RANDOM.randint(min_val, max_val)
                 else:
                     config[param] = _SECURE_RANDOM.uniform(min_val, max_val)
+            elif isinstance(space, dict) and "low" in space and "high" in space:
+                # Typed range dict (Range / IntRange)
+                config[param] = sample_range_dict(_SECURE_RANDOM, space)
             else:
                 # Default
                 config[param] = space

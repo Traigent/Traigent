@@ -94,9 +94,9 @@ class _BaseMessage:
     type: str = "generic"
 
 
-def _load_messages() -> (
-    tuple[type[_BaseMessage], type[_BaseMessage], type[_BaseMessage]]
-):
+def _load_messages() -> tuple[
+    type[_BaseMessage], type[_BaseMessage], type[_BaseMessage]
+]:
     try:  # pragma: no cover - executed when dependency is installed
         from langchain_core.messages import AIMessage as real_ai  # type: ignore
         from langchain_core.messages import HumanMessage as real_human

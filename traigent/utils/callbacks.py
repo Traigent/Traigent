@@ -196,6 +196,27 @@ def _shutdown_callback_executor(
     executor.shutdown(wait=False, cancel_futures=True)
 
 
+def _count_executed_trials(trials: Any) -> int:
+    """Count trials that actually ran, skipping never-started placeholders.
+
+    The orchestrator keeps permit-denied / constraint-rejected configurations
+    in ``result.trials`` flagged ``abandoned`` (and ``_traigent_never_started``);
+    they spent nothing and must not count toward the closing progress total.
+    Failed or pruned trials that did start are counted. The metadata keys are
+    the orchestrator's ``_ABANDONED_TRIAL_METADATA_KEY`` and
+    ``mandatory_metrics.NEVER_STARTED_METADATA_KEY`` (not imported: cycle).
+    """
+    count = 0
+    for trial in trials or []:
+        metadata = getattr(trial, "metadata", None)
+        if isinstance(metadata, dict) and (
+            metadata.get("abandoned") or metadata.get("_traigent_never_started")
+        ):
+            continue
+        count += 1
+    return count
+
+
 @dataclass
 class ProgressInfo:
     """Information about optimization progress."""
@@ -389,7 +410,14 @@ class ProgressBarCallback(OptimizationCallback):
         """Called when optimization completes."""
         # Draw final 100% progress bar (throttle may have skipped the last update)
         if self._last_progress is not None:
-            self._print_final_progress_bar(self._last_progress)
+            trials = getattr(result, "trials", None)
+            self._print_final_progress_bar(
+                self._last_progress,
+                # Without a usable trial list keep the recorded total.
+                executed_trials=(
+                    _count_executed_trials(trials) if isinstance(trials, list) else None
+                ),
+            )
 
         _safe_print("\n")
         self._print_completion_status(result)
@@ -408,14 +436,24 @@ class ProgressBarCallback(OptimizationCallback):
 
         self._print_results_table(result)
 
-    def _print_final_progress_bar(self, progress: ProgressInfo) -> None:
-        """Print the closing 100% progress line from the last recorded progress."""
+    def _print_final_progress_bar(
+        self, progress: ProgressInfo, executed_trials: int | None = None
+    ) -> None:
+        """Print the closing 100% progress line from the last recorded progress.
+
+        ``progress.total_trials`` is the *budget* (``max_trials``); a finite
+        search space (e.g. a 4-point grid with ``max_trials=8``) can finish
+        sooner. When the executed count is known, close on that so the line
+        never claims trials that did not run (Traigent#3207).
+        """
         bar = "█" * self.width
         elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
         best_score_str = (
             f"{progress.best_score:.3f}" if progress.best_score is not None else "N/A"
         )
-        total = progress.total_trials
+        total = (
+            executed_trials if executed_trials is not None else progress.total_trials
+        )
         # Using print for final progress display output
         _safe_print(
             f"\r[{bar}] 100.0% "
@@ -1036,6 +1074,7 @@ class CallbackManager:
             CallbackInvocationKey, concurrent.futures.Future[Any]
         ] = {}
         self._running_callbacks_lock = threading.Lock()
+        self._warned_missing_hooks: set[tuple[int, str]] = set()
 
     def _ensure_executor(self) -> concurrent.futures.ThreadPoolExecutor:
         """Create or return the shared callback executor."""
@@ -1289,6 +1328,26 @@ class CallbackManager:
         if callback in self.callbacks:
             self.callbacks.remove(callback)
 
+    def _optional_hook(
+        self, callback: Any, method_name: str
+    ) -> Callable[..., Any] | None:
+        """Look up a hook; warn once and return None if the callback lacks it.
+
+        Only the attribute lookup is guarded. Exceptions raised *inside* a hook
+        still go through ``_invoke_callback_safe`` and are recorded as before.
+        """
+        hook = getattr(callback, method_name, None)
+        if callable(hook):
+            return hook  # type: ignore[no-any-return]
+        key = (id(callback), method_name)
+        if key not in self._warned_missing_hooks:
+            self._warned_missing_hooks.add(key)
+            logger.warning(
+                f"Callback {callback.__class__.__name__} has no {method_name}; "
+                "skipping it (subclass OptimizationCallback to implement every hook)"
+            )
+        return None
+
     def on_run_settings(self, settings: dict[str, Any]) -> None:
         """Notify callbacks that implement the optional run-settings hook."""
         for callback in self.callbacks:
@@ -1306,10 +1365,13 @@ class CallbackManager:
         )
         for i, callback in enumerate(self.callbacks):
             logger.debug(f"Calling callback {i}: {callback.__class__.__name__}")
+            hook = self._optional_hook(callback, "on_optimization_start")
+            if hook is None:
+                continue
             self._invoke_callback_safe(
                 callback,
                 "on_optimization_start",
-                callback.on_optimization_start,
+                hook,
                 config_space,
                 objectives,
                 algorithm,
@@ -1318,10 +1380,13 @@ class CallbackManager:
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Notify all callbacks of trial start."""
         for callback in self.callbacks:
+            hook = self._optional_hook(callback, "on_trial_start")
+            if hook is None:
+                continue
             self._invoke_callback_safe(
                 callback,
                 "on_trial_start",
-                callback.on_trial_start,
+                hook,
                 trial_number,
                 config,
             )
@@ -1329,10 +1394,13 @@ class CallbackManager:
     def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
         """Notify all callbacks of trial completion."""
         for callback in self.callbacks:
+            hook = self._optional_hook(callback, "on_trial_complete")
+            if hook is None:
+                continue
             self._invoke_callback_safe(
                 callback,
                 "on_trial_complete",
-                callback.on_trial_complete,
+                hook,
                 trial,
                 progress,
             )
@@ -1341,10 +1409,13 @@ class CallbackManager:
         """Notify all callbacks of optimization completion."""
         try:
             for callback in self.callbacks:
+                hook = self._optional_hook(callback, "on_optimization_complete")
+                if hook is None:
+                    continue
                 self._invoke_callback_safe(
                     callback,
                     "on_optimization_complete",
-                    callback.on_optimization_complete,
+                    hook,
                     result,
                 )
         finally:

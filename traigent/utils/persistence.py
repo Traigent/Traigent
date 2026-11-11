@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import dataclasses
 import gzip
@@ -12,6 +13,11 @@ import json
 import logging
 import os
 import pickle
+import shutil
+import stat
+import threading
+import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -45,6 +51,26 @@ logger = logging.getLogger(__name__)
 # File name constants
 _INTEGRITY_FILES = ("metadata.json", "trials.json.gz")
 METADATA_FILE = "metadata.json"
+# #3257: in-progress / displaced result directories; never listed as results.
+_STAGING_PREFIX = ".traigent-staging-"
+_ASIDE_PREFIX = _STAGING_PREFIX + "old."
+_PUBLISH_LOCK = threading.Lock()
+_SEQ_LAST = 0
+
+
+try:  # POSIX only; elsewhere the in-process lock is the only guard
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
+
+
+def _next_seq() -> int:
+    """Strictly increasing within the process, wall-clock ordered across them."""
+    global _SEQ_LAST
+    _SEQ_LAST = max(time.time_ns(), _SEQ_LAST + 1)
+    return _SEQ_LAST
+
+
 TRIALS_JSON_FILE = "trials.json.gz"
 TRIALS_PKL_FILE = "trials.pkl.gz"
 TRIALS_SUMMARY_FILE = "trials_summary.json"
@@ -538,8 +564,70 @@ class PersistenceManager:
             if temp_path.exists():
                 temp_path.unlink()
 
+    @contextlib.contextmanager
+    def _publish_guard(self) -> Any:
+        """Serialise swaps and recovery across threads AND processes.
+
+        The thread lock covers this process; an exclusive ``flock`` on the base
+        directory itself (no lock file, so nothing extra is listed) covers other
+        processes sharing it.
+        """
+        with _PUBLISH_LOCK:
+            fd = None
+            if fcntl is not None:
+                try:
+                    fd = os.open(self.base_dir, os.O_RDONLY)
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                except OSError:
+                    if fd is not None:
+                        os.close(fd)
+                    fd = None
+            try:
+                yield
+            finally:
+                if fd is not None:
+                    os.close(fd)  # closing releases the flock
+
+    def _recover_displaced(self) -> None:
+        """Restore generations displaced by a save that died mid-swap.
+
+        ``_publish_result_dir`` renames the old directory aside before moving
+        the new one in. A hard kill between the two leaves the name absent and
+        the old generation under
+        ``.traigent-staging-old.<name>.<seq>.<pid>.<id>``, where ``<seq>`` is a
+        zero-padded, process-monotonic nanosecond stamp. The NEWEST aside copy
+        is put back, and older copies are deleted only after that rename
+        succeeded. When the name is present, leftover copies are stale and are
+        removed. Runs under the publish lock so it cannot restore a copy a
+        concurrent in-process save is about to replace.
+
+        Savers and recovery in different processes are serialised by an
+        ``flock`` on the base directory (POSIX). Known limit: a reader racing
+        an overwrite can still see a mixed generation (readers are not locked).
+        """
+        with self._publish_guard():
+            groups: dict[str, list[tuple[str, Path]]] = {}
+            for aside in self.base_dir.glob(f"{_ASIDE_PREFIX}*"):
+                parts = aside.name[len(_ASIDE_PREFIX) :].rsplit(".", 3)
+                if len(parts) != 4 or not parts[0] or not aside.is_dir():
+                    continue
+                groups.setdefault(parts[0], []).append((parts[1], aside))
+            for name, copies in groups.items():
+                copies.sort(key=lambda c: c[0])
+                target = self.base_dir / name
+                if not target.exists():
+                    try:
+                        os.replace(copies[-1][1], target)
+                    except OSError:
+                        logger.warning("Could not restore a displaced saved result")
+                        continue
+                    copies = copies[:-1]
+                for _seq, stale in copies:
+                    shutil.rmtree(stale, ignore_errors=True)
+
     def result_exists(self, name: str) -> bool:
         """Return True if a result named ``name`` is already saved."""
+        self._recover_displaced()
         return self._resolve_path(self.base_dir / name).is_dir()
 
     def save_result(self, result: OptimizationResult, name: str | None = None) -> str:
@@ -560,10 +648,59 @@ class PersistenceManager:
             )
             name = f"{func_slug}_{timestamp}"
 
-        # Create subdirectory for this optimization
+        # #3257: the result is built in a sibling staging directory (files and
+        # integrity manifest together) and only then swapped into place, so a
+        # crash mid-save can neither expose a half-written result nor mix old
+        # and new generations under one name.
+        if name.startswith(_STAGING_PREFIX):
+            raise ValueError("Result names must not start with the staging prefix")
+        self._recover_displaced()
         result_dir = self._resolve_path(self.base_dir / name)
-        result_dir.mkdir(exist_ok=True)
+        stage_dir = self._resolve_path(
+            self.base_dir
+            / f"{_STAGING_PREFIX}{name}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
+        )
+        stage_dir.mkdir(mode=0o700)  # private while being built
+        try:
+            self._write_result_files(result, stage_dir)
+            self._publish_result_dir(stage_dir, result_dir)
+        except BaseException:
+            shutil.rmtree(stage_dir, ignore_errors=True)
+            raise
+        return str(result_dir)
 
+    def _publish_result_dir(self, stage_dir: Path, result_dir: Path) -> None:
+        """Swap a fully built staging directory into place as ``result_dir``.
+
+        Directory rename-over-existing is not portable (it fails on Windows),
+        so an existing generation is renamed aside first and restored if the
+        final rename fails.
+        """
+        with self._publish_guard():
+            if result_dir.exists():
+                # the new generation must not be more permissive than the one
+                # it replaces (e.g. a private 0700 result directory)
+                os.chmod(stage_dir, stat.S_IMODE(result_dir.stat().st_mode))
+            self._swap_in(stage_dir, result_dir)
+
+    def _swap_in(self, stage_dir: Path, result_dir: Path) -> None:
+        if not result_dir.exists():
+            os.replace(stage_dir, result_dir)
+            return
+        aside = self._resolve_path(
+            self.base_dir
+            / f"{_ASIDE_PREFIX}{result_dir.name}.{_next_seq():020d}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
+        )
+        os.replace(result_dir, aside)
+        try:
+            os.replace(stage_dir, result_dir)
+        except BaseException:
+            os.replace(aside, result_dir)
+            raise
+        shutil.rmtree(aside, ignore_errors=True)
+
+    def _write_result_files(self, result: OptimizationResult, result_dir: Path) -> None:
+        """Write every artifact of ``result`` into ``result_dir``."""
         # Save metadata as JSON
         metadata = {
             "function_identifier": result.metadata.get("function_name", "unknown"),
@@ -714,8 +851,6 @@ class PersistenceManager:
 
         self._atomic_write_json(result_dir / TRIALS_SUMMARY_FILE, trials_summary)
 
-        return str(result_dir)
-
     def _load_trials(self, name: str, result_dir: Path) -> list[TrialResult]:
         """Read the saved trials: JSON first, legacy pickle with a warning."""
         # Load trials using JSON instead of pickle for security
@@ -797,6 +932,7 @@ class PersistenceManager:
         it is not tamper-proof, because someone who can rewrite the files can
         rewrite the manifest as well.
         """
+        self._recover_displaced()
         result_dir = self._resolve_path(self.base_dir / name)
 
         if not result_dir.exists():
@@ -893,10 +1029,11 @@ class PersistenceManager:
             carry a second copy of every result's metadata, metrics and
             best_config).
         """
+        self._recover_displaced()
         results = []
 
         for result_dir in self.base_dir.iterdir():
-            if result_dir.is_dir():
+            if result_dir.is_dir() and not result_dir.name.startswith(_STAGING_PREFIX):
                 metadata_file = self._resolve_path(result_dir / METADATA_FILE)
                 if metadata_file.exists():
                     try:

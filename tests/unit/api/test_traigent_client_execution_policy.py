@@ -12,6 +12,8 @@ from traigent.config.types import ExecutionIntent, ExecutionMode
 from traigent.traigent_client import TraigentClient
 from traigent.utils.exceptions import ConfigurationError
 
+pytestmark = pytest.mark.usefixtures("connected_policy_env")
+
 
 class _FakeBackendConfig:
     @staticmethod

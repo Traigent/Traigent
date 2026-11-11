@@ -143,6 +143,12 @@ class MockOrchestrator:
         self.backend_session_manager = None
         self.mock_state_records = 0
 
+    def _remember_trial_result(self, trial_number, result):
+        """Mirror of OptimizationOrchestrator._remember_trial_result."""
+        if isinstance(result, TrialResult):
+            self._trial_real_results = getattr(self, "_trial_real_results", None) or {}
+            self._trial_real_results[trial_number] = result
+
     def _apply_knob_resolution(self, config):
         """Mirror of OptimizationOrchestrator._apply_knob_resolution (RFC 0001):
         passthrough when no resolver is configured."""

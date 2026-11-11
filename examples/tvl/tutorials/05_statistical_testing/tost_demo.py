@@ -208,8 +208,8 @@ def demonstrate_banded_with_tost():
     # Config B: below band
     samples_b = [0.80 + random.gauss(0, 0.02) for _ in range(20)]
 
-    print(f"\n  Config A mean: {sum(samples_a)/len(samples_a):.3f}")
-    print(f"  Config B mean: {sum(samples_b)/len(samples_b):.3f}")
+    print(f"\n  Config A mean: {sum(samples_a) / len(samples_a):.3f}")
+    print(f"  Config B mean: {sum(samples_b) / len(samples_b):.3f}")
 
     winner, tost_a, tost_b = compare_banded_with_tost(samples_a, samples_b, band)
 
@@ -244,12 +244,12 @@ def demonstrate_banded_objective_spec():
     good_samples = [0.90 + random.gauss(0, 0.02) for _ in range(20)]
     bad_samples = [0.78 + random.gauss(0, 0.02) for _ in range(20)]
 
-    print(f"\n  Good config (mean={sum(good_samples)/len(good_samples):.3f}):")
+    print(f"\n  Good config (mean={sum(good_samples) / len(good_samples):.3f}):")
     good_result = spec.evaluate(good_samples)
     print(f"    Satisfied: {spec.is_satisfied(good_samples)}")
     print(f"    TOST result: is_equivalent={good_result.is_equivalent}")
 
-    print(f"\n  Bad config (mean={sum(bad_samples)/len(bad_samples):.3f}):")
+    print(f"\n  Bad config (mean={sum(bad_samples) / len(bad_samples):.3f}):")
     bad_result = spec.evaluate(bad_samples)
     print(f"    Satisfied: {spec.is_satisfied(bad_samples)}")
     print(f"    TOST result: is_equivalent={bad_result.is_equivalent}")

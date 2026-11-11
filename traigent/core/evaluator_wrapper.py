@@ -20,6 +20,7 @@ from traigent.core.utils import safe_get_nested_attr
 from traigent.evaluators.base import (
     EXAMPLE_TIMEOUT_ERROR_PREFIX,
     MEASURED_ONLY_METRICS,
+    OBJECTIVE_SOURCE_METRICS,
     BaseEvaluator,
     Dataset,
     EvaluationExample,
@@ -373,6 +374,12 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 # the legacy estimator's input when that call had no usage.
                 original_prompt=original_prompt if position == 0 else None,
                 response_text=response_text if position == 0 else None,
+                # A captured response with missing/null usage is an unknown
+                # spend, never an estimate from the prompt/answer text
+                # (Traigent#3251). This deliberately does NOT claim the
+                # response is provider-billed (``response_captured``): the
+                # capture buffer also holds caller-supplied objects (#2505).
+                estimate_from_text=False,
             )
             if not self._has_llm_measurement(metrics):
                 # A call with no usage is an unknown spend, and it stays
@@ -421,6 +428,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         total.cost.output_cost += extra.cost.output_cost
         total.cost.total_cost += extra.cost.total_cost
         total.cost.unpriced = total.cost.unpriced or extra.cost.unpriced
+        total.cost.cache_rate_unknown = (
+            total.cost.cache_rate_unknown or extra.cost.cache_rate_unknown
+        )
         total.response.response_time_ms += extra.response.response_time_ms
 
     def _enhance_result_with_llm_metrics(
@@ -611,7 +621,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 continue
             if _any_row_measured(all_metrics, metric):
                 continue
-            source = "total_cost" if metric == "cost" else metric
+            source = OBJECTIVE_SOURCE_METRICS.get(metric, (metric,))[0]
             captured = _measured_number(aggregated.get(source))
             if captured is not None:
                 aggregated[metric] = captured

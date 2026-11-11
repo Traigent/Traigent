@@ -20,6 +20,7 @@ from traigent.core.objective_directions import resolve_objective_orientation
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.utils.exceptions import TVLValidationError
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import validate_positive_int
 
 from .models import (
     ConvergenceCriteria,
@@ -2136,11 +2137,15 @@ def _parse_budget(optimization_section: Any) -> TVLBudget:
 
     timeout_seconds = _extract_numeric_field(budget_section.get("timeout_seconds"))
 
-    max_total_examples_raw = _extract_numeric_field(
-        budget_section.get("max_total_examples")
-    )
+    # Validate the raw value: int() would turn True into 1 and 2.5 into 2
+    # silently, and NaN/inf raise errors that do not name the field (#2898).
+    budget_examples_field = budget_section.get("max_total_examples")
+    if isinstance(budget_examples_field, dict) and "value" in budget_examples_field:
+        budget_examples_field = budget_examples_field["value"]
     max_total_examples = (
-        int(max_total_examples_raw) if max_total_examples_raw is not None else None
+        validate_positive_int("max_total_examples", budget_examples_field)
+        if budget_examples_field is not None
+        else None
     )
 
     parallel_trials_value = budget_section.get("parallel_trials")
@@ -2626,7 +2631,9 @@ def _translate_expression(expression: str) -> str:
         if quote is not None
         else _rewrite_segment(expression[segment_start:])
     )
-    return "".join(out)
+    # The `!` -> " not " rewrite can leave leading/trailing whitespace, which
+    # ast.parse(mode="eval") rejects as "unexpected indent" (#3229).
+    return "".join(out).strip()
 
 
 _ALLOWED_AST_NODES = (

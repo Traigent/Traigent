@@ -39,9 +39,17 @@ except ImportError:
 
 from ...api.types import OptimizationResult, TrialResult
 from ...core.objective_directions import resolve_objective_orientation
+from ...utils.callbacks import OptimizationCallback
+from ...utils.discrete_domains import (
+    discrete_cardinality_for_config_param,
+    discrete_values_for_config_param,
+)
 from ...utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+#: Run-name prefix when the optimized function's name is not available.
+_DEFAULT_RUN_LABEL = "traigent"
 
 
 class TraigentWandBTracker:
@@ -431,7 +439,7 @@ class TraigentWandBTracker:
         return cast(str, sweep_id)
 
 
-class WandBOptimizationCallback:
+class WandBOptimizationCallback(OptimizationCallback):
     """Callback for automatic W&B logging during optimization."""
 
     def __init__(self, tracker: TraigentWandBTracker) -> None:
@@ -442,24 +450,52 @@ class WandBOptimizationCallback:
         """
         self.tracker = tracker
         self.trial_count = 0
+        self._function_name: str | None = None
 
-    def on_optimization_start(
+    def on_run_settings(self, settings: dict[str, Any]) -> None:
+        """Remember the optimized function's name for the W&B run name."""
+        name = settings.get("function_name")
+        if isinstance(name, str) and name:
+            self._function_name = name
+
+    def on_optimization_start(  # type: ignore[override]
         self,
-        function_name: str,
-        objectives: list[str],
-        configuration_space: dict[str, Any],
-        **kwargs,
+        config_space: dict[str, Any] | None = None,
+        objectives: list[str] | None = None,
+        algorithm: str | None = None,
+        *,
+        function_name: str | None = None,
+        configuration_space: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
-        """Called when optimization starts."""
+        """Called when optimization starts.
+
+        Accepts the ``OptimizationCallback`` signature
+        ``(config_space, objectives, algorithm)``. The legacy keyword form
+        ``function_name=..., configuration_space=...`` still works.
+        """
+        if isinstance(config_space, str):
+            # Legacy positional order (function_name, objectives, config_space),
+            # possibly mixed with keywords.
+            function_name = function_name or config_space
+            config_space = algorithm if isinstance(algorithm, dict) else None
+        space = config_space if config_space is not None else configuration_space
+        name = function_name or self._function_name or _DEFAULT_RUN_LABEL
         self.tracker.start_optimization_run(
-            function_name=function_name,
-            objectives=objectives,
-            configuration_space=configuration_space,
+            function_name=name,
+            objectives=list(objectives or []),
+            configuration_space=dict(space or {}),
             additional_tags=kwargs.get("wandb_tags", []),
             config=kwargs.get("wandb_config", {}),
         )
 
-    def on_trial_complete(self, trial: TrialResult) -> None:
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts (nothing to log until it completes)."""
+        return None
+
+    def on_trial_complete(  # type: ignore[override]
+        self, trial: TrialResult, progress: Any = None
+    ) -> None:
         """Called when trial completes."""
         self.trial_count += 1
         self.tracker.log_trial(trial, self.trial_count)
@@ -566,6 +602,17 @@ def log_traigent_optimization(
     return run_id
 
 
+_WANDB_MAX_GRID_VALUES = 10_000
+
+
+def _is_unit_or_no_step(param_range: Mapping[str, Any]) -> bool:
+    step = param_range.get("step")
+    if step is None:
+        return True
+    is_int = str(param_range.get("type", "")).lower() in {"int", "integer"}
+    return is_int and step == 1
+
+
 def create_wandb_sweep_config(
     function_name: str,
     configuration_space: dict[str, Any],
@@ -608,6 +655,49 @@ def create_wandb_sweep_config(
             # Continuous parameter
             min_val, max_val = param_range
             wandb_parameters[param_name] = {"min": min_val, "max": max_val}
+        elif (
+            isinstance(param_range, dict)
+            and "low" in param_range
+            and "high" in param_range
+            and not param_range.get("log")
+            and _is_unit_or_no_step(param_range)
+        ):
+            # Typed numeric range dict without a step, or an integer range
+            # with step 1 (e.g. IntRange): a plain min/max domain
+            bounds: dict[str, Any] = {
+                "min": param_range["low"],
+                "max": param_range["high"],
+            }
+            range_type = str(param_range.get("type", "")).lower()
+            if range_type in {"int", "integer"}:
+                bounds["distribution"] = "int_uniform"
+            elif range_type == "float":
+                # Explicit float domain: integer-valued bounds must not be
+                # inferred as int_uniform by W&B (#3211).
+                bounds = {
+                    "min": float(param_range["low"]),
+                    "max": float(param_range["high"]),
+                    "distribution": "uniform",
+                }
+            wandb_parameters[param_name] = bounds
+        elif (
+            isinstance(param_range, dict)
+            and "low" in param_range
+            and "high" in param_range
+            and param_range.get("step") is not None
+            and not param_range.get("log")
+        ):
+            # Stepped range: export the exact grid so the sweep never leaves it.
+            # Bound the size arithmetically before materializing the grid.
+            count = discrete_cardinality_for_config_param(param_range) or 0
+            if count < 1 or count > _WANDB_MAX_GRID_VALUES:
+                raise ValueError(
+                    f"Parameter '{param_name}' has a stepped range with "
+                    f"{count} values; W&B export supports "
+                    f"1..{_WANDB_MAX_GRID_VALUES}"
+                )
+            grid = discrete_values_for_config_param(param_range) or ()
+            wandb_parameters[param_name] = {"values": list(grid)}
         else:
             # Single value - treat as constant
             wandb_parameters[param_name] = {"value": param_range}

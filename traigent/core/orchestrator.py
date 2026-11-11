@@ -86,7 +86,10 @@ from traigent.core.execution_policy_runtime import (
     unsupported_backend_smart_algorithm_message,
 )
 from traigent.core.logger_facade import LoggerFacade
-from traigent.core.mandatory_metrics import MandatoryMetricsCollector
+from traigent.core.mandatory_metrics import (
+    NEVER_STARTED_METADATA_KEY,
+    MandatoryMetricsCollector,
+)
 from traigent.core.metadata_helpers import merge_run_metrics_into_session_summary
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
 from traigent.core.metrics_aggregator import (
@@ -127,8 +130,12 @@ from traigent.core.selection_receipt import build_selection_receipt
 from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
-from traigent.core.stop_conditions import StopCondition
-from traigent.core.trial_lifecycle import TrialLifecycle
+from traigent.core.stop_conditions import StopCondition, validate_plateau_window
+from traigent.core.trial_lifecycle import (
+    CONSTRAINT_REJECTION_CAP_FACTOR,
+    TrialLifecycle,
+    rejection_cap_applies,
+)
 from traigent.core.utils import extract_examples_attempted
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
 from traigent.evaluators.base import MEASURED_ONLY_METRICS, BaseEvaluator, Dataset
@@ -146,6 +153,7 @@ from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationError,
+    TVLConstraintError,
     VendorPauseError,
 )
 from traigent.utils.function_identity import (
@@ -156,6 +164,7 @@ from traigent.utils.hashing import generate_run_label
 from traigent.utils.logging import get_logger
 from traigent.utils.mock_provenance import MockProvenanceRecorder
 from traigent.utils.money import format_usd
+from traigent.utils.numeric_validation import validate_positive_int
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
     is_minimization_objective,
@@ -580,6 +589,26 @@ _NON_LLM_MODEL_KEYS = frozenset(
 )
 
 
+def _deterministic_fill(definition: Any) -> tuple[bool, Any]:
+    """Deterministic value for a tuned variable with no default, if one exists.
+
+    Categorical: first declared value. Range: lower bound (the first point of
+    the step grid). Anything else has no fill.
+    """
+    if isinstance(definition, (list, tuple)) and definition:
+        # A list is a categorical; a (low, high) tuple is a range. Either way
+        # the first element is the deterministic fill.
+        return True, definition[0]
+    if isinstance(definition, dict):
+        if "low" in definition and "high" in definition:
+            return True, definition["low"]
+        for key in ("choices", "values"):
+            values = definition.get(key)
+            if isinstance(values, (list, tuple)) and values:
+                return True, values[0]
+    return False, None
+
+
 class OptimizationOrchestrator:
     """Orchestrates the optimization process.
 
@@ -626,7 +655,12 @@ class OptimizationOrchestrator:
         self.optimizer = optimizer
         self.evaluator = evaluator
         self._max_trials = max_trials
-        self._max_total_examples = max_total_examples
+        # Store the normalised int so 3.0 behaves exactly like 3 (Traigent#2898).
+        self._max_total_examples = (
+            validate_positive_int("max_total_examples", max_total_examples)
+            if max_total_examples is not None
+            else None
+        )
         self.timeout = timeout
         self.traigent_config = config or TraigentConfig()
         self.config = kwargs
@@ -635,7 +669,11 @@ class OptimizationOrchestrator:
             parallel_trials=self.parallel_trials,
         )
         self.progress_manager = ProgressManager(
-            total_trials=max_trials,
+            total_trials=self._expected_total_trials(
+                optimizer,
+                max_trials,
+                extra_trials=1 if kwargs.get("default_config") else 0,
+            ),
             algorithm_name=optimizer.__class__.__name__,
             objectives=(
                 [obj for obj in objectives if obj is not None] if objectives else None
@@ -704,6 +742,8 @@ class OptimizationOrchestrator:
         self._default_config: dict[str, Any] | None = None
         self._default_config_used = False
         self._init_default_config(default_config)
+        # User-supplied starting configs (issue #1665), run after the baseline.
+        self._seed_configs: list[dict[str, Any]] = []
 
         self.use_versioned_logger = use_versioned_logger
         self.file_version = file_version
@@ -1202,7 +1242,12 @@ class OptimizationOrchestrator:
 
     def _configure_stop_conditions(self) -> None:
         """Configure stop conditions and sample budget management."""
-        plateau_window = int(self.config.get("plateau_window", 0) or 0)
+        raw_plateau_window = self.config.get("plateau_window")
+        plateau_window = (
+            validate_plateau_window(raw_plateau_window)
+            if raw_plateau_window is not None
+            else 0
+        )
         plateau_epsilon = (
             float(self.config.get("plateau_epsilon", 1e-6) or 1e-6)
             if plateau_window > 0
@@ -1514,13 +1559,23 @@ class OptimizationOrchestrator:
             )
 
     def _consume_default_config(self) -> dict[str, Any] | None:
-        """Return the default config once to seed a baseline trial."""
+        """Return the next fixed starting config, or None.
+
+        The ``default_config`` baseline comes first (once), then any
+        user-supplied ``seed_configs`` one per call (issue #1665). Every
+        trial-start path already calls this, so seeds reach sequential and
+        parallel runs alike.
+        """
         if self._default_config_used:
-            return None
+            return self._consume_seed_config()
 
         self._default_config_used = True
         if not self._default_config:
-            return None
+            return self._consume_seed_config()
+
+        baseline = self._complete_default_config()
+        if baseline is None:
+            return self._consume_seed_config()
 
         self._warn_if_baseline_shrinks_grid()
 
@@ -1533,7 +1588,97 @@ class OptimizationOrchestrator:
             except Exception:
                 logger.debug("Unable to increment optimizer trial count for baseline.")
 
-        return copy.deepcopy(self._default_config)
+        return baseline
+
+    def _complete_default_config(self) -> dict[str, Any] | None:
+        """The baseline with every tuned key present, or None to skip it (#3200).
+
+        Keys the ``default_config`` lacks are filled from the configuration
+        space itself, never from the optimizer, so the optimizer's own sequence
+        and tried-hash accounting are unaffected: a Choices takes its first
+        declared value; a range takes its lower bound (the first point of its
+        step grid). A parameter with no deterministic fill, or a completed
+        baseline that violates a pre-evaluation constraint, skips the baseline
+        with one warning.
+        """
+        if self._default_config is None:
+            # An explicit raise, not an assert: ``python -O`` strips asserts.
+            raise OptimizationError(
+                "default config baseline requested without a default_config"
+            )
+        baseline = copy.deepcopy(self._default_config)
+        space = getattr(self.optimizer, "config_space", None)
+        if not isinstance(space, dict):
+            return baseline
+        for name, definition in space.items():
+            if name in baseline:
+                continue
+            found, value = _deterministic_fill(definition)
+            if not found:
+                logger.warning(
+                    "Skipping the default_config baseline: parameter '%s' has no "
+                    "default and no deterministic fill, so trial 1 would lack it.",
+                    name,
+                )
+                return None
+            baseline[name] = value
+        try:
+            satisfied = pre_trial_validate_config(baseline, self._constraints_pre_eval)
+        except TVLConstraintError:
+            satisfied = False
+        if not satisfied:
+            logger.warning(
+                "Skipping the default_config baseline: the baseline completed from "
+                "the configuration space violates a pre-evaluation constraint."
+            )
+            return None
+        return baseline
+
+    def set_seed_configs(self, seed_configs: list[dict[str, Any]]) -> None:
+        """Queue validated seed configs to run before any optimizer suggestion.
+
+        They run in order, after the ``default_config`` baseline (if any), and
+        count toward ``max_trials``. The caller validates them against the
+        configuration space (``traigent.core.seed_configs``).
+        """
+        for index, seed in enumerate(seed_configs):
+            if not pre_trial_validate_config(seed, self._constraints_pre_eval):
+                raise ValueError(
+                    f"Seed config #{index} violates a pre-evaluation constraint "
+                    "of this run."
+                )
+        self._seed_configs = [copy.deepcopy(c) for c in seed_configs]
+        planned = self._max_trials
+        baseline = 1 if self._default_config else 0
+        if planned is not None and len(self._seed_configs) + baseline > planned:
+            logger.warning(
+                "%d seed config(s) plus the default_config baseline exceed "
+                "max_trials=%d, so some seeds will not be evaluated.",
+                len(self._seed_configs),
+                planned,
+            )
+
+    def _consume_seed_config(self) -> dict[str, Any] | None:
+        """Return the next queued seed config, or None when none are left."""
+        if not self._seed_configs:
+            return None
+        # Keep local optimizers' internal trial counters aligned with
+        # max_trials, exactly as for the baseline trial.
+        if hasattr(self.optimizer, "_trial_count"):
+            try:
+                self.optimizer._trial_count += 1  # type: ignore[attr-defined]
+            except Exception:
+                logger.debug("Unable to increment optimizer trial count for seed.")
+        seed = self._seed_configs.pop(0)
+        # Tell local optimizers this point is spent so they never re-propose it
+        # (same call resume_from uses for reused configs, #1697).
+        mark = getattr(self.optimizer, "mark_config_evaluated", None)
+        if callable(mark):
+            try:
+                mark(seed)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                logger.warning("seed_configs: optimizer could not record a seed")
+        return seed
 
     @property
     def status(self) -> OptimizationStatus:
@@ -2305,6 +2450,10 @@ class OptimizationOrchestrator:
         if trial_result.status != TrialStatus.FAILED or not trial_result.error_message:
             return None
 
+        if trial_result.error_message.startswith("No examples succeeded"):
+            # Aggregate all-failed message: provider failures were already
+            # summarised into metadata from the per-example errors above.
+            return None
         category = classify_systematic_provider_failure(trial_result.error_message)
         if category is None:
             return None
@@ -2430,6 +2579,38 @@ class OptimizationOrchestrator:
         except Exception as exc:
             logger.debug("Hybrid lifecycle cleanup failed: %s", exc)
 
+    @staticmethod
+    def _expected_total_trials(
+        optimizer: BaseOptimizer,
+        max_trials: int | None,
+        extra_trials: int = 0,
+    ) -> int | None:
+        """Planned trial count: max_trials capped by a finite search space.
+
+        ``extra_trials`` are fixed trials that run on top of the optimizer's own
+        suggestions (the ``default_config`` baseline); it counts toward
+        ``max_trials`` but is not marked as an evaluated grid point. Seed
+        configs are grid points and are already inside the cardinality.
+        Only optimizers that never repeat a configuration (grid, random) are
+        capped; others may repeat, so their total stays ``max_trials``.
+
+        Reuses ``BaseOptimizer.config_space_cardinality`` (None for continuous
+        or unknown spaces, where max_trials is returned unchanged). Traigent#3207.
+        """
+        if max_trials is None:
+            return None
+        from traigent.optimizers.grid import GridSearchOptimizer
+        from traigent.optimizers.random import RandomSearchOptimizer
+
+        if not isinstance(optimizer, (GridSearchOptimizer, RandomSearchOptimizer)):
+            return max_trials
+        cardinality = getattr(optimizer, "config_space_cardinality", None)
+        if isinstance(cardinality, int) and not isinstance(cardinality, bool):
+            capped = cardinality + max(extra_trials, 0)
+            if 0 < cardinality and capped < max_trials:
+                return capped
+        return max_trials
+
     def _get_progress_info(self, current_trial: int) -> ProgressInfo:
         """Create progress information for callbacks."""
         elapsed_time = time.time() - self._start_time if self._start_time else 0.0
@@ -2448,16 +2629,27 @@ class OptimizationOrchestrator:
             best_config = best_result.config
 
         # Estimate remaining time
-        avg_trial_time = elapsed_time / len(self._trials) if self._trials else 0
-        remaining_trials = (self.max_trials or 0) - len(self._trials)
+        # Constraint-rejected records were never evaluated (Traigent#3210).
+        executed_count = sum(
+            1
+            for trial in self._trials
+            if not (getattr(trial, "metadata", None) or {}).get("constraint_rejected")
+        )
+        avg_trial_time = elapsed_time / executed_count if executed_count else 0
+        planned_total = OptimizationOrchestrator._expected_total_trials(
+            self.optimizer,
+            self.max_trials,
+            extra_trials=1 if getattr(self, "_default_config", None) else 0,
+        )
+        remaining_trials = (planned_total or 0) - executed_count
         estimated_remaining = (
             avg_trial_time * remaining_trials if remaining_trials > 0 else None
         )
 
         return ProgressInfo(
             current_trial=current_trial,
-            total_trials=self.max_trials or 0,
-            completed_trials=len(self._trials),
+            total_trials=planned_total or 0,
+            completed_trials=executed_count,
             successful_trials=successful_trials,
             failed_trials=failed_trials,
             best_score=best_score,
@@ -2556,6 +2748,30 @@ class OptimizationOrchestrator:
             "traigent_config": traigent_config,
         }
 
+    @staticmethod
+    def _failed_on_vendor_errors_only(trial_result: TrialResult) -> bool:
+        """True when a failed trial made no call that returned a response (#3249).
+
+        Requires the trial failed and every provider-call attempt in it raised
+        before any response came back (at least one attempt). One returned
+        response, even with usage that cannot be priced, an interrupted stream,
+        or an incomplete attempt keeps strict mode fail-closed. So does any
+        response captured by a path outside the attempt ledger (LangChain etc.).
+        """
+        if trial_result.status != TrialStatus.FAILED:
+            return False
+        meta = trial_result.metadata or {}
+        attempts = meta.get("vendor_call_attempts")
+        no_response = meta.get("vendor_call_no_response_attempts")
+        captured = meta.get("vendor_call_responses_captured")
+        if (
+            not isinstance(attempts, int)
+            or not isinstance(no_response, int)
+            or not isinstance(captured, int)
+        ):
+            return False  # unknown capture state is never exempt
+        return no_response > 0 and attempts == no_response and captured == 0
+
     async def _track_trial_cost(
         self,
         trial_result: TrialResult,
@@ -2566,6 +2782,7 @@ class OptimizationOrchestrator:
         missing_examples: Any,
         missing_count: int | None,
         attempted_count: int | None,
+        vendor_error_only: bool = False,
     ) -> None:
         if self.cost_enforcer is None:
             return
@@ -2591,6 +2808,7 @@ class OptimizationOrchestrator:
                 unmeasured_examples=missing_examples,
                 missing_usage_examples=missing_count,
                 attempted_examples=attempted_count,
+                vendor_error_only=vendor_error_only,
             )
 
     async def _account_trial_spend(
@@ -2652,6 +2870,9 @@ class OptimizationOrchestrator:
                 missing_examples=missing_examples,
                 missing_count=missing_count,
                 attempted_count=attempted_count,
+                vendor_error_only=OptimizationOrchestrator._failed_on_vendor_errors_only(
+                    trial_result
+                ),
             )
         finally:
             if (budget := getattr(self, "execution_budget", None)) is not None:
@@ -2868,10 +3089,14 @@ class OptimizationOrchestrator:
         log_on_success: bool,
         permit: Permit | None = None,
         submit_to_backend: bool = True,
+        scheduled_index: int | None = None,
     ) -> int:
         """Update orchestrator state after a single trial completes.
 
         Args:
+            scheduled_index: Index the trial was announced under in
+                ``on_trial_start``, when it differs from ``current_trial_index``
+                (permit-denied batch items do not advance the count, #2943).
             permit: The Permit object from permit acquisition.
                 When provided, track_cost_async uses this to release the
                 reservation exactly with single-release semantics, preventing
@@ -2924,6 +3149,14 @@ class OptimizationOrchestrator:
         new_count = current_trial_index + 1
 
         progress_info = self._get_progress_info(new_count)
+        if getattr(self, "_trial_complete_dispatched", None) is None:
+            self._trial_complete_dispatched = set()
+        self._trial_real_results: dict[int, TrialResult] = {}
+        started_index = (
+            current_trial_index if scheduled_index is None else scheduled_index
+        )
+        self._trial_complete_dispatched.add(started_index)
+        self._trial_real_results.pop(started_index, None)
         self.callback_manager.on_trial_complete(trial_result, progress_info)
 
         if new_count % PROGRESS_LOG_INTERVAL == 0 or (
@@ -2990,7 +3223,20 @@ class OptimizationOrchestrator:
         constraints.
         """
         configs: list[dict[str, Any]] = []
-        for _ in range(count):
+        attempts = 0
+        # Rejected suggestions do not fill a slot; keep drawing, bounded.
+        # The cap only applies to unbounded spaces; grid and finite random
+        # end by exhaustion (optimizer raises OptimizationError).
+        max_attempts = (
+            count + CONSTRAINT_REJECTION_CAP_FACTOR * count
+            if rejection_cap_applies(self.optimizer)
+            else None
+        )
+        while len(configs) < count and (
+            max_attempts is None or attempts < max_attempts
+        ):
+            attempts += 1
+            trial_count_before = getattr(self.optimizer, "_trial_count", None)
             try:
                 config = self.optimizer.suggest_next_trial(self._trials)
                 config = self._apply_knob_resolution(config)
@@ -3004,6 +3250,12 @@ class OptimizationOrchestrator:
             # Pre-trial constraint validation — reject before execution
             if not pre_trial_validate_config(config, self._constraints_pre_eval):
                 logger.debug("Config rejected by pre-trial constraints: %s", config)
+                # Give the optimizer's slot back (Traigent#3210); keep the
+                # config marked tried so it is not re-drawn.
+                if isinstance(trial_count_before, int) and isinstance(
+                    getattr(self.optimizer, "_trial_count", None), int
+                ):
+                    self.optimizer._trial_count = trial_count_before
                 continue
             configs.append(config)
         return configs
@@ -3021,14 +3273,22 @@ class OptimizationOrchestrator:
         configs: list[dict[str, Any]] = []
         remaining = target_batch_size
 
-        baseline_config = self._consume_default_config()
-        if baseline_config is not None:
-            # baseline trials get the same Fixed/CVAR injection as suggested
+        # Baseline, then user seed configs (#1665): fixed starting trials.
+        seeds_before = len(self._seed_configs)
+        self._parallel_batch_had_seeds = False
+        while remaining > 0:
+            start_config = self._consume_default_config()
+            if start_config is None:
+                break
+            # start trials get the same Fixed/CVAR injection as suggested
             # ones — no bypass of R3/R6/R8 (RFC 0001)
-            configs.append(self._apply_knob_resolution(baseline_config))
+            configs.append(self._apply_knob_resolution(start_config))
             remaining -= 1
-            if remaining <= 0:
-                return configs, False
+        self._parallel_batch_had_seeds = len(self._seed_configs) < seeds_before
+        # Seeds run alone in their batch: suggestions made in the same batch
+        # could not see the seeds' results.
+        if configs and (remaining <= 0 or len(self._seed_configs) < seeds_before):
+            return configs, False
 
         # Try hybrid/async generation if applicable
         used_async_batch = False
@@ -3269,7 +3529,9 @@ class OptimizationOrchestrator:
             scheduled_configs.append(cfg)
             scheduled_optuna_ids.append(optuna_id)
             tasks.append(
-                self._run_trial_recording_subset(
+                self._run_and_remember_trial(
+                    trial_index,
+                    self._run_trial_recording_subset,
                     self._trial_lifecycle.run_trial,
                     subset_indices_of_dataset(ds_for_trial),
                     func,
@@ -3288,13 +3550,19 @@ class OptimizationOrchestrator:
         # Use permit-based execution with cost enforcement
         # Each trial checks for a cost permit before execution
         # Trials that exceed the cost limit are cancelled (returned as None)
-        (
-            results,
-            cancelled_count,
-        ) = await self.parallel_execution_manager.run_with_cost_permits(
-            tasks,
-            cancel_sentinel=None,  # None indicates cost limit cancellation
-        )
+        try:
+            (
+                results,
+                cancelled_count,
+            ) = await self.parallel_execution_manager.run_with_cost_permits(
+                tasks,
+                cancel_sentinel=None,  # None indicates cost limit cancellation
+            )
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # #3234: pair every started trial with a completion, then propagate.
+            for offset, cfg in enumerate(scheduled_configs):
+                self._notify_interrupted_trial(trial_count + offset, cfg)
+            raise
 
         # Track cancelled trials for reporting
         if cancelled_count > 0:
@@ -3348,6 +3616,43 @@ class OptimizationOrchestrator:
             )
         return cast(TrialResult, result)
 
+    def _record_unstarted_cost_limit_trial(
+        self, trial_result: TrialResult, trial_number: int, optuna_id: int | None
+    ) -> None:
+        """Record a permit-denied parallel trial without counting it as an attempt.
+
+        The placeholder stays visible in ``trials`` but carries the ``abandoned``
+        marker, so ``max_trials`` and the mandatory-cost collector ignore it
+        (it never ran, so it spent nothing). Whether the run stops for
+        ``cost_limit`` is decided once the batch settles.
+        """
+        trial_result.metadata[_ABANDONED_TRIAL_METADATA_KEY] = True
+        trial_result.metadata[NEVER_STARTED_METADATA_KEY] = True
+        # Never collide with the id a later real trial takes at this index.
+        trial_result.trial_id = f"{trial_result.trial_id}_not_started"
+        trial_result.metadata["stop_reason"] = "cost_limit"
+        self._trials.append(trial_result)
+        self._log_trial(trial_result)
+        self._notify_optimizer_of_result(trial_result, optuna_id)
+        dispatched = getattr(self, "_trial_complete_dispatched", None)
+        if dispatched is None:
+            dispatched = self._trial_complete_dispatched = set()
+        dispatched.add(trial_number)
+        self.callback_manager.on_trial_complete(
+            trial_result, self._get_progress_info(trial_number)
+        )
+
+    async def _cost_budget_exhausted_after_denial(self) -> bool:
+        """Probe admission once the batch settled; True when no trial fits."""
+        enforcer = getattr(self, "cost_enforcer", None)
+        if enforcer is None:
+            return True
+        probe = await enforcer.acquire_permit_async()
+        if not probe.is_granted:
+            return True
+        await enforcer.release_permit_async(probe)
+        return False
+
     async def _process_parallel_results(
         self,
         scheduled_configs: list[dict[str, Any]],
@@ -3372,46 +3677,80 @@ class OptimizationOrchestrator:
         # _handle_trial_result increments trial_count on every item, so anchor
         # synthetic cancelled/failed IDs once for contiguous batch numbering.
         batch_start = trial_count
+        denied_numbers: list[int] = []
 
-        for batch_offset, (config, permitted_result, optuna_id) in enumerate(
-            zip(scheduled_configs, results, scheduled_optuna_ids, strict=False)
-        ):
-            # Unwrap PermittedTrialResult to get result and permit
-            result = permitted_result.result
-            permit = permitted_result.permit
+        try:
+            for batch_offset, (config, permitted_result, optuna_id) in enumerate(
+                zip(scheduled_configs, results, scheduled_optuna_ids, strict=False)
+            ):
+                # Unwrap PermittedTrialResult to get result and permit
+                result = permitted_result.result
+                permit = permitted_result.permit
 
-            # Use try/finally to ensure permit is released on any exception
-            # during result processing (Gemini Phase 1.5 fix)
-            try:
-                trial_result = self._trial_result_from_parallel_item(
-                    result, config, f"trial_{batch_start + batch_offset}"
-                )
-
-                trial_count = await self._handle_trial_result(
-                    trial_result=trial_result,
-                    optimizer_config=config,
-                    current_trial_index=trial_count,
-                    session_id=session_id,
-                    optuna_trial_id=optuna_id,
-                    log_on_success=False,
-                    permit=permit,
-                    submit_to_backend=submit_to_backend,
-                )
-            except CloudBrainOptimizationComplete as complete:
-                if terminal_completion is None:
-                    terminal_completion = complete
-                submit_to_backend = False
-                trial_count = len(self._trials)
-            except Exception:
-                # Release permit on any exception to prevent stranding
-                # (only if permit is still active - wasn't already released)
-                if permit.active and self.cost_enforcer is not None:
-                    await self.cost_enforcer.release_permit_async(permit)
-                    logger.debug(
-                        "Released permit %d after exception in _process_parallel_results",
-                        permit.id,
+                # Use try/finally to ensure permit is released on any exception
+                # during result processing (Gemini Phase 1.5 fix)
+                try:
+                    trial_result = self._trial_result_from_parallel_item(
+                        result, config, f"trial_{batch_start + batch_offset}"
                     )
-                raise
+
+                    if result is None:
+                        # #2943: the cost permit was denied, so the trial never
+                        # started. It spent nothing and must not consume the
+                        # max_trials budget or count as unmeasured spend.
+                        self._record_unstarted_cost_limit_trial(
+                            trial_result,
+                            batch_start + batch_offset,
+                            optuna_id,
+                        )
+                        denied_numbers.append(batch_start + batch_offset)
+                        continue
+
+                    trial_count = await self._handle_trial_result(
+                        trial_result=trial_result,
+                        optimizer_config=config,
+                        current_trial_index=trial_count,
+                        session_id=session_id,
+                        optuna_trial_id=optuna_id,
+                        log_on_success=False,
+                        permit=permit,
+                        submit_to_backend=submit_to_backend,
+                        scheduled_index=batch_start + batch_offset,
+                    )
+                except CloudBrainOptimizationComplete as complete:
+                    if terminal_completion is None:
+                        terminal_completion = complete
+                    submit_to_backend = False
+                    trial_count = len(self._trials)
+                except Exception:
+                    # Release permit on any exception to prevent stranding
+                    # (only if permit is still active - wasn't already released)
+                    if permit.active and self.cost_enforcer is not None:
+                        await self.cost_enforcer.release_permit_async(permit)
+                        logger.debug(
+                            "Released permit %d after exception in _process_parallel_results",
+                            permit.id,
+                        )
+                    raise
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # #3234: pair every started trial of the batch, real result first.
+            for offset, (cfg, permitted) in enumerate(
+                zip(scheduled_configs, results, strict=False)
+            ):
+                self._remember_trial_result(
+                    batch_start + offset,
+                    self._trial_result_from_parallel_item(
+                        permitted.result, cfg, f"trial_{batch_start + offset}"
+                    ),
+                )
+                self._notify_interrupted_trial(batch_start + offset, cfg)
+            raise
+        # The batch is settled: free the denied indexes so a later batch that
+        # reuses them (denied items do not advance the count) dispatches its
+        # own completion normally.
+        dispatched = getattr(self, "_trial_complete_dispatched", None)
+        if dispatched is not None:
+            dispatched.difference_update(denied_numbers)
         if terminal_completion is not None:
             raise terminal_completion
         return trial_count
@@ -3549,6 +3888,16 @@ class OptimizationOrchestrator:
         configs = self._apply_cache_policy_and_prune(configs, function_name, dataset)
 
         if not configs:
+            if getattr(self, "_parallel_batch_had_seeds", False):
+                # Every seed in this batch was filtered by the cache policy
+                # (already seen). That must not end the run: the seeds are spent
+                # and the optimizer's own suggestions come next (#1665).
+                logger.info(
+                    "seed_configs: seed batch fully filtered by cache policy; "
+                    "continuing with optimizer suggestions."
+                )
+                self._parallel_batch_had_seeds = False
+                return trial_count, "continue"
             return trial_count, "break"
 
         # Phase 5: Build trial descriptors
@@ -3587,6 +3936,14 @@ class OptimizationOrchestrator:
             self._stop_reason = "execution_budget"
             return trial_count, "break"
 
+        # #2943: permits denied while sibling trials held reservations may be a
+        # transient shortage. Now that the batch has settled, stop for
+        # cost_limit only if the budget genuinely cannot admit another trial.
+        if any(item.result is None for item in results):
+            if await self._cost_budget_exhausted_after_denial():
+                self._stop_reason = "cost_limit"
+                return trial_count, "break"
+
         # Phase 10: Checkpoint logging
         self._maybe_log_checkpoint(trial_count)
 
@@ -3595,16 +3952,16 @@ class OptimizationOrchestrator:
     async def _submit_usage_analytics(self) -> None:
         """Submit usage analytics if enabled."""
 
-        if not self.traigent_config.enable_usage_analytics:
-            return
+        from traigent.utils.local_analytics import (
+            LocalAnalytics,
+            usage_analytics_allowed,
+        )
 
-        if is_backend_offline() or backend_egress_disabled(self.traigent_config):
-            logger.debug("Skipping analytics submission: backend egress is disabled")
+        if not usage_analytics_allowed(self.traigent_config):
+            logger.debug("Skipping analytics submission: usage analytics is gated off")
             return
 
         try:
-            from traigent.utils.local_analytics import LocalAnalytics
-
             analytics = LocalAnalytics(self.traigent_config)
             await asyncio.wait_for(analytics.submit_usage_stats(), timeout=10.0)
             logger.debug("Analytics submitted after optimization completion")
@@ -3731,6 +4088,19 @@ class OptimizationOrchestrator:
             )
             experiment_display_name = function_name
 
+        # Cost approval is decided BEFORE the backend session exists (#2960): a
+        # declined approval used to raise after POST /sessions, stranding a
+        # RUNNING experiment and consuming one plan trial for a run that never
+        # started. Fail closed: any refusal propagates and no session or trial
+        # reservation is ever created.
+        try:
+            self._check_cost_approval(dataset)
+        except BaseException:
+            self._status = OptimizationStatus.FAILED
+            if not self._stop_reason:
+                self._stop_reason = "error"
+            raise
+
         # Create backend session using manager. Governance crosses the wire
         # content-free (Phase 8): the declared promotion policy and the
         # cvar summary from DECLARED bindings — never values or evidence.
@@ -3800,10 +4170,20 @@ class OptimizationOrchestrator:
             )
 
         example_limit = getattr(self.evaluator, "timeout", None)
+        # Closed, non-content run settings. ``function_name`` is the code
+        # identifier (or the user's experiment name), which trackers use to name
+        # their run.
+        run_settings: dict[str, Any] = {
+            "function_name": experiment_display_name or descriptor.identifier
+        }
         if isinstance(example_limit, (int, float)) and not isinstance(
             example_limit, bool
         ):
-            self.callback_manager.on_run_settings({"example_timeout": example_limit})
+            run_settings["example_timeout"] = example_limit
+        self.callback_manager.on_run_settings(run_settings)
+        self._optimization_complete_notified = False
+        self._optimization_start_notified = True
+        self._trial_complete_dispatched = set()
         self.callback_manager.on_optimization_start(
             config_space=self.optimizer.config_space,
             objectives=self.optimizer.objectives,
@@ -4157,6 +4537,7 @@ class OptimizationOrchestrator:
                     session_span=session_span,
                 )
         finally:
+            self._ensure_optimization_callbacks_closed()
             recorder = getattr(self, "_mock_recorder", None)
             if recorder is not None:
                 recorder.deactivate()
@@ -4171,6 +4552,103 @@ class OptimizationOrchestrator:
                     reset_resume_prefill(token)
                 except ValueError:  # token from another context: nothing to undo
                     pass
+
+    def _ensure_optimization_callbacks_closed(self) -> None:
+        """Guarantee ``on_optimization_complete`` and worker shutdown (#3233).
+
+        The normal and user-cancel paths deliver the completion callback from
+        ``_finalize_optimization``. Any other exit (SystemExit from the
+        objective, OptimizationError, an unexpected failure) used to skip it,
+        leaving callback resources open and the worker thread alive. This is a
+        best-effort safety net: it never raises, so it cannot mask the
+        original exception.
+        """
+        manager = getattr(self, "callback_manager", None)
+        if manager is None:
+            return
+        started = getattr(self, "_optimization_start_notified", False)
+        notified = getattr(self, "_optimization_complete_notified", False)
+        self._optimization_start_notified = False
+        try:
+            if started and not notified:
+                self._optimization_complete_notified = True
+                if self._status in (
+                    OptimizationStatus.RUNNING,
+                    OptimizationStatus.PENDING,
+                ):
+                    # Abnormal exit before any handler set a terminal status
+                    # (e.g. preflight failure): never report an active run.
+                    self._status = OptimizationStatus.FAILED
+                try:
+                    result = self._create_optimization_result()
+                except Exception:
+                    logger.debug(
+                        "Could not build partial result for the completion "
+                        "callback after an abnormal exit",
+                        exc_info=True,
+                    )
+                else:
+                    manager.on_optimization_complete(result)
+        except BaseException:  # noqa: B036 - must not mask the original exit
+            logger.debug("Completion callback failed on abnormal exit", exc_info=True)
+        finally:
+            try:
+                manager.close()
+            except BaseException:  # noqa: B036 - must not mask the original exit
+                logger.debug("Callback manager close failed", exc_info=True)
+
+    def _remember_trial_result(self, trial_number: int, result: Any) -> None:
+        """Remember a finished trial's real result until its callback fires."""
+        if isinstance(result, TrialResult):
+            if getattr(self, "_trial_real_results", None) is None:
+                self._trial_real_results = {}
+            self._trial_real_results[trial_number] = result
+
+    async def _run_and_remember_trial(
+        self,
+        trial_number: int,
+        run: Callable[..., Awaitable[Any]],
+        *args: Any,
+        **kw: Any,
+    ) -> Any:
+        result = await run(*args, **kw)
+        self._remember_trial_result(trial_number, result)
+        return result
+
+    def _notify_interrupted_trial(
+        self, trial_number: int, config: dict[str, Any]
+    ) -> None:
+        """Best-effort on_trial_complete (cancelled) for a started trial that an
+        interrupt cut short (#3234). No-op if its completion already fired."""
+        dispatched = getattr(self, "_trial_complete_dispatched", None)
+        if dispatched is None:
+            dispatched = self._trial_complete_dispatched = set()
+        if trial_number in dispatched:
+            return
+        dispatched.add(trial_number)
+        real = (getattr(self, "_trial_real_results", None) or {}).pop(
+            trial_number, None
+        )
+        try:
+            if real is not None:
+                # The trial already finished: callbacks must see its real
+                # outcome, never a synthetic cancellation.
+                trial = real
+                progress = self._get_progress_info(trial_number + 1)
+            else:
+                trial = TrialResult(
+                    trial_id=f"trial_{trial_number}_interrupted",
+                    config=dict(config),
+                    metrics={},
+                    status=TrialStatus.CANCELLED,
+                    duration=0.0,
+                    timestamp=datetime.now(UTC),
+                    error_message="Trial interrupted by user",
+                )
+                progress = self._get_progress_info(trial_number)
+            self.callback_manager.on_trial_complete(trial, progress)
+        except BaseException:  # noqa: B036 - must not mask the interrupt
+            logger.debug("Interrupted-trial callback failed", exc_info=True)
 
     def _check_cost_approval(self, dataset: Dataset) -> None:
         """Check pre-run cost approval before optimization.
@@ -5317,6 +5795,7 @@ class OptimizationOrchestrator:
                     self._status,
                     certified_selection=certified_selection,
                     session_aggregation=agg_payload,
+                    stop_reason=self._stop_reason,
                 )
             finally:
                 self._session_finalized = True
@@ -5411,6 +5890,20 @@ class OptimizationOrchestrator:
             )
         return persistence_status
 
+    def _apply_runtime_degradation_tracking(
+        self, result: OptimizationResult, persistence_status: str
+    ) -> str:
+        """A mid-run LOCAL-ONLY fallback leaves the backend with partial trials.
+
+        The session is still finalized once (#2961), but the trials run after
+        the fallback never reached it, so a clean "succeeded" would overstate.
+        """
+        if self.backend_session_manager.backend_degraded:
+            if persistence_status in {"skipped", "succeeded"}:
+                persistence_status = "degraded"
+            result.metadata.setdefault("backend_tracking", "partial")
+        return persistence_status
+
     def _log_local_only_summary(self) -> None:
         # Issue #1265: if a backend-tracking run degraded to local-only, say so
         # prominently at the end (the per-trial warning fired once mid-run; this
@@ -5435,7 +5928,10 @@ class OptimizationOrchestrator:
                     "(source='local_fallback'): "
                     "the Traigent backend was unreachable during the run, so results "
                     "were computed and stored locally and are NOT on the cloud "
-                    "backend. They will sync on the next successful run.",
+                    "backend. One finalize of the backend session was attempted "
+                    "with the trials it had received (see "
+                    "metadata['persistence_status']); the rest exist only in "
+                    "local storage.",
                     self._optimization_id,
                 )
 
@@ -5500,7 +5996,7 @@ class OptimizationOrchestrator:
         persistence_status = "skipped"
         if (
             self.backend_session_manager.backend_tracking_enabled
-            and not backend_egress_disabled(self.traigent_config)
+            and self.backend_session_manager.finalize_egress_allowed()
             and session_id is not None
         ):
             persistence_status = await self._persist_run_to_backend(result, session_id)
@@ -5512,6 +6008,9 @@ class OptimizationOrchestrator:
         # optimizer kept sequencing — the run completed its full local
         # enumeration, but backend tracking is only PARTIAL. Mark it so.
         persistence_status = self._apply_early_complete_tracking(
+            result, persistence_status
+        )
+        persistence_status = self._apply_runtime_degradation_tracking(
             result, persistence_status
         )
 
@@ -5528,7 +6027,9 @@ class OptimizationOrchestrator:
         ):
             await self._submit_workflow_traces(session_id)
 
-        self.callback_manager.on_optimization_complete(result)
+        if not getattr(self, "_optimization_complete_notified", False):
+            self._optimization_complete_notified = True
+            self.callback_manager.on_optimization_complete(result)
 
         self._log_local_only_summary()
 
@@ -5563,7 +6064,7 @@ class OptimizationOrchestrator:
         if (
             getattr(self, "_session_finalized", False)
             or not self.backend_session_manager.backend_tracking_enabled
-            or backend_egress_disabled(self.traigent_config)
+            or not self.backend_session_manager.finalize_egress_allowed()
             or session_id is None
         ):
             return
@@ -5573,6 +6074,7 @@ class OptimizationOrchestrator:
             self.backend_session_manager.finalize_session(
                 session_id,
                 OptimizationStatus.FAILED,
+                stop_reason=self._stop_reason,
             )
         except Exception as finalize_error:
             logger.warning(
@@ -5929,13 +6431,20 @@ class OptimizationOrchestrator:
         session_span: Any,
     ) -> OptimizationResult:
         """Run optimization with tracing enabled."""
-        self._check_cost_approval(dataset)
+        # Cost approval already ran in _initialize_optimization_run, before
+        # the backend session was created (#2960).
         self._apply_resume(dataset)
 
         try:
             # Check for immediate timeout
             if self.timeout is not None and self.timeout == 0:
-                return self._cancel_for_zero_timeout()
+                zero_timeout_result = self._cancel_for_zero_timeout()
+                # The session already exists: finalize it once with the reason
+                # instead of stranding it RUNNING (#2508).
+                await self._finalize_optimization(
+                    zero_timeout_result, session_id, session_span
+                )
+                return zero_timeout_result
 
             await self._run_loop_under_deadline(
                 func, dataset, session_id, function_identifier
@@ -6445,6 +6954,25 @@ class OptimizationOrchestrator:
             for c in [t.config for t in reusable] + list(blocked_configs)
         )
 
+    def _drop_seeds_covered_by_resume(
+        self, reusable: Any, blocked_configs: Any
+    ) -> None:
+        """Drop seeds already evaluated (reused) or in flight (never retried)."""
+        if not self._seed_configs:
+            return
+        kept = [
+            seed
+            for seed in self._seed_configs
+            if not self._baseline_already_covered(seed, reusable, blocked_configs)
+        ]
+        dropped = len(self._seed_configs) - len(kept)
+        if dropped:
+            logger.info(
+                "resume_from: skipped %d seed config(s) already covered by prior trials.",
+                dropped,
+            )
+        self._seed_configs = kept
+
     def _adopt_reusable_trials(self, reusable: Any) -> tuple[float, int]:
         """Adopt prior trials into this run; return (known reused cost, unknown-cost count)."""
         reused_cost = 0.0
@@ -6514,6 +7042,7 @@ class OptimizationOrchestrator:
             # The baseline was already evaluated (reused) or is in flight with an
             # unknown outcome (never retried); do not spend a trial on it.
             self._default_config_used = True
+        self._drop_seeds_covered_by_resume(plan.reusable, plan.blocked_configs)
         self._resume_summary = {
             "reused_trials": len(plan.reusable),
             "unfinished_prior_trials_not_reused": plan.not_reusable_unfinished,

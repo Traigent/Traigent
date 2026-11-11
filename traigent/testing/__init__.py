@@ -168,14 +168,16 @@ def enable_mock_mode_for_quickstart() -> None:
         # (``is_mock_llm()`` recomputes ``is_production_strict_env()`` live) makes
         # exploitability low, but tightening the invariant here is
         # cheap.
-        env_name = os.environ.get("ENVIRONMENT", "development").strip().lower()
-        if env_name in {"prod", "production"}:
+        from traigent.utils.env_config import any_environment_declared_production
+
+        if any_environment_declared_production():
             raise RuntimeError(
                 "traigent.testing.enable_mock_mode_for_quickstart() was "
-                "called with ENVIRONMENT=production. Mock mode is "
+                "called with ENVIRONMENT=production (or TRAIGENT_ENVIRONMENT / "
+                "TRAIGENT_ENV set to production). Mock mode is "
                 "hard-blocked in production to prevent silent substitution "
                 "of real LLM calls. If you want a keyless demo, run with "
-                "ENVIRONMENT!=production."
+                "a non-production environment."
             )
         # Install first: only mark enabled once interception is in place.
         _install_mock_interceptors()

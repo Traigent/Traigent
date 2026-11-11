@@ -15,6 +15,12 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from traigent.utils.logging import get_logger
 from traigent.wrapper.errors import HybridAPIError, RequestTimeoutError
+from traigent.wrapper.request_validation import (
+    MAX_TIMEOUT_MS,
+    is_valid_request_id,
+    validate_evaluate_request,
+    validate_execute_request,
+)
 
 if TYPE_CHECKING:
     from traigent.wrapper.service import TraigentService
@@ -83,6 +89,9 @@ def _get_timeout_ms(
 
     if timeout_ms < 1000:
         raise ValueError("timeout_ms must be >= 1000")
+
+    if timeout_ms > MAX_TIMEOUT_MS:
+        raise ValueError("timeout_ms must be <= 600000")
 
     return int(timeout_ms)
 
@@ -189,7 +198,7 @@ async def _route_execute(
     request_box: list[dict[str, Any] | None],
 ) -> None:
     request = await _parse_request(receive)
-    request_box[0] = request
+    _validate_or_reject(request, request_box, validate_execute_request)
     response = await _run_with_timeout(
         service.handle_execute(request),
         _get_timeout_ms(request, default_ms=30000),
@@ -200,6 +209,16 @@ async def _route_execute(
     )
 
 
+def _validate_or_reject(
+    request: dict[str, Any],
+    request_box: list[dict[str, Any] | None],
+    validator: Callable[[dict[str, Any]], None],
+) -> None:
+    """Run request-schema validation; never echo an invalid request_id."""
+    request_box[0] = request if is_valid_request_id(request.get("request_id")) else None
+    validator(request)
+
+
 async def _route_evaluate(
     service: TraigentService,
     receive: Callable,
@@ -208,7 +227,7 @@ async def _route_evaluate(
     request_box: list[dict[str, Any] | None],
 ) -> None:
     request = await _parse_request(receive)
-    request_box[0] = request
+    _validate_or_reject(request, request_box, validate_evaluate_request)
     response = await _run_with_timeout(
         service.handle_evaluate(request),
         _get_timeout_ms(request, default_ms=None),

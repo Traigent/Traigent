@@ -602,18 +602,22 @@ class HybridAPIEvaluator(BaseEvaluator):
         return "target", expected
 
     @staticmethod
-    def _compute_describe_stats(values: list[float]) -> dict[str, float]:
-        """Compute pandas.describe()-style statistics for numeric values."""
+    def _compute_describe_stats(values: list[float]) -> dict[str, float | None]:
+        """Compute pandas.describe()-style statistics for numeric values.
+
+        Undefined statistics (everything for zero values, ``std`` for one
+        value) are ``None`` rather than a misleading 0.0 (#3226).
+        """
         if not values:
             return {
                 "count": 0.0,
-                "mean": 0.0,
-                "std": 0.0,
-                "min": 0.0,
-                "25%": 0.0,
-                "50%": 0.0,
-                "75%": 0.0,
-                "max": 0.0,
+                "mean": None,
+                "std": None,
+                "min": None,
+                "25%": None,
+                "50%": None,
+                "75%": None,
+                "max": None,
             }
 
         sorted_values = sorted(values)
@@ -632,7 +636,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         return {
             "count": float(n),
             "mean": float(statistics.mean(sorted_values)),
-            "std": float(statistics.stdev(sorted_values)) if n > 1 else 0.0,
+            "std": float(statistics.stdev(sorted_values)) if n > 1 else None,
             "min": float(sorted_values[0]),
             "25%": percentile(0.25),
             "50%": percentile(0.50),

@@ -23,6 +23,7 @@ from traigent._version import get_version
 # are truncated, evaluator keys are never dropped.
 from traigent.knobs.telemetry import TOTAL_MEASURES_CEILING
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import validate_token_count
 
 # Initialize logger first
 logger = get_logger(__name__)
@@ -457,12 +458,61 @@ class TokenMetrics:
     # pricing) must treat this as "not real usage", never merge it into the
     # same fields as a measured count without a flag.
     estimated: bool = False
+    # True when the provider reported a count that failed validation
+    # (negative, bool, float, string, absurdly large: Traigent#3252). The
+    # counts above are then zero, but zero here means UNKNOWN, not "free":
+    # cost must not be estimated from text and must stay unmeasured.
+    invalid: bool = False
 
     def __post_init__(self) -> None:
         # Ensure non-negative values and handle None
         self.input_tokens = max(0, self.input_tokens or 0)
         self.output_tokens = max(0, self.output_tokens or 0)
         self.total_tokens = self.input_tokens + self.output_tokens
+
+
+def _checked_tokens(
+    input_raw: Any, output_raw: Any, total_raw: Any = None
+) -> TokenMetrics:
+    """Build ``TokenMetrics`` from provider-reported counts, failing closed.
+
+    ``None`` means "not reported". A missing total is derived. When exactly one
+    of input/output is missing the usage is incomplete and would be priced on
+    the reported side only, so it is unknown (``invalid``) unless the reported
+    total equals the reported side (e.g. input-only endpoints that report
+    ``prompt_tokens == total_tokens``). Any other value must pass
+    ``validate_token_count``; if one does not (negative, bool, float, string,
+    absurdly large), the whole usage is unknown: an empty ``TokenMetrics`` is
+    returned so nothing invalid is stored or priced (Traigent#3252).
+    """
+    counts: list[int] = []
+    for raw in (input_raw, output_raw, total_raw):
+        if raw is None:
+            counts.append(0)
+            continue
+        valid = validate_token_count(raw)
+        if valid is None:
+            logger.warning(
+                "Ignoring invalid provider token count of type %s; "
+                "treating usage as unknown",
+                type(raw).__name__,
+            )
+            return TokenMetrics(invalid=True)
+        counts.append(valid)
+    input_tokens, output_tokens, total_tokens = counts
+    if (input_raw is None) != (output_raw is None):
+        known = output_tokens if input_raw is None else input_tokens
+        if total_raw is None or total_tokens != known:
+            logger.warning(
+                "Provider usage reported only one of input/output tokens "
+                "without a matching total; treating usage as unknown"
+            )
+            return TokenMetrics(invalid=True)
+    return TokenMetrics(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens or input_tokens + output_tokens,
+    )
 
 
 @dataclass
@@ -497,6 +547,11 @@ class CostMetrics:
     # Consumers (trial/result aggregation) must treat this as "unknown spend",
     # not "verified free".
     unpriced: bool = False
+    # True when the call reported cached prompt tokens but the price table has
+    # no usable cached-input rate for the model, so those tokens were priced at
+    # the full input rate: ``total_cost`` is an upper bound, never an
+    # undercount (Traigent#3253).
+    cache_rate_unknown: bool = False
     # True when ``total_cost`` came from a local/LiteLLM price-table estimate
     # (``_hidden_params['response_cost']`` used as a fallback) rather than an
     # explicit provider-reported charge (``response.cost`` or ``usage.cost``,
@@ -609,6 +664,10 @@ class ExampleMetrics:
     # True only when the SDK inserted this row's evaluation_cost. User values
     # win collisions and are never withdrawn by the unknown LLM-cost rule.
     sdk_evaluation_cost: bool = field(default=False, kw_only=True)
+    # Custom-metric names this row could not measure (a non-objective metric
+    # function returned NaN/inf, Traigent#2950). Summary statistics skip the row
+    # for these keys instead of counting a fabricated 0.
+    unmeasured_custom_keys: set[str] = field(default_factory=set, kw_only=True)
     # ``LocalEvaluator`` sets this from the dataset's expected-output contract.
     # A false value means the built-in exact-match accuracy is not meaningful
     # for this row (for example, the expected output is blank), so formatter
@@ -808,10 +867,16 @@ class MetricsTracker:
             return self.end_time - self.start_time
         return 0.0
 
-    def calculate_statistics(self, values: Sequence[int | float]) -> dict[str, float]:
-        """Calculate mean, median, and std for a list of values."""
+    def calculate_statistics(
+        self, values: Sequence[int | float]
+    ) -> dict[str, float | None]:
+        """Calculate mean, median, and std for a list of values.
+
+        ``std`` is the sample standard deviation and is ``None`` when fewer than
+        two values exist (undefined, like pandas' NaN), not a fake 0.0 (#3226).
+        """
         if not values:
-            return {"mean": 0.0, "median": 0.0, "std": 0.0}
+            return {"mean": 0.0, "median": 0.0, "std": None}
 
         # Filter out None values and ensure all are float
         clean_values = []
@@ -823,20 +888,24 @@ class MetricsTracker:
                     logger.warning(f"Skipping invalid value {v}: {e}")
 
         if not clean_values:
-            return {"mean": 0.0, "median": 0.0, "std": 0.0}
+            return {"mean": 0.0, "median": 0.0, "std": None}
 
         try:
             mean_val = statistics.mean(clean_values)
             median_val = statistics.median(clean_values)
-            std_val = statistics.stdev(clean_values) if len(clean_values) > 1 else 0.0
+            std_val = (
+                round(statistics.stdev(clean_values), 6)
+                if len(clean_values) > 1
+                else None
+            )
         except Exception as e:
             logger.exception(f"Error calculating statistics: {e}")
-            return {"mean": 0.0, "median": 0.0, "std": 0.0}
+            return {"mean": 0.0, "median": 0.0, "std": None}
 
         return {
             "mean": round(mean_val, 6),
             "median": round(median_val, 6),
-            "std": round(std_val, 6),
+            "std": std_val,
         }
 
     def aggregate_metrics(self) -> dict[str, Any]:
@@ -941,7 +1010,8 @@ class MetricsTracker:
         empty_stats = {
             "mean": missing_default,
             "median": missing_default,
-            "std": missing_default,
+            # Sample std of zero values is undefined, never a fake 0.0 (#3226)
+            "std": None,
         }
         return {
             "input_tokens": empty_stats.copy(),
@@ -1543,22 +1613,31 @@ class MetricsTracker:
             if key in metrics_data or key == "accuracy":
                 continue
             custom_values = self._custom_values_for_key(
-                key, custom_rows, user_evaluation_cost
+                key, custom_rows, user_evaluation_cost, self.example_metrics
             )
             if custom_values:
                 metrics_data[key] = custom_values
 
     @staticmethod
     def _custom_values_for_key(
-        key: str, custom_rows: list[dict[str, Any]], user_evaluation_cost: bool
+        key: str,
+        custom_rows: list[dict[str, Any]],
+        user_evaluation_cost: bool,
+        example_metrics: Sequence[ExampleMetrics] = (),
     ) -> list[Any]:
         custom_values: list[Any] = []
-        for row in custom_rows:
+        for index, row in enumerate(custom_rows):
             if key in row:
                 custom_values.append(row[key])
             elif key == "evaluation_cost" and user_evaluation_cost:
                 # An excluded SDK entry is not a user measurement
                 # of zero. Use the same samples as the scalar mean.
+                continue
+            elif index < len(example_metrics) and (
+                key in example_metrics[index].unmeasured_custom_keys
+            ):
+                # The metric function returned NaN/inf for this example: it is
+                # unmeasured, not a measured zero (Traigent#2950).
                 continue
             else:
                 custom_values.append(0.0)  # Default value if metric not present
@@ -1642,22 +1721,27 @@ class MetricsTracker:
 
     def _calculate_describe_stats(
         self, values: Sequence[int | float]
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Calculate pandas.describe()-compatible statistics.
 
         Returns statistics in the exact format of pandas.DataFrame.describe():
         count, mean, std, min, 25%, 50%, 75%, max
+
+        pandas reports NaN for every statistic of zero values and for the
+        sample ``std`` of one value; we report ``None`` for those (#3226).
         """
+        # NaN/inf are not measurements; statistics.stdev would also raise on them.
+        values = [v for v in values if math.isfinite(v)]
         if not values:
             return {
                 "count": 0,
-                "mean": 0.0,
-                "std": 0.0,
-                "min": 0.0,
-                "25%": 0.0,
-                "50%": 0.0,
-                "75%": 0.0,
-                "max": 0.0,
+                "mean": None,
+                "std": None,
+                "min": None,
+                "25%": None,
+                "50%": None,
+                "75%": None,
+                "max": None,
             }
 
         sorted_values = sorted(values)
@@ -1682,7 +1766,7 @@ class MetricsTracker:
         return {
             "count": n,
             "mean": statistics.mean(values),
-            "std": statistics.stdev(values) if n > 1 else 0.0,
+            "std": statistics.stdev(values) if n > 1 else None,
             "min": min(values),
             "25%": percentile(sorted_values, 0.25),
             "50%": percentile(sorted_values, 0.50),  # median
@@ -2066,24 +2150,14 @@ class OpenAIResponseHandler(ResponseHandler):
         return hasattr(usage, "prompt_tokens") and hasattr(usage, "completion_tokens")
 
     def extract_tokens(self, response: Any) -> TokenMetrics:
-        tokens = TokenMetrics()
-        if hasattr(response, "usage"):
-            usage = response.usage
-            if hasattr(usage, "prompt_tokens") and isinstance(
-                usage.prompt_tokens, (int, float)
-            ):
-                tokens.input_tokens = int(usage.prompt_tokens)
-            if hasattr(usage, "completion_tokens") and isinstance(
-                usage.completion_tokens, (int, float)
-            ):
-                tokens.output_tokens = int(usage.completion_tokens)
-            if hasattr(usage, "total_tokens") and isinstance(
-                usage.total_tokens, (int, float)
-            ):
-                tokens.total_tokens = int(usage.total_tokens)
-            else:
-                tokens.total_tokens = tokens.input_tokens + tokens.output_tokens
-        return tokens
+        if not hasattr(response, "usage"):
+            return TokenMetrics()
+        usage = response.usage
+        return _checked_tokens(
+            getattr(usage, "prompt_tokens", None),
+            getattr(usage, "completion_tokens", None),
+            getattr(usage, "total_tokens", None),
+        )
 
     def extract_response_time(self, response: Any) -> float:
         recorded = recorded_response_time_ms(response)
@@ -2159,28 +2233,28 @@ class AnthropicResponseHandler(ResponseHandler):
                     return u.get(name)
                 return getattr(u, name, None)
 
-            input_val = (
-                _get(usage, "input_tokens")
-                or _get(usage, "num_input_tokens")
-                or _get(usage, "inputTokens")
-                or _get(usage, "prompt_tokens")
+            def _first_reported(*names: str) -> Any:
+                # First key that is present and not None. Plain ``or``
+                # chaining would skip falsy invalid values such as ``False``
+                # and silently treat them as unreported (Traigent#3252).
+                for name in names:
+                    value = _get(usage, name)
+                    if value is not None:
+                        return value
+                return None
+
+            input_val = _first_reported(
+                "input_tokens", "num_input_tokens", "inputTokens", "prompt_tokens"
             )
-            output_val = (
-                _get(usage, "output_tokens")
-                or _get(usage, "num_output_tokens")
-                or _get(usage, "outputTokens")
-                or _get(usage, "completion_tokens")
+            output_val = _first_reported(
+                "output_tokens",
+                "num_output_tokens",
+                "outputTokens",
+                "completion_tokens",
             )
             total_val = _get(usage, "total_tokens")
 
-            if isinstance(input_val, (int, float)):
-                tokens.input_tokens = int(input_val)
-            if isinstance(output_val, (int, float)):
-                tokens.output_tokens = int(output_val)
-            if isinstance(total_val, (int, float)):
-                tokens.total_tokens = int(total_val)
-            else:
-                tokens.total_tokens = tokens.input_tokens + tokens.output_tokens
+            return _checked_tokens(input_val, output_val, total_val)
         return tokens
 
     def extract_response_time(self, response: Any) -> float:
@@ -2209,36 +2283,44 @@ class LangChainResponseHandler(ResponseHandler):
         )
 
     @staticmethod
+    def _tokens_from_usage(
+        usage: Any, input_keys: tuple[str, ...], output_keys: tuple[str, ...]
+    ) -> TokenMetrics:
+        """Validate one LangChain usage mapping; invalid counts mean unknown."""
+
+        def _first(keys: tuple[str, ...]) -> Any:
+            for key in keys:
+                if key in usage:
+                    return usage[key]
+            return None
+
+        return _checked_tokens(
+            _first(input_keys), _first(output_keys), usage.get("total_tokens")
+        )
+
+    @staticmethod
     def _extract_response_metadata_tokens(metadata: Any, tokens: TokenMetrics) -> bool:
-        # Check for token_usage field (ChatOpenAI format)
-        if "token_usage" in metadata and isinstance(metadata["token_usage"], dict):
-            usage = metadata["token_usage"]
-            tokens.input_tokens = usage.get("prompt_tokens", 0)
-            tokens.output_tokens = usage.get("completion_tokens", 0)
-            tokens.total_tokens = usage.get(
-                "total_tokens", tokens.input_tokens + tokens.output_tokens
-            )
-            if tokens.total_tokens > 0:
-                return True
-
-        # Check for usage field (alternative format)
-        if "usage" in metadata and isinstance(metadata["usage"], dict):
-            usage = metadata["usage"]
-            input_val = usage.get("input_tokens", usage.get("prompt_tokens", 0))
-            output_val = usage.get("output_tokens", usage.get("completion_tokens", 0))
-            tokens.input_tokens = int(input_val) if input_val is not None else 0
-            tokens.output_tokens = int(output_val) if output_val is not None else 0
-            total_val = usage.get(
-                "total_tokens", tokens.input_tokens + tokens.output_tokens
-            )
-            tokens.total_tokens = (
-                int(total_val)
-                if total_val is not None
-                else tokens.input_tokens + tokens.output_tokens
-            )
-            if tokens.total_tokens > 0:
-                return True
-
+        # token_usage (ChatOpenAI format) then usage (alternative format).
+        for usage_field, in_keys, out_keys in (
+            ("token_usage", ("prompt_tokens",), ("completion_tokens",)),
+            (
+                "usage",
+                ("input_tokens", "prompt_tokens"),
+                ("output_tokens", "completion_tokens"),
+            ),
+        ):
+            if usage_field in metadata and isinstance(metadata[usage_field], dict):
+                found = LangChainResponseHandler._tokens_from_usage(
+                    metadata[usage_field], in_keys, out_keys
+                )
+                tokens.input_tokens = found.input_tokens
+                tokens.output_tokens = found.output_tokens
+                tokens.total_tokens = found.total_tokens
+                tokens.invalid = found.invalid
+                if found.invalid or tokens.total_tokens > 0:
+                    # Invalid counts end the search: never fall through to a
+                    # different usage field and price that as measured.
+                    return True
         return False
 
     def extract_tokens(self, response: Any) -> TokenMetrics:
@@ -2246,13 +2328,10 @@ class LangChainResponseHandler(ResponseHandler):
 
         # Check usage_metadata for token usage (langchain_core AIMessage)
         if hasattr(response, "usage_metadata") and response.usage_metadata:
-            usage = response.usage_metadata
-            tokens.input_tokens = usage.get("input_tokens", 0)
-            tokens.output_tokens = usage.get("output_tokens", 0)
-            tokens.total_tokens = usage.get(
-                "total_tokens", tokens.input_tokens + tokens.output_tokens
+            tokens = self._tokens_from_usage(
+                response.usage_metadata, ("input_tokens",), ("output_tokens",)
             )
-            if tokens.total_tokens > 0:
+            if tokens.invalid or tokens.total_tokens > 0:
                 return tokens
 
         # Check response_metadata for token usage (alternative format)
@@ -2268,11 +2347,10 @@ class LangChainResponseHandler(ResponseHandler):
         if hasattr(response, "llm_output") and isinstance(response.llm_output, dict):
             llm_output = response.llm_output
             if "token_usage" in llm_output:
-                usage = llm_output["token_usage"]
-                tokens.input_tokens = usage.get("prompt_tokens", 0)
-                tokens.output_tokens = usage.get("completion_tokens", 0)
-                tokens.total_tokens = usage.get(
-                    "total_tokens", tokens.input_tokens + tokens.output_tokens
+                tokens = self._tokens_from_usage(
+                    llm_output["token_usage"],
+                    ("prompt_tokens",),
+                    ("completion_tokens",),
                 )
 
         return tokens
@@ -2313,30 +2391,20 @@ class DictResponseHandler(ResponseHandler):
             return TokenMetrics()
 
         # Direct token fields
-        input_tokens = response.get("input_tokens", 0)
-        output_tokens = response.get("output_tokens", 0)
-        total_tokens = response.get("total_tokens", 0)
+        input_raw = response.get("input_tokens")
+        output_raw = response.get("output_tokens")
+        total_raw = response.get("total_tokens")
 
         # Check for usage field (OpenAI style)
         if "usage" in response and isinstance(response["usage"], dict):
             usage = response["usage"]
-            input_tokens = usage.get(
-                "prompt_tokens", usage.get("input_tokens", input_tokens)
+            input_raw = usage.get("prompt_tokens", usage.get("input_tokens", input_raw))
+            output_raw = usage.get(
+                "completion_tokens", usage.get("output_tokens", output_raw)
             )
-            output_tokens = usage.get(
-                "completion_tokens", usage.get("output_tokens", output_tokens)
-            )
-            total_tokens = usage.get("total_tokens", total_tokens)
+            total_raw = usage.get("total_tokens", total_raw)
 
-        # If total_tokens is not provided, calculate it
-        if total_tokens == 0 and (input_tokens > 0 or output_tokens > 0):
-            total_tokens = input_tokens + output_tokens
-
-        return TokenMetrics(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-        )
+        return _checked_tokens(input_raw, output_raw, total_raw)
 
     def extract_response_time(self, response: Any) -> float:
         """Extract response time from dict."""
@@ -2365,17 +2433,10 @@ class GenericResponseHandler(ResponseHandler):
         if isinstance(metadata, dict):
             usage = metadata.get("usage") or metadata.get("token_usage")
             if isinstance(usage, dict):
-                input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
-                output_tokens = usage.get(
-                    "output_tokens", usage.get("completion_tokens", 0)
-                )
-                total_tokens = usage.get(
-                    "total_tokens", (input_tokens or 0) + (output_tokens or 0)
-                )
-                return TokenMetrics(
-                    input_tokens=int(input_tokens or 0),
-                    output_tokens=int(output_tokens or 0),
-                    total_tokens=int(total_tokens or 0),
+                return _checked_tokens(
+                    usage.get("input_tokens", usage.get("prompt_tokens")),
+                    usage.get("output_tokens", usage.get("completion_tokens")),
+                    usage.get("total_tokens"),
                 )
         return TokenMetrics()  # Return empty metrics
 
@@ -2523,13 +2584,22 @@ def _skip_cost_for_unnamed_model(
             "TRAIGENT_STRICT_COST_ACCOUNTING=false to accept $0 for "
             "calls that cannot be priced."
         )
-    logger.warning(
+    # No tokens were captured: a model-free objective (plain function, cached
+    # lookup, deterministic scorer). Nothing was spent, the example is marked
+    # cost-unmeasured by the caller, and the per-trial and run-level warnings
+    # already carry the actionable text, so a per-example WARNING is only
+    # noise that scales with trials x examples (Traigent#3235). Captured
+    # tokens with no model name stay a WARNING: that is real, unpriced spend.
+    input_tokens = metrics.tokens.input_tokens
+    output_tokens = metrics.tokens.output_tokens
+    log_skip = logger.warning if input_tokens > 0 or output_tokens > 0 else logger.debug
+    log_skip(
         "Cost calculation skipped: model_name is None/empty. "
         "Ensure the optimization config includes a 'model' key or "
         "the LLM response exposes the model name. "
         "tokens=(in=%d, out=%d)",
-        metrics.tokens.input_tokens,
-        metrics.tokens.output_tokens,
+        input_tokens,
+        output_tokens,
     )
 
 
@@ -2580,6 +2650,14 @@ def _price_call_and_check_zero_cost(
 def _token_derived_cost(
     metrics: ExampleMetrics, model_name: str | None
 ) -> tuple[float, float, float] | None:
+    """Token-derived estimate ``(input, output, total)``, or ``None``."""
+    result = _token_derived_estimate(metrics, model_name)
+    return None if result is None else result[:3]
+
+
+def _token_derived_estimate(
+    metrics: ExampleMetrics, model_name: str | None
+) -> tuple[float, float, float, bool] | None:
     if not model_name:
         return None
     in_tokens = metrics.tokens.input_tokens
@@ -2587,11 +2665,9 @@ def _token_derived_cost(
     if in_tokens <= 0 and out_tokens <= 0:
         return None
 
-    from traigent.utils.cost_calculator import cost_from_tokens
-
     try:
-        input_cost, output_cost = cost_from_tokens(
-            in_tokens, out_tokens, model_name, strict=False
+        input_cost, output_cost, upper_bound = _price_with_cached_input(
+            metrics, model_name, False
         )
     except Exception:  # pragma: no cover - defensive; never break the trial
         logger.debug(
@@ -2602,7 +2678,7 @@ def _token_derived_cost(
     derived_total = input_cost + output_cost
     if derived_total <= 0.0:
         return None
-    return input_cost, output_cost, derived_total
+    return input_cost, output_cost, derived_total, upper_bound
 
 
 def _reconcile_reported_cost_with_tokens(
@@ -2617,11 +2693,11 @@ def _reconcile_reported_cost_with_tokens(
     estimate. If token data or pricing is unavailable, this is the residual BYOK
     trust boundary: accept the caller/provider-reported value as-is.
     """
-    derived = _token_derived_cost(metrics, model_name)
+    derived = _token_derived_estimate(metrics, model_name)
     if derived is None:
         return
 
-    input_cost, output_cost, derived_total = derived
+    input_cost, output_cost, derived_total, upper_bound = derived
     authoritative_total = metrics.cost.total_cost
     # The provider's own billed charge is not a self-report: it may sit well
     # below a stale table price (OpenRouter routing to a cheaper upstream), and
@@ -2629,8 +2705,21 @@ def _reconcile_reported_cost_with_tokens(
     # the exact ``provider_billed`` tag skips the floor; anything else,
     # including an unknown source, keeps it.
     provider_billed = metrics.cost.cost_source == COST_SOURCE_PROVIDER_BILLED
-    if not provider_billed and authoritative_total < (
-        derived_total * REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO
+    # An estimate that priced cached tokens at the full rate (no cached rate in
+    # the table) is an UPPER bound, so it cannot prove a lower reported cost
+    # implausible. A LOWER bound (cache reads free, fresh input and output at
+    # table rates) still can: a reported cost below it is an under-report
+    # whatever the unknown cached rate is (Traigent#3253).
+    if upper_bound:
+        lower = _cached_read_free_lower_bound(metrics, model_name)
+        if lower is None:
+            _backfill_cost_breakdown(metrics, input_cost, output_cost, derived_total)
+            return
+        input_cost, output_cost = lower
+        derived_total = input_cost + output_cost
+    if (
+        not provider_billed
+        and authoritative_total < derived_total * REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO
     ):
         logger.warning(
             "Reported LLM cost $%.8f for model %r is implausibly below token-derived "
@@ -2646,9 +2735,44 @@ def _reconcile_reported_cost_with_tokens(
         metrics.cost.output_cost = output_cost
         metrics.cost.total_cost = derived_total
         metrics.cost.cost_source = COST_SOURCE_TABLE
+        if upper_bound:
+            # Clamped to a lower bound only: the true bill may be higher.
+            metrics.cost.cache_rate_unknown = True
         return
 
+    if upper_bound:
+        # Reported cost sits between the bounds: accept it, scale the split
+        # against the full-rate (upper) estimate as before.
+        derived = _token_derived_estimate(metrics, model_name)
+        if derived is not None:
+            input_cost, output_cost, derived_total, _ = derived
     _backfill_cost_breakdown(metrics, input_cost, output_cost, derived_total)
+
+
+def _cached_read_free_lower_bound(
+    metrics: ExampleMetrics, model_name: str | None
+) -> tuple[float, float] | None:
+    """``(input, output)`` cost with cache-read tokens priced at 0, or ``None``."""
+    if not model_name:
+        return None
+    from traigent.utils import cost_calculator
+
+    cached = metrics.cache_read_tokens or 0
+    in_tokens = metrics.tokens.input_tokens
+    if cached <= 0 or cached > in_tokens:
+        return None
+    try:
+        fresh, output = cost_calculator.cost_from_tokens(
+            in_tokens - cached,
+            metrics.tokens.output_tokens,
+            model_name,
+            strict=False,
+        )
+    except Exception:  # pragma: no cover - defensive; never break the trial
+        return None
+    if fresh + output <= 0.0:
+        return None
+    return fresh, output
 
 
 def _backfill_cost_breakdown(
@@ -2695,6 +2819,63 @@ def _handle_mock_mode(
     metrics.cost.total_cost = 0.0
 
 
+def _cost_with_cached_input(
+    metrics: ExampleMetrics, model_name: str, strict: bool
+) -> tuple[float, float]:
+    """Recorded cost: :func:`_price_with_cached_input`, flagging an unknown rate."""
+    input_cost, output_cost, rate_unknown = _price_with_cached_input(
+        metrics, model_name, strict
+    )
+    if rate_unknown:
+        metrics.cost.cache_rate_unknown = True
+        logger.warning(
+            "No usable cached-input rate for model %r; %d cached prompt "
+            "tokens priced at the full input rate (cost is an upper bound).",
+            model_name,
+            metrics.cache_read_tokens,
+        )
+    return input_cost, output_cost
+
+
+def _price_with_cached_input(
+    metrics: ExampleMetrics, model_name: str, strict: bool
+) -> tuple[float, float, bool]:
+    """``cost_from_tokens`` with cache-read input priced at the cached rate.
+
+    Applies only when the response's input count INCLUDES the cache reads
+    (OpenAI / Gemini shape: ``cache_total_input_tokens == input_tokens``).
+    Disjoint shapes (Bedrock / Anthropic) and unknown cache counts are left on
+    the existing path. When the table has no cached rate (or one above the
+    fresh rate) the full input rate is kept and the third element is True:
+    the figure may overstate but never undercounts (Traigent#3253).
+    Returns ``(input_cost, output_cost, cache_rate_unknown)``; pure, no flags.
+    """
+    from traigent.utils import cost_calculator
+
+    in_tokens = metrics.tokens.input_tokens
+    out_tokens = metrics.tokens.output_tokens
+    cached = metrics.cache_read_tokens
+    full = cost_calculator.cost_from_tokens(
+        in_tokens, out_tokens, model_name, strict=strict
+    )
+    if (
+        not cached
+        or cached <= 0
+        or cached > in_tokens
+        or metrics.cache_total_input_tokens != in_tokens
+    ):
+        return full[0], full[1], False
+
+    rate = cost_calculator.get_cached_input_rate(model_name)
+    fresh_rate = full[0] / in_tokens if in_tokens > 0 else 0.0
+    if rate is None or rate > fresh_rate or fresh_rate <= 0.0:
+        return full[0], full[1], fresh_rate > 0.0
+    fresh_cost, output_cost = cost_calculator.cost_from_tokens(
+        in_tokens - cached, out_tokens, model_name, strict=strict
+    )
+    return fresh_cost + cached * rate, output_cost, False
+
+
 def _compute_cost(
     metrics: ExampleMetrics,
     model_name: str,
@@ -2704,8 +2885,6 @@ def _compute_cost(
     strict_cost_accounting: bool,
 ) -> None:
     """Compute cost using cost_from_tokens (preferred) or legacy text path."""
-    from traigent.utils.cost_calculator import cost_from_tokens
-
     # Ensure total tokens computed
     if metrics.tokens.total_tokens == 0:
         metrics.tokens.total_tokens = (
@@ -2714,11 +2893,8 @@ def _compute_cost(
 
     if metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0:
         # Preferred path: use canonical cost_from_tokens directly
-        input_cost, output_cost = cost_from_tokens(
-            metrics.tokens.input_tokens,
-            metrics.tokens.output_tokens,
-            model_name,
-            strict=strict_cost_accounting,
+        input_cost, output_cost = _cost_with_cached_input(
+            metrics, model_name, strict_cost_accounting
         )
         metrics.cost.input_cost = input_cost
         metrics.cost.output_cost = output_cost
@@ -2885,6 +3061,7 @@ def extract_llm_metrics(
     prompt_length: int | None = None,
     response_length: int | None = None,
     response_captured: bool = False,
+    estimate_from_text: bool = True,
 ) -> ExampleMetrics:
     """Extract metrics from LLM response objects with cost calculation.
 
@@ -2906,6 +3083,10 @@ def extract_llm_metrics(
             (e.g. a returned ``raw_response``) is never provider-billed: any
             cost it carries is a self-report (#2505). Defaults to False
             (fail closed).
+        estimate_from_text: When False, a response that carries no usable usage
+            and no billing evidence is left unmeasured instead of being priced
+            from ``original_prompt`` / ``response_text`` length (Traigent#3251).
+            Unlike ``response_captured`` this grants no billing trust.
 
     Returns:
         ExampleMetrics with extracted token, cost, and response metrics
@@ -2955,14 +3136,38 @@ def extract_llm_metrics(
     # model name carried on the response itself when the config supplies none
     # (multi-model/multi-step agents have no single config 'model' key; #1599).
     effective_model_name = model_name or _infer_model_name_from_response(response)
-    _calculate_cost_for_metrics(
-        metrics,
-        effective_model_name,
-        original_prompt,
-        response_text,
-        prompt_length=prompt_length,
-        response_length=response_length,
+    no_billing_evidence = not (
+        metrics.cost.total_cost > 0 or metrics.cost.cost_explicit
     )
+    if metrics.tokens.invalid and no_billing_evidence:
+        # The provider reported an unusable token count (Traigent#3252): usage
+        # is unknown, so do not estimate a cost from text either. The example
+        # falls through to the ``cost.unmeasured`` guard below.
+        logger.warning(
+            "Provider token usage was invalid for model %r; "
+            "cost is unmeasured, not priced",
+            effective_model_name,
+        )
+    elif not estimate_from_text and not usage_captured and no_billing_evidence:
+        # A captured provider response that carried no usable usage (missing
+        # usage, or null token counts; Traigent#3251). The call happened and
+        # its spend is unknown. A length-based estimate from the
+        # prompt/answer text would be recorded as a measurement with 0 tokens,
+        # so none is made; the ``cost.unmeasured`` guard below flags it.
+        logger.warning(
+            "Response for model %r carried no usable usage; "
+            "cost is unmeasured, not estimated from text",
+            effective_model_name,
+        )
+    else:
+        _calculate_cost_for_metrics(
+            metrics,
+            effective_model_name,
+            original_prompt,
+            response_text,
+            prompt_length=prompt_length,
+            response_length=response_length,
+        )
 
     # Nothing was captured and the length-based (privacy-mode) path priced
     # nothing either: the cost is UNKNOWN, not $0 (Traigent#2517). The global

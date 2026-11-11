@@ -186,8 +186,12 @@ class TestMetaExtraction:
         assert meta is not None
         assert metrics.cost.total_cost == 0.0  # Clamped to 0
 
-    def test_meta_extraction_negative_tokens_clamped(self):
-        """Should clamp negative tokens to 0."""
+    def test_meta_extraction_negative_tokens_are_unknown_not_clamped(self, caplog):
+        """Negative declared tokens make usage unknown (Traigent#3252).
+
+        Previously clamped to a fake measured 0; now flagged invalid and one
+        WARNING names the field without echoing the value.
+        """
         evaluator = LocalEvaluator()
         metrics = ExampleMetrics()
 
@@ -201,9 +205,33 @@ class TestMetaExtraction:
         meta = evaluator._extract_and_inject_traigent_meta(output, metrics)
 
         assert meta is not None
-        assert metrics.tokens.input_tokens == 0  # Clamped
-        assert metrics.tokens.output_tokens == 0  # Clamped
+        assert metrics.tokens.input_tokens == 0
+        assert metrics.tokens.output_tokens == 0
         assert metrics.tokens.total_tokens == 0
+        assert metrics.tokens.invalid is True
+        warned = [
+            r.getMessage() for r in caplog.records if "input_tokens" in r.getMessage()
+        ]
+        assert warned
+        assert not any("-100" in m for m in warned)
+
+    @pytest.mark.parametrize("bad", [True, 12.0, "12", 10**400, float("nan")])
+    def test_meta_extraction_other_invalid_tokens_are_unknown(self, bad):
+        evaluator = LocalEvaluator()
+        metrics = ExampleMetrics()
+        evaluator._inject_usage_from_meta({"input_tokens": bad}, metrics)
+        assert metrics.tokens.input_tokens == 0
+        assert metrics.tokens.invalid is True
+
+    def test_meta_extraction_valid_tokens_unchanged(self):
+        evaluator = LocalEvaluator()
+        metrics = ExampleMetrics()
+        evaluator._inject_usage_from_meta(
+            {"input_tokens": 100, "output_tokens": 50}, metrics
+        )
+        assert (metrics.tokens.input_tokens, metrics.tokens.output_tokens) == (100, 50)
+        assert metrics.tokens.total_tokens == 150
+        assert metrics.tokens.invalid is False
 
     def test_meta_extraction_clamps_implausible_reported_cost(self, caplog):
         """with_usage-style metadata cannot under-report known model token cost."""

@@ -19,6 +19,8 @@ from traigent.config.parallel import (
     ParallelConfig,
     coerce_parallel_config,
     merge_parallel_configs,
+    validate_parallel_config_fields,
+    validate_parallel_workers,
 )
 from traigent.config.types import TraigentConfig, validate_execution_mode
 from traigent.core.cache_usage import normalize_cache_usage
@@ -33,19 +35,31 @@ from traigent.utils.insights import (
     get_optimization_insights as _get_optimization_insights,
 )
 from traigent.utils.logging import get_logger, setup_logging
+from traigent.utils.numeric_validation import (
+    MAX_TOKEN_COUNT,
+    validate_positive_int,
+    validate_token_count,
+)
 from traigent.utils.validation import Validators, validate_or_raise
 
 logger = get_logger(__name__)
 
-# Global configuration
-_GLOBAL_CONFIG: dict[str, Any] = {
-    "default_storage_backend": "local",
-    "parallel_workers": 1,
-    "cache_policy": "memory",
-    "logging_level": "INFO",
-    "api_keys": {},  # Kept for backward compatibility
-    "parallel_config": ParallelConfig(),
-}
+
+def _default_global_config() -> dict[str, Any]:
+    """Fresh default global configuration."""
+    return {
+        "default_storage_backend": "local",
+        "parallel_workers": 1,
+        "cache_policy": "memory",
+        "logging_level": "INFO",
+        "api_keys": {},  # Kept for backward compatibility
+        "parallel_config": ParallelConfig(),
+    }
+
+
+# Global configuration: the single source of truth. traigent.api.config_builder
+# reads and writes this same dict (#3162); do not create a second store.
+_GLOBAL_CONFIG: dict[str, Any] = _default_global_config()
 
 
 if TYPE_CHECKING:
@@ -84,9 +98,13 @@ def configure(
     """Configure global Traigent SDK settings.
 
     Args:
-        default_storage_backend: Default storage ("local", "s3", "gcs")
+        default_storage_backend: Deprecated and has no effect. Nothing in the SDK
+            reads it; a ``DeprecationWarning`` is emitted and the value is ignored.
         parallel_workers: Default number of parallel workers
-        cache_policy: Cache policy ("memory", "disk", "distributed")
+        cache_policy: Deprecated and has no effect. The per-run cache policy is
+            the ``cache_policy`` argument of ``.optimize()`` (e.g.
+            ``"allow_repeats"``). Valid legacy values are still checked, then a
+            ``DeprecationWarning`` is emitted and the value is ignored.
         logging_level: Logging verbosity ("DEBUG", "INFO", "WARNING", "ERROR")
         api_keys: API keys for external services
         objectives: Default objectives (list of names or ObjectiveSchema)
@@ -103,11 +121,24 @@ def configure(
         True
     """
     if default_storage_backend is not None:
-        _GLOBAL_CONFIG["default_storage_backend"] = default_storage_backend
+        warnings.warn(
+            "configure(default_storage_backend=...) has no effect: no SDK "
+            "component reads it, so the value is ignored.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    # Validate every parallel input before storing any of it, so a rejected call
+    # leaves global state untouched.
+    if parallel_config is not None:
+        _coerced_parallel = coerce_parallel_config(parallel_config)
+        if _coerced_parallel is not None:
+            validate_parallel_config_fields(_coerced_parallel)
 
     if parallel_workers is not None:
         result = Validators.validate_positive_int(parallel_workers, "parallel_workers")
         validate_or_raise(result)
+        validate_parallel_workers(parallel_workers)
         _GLOBAL_CONFIG["parallel_workers"] = parallel_workers
 
     if cache_policy is not None:
@@ -116,7 +147,12 @@ def configure(
             cache_policy, "cache_policy", valid_policies
         )
         validate_or_raise(result)
-        _GLOBAL_CONFIG["cache_policy"] = cache_policy
+        warnings.warn(
+            "configure(cache_policy=...) has no effect: the run cache policy is "
+            "set per run via .optimize(cache_policy=...), so the value is ignored.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     if logging_level is not None:
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -162,6 +198,7 @@ def _apply_parallel_config(
         )
         return
 
+    validate_parallel_config_fields(coerced)
     existing_config = _GLOBAL_CONFIG.get("parallel_config", ParallelConfig())
     merged_config, _ = merge_parallel_configs(
         [
@@ -349,6 +386,8 @@ def _apply_config_settings(config: TraigentConfig) -> None:
 
     if config.auto_sync is not None:
         _GLOBAL_CONFIG["auto_sync"] = config.auto_sync
+
+    _GLOBAL_CONFIG["enable_usage_analytics"] = config.enable_usage_analytics
 
     _GLOBAL_CONFIG["default_storage_backend"] = (
         "local" if config.is_local_mode() else "cloud"
@@ -652,9 +691,9 @@ def override_config(
         override["timeout"] = timeout
 
     if max_total_examples is not None:
-        if max_total_examples <= 0:
-            raise ValueError("max_total_examples must be > 0")
-        override["max_total_examples"] = max_total_examples
+        override["max_total_examples"] = validate_positive_int(
+            "max_total_examples", max_total_examples
+        )
 
     if samples_include_pruned is not None:
         override["samples_include_pruned"] = bool(samples_include_pruned)
@@ -1114,10 +1153,25 @@ def _build_usage_dict(
     if input_tokens is None and output_tokens is None and response_time_ms is None:
         return None
     usage: dict[str, Any] = {}
-    if input_tokens is not None:
-        usage["input_tokens"] = int(input_tokens)
-    if output_tokens is not None:
-        usage["output_tokens"] = int(output_tokens)
+    for name, declared in (
+        ("input_tokens", input_tokens),
+        ("output_tokens", output_tokens),
+    ):
+        if declared is None:
+            continue
+        valid = validate_token_count(declared)
+        if valid is None:
+            # Unknown, never clamped to a fake measured zero (Traigent#3252).
+            # The value is deliberately not echoed.
+            logger.warning(
+                "with_usage(): ignoring invalid %s (expected a non-negative "
+                "int up to %d); token usage is unknown",
+                name,
+                MAX_TOKEN_COUNT,
+            )
+            usage["tokens_invalid"] = True
+        else:
+            usage[name] = valid
     if response_time_ms is not None:
         usage["response_time_ms"] = float(response_time_ms)
     return usage
