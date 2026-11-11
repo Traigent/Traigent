@@ -1374,3 +1374,42 @@ class TestRaisingValidatorIsLoud:
             r.levelname == "WARNING" and "KeyError" in r.getMessage()
             for r in caplog.records
         )
+
+
+class TestRaisingValidatorDoesNotLeakText:
+    """Exception text may carry secrets: log and message use the type only."""
+
+    PAYLOAD = "customer-private-payload-marker"
+
+    def test_no_secret_in_logs_or_messages(self, caplog):
+        from traigent.core.types import ConfigurationSpace
+
+        calls = []
+
+        def validator(c):
+            calls.append(1)
+            raise RuntimeError(self.PAYLOAD)
+
+        def resource(c):
+            raise RuntimeError(self.PAYLOAD)
+
+        manager = ConstraintManager()
+        manager.add_constraint(
+            CustomConstraint("custom", validator, lambda c: "rule violated")
+        )
+        manager.add_constraint(ResourceConstraint("res", resource, 1.0))
+        space = ConfigurationSpace([], [validator])
+
+        with caplog.at_level("DEBUG"):
+            _, violations = manager.validate_configuration({"x": 1})
+            space.validate_config({"x": 1})
+
+        assert len(violations) == 2
+        assert self.PAYLOAD not in violations[0].message  # the custom validator
+        assert "RuntimeError" in violations[0].message
+        for record in caplog.records:
+            assert self.PAYLOAD not in record.getMessage()
+            assert record.exc_info is None
+        # validator ran once for the manager and once for the space: not re-run
+        # to build the message.
+        assert len(calls) == 2

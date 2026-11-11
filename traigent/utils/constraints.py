@@ -319,13 +319,11 @@ class ResourceConstraint(Constraint):
             return usage <= self.max_resource
         except Exception as e:
             # Missing keys or a buggy calculator: treat as invalid, but say so.
+            # Type only: exception text can carry customer content.
             logger.warning(
-                "Resource constraint '%s' calculator raised %s "
-                "(treating as invalid): %s",
+                "Resource constraint '%s' calculator raised %s (treating as invalid)",
                 self.name,
                 type(e).__name__,
-                e,
-                exc_info=not isinstance(e, KeyError),
             )
             return False  # Invalid config for resource calculation
 
@@ -363,31 +361,32 @@ class CustomConstraint(Constraint):
         super().__init__(name, "Custom constraint")
         self.validator = validator
         self.message_generator = message_generator
+        # Exception type from the last validate() call, so the violation
+        # message does not need to re-run the user validator.
+        self._last_error_type: str | None = None
         self.suggestion_generator = suggestion_generator
 
     def validate(self, config: dict[str, Any]) -> bool:
         """Check constraint using custom validator."""
+        self._last_error_type = None
         try:
             return self.validator(config)
         except Exception as e:
+            # Type only: exception text can carry customer content.
+            self._last_error_type = type(e).__name__
             logger.warning(
-                "Custom constraint '%s' validator raised %s (treating as invalid): %s",
+                "Custom constraint '%s' validator raised %s (treating as invalid)",
                 self.name,
                 type(e).__name__,
-                e,
             )
             return False
 
     def get_violation_message(self, config: dict[str, Any]) -> str:
         """Get violation message using custom generator."""
-        try:
-            self.validator(config)
-        except Exception as e:
-            # The validator crashed; do not blame the business rule.
-            return (
-                f"Custom constraint '{self.name}' validator raised "
-                f"{type(e).__name__}: {e}"
-            )
+        error_type = self._last_error_type
+        if error_type is not None:
+            # The validator crashed on its last call; do not blame the rule.
+            return f"Custom constraint '{self.name}' validator raised {error_type}"
         try:
             return self.message_generator(config)
         except Exception as e:

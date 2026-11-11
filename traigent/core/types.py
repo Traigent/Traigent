@@ -242,9 +242,8 @@ class ConfigurationSpace:
                         return False
                 except Exception as e:
                     logger.warning(
-                        "Constraint check raised %s (treating as invalid): %s",
+                        "Constraint check raised %s (treating as invalid)",
                         type(e).__name__,
-                        e,
                     )
                     return False
 

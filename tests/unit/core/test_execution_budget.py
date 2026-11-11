@@ -395,6 +395,15 @@ def test_debit_trial_non_numeric_cost_marks_tracking_incomplete() -> None:
     assert snap.cost_tracking != "complete"
 
 
+def test_debit_trial_valid_cost_is_booked_despite_bad_examples() -> None:
+    budget = ExecutionBudget(max_cost_usd=1.0, max_examples=10)
+    budget.debit_trial(cost=0.4, examples="not-an-int")  # type: ignore[arg-type]
+    snap = budget.snapshot()
+    assert budget.consumed_cost == pytest.approx(0.4)
+    assert snap.trials == 1
+    assert snap.cost_tracking != "complete"
+
+
 def test_debit_trial_non_finite_cost_marks_tracking_incomplete() -> None:
     budget = ExecutionBudget(max_cost_usd=1.0)
     budget.debit_trial(cost=float("nan"))

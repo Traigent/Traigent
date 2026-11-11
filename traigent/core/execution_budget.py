@@ -514,19 +514,34 @@ class ExecutionBudget:
             untracked: Force-mark the trial as untracked even if a cost is given.
             trial_id: Trial identifier, for debug logging only.
         """
+        # A valid observed cost is booked independently of a bad ``examples``
+        # value (and vice versa), so one malformed field never hides the other.
+        cost_value: float | None = None
+        cost_ok = True
         try:
-            # Coerce first so a bad value cannot leave the counters half-updated.
-            cost_value = float(cost) if cost is not None else None
-            if cost_value is not None and not math.isfinite(cost_value):
-                raise ValueError("non-finite trial cost")
+            if cost is not None:
+                cost_value = float(cost)
+                if not math.isfinite(cost_value):
+                    raise ValueError("non-finite trial cost")
+        except Exception:
+            cost_ok = False
+            cost_value = None
+        examples_value = 0
+        examples_ok = True
+        try:
             examples_value = int(examples) if examples else 0
+        except Exception:
+            examples_ok = False
+        try:
             with self._lock:
                 self._start_clock_locked()
                 self._trials += 1
                 if cost_value is not None:
                     self._consumed_cost += cost_value
-                if untracked or cost_value is None:
+                if untracked or cost is None or not cost_ok:
                     self._untracked_trials += 1
+                if not cost_ok or not examples_ok:
+                    self._external_untracked = True
                 if examples_value:
                     self._consumed_examples += examples_value
         except Exception:  # never break a run, but never report a clean verdict
@@ -537,9 +552,16 @@ class ExecutionBudget:
                 exc_info=True,
             )
             with self._lock:
-                self._trials += 1
                 self._untracked_trials += 1
                 self._external_untracked = True
+            return
+        if not cost_ok or not examples_ok:
+            logger.warning(
+                "ExecutionBudget.debit_trial received an invalid %s for trial %s; "
+                "marking cost tracking incomplete",
+                "cost" if not cost_ok else "examples",
+                trial_id,
+            )
 
     def record_external(
         self,
