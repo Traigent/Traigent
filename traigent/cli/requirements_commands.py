@@ -8,6 +8,7 @@ codes only; server bodies and user content are never echoed.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import sys
 import time
@@ -276,6 +277,8 @@ def watch_cmd(
     """Best-effort snapshot reporting of breach transitions (not an event feed)."""
     import logging
 
+    if not math.isfinite(interval):
+        raise click.BadParameter("must be a finite number", param_hint="--interval")
     try:
         fn = _find_function(file_path, function)
         declared = _declared(fn)
