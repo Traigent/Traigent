@@ -385,6 +385,24 @@ def test_debit_trial_never_raises_on_bad_examples() -> None:
     # debit was swallowed — either way, no exception escaped.
 
 
+def test_debit_trial_non_numeric_cost_marks_tracking_incomplete() -> None:
+    budget = ExecutionBudget(max_cost_usd=1.0)
+    budget.debit_trial(cost=0.4)
+    budget.debit_trial(cost="n/a")  # type: ignore[arg-type]
+    snap = budget.snapshot()
+    assert snap.trials == 2
+    assert snap.untracked_trials == 1
+    assert snap.cost_tracking != "complete"
+
+
+def test_debit_trial_non_finite_cost_marks_tracking_incomplete() -> None:
+    budget = ExecutionBudget(max_cost_usd=1.0)
+    budget.debit_trial(cost=float("nan"))
+    snap = budget.snapshot()
+    assert snap.cost_tracking != "complete"
+    assert budget.consumed_cost == 0.0
+
+
 # ---------------------------------------------------------------------------
 # remaining_* — inf when unbounded, floors at zero
 # ---------------------------------------------------------------------------

@@ -4224,8 +4224,13 @@ class OptimizedFunction[**P, R]:
                 and cost_enforcer.get_status().unknown_cost_mode
             ):
                 budget.mark_cost_untracked()
-        except Exception:  # pragma: no cover - defensive; never break finalize
-            logger.debug("ExecutionBudget unknown-cost fold-in failed", exc_info=True)
+        except Exception:  # never break finalize, but degrade the verdict
+            logger.warning(
+                "ExecutionBudget unknown-cost fold-in failed; "
+                "marking cost tracking incomplete",
+                exc_info=True,
+            )
+            budget.mark_cost_untracked()
         if "UNPRICED_MODEL_RUNTIME" in result.warning_codes:
             budget.mark_cost_untracked()
 

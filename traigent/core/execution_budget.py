@@ -515,21 +515,31 @@ class ExecutionBudget:
             trial_id: Trial identifier, for debug logging only.
         """
         try:
+            # Coerce first so a bad value cannot leave the counters half-updated.
+            cost_value = float(cost) if cost is not None else None
+            if cost_value is not None and not math.isfinite(cost_value):
+                raise ValueError("non-finite trial cost")
+            examples_value = int(examples) if examples else 0
             with self._lock:
                 self._start_clock_locked()
                 self._trials += 1
-                if cost is not None:
-                    self._consumed_cost += float(cost)
-                if untracked or cost is None:
+                if cost_value is not None:
+                    self._consumed_cost += cost_value
+                if untracked or cost_value is None:
                     self._untracked_trials += 1
-                if examples:
-                    self._consumed_examples += int(examples)
-        except Exception:  # pragma: no cover - defensive; never break a run
-            logger.debug(
-                "ExecutionBudget.debit_trial swallowed an error for trial %s",
+                if examples_value:
+                    self._consumed_examples += examples_value
+        except Exception:  # never break a run, but never report a clean verdict
+            logger.warning(
+                "ExecutionBudget.debit_trial could not account trial %s; "
+                "marking cost tracking incomplete",
                 trial_id,
                 exc_info=True,
             )
+            with self._lock:
+                self._trials += 1
+                self._untracked_trials += 1
+                self._external_untracked = True
 
     def record_external(
         self,
