@@ -408,8 +408,10 @@ class TestOptimizeDecorator:
 
         assert isinstance(constrained_function, OptimizedFunction)
 
-    def test_decorator_loads_tvl_spec(self):
+    def test_decorator_loads_tvl_spec(self, connected_policy_env):
         """Supplying tvl_spec hydrates the configuration automatically."""
+        # The fixture spec names a managed algorithm; the spec's algorithm now
+        # applies, and a managed algorithm is refused while offline.
 
         spec_path = Path("tests/fixtures/tvl/hello_tvl.yml")
 

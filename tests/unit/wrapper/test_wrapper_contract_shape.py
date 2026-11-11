@@ -185,7 +185,7 @@ async def test_evaluate_legacy_example_id_still_echoed_as_input_id() -> None:
         "POST",
         EVALUATE_PATH,
         {
-            "request_id": "r-legacy",
+            "request_id": "770e8400-e29b-41d4-a716-446655440002",
             "tunable_id": "my_agent",
             "evaluations": [{"example_id": "e1", "output": {}, "target": {}}],
         },

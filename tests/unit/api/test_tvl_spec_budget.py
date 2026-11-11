@@ -49,7 +49,11 @@ def test_explicit_decorator_values_win_over_tvl_spec(tmp_path) -> None:
     assert agent.algorithm == "grid"
 
 
-def test_explicit_auto_algorithm_is_not_overridden_by_spec(tmp_path) -> None:
+def test_explicit_auto_algorithm_is_not_overridden_by_spec(
+    tmp_path, connected_policy_env
+) -> None:
+    # Offline (the default unit lane) resolves "auto" to the local runtime
+    # algorithm; a connected policy keeps "auto" as chosen.
     agent = _decorate(tmp_path, algorithm="auto")
 
     assert agent.algorithm == "auto"
