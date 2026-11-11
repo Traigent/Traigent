@@ -371,6 +371,9 @@ class RandomSearchOptimizer(BaseOptimizer):
     @property
     def progress(self) -> float:
         """Get optimization progress as a fraction (0.0 to 1.0)."""
+        if self.max_trials <= 0:
+            # A zero-trial run is a no-op that is immediately complete.
+            return 1.0
         return float(min(self._trial_count / self.max_trials, 1.0))
 
     def set_max_trials(self, max_trials: int) -> None:

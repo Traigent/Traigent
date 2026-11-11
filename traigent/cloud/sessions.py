@@ -524,7 +524,12 @@ class _SessionStateRegistry:
         return {
             **self._stats,
             "current_sessions": len(self._sessions),
-            "capacity_utilization": len(self._sessions) / self.max_sessions,
+            # A zero-capacity manager is always full.
+            "capacity_utilization": (
+                len(self._sessions) / self.max_sessions
+                if self.max_sessions > 0
+                else 1.0
+            ),
             "dirty_sessions": len(self.list_dirty_sessions()),
         }
 
