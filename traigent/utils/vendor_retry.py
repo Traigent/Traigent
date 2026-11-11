@@ -31,7 +31,11 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, cast
 
-from traigent.core.exception_handler import VendorErrorCategory, classify_vendor_error
+from traigent.core.exception_handler import (
+    VendorErrorCategory,
+    classify_vendor_error,
+    is_temporary_in_flight_budget_402,
+)
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.langchain_interceptor import (
     VendorAttemptHandle,
@@ -147,6 +151,10 @@ def classify_retryable(exc: BaseException) -> VendorErrorCategory | None:
     if not isinstance(exc, Exception):
         return None
     try:
+        # Structured metadata outranks wording: the temporary 402's message
+        # reads like an exhausted account but clears on its own.
+        if is_temporary_in_flight_budget_402(exc):
+            return VendorErrorCategory.RATE_LIMIT
         message = str(exc).lower()
         if any(marker in message for marker in _TERMINAL_MARKERS):
             return None

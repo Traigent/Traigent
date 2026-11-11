@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from traigent.core.exception_handler import classify_vendor_error
 from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.testing import inject_vendor_failures
 from traigent.utils.exceptions import (
@@ -1406,3 +1407,153 @@ def test_openrouter_inflight_credit_wording_is_terminal(status):
         "your current in-flight requests."
     )
     assert classify_retryable(_Err(msg)) is None
+
+
+# ------------------------------------- temporary in-flight-budget 402 (#2888)
+
+_TEMP_META = {
+    "reason": "in_flight_budget_exhausted",
+    "limit_source": "openrouter_in_flight_budget",
+}
+_TEMP_MSG = (
+    "This request would exceed your available credits given your current "
+    "in-flight requests."
+)
+
+
+def _envelope(metadata):
+    return {"error": {"code": 402, "message": _TEMP_MSG, "metadata": metadata}}
+
+
+class _Resp:
+    def __init__(self, body, status=402, headers=None):
+        self._body = body
+        self.status_code = status
+        self.headers = headers or {}
+
+    def json(self):
+        return self._body
+
+
+def _temp_402(*, body=None, response_body=None, headers=None):
+    """A 402 shaped like the OpenAI client (body) or LiteLLM (response)."""
+    exc = _Http(_TEMP_MSG, 402, headers=headers or {"Retry-After": "0.001"}, body=body)
+    if response_body is not None:
+        exc.response = _Resp(response_body)
+    return exc
+
+
+def test_temporary_402_body_is_retryable():
+    exc = _temp_402(body=_envelope(_TEMP_META))
+    assert classify_retryable(exc) is not None
+    assert classify_vendor_error(exc).value == "rate_limit"
+
+
+def test_temporary_402_litellm_context_response_is_retryable():
+    # LiteLLM leaves ``body`` empty; the metadata lives on a chained response.
+    inner = _temp_402(response_body=_envelope(_TEMP_META))
+    outer = _Http("litellm.APIError: " + _TEMP_MSG, 402, body=None)
+    outer.__cause__ = inner
+    assert classify_retryable(outer) is not None
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"reason": "weight_exceeds_budget", "limit_source": "openrouter_credits"},
+        {"reason": "in_flight_budget_exhausted", "limit_source": "openrouter_credits"},
+        {
+            "reason": "weight_exceeds_budget",
+            "limit_source": "openrouter_in_flight_budget",
+        },
+        {"reason": "in_flight_budget_exhausted"},
+        {"limit_source": "openrouter_in_flight_budget"},
+        "in_flight_budget_exhausted",
+        None,
+    ],
+)
+def test_other_402_stays_terminal(metadata):
+    assert classify_retryable(_temp_402(body=_envelope(metadata))) is None
+    assert classify_vendor_error(_temp_402(body=_envelope(metadata))).value == (
+        "insufficient_funds"
+    )
+
+
+def test_plain_402_and_non_402_with_temporary_metadata_stay_terminal():
+    assert classify_retryable(_temp_402(body=None)) is None
+    exc = _Http(_TEMP_MSG, 400, body=_envelope(_TEMP_META))
+    assert classify_retryable(exc) is None
+
+
+def test_contradictory_metadata_in_chain_stays_terminal():
+    inner = _temp_402(
+        body=_envelope(
+            {"reason": "weight_exceeds_budget", "limit_source": "openrouter_credits"}
+        )
+    )
+    outer = _temp_402(body=_envelope(_TEMP_META))
+    outer.__cause__ = inner
+    assert classify_retryable(outer) is None
+
+
+def test_metadata_chain_cycle_terminates():
+    a = _temp_402(body=None)
+    b = _temp_402(body=None)
+    a.__cause__ = b
+    b.__cause__ = a
+    assert classify_retryable(a) is None
+
+
+def test_temporary_402_retries_when_enabled(mock_off, monkeypatch):
+    monkeypatch.setenv(RETRIES, "2")
+    monkeypatch.setenv("TRAIGENT_VENDOR_RETRY_BACKOFF", "0")
+    mod, p = _patched([_temp_402(body=_envelope(_TEMP_META))])
+    try:
+        out = mod.completion(model="gpt-4o")
+        assert out.model == "gpt-4o"
+        assert mod.calls["n"] == 2
+    finally:
+        p.stop()
+
+
+def test_temporary_402_default_no_retry_and_budget_bounded(mock_off, monkeypatch):
+    mod, p = _patched([_temp_402(body=_envelope(_TEMP_META))])
+    try:
+        with pytest.raises(_Http):
+            mod.completion(model="gpt-4o")
+        assert mod.calls["n"] == 1
+    finally:
+        p.stop()
+    monkeypatch.setenv(RETRIES, "1")
+    mod, p = _patched([_temp_402(body=_envelope(_TEMP_META))] * 3)
+    try:
+        with pytest.raises(_Http):
+            mod.completion(model="gpt-4o")
+        assert mod.calls["n"] == 2
+    finally:
+        p.stop()
+
+
+@pytest.mark.asyncio
+async def test_temporary_402_retries_async(mock_off, monkeypatch):
+    monkeypatch.setenv(RETRIES, "2")
+    monkeypatch.setenv("TRAIGENT_VENDOR_RETRY_BACKOFF", "0")
+    mod, p = _patched([_temp_402(response_body=_envelope(_TEMP_META))])
+    try:
+        out = await mod.acompletion(model="gpt-4o")
+        assert out.model == "gpt-4o"
+        assert mod.calls["n"] == 2
+    finally:
+        p.stop()
+
+
+def test_permanent_402_not_retried_when_enabled(mock_off, monkeypatch):
+    monkeypatch.setenv(RETRIES, "2")
+    perm = {"reason": "weight_exceeds_budget", "limit_source": "openrouter_credits"}
+    mod, p = _patched([_temp_402(body=_envelope(perm))])
+    try:
+        with pytest.raises(_Http):
+            mod.completion(model="gpt-4o")
+        assert mod.calls["n"] == 1
+    finally:
+        p.stop()

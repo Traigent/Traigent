@@ -262,6 +262,63 @@ def http_status_of(exc: BaseException) -> int | None:
     return None
 
 
+#: OpenRouter's documented *temporary* 402 subtype: an in-flight spending
+#: budget that clears on its own (the response carries ``Retry-After``).
+#: Permanent credit failures use other ``limit_source``/``reason`` values.
+_TEMPORARY_402_LIMIT_SOURCE = "openrouter_in_flight_budget"
+_TEMPORARY_402_REASON = "in_flight_budget_exhausted"
+_MAX_CHAIN_DEPTH = 8
+
+
+def _metadata_pairs(node: BaseException) -> list[tuple[Any, Any]]:
+    """``(limit_source, reason)`` pairs in ``node``'s body / response JSON."""
+    bodies: list[Any] = [getattr(node, "body", None)]
+    response = getattr(node, "response", None)
+    if response is not None and not isinstance(response, dict):
+        try:
+            bodies.append(response.json())
+        except Exception:  # noqa: BLE001 - unreadable body is simply no metadata
+            pass
+    pairs: list[tuple[Any, Any]] = []
+    for body in bodies:
+        if not isinstance(body, dict):
+            continue
+        inner = body.get("error", body)
+        metadata = inner.get("metadata") if isinstance(inner, dict) else None
+        if isinstance(metadata, dict):
+            pairs.append((metadata.get("limit_source"), metadata.get("reason")))
+    return pairs
+
+
+def is_temporary_in_flight_budget_402(exc: BaseException) -> bool:
+    """True only for a structured, unambiguous temporary OpenRouter 402.
+
+    Requires an HTTP 402 and, somewhere in the bounded exception chain, the
+    exact ``limit_source``/``reason`` pair of the temporary subtype. Any
+    other or contradictory metadata in the chain (for example a permanent
+    credit failure) keeps the error terminal.
+    """
+    try:
+        if http_status_of(exc) != 402:
+            return False
+        node: BaseException | None = exc
+        seen: set[int] = set()
+        temporary = False
+        for _ in range(_MAX_CHAIN_DEPTH):
+            if node is None or id(node) in seen:
+                break
+            seen.add(id(node))
+            for pair in _metadata_pairs(node):
+                if pair == (_TEMPORARY_402_LIMIT_SOURCE, _TEMPORARY_402_REASON):
+                    temporary = True
+                elif pair != (None, None):
+                    return False
+            node = node.__cause__ or node.__context__
+        return temporary
+    except Exception:  # noqa: BLE001 - classification must never mask the error
+        return False
+
+
 _STATUS_CATEGORIES: dict[int, VendorErrorCategory] = {
     401: VendorErrorCategory.AUTHENTICATION,
     403: VendorErrorCategory.AUTHENTICATION,
@@ -379,6 +436,9 @@ def classify_vendor_error(
 
     if provider_text_only and not _is_provider_sdk_exception(exc):
         return _structured_only_category(exc)
+
+    if is_temporary_in_flight_budget_402(exc):
+        return VendorErrorCategory.RATE_LIMIT
 
     status = http_status_of(exc)
     if status is not None and _status_is_vendor_signal(exc, status):
