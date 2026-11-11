@@ -262,6 +262,92 @@ def http_status_of(exc: BaseException) -> int | None:
     return None
 
 
+#: OpenRouter's documented *temporary* 402 subtype: an in-flight spending
+#: budget that clears on its own (the response carries ``Retry-After``).
+#: Permanent credit failures use other ``limit_source``/``reason`` values.
+_TEMPORARY_402_LIMIT_SOURCE = "openrouter_in_flight_budget"
+_TEMPORARY_402_REASON = "in_flight_budget_exhausted"
+_MAX_CHAIN_DEPTH = 8
+
+
+def _metadata_pairs(node: BaseException) -> list[tuple[Any, Any]]:
+    """``(limit_source, reason)`` pairs in ``node``'s body / response JSON."""
+    bodies: list[Any] = [getattr(node, "body", None)]
+    response = getattr(node, "response", None)
+    if response is not None and not isinstance(response, dict):
+        try:
+            bodies.append(response.json())
+        except Exception:  # noqa: BLE001 - unreadable body is simply no metadata
+            pass
+    pairs: list[tuple[Any, Any]] = []
+    for body in bodies:
+        if not isinstance(body, dict):
+            continue
+        inner = body.get("error", body)
+        metadata = inner.get("metadata") if isinstance(inner, dict) else None
+        if isinstance(metadata, dict):
+            pairs.append((metadata.get("limit_source"), metadata.get("reason")))
+    return pairs
+
+
+def _request_of(node: BaseException) -> Any:
+    request = getattr(node, "request", None)
+    if request is None:
+        request = getattr(getattr(node, "response", None), "request", None)
+    return request
+
+
+def temporary_402_chain(exc: BaseException) -> list[BaseException] | None:
+    """The validated exception chain of a temporary OpenRouter 402, else ``None``.
+
+    Requires an HTTP 402 and the exact ``limit_source``/``reason`` pair of the
+    temporary subtype. Metadata comes from ``exc`` itself and from linked
+    exceptions only when each link is a 402 for the *same* ``httpx.Request``
+    object as ``exc`` (an explicit ``__cause__`` of an exception with no
+    request of its own is also accepted when it is the direct link). An
+    unrelated earlier exception never supplies metadata. Other or
+    contradictory metadata, or a cycle, keeps the error terminal.
+    """
+    try:
+        if http_status_of(exc) != 402:
+            return None
+        request = _request_of(exc)
+        node: BaseException = exc
+        chain: list[BaseException] = [exc]
+        seen: set[int] = set()
+        temporary = False
+        for _ in range(_MAX_CHAIN_DEPTH):
+            if id(node) in seen:
+                return None  # cycle
+            seen.add(id(node))
+            for pair in _metadata_pairs(node):
+                if pair == (_TEMPORARY_402_LIMIT_SOURCE, _TEMPORARY_402_REASON):
+                    temporary = True
+                elif pair != (None, None):
+                    return None
+            nxt: BaseException | None = None
+            for link, explicit in ((node.__cause__, True), (node.__context__, False)):
+                if link is None or http_status_of(link) != 402:
+                    continue
+                same_request = request is not None and _request_of(link) is request
+                direct_wrapper = explicit and request is None and node is exc
+                if same_request or direct_wrapper:
+                    nxt = link
+                    break
+            if nxt is None:
+                return chain if temporary else None
+            chain.append(nxt)
+            node = nxt
+        return None  # chain deeper than the bound: do not guess
+    except Exception:  # noqa: BLE001 - classification must never mask the error
+        return None
+
+
+def is_temporary_in_flight_budget_402(exc: BaseException) -> bool:
+    """True only for a structured, unambiguous temporary OpenRouter 402."""
+    return temporary_402_chain(exc) is not None
+
+
 _STATUS_CATEGORIES: dict[int, VendorErrorCategory] = {
     401: VendorErrorCategory.AUTHENTICATION,
     403: VendorErrorCategory.AUTHENTICATION,
@@ -376,6 +462,9 @@ def classify_vendor_error(
     typed = _typed_vendor_category(exc)
     if typed is not None:
         return typed
+
+    if is_temporary_in_flight_budget_402(exc):
+        return VendorErrorCategory.RATE_LIMIT
 
     if provider_text_only and not _is_provider_sdk_exception(exc):
         return _structured_only_category(exc)
