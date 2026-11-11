@@ -478,7 +478,9 @@ class TraigentMLflowTracker:
                 best_metrics = {}
                 for key, value in run.data.metrics.items():
                     if key.startswith("best_"):
-                        metric_name = key.replace("best_", "")
+                        metric_name = key.replace("best_", "", 1)
+                        if metrics is not None and metric_name not in metrics:
+                            continue
                         best_metrics[metric_name] = value
 
                 # Extract best config
