@@ -7,7 +7,6 @@ for optimization experiments.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
 import asyncio
-import concurrent.futures
 import copy
 import hashlib
 import json
@@ -39,6 +38,7 @@ from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
+from traigent.utils.thread_timeout import run_in_thread_with_timeout
 from traigent.utils.trial_costs import is_cost_unmeasured, lift_cost_floor_to_body
 from traigent.utils.wire_text import (
     filter_summary_stats,
@@ -633,9 +633,7 @@ class TrialOperations:
                     finally:
                         new_loop.close()
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    return future.result(timeout=60)
+                return run_in_thread_with_timeout(_run_in_new_loop, 60)
 
             # No running loop, safe to use asyncio.run()
             return asyncio.run(_register_async())

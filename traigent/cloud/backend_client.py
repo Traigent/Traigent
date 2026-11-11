@@ -7,7 +7,6 @@ for better maintainability and adherence to software engineering principles.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Security FUNC-CLOUD-HYBRID FUNC-AGENTS FUNC-SECURITY REQ-CLOUD-009 REQ-AGNT-013 REQ-SEC-010
 
 import asyncio
-import concurrent.futures
 import dataclasses
 import json
 import logging
@@ -112,6 +111,7 @@ from traigent.utils.logging import get_logger
 from traigent.utils.numeric_validation import positive_int_env
 from traigent.utils.optimization_only_egress import parse_flag
 from traigent.utils.retry import RetryConfig, RetryHandler
+from traigent.utils.thread_timeout import run_in_thread_with_timeout
 
 BACKEND_CLIENT = "backend client"
 REQUESTS_IS_UNAVAILABLE = "requests is unavailable"
@@ -2329,9 +2329,9 @@ class BackendIntegratedClient:
                 in_running_loop = False
 
             if in_running_loop:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    headers = future.result(timeout=min(self.timeout, 30.0))
+                headers = run_in_thread_with_timeout(
+                    _run_in_new_loop, min(self.timeout, 30.0)
+                )
             else:
                 headers = asyncio.run(_get_headers_async())
         except AuthenticationError:
