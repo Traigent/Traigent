@@ -395,14 +395,14 @@ class TestHelpersImportRealConfigModules:
 
         from traigent.config.context import config_context, get_config
 
-        token = config_context.set(None)
+        ctx_reset = config_context.set(None)
         try:
             enable_streaming_optimization()
             assert get_config().custom_params == {"stream": True}
             enable_tools_optimization([{"type": "function"}])
             assert get_config().custom_params == {"tools": [{"type": "function"}]}
         finally:
-            config_context.reset(token)
+            config_context.reset(ctx_reset)
 
         from traigent.integrations.llms import openai as openai_mod
 

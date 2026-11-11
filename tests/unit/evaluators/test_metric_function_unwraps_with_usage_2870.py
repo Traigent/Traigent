@@ -38,11 +38,11 @@ async def test_metric_function_receives_unwrapped_output(detailed: bool) -> None
         raw.append(out)
         return out
 
-    token = trial_context.set({"trial_id": "t-2870"})
+    ctx_reset = trial_context.set({"trial_id": "t-2870"})
     try:
         await evaluator.evaluate(agent, {}, _dataset())
     finally:
-        trial_context.reset(token)
+        trial_context.reset(ctx_reset)
 
     assert "__traigent_meta__" in raw[0]  # the wrapper really was in play
     assert seen == [["t1", "t2"]]
@@ -88,13 +88,13 @@ async def test_progress_payload_metric_sees_unwrapped_output() -> None:
     def agent(_x: Any) -> Any:
         return with_usage(["t1", "t2"], total_cost=0.002)
 
-    token = trial_context.set({"trial_id": "t-2870-progress"})
+    ctx_reset = trial_context.set({"trial_id": "t-2870-progress"})
     try:
         await evaluator.evaluate(
             agent, {}, _dataset(), progress_callback=progress_callback
         )
     finally:
-        trial_context.reset(token)
+        trial_context.reset(ctx_reset)
 
     metric_values = [
         payload["metrics"]["recall_at_budget"]
@@ -126,11 +126,11 @@ async def test_simple_scoring_evaluator_metric_function_receives_unwrapped_outpu
     def agent(*_args: Any, **_kwargs: Any) -> Any:
         return with_usage(["t1", "t2"], total_cost=0.002)
 
-    token = trial_context.set({"trial_id": "t-2870-simple"})
+    ctx_reset = trial_context.set({"trial_id": "t-2870-simple"})
     try:
         await evaluator.evaluate(agent, {}, _dataset())
     finally:
-        trial_context.reset(token)
+        trial_context.reset(ctx_reset)
 
     assert seen == [["t1", "t2"]]
 
@@ -153,10 +153,10 @@ async def test_simple_scoring_evaluator_scoring_function_receives_unwrapped_outp
     def agent(*_args: Any, **_kwargs: Any) -> Any:
         return with_usage(["t1", "t2"], total_cost=0.002)
 
-    token = trial_context.set({"trial_id": "t-2870-scoring"})
+    ctx_reset = trial_context.set({"trial_id": "t-2870-scoring"})
     try:
         await evaluator.evaluate(agent, {}, _dataset())
     finally:
-        trial_context.reset(token)
+        trial_context.reset(ctx_reset)
 
     assert seen == [["t1", "t2"]]
