@@ -1334,3 +1334,43 @@ class TestCTDScenarios:
                 assert suggestion is None
             else:
                 assert suggestion == "Test suggestion"
+
+
+class TestRaisingValidatorIsLoud:
+    """A validator that raises must be logged and not blamed on the rule (#3123)."""
+
+    def test_custom_validator_error_logged_and_named_in_message(self, caplog):
+        constraint = CustomConstraint(
+            "budget",
+            lambda c: c["n"] <= 10,
+            lambda c: "estimated cost too high",
+        )
+        manager = ConstraintManager()
+        manager.add_constraint(constraint)
+        with caplog.at_level("WARNING"):
+            is_valid, violations = manager.validate_configuration({"x": 1})
+
+        assert is_valid is False
+        assert "KeyError" in violations[0].message
+        assert "estimated cost too high" not in violations[0].message
+        assert any(
+            r.levelname == "WARNING" and "budget" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_resource_keyerror_is_logged(self, caplog):
+        constraint = ResourceConstraint("res", lambda c: c["missing"], 1.0)
+        with caplog.at_level("WARNING"):
+            assert constraint.validate({"x": 1}) is False
+        assert any("res" in r.getMessage() for r in caplog.records)
+
+    def test_configuration_space_constraint_error_is_logged(self, caplog):
+        from traigent.core.types import ConfigurationSpace
+
+        space = ConfigurationSpace([], [lambda c: c["t"] <= 0.9])
+        with caplog.at_level("WARNING"):
+            assert space.validate_config({"x": 1}) is False
+        assert any(
+            r.levelname == "WARNING" and "KeyError" in r.getMessage()
+            for r in caplog.records
+        )

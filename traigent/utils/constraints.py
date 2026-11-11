@@ -317,13 +317,15 @@ class ResourceConstraint(Constraint):
         try:
             usage = self.resource_calculator(config)
             return usage <= self.max_resource
-        except KeyError:
-            # Missing keys mean we can't calculate usage, treat as invalid
-            return False
         except Exception as e:
+            # Missing keys or a buggy calculator: treat as invalid, but say so.
             logger.warning(
-                f"Resource constraint validation error (treating as invalid): {e}",
-                exc_info=True,
+                "Resource constraint '%s' calculator raised %s "
+                "(treating as invalid): %s",
+                self.name,
+                type(e).__name__,
+                e,
+                exc_info=not isinstance(e, KeyError),
             )
             return False  # Invalid config for resource calculation
 
@@ -368,13 +370,24 @@ class CustomConstraint(Constraint):
         try:
             return self.validator(config)
         except Exception as e:
-            logger.debug(
-                f"Custom constraint '{self.name}' validation failed (treating as invalid): {e}"
+            logger.warning(
+                "Custom constraint '%s' validator raised %s (treating as invalid): %s",
+                self.name,
+                type(e).__name__,
+                e,
             )
             return False
 
     def get_violation_message(self, config: dict[str, Any]) -> str:
         """Get violation message using custom generator."""
+        try:
+            self.validator(config)
+        except Exception as e:
+            # The validator crashed; do not blame the business rule.
+            return (
+                f"Custom constraint '{self.name}' validator raised "
+                f"{type(e).__name__}: {e}"
+            )
         try:
             return self.message_generator(config)
         except Exception as e:

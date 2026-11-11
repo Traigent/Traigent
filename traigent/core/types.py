@@ -241,8 +241,10 @@ class ConfigurationSpace:
                     if not constraint(config):
                         return False
                 except Exception as e:
-                    logger.debug(
-                        f"Constraint check raised exception (treating as invalid): {e}"
+                    logger.warning(
+                        "Constraint check raised %s (treating as invalid): %s",
+                        type(e).__name__,
+                        e,
                     )
                     return False
 
