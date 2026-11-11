@@ -15,7 +15,6 @@ Notes
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import json
 import time
 from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
@@ -492,19 +491,20 @@ class BedrockChatClient:
         except ImportError:
             start_time = time.perf_counter()
             loop = asyncio.get_running_loop()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                response = await loop.run_in_executor(
-                    executor,
-                    lambda: self.invoke(
-                        model_id=model_id,
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        extra_params=extra_params,
-                        _capture=False,
-                    ),
-                )
+            # Default executor, not a ``with`` pool: pool exit would join the
+            # worker and block the loop on cancellation (#3142).
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.invoke(
+                    model_id=model_id,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    extra_params=extra_params,
+                    _capture=False,
+                ),
+            )
             return self._capture_response(
                 response,
                 model_id=model_id,
@@ -606,8 +606,7 @@ class BedrockChatClient:
                     )
                 )
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                chunks = await loop.run_in_executor(executor, _collect_chunks)
+            chunks = await loop.run_in_executor(None, _collect_chunks)
             for chunk in chunks:
                 yield chunk
 

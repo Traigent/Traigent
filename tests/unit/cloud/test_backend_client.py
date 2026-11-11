@@ -727,6 +727,53 @@ class TestBackendIntegratedClient:
         assert call_args.kwargs["headers"]["Authorization"] == "Bearer test-token"
 
     @patch("requests.post")
+    def test_upload_example_features_chunks_to_the_service_cap(
+        self, mock_post, backend_client
+    ):
+        """#2992: more than 1000 features are sent in <=1000-row requests."""
+        mock_post.return_value = MagicMock(status_code=200, text="ok")
+        rows = [{"example_id": f"ex_{i}", "feature": "0f0f"} for i in range(2500)]
+        with patch.object(
+            backend_client.auth_manager.auth,
+            "get_headers",
+            AsyncMock(return_value={"Authorization": "Bearer test-token"}),
+        ):
+            result = backend_client.upload_example_features(
+                "run_123", "simhash_v1", rows
+            )
+
+        assert result is True
+        sent = [c.kwargs["json"]["features"] for c in mock_post.call_args_list]
+        assert [len(chunk) for chunk in sent] == [1000, 1000, 500]
+        assert [row for chunk in sent for row in chunk] == rows
+
+    @patch("requests.post")
+    def test_upload_example_features_warns_when_a_chunk_is_rejected(
+        self, mock_post, backend_client, caplog
+    ):
+        """#2992: a rejected chunk is a warning, not a silent debug line."""
+        mock_post.side_effect = [
+            MagicMock(status_code=200, text="ok"),
+            MagicMock(status_code=400, text="bad"),
+        ]
+        rows = [{"example_id": f"ex_{i}", "feature": "0f0f"} for i in range(1500)]
+        with (
+            caplog.at_level("WARNING"),
+            patch.object(
+                backend_client.auth_manager.auth,
+                "get_headers",
+                AsyncMock(return_value={"Authorization": "Bearer test-token"}),
+            ),
+        ):
+            result = backend_client.upload_example_features(
+                "run_123", "simhash_v1", rows
+            )
+
+        assert result is False
+        assert mock_post.call_count == 2
+        assert "1000 of 1500" in caplog.text
+
+    @patch("requests.post")
     def test_upload_example_features_rejects_unsupported_feature_kind(
         self, mock_post, backend_client
     ):
