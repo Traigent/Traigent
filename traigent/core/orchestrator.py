@@ -1601,7 +1601,11 @@ class OptimizationOrchestrator:
         baseline that violates a pre-evaluation constraint, skips the baseline
         with one warning.
         """
-        assert self._default_config is not None
+        if self._default_config is None:
+            # An explicit raise, not an assert: ``python -O`` strips asserts.
+            raise OptimizationError(
+                "default config baseline requested without a default_config"
+            )
         baseline = copy.deepcopy(self._default_config)
         space = getattr(self.optimizer, "config_space", None)
         if not isinstance(space, dict):

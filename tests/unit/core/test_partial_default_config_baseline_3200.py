@@ -140,6 +140,18 @@ def test_unfillable_parameter_type_skips_the_baseline_with_a_named_warning(caplo
     assert caplog.text.count("Skipping the default_config baseline") == 1
 
 
+def test_missing_default_config_raises_optimization_error_not_assert():
+    from traigent.core.orchestrator import OptimizationOrchestrator
+    from traigent.utils.exceptions import OptimizationError
+
+    fake = _fake({"model": ["x"]}, None)
+    with pytest.raises(
+        OptimizationError,
+        match="default config baseline requested without a default_config",
+    ):
+        OptimizationOrchestrator._complete_default_config(fake)
+
+
 def test_completion_never_touches_the_optimizer():
     from traigent.core.orchestrator import OptimizationOrchestrator
 
