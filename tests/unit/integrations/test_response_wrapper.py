@@ -332,3 +332,61 @@ class TestExtractGenericMetadata:
 
         result = _extract_generic_metadata(NoTextResponse(), "unknown")
         assert result.text == ""
+
+
+class TestHelpersKeepTextAndTokens3151:
+    """#3151: a null token count or a newer vendor shape must not drop text."""
+
+    def test_anthropic_null_token_keeps_text_and_model(self) -> None:
+        from types import SimpleNamespace as NS
+
+        resp = NS(
+            content=[NS(text="hello")],
+            usage=NS(input_tokens=None, output_tokens=3),
+            model="claude",
+        )
+        result = extract_response_metadata(resp, "anthropic")
+        assert result.text == "hello"
+        assert result.model == "claude"
+        assert result.usage == {
+            "input_tokens": 0,
+            "output_tokens": 3,
+            "total_tokens": 3,
+        }
+
+    def test_gemini_model_version_is_read(self) -> None:
+        from types import SimpleNamespace as NS
+
+        resp = NS(text="hi", model_version="gemini-2.5-pro", usage_metadata=None)
+        assert extract_response_metadata(resp, "gemini").model == "gemini-2.5-pro"
+
+    def test_cohere_v2_text_and_usage(self) -> None:
+        from types import SimpleNamespace as NS
+
+        resp = NS(
+            message=NS(content=[NS(text="a"), NS(text="b")]),
+            usage=NS(billed_units=NS(input_tokens=2, output_tokens=5)),
+        )
+        result = extract_response_metadata(resp, "cohere")
+        assert result.text == "ab"
+        assert result.usage == {
+            "input_tokens": 2,
+            "output_tokens": 5,
+            "total_tokens": 7,
+        }
+
+    def test_openai_null_tokens_are_coerced(self) -> None:
+        from types import SimpleNamespace as NS
+
+        resp = NS(
+            choices=[NS(message=NS(content="x"), finish_reason="stop")],
+            usage=NS(prompt_tokens=None, completion_tokens=4, total_tokens=None),
+            model="gpt-4o",
+            id="r1",
+        )
+        usage = extract_response_metadata(resp, "openai").usage
+        assert usage == {
+            "prompt_tokens": 0,
+            "completion_tokens": 4,
+            "total_tokens": 0,
+        }
