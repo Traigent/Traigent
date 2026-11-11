@@ -630,14 +630,14 @@ def _backend_cache_identity() -> tuple[str, str]:
 
     try:
         url = BackendConfig.get_configured_backend_url() or ""
-        key_credential = BackendConfig.get_api_key() or ""
-        jwt_credential = os.getenv("TRAIGENT_JWT_TOKEN") or ""
+        key_value = BackendConfig.get_api_key() or ""
+        jwt_value = os.getenv("TRAIGENT_JWT_TOKEN") or ""
     except Exception:
         return ("", "")
     # "surrogatepass": an undecodable environment value must not raise here.
-    material = (
-        f"{len(key_credential)}:{key_credential}{len(jwt_credential)}:{jwt_credential}"
-    ).encode("utf-8", errors="surrogatepass")
+    material = (f"{len(key_value)}:{key_value}{len(jwt_value)}:{jwt_value}").encode(
+        "utf-8", errors="surrogatepass"
+    )
     message = _CACHE_IDENTITY_DOMAIN + _CACHE_IDENTITY_NONCE
     return (url, hmac.new(material, message, hashlib.sha256).hexdigest()[:12])
 
