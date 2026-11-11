@@ -297,48 +297,55 @@ def _request_of(node: BaseException) -> Any:
     return request
 
 
-def is_temporary_in_flight_budget_402(exc: BaseException) -> bool:
-    """True only for a structured, unambiguous temporary OpenRouter 402.
+def temporary_402_chain(exc: BaseException) -> list[BaseException] | None:
+    """The validated exception chain of a temporary OpenRouter 402, else ``None``.
 
     Requires an HTTP 402 and the exact ``limit_source``/``reason`` pair of the
-    temporary subtype. Metadata is read from ``exc`` itself, its explicit
-    ``__cause__`` chain, and an implicit ``__context__`` only when that context
-    is the HTTP error of the *same* request (client libraries wrap the
-    original response error this way). An unrelated earlier exception never
-    supplies metadata. Other or contradictory metadata, or a cycle, keeps the
-    error terminal.
+    temporary subtype. Metadata comes from ``exc`` itself and from linked
+    exceptions only when each link is a 402 for the *same* ``httpx.Request``
+    object as ``exc`` (an explicit ``__cause__`` of an exception with no
+    request of its own is also accepted when it is the direct link). An
+    unrelated earlier exception never supplies metadata. Other or
+    contradictory metadata, or a cycle, keeps the error terminal.
     """
     try:
         if http_status_of(exc) != 402:
-            return False
+            return None
         request = _request_of(exc)
         node: BaseException = exc
+        chain: list[BaseException] = [exc]
         seen: set[int] = set()
         temporary = False
         for _ in range(_MAX_CHAIN_DEPTH):
             if id(node) in seen:
-                return False  # cycle
+                return None  # cycle
             seen.add(id(node))
             for pair in _metadata_pairs(node):
                 if pair == (_TEMPORARY_402_LIMIT_SOURCE, _TEMPORARY_402_REASON):
                     temporary = True
                 elif pair != (None, None):
-                    return False
-            nxt = node.__cause__
-            if nxt is None and node.__context__ is not None:
-                ctx = node.__context__
-                if (
-                    request is not None
-                    and _request_of(ctx) is request
-                    and http_status_of(ctx) == 402
-                ):
-                    nxt = ctx
+                    return None
+            nxt: BaseException | None = None
+            for link, explicit in ((node.__cause__, True), (node.__context__, False)):
+                if link is None or http_status_of(link) != 402:
+                    continue
+                same_request = request is not None and _request_of(link) is request
+                direct_wrapper = explicit and request is None and node is exc
+                if same_request or direct_wrapper:
+                    nxt = link
+                    break
             if nxt is None:
-                return temporary
+                return chain if temporary else None
+            chain.append(nxt)
             node = nxt
-        return False  # chain deeper than the bound: do not guess
+        return None  # chain deeper than the bound: do not guess
     except Exception:  # noqa: BLE001 - classification must never mask the error
-        return False
+        return None
+
+
+def is_temporary_in_flight_budget_402(exc: BaseException) -> bool:
+    """True only for a structured, unambiguous temporary OpenRouter 402."""
+    return temporary_402_chain(exc) is not None
 
 
 _STATUS_CATEGORIES: dict[int, VendorErrorCategory] = {

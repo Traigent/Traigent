@@ -35,6 +35,7 @@ from traigent.core.exception_handler import (
     VendorErrorCategory,
     classify_vendor_error,
     is_temporary_in_flight_budget_402,
+    temporary_402_chain,
 )
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.langchain_interceptor import (
@@ -269,7 +270,14 @@ def compute_delay(
     requested = vendor_wait_seconds(exc)
     if requested is not None:
         return None if requested > MAX_RETRY_DELAY_SECONDS else requested
-    return float(min(base_backoff * (2**retry_index), MAX_RETRY_DELAY_SECONDS))
+    own = float(min(base_backoff * (2**retry_index), MAX_RETRY_DELAY_SECONDS))
+    # A temporary 402 found on an inner response of the validated chain: honour
+    # that response's Retry-After, never waiting less than the provider asked.
+    for node in temporary_402_chain(exc) or ():
+        inner = vendor_wait_seconds(node)
+        if inner is not None:
+            return None if inner > MAX_RETRY_DELAY_SECONDS else max(inner, own)
+    return own
 
 
 def _usage_of(response: Any) -> dict[str, int] | None:

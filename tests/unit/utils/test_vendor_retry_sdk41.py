@@ -1427,12 +1427,14 @@ _TEMP_MSG = (
 )
 
 
-def _openai_402(metadata, *, retry_after="0.001", with_meta_key=True):
+def _openai_402(metadata, *, retry_after="0.001", with_meta_key=True, request=None):
     """A real ``openai.APIStatusError`` built from a real ``httpx.Response``."""
     error = {"code": 402, "message": _TEMP_MSG}
     if with_meta_key:
         error["metadata"] = metadata
-    request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+    request = request or httpx.Request(
+        "POST", "https://openrouter.ai/api/v1/chat/completions"
+    )
     response = httpx.Response(
         402,
         json={"error": error},
@@ -1541,21 +1543,28 @@ def test_litellm_error_with_unrelated_request_context_stays_terminal():
 
 def test_explicit_cause_chain_supplies_metadata():
     inner = _openai_402(_TEMP_META)
-    outer = litellm.APIError(402, _TEMP_MSG, "openrouter", "m")
+    outer = litellm.APIError(
+        402, _TEMP_MSG, "openrouter", "m", request=inner.response.request
+    )
     outer.__cause__ = inner
     assert classify_retryable(outer) is not None
+    # LiteLLM invents its own request when none is given, so it never counts
+    # as "same request" and an explicit cause cannot lend it metadata.
+    bare = litellm.APIError(402, _TEMP_MSG, "openrouter", "m")
+    bare.__cause__ = inner
+    assert classify_retryable(bare) is None
 
 
 def test_contradictory_metadata_in_chain_stays_terminal():
-    inner = _openai_402(_PERM_META)
     outer = _openai_402(_TEMP_META)
+    inner = _openai_402(_PERM_META, request=outer.response.request)
     outer.__cause__ = inner
     assert classify_retryable(outer) is None
 
 
 def test_cycle_stays_terminal():
     a = _openai_402(_TEMP_META)
-    b = _openai_402(_TEMP_META)
+    b = _openai_402(_TEMP_META, request=a.response.request)
     a.__cause__ = b
     b.__cause__ = a
     assert classify_retryable(a) is None
@@ -1635,5 +1644,57 @@ def test_permanent_402_not_retried_when_enabled(mock_off, monkeypatch):
         with pytest.raises(litellm.APIError):
             mod.completion(model="gpt-4o")
         assert mod.calls["n"] == 1
+    finally:
+        p.stop()
+
+
+def test_permanent_402_raised_from_temporary_402_of_other_request_stays_terminal():
+    earlier = _openai_402(_TEMP_META)  # its own, different httpx.Request
+    for current in (_openai_402(_PERM_META), _openai_402(None, with_meta_key=False)):
+        try:
+            raise current from earlier
+        except openai.APIStatusError as exc:
+            assert exc.__cause__ is earlier
+            assert classify_retryable(exc) is None
+            assert classify_vendor_error(exc).value == "insufficient_funds"
+
+
+def test_top_level_permanent_metadata_wins_over_same_request_temporary_cause():
+    inner = _openai_402(_TEMP_META)
+    outer = litellm.APIError(
+        402,
+        _TEMP_MSG,
+        "openrouter",
+        "m",
+        request=inner.response.request,
+        body={"error": {"metadata": _PERM_META}},
+    )
+    outer.__cause__ = inner
+    assert classify_retryable(outer) is None
+
+
+def test_inner_retry_after_is_honoured_never_shorter(mock_off, monkeypatch):
+    monkeypatch.setenv(RETRIES, "2")
+    monkeypatch.setenv(BACKOFF, "0.1")
+    wrapper = _litellm_402(_TEMP_META)
+    assert vendor_wait_seconds(wrapper) is None  # header lives on the inner error
+    inner = wrapper.__context__
+    inner.response.headers["Retry-After"] = "0.25"
+    mod, p = _patched([wrapper])
+    try:
+        with patch("time.sleep") as sleep:
+            mod.completion(model="gpt-4o")
+        assert mod.calls["n"] == 2
+        assert sleep.call_args.args[0] >= 0.25
+    finally:
+        p.stop()
+    # configured backoff larger than the provider's wait: the larger wins
+    monkeypatch.setenv(BACKOFF, "3")
+    mod, p = _patched([_litellm_402(_TEMP_META)])
+    try:
+        wrapper = None
+        with patch("time.sleep") as sleep:
+            mod.completion(model="gpt-4o")
+        assert sleep.call_args.args[0] >= 3.0
     finally:
         p.stop()
