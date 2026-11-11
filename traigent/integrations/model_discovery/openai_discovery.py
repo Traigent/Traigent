@@ -7,6 +7,7 @@ Uses the OpenAI SDK's models.list() API for dynamic model discovery.
 
 import logging
 import os
+import re
 
 from traigent.integrations.model_discovery.base import ModelDiscovery
 from traigent.integrations.utils import Framework
@@ -19,6 +20,30 @@ OPENAI_MODEL_PATTERN = (
     r"^(gpt-[0-9]|o[0-9]|text-|code-|davinci|curie|babbage|ada|"
     r"chatgpt-|ft:|whisper|tts|dall-e)"
 )
+
+# Chat/completion-capable ids offered by SDK discovery: the same families as
+# OPENAI_MODEL_PATTERN's chat side (gpt-, chatgpt-, o<digit> reasoning models,
+# legacy text-/code-), minus non-chat families listed under the same prefixes.
+_OPENAI_CHAT_ID_RE = re.compile(
+    r"^(gpt-|chatgpt-|o[0-9]+(-|$)|text-|code-|davinci$|curie$|babbage$|ada$)"
+)
+_OPENAI_NON_CHAT_MARKERS = (
+    "embedding",
+    "image",
+    "audio",
+    "tts",
+    "whisper",
+    "moderation",
+    "transcribe",
+    "realtime",
+    "dall-e",
+)
+
+
+def _is_openai_chat_model_id(model_id: str) -> bool:
+    if not _OPENAI_CHAT_ID_RE.match(model_id):
+        return False
+    return not any(marker in model_id for marker in _OPENAI_NON_CHAT_MARKERS)
 
 
 class OpenAIDiscovery(ModelDiscovery):
@@ -76,11 +101,7 @@ class OpenAIDiscovery(ModelDiscovery):
             model_ids = []
             for model in models.data:
                 model_id = model.id
-                # Include GPT, O1, text/code completion models
-                if any(
-                    model_id.startswith(prefix)
-                    for prefix in ["gpt-", "o1-", "text-", "code-", "chatgpt-"]
-                ) or model_id in ["davinci", "curie", "babbage", "ada"]:
+                if _is_openai_chat_model_id(model_id):
                     model_ids.append(model_id)
 
             logger.info(f"Discovered {len(model_ids)} OpenAI models via SDK")
