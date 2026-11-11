@@ -17,6 +17,8 @@ from traigent.prompts import (
     PromptNotPermittedError,
     PromptPaginationError,
     PromptPaymentRequiredError,
+    PromptSortBy,
+    PromptSortOrder,
     PromptType,
     PromptUpstreamError,
 )
@@ -1029,3 +1031,82 @@ def test_resolve_prompt_posts_label_in_body_not_query():
         ("POST", "/ref_1/resolve", {"label": "latest"}),
         ("POST", "/ref_1/resolve", {"label": "production"}),
     ]
+
+
+def test_search_prompts_sends_sort_fields_in_post_body():
+    calls: list[tuple[str, str, dict | None]] = []
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        calls.append((method, path, payload))
+        return {
+            "data": {
+                "items": [],
+                "pagination": {"limit": 5, "next_cursor": None, "has_more": False},
+            }
+        }
+
+    client = PromptManagementClient(request_sender=request_sender)
+    client.search_prompts(
+        search="x",
+        sort_by=PromptSortBy.NAME,
+        sort_order="asc",
+        limit=5,
+        cursor="c1",
+    )
+    client.search_prompts(limit=5)
+
+    assert calls == [
+        (
+            "POST",
+            "/search",
+            {
+                "limit": 5,
+                "search": "x",
+                "sort_by": "name",
+                "sort_order": "asc",
+                "cursor": "c1",
+            },
+        ),
+        ("POST", "/search", {"limit": 5}),
+    ]
+
+
+def test_search_prompts_rejects_unknown_sort_values_before_sending():
+    calls: list = []
+    client = PromptManagementClient(
+        request_sender=lambda m, p, b: calls.append((m, p, b))
+    )
+    with pytest.raises(ValueError):
+        client.search_prompts(sort_by="created_at")
+    with pytest.raises(ValueError):
+        client.search_prompts(sort_order="sideways")
+    assert calls == []
+
+
+def test_iter_search_prompts_forwards_sort_on_every_page():
+    calls: list[dict] = []
+    pages = {None: ("cursor_1", True), "cursor_1": (None, False)}
+
+    def request_sender(method: str, path: str, payload: dict | None):
+        calls.append(payload)
+        next_cursor, has_more = pages[payload.get("cursor")]
+        return {
+            "data": {
+                "items": [],
+                "pagination": {
+                    "limit": 5,
+                    "next_cursor": next_cursor,
+                    "has_more": has_more,
+                },
+            }
+        }
+
+    client = PromptManagementClient(request_sender=request_sender)
+    list(
+        client.iter_search_prompts(
+            sort_by="version_count", sort_order=PromptSortOrder.DESC, limit=5
+        )
+    )
+    assert all(c["sort_by"] == "version_count" for c in calls)
+    assert all(c["sort_order"] == "desc" for c in calls)
+    assert len(calls) == 2

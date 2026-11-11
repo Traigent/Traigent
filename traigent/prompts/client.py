@@ -16,6 +16,8 @@ from traigent.prompts.dtos import (
     PromptDetail,
     PromptListResponse,
     PromptPlaygroundResult,
+    PromptSortBy,
+    PromptSortOrder,
     PromptSummary,
     PromptType,
     ResolvedPrompt,
@@ -100,13 +102,18 @@ class PromptManagementClient:
         search: str | None = None,
         prompt_type: PromptType | str | None = None,
         label: str | None = None,
+        sort_by: PromptSortBy | str | None = None,
+        sort_order: PromptSortOrder | str | None = None,
         limit: int = 20,
         cursor: str | None = None,
     ) -> PromptListResponse:
         """Search prompts with ``POST .../prompts/search``.
 
         ``search`` is a substring match on the prompt name and description, not
-        an exact match. Pass the same filters again with a ``cursor``.
+        an exact match. ``sort_by`` is one of ``updated_at`` (server default),
+        ``name`` or ``version_count``; ``sort_order`` is ``asc`` or ``desc``
+        (omitted means the key's default). A ``cursor`` is bound to the sort:
+        pass the same filters and sort again with it.
         """
         body: dict[str, Any] = {"limit": limit}
         if search:
@@ -116,6 +123,10 @@ class PromptManagementClient:
             body["prompt_type"] = type_value
         if label:
             body["label"] = label
+        if sort_by is not None:
+            body["sort_by"] = PromptSortBy(sort_by).value
+        if sort_order is not None:
+            body["sort_order"] = PromptSortOrder(sort_order).value
         if cursor:
             body["cursor"] = cursor
         payload = self._request_json("POST", "/search", body)
@@ -177,6 +188,8 @@ class PromptManagementClient:
         search: str | None = None,
         prompt_type: PromptType | str | None = None,
         label: str | None = None,
+        sort_by: PromptSortBy | str | None = None,
+        sort_order: PromptSortOrder | str | None = None,
         limit: int = 100,
     ) -> Iterator[PromptSummary]:
         """Iterate over *all* search results across pages, fetching lazily."""
@@ -185,6 +198,8 @@ class PromptManagementClient:
                 search=search,
                 prompt_type=prompt_type,
                 label=label,
+                sort_by=sort_by,
+                sort_order=sort_order,
                 limit=limit,
                 cursor=cursor,
             )

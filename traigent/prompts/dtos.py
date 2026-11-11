@@ -14,6 +14,21 @@ class PromptType(StrEnum):
     CHAT = "chat"
 
 
+class PromptSortBy(StrEnum):
+    """Sort keys accepted by ``POST .../prompts/search``."""
+
+    UPDATED_AT = "updated_at"
+    NAME = "name"
+    VERSION_COUNT = "version_count"
+
+
+class PromptSortOrder(StrEnum):
+    """Sort directions accepted by ``POST .../prompts/search``."""
+
+    ASC = "asc"
+    DESC = "desc"
+
+
 @dataclass(frozen=True)
 class PaginationInfo:
     page: int
