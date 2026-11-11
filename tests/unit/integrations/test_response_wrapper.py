@@ -349,9 +349,10 @@ class TestHelpersKeepTextAndTokens3151:
         assert result.text == "hello"
         assert result.model == "claude"
         assert result.usage == {
-            "input_tokens": 0,
+            "input_tokens": None,
             "output_tokens": 3,
-            "total_tokens": 3,
+            "total_tokens": None,
+            "cost_unmeasured": True,
         }
 
     def test_gemini_model_version_is_read(self) -> None:
@@ -386,7 +387,32 @@ class TestHelpersKeepTextAndTokens3151:
         )
         usage = extract_response_metadata(resp, "openai").usage
         assert usage == {
-            "prompt_tokens": 0,
+            "prompt_tokens": None,
             "completion_tokens": 4,
-            "total_tokens": 0,
+            "total_tokens": None,
+            "cost_unmeasured": True,
         }
+
+    def test_unmeasured_usage_is_not_free_to_cost_paths(self) -> None:
+        """A null token count is flagged so cost objectives skip it, not $0."""
+        from types import SimpleNamespace as NS
+
+        from traigent.optimizers.batch_optimizers import _objective_unmeasured
+        from traigent.utils.trial_costs import is_cost_unmeasured
+
+        resp = NS(
+            content=[NS(text="t")],
+            usage=NS(input_tokens=None, output_tokens=3),
+            model="claude",
+        )
+        usage = extract_response_metadata(resp, "anthropic").usage
+        assert is_cost_unmeasured(usage)
+        assert _objective_unmeasured(usage, ["cost"])
+
+        measured = NS(
+            content=[NS(text="t")],
+            usage=NS(input_tokens=2, output_tokens=3),
+            model="claude",
+        )
+        ok = extract_response_metadata(measured, "anthropic").usage
+        assert ok["total_tokens"] == 5 and not is_cost_unmeasured(ok)

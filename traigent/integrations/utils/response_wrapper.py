@@ -53,11 +53,39 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     return getattr(obj, attr, default) if hasattr(obj, attr) else default
 
 
-def _token_count(value: Any) -> int:
-    """Coerce a vendor token field to an int; None/non-numeric counts as 0."""
+def _token_count(value: Any) -> int | None:
+    """Return a vendor token field as an int, or None when it is not measured.
+
+    A missing or null count must stay unknown: 0 would make an unmeasured
+    call look free to a cost objective.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0
+        return None
+    if value != value or value in (float("inf"), float("-inf")) or value < 0:
+        return None
     return int(value)
+
+
+def _build_usage(
+    first_key: str,
+    second_key: str,
+    first: Any,
+    second: Any,
+    total: Any = None,
+) -> dict[str, Any]:
+    """Build a usage dict that keeps unknown counts as None.
+
+    When any count is unknown the dict carries ``cost_unmeasured: True`` (the
+    flag ``traigent.utils.trial_costs.is_cost_unmeasured`` understands), so
+    cost paths omit the cost instead of treating it as $0.
+    """
+    n1, n2, nt = _token_count(first), _token_count(second), _token_count(total)
+    if nt is None and n1 is not None and n2 is not None:
+        nt = n1 + n2
+    usage: dict[str, Any] = {first_key: n1, second_key: n2, "total_tokens": nt}
+    if n1 is None or n2 is None or nt is None:
+        usage["cost_unmeasured"] = True
+    return usage
 
 
 def _extract_openai_text(response: Any) -> str:
@@ -160,17 +188,13 @@ def _extract_openai_metadata(
         # Extract usage
         usage = None
         if hasattr(response, "usage") and response.usage:
-            usage = {
-                "prompt_tokens": _token_count(
-                    getattr(response.usage, "prompt_tokens", 0)
-                ),
-                "completion_tokens": _token_count(
-                    getattr(response.usage, "completion_tokens", 0)
-                ),
-                "total_tokens": _token_count(
-                    getattr(response.usage, "total_tokens", 0)
-                ),
-            }
+            usage = _build_usage(
+                "prompt_tokens",
+                "completion_tokens",
+                getattr(response.usage, "prompt_tokens", None),
+                getattr(response.usage, "completion_tokens", None),
+                getattr(response.usage, "total_tokens", None),
+            )
 
         model = _safe_getattr(response, "model")
         response_id = _safe_getattr(response, "id")
@@ -214,13 +238,12 @@ def _extract_anthropic_metadata(
 
     try:
         if hasattr(response, "usage") and response.usage:
-            input_tokens = _token_count(getattr(response.usage, "input_tokens", 0))
-            output_tokens = _token_count(getattr(response.usage, "output_tokens", 0))
-            usage = {
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "total_tokens": input_tokens + output_tokens,
-            }
+            usage = _build_usage(
+                "input_tokens",
+                "output_tokens",
+                getattr(response.usage, "input_tokens", None),
+                getattr(response.usage, "output_tokens", None),
+            )
     except Exception as e:
         logger.debug(f"Error extracting Anthropic usage: {e}")
 
@@ -273,13 +296,13 @@ def _extract_gemini_metadata(
         usage = None
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             um = response.usage_metadata
-            usage = {
-                "prompt_tokens": _token_count(getattr(um, "prompt_token_count", 0)),
-                "completion_tokens": _token_count(
-                    getattr(um, "candidates_token_count", 0)
-                ),
-                "total_tokens": _token_count(getattr(um, "total_token_count", 0)),
-            }
+            usage = _build_usage(
+                "prompt_tokens",
+                "completion_tokens",
+                getattr(um, "prompt_token_count", None),
+                getattr(um, "candidates_token_count", None),
+                getattr(um, "total_token_count", None),
+            )
 
         model_version = _safe_getattr(response, "model_version")
         if isinstance(model_version, str) and model_version:
@@ -341,13 +364,12 @@ def _extract_cohere_metadata(
                 billed = container.billed_units
                 break
         if billed is not None:
-            input_tokens = _token_count(getattr(billed, "input_tokens", 0))
-            output_tokens = _token_count(getattr(billed, "output_tokens", 0))
-            usage = {
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "total_tokens": input_tokens + output_tokens,
-            }
+            usage = _build_usage(
+                "input_tokens",
+                "output_tokens",
+                getattr(billed, "input_tokens", None),
+                getattr(billed, "output_tokens", None),
+            )
 
         # Extract response ID
         if hasattr(response, "id"):
