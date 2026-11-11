@@ -602,8 +602,9 @@ def _fetch_backend_recommendations(
 #: Fixed label for the credential fingerprint below. The versioned text keeps this
 #: construction apart from any other HMAC the SDK computes.
 _CACHE_IDENTITY_DOMAIN = b"traigent:tvar-recommendations-cache:v1"
-#: Random per process. It is part of the HMAC message, so a fingerprint that
-#: leaked out of this process cannot be checked against guessed credentials.
+#: Random per interpreter start (a forked child inherits it). It is part of the
+#: HMAC message, so a fingerprint that leaked out of this process cannot be
+#: checked against guessed credentials.
 _CACHE_IDENTITY_NONCE = os.urandom(16)
 
 
@@ -612,9 +613,9 @@ def _backend_cache_identity() -> tuple[str, str]:
 
     The fingerprint is HMAC-SHA256 with the credentials (API key and JWT,
     length-prefixed so no pair reads as another) as the KEY and a fixed label
-    plus a random per-process nonce as the message, truncated to 12 hex digits.
-    It exists only to partition this process's in-memory cache: it is never
-    stored, logged or sent. What it gives: a change of either credential changes
+    plus a random per-interpreter nonce as the message, truncated to 12 hex digits.
+    It exists only to partition this process's in-memory cache: it is held only as
+    part of an in-memory dict key and is never persisted, logged or sent. What it gives: a change of either credential changes
     the partition, and a fingerprint seen outside this process cannot be tested
     against guessed credentials without this process's nonce. What it does not
     give: protection if the nonce and the fingerprint both leak from the same
