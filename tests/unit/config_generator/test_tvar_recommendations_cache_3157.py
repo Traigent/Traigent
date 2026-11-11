@@ -118,3 +118,61 @@ def test_identity_does_not_expose_a_plain_hash_of_the_credential() -> None:
     # an attacker could test guesses against.
     assert fingerprint != hashlib.sha256(b"key-one").hexdigest()[:12]
     assert fingerprint != hashlib.sha256(b"key-one\x00").hexdigest()[:12]
+
+
+def test_identity_keeps_the_api_key_and_jwt_apart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """('a\\x00b', '') and ('a', 'b') must not share a fingerprint."""
+    monkeypatch.setattr(
+        _backend_config(), "get_api_key", staticmethod(lambda: "a\x00b")
+    )
+    monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
+    joined = _identity()
+    monkeypatch.setattr(_backend_config(), "get_api_key", staticmethod(lambda: "a"))
+    monkeypatch.setenv("TRAIGENT_JWT_TOKEN", "b")
+    assert _identity() != joined
+
+
+def test_identity_accepts_a_jwt_that_is_not_valid_utf8(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An undecodable environment value must not raise out of the recommender."""
+    monkeypatch.setenv("TRAIGENT_JWT_TOKEN", "tok-\udcff")
+    url, fingerprint = _identity()
+    assert fingerprint and fingerprint != _identity_with_jwt(monkeypatch, "other")[1]
+
+
+def _backend_config():
+    from traigent.config.backend_config import BackendConfig
+
+    return BackendConfig
+
+
+def _identity_with_jwt(monkeypatch: pytest.MonkeyPatch, jwt: str) -> tuple[str, str]:
+    monkeypatch.setenv("TRAIGENT_JWT_TOKEN", jwt)
+    return _identity()
+
+
+def test_identity_is_the_keyed_construction_not_a_plain_digest() -> None:
+    """Pins HMAC-SHA256(key=credentials, msg=label+per-process nonce)."""
+    import hashlib
+    import hmac
+
+    key = b"7:key-one0:"  # length-prefixed API key, empty JWT
+    message = mod._CACHE_IDENTITY_DOMAIN + mod._CACHE_IDENTITY_NONCE
+    expected = hmac.new(key, message, hashlib.sha256).hexdigest()[:12]
+    assert _identity()[1] == expected
+    # The plain-digest forms a weak-hash scan rejects must not match either.
+    assert _identity()[1] != hashlib.sha256(key + message).hexdigest()[:12]
+
+
+def test_leaked_identity_cannot_be_tested_against_guesses_without_the_nonce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The message carries a per-process nonce, so the same credential gives a
+    different fingerprint under another nonce: a fingerprint seen outside this
+    process cannot be checked against guessed credentials."""
+    first = _identity()[1]
+    monkeypatch.setattr(mod, "_CACHE_IDENTITY_NONCE", b"another-process-nonce")
+    assert _identity()[1] != first

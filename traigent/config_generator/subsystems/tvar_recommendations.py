@@ -602,19 +602,25 @@ def _fetch_backend_recommendations(
 #: Fixed label for the credential fingerprint below. The versioned text keeps this
 #: construction apart from any other HMAC the SDK computes.
 _CACHE_IDENTITY_DOMAIN = b"traigent:tvar-recommendations-cache:v1"
+#: Random per process. It is part of the HMAC message, so a fingerprint that
+#: leaked out of this process cannot be checked against guessed credentials.
+_CACHE_IDENTITY_NONCE = os.urandom(16)
 
 
 def _backend_cache_identity() -> tuple[str, str]:
     """Backend URL and a credential fingerprint, so a switch never reuses hints.
 
-    The fingerprint is HMAC-SHA256 with the credentials as the KEY and a fixed
-    label as the message, truncated. That is a keyed identifier, not a stored
-    digest of the credential: it cannot be tested against guesses without the
-    credential itself, it is only used inside this process's cache key, and it
-    changes when either the API key or the JWT changes. (CodeQL's
-    ``py/weak-sensitive-data-hashing`` models a hash *input*, not an HMAC key;
-    the model-discovery cache already uses this form. That the scan accepts it is
-    a property of the scanner's model, not a claim that it approved the design.)
+    The fingerprint is HMAC-SHA256 with the credentials (API key and JWT,
+    length-prefixed so no pair reads as another) as the KEY and a fixed label
+    plus a random per-process nonce as the message, truncated to 12 hex digits.
+    It exists only to partition this process's in-memory cache: it is never
+    stored, logged or sent. What it gives: a change of either credential changes
+    the partition, and a fingerprint seen outside this process cannot be tested
+    against guessed credentials without this process's nonce. What it does not
+    give: protection if the nonce and the fingerprint both leak from the same
+    process. CodeQL's ``py/weak-sensitive-data-hashing`` models a hash input, not
+    an HMAC key, so this form is not reported; that is a property of the scanner's
+    model, not a claim that it approved the design.
     """
     import hashlib
     import hmac
@@ -627,9 +633,12 @@ def _backend_cache_identity() -> tuple[str, str]:
         jwt = os.getenv("TRAIGENT_JWT_TOKEN") or ""
     except Exception:
         return ("", "")
-    material = f"{api_key}\x00{jwt}".encode()
-    fingerprint = hmac.new(material, _CACHE_IDENTITY_DOMAIN, hashlib.sha256)
-    return (url, fingerprint.hexdigest()[:12])
+    # "surrogatepass": an undecodable environment value must not raise here.
+    material = f"{len(api_key)}:{api_key}{len(jwt)}:{jwt}".encode(
+        "utf-8", errors="surrogatepass"
+    )
+    message = _CACHE_IDENTITY_DOMAIN + _CACHE_IDENTITY_NONCE
+    return (url, hmac.new(material, message, hashlib.sha256).hexdigest()[:12])
 
 
 def _should_fetch_backend_recommendations() -> bool:
