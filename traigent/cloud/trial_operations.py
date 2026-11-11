@@ -232,6 +232,73 @@ _sync_registration_loop: ContextVar[bool] = ContextVar(
 )
 
 
+# The backend rejects a results request body above 1 MiB with HTTP 413, which
+# the SDK treats as permanent (the run drops to local-only). The limit is taken
+# from the backend route constant cited in #2964 (not readable from this repo);
+# a small margin covers JSON encoder differences.
+_MAX_RESULTS_BODY_BYTES = 1_048_576 - 4_096
+
+
+def _results_body_size(body: Any) -> int:
+    """Size in bytes of ``body`` as the HTTP client serializes it (json.dumps)."""
+    return len(json.dumps(body).encode("utf-8"))
+
+
+def _fit_results_body(body: dict[str, Any], trial_id: str) -> dict[str, Any] | None:
+    """Return ``body`` shrunk to fit the request-size cap, or None if it cannot.
+
+    Per-example ``measures`` are the only part trimmed (longest prefix that
+    fits, with a WARNING). If the body is still too large without them it is
+    NOT sent: an ERROR names the cause instead of a permanent 413 (#2964).
+    """
+    try:
+        if _results_body_size(body) <= _MAX_RESULTS_BODY_BYTES:
+            return body
+        measures = body.get("measures")
+        if not isinstance(measures, list) or not measures:
+            raise _ResultsBodyTooLargeError
+        trimmed = {k: v for k, v in body.items() if k != "measures"}
+        if _results_body_size(trimmed) > _MAX_RESULTS_BODY_BYTES:
+            raise _ResultsBodyTooLargeError
+        low, high = 0, len(measures)  # largest prefix length that fits
+        while low < high:
+            mid = (low + high + 1) // 2
+            if _results_body_size({**trimmed, "measures": measures[:mid]}) <= (
+                _MAX_RESULTS_BODY_BYTES
+            ):
+                low = mid
+            else:
+                high = mid - 1
+        logger.warning(
+            "Trial %s results body exceeds the backend request-size limit; "
+            "truncating per-example measures from %s to %s.",
+            trial_id,
+            len(measures),
+            low,
+        )
+        return {**trimmed, "measures": measures[:low]} if low else trimmed
+    except _ResultsBodyTooLargeError:
+        logger.error(
+            "Trial %s results body exceeds the backend request-size limit "
+            "(%s bytes) even without per-example measures (large config or "
+            "metadata); not sending it.",
+            trial_id,
+            _MAX_RESULTS_BODY_BYTES,
+        )
+        return None
+    except (TypeError, ValueError):
+        logger.error(
+            "Trial %s results body could not be sized for the request-size "
+            "limit; not sending it.",
+            trial_id,
+        )
+        return None
+
+
+class _ResultsBodyTooLargeError(Exception):
+    """Internal signal: the body cannot be made to fit."""
+
+
 class TrialOperations:
     """Handles trial management operations."""
 
@@ -1288,6 +1355,11 @@ class TrialOperations:
                     explicit=oo_egress.policy_of(self.client, headers, url),
                     session_id=session_id,
                 )
+
+                fitted = _fit_results_body(wire_result, trial_id)
+                if fitted is None:
+                    return False
+                wire_result = fitted
 
                 for attempt in range(_TRIAL_SUBMIT_MAX_ATTEMPTS):
                     async with session.post(
