@@ -568,7 +568,11 @@ class InteractiveOptimizer(BaseOptimizer):
             "session_id": self.session_id,
             "completed_trials": self.session.completed_trials,
             "max_trials": self.session.max_trials,
-            "progress": self.session.completed_trials / self.session.max_trials,
+            "progress": (
+                self.session.completed_trials / self.session.max_trials
+                if self.session.max_trials > 0
+                else 1.0
+            ),
             "best_config": self.session.best_config,
             "best_metrics": self.session.best_metrics,
             "elapsed_time": elapsed,
