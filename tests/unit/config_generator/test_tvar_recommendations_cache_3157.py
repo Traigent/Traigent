@@ -81,3 +81,40 @@ def test_cache_is_bounded() -> None:
         mod._fetch_backend_recommendations("rag", (f"v{i}",))
 
     assert len(mod._RECOMMENDATIONS_CACHE) <= mod._RECOMMENDATIONS_CACHE_MAX
+
+
+# --- the credential fingerprint in the cache key -------------------------------
+
+
+def _identity() -> tuple[str, str]:
+    return mod._backend_cache_identity()
+
+
+def test_identity_changes_with_the_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    first = _identity()
+    monkeypatch.setenv("TRAIGENT_API_KEY", "key-two")
+    assert _identity() != first
+
+
+def test_identity_changes_with_the_jwt_when_the_api_key_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_JWT_TOKEN", "jwt-one")
+    first = _identity()
+    monkeypatch.setenv("TRAIGENT_JWT_TOKEN", "jwt-two")
+    assert _identity() != first
+
+
+def test_identity_is_stable_within_a_process() -> None:
+    assert _identity() == _identity()
+
+
+def test_identity_does_not_expose_a_plain_hash_of_the_credential() -> None:
+    import hashlib
+
+    _url, fingerprint = _identity()
+    assert "key-one" not in fingerprint
+    # A bare digest of the credential is the form the weak-hash scan rejects and
+    # an attacker could test guesses against.
+    assert fingerprint != hashlib.sha256(b"key-one").hexdigest()[:12]
+    assert fingerprint != hashlib.sha256(b"key-one\x00").hexdigest()[:12]
