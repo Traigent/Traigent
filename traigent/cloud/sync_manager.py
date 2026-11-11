@@ -53,6 +53,7 @@ from ..storage.local_storage import (
 )
 from ..utils.exceptions import TraigentStorageError
 from ..utils.logging import get_logger
+from ..utils.metric_name_tokens import depends_on_cost
 from ..utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
@@ -64,7 +65,7 @@ PAYLOAD_HASH_VERSION = 3
 _MAX_EXAMPLE_MEASURES = 1000
 _MAX_EXAMPLE_METRICS = 50
 _MAX_EXAMPLE_METRIC_KEY_LENGTH = 100
-_EXAMPLE_METRIC_KEY_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_EXAMPLE_METRIC_KEY_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*\Z")
 
 # SDK-minted example ids (traigent/core/metadata_helpers.py, utils/example_id):
 # only the index digits are ever read from them.
@@ -644,8 +645,9 @@ class SyncManager:
         for objective in objectives:
             value = measures.get(objective)
             if not isinstance(value, (int, float)) or isinstance(value, bool):
-                if cost_unmeasured and "cost" in objective.lower():
-                    # Unknown cost is omitted, never the score or 0.0.
+                if cost_unmeasured and depends_on_cost(objective):
+                    # Unknown cost (or anything derived from it) is omitted, never
+                    # the score or 0.0.
                     continue
                 measures[objective] = fallback
 

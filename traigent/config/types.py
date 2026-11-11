@@ -11,6 +11,7 @@ from inspect import Parameter, Signature
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from traigent.utils.env_config import is_truthy
 from traigent.utils.validation import Validators, validate_or_raise
 
 _EMITTED_DEPRECATION_WARNINGS: set[str] = set()
@@ -693,8 +694,7 @@ def is_traigent_disabled() -> bool:
         >>> is_traigent_disabled()
         True
     """
-    val = os.getenv("TRAIGENT_DISABLED", "").lower()
-    return val in ("1", "true", "yes")
+    return is_truthy(os.getenv("TRAIGENT_DISABLED"))
 
 
 _SAMPLING_VALIDATED_KEYS = frozenset(
@@ -1298,11 +1298,7 @@ class TraigentConfig:
             object.__setattr__(config, "execution_mode", ExecutionMode.LOCAL.value)
 
         # Deprecated local-only compatibility env var.
-        if os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        ):
+        if is_truthy(os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE")):
             _warn_deprecated_once(
                 "TRAIGENT_EDGE_ANALYTICS_MODE",
                 "TRAIGENT_EDGE_ANALYTICS_MODE is deprecated. Use "
@@ -1326,11 +1322,11 @@ class TraigentConfig:
             config.minimal_logging = False
 
         # Set auto-sync preference
-        if os.getenv("TRAIGENT_AUTO_SYNC", "").lower() in ("true", "1", "yes"):
+        if is_truthy(os.getenv("TRAIGENT_AUTO_SYNC")):
             config.auto_sync = True
 
         # Deprecated content-redaction compatibility toggle.
-        if os.getenv("TRAIGENT_PRIVACY_MODE", "").lower() in ("true", "1", "yes"):
+        if is_truthy(os.getenv("TRAIGENT_PRIVACY_MODE")):
             _warn_deprecated_once(
                 "TRAIGENT_PRIVACY_MODE",
                 "TRAIGENT_PRIVACY_MODE is deprecated. Use offline=True or "
@@ -1342,11 +1338,7 @@ class TraigentConfig:
             object.__setattr__(config, "privacy_enabled", True)
 
         # Strict metrics nulls toggle
-        if os.getenv("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        ):
+        if is_truthy(os.getenv("TRAIGENT_STRICT_METRICS_NULLS")):
             config.strict_metrics_nulls = True
 
         mode = os.getenv("TRAIGENT_COMPARABILITY_MODE", "").strip().lower()

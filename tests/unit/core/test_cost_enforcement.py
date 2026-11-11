@@ -32,7 +32,7 @@ from traigent.core.cost_enforcement import (
     normalize_estimated_calls_per_example,
 )
 from traigent.core.stop_conditions import CostLimitStopCondition
-from traigent.utils.exceptions import OptimizationError
+from traigent.utils.exceptions import ConfigurationError, OptimizationError
 
 
 def _create_mock_permit(amount: float = 0.0) -> Permit:
@@ -861,12 +861,6 @@ class TestCostEnforcerEnvironmentVariables:
 
         request_approval.assert_not_called()
 
-    def test_invalid_env_uses_default(self) -> None:
-        """Invalid environment values fall back to defaults."""
-        with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": "not_a_number"}):
-            enforcer = CostEnforcer()
-            assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
-
     @pytest.mark.parametrize("raw_limit", ["", "  "])
     def test_blank_env_limit_is_unset_without_warning(
         self, caplog: pytest.LogCaptureFixture, raw_limit: str
@@ -886,14 +880,22 @@ class TestCostEnforcerEnvironmentVariables:
         assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
         assert enforcer.config.limit_explicit is False
 
-    def test_unparseable_env_limit_still_warns(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize("raw_limit", ["abc", "0,5", "inf", "-inf", "nan"])
+    def test_malformed_env_limit_raises_at_config_time(self, raw_limit: str) -> None:
+        """A malformed budget fails fast and names the variable (#2906)."""
+        with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": raw_limit}):
+            with pytest.raises(ConfigurationError, match="TRAIGENT_RUN_COST_LIMIT"):
+                CostEnforcer()
+
+    @pytest.mark.parametrize(
+        ("raw_limit", "expected"), [("$5", 5.0), (" 0.5 ", 0.5), ("2", 2.0)]
+    )
+    def test_numeric_env_limit_forms_are_respected(
+        self, raw_limit: str, expected: float
     ) -> None:
-        with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": "abc"}):
-            with caplog.at_level("WARNING", logger="traigent.core.cost_enforcement"):
-                enforcer = CostEnforcer()
-        assert enforcer.config.limit == DEFAULT_COST_LIMIT_USD
-        assert "Invalid TRAIGENT_RUN_COST_LIMIT='abc'" in caplog.text
+        with patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": raw_limit}):
+            enforcer = CostEnforcer()
+        assert enforcer.config.limit == expected
 
     @pytest.mark.parametrize("raw_limit", ["-5.0", "0", "0.0"])
     def test_nonpositive_env_limit_raises_at_config_time(self, raw_limit: str) -> None:
@@ -1386,7 +1388,9 @@ class TestCostEnforcerConfigLoading:
     def test_load_config_invalid_values(self, mock_logger) -> None:
         """Verify safe parsing handles invalid values."""
         env = {
-            "TRAIGENT_RUN_COST_LIMIT": "invalid",
+            # A malformed TRAIGENT_RUN_COST_LIMIT raises (#2906); only the
+            # advisory thresholds degrade to defaults.
+            "TRAIGENT_RUN_COST_LIMIT": "",
             "TRAIGENT_COST_WARNING_THRESHOLD": "-0.5",  # Negative
             "TRAIGENT_FALLBACK_TRIAL_LIMIT": "0",  # Too low
         }
@@ -1398,7 +1402,7 @@ class TestCostEnforcerConfigLoading:
             assert enforcer.config.fallback_trial_limit == 10
 
             # Verify warnings were logged
-            assert mock_logger.warning.call_count >= 3
+            assert mock_logger.warning.call_count >= 2
 
 
 class TestCostEnforcerApprovalToken:

@@ -55,7 +55,7 @@ OPTIMIZATION_ONLY_METADATA_INVALID_MESSAGE = "This workspace requires request me
 
 ID_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
 VERSION_RE = re.compile(r"^[0-9A-Za-z.+-]{1,32}$")
-SHA256_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
+SHA256_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}\Z")
 COLOR_RE = re.compile(r"^#?[0-9A-Za-z]{1,16}$")
 METRIC_KEY_RE = re.compile(r"^[A-Za-z0-9_.%-]{1,64}$")
 

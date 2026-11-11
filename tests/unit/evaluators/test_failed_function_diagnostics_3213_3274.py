@@ -146,8 +146,18 @@ async def test_wire_code_and_provider_classification_unchanged():
     )
     from traigent.utils.wire_text import error_code_for_wire
 
+    class _FundsStatusError(Exception):
+        """Carries the structured HTTP status a provider SDK error carries.
+
+        Run-abort classification reads the real exception (#2982), so message
+        wording alone on a plain ``ValueError`` is an ordinary failure; the
+        exception-class marker in the text must not change a structured verdict.
+        """
+
+        status_code = 402
+
     def func(row):
-        raise ValueError("quota exceeded")
+        raise _FundsStatusError("quota exceeded")
 
     eval_result = await _evaluate(func)
     trial = build_success_result(

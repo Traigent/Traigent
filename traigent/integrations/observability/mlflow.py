@@ -121,6 +121,7 @@ else:
 
 
 from traigent.api.types import OptimizationResult, TrialResult
+from traigent.integrations.observability._offline_guard import offline_guarded
 from traigent.utils.callbacks import OptimizationCallback
 
 from ...utils.logging import get_logger
@@ -135,6 +136,7 @@ _DEFAULT_RUN_LABEL = "traigent"
 class TraigentMLflowTracker:
     """MLflow experiment tracker for Traigent optimizations."""
 
+    @offline_guarded("MLflow tracking")
     def __init__(
         self,
         tracking_uri: str | None = None,
@@ -163,24 +165,33 @@ class TraigentMLflowTracker:
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
 
-        self.experiment_id: str | None
+        # No server contact here: the tracker may be built before an
+        # ``offline=True`` run starts. The experiment is looked up or created on
+        # the first guarded call (``start_optimization_run``).
+        self.experiment_name = experiment_name
+        self.experiment_id: str | None = None
+        self._experiment_ready = False
 
-        # Set or create experiment
+        self.current_run = None
+
+    def _ensure_experiment(self) -> None:
+        """Look up / create the experiment once, on first use inside a run."""
+        if self._experiment_ready:
+            return
         try:
-            experiment = mlflow.get_experiment_by_name(experiment_name)
+            experiment = mlflow.get_experiment_by_name(self.experiment_name)
             if experiment is None:
-                experiment_id = mlflow.create_experiment(experiment_name)
-                self.experiment_id = experiment_id
+                self.experiment_id = mlflow.create_experiment(self.experiment_name)
             else:
                 self.experiment_id = experiment.experiment_id
         except Exception as e:
             logger.warning(f"Failed to set MLflow experiment: {e}")
             self.experiment_id = None
 
-        mlflow.set_experiment(experiment_name)
+        mlflow.set_experiment(self.experiment_name)
+        self._experiment_ready = True
 
-        self.current_run = None
-
+    @offline_guarded("MLflow tracking")
     def start_optimization_run(
         self,
         function_name: str,
@@ -201,6 +212,7 @@ class TraigentMLflowTracker:
         Returns:
             MLflow run ID
         """
+        self._ensure_experiment()
         if not run_name:
             timestamp = int(time.time())
             run_name = f"{function_name}_optimization_{timestamp}"
@@ -258,6 +270,7 @@ class TraigentMLflowTracker:
         """
         mlflow.end_run(status="RUNNING")
 
+    @offline_guarded("MLflow tracking")
     def log_trial(
         self, trial: TrialResult, trial_number: int, step: int | None = None
     ) -> None:
@@ -359,6 +372,7 @@ class TraigentMLflowTracker:
                 ** 0.5,
             )
 
+    @offline_guarded("MLflow tracking")
     def log_optimization_result(
         self, result: OptimizationResult, dataset_path: str | None = None
     ) -> None:
@@ -424,6 +438,7 @@ class TraigentMLflowTracker:
         if run is not None:
             logger.info(f"Logged optimization result to MLflow run: {run.info.run_id}")
 
+    @offline_guarded("MLflow tracking")
     def end_optimization_run(self) -> None:
         """End current MLflow run."""
         if self.current_run:
@@ -436,6 +451,7 @@ class TraigentMLflowTracker:
             logger.info(f"Ended MLflow run: {self.current_run.info.run_id}")
             self.current_run = None
 
+    @offline_guarded("MLflow tracking")
     def compare_optimizations(
         self, run_ids: list[str], metrics: list[str] | None = None
     ) -> dict[str, Any]:
@@ -488,6 +504,7 @@ class TraigentMLflowTracker:
 
         return comparison_data
 
+    @offline_guarded("MLflow tracking")
     def get_best_run(
         self, experiment_name: str, metric_name: str, maximize: bool = True
     ) -> dict[str, Any] | None:

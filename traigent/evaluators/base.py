@@ -28,7 +28,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
-from traigent.core.exception_handler import is_provider_api_key_failure
+from traigent.core.exception_handler import (
+    function_call_failure_text,
+    is_provider_api_key_failure,
+    preserve_error_text,
+)
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
@@ -56,6 +60,7 @@ from traigent.utils.langchain_interceptor import (
     mark_capture_incomplete,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.metric_name_tokens import metric_name_tokens
 from traigent.utils.removed_params import reject_removed_mock_parameters
 from traigent.utils.response_model import resolve_pricing_model
 from traigent.utils.trial_costs import (
@@ -151,6 +156,28 @@ def _stored_unmeasured_keys_metadata(stored: Mapping[str, Any]) -> dict[str, Any
             UNMEASURED_CUSTOM_KEYS_METADATA: [k for k in marker if isinstance(k, str)]
         }
     return {}
+
+
+_QUANTILE_NAME_TOKENS = {
+    "p50": 0.50,
+    "p90": 0.90,
+    "p95": 0.95,
+    "p99": 0.99,
+    "max": 1.0,
+}
+
+
+def quantile_for_metric_name(metric_name: str) -> float | None:
+    """Return the quantile a metric name asks for, or ``None`` for the mean.
+
+    Only whole name tokens count (``p95_latency``, ``latency-p99``,
+    ``max_latency``); a substring such as the ``95`` in ``step95_score`` does
+    not select a percentile. ``max`` maps to the 1.0 quantile.
+    """
+    for token in metric_name_tokens(metric_name):
+        if token in _QUANTILE_NAME_TOKENS:
+            return _QUANTILE_NAME_TOKENS[token]
+    return None
 
 
 def count_timed_out_examples(example_results: Any) -> int:
@@ -3313,7 +3340,9 @@ class BaseEvaluator(ABC):
             raise
         except Exception as e:
             self._check_api_key_error(e)
-            error_msg = f"Function call failed: {type(e).__name__}: {e}"
+            error_msg = function_call_failure_text(
+                e, f"Function call failed: {type(e).__name__}: {e}"
+            )
             self._log_function_failure(e, error_msg, config)
             return None, error_msg
 
@@ -3552,7 +3581,7 @@ class BaseEvaluator(ABC):
                 metrics={},
                 execution_time=0.0,
                 success=False,
-                error_message=str(error),
+                error_message=preserve_error_text(error),
                 metadata=example.metadata.copy() if example.metadata else {},
             ),
             index,
@@ -3588,7 +3617,7 @@ class BaseEvaluator(ABC):
             failed_result = self._create_failed_example_result(example, index, result)
             example_results.append(failed_result)
         outputs.append(None)
-        errors.append(str(result))
+        errors.append(preserve_error_text(result))
         if progress_callback:
             progress_callback(index, {"success": False, "error": str(result)})
         return False
@@ -3712,7 +3741,7 @@ class BaseEvaluator(ABC):
                 example, index, exc
             )
         outputs_by_index[index] = None
-        errors_by_index[index] = str(exc)
+        errors_by_index[index] = preserve_error_text(exc)
 
     def _store_success_result(
         self,
@@ -4639,7 +4668,7 @@ class BaseEvaluator(ABC):
             metrics=failed_row_metrics(self.metrics),
             execution_time=execution_time,
             success=False,
-            error_message=str(error),
+            error_message=preserve_error_text(error),
             metadata=example.metadata.copy() if example.metadata else {},
         )
 
@@ -5243,11 +5272,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         example_metrics["completion_tokens"] = llm_metrics.get("completion_tokens", 0)
         example_metrics["total_tokens"] = llm_metrics.get("total_tokens", 0)
 
-        strict_nulls = os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+        strict_nulls = is_truthy(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
         missing_default = None if strict_nulls else 0.0
 
         if llm_metrics.get("cost_unmeasured") or llm_metrics.get("cost_unpriced"):
@@ -5331,11 +5356,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         ):
             # Nothing measured this cost: it is unknown, never a
             # fabricated 0.0 (#2517). None under strict nulls.
-            if os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-                "true",
-                "1",
-                "yes",
-            ):
+            if is_truthy(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS")):
                 aggregated[metric] = None
             return
         aggregated[metric] = aggregate_measured_metric(metric, all_metrics)
@@ -5351,8 +5372,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         if not metric_values:
             aggregated[metric] = 0.0
             return
-        if "p95" in metric.lower():
-            aggregated[metric] = self._compute_percentile(metric_values, 0.95)
+        quantile = quantile_for_metric_name(metric)
+        if quantile is not None:
+            aggregated[metric] = self._compute_percentile(metric_values, quantile)
         else:
             aggregated[metric] = sum(metric_values) / len(metric_values)
 
@@ -5363,9 +5385,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         example_results: list[Any],
     ) -> None:
         # Aggregate cost metrics (total, not average)
-        strict_nulls_cost = os.environ.get(
-            "TRAIGENT_STRICT_METRICS_NULLS", ""
-        ).lower() in ("true", "1", "yes")
+        strict_nulls_cost = is_truthy(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
         cost_metrics = ["input_cost", "output_cost", "total_cost"]
         # One shared classifier decides (traigent.utils.trial_costs): a flagged
         # row, a successful row with no cost, or a trial where no row measured
@@ -5777,7 +5797,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
             )
             all_metrics.append(failed_result.metrics)
             outputs.append(None)
-            errors.append(str(e))
+            errors.append(failed_result.error_message)
 
     async def evaluate(
         self,
@@ -6107,7 +6127,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 metrics=failed_row_metrics(self.metrics),
                 execution_time=0.0,
                 success=False,
-                error_message=str(error),
+                error_message=preserve_error_text(error),
                 metadata=example.metadata.copy() if example.metadata else {},
             ),
             index,

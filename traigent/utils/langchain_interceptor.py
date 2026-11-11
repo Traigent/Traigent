@@ -373,6 +373,24 @@ _capture_owner: ContextVar[int | None] = ContextVar(
     "traigent_capture_owner", default=None
 )
 
+#: The correlation key (example id) of the evaluation running in this context.
+#: A ContextVar rather than a thread-local: concurrent example coroutines share
+#: the event-loop thread, so a thread-local key was overwritten by whichever
+#: example started last and blanked by whichever finished first.
+_current_key: ContextVar[Any] = ContextVar("traigent_capture_key", default=None)
+
+
+class _KeySlot:
+    """``current_key`` view over the ContextVar (kept for the ``_key_local`` name)."""
+
+    @property
+    def current_key(self) -> Any:
+        return _current_key.get()
+
+    @current_key.setter
+    def current_key(self, value: Any) -> None:
+        _current_key.set(value)
+
 
 @contextmanager
 def capture_owner(owner: int) -> Iterator[None]:
@@ -435,8 +453,8 @@ class LangChainMetadataCapture:
         # Map correlation keys (e.g., example_id) to responses
         self._by_key: dict[str, Any] = {}
         self._by_key_lock = threading.Lock()
-        # Current correlation key in thread local
-        self._key_local = threading.local()
+        # Current correlation key, per execution context (not per thread)
+        self._key_local = _KeySlot()
 
     def set_last_response(self, response: Any, *, requested_model: Any = None) -> None:
         """Store the last LangChain response.
@@ -454,7 +472,7 @@ class LangChainMetadataCapture:
             self._storage.responses.append(response)
             logger.debug("Captured LangChain response with metadata")
 
-        key = getattr(self._key_local, "current_key", None)
+        key = _current_key.get()
 
         # Route into the trial's own buffer when one is active (Traigent#2387).
         # Without a scope this falls back to the process-global list, which is
@@ -574,15 +592,14 @@ class LangChainMetadataCapture:
             with self._by_key_lock:
                 self._by_key.clear()
 
-        if hasattr(self._key_local, "current_key"):
-            self._key_local.current_key = None
+        _current_key.set(None)
 
     # Key management
     def set_current_key(self, key: Any) -> None:
-        self._key_local.current_key = key
+        _current_key.set(key)
 
     def clear_current_key(self) -> None:
-        self._key_local.current_key = None
+        _current_key.set(None)
 
     def get_by_key(self, key: Any) -> Any:
         # Example ids are not unique ACROSS trials -- every trial evaluates the

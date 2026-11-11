@@ -38,7 +38,7 @@ class ModuleSpecError(ImportError):
     """The file could not be turned into an importable module spec."""
 
 
-_DOTTED_MODULE_RE = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)+$")
+_DOTTED_MODULE_RE = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)+\Z")
 _RELATIVE_IMPORT_MARKER = "attempted relative import"
 
 

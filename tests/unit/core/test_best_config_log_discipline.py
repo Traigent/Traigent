@@ -228,7 +228,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_agent_head_generation_sync",
         "raise",
-        "dcfa7ba99288b9d4",  # pragma: allowlist secret
+        "83ecb930d9de43aa",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -237,7 +237,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_best_config_sync",
         "raise",
-        "6e05c0b1ccc04f75",  # pragma: allowlist secret
+        "343f67dfe3e706e1",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -264,7 +264,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.publish_best_config_sync",
         "raise",
-        "66eeefe89a47633b",  # pragma: allowlist secret
+        "e3ccb8bc5bbbab21",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -291,7 +291,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.upload_example_features",
         "log",
-        "a00ec674afa6f7c5",  # pragma: allowlist secret
+        "cceaf2141f516f26",  # pragma: allowlist secret
     ): (
         1,
         _LEGACY_BACKEND,
@@ -348,7 +348,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_run_sync_backend_request_with_retry",
         "raise",
-        "402529dd40c51ccc",
+        "02feea07c69229b3",  # pragma: allowlist secret
     ): (
         1,
         "operation literal + pre-sanitized transient text or exception type name",
@@ -357,7 +357,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_run_sync_backend_request_with_retry",
         "raise",
-        "9c8bd3bbaf3e6fe9",  # pragma: allowlist secret
+        "fe383c90ba16fa5d",  # pragma: allowlist secret
     ): (
         1,
         "operation literal + pre-sanitized transient text or exception type name",
@@ -366,7 +366,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_run_sync_backend_request_with_retry",
         "raise",
-        "f1072a0fa4f123e2",  # pragma: allowlist secret
+        "6703b185d33ae951",  # pragma: allowlist secret
     ): (
         1,
         "operation literal + pre-sanitized transient text or exception type name",

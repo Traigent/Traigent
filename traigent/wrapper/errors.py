@@ -128,3 +128,34 @@ class ServiceUnavailableError(HybridAPIError):
             details=details,
             headers=headers,
         )
+
+
+class InvalidInputsError(BadRequestError, ValueError):
+    """The ``inputs`` array is missing or has the wrong shape (``INVALID_INPUTS``)."""
+
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message, error_code="INVALID_INPUTS", details=details)
+
+
+class IdempotencyConflictError(HybridAPIError, ValueError):
+    """A ``request_id`` was reused with a different payload (HTTP 409)."""
+
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(
+            message,
+            status_code=409,
+            error_code="IDEMPOTENCY_CONFLICT",
+            details=details,
+        )
+
+
+class UnknownTunableIdError(HybridAPIError, ValueError):
+    """The requested ``tunable_id`` is not served here (HTTP 404)."""
+
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(
+            message,
+            status_code=404,
+            error_code="UNKNOWN_TUNABLE_ID",
+            details=details,
+        )

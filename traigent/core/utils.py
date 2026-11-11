@@ -22,6 +22,7 @@ from traigent.core.constants import (
     RESPONSE_TIME_METRIC,
     TOKEN_METRICS,
 )
+from traigent.utils.env_config import is_truthy
 
 logger = logging.getLogger(__name__)
 
@@ -334,6 +335,26 @@ def extract_examples_attempted(
         return default
 
 
+_CONFIGURED_STRICT_METRICS_NULLS = False
+
+
+def set_configured_strict_metrics_nulls(enabled: bool) -> None:
+    """Record ``TraigentConfig.strict_metrics_nulls`` for the metric readers."""
+    global _CONFIGURED_STRICT_METRICS_NULLS
+    _CONFIGURED_STRICT_METRICS_NULLS = bool(enabled)
+
+
+def strict_metrics_nulls_enabled() -> bool:
+    """True when missing metrics are reported as None rather than 0.0.
+
+    Enabled by ``TraigentConfig(strict_metrics_nulls=True)`` applied through
+    ``traigent.initialize`` or by ``TRAIGENT_STRICT_METRICS_NULLS``.
+    """
+    if _CONFIGURED_STRICT_METRICS_NULLS:
+        return True
+    return is_truthy(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
+
+
 def safe_float_convert(value: Any, default: float = 0.0) -> float | None:
     """Safely convert a value to float.
 
@@ -344,12 +365,7 @@ def safe_float_convert(value: Any, default: float = 0.0) -> float | None:
     Returns:
         Float representation of value or default (None if TRAIGENT_STRICT_METRICS_NULLS=true)
     """
-    # Check for strict metrics nulls mode
-    strict_nulls = os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    )
+    strict_nulls = strict_metrics_nulls_enabled()
     actual_default = None if strict_nulls else default
 
     try:

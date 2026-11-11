@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from traigent.config.backend_config import PRICING_URL
-from traigent.utils.exceptions import ConfigurationError
+from traigent.utils.exceptions import ConfigurationError, TraigentError
+from traigent.utils.file_lock import storage_lock
 from traigent.utils.logging import get_logger
 from traigent.utils.money import format_usd
 
@@ -40,9 +41,24 @@ def _read_json_file(path: Path) -> Any:
 
 
 def _write_json_file(path: Path, data: Any) -> None:
-    """Write JSON data to disk."""
-    with path.open("w") as file_obj:
-        json.dump(data, file_obj, indent=2)
+    """Write JSON data to disk atomically (temp file, then replace)."""
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        with tmp_path.open("w") as file_obj:
+            json.dump(data, file_obj, indent=2)
+            file_obj.flush()
+            os.fsync(file_obj.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        with suppress(OSError):  # silent-ok: best-effort temp-file cleanup
+            tmp_path.unlink()
+
+
+class UsageStorageError(TraigentError):
+    """The usage file cannot be read or set aside; history is left untouched."""
+
+
+_storage_lock = storage_lock
 
 
 # Cost Tracking Enums and Classes (from cost_tracking.py)
@@ -224,6 +240,7 @@ class UsageTracker:
             self.storage_path = Path.cwd() / ".traigent_local" / _USAGE_STORAGE_FILENAME
             self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._usage_records: list[UsageRecord] = []
+        self._pending_records: list[UsageRecord] = []
         self._load_usage_data()
 
         # Billing plans
@@ -298,8 +315,7 @@ class UsageTracker:
             billing_tier=billing_tier,
         )
 
-        self._usage_records.append(usage_record)
-        await self._save_usage_data()
+        self._append_record_and_save(usage_record)
 
         logger.info(
             f"Recorded optimization: {function_name} "
@@ -356,6 +372,8 @@ class UsageTracker:
             )
         if end_date is None:
             end_date = datetime.now(UTC)
+
+        self._refresh_from_disk()
 
         # Filter records by date range
         filtered_records = [
@@ -478,33 +496,96 @@ class UsageTracker:
             "cost_per_credit": plan.cost_per_credit,
         }
 
+    def _read_records_from_disk(self) -> list[UsageRecord]:
+        """Read the stored records; quarantine an unreadable file, never drop it."""
+        if not self.storage_path.exists():
+            return []
+        try:
+            with open(self.storage_path) as f:
+                data = json.load(f)
+            return [
+                UsageRecord.from_dict(record_data)
+                for record_data in data.get("usage_records", [])
+            ]
+        except Exception as e:
+            quarantine = self.storage_path.with_name(
+                f"{self.storage_path.name}.corrupt-{time.time_ns()}"
+            )
+            try:
+                os.replace(self.storage_path, quarantine)
+                logger.error(
+                    "Prior usage history was unreadable and has been quarantined "
+                    f"as {quarantine.name}; local usage limits restart from zero"
+                )
+                logger.warning(
+                    f"Usage data unreadable ({e}); moved to {quarantine} and "
+                    "starting a fresh usage file"
+                )
+            except OSError as move_error:
+                raise UsageStorageError(
+                    f"Usage file {self.storage_path} is unreadable ({e}) and "
+                    f"could not be set aside ({move_error}); leaving it untouched"
+                ) from e
+            return []
+
     def _load_usage_data(self) -> None:
         """Load usage data from storage."""
+        with _storage_lock(self.storage_path):
+            self._usage_records = self._read_records_from_disk()
+        logger.debug(f"Loaded {len(self._usage_records)} usage records")
+
+    def _write_records(self, records: list[UsageRecord]) -> None:
+        data = {
+            "usage_records": [record.to_dict() for record in records],
+            "last_updated": datetime.now(UTC).isoformat(),
+        }
+        _write_json_file(self.storage_path, data)
+
+    def _refresh_from_disk(self) -> None:
+        """Reload so other trackers' writes count; keep our unsaved records.
+
+        Fails closed: a lock or read error raises ``UsageStorageError`` rather
+        than answering limit questions from stale memory.
+        """
         try:
-            if self.storage_path.exists():
-                with open(self.storage_path) as f:
-                    data = json.load(f)
-                    self._usage_records = [
-                        UsageRecord.from_dict(record_data)
-                        for record_data in data.get("usage_records", [])
-                    ]
-                logger.debug(f"Loaded {len(self._usage_records)} usage records")
-            else:
-                self._usage_records = []
+            with _storage_lock(self.storage_path):
+                records = self._read_records_from_disk()
+        except OSError as e:
+            raise UsageStorageError(f"Could not refresh usage data: {e}") from e
+        self._usage_records = records + self._pending_records
+
+    def _append_record_and_save(self, record: UsageRecord) -> None:
+        """Append under an inter-process lock, merging what other writers saved.
+
+        A record that could not be written stays pending and is merged into the
+        next successful write. An unreadable, unquarantinable file raises
+        ``UsageStorageError`` and is never overwritten.
+        """
+        self._pending_records.append(record)
+        try:
+            with _storage_lock(self.storage_path):
+                records = self._read_records_from_disk() + self._pending_records
+                self._write_records(records)
+                self._usage_records = records
+                self._pending_records = []
+        except UsageStorageError:
+            self._usage_records.append(record)
+            raise
         except Exception as e:
-            logger.warning(f"Failed to load usage data: {e}")
-            self._usage_records = []
+            self._usage_records.append(record)
+            logger.exception(f"Failed to save usage data: {e}")
+            raise UsageStorageError(
+                "Usage record was not saved; it is kept pending and will be "
+                "written with the next successful save"
+            ) from e
 
     async def _save_usage_data(self) -> None:
         """Save usage data to storage."""
         try:
-            data = {
-                "usage_records": [record.to_dict() for record in self._usage_records],
-                "last_updated": datetime.now(UTC).isoformat(),
-            }
             # Keep billing persistence synchronous to avoid leaking threadpool
             # executors across many short-lived asyncio.run() calls in tests/CLI usage.
-            _write_json_file(self.storage_path, data)
+            with _storage_lock(self.storage_path):
+                self._write_records(self._usage_records)
         except Exception as e:
             logger.exception(f"Failed to save usage data: {e}")
 

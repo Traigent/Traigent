@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from _cost_display import format_cost
+
 # Environment setup must happen before imports
 MOCK = str(os.getenv("TRAIGENT_MOCK_LLM", "")).lower() in {"1", "true", "yes", "y"}
 BASE = Path(__file__).parent
@@ -432,7 +434,9 @@ def _print_results(result: OptimizationResult) -> None:
     # Display summary statistics
     summary = result.get_summary()
     print("\nOptimization summary:")
-    total_cost = float(summary.get("total_cost", 0.0) or 0.0)
+    total_cost_text = format_cost(
+        summary.get("total_cost"), summary.get("cost_lower_bound")
+    )
     total_duration = float(summary.get("total_duration", 0.0) or 0.0)
     total_examples = int(summary.get("total_examples_attempted", 0) or 0)
 
@@ -441,7 +445,7 @@ def _print_results(result: OptimizationResult) -> None:
     print(f"    pruned: {summary.get('pruned_trials', 0)}")
     print(f"    failed: {summary.get('failed_trials', 0)}")
     print(f"  total_examples_attempted: {total_examples}")
-    print(f"  total_cost: ${total_cost:.6f}")
+    print(f"  total_cost: {total_cost_text}")
     print(f"  total_duration: {total_duration:.3f}s")
 
     per_model = summary.get("trials_per_model") or {}
@@ -619,9 +623,8 @@ def answer(
 ) -> str:
     """Simple function that answers math questions using LLM."""
     if MOCK:
-        # Rule-based path: no model call, so record a measured $0 (strict cost
-        # accounting refuses an unreported cost under the cost objective).
-        return traigent.with_usage(_evaluate_expression(question), total_cost=0)
+        # No model is called in mock mode, so the measured cost is exactly $0.
+        return traigent.with_usage(_evaluate_expression(question), total_cost=0.0)
 
     assert os.getenv("OPENAI_API_KEY"), "Missing OPENAI_API_KEY"
 

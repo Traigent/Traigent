@@ -24,6 +24,7 @@ from traigent.core.objective_directions import (
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import PlatformCapabilityError
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_checks import require_finite_number
 
 logger = get_logger(__name__)
 
@@ -3128,6 +3129,7 @@ class StrategyConfig:
 
     def validate(self) -> None:
         """Validate strategy configuration."""
+        require_finite_number("parallel_workers", self.parallel_workers, integer=True)
         if self.parallel_workers < 1:
             raise ValueError("parallel_workers must be >= 1")
 

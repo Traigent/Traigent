@@ -19,7 +19,7 @@ from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
 
-from .billing import BillingManager, UsageTracker
+from .billing import BillingManager, UsageStorageError, UsageTracker
 from .subset_selection import SmartSubsetSelector
 
 logger = get_logger(__name__)
@@ -194,13 +194,18 @@ class TraigentCloudService:
             )
 
             # Record usage for billing
-            await self.usage_tracker.record_optimization(
-                function_name=request.function_name,
-                trials_count=optimization_result["trials_count"],
-                dataset_size=subset_size,
-                optimization_time=time.time() - start_time,
-                billing_tier=request.billing_tier,
-            )
+            try:
+                await self.usage_tracker.record_optimization(
+                    function_name=request.function_name,
+                    trials_count=optimization_result["trials_count"],
+                    dataset_size=subset_size,
+                    optimization_time=time.time() - start_time,
+                    billing_tier=request.billing_tier,
+                )
+            except UsageStorageError as usage_error:
+                # Best-effort: a finished optimization is not discarded because
+                # local usage bookkeeping failed; the record stays pending.
+                logger.warning(f"Usage record not saved: {usage_error}")
 
             # Update service statistics
             self.total_optimizations += 1

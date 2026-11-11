@@ -894,6 +894,45 @@ def _format_trial_config(config: dict[str, Any]) -> str:
     return ", ".join(config_parts) if config_parts else "config"
 
 
+class _StartedTrials:
+    """Remember which trial number started with which config.
+
+    Parallel batches fire ``on_trial_start`` for every trial before any
+    completes, so the completion line cannot rely on the last-started number.
+    """
+
+    def __init__(self) -> None:
+        self._started: list[tuple[int, Any]] = []
+
+    @staticmethod
+    def _normalise(config: Any) -> Any:
+        # Results carry the config with internal keys removed (Optuna ids,
+        # subset indices); strip them the same way so both sides compare equal.
+        from ..core.orchestrator_helpers import prepare_evaluation_config
+
+        return copy.deepcopy(prepare_evaluation_config(config))
+
+    def start(self, number: int, config: Any) -> None:
+        # Only keep a reference: start-time handlers must not read the config
+        # (characterised); it is normalised when a completion looks it up.
+        self._started.append((number, config))
+
+    def take(self, config: Any, fallback: int) -> int:
+        """Number of the oldest started trial with ``config``, else ``fallback``.
+
+        The completion hook carries no trial index, so identical configs are
+        matched in start order (a per-config FIFO).
+        """
+        if config is None:
+            return fallback
+        wanted = self._normalise(config)
+        for index, (number, started_config) in enumerate(self._started):
+            if self._normalise(started_config) == wanted:
+                del self._started[index]
+                return number
+        return fallback
+
+
 class SimpleProgressCallback(OptimizationCallback):
     """Simple progress callback for basic console output.
 
@@ -914,6 +953,7 @@ class SimpleProgressCallback(OptimizationCallback):
         self.total_trials = 0
         self._primary_objective: str | None = None
         self.current_trial = 0
+        self._started_trials = _StartedTrials()
         self.best_score: float | None = None
         self._output_handler = self._get_output_handler(output)
 
@@ -957,6 +997,7 @@ class SimpleProgressCallback(OptimizationCallback):
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
         self.current_trial = trial_number + 1
+        self._started_trials.start(self.current_trial, config)
 
         if self.show_details:
             config_str = _format_trial_config(config)
@@ -966,6 +1007,9 @@ class SimpleProgressCallback(OptimizationCallback):
 
     def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
         """Called when a trial completes."""
+        trial_number = self._started_trials.take(
+            getattr(trial, "config", None), self.current_trial
+        )
         if progress.best_score is not None:
             self.best_score = progress.best_score
 
@@ -975,12 +1019,12 @@ class SimpleProgressCallback(OptimizationCallback):
 
             if score is not None:
                 self._output(
-                    f"[{self.current_trial}/{self.total_trials}] "
+                    f"[{trial_number}/{self.total_trials}] "
                     f"Completed. Score: {score:.1%} | Best so far: {self.best_score:.1%}"
                 )
             elif self.best_score is not None:
                 self._output(
-                    f"[{self.current_trial}/{self.total_trials}] "
+                    f"[{trial_number}/{self.total_trials}] "
                     f"Completed. Best score so far: {self.best_score:.1%}"
                 )
 
@@ -1445,6 +1489,7 @@ class DetailedProgressCallback(OptimizationCallback):
         self.show_config_details = show_config_details
         self.show_metrics = show_metrics
         self.trial_count = 0
+        self._started_trials = _StartedTrials()
         self.total_trials = 0
         self.configs_tested: list[Any] = []
 
@@ -1487,6 +1532,7 @@ class DetailedProgressCallback(OptimizationCallback):
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
         self.trial_count = trial_number + 1
+        self._started_trials.start(self.trial_count, config)
         self.configs_tested.append(config)
 
         total_display = self.total_trials if self.total_trials > 0 else "?"
@@ -1503,6 +1549,9 @@ class DetailedProgressCallback(OptimizationCallback):
     def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
         """Called when a trial completes."""
         status_icon = "✅" if trial.status == "completed" else "❌"
+        trial_number = self._started_trials.take(
+            getattr(trial, "config", None), self.trial_count
+        )
 
         total_display = self.total_trials or progress.total_trials
         if not total_display or total_display <= 0:
@@ -1510,9 +1559,7 @@ class DetailedProgressCallback(OptimizationCallback):
         else:
             total_display_str = str(total_display)
 
-        _safe_print(
-            f"{status_icon} Trial {self.trial_count}/{total_display_str} completed"
-        )
+        _safe_print(f"{status_icon} Trial {trial_number}/{total_display_str} completed")
 
         if self.show_metrics and trial.metrics:
             _safe_print("   Metrics:")

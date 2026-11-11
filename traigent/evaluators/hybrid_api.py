@@ -39,7 +39,7 @@ from traigent.hybrid import (
     TransportTimeoutError,
     create_transport,
 )
-from traigent.utils.exceptions import ValidationError
+from traigent.utils.exceptions import ConfigurationError, ValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import classify_objective
 from traigent.utils.retry import RetryConfig, RetryHandler
@@ -158,6 +158,14 @@ _TRAIGENT_COMPUTED_METRIC_KEYS: frozenset[str] = frozenset(
 _COST_UNMEASURED_KEY = "cost_unmeasured"
 
 
+class _EvaluationKwargsAfterExecutionError(ConfigurationError):
+    """evaluation_kwargs cannot be honoured, but the batch was already executed."""
+
+    def __init__(self, message: str, batch_results: list[Any]) -> None:
+        super().__init__(message)
+        self.batch_results = batch_results
+
+
 class HybridAPIEvaluator(BaseEvaluator):
     """Evaluator that executes trials via external API endpoints.
 
@@ -264,6 +272,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         self._lifecycle_manager: AgentLifecycleManager | None = None
         self._discovery: ConfigSpaceDiscovery | None = None
         self._capabilities: ServiceCapabilities | None = None
+        self._batch_clamp_warned = False
         self._session_id: str | None = None
         self._optimization_spec: dict[str, Any] | None = None
         self._benchmark_id: str | None = None
@@ -384,6 +393,13 @@ class HybridAPIEvaluator(BaseEvaluator):
             )
 
         transport = await self._get_transport()
+        caps = await self._get_capabilities()
+        if getattr(caps, "supports_benchmarks", None) is False:
+            raise ConfigurationError(
+                "The external service advertises supports_benchmarks=false, so "
+                "benchmark/dataset discovery is unavailable. Provide example IDs "
+                "explicitly."
+            )
         resp: BenchmarksResponse = await transport.benchmarks(tunable_id=tid)
         selected_dataset_id = dataset_id
 
@@ -451,6 +467,40 @@ class HybridAPIEvaluator(BaseEvaluator):
             if self._benchmark_id:
                 return  # another coroutine resolved it while we waited
             await self.discover_example_ids()
+
+    def _require_evaluation_kwargs_support(self, caps: ServiceCapabilities) -> None:
+        """Refuse evaluation_kwargs the service has not advertised support for."""
+        if self._evaluation_kwargs and not getattr(
+            caps, "supports_evaluation_kwargs", False
+        ):
+            raise ConfigurationError(
+                "evaluation_kwargs were provided but the external service does "
+                "not advertise supports_evaluation_kwargs; they cannot be "
+                "honoured. Remove evaluation_kwargs or use a service that "
+                "supports them."
+            )
+        if self._evaluation_kwargs and not getattr(caps, "supports_evaluate", False):
+            raise ConfigurationError(
+                "evaluation_kwargs were provided but the external service does "
+                "not support a separate evaluate call, which is the only request "
+                "that carries them; they cannot be honoured."
+            )
+
+    def _effective_batch_size(self, caps: ServiceCapabilities) -> int:
+        """Clamp the configured batch size to the service's max_batch_size."""
+        limit = getattr(caps, "max_batch_size", None)
+        if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 1:
+            if self._batch_size > limit:
+                if not self._batch_clamp_warned:
+                    logger.warning(
+                        "batch_size=%d exceeds the service max_batch_size=%d; using %d",
+                        self._batch_size,
+                        limit,
+                        limit,
+                    )
+                    self._batch_clamp_warned = True
+                return limit
+        return self._batch_size
 
     async def _ensure_lifecycle_manager(self) -> None:
         """Ensure lifecycle manager is initialized if keep-alive enabled."""
@@ -930,6 +980,11 @@ class HybridAPIEvaluator(BaseEvaluator):
         caps = await self._await_with_sample_lease_cleanup(
             self._get_capabilities(), sample_lease, execution_budget_lease
         )
+        try:
+            self._require_evaluation_kwargs_support(caps)
+        except ConfigurationError:
+            self._cleanup_sample_lease_on_cancel(sample_lease, execution_budget_lease)
+            raise
 
         # Initialize lifecycle manager if needed
         await self._await_with_sample_lease_cleanup(
@@ -957,8 +1012,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         example_results: list[HybridExampleResult] = []
         total_cost = 0.0
 
-        for batch_start in range(0, len(examples), self._batch_size):
-            batch_end = min(batch_start + self._batch_size, len(examples))
+        batch_size = self._effective_batch_size(caps)
+        for batch_start in range(0, len(examples), batch_size):
+            batch_end = min(batch_start + batch_size, len(examples))
             batch = examples[batch_start:batch_end]
             batch_ids = example_ids[batch_start:batch_end]
 
@@ -968,11 +1024,41 @@ class HybridAPIEvaluator(BaseEvaluator):
                 break
 
             # Execute batch
-            batch_results = await self._await_with_sample_lease_cleanup(
-                self._execute_batch(transport, caps, config, batch, batch_ids),
-                sample_lease,
-                execution_budget_lease,
-            )
+            try:
+                batch_results = await self._await_with_sample_lease_cleanup(
+                    self._execute_batch(transport, caps, config, batch, batch_ids),
+                    sample_lease,
+                    execution_budget_lease,
+                )
+            except _EvaluationKwargsAfterExecutionError as exc:
+                # The batch already ran: account its examples and reported cost
+                # (unmeasured when the response carries none) before refusing.
+                executed = [*example_results, *exc.batch_results]
+                batch_cost = HybridAPIEvaluator._record_batch_completion(
+                    sample_lease, exc.batch_results
+                )
+                aggregated, _ = self._compute_aggregated_metrics_with_comparability(
+                    executed, total_cost + batch_cost
+                )
+                self._finalize_execution_budget_evaluation(
+                    budget,
+                    EvaluationResult(
+                        config=config,
+                        example_results=executed,
+                        aggregated_metrics=aggregated,
+                        total_examples=len(executed),
+                        successful_examples=sum(1 for r in executed if r.success),
+                        duration=time.time() - start_time,
+                        examples_consumed=len(executed),
+                    ),
+                    execution_budget_lease,
+                )
+                raise ConfigurationError(str(exc)) from None
+            except ConfigurationError:
+                self._cleanup_sample_lease_on_cancel(
+                    sample_lease, execution_budget_lease
+                )
+                raise
             example_results.extend(batch_results)
             batch_cost = HybridAPIEvaluator._record_batch_completion(
                 sample_lease, batch_results
@@ -1108,6 +1194,16 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             # Check if combined mode (quality metrics included)
             if execute_response.quality_metrics:
+                if self._evaluation_kwargs:
+                    raise _EvaluationKwargsAfterExecutionError(
+                        "evaluation_kwargs were provided but the service scored "
+                        "the batch in the execute response, so the separate "
+                        "evaluate request that carries them was never sent; "
+                        "they cannot be honoured.",
+                        self._process_combined_response(
+                            batch, inputs, execute_response
+                        ),
+                    )
                 # Combined mode - use quality metrics directly
                 return self._process_combined_response(batch, inputs, execute_response)
             elif caps.supports_evaluate:

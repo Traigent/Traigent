@@ -20,8 +20,17 @@ from typing import Any
 
 from traigent.core.constants import DEFAULT_MODEL
 from traigent.utils.logging import configure_litellm_logging, get_logger
+from traigent.utils.numeric_checks import is_finite_number
 
 logger = get_logger(__name__)
+
+
+def _contains(values: set[Any], item: Any) -> bool:
+    """Membership that treats an unhashable item as simply not a member."""
+    try:
+        return item in values
+    except TypeError:
+        return any(item == candidate for candidate in values)
 
 
 @dataclass
@@ -114,7 +123,7 @@ class ParameterRangeConstraint(Constraint):
 
         value = config[self.parameter]
 
-        if not isinstance(value, (int, float)):
+        if not is_finite_number(value):
             return False
 
         if self.min_value is not None and value < self.min_value:
@@ -216,7 +225,7 @@ class MutuallyExclusiveConstraint(Constraint):
         count = 0
 
         for param in self.parameters:
-            if param in config and config[param] in self.values:
+            if param in config and _contains(self.values, config[param]):
                 count += 1
 
         return count <= self.max_simultaneous
@@ -225,7 +234,7 @@ class MutuallyExclusiveConstraint(Constraint):
         """Get violation message."""
         violating_params = []
         for param in self.parameters:
-            if param in config and config[param] in self.values:
+            if param in config and _contains(self.values, config[param]):
                 violating_params.append(f"{param}={config[param]}")
 
         return (
@@ -266,7 +275,7 @@ class DependencyConstraint(Constraint):
         if self.dependency_param not in config:
             return False  # Dependency missing
 
-        return config[self.dependency_param] in self.dependency_values
+        return _contains(self.dependency_values, config[self.dependency_param])
 
     def get_violation_message(self, config: dict[str, Any]) -> str:
         """Get violation message."""

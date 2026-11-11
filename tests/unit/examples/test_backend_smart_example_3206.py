@@ -33,6 +33,10 @@ def example(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
         "TRAIGENT_CONCURRENCY_PROFILE",
     ):
         monkeypatch.delenv(key, raising=False)
+    # The script does `from _cost_display import format_cost`, a sibling module
+    # that only resolves when the script's folder is on sys.path (as it is when
+    # run directly). monkeypatch restores sys.path at teardown.
+    monkeypatch.syspath_prepend(str(SCRIPT.parent))
     spec = importlib.util.spec_from_file_location(_NAME, SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

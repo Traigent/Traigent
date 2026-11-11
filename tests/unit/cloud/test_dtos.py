@@ -1189,3 +1189,37 @@ class TestLocalDtoHelpers:
 
         assert run.metadata["execution_mode"] == "local"
         assert "mode" not in run.metadata
+
+
+class TestStrictValidationEnvSpellings:
+    """TRAIGENT_STRICT_VALIDATION fails closed: only explicit off-spellings relax it."""
+
+    @staticmethod
+    def _failing_validator(monkeypatch: pytest.MonkeyPatch) -> ExperimentDTO:
+        class _Validator:
+            def validate_json(self, *_args: Any, **_kwargs: Any) -> list[str]:
+                return ["schema error"]
+
+        monkeypatch.setattr(
+            cloud_dtos, "_get_schema_validator_class", lambda: _Validator
+        )
+        return ExperimentDTO(id="exp-s", name="n", description="d")
+
+    @pytest.mark.parametrize("value", ["true", "1", "yes", " true", "on", "TRUE\n"])
+    def test_truthy_or_unknown_spellings_stay_strict(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        exp = self._failing_validator(monkeypatch)
+        monkeypatch.setenv("TRAIGENT_STRICT_VALIDATION", value)
+
+        with pytest.raises(DTOSerializationError):
+            exp.validate()
+
+    @pytest.mark.parametrize("value", ["false", "0", "no", "off", " False "])
+    def test_explicit_off_spellings_relax(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        exp = self._failing_validator(monkeypatch)
+        monkeypatch.setenv("TRAIGENT_STRICT_VALIDATION", value)
+
+        assert exp.validate() is False

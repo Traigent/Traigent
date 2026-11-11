@@ -122,6 +122,8 @@ def test_manager_dispatch_without_run_settings_uses_fixed_prefix(cls) -> None:
 
 
 def test_mlflow_run_name_is_not_the_config_dict(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
     fake = MagicMock()
     monkeypatch.setattr(mlflow_module, "mlflow", fake)
     monkeypatch.setattr(mlflow_module, "MLFLOW_AVAILABLE", True)
@@ -218,6 +220,9 @@ class _ThreadLocalMLflow:
 def test_mlflow_hooks_on_different_threads_stay_bound_to_the_run(monkeypatch) -> None:
     import threading
 
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+
     fake = _ThreadLocalMLflow()
     monkeypatch.setattr(mlflow_module, "mlflow", fake)
     monkeypatch.setattr(mlflow_module, "MLFLOW_AVAILABLE", True)
@@ -246,6 +251,9 @@ def test_worker_thread_logging_does_not_leave_run_active_on_that_thread(
 ) -> None:
     """A pooled worker that logged a trial must not keep the run on its stack."""
     import threading
+
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
 
     fake = _ThreadLocalMLflow()
     monkeypatch.setattr(mlflow_module, "mlflow", fake)

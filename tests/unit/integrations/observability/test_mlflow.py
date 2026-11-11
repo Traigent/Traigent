@@ -24,6 +24,10 @@ from traigent.api.types import (
 )
 from traigent.integrations.observability import mlflow as mlflow_module
 
+# Mocked tracker transports: these tests exercise the tracker itself, which is
+# gated while offline (#3186), so run them in the connected lane.
+pytestmark = pytest.mark.backend_online
+
 
 class MockMLflowRun:
     """Mock MLflow run object."""
@@ -215,6 +219,11 @@ class TestTraigentMLflowTracker:
 
         assert tracker.auto_log is True
         assert tracker.current_run is None
+        # The experiment is resolved on the first run, not at construction (#3186).
+        assert patched_mlflow.active_experiment is None
+        tracker.start_optimization_run(
+            function_name="f", objectives=["accuracy"], configuration_space={}
+        )
         assert patched_mlflow.active_experiment == "traigent_optimization"
 
     def test_init_with_custom_tracking_uri(self, patched_mlflow: MockMLflow) -> None:
@@ -230,6 +239,10 @@ class TestTraigentMLflowTracker:
         """Test initialization creates new experiment if it doesn't exist."""
         tracker = mlflow_module.TraigentMLflowTracker(experiment_name="new_experiment")
 
+        assert "new_experiment" not in patched_mlflow.experiments
+        tracker.start_optimization_run(
+            function_name="f", objectives=["accuracy"], configuration_space={}
+        )
         assert "new_experiment" in patched_mlflow.experiments
         assert tracker.experiment_id is not None
 
@@ -242,6 +255,10 @@ class TestTraigentMLflowTracker:
 
         tracker = mlflow_module.TraigentMLflowTracker(experiment_name="my_experiment")
 
+        assert tracker.experiment_id is None
+        tracker.start_optimization_run(
+            function_name="f", objectives=["accuracy"], configuration_space={}
+        )
         assert tracker.experiment_id == "exp_existing"
 
     def test_init_handles_experiment_creation_failure(
@@ -257,6 +274,9 @@ class TestTraigentMLflowTracker:
         patched_mlflow.create_experiment = raise_error  # type: ignore[assignment]
 
         tracker = mlflow_module.TraigentMLflowTracker()
+        tracker.start_optimization_run(
+            function_name="f", objectives=["accuracy"], configuration_space={}
+        )
 
         assert tracker.experiment_id is None
 

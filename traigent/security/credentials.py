@@ -34,6 +34,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from traigent.security.config import get_security_flags
+from traigent.utils.env_config import is_truthy, resolve_environment_name
 from traigent.utils.exceptions import AuthenticationError as SecurityError
 from traigent.utils.logging import get_logger
 
@@ -1094,19 +1095,29 @@ class EnhancedCredentialStore:
 def get_secure_credential_store() -> EnhancedCredentialStore:
     """Get production-ready credential store with secure defaults."""
     # Detect environment
-    environment = os.getenv("TRAIGENT_ENVIRONMENT", "production").lower()
-
-    # Set security level based on environment
-    if environment == "production":
+    # Fail closed: if ANY environment variable says production, treat the
+    # process as production (ENVIRONMENT=development must not downgrade a
+    # TRAIGENT_ENVIRONMENT=production setting).
+    declared = [
+        value.strip().lower()
+        for key in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")
+        if (value := os.getenv(key)) is not None and value.strip()
+    ]
+    # Unset or unrecognised names also fail closed: reduced security needs every
+    # declared variable to be an explicitly recognised non-production name.
+    non_production = ("dev", "development", "local", "test", "testing")
+    staging = ("stage", "staging")
+    environment = resolve_environment_name(default=None)
+    if not declared or any(value not in non_production + staging for value in declared):
         security_level = SecurityLevel.MAXIMUM
-    elif environment == "staging":
+    elif environment in staging:
         security_level = SecurityLevel.HIGH
     else:
         security_level = SecurityLevel.STANDARD
         logger.info(f"Credential store in {environment} mode - reduced security")
 
     # Check for HSM availability
-    enable_hsm = os.getenv("TRAIGENT_ENABLE_HSM", "false").lower() == "true"
+    enable_hsm = is_truthy(os.getenv("TRAIGENT_ENABLE_HSM"))
 
     return EnhancedCredentialStore(
         security_level=security_level,

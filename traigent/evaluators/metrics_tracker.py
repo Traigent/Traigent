@@ -22,6 +22,7 @@ from traigent._version import get_version
 # pre-merge path; this aggregation path mirrors the SAME semantics — user keys
 # are truncated, evaluator keys are never dropped.
 from traigent.knobs.telemetry import TOTAL_MEASURES_CEILING
+from traigent.utils.env_config import is_truthy
 from traigent.utils.logging import get_logger
 from traigent.utils.numeric_validation import validate_token_count
 
@@ -39,7 +40,7 @@ logger = get_logger(__name__)
 #: ``test_user_metric_pattern_matches_measuresdict_pattern`` so any drift fails a
 #: test rather than silently reopening the bypass. ``re.ASCII`` keeps ``\w`` to
 #: ``[A-Za-z0-9_]`` so Unicode identifiers (e.g. ``"π_metric"``) are rejected.
-USER_METRIC_KEY_PATTERN: re.Pattern[str] = re.compile(r"^[a-zA-Z_]\w*$", re.ASCII)
+USER_METRIC_KEY_PATTERN: re.Pattern[str] = re.compile(r"^[a-zA-Z_]\w*\Z", re.ASCII)
 
 # Expose TOKENCOST availability and backward compatibility functions for tests
 try:
@@ -1000,11 +1001,7 @@ class MetricsTracker:
     def _empty_aggregated_metrics(self) -> dict[str, Any]:
         """Return empty aggregated metrics structure."""
         # Check for strict metrics nulls mode
-        strict_nulls = os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+        strict_nulls = is_truthy(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
         missing_default = None if strict_nulls else 0.0
 
         empty_stats = {
@@ -1157,11 +1154,7 @@ class MetricsTracker:
             logger.exception(f"Error aggregating metrics: {e}")
             return self._empty_backend_format()
 
-        strict_nulls = os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+        strict_nulls = is_truthy(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
 
         # Safe getter with defaults
         def safe_get(
@@ -1453,11 +1446,7 @@ class MetricsTracker:
     def _empty_backend_format(self) -> dict[str, Any]:
         """Return empty backend format structure when error occurs."""
         # Check for strict metrics nulls mode
-        strict_nulls = os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+        strict_nulls = is_truthy(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
         missing_default = None if strict_nulls else 0.0
 
         return {

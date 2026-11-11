@@ -54,7 +54,7 @@ logger = get_logger(__name__)
 
 _SECURE_RANDOM = SystemRandom()
 
-_EXAMPLE_SET_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{3,128}$")
+_EXAMPLE_SET_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{3,128}\Z")
 _TAG_KEY_SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
 _TAG_CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x1f\x7f]+")
 _METADATA_TAG_VALUE_TYPES = (str, int, float, bool)

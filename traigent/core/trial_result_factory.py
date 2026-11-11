@@ -18,7 +18,11 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
-from traigent.core.exception_handler import classify_systematic_provider_failure
+from traigent.core.exception_handler import (
+    ClassifiedErrorText,
+    classify_systematic_provider_failure,
+    preserve_error_text,
+)
 from traigent.evaluators.base import (
     MEASURED_ONLY_METRICS,
     OBJECTIVE_SOURCE_METRICS,
@@ -471,9 +475,12 @@ def _provider_failure_summary(
     for error in errors:
         if not error:
             continue
-        category = classify_systematic_provider_failure(
-            _EXCEPTION_CLASS_MARKER.sub(r"\1", str(error))
-        )
+        error_text = preserve_error_text(error)
+        if not isinstance(error_text, ClassifiedErrorText):
+            # The class marker is for humans; classification reads the text
+            # without it. A ClassifiedErrorText already carries its verdict.
+            error_text = _EXCEPTION_CLASS_MARKER.sub(r"\1", error_text)
+        category = classify_systematic_provider_failure(error_text)
         if category is None:
             continue
         fatal_failures += 1

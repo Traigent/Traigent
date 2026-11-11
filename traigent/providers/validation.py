@@ -84,7 +84,7 @@ _PROVIDER_PATTERNS: dict[str, re.Pattern[str]] = {
 
 # HuggingFace bare org/model pattern (e.g. "meta-llama/Meta-Llama-3-8B-Instruct").
 # Applied as a LAST RESORT only when the leading segment is not a known provider prefix.
-_HF_ORG_MODEL_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$")
+_HF_ORG_MODEL_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+\Z")
 
 # Also accept provider/model and provider:model formats (LiteLLM compatibility).
 # Supports underscores and digits in the prefix (e.g. vertex_ai, together_ai).

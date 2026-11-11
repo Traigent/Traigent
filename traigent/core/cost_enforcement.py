@@ -58,7 +58,7 @@ from traigent.utils.env_config import (
     strict_cost_accounting_origin,
 )
 from traigent.utils.exceptions import ConfigurationError, CostLimitExceeded
-from traigent.utils.money import format_usd
+from traigent.utils.money import cost_cap_reached, format_usd
 
 logger = logging.getLogger(__name__)
 
@@ -382,7 +382,7 @@ def _spend_reached_limit(known_spend: object, cost_limit: object) -> bool:
     return (
         isinstance(known_spend, (int, float))
         and isinstance(cost_limit, (int, float))
-        and known_spend >= cost_limit
+        and cost_cap_reached(known_spend, cost_limit)
     )
 
 
@@ -774,15 +774,18 @@ class CostEnforcer:
                 # Blank means "unset" (callers blank it on purpose so a later
                 # load_dotenv cannot refill it): default, no warning.
                 return DEFAULT_COST_LIMIT_USD
+            # A malformed budget must not silently widen the cap: fail fast and
+            # name the variable. A leading "$" is accepted.
             try:
-                parsed = float(raw)
+                parsed = float(raw.strip().removeprefix("$"))
             except ValueError:
-                logger.warning(
-                    "Invalid TRAIGENT_RUN_COST_LIMIT=%r, using default %s",
-                    raw,
-                    DEFAULT_COST_LIMIT_USD,
+                parsed = float("nan")
+            if not math.isfinite(parsed):
+                raise ConfigurationError(
+                    f"TRAIGENT_RUN_COST_LIMIT={raw!r} is not a finite number of "
+                    "USD (for example 0.50). Fix the value or unset the variable "
+                    f"to use the default {format_usd(DEFAULT_COST_LIMIT_USD)}."
                 )
-                return DEFAULT_COST_LIMIT_USD
             # Nonpositive limits raise at config time instead of silently
             # blocking every trial (issue #1684 item 3); validate_cost_limit
             # in CostEnforcerConfig.__post_init__ enforces this, but raising
@@ -832,10 +835,10 @@ class CostEnforcer:
                 # the limit with it is proof enough. The trial-count fallback
                 # stays as an extra bound for the spend we cannot see.
                 return (
-                    self._accumulated_cost >= self.config.limit
+                    cost_cap_reached(self._accumulated_cost, self.config.limit)
                     or self._trial_count >= self.config.fallback_trial_limit
                 )
-            return self._accumulated_cost >= self.config.limit
+            return cost_cap_reached(self._accumulated_cost, self.config.limit)
 
     def waive_unknown_cost_trial_cap(self) -> None:
         """Let an explicitly sized run continue while its cost is unmeasured.
@@ -1386,7 +1389,7 @@ Options:
 
         pct = self._accumulated_cost / self.config.limit
 
-        if pct >= 1.0:
+        if cost_cap_reached(self._accumulated_cost, self.config.limit):
             logger.warning(
                 f"COST LIMIT REACHED: {format_usd(self._accumulated_cost)} "
                 f"(limit: {format_usd(self.config.limit)})"
@@ -1486,7 +1489,9 @@ Options:
             if total_trials >= self.config.fallback_trial_limit:
                 return Permit(id=-1, amount=0.0, active=False)  # Denied
             # The known spend floor still counts against the cost limit.
-            if self._accumulated_cost + self._reserved_cost >= self.config.limit:
+            if cost_cap_reached(
+                self._accumulated_cost + self._reserved_cost, self.config.limit
+            ):
                 return Permit(id=-1, amount=0.0, active=False)  # Denied
 
             self._in_flight_count += 1

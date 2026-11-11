@@ -39,7 +39,7 @@ temperature = Range.temperature(creative=True)  # [0.7, 1.5]
 max_tokens = IntRange.max_tokens(task="medium")  # [256, 1024]
 # Choices.model() defaults are owned by the library and may change, so use an
 # explicit list that contains the model the constraint below names.
-model = Choices(["gpt-4.1-mini", "gpt-4.1"], name="model")
+model = Choices(["gpt-4.1-mini", "gpt-4.1"], default="gpt-4.1-mini", name="model")
 top_p = Range.top_p()  # [0.1, 1.0]
 
 # Define constraints
@@ -63,7 +63,7 @@ constraints = [
     eval_dataset=DATASET_PATH,
     offline=True,
 )
-def creative_writer(question: str) -> str:
+def creative_writer(question: str) -> str | dict:
     """Mock creative writing function using all configured parameters."""
     config = traigent.get_config()
 
@@ -106,7 +106,8 @@ def creative_writer(question: str) -> str:
     if p_value < 0.5:
         answer = f"{answer} (focused, top_p={p_value:.2f})"
 
-    return answer
+    # The mock writer makes no model call, so its measured cost is exactly $0.
+    return traigent.with_usage(answer, total_cost=0.0)
 
 
 async def main() -> None:
@@ -125,10 +126,11 @@ async def main() -> None:
     print("  2. temperature >= 1.0 -> max_tokens >= 512")
     print("  3. top_p <= 0.5 -> temperature <= 0.9")
 
-    # Use optuna algorithm which handles all parameter types correctly
+    # The local SDK supports 'random' and 'grid'; smart algorithms (for example
+    # 'optuna') run in the Traigent cloud and need a backend connection.
     print("\nRunning optimization...")
     results = await creative_writer.optimize(
-        algorithm="optuna", max_trials=12, random_seed=42
+        algorithm="random", max_trials=12, random_seed=42
     )
 
     print("\nBest Configuration Found:")
