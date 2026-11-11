@@ -560,7 +560,8 @@ class TestResourceConstraint:
 
         msg = constraint.get_violation_message({"any": "config"})
         assert "Cannot calculate resource usage:" in msg
-        assert "Calculator error" in msg
+        assert "calculator raised ValueError" in msg
+        assert "Calculator error" not in msg  # exception text never echoed
 
     def test_resource_constraint_complex_calculator(self):
         """Test resource constraint with complex calculator."""
@@ -692,8 +693,8 @@ class TestCustomConstraint:
 
         config = {"any": "config"}
         msg = constraint.get_violation_message(config)
-        assert "Custom constraint 'broken' violated:" in msg
-        assert "Message error" in msg
+        assert "message generator raised ValueError" in msg
+        assert "Message error" not in msg  # exception text never echoed
 
         suggestion = constraint.get_suggestion(config)
         assert suggestion is None  # Exception in suggestion generator
@@ -1323,7 +1324,8 @@ class TestCTDScenarios:
         if not validator_result and not validator_throws:
             msg = constraint.get_violation_message({"test": "config"})
             if message_throws:
-                assert "Custom constraint 'custom' violated:" in msg
+                assert "message generator raised ValueError" in msg
+                assert "Message error" not in msg
             else:
                 assert msg == "Test message"
 
@@ -1413,3 +1415,18 @@ class TestRaisingValidatorDoesNotLeakText:
         # validator ran once for the manager and once for the space: not re-run
         # to build the message.
         assert len(calls) == 2
+
+    def test_resource_message_does_not_rerun_calculator(self):
+        calls = []
+
+        def calculator(config):
+            calls.append(1)
+            return 1.5
+
+        constraint = ResourceConstraint("res", calculator, 1.0)
+        manager = ConstraintManager()
+        manager.add_constraint(constraint)
+        _, violations = manager.validate_configuration({"x": 1})
+
+        assert len(calls) == 1
+        assert "1.500" in violations[0].message
