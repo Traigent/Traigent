@@ -2320,12 +2320,19 @@ class BackendIntegratedClient:
                 new_loop.close()
 
         try:
+            # Detect the loop first so a RuntimeError raised by the header work
+            # is not mistaken for "no running loop" (#3144).
             try:
                 asyncio.get_running_loop()
+                in_running_loop = True
+            except RuntimeError:
+                in_running_loop = False
+
+            if in_running_loop:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(_run_in_new_loop)
                     headers = future.result(timeout=min(self.timeout, 30.0))
-            except RuntimeError:
+            else:
                 headers = asyncio.run(_get_headers_async())
         except AuthenticationError:
             # Re-raise: a backend-rejected key must NEVER be downgraded to a

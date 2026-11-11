@@ -1202,8 +1202,15 @@ class SessionOperations:
 
         # Run async method in sync context
         try:
+            # Detect the loop first so a RuntimeError raised by the work itself
+            # is not mistaken for "no running loop" (#3078).
             try:
                 asyncio.get_running_loop()
+                in_running_loop = True
+            except RuntimeError:
+                in_running_loop = False
+
+            if in_running_loop:
 
                 def _run_in_new_loop() -> SessionCreationResult:
                     new_loop = asyncio.new_event_loop()
@@ -1220,12 +1227,11 @@ class SessionOperations:
                 executor = _get_session_executor()
                 future = executor.submit(_run_in_new_loop)
                 return future.result(timeout=60)
-            except RuntimeError:
-                return asyncio.run(
-                    _with_loop_local_session(
-                        self.client, _create_session_async(self, context)
-                    )
+            return asyncio.run(
+                _with_loop_local_session(
+                    self.client, _create_session_async(self, context)
                 )
+            )
 
         except ValidationException:
             raise  # User input errors must propagate

@@ -608,9 +608,15 @@ class TrialOperations:
                 _sync_registration_loop.reset(context_reset)
 
         try:
-            # Check if there's a running event loop
+            # Detect the loop first so a RuntimeError raised by the work itself
+            # is not mistaken for "no running loop" (#3144).
             try:
-                asyncio.get_running_loop()  # Raises RuntimeError if no loop running
+                asyncio.get_running_loop()
+                in_running_loop = True
+            except RuntimeError:
+                in_running_loop = False
+
+            if in_running_loop:
                 # Loop is running (e.g., in Jupyter, async frameworks).
                 # CRITICAL: run_coroutine_threadsafe().result() DEADLOCKS if called
                 # from the same thread as the running loop — the loop cannot process
@@ -631,9 +637,8 @@ class TrialOperations:
                     future = executor.submit(_run_in_new_loop)
                     return future.result(timeout=60)
 
-            except RuntimeError:
-                # No running loop, safe to use asyncio.run()
-                return asyncio.run(_register_async())
+            # No running loop, safe to use asyncio.run()
+            return asyncio.run(_register_async())
         except Exception:
             logger.exception(
                 "Failed to register trial start synchronously for session %s trial %s (%s)",
