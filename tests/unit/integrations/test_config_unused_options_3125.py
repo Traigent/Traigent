@@ -1,0 +1,43 @@
+"""configure_integrations warns about options that nothing reads (#3125)."""
+
+from __future__ import annotations
+
+import warnings
+from dataclasses import fields
+
+import pytest
+
+import traigent.integrations.config as config_module
+from traigent.integrations.config import IntegrationConfig, configure_integrations
+
+
+@pytest.fixture(autouse=True)
+def _restore_config():
+    saved = config_module.integration_config
+    config_module.integration_config = IntegrationConfig()
+    yield
+    config_module.integration_config = saved
+
+
+def test_non_default_value_warns_that_option_has_no_effect():
+    with pytest.warns(UserWarning, match="strict_mode.*no effect"):
+        configure_integrations(strict_mode=True)
+
+
+@pytest.mark.parametrize("name", [f.name for f in fields(IntegrationConfig)])
+def test_every_unread_option_warns_when_changed(name):
+    default = getattr(IntegrationConfig(), name)
+    if isinstance(default, bool):
+        changed = not default
+    elif isinstance(default, float):
+        changed = 0.5
+    else:
+        changed = default + 1
+    with pytest.warns(UserWarning, match=name):
+        configure_integrations(**{name: changed})
+
+
+def test_default_value_does_not_warn():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        configure_integrations(strict_mode=False, max_fallback_attempts=4)

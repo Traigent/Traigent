@@ -544,7 +544,14 @@ auto_migrate_parameters: bool = True
 # Performance
 max_fallback_attempts: int = 4
 log_override_details: bool = False
+
+# Safety
+allow_unknown_parameters: bool = False
+sanitize_parameters: bool = True
 ```
+
+Note: no integration module reads these fields yet. `configure_integrations()`
+stores them and emits a `UserWarning` when a non-default value is set.
 
 ---
 
