@@ -263,15 +263,24 @@ def create_resilient_wrapper(
     wrapper: Callable[..., Any],
     fallback_on_error: bool = True,
 ) -> Callable[..., Any]:
-    """Create a resilient wrapper that falls back to original on error.
+    """Create a wrapper that reports errors raised by ``wrapper`` and re-raises them.
+
+    ``wrapper`` usually injects tuned parameters and then calls the vendor, so
+    an error it raises may come from the vendor call. Re-issuing the request
+    through ``original`` would bill it twice and return a result that does not
+    reflect the tuned configuration, so errors are never swallowed: one
+    WARNING naming only the error type is logged (never its message or
+    arguments) and the original exception propagates unchanged, with its cause
+    and traceback.
 
     Args:
-        original: Original function
-        wrapper: Wrapper function that might fail
-        fallback_on_error: Whether to fall back to original on wrapper error
+        original: Original function (used for metadata and sync/async dispatch)
+        wrapper: Wrapper function that calls the vendor
+        fallback_on_error: When False, ``wrapper`` is returned unchanged
+            without the warning log
 
     Returns:
-        Resilient wrapper function
+        Wrapper function that propagates errors from ``wrapper``
     """
     if not fallback_on_error:
         return wrapper
@@ -281,27 +290,22 @@ def create_resilient_wrapper(
         try:
             return wrapper(*args, **kwargs)
         except Exception as exc:
-            if _should_propagate_wrapper_exception(exc):
-                raise
-            # Fallback to original on any wrapper error
-            logger.debug(
-                "Resilient wrapper fell back to original after error", exc_info=True
+            logger.warning(
+                "Wrapped call raised %s; propagating without a retry",
+                type(exc).__name__,
             )
-            return original(*args, **kwargs)
+            raise
 
     @functools.wraps(original)
     async def resilient_async_wrapper(*args, **kwargs):
         try:
             return await wrapper(*args, **kwargs)
         except Exception as exc:
-            if _should_propagate_wrapper_exception(exc):
-                raise
-            # Fallback to original on any wrapper error
-            logger.debug(
-                "Resilient async wrapper fell back to original after error",
-                exc_info=True,
+            logger.warning(
+                "Wrapped call raised %s; propagating without a retry",
+                type(exc).__name__,
             )
-            return await original(*args, **kwargs)
+            raise
 
     if inspect.iscoroutinefunction(original):
         return resilient_async_wrapper

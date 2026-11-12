@@ -505,3 +505,45 @@ class TestJsonDatasetLayouts:
         f.write_text(json.dumps(rows), encoding="utf-8")
         result = Validators.validate_dataset(str(f))
         assert _errs(result) == [("dataset:example1", "INVALID_FORMAT")]
+
+
+class TestJsonlDuplicateExampleIds:
+    """#3232: the JSONL scan applies the loader's example_id uniqueness rule."""
+
+    @pytest.mark.parametrize(
+        "rows",
+        [
+            [
+                {"input": "a", "metadata": {"example_id": "m1"}},
+                {"input": "b", "example_id": "m1"},
+            ],
+            [
+                {"input": "a", "example_id": 7},
+                {"input": "b", "example_id": 7},
+            ],
+        ],
+    )
+    def test_duplicate_ids_rejected_like_the_loader(self, tmp_path, monkeypatch, rows):
+        monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+        f = tmp_path / "d.jsonl"
+        f.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+        with pytest.raises(Exception, match="Duplicate example_id"):
+            Dataset.from_jsonl(f)
+        result = Validators.validate_dataset(f)
+        assert not result.is_valid
+        assert any("Duplicate example_id" in e.message for e in result.errors)
+
+    def test_null_empty_and_bool_ids_are_positional_not_duplicates(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+        rows = [
+            {"input": "a", "example_id": None},
+            {"input": "b", "example_id": ""},
+            {"input": "c", "example_id": True},
+            {"input": "d", "example_id": False},
+        ]
+        f = tmp_path / "d.jsonl"
+        f.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+        assert len(Dataset.from_jsonl(f)) == 4
+        assert Validators.validate_dataset(f).is_valid

@@ -322,19 +322,44 @@ class TestCreateResilientWrapper:
 
         assert result == "wrapped"
 
-    def test_resilient_wrapper_fallback_on_error(self):
-        """Test resilient wrapper falls back to original on error."""
+    def test_resilient_wrapper_fallback_on_error(self, caplog):
+        """Errors from the wrapper propagate; original is never re-called (#3149)."""
+        calls = []
 
         def original():
+            calls.append("original")
             return "original"
 
         def wrapper_func():
-            raise ValueError("Wrapper failed")
+            raise ValueError("secret-detail")
 
         resilient = create_resilient_wrapper(original, wrapper_func)
-        result = resilient()
+        with caplog.at_level("WARNING", logger="traigent.integrations.wrappers"):
+            with pytest.raises(ValueError, match="secret-detail"):
+                resilient()
 
-        assert result == "original"
+        assert calls == []
+        assert "ValueError" in caplog.text
+        assert "secret-detail" not in caplog.text
+
+    def test_vendor_called_once_when_wrapper_raises_after_calling_it(self):
+        """A vendor failure inside the wrapper is not retried (#3149)."""
+        requests = []
+        cause = ConnectionError("upstream")
+
+        def vendor(**kw):
+            requests.append(kw)
+            raise RuntimeError("429") from cause
+
+        def override(**kw):
+            return vendor(**dict(kw, temperature=0.9))
+
+        resilient = create_resilient_wrapper(vendor, override)
+        with pytest.raises(RuntimeError, match="429") as info:
+            resilient(model="m")
+
+        assert requests == [{"model": "m", "temperature": 0.9}]
+        assert info.value.__cause__ is cause
 
     def test_resilient_wrapper_propagates_critical_exception(self):
         """Critical exceptions should never be swallowed by fallback behavior."""
@@ -382,19 +407,25 @@ class TestCreateResilientWrapper:
         assert result == "wrapped"
 
     @pytest.mark.asyncio
-    async def test_async_resilient_wrapper_fallback(self):
-        """Test async resilient wrapper falls back on error."""
+    async def test_async_resilient_wrapper_fallback(self, caplog):
+        """Async errors from the wrapper propagate; original is not called."""
+        calls = []
 
         async def original():
+            calls.append("original")
             return "original"
 
         async def wrapper_func():
             raise ValueError("Async wrapper failed")
 
         resilient = create_resilient_wrapper(original, wrapper_func)
-        result = await resilient()
+        with caplog.at_level("WARNING", logger="traigent.integrations.wrappers"):
+            with pytest.raises(ValueError, match="Async wrapper failed"):
+                await resilient()
 
-        assert result == "original"
+        assert calls == []
+        assert "ValueError" in caplog.text
+        assert "Async wrapper failed" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_async_resilient_wrapper_propagates_critical_exception(self):

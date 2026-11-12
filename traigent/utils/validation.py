@@ -1216,6 +1216,47 @@ def _row_object_problem(data: Any) -> tuple[str, str] | None:
     return None
 
 
+def _example_problem(
+    item: Any, index: int, seen_ids: dict[Any, int], location: str
+) -> tuple[str, str] | None:
+    """Return ``(message, error_code)`` for an invalid example, else ``None``.
+
+    Applies the same coercion and example_id uniqueness rules as ``Dataset``
+    construction, so the validator and the loader cannot diverge. ``seen_ids``
+    is updated in place; ``index`` is the example's position in the loaded
+    dataset (it is the fallback id).
+    """
+    # Imported lazily: evaluators.base imports from this package.
+    from traigent.evaluators.base import (
+        EvaluationExample,
+        _coerce_dataset_example_mapping,
+        _example_correlation_key,
+    )
+
+    problem = _row_object_problem(item)
+    if problem is not None:
+        return problem
+    try:
+        input_data, expected, meta = _coerce_dataset_example_mapping(
+            item, source="dataset", location=location
+        )
+        key = _example_correlation_key(
+            EvaluationExample(input_data, expected, meta), index
+        )
+        previous = seen_ids.get(key)
+        if previous is not None:
+            return (
+                f"Duplicate example_id (also at example {previous})",
+                "INVALID_FORMAT",
+            )
+        seen_ids[key] = index
+    except TypeError:
+        return ("example_id must be hashable", "INVALID_FORMAT")
+    except Exception as exc:
+        return (str(exc), "INVALID_FORMAT")
+    return None
+
+
 def _scan_json_dataset(result: ValidationResult, handle: Any) -> tuple[int, int]:
     """Validate a ``.json`` dataset with the loader's layout rules (#3232).
 
@@ -1225,12 +1266,7 @@ def _scan_json_dataset(result: ValidationResult, handle: Any) -> tuple[int, int]
     no per-line re-parse.
     """
     # Imported lazily: evaluators.base imports from this package.
-    from traigent.evaluators.base import (
-        EvaluationExample,
-        _coerce_dataset_example_mapping,
-        _example_correlation_key,
-        _json_dataset_layout,
-    )
+    from traigent.evaluators.base import _json_dataset_layout
 
     try:
         data = json.load(handle)
@@ -1248,28 +1284,7 @@ def _scan_json_dataset(result: ValidationResult, handle: Any) -> tuple[int, int]
     seen_ids: dict[Any, int] = {}
     for index, item in iterable:
         row_count += 1
-        problem = _row_object_problem(item)
-        if problem is None:
-            # Same coercion and id-uniqueness rules as Dataset construction.
-            try:
-                input_data, expected, meta = _coerce_dataset_example_mapping(
-                    item, source="dataset", location=f"example {index}"
-                )
-                key = _example_correlation_key(
-                    EvaluationExample(input_data, expected, meta), index
-                )
-                previous = seen_ids.get(key)
-                if previous is not None:
-                    problem = (
-                        f"Duplicate example_id (also at example {previous})",
-                        "INVALID_FORMAT",
-                    )
-                else:
-                    seen_ids[key] = index
-            except TypeError:
-                problem = ("example_id must be hashable", "INVALID_FORMAT")
-            except Exception as exc:
-                problem = (str(exc), "INVALID_FORMAT")
+        problem = _example_problem(item, index, seen_ids, f"example {index}")
         if problem is None:
             continue
         invalid_rows += 1
@@ -1303,15 +1318,22 @@ def _scan_dataset_rows(result: ValidationResult, lines: Any) -> tuple[int, int]:
     """
     row_count = 0
     invalid_rows = 0
+    seen_ids: dict[Any, int] = {}
     for line_num, line in enumerate(lines, 1):
         text = line.strip()
         if not text:
             # Blank lines are skipped by Dataset.from_jsonl;
             # validation must agree with the runtime loader.
             continue
+        index = row_count
         row_count += 1
 
         problem = _dataset_row_problem(text)
+        if problem is None:
+            # Same uniqueness rules as Dataset construction (#3232).
+            problem = _example_problem(
+                json.loads(text), index, seen_ids, f"line {line_num}"
+            )
         if problem is None:
             continue
         invalid_rows += 1
