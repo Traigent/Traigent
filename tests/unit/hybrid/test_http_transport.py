@@ -314,6 +314,121 @@ class TestHTTPTransportMethods:
         assert response.status == "completed"
         assert len(response.outputs) == 1
 
+    @staticmethod
+    def _legacy_request() -> HybridExecuteRequest:
+        from traigent.hybrid.protocol import BatchOptions
+
+        return HybridExecuteRequest(
+            tunable_id="test_agent",
+            config={"model": "fast"},
+            examples=[
+                {"example_id": "i1", "data": {"query": "what is ML?"}},
+                {"example_id": "i2", "data": {"query": "other"}},
+            ],
+            batch_options=BatchOptions(parallelism=2),
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_falls_back_on_invalid_inputs_code(
+        self, transport: HTTPTransport
+    ) -> None:
+        """INVALID_INPUTS code (any message) triggers the inputs shape, keeping data."""
+        body = '{"error": {"code": "INVALID_INPUTS", "message": "inputs array is required."}}'
+        ok = {
+            "request_id": "r",
+            "execution_id": "e1",
+            "status": "completed",
+            "outputs": [],
+            "operational_metrics": {},
+        }
+        mock = AsyncMock(
+            side_effect=[
+                TransportError("HTTP 400", status_code=400, response_body=body),
+                ok,
+            ]
+        )
+        with patch.object(transport, "_request", mock):
+            await transport.execute(self._legacy_request())
+
+        assert mock.call_count == 2
+        retried = mock.call_args_list[1].kwargs["json_data"]
+        assert retried["inputs"] == [
+            {"input_id": "i1", "data": {"query": "what is ML?"}},
+            {"input_id": "i2", "data": {"query": "other"}},
+        ]
+        assert "examples" not in retried
+        assert retried["batch_options"]["parallelism"] == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            '{"error": {"code": "OTHER", "message": "Missing required fields: inputs"}}',
+            "Missing required fields: inputs and more",
+            "x Missing required fields: inputs",
+            '{"error": {"message": "Bad. Missing required fields: inputs"}}',
+            "not json",
+            None,
+        ],
+    )
+    async def test_execute_does_not_fall_back_without_structured_signal(
+        self, transport: HTTPTransport, body: str | None
+    ) -> None:
+        mock = AsyncMock(
+            side_effect=TransportError("HTTP 400", status_code=400, response_body=body)
+        )
+        with patch.object(transport, "_request", mock):
+            with pytest.raises(TransportError):
+                await transport.execute(self._legacy_request())
+        assert mock.call_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "Missing required fields: inputs",
+            '{"error": {"message": "Missing required fields: inputs"}}',
+            '{"message": "Missing required fields: inputs"}',
+        ],
+    )
+    async def test_execute_legacy_exact_phrase_still_retries(
+        self, transport: HTTPTransport, body: str
+    ) -> None:
+        """Legacy compatibility: exact phrase, no structured code."""
+        ok = {
+            "request_id": "r",
+            "execution_id": "e1",
+            "status": "completed",
+            "outputs": [],
+            "operational_metrics": {},
+        }
+        mock = AsyncMock(
+            side_effect=[
+                TransportError("HTTP 400", status_code=400, response_body=body),
+                ok,
+            ]
+        )
+        with patch.object(transport, "_request", mock):
+            await transport.execute(self._legacy_request())
+        assert mock.call_count == 2
+        assert "inputs" in mock.call_args_list[1].kwargs["json_data"]
+
+    @pytest.mark.asyncio
+    async def test_legacy_payload_keeps_outer_id_over_nested_ids(self) -> None:
+        request = HybridExecuteRequest(
+            tunable_id="a",
+            config={},
+            examples=[
+                {
+                    "example_id": "outer",
+                    "data": {"input_id": "nested1", "example_id": "nested2"},
+                }
+            ],
+        )
+        payload = HTTPTransport._build_legacy_payload(request)
+        assert payload["inputs"][0]["input_id"] == "outer"
+        assert payload["inputs"][0]["data"]["input_id"] == "nested1"
+
     @pytest.mark.asyncio
     async def test_health_check(self, transport: HTTPTransport) -> None:
         """Test health check method."""

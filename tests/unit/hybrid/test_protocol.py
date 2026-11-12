@@ -1,5 +1,7 @@
 """Unit tests for hybrid mode protocol DTOs."""
 
+import pytest
+
 from traigent.hybrid.protocol import (
     BatchOptions,
     ConfigSpaceResponse,
@@ -546,23 +548,54 @@ class TestHealthCheckResponse:
 
 
 class TestExecuteResponseMissingExecutionId:
-    """Test HybridExecuteResponse fallback when execution_id is missing."""
+    """A missing or invalid execution_id fails closed; no id is fabricated."""
 
-    def test_missing_execution_id_generates_fallback(self) -> None:
-        """Missing execution_id should generate a UUID fallback."""
+    @staticmethod
+    def _data(**extra: object) -> dict:
         data = {
             "request_id": "req_abc",
             "status": "completed",
             "outputs": [],
             "operational_metrics": {},
         }
+        data.update(extra)
+        return data
 
+    @pytest.mark.parametrize("bad", [None, "", "   ", 123, {}])
+    def test_missing_or_invalid_execution_id_raises(self, bad: object) -> None:
+        data = self._data()
+        if bad is not None:
+            data["execution_id"] = bad
+        with pytest.raises(ValueError, match="execution_id"):
+            HybridExecuteResponse.from_dict(data)
+
+    def test_absent_key_raises(self) -> None:
+        with pytest.raises(ValueError, match="execution_id"):
+            HybridExecuteResponse.from_dict(self._data())
+
+    @pytest.mark.parametrize("status", ["failed", "error"])
+    @pytest.mark.parametrize("eid", [None, ""])
+    def test_failed_response_keeps_structured_error(
+        self, status: str, eid: object
+    ) -> None:
+        data = self._data(
+            status=status, error={"code": "AUTH_ERROR", "message": "nope"}
+        )
+        if eid is not None:
+            data["execution_id"] = eid
         response = HybridExecuteResponse.from_dict(data)
+        assert response.status == "failed"
+        assert response.error == {"code": "AUTH_ERROR", "message": "nope"}
+        assert response.execution_id == ""
 
-        assert response.request_id == "req_abc"
-        # execution_id should be a generated UUID string
-        assert response.execution_id is not None
-        assert len(response.execution_id) == 36  # UUID format
+    @pytest.mark.parametrize("status", ["completed", "partial"])
+    def test_success_shaped_without_id_still_raises(self, status: str) -> None:
+        with pytest.raises(ValueError, match="execution_id"):
+            HybridExecuteResponse.from_dict(self._data(status=status))
+
+    def test_valid_execution_id_preserved(self) -> None:
+        response = HybridExecuteResponse.from_dict(self._data(execution_id="exec_1"))
+        assert response.execution_id == "exec_1"
 
 
 class TestEvaluateResponseExecutionId:
