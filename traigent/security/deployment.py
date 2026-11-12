@@ -360,16 +360,22 @@ class BackupManager:
         if not backup:
             return {"error": f"Backup {backup_id} not found"}
 
-        # Simulate restore process
-        restore_info = {
+        logger.error(
+            "BackupManager.restore_backup(%r) called but no restore executor "
+            "is configured. Returning status='unsupported'; no restore was "
+            "started.",
+            backup_id,
+        )
+        return {
             "backup_id": backup_id,
-            "restore_started_at": datetime.now(UTC).isoformat(),
-            "estimated_duration_minutes": 30,
-            "status": "in_progress",
+            "status": "unsupported",
+            "reason": (
+                "No real restore implementation is wired. Override "
+                "BackupManager.restore_backup in a subclass to provide one. "
+                "NO RESTORE WAS STARTED."
+            ),
+            "requested_at": datetime.now(UTC).isoformat(),
         }
-
-        logger.info(f"Started restore from backup: {backup_id}")
-        return restore_info
 
     def cleanup_expired_backups(self) -> int:
         """Clean up expired backups."""

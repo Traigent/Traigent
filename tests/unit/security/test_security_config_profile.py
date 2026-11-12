@@ -52,3 +52,12 @@ def test_invalid_explicit_profile_fails_closed_without_echoing_value(
     assert profile is SecurityProfile.PRODUCTION
     assert "TRAIGENT_SECURITY_PROFILE" in caplog.text
     assert "prod-secret-typo" not in caplog.text
+
+
+def test_pytest_marker_does_not_downgrade_production(monkeypatch):
+    """PYTEST_CURRENT_TEST must never weaken a production process."""
+    _clear_security_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/x.py::t (call)")
+
+    assert get_security_profile() is SecurityProfile.PRODUCTION

@@ -351,6 +351,9 @@ class SecureRateLimiter:
         if not identifier:
             identifier = self._generate_secure_identifier(ip_address, username, api_key)
 
+        with self._lock:
+            self._evict_idle(time.time())
+
         # Check multiple identifiers if enabled (prevents bypass via parameter switching)
         if self.config.check_multiple_identifiers:
             identifiers_to_check = []
@@ -533,19 +536,21 @@ class SecureRateLimiter:
                 identifiers.append(self._generate_secure_identifier(api_key=api_key))
         # Preserve order, drop duplicates (single-component calls collapse)
         identifiers = list(dict.fromkeys(identifiers))
-        # The shared per-IP bucket is never cleared by one principal's success.
+        # The per-IP bucket is shared by many principals and is never cleared
+        # on success, even when it is also the primary identifier.
         shared_ip_id = (
             self._generate_secure_identifier(ip_address=ip_address)
-            if ip_address and self.config.check_multiple_identifiers
+            if ip_address
             else None
         )
 
         with self._lock:
             now = time.time()
+            self._evict_idle(now)
 
             for ident in identifiers:
                 if success:
-                    if ident == shared_ip_id and ident != identifier:
+                    if ident == shared_ip_id:
                         continue
                     # Clear failed attempts on success
                     if ident in self.attempts:
@@ -559,6 +564,21 @@ class SecureRateLimiter:
                 else:
                     # Record failed attempt
                     self.attempts[ident].append(now)
+
+    def _evict_idle(self, now: float) -> None:
+        """Drop identifiers whose windows expired and that hold no lockout.
+
+        Caller must hold ``self._lock``. Active lockouts are always kept.
+        """
+        for ident, until in list(self.lockouts.items()):
+            if until <= now:
+                del self.lockouts[ident]
+        window_start = now - self.config.window_seconds
+        for ident, attempts in list(self.attempts.items()):
+            if ident in self.lockouts:
+                continue
+            if not attempts or attempts[-1] < window_start:
+                del self.attempts[ident]
 
     def get_progressive_delay(self, identifier: str) -> float:
         """Get progressive delay with security limits."""

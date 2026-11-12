@@ -904,11 +904,12 @@ class TestSecureAuthenticationRateLimiter:
         # Record success
         auth_limiter.record_auth_result(success=True, ip_address=ip_address)
 
-        # Should clear attempts
+        # The shared per-IP bucket is never cleared by a success, so one
+        # success cannot reset a spray counter for the whole address.
         identifier = auth_limiter.limiter._generate_secure_identifier(
             ip_address=ip_address
         )
-        assert len(auth_limiter.limiter.attempts.get(identifier, deque())) == 0
+        assert len(auth_limiter.limiter.attempts.get(identifier, deque())) == 3
 
     def test_record_auth_result_failure(
         self, auth_limiter: SecureAuthenticationRateLimiter
@@ -1657,3 +1658,71 @@ class TestAuthLimiterRecordsUnderCheckedIdentifiers:
             ip_address="198.51.100.1", username="other"
         )
         assert result.allowed is True
+
+    def test_user_agent_failures_land_in_combined_identifier_bucket(self) -> None:
+        """The UA-qualified combined bucket is written, in isolation."""
+        import hashlib
+
+        limiter = SecureAuthenticationRateLimiter()
+        ua = "Mozilla/5.0"
+        for _ in range(3):
+            limiter.record_auth_result(
+                success=False,
+                ip_address="203.0.113.20",
+                username="carol",
+                user_agent=ua,
+            )
+        inner = limiter.limiter
+        ua_hash = hashlib.sha256(ua.encode()).hexdigest()[:8]
+        combined = inner._generate_secure_identifier(
+            "203.0.113.20", "carol", None, {"ua": ua_hash}
+        )
+        no_ua = inner._generate_secure_identifier("203.0.113.20", "carol", None)
+        assert len(inner.attempts[combined]) == 3
+        assert combined != no_ua
+        assert len(inner.attempts[no_ua]) == 0
+
+    @pytest.mark.asyncio
+    async def test_ip_only_success_does_not_clear_shared_ip_bucket(self) -> None:
+        limiter = SecureAuthenticationRateLimiter()
+        limiter.config.progressive_delay = False
+        ip = "203.0.113.21"
+        for i in range(limiter.config.max_attempts):
+            limiter.record_auth_result(success=False, ip_address=ip, username=f"u{i}")
+        limiter.record_auth_result(success=True, ip_address=ip)
+        result = await limiter.check_auth_attempt(ip_address=ip, username="new")
+        assert result.allowed is False
+
+    def test_rotating_usernames_does_not_grow_state_without_bound(self) -> None:
+        limiter = SecureAuthenticationRateLimiter()
+        inner = limiter.limiter
+        inner.config.window_seconds = 1
+        with patch("traigent.security.rate_limiter.time.time") as fake_time:
+            fake_time.return_value = 1000.0
+            for i in range(200):
+                limiter.record_auth_result(
+                    success=False, ip_address="198.51.100.5", username=f"rot{i}"
+                )
+            fake_time.return_value = 2000.0
+            inner.check_rate_limit(ip_address="198.51.100.5", username="fresh")
+            limiter.record_auth_result(
+                success=False, ip_address="198.51.100.5", username="fresh"
+            )
+        assert len(inner.attempts) <= 5
+
+    def test_eviction_keeps_active_lockouts(self) -> None:
+        limiter = SecureAuthenticationRateLimiter()
+        inner = limiter.limiter
+        with patch("traigent.security.rate_limiter.time.time") as fake_time:
+            fake_time.return_value = 1000.0
+            for _ in range(inner.config.max_attempts):
+                limiter.record_auth_result(
+                    success=False, ip_address="198.51.100.6", username="locked"
+                )
+            first = inner.check_rate_limit(ip_address="198.51.100.6", username="locked")
+            assert first.allowed is False
+            fake_time.return_value = 1000.0 + inner.config.window_seconds + 10
+            second = inner.check_rate_limit(
+                ip_address="198.51.100.6", username="locked"
+            )
+        assert second.allowed is False

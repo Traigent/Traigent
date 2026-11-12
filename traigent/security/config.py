@@ -59,8 +59,6 @@ def get_security_profile() -> SecurityProfile:
             return SecurityProfile.PRODUCTION
 
     env = resolve_environment_name(default="production") or "production"
-    if os.getenv("PYTEST_CURRENT_TEST") and explicit is None:
-        return SecurityProfile.DEVELOPMENT
     if env in {"dev", "development", "local"}:
         return SecurityProfile.DEVELOPMENT
     if env in {"stage", "staging"}:

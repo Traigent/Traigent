@@ -859,9 +859,10 @@ class TestBackupManagerRestoreBackup:
         restore = manager.restore_backup("backup_synth")
 
         assert restore["backup_id"] == "backup_synth"
-        assert restore["status"] == "in_progress"
-        assert restore["estimated_duration_minutes"] == 30
-        assert "restore_started_at" in restore
+        assert restore["status"] == "unsupported"
+        assert "estimated_duration_minutes" not in restore
+        assert "restore_started_at" not in restore
+        assert "reason" in restore
 
     def test_restore_backup_not_found(self, manager: BackupManager) -> None:
         """Test restoring from non-existent backup returns error."""
@@ -871,22 +872,15 @@ class TestBackupManagerRestoreBackup:
         assert "not found" in restore["error"]
 
     @patch("traigent.security.deployment.logger")
-    def test_restore_backup_logs_info(
+    def test_restore_backup_logs_error_not_success(
         self, mock_logger: MagicMock, manager: BackupManager
     ) -> None:
-        """Test restore operation logs informational message."""
+        """An unsupported restore is logged as an error, never as started."""
         manager.backups.append(_synthetic_backup_entry("backup_synth"))
         manager.restore_backup("backup_synth")
 
-        mock_logger.info.assert_called()
-        # Find the restore log message
-        restore_log_found = False
-        for call in mock_logger.info.call_args_list:
-            log_message = call[0][0]
-            if "Started restore from backup" in log_message:
-                restore_log_found = True
-                break
-        assert restore_log_found
+        mock_logger.error.assert_called_once()
+        mock_logger.info.assert_not_called()
 
 
 class TestBackupManagerCleanupExpiredBackups:
