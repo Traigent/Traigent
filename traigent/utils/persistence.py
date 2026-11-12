@@ -1019,6 +1019,30 @@ class PersistenceManager:
             artifact_name=name,
         )
 
+    def _read_listing_metadata(self, result_dir: Path) -> dict[str, Any] | None:
+        """Curated listing entry for one result directory, or None to skip it."""
+        metadata_file = self._resolve_path(result_dir / METADATA_FILE)
+        if not metadata_file.exists():
+            return None
+        try:
+            with safe_open(metadata_file, self.base_dir, mode="r") as f:
+                metadata: dict[str, Any] = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return None
+        # #2666: surface the run outcome for the CLI list
+        # from the full field set; absent on legacy results
+        # (never guessed), so renderers show "unknown".
+        fields = metadata.pop("result_fields", None)
+        if isinstance(fields, dict) and isinstance(fields.get("status"), str):
+            metadata["status"] = fields["status"]
+        # … and the version stamp that describes it: it says
+        # nothing about the curated summary keys, and a renderer
+        # that dumps every key of a listing entry would show it
+        # as if it were one of the result's own values.
+        metadata.pop(SCHEMA_VERSION_KEY, None)
+        metadata["name"] = result_dir.name
+        return metadata
+
     def list_results(self) -> list[dict[str, Any]]:
         """List all saved optimization results.
 
@@ -1034,28 +1058,9 @@ class PersistenceManager:
 
         for result_dir in self.base_dir.iterdir():
             if result_dir.is_dir() and not result_dir.name.startswith(_STAGING_PREFIX):
-                metadata_file = self._resolve_path(result_dir / METADATA_FILE)
-                if metadata_file.exists():
-                    try:
-                        with safe_open(metadata_file, self.base_dir, mode="r") as f:
-                            metadata = json.load(f)
-                        # #2666: surface the run outcome for the CLI list
-                        # from the full field set; absent on legacy results
-                        # (never guessed), so renderers show "unknown".
-                        fields = metadata.pop("result_fields", None)
-                        if isinstance(fields, dict) and isinstance(
-                            fields.get("status"), str
-                        ):
-                            metadata["status"] = fields["status"]
-                        # … and the version stamp that describes it: it says
-                        # nothing about the curated summary keys, and a renderer
-                        # that dumps every key of a listing entry would show it
-                        # as if it were one of the result's own values.
-                        metadata.pop(SCHEMA_VERSION_KEY, None)
-                        metadata["name"] = result_dir.name
-                        results.append(metadata)
-                    except (json.JSONDecodeError, FileNotFoundError):
-                        continue
+                metadata = self._read_listing_metadata(result_dir)
+                if metadata is not None:
+                    results.append(metadata)
 
         # Sort by creation time, newest first
         results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
