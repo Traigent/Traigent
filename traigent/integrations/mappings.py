@@ -19,6 +19,15 @@ IMPORTANT — constructor vs method params:
 
 from __future__ import annotations
 
+_OPENAI_CLIENT = "openai.OpenAI"
+_OPENAI_ASYNC_CLIENT = "openai.AsyncOpenAI"
+_LANGCHAIN_CHAT_OPENAI = "langchain_openai.ChatOpenAI"
+_ANTHROPIC_CLIENT = "anthropic.Anthropic"
+_ANTHROPIC_ASYNC_CLIENT = "anthropic.AsyncAnthropic"
+_METHOD_COMPLETIONS_CREATE = "completions.create"
+_METHOD_CHAT_COMPLETIONS_CREATE = "chat.completions.create"
+_METHOD_MESSAGES_CREATE = "messages.create"
+_METHOD_MESSAGES_STREAM = "messages.stream"
 _HF_ASYNC_INFERENCE_CLIENT = "huggingface_hub.AsyncInferenceClient"
 
 _HF_INFERENCE_CLIENT = "huggingface_hub.InferenceClient"
@@ -27,7 +36,7 @@ _HF_INFERENCE_CLIENT = "huggingface_hub.InferenceClient"
 # Keys are fully-qualified class names, values are dicts mapping traigent_param -> framework_param
 PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
     # OpenAI SDK mappings
-    "openai.OpenAI": {
+    _OPENAI_CLIENT: {
         "model": "model",
         "temperature": "temperature",
         "max_tokens": "max_tokens",
@@ -37,7 +46,7 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
         "stream": "stream",
         "tools": "tools",
     },
-    "openai.AsyncOpenAI": {
+    _OPENAI_ASYNC_CLIENT: {
         "model": "model",
         "temperature": "temperature",
         "max_tokens": "max_tokens",
@@ -65,7 +74,7 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
         "presence_penalty": "presence_penalty",
         "streaming": "streaming",
     },
-    "langchain_openai.ChatOpenAI": {
+    _LANGCHAIN_CHAT_OPENAI: {
         "model": "model",
         "temperature": "temperature",
         "max_tokens": "max_tokens",
@@ -75,7 +84,7 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
         "streaming": "streaming",
     },
     # Anthropic mappings
-    "anthropic.Anthropic": {
+    _ANTHROPIC_CLIENT: {
         "model": "model",
         "temperature": "temperature",
         "top_p": "top_p",
@@ -85,7 +94,7 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
         "tools": "tools",
         "system_prompt": "system",
     },
-    "anthropic.AsyncAnthropic": {
+    _ANTHROPIC_ASYNC_CLIENT: {
         "model": "model",
         "temperature": "temperature",
         "top_p": "top_p",
@@ -190,13 +199,13 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
 # Used for method-level parameter injection (e.g., chat.completions.create).
 METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
     # OpenAI SDK methods that accept parameters
-    "openai.OpenAI": {
+    _OPENAI_CLIENT: {
         # Capture-only entries: usage is recorded for the trial's cost, but no
         # trial parameters are injected into these calls (issue #2444).
         "chat.completions.parse": [],
         "responses.create": [],
         "responses.parse": [],
-        "completions.create": [
+        _METHOD_COMPLETIONS_CREATE: [
             "model",
             "temperature",
             "max_tokens",
@@ -209,7 +218,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "stream",
             "tools",
         ],
-        "chat.completions.create": [
+        _METHOD_CHAT_COMPLETIONS_CREATE: [
             "model",
             "temperature",
             "max_tokens",
@@ -223,13 +232,13 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "tools",
         ],
     },
-    "openai.AsyncOpenAI": {
+    _OPENAI_ASYNC_CLIENT: {
         # Capture-only entries: usage is recorded for the trial's cost, but no
         # trial parameters are injected into these calls (issue #2444).
         "chat.completions.parse": [],
         "responses.create": [],
         "responses.parse": [],
-        "completions.create": [
+        _METHOD_COMPLETIONS_CREATE: [
             "model",
             "temperature",
             "max_tokens",
@@ -242,7 +251,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "stream",
             "tools",
         ],
-        "chat.completions.create": [
+        _METHOD_CHAT_COMPLETIONS_CREATE: [
             "model",
             "temperature",
             "max_tokens",
@@ -257,8 +266,8 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
         ],
     },
     # Anthropic methods
-    "anthropic.Anthropic": {
-        "messages.create": [
+    _ANTHROPIC_CLIENT: {
+        _METHOD_MESSAGES_CREATE: [
             "model",
             "temperature",
             "max_tokens",
@@ -270,7 +279,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "tools",
             "system",
         ],
-        "messages.stream": [
+        _METHOD_MESSAGES_STREAM: [
             "model",
             "temperature",
             "max_tokens",
@@ -282,8 +291,8 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "system",
         ],
     },
-    "anthropic.AsyncAnthropic": {
-        "messages.create": [
+    _ANTHROPIC_ASYNC_CLIENT: {
+        _METHOD_MESSAGES_CREATE: [
             "model",
             "temperature",
             "max_tokens",
@@ -295,7 +304,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "tools",
             "system",
         ],
-        "messages.stream": [
+        _METHOD_MESSAGES_STREAM: [
             "model",
             "temperature",
             "max_tokens",
@@ -308,7 +317,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
         ],
     },
     # LangChain methods
-    "langchain_openai.ChatOpenAI": {
+    _LANGCHAIN_CHAT_OPENAI: {
         "invoke": [
             "model",
             "temperature",
@@ -458,23 +467,23 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
 METHOD_PARAMETER_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     # stop / stop_sequences aliasing (#2925): ``stop`` is the canonical name; each
     # provider receives the keyword its method accepts.
-    "openai.OpenAI": {
-        "chat.completions.create": {"stop_sequences": "stop"},
-        "completions.create": {"stop_sequences": "stop"},
+    _OPENAI_CLIENT: {
+        _METHOD_CHAT_COMPLETIONS_CREATE: {"stop_sequences": "stop"},
+        _METHOD_COMPLETIONS_CREATE: {"stop_sequences": "stop"},
     },
-    "openai.AsyncOpenAI": {
-        "chat.completions.create": {"stop_sequences": "stop"},
-        "completions.create": {"stop_sequences": "stop"},
+    _OPENAI_ASYNC_CLIENT: {
+        _METHOD_CHAT_COMPLETIONS_CREATE: {"stop_sequences": "stop"},
+        _METHOD_COMPLETIONS_CREATE: {"stop_sequences": "stop"},
     },
-    "anthropic.Anthropic": {
-        "messages.create": {"stop": "stop_sequences"},
-        "messages.stream": {"stop": "stop_sequences"},
+    _ANTHROPIC_CLIENT: {
+        _METHOD_MESSAGES_CREATE: {"stop": "stop_sequences"},
+        _METHOD_MESSAGES_STREAM: {"stop": "stop_sequences"},
     },
-    "anthropic.AsyncAnthropic": {
-        "messages.create": {"stop": "stop_sequences"},
-        "messages.stream": {"stop": "stop_sequences"},
+    _ANTHROPIC_ASYNC_CLIENT: {
+        _METHOD_MESSAGES_CREATE: {"stop": "stop_sequences"},
+        _METHOD_MESSAGES_STREAM: {"stop": "stop_sequences"},
     },
-    "langchain_openai.ChatOpenAI": {
+    _LANGCHAIN_CHAT_OPENAI: {
         m: {"stop_sequences": "stop"}
         for m in ("invoke", "ainvoke", "stream", "astream")
     },
