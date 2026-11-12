@@ -10,7 +10,7 @@ import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import click
 from rich.console import Console
@@ -2977,6 +2977,27 @@ if __name__ == "__main__":
 '''
 
 
+def _exit_missing_functions(missing: list[str], available: list[str]) -> NoReturn:
+    err_console.print(
+        f"\n[red]❌ Requested function(s) not found: {', '.join(missing)}[/red]"
+    )
+    err_console.print(
+        "Available @traigent.optimize functions: "
+        f"{', '.join(available) if available else '(none)'}"
+    )
+    sys.exit(1)
+
+
+def _report_no_functions(*messages: str, allow_empty: bool) -> None:
+    """Print why nothing is left to check; exit 1 unless ``allow_empty``."""
+    # --allow-empty makes this a non-failure (exit 0): stay on stdout.
+    target = console if allow_empty else err_console
+    for message in messages:
+        target.print(message)
+    if not allow_empty:
+        sys.exit(1)
+
+
 def _missing_requested_functions(
     function_filter: list[str] | None, discovered_functions: list[Any]
 ) -> list[str]:
@@ -3100,7 +3121,6 @@ def check(
         traigent check my_module.py --allow-empty      # Zero functions is OK (exit 0)
     """
     import asyncio
-    import sys
 
     from traigent.cli.function_discovery import (
         classify_discovered_functions,
@@ -3128,41 +3148,26 @@ def check(
 
         missing = _missing_requested_functions(function_filter, discovered_functions)
         if missing:
-            available = available_names
-            err_console.print(
-                f"\n[red]❌ Requested function(s) not found: {', '.join(missing)}[/red]"
-            )
-            err_console.print(
-                "Available @traigent.optimize functions: "
-                f"{', '.join(available) if available else '(none)'}"
-            )
-            sys.exit(1)
+            _exit_missing_functions(missing, available_names)
 
         if not discovered_functions:
-            # --allow-empty makes this a non-failure (exit 0): stay on stdout.
-            empty_console = console if allow_empty else err_console
-            empty_console.print(
-                f"\n[red]❌ No optimizable functions found in {module_path}[/red]"
+            _report_no_functions(
+                f"\n[red]❌ No optimizable functions found in {module_path}[/red]",
+                "Make sure your functions are decorated with @traigent.optimize",
+                allow_empty=allow_empty,
             )
-            empty_console.print(
-                "Make sure your functions are decorated with @traigent.optimize"
-            )
-            if allow_empty:
-                return
-            sys.exit(1)
+            return
 
         if objectives_filter:
             discovered_functions = _filter_functions_by_objectives(
                 discovered_functions, objectives_filter
             )
             if not discovered_functions:
-                # --allow-empty makes this a non-failure (exit 0): stay on stdout.
-                (console if allow_empty else err_console).print(
-                    f"\n[red]❌ No functions found with objectives: {objectives_filter}[/red]"
+                _report_no_functions(
+                    f"\n[red]❌ No functions found with objectives: {objectives_filter}[/red]",
+                    allow_empty=allow_empty,
                 )
-                if allow_empty:
-                    return
-                sys.exit(1)
+                return
 
         if dry_run:
             _report_check_dry_run(discovered_functions)
