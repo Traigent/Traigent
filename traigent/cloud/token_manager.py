@@ -34,6 +34,51 @@ logger = logging.getLogger(__name__)
 _GENERIC_REFRESH_ERROR = "Token refresh failed"
 
 
+def _oauth2_credentials_failure(
+    credentials: AuthCredentials | None,
+) -> AuthResult | None:
+    """Failure result when OAuth2 refresh credentials are unusable, else None."""
+    from traigent.cloud.auth import AuthResult, AuthStatus
+
+    if not credentials or not credentials.refresh_token:
+        return AuthResult(
+            success=False,
+            status=AuthStatus.UNAUTHENTICATED,
+            error_message="No refresh token available",
+        )
+
+    if credentials.client_id is None or credentials.client_secret is None:
+        return AuthResult(
+            success=False,
+            status=AuthStatus.INVALID,
+            error_message="OAuth2 client credentials missing",
+        )
+    return None
+
+
+async def _oauth2_non_200_outcome(response: Any) -> tuple[AuthResult, bool]:
+    """Failure result for a non-200 OAuth2 refresh, and whether it is ambiguous."""
+    from traigent.cloud.auth import AuthResult, AuthStatus
+
+    await response.text()  # drain body; do not propagate upstream content
+    logger.warning(
+        "OAuth2 token refresh failed with HTTP %s",
+        response.status,
+    )
+    # 5xx/408 may come from a server or proxy after the
+    # token was already rotated: ambiguous. Other 4xx are
+    # definitive rejections.
+    ambiguous = response.status >= 500 or response.status == 408
+    return (
+        AuthResult(
+            success=False,
+            status=AuthStatus.INVALID,
+            error_message=f"OAuth2 token refresh failed with HTTP {response.status}",
+        ),
+        ambiguous,
+    )
+
+
 class RefreshRejectedError(ValueError):
     """The server explicitly rejected the refresh token (HTTP 401 / success=false).
 
@@ -454,41 +499,7 @@ class TokenManager:
                     error_message="Token refresh returned no data",
                 )
 
-            # Latch BEFORE committing: the callback refuses (raises) on a flagged manager
-            # that cannot latch, and then neither credentials nor the secure store change.
-            updated_credentials = self.build_credentials_from_token_data(token_data)
-
-            if self._set_credentials_fn:
-                self._set_credentials_fn(updated_credentials, AuthStatus.AUTHENTICATED)
-            self.store_tokens(token_data)
-
-            # Committed: the new token is installed and usable. A later
-            # failure (auto-refresh scheduling, the cache callback) must not
-            # invalidate it, so those steps are non-fatal.
-            headers: dict[str, str] = {}
-            if updated_credentials.jwt_token:
-                headers["Authorization"] = f"Bearer {updated_credentials.jwt_token}"
-
-            try:
-                if self.config.auto_refresh and updated_credentials.refresh_token:
-                    self.schedule_refresh(updated_credentials)
-
-                if self.config.cache_credentials and self._cache_credentials_fn:
-                    await self._cache_credentials_fn(updated_credentials)
-            except Exception as post_exc:
-                logger.warning(
-                    "Post-refresh step failed after the new token was installed; "
-                    "keeping it: %s",
-                    type(post_exc).__name__,
-                )
-
-            return AuthResult(
-                success=True,
-                status=AuthStatus.AUTHENTICATED,
-                credentials=updated_credentials,
-                headers=headers,
-                expires_in=token_data.get("expires_in"),
-            )
+            return await self._commit_refreshed_jwt(token_data)
 
         except ValueError as exc:
             self._invalidate_refresh_state()
@@ -512,6 +523,52 @@ class TokenManager:
                 status=AuthStatus.INVALID,
                 error_message=_GENERIC_REFRESH_ERROR,
             )
+
+    async def _run_post_refresh_steps(
+        self, updated_credentials: AuthCredentials
+    ) -> None:
+        """Non-fatal follow-ups after a committed refresh (schedule, cache)."""
+        try:
+            if self.config.auto_refresh and updated_credentials.refresh_token:
+                self.schedule_refresh(updated_credentials)
+
+            if self.config.cache_credentials and self._cache_credentials_fn:
+                await self._cache_credentials_fn(updated_credentials)
+        except Exception as post_exc:
+            logger.warning(
+                "Post-refresh step failed after the new token was installed; "
+                "keeping it: %s",
+                type(post_exc).__name__,
+            )
+
+    async def _commit_refreshed_jwt(self, token_data: dict[str, Any]) -> AuthResult:
+        """Install refreshed JWT credentials and build the success result."""
+        from traigent.cloud.auth import AuthResult, AuthStatus
+
+        # Latch BEFORE committing: the callback refuses (raises) on a flagged manager
+        # that cannot latch, and then neither credentials nor the secure store change.
+        updated_credentials = self.build_credentials_from_token_data(token_data)
+
+        if self._set_credentials_fn:
+            self._set_credentials_fn(updated_credentials, AuthStatus.AUTHENTICATED)
+        self.store_tokens(token_data)
+
+        # Committed: the new token is installed and usable. A later
+        # failure (auto-refresh scheduling, the cache callback) must not
+        # invalidate it, so those steps are non-fatal.
+        headers: dict[str, str] = {}
+        if updated_credentials.jwt_token:
+            headers["Authorization"] = f"Bearer {updated_credentials.jwt_token}"
+
+        await self._run_post_refresh_steps(updated_credentials)
+
+        return AuthResult(
+            success=True,
+            status=AuthStatus.AUTHENTICATED,
+            credentials=updated_credentials,
+            headers=headers,
+            expires_in=token_data.get("expires_in"),
+        )
 
     @staticmethod
     async def _parse_jwt_refresh_response(
@@ -542,6 +599,21 @@ class TokenManager:
             purpose="OAuth2 cloud_base_url",
         )
         return f"{cloud_base_url}/oauth/token"
+
+    async def _oauth2_token_url_or_failure(
+        self,
+    ) -> tuple[str | None, AuthResult | None]:
+        from traigent.cloud.auth import AuthResult, AuthStatus
+
+        try:
+            return await self._build_oauth2_token_url(), None
+        except ValueError as exc:
+            logger.warning("Rejected unsafe OAuth2 cloud_base_url: %s", exc)
+            return None, AuthResult(
+                success=False,
+                status=AuthStatus.INVALID,
+                error_message=f"OAuth2 cloud_base_url rejected (private or loopback host not allowed): {exc}",
+            )
 
     async def _apply_oauth2_token_response(
         self,
@@ -575,13 +647,7 @@ class TokenManager:
             expires_in=token_data.get("expires_in", 3600),
         )
 
-    async def refresh_oauth2(self) -> AuthResult:
-        """Refresh OAuth2 access token.
-
-        Returns:
-            AuthResult with refresh status
-        """
-        from traigent.cloud.auth import AuthResult, AuthStatus
+    def _oauth2_egress_blocked(self) -> bool:
         from traigent.cloud.client import (
             CloudEgressBlockedError,
             raise_if_cloud_egress_disabled,
@@ -592,6 +658,34 @@ class TokenManager:
                 "OAuth2 token refresh", no_egress=self.no_egress
             )
         except CloudEgressBlockedError:
+            return True
+        return False
+
+    def _oauth2_refresh_failure(
+        self, exc: Exception, token_data: dict[str, Any] | None
+    ) -> AuthResult:
+        from traigent.cloud.auth import AuthResult, AuthStatus
+
+        if token_data is not None or isinstance(exc, NonRetryableError):
+            # Ambiguous outcome, or the server already consumed the old
+            # refresh token: drop it everywhere so it is never resent.
+            self._invalidate_refresh_state()
+        logger.error("OAuth2 token refresh failed: %s", type(exc).__name__)
+        return AuthResult(
+            success=False,
+            status=AuthStatus.INVALID,
+            error_message="OAuth2 token refresh failed",
+        )
+
+    async def refresh_oauth2(self) -> AuthResult:
+        """Refresh OAuth2 access token.
+
+        Returns:
+            AuthResult with refresh status
+        """
+        from traigent.cloud.auth import AuthResult, AuthStatus
+
+        if self._oauth2_egress_blocked():
             return AuthResult(
                 success=False,
                 status=AuthStatus.INVALID,
@@ -602,29 +696,15 @@ class TokenManager:
             raise RuntimeError("aiohttp not available for token refresh") from None
 
         credentials = self._get_credentials_fn() if self._get_credentials_fn else None
-        if not credentials or not credentials.refresh_token:
-            return AuthResult(
-                success=False,
-                status=AuthStatus.UNAUTHENTICATED,
-                error_message="No refresh token available",
-            )
+        unusable = _oauth2_credentials_failure(credentials)
+        if unusable is not None:
+            return unusable
+        credentials = cast("AuthCredentials", credentials)
 
-        if credentials.client_id is None or credentials.client_secret is None:
-            return AuthResult(
-                success=False,
-                status=AuthStatus.INVALID,
-                error_message="OAuth2 client credentials missing",
-            )
-
-        try:
-            token_url = await self._build_oauth2_token_url()
-        except ValueError as exc:
-            logger.warning("Rejected unsafe OAuth2 cloud_base_url: %s", exc)
-            return AuthResult(
-                success=False,
-                status=AuthStatus.INVALID,
-                error_message=f"OAuth2 cloud_base_url rejected (private or loopback host not allowed): {exc}",
-            )
+        token_url, url_failure = await self._oauth2_token_url_or_failure()
+        if url_failure is not None:
+            return url_failure
+        token_url = cast(str, token_url)
 
         data = {
             "grant_type": "refresh_token",
@@ -662,26 +742,10 @@ class TokenManager:
                     allow_redirects=False,
                 ) as response:
                     if response.status != 200:
-                        await (
-                            response.text()
-                        )  # drain body; do not propagate upstream content
-                        logger.warning(
-                            "OAuth2 token refresh failed with HTTP %s",
-                            response.status,
+                        rejection, ambiguous_status = await _oauth2_non_200_outcome(
+                            response
                         )
-                        # 5xx/408 may come from a server or proxy after the
-                        # token was already rotated: ambiguous. Other 4xx are
-                        # definitive rejections.
-                        ambiguous_status = (
-                            response.status >= 500 or response.status == 408
-                        )
-                        return AuthResult(
-                            success=False,
-                            status=AuthStatus.INVALID,
-                            error_message=(
-                                f"OAuth2 token refresh failed with HTTP {response.status}"
-                            ),
-                        )
+                        return rejection
                     return cast(dict[str, Any], await response.json())
 
         client = ResilientClient(
@@ -710,16 +774,7 @@ class TokenManager:
             token_data = outcome
             return await self._apply_oauth2_token_response(credentials, token_data)
         except Exception as exc:
-            if token_data is not None or isinstance(exc, NonRetryableError):
-                # Ambiguous outcome, or the server already consumed the old
-                # refresh token: drop it everywhere so it is never resent.
-                self._invalidate_refresh_state()
-            logger.error("OAuth2 token refresh failed: %s", type(exc).__name__)
-            return AuthResult(
-                success=False,
-                status=AuthStatus.INVALID,
-                error_message="OAuth2 token refresh failed",
-            )
+            return self._oauth2_refresh_failure(exc, token_data)
 
     def build_credentials_from_token_data(
         self, token_data: dict[str, Any]
