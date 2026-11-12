@@ -1220,6 +1220,88 @@ class TrialOperations:
                 f"🔍 Redacted payload (first 1000 chars): {payload_json[:1000]}"
             )
 
+    def _prepare_trial_result_payload(
+        self,
+        session_id: str,
+        trial_id: str,
+        config: dict[str, Any],
+        metrics: dict[str, Any],
+        backend_status: str,
+        error_message: str | None,
+        metadata: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        """Validated result body and clean metrics, or None when rejected."""
+        # Extract transport-only fields before validating trial metrics.
+        measures, summary_stats, clean_metrics = self._extract_measures_from_metrics(
+            metrics
+        )
+
+        # Validate key naming and cardinality for numeric metrics. This is
+        # a hard contract (mirrors the schema validation below): a trial
+        # whose measures violate the MeasuresDict contract must not be
+        # submitted with unvalidated numeric metrics silently substituted
+        # in (Traigent#1724 — was fail-open, log-only).
+        try:
+            validated_metrics: dict[str, Any] = dict(MeasuresDict(clean_metrics))
+        except (TypeError, ValueError) as validation_error:
+            logger.exception(
+                "Invalid trial metrics for trial %s: %s. Rejecting submission "
+                "(measures contract violation).",
+                trial_id,
+                validation_error,
+            )
+            return None
+
+        ensure_cost_metric_for_budgeted_completed_submission(
+            client=self.client,
+            session_id=session_id,
+            metrics=validated_metrics,
+            status=backend_status,
+            telemetry_sources=(metrics, metadata, measures, summary_stats),
+            logger=logger,
+        )
+
+        # Build result data
+        result_data = self._build_trial_result_data(
+            trial_id,
+            config,
+            validated_metrics,
+            backend_status,
+            metadata=metadata,
+        )
+
+        lift_cost_floor_to_body(result_data)
+
+        # Add measures and summary_stats at the top level if present
+        if measures is not None:
+            result_data["measures"] = copy.deepcopy(measures)
+        self._log_measures_debug(trial_id, measures)
+
+        if summary_stats is not None:
+            result_data["summary_stats"] = filter_summary_stats(summary_stats)
+        self._log_summary_stats_debug(trial_id, summary_stats)
+
+        # Validate the submission data. Schema validation is authoritative;
+        # invalid payloads must not be posted to the backend.
+        try:
+            validate_configuration_run_submission(result_data)
+        except ValueError as e:
+            logger.exception(f"Invalid configuration run submission: {e}")
+            return None
+
+        if error_message:
+            # Wire key MUST be "error_message" — the backend route
+            # (traigent_session_routes.py) and TraigentCloudClient both
+            # read "error_message"; a key of "error" was silently
+            # dropped, so every failed-trial message was lost
+            # (Traigent#1724).
+            result_data["error_message"] = self.client._sanitize_error_message(
+                error_message
+            )
+
+        self._log_submission_debug(trial_id, result_data)
+        return result_data, clean_metrics
+
     async def submit_trial_result_via_session(
         self,
         session_id: str,
@@ -1267,75 +1349,18 @@ class TrialOperations:
                 status, endpoint="config_run"
             )
 
-            # Extract transport-only fields before validating trial metrics.
-            measures, summary_stats, clean_metrics = (
-                self._extract_measures_from_metrics(metrics)
-            )
-
-            # Validate key naming and cardinality for numeric metrics. This is
-            # a hard contract (mirrors the schema validation below): a trial
-            # whose measures violate the MeasuresDict contract must not be
-            # submitted with unvalidated numeric metrics silently substituted
-            # in (Traigent#1724 — was fail-open, log-only).
-            try:
-                validated_metrics: dict[str, Any] = dict(MeasuresDict(clean_metrics))
-            except (TypeError, ValueError) as validation_error:
-                logger.exception(
-                    "Invalid trial metrics for trial %s: %s. Rejecting submission "
-                    "(measures contract violation).",
-                    trial_id,
-                    validation_error,
-                )
-                return False
-
-            ensure_cost_metric_for_budgeted_completed_submission(
-                client=self.client,
-                session_id=session_id,
-                metrics=validated_metrics,
-                status=backend_status,
-                telemetry_sources=(metrics, metadata, measures, summary_stats),
-                logger=logger,
-            )
-
-            # Build result data
-            result_data = self._build_trial_result_data(
+            prepared = self._prepare_trial_result_payload(
+                session_id,
                 trial_id,
                 config,
-                validated_metrics,
+                metrics,
                 backend_status,
-                metadata=metadata,
+                error_message,
+                metadata,
             )
-
-            lift_cost_floor_to_body(result_data)
-
-            # Add measures and summary_stats at the top level if present
-            if measures is not None:
-                result_data["measures"] = copy.deepcopy(measures)
-            self._log_measures_debug(trial_id, measures)
-
-            if summary_stats is not None:
-                result_data["summary_stats"] = filter_summary_stats(summary_stats)
-            self._log_summary_stats_debug(trial_id, summary_stats)
-
-            # Validate the submission data. Schema validation is authoritative;
-            # invalid payloads must not be posted to the backend.
-            try:
-                validate_configuration_run_submission(result_data)
-            except ValueError as e:
-                logger.exception(f"Invalid configuration run submission: {e}")
+            if prepared is None:
                 return False
-
-            if error_message:
-                # Wire key MUST be "error_message" — the backend route
-                # (traigent_session_routes.py) and TraigentCloudClient both
-                # read "error_message"; a key of "error" was silently
-                # dropped, so every failed-trial message was lost
-                # (Traigent#1724).
-                result_data["error_message"] = self.client._sanitize_error_message(
-                    error_message
-                )
-
-            self._log_submission_debug(trial_id, result_data)
+            result_data, clean_metrics = prepared
 
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
