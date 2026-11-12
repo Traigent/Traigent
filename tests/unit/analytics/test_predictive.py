@@ -194,7 +194,7 @@ class TestOptimizationOutcomePredictor:
             "metrics": {"accuracy": 0.85, "cost": 0.05},
         }
 
-        prediction = predictor.forecast(current_state, ForecastPeriod.DAILY)
+        prediction = predictor.forecast(current_state)
 
         assert "expected_improvement" in prediction
         assert "confidence" in prediction
@@ -211,7 +211,7 @@ class TestOptimizationOutcomePredictor:
             {"model": "gpt-3.5", "temperature": 0.1},
         ]
 
-        comparison = predictor.forecast(configs[0], ForecastPeriod.DAILY)
+        comparison = predictor.forecast(configs[0])
 
         assert comparison is not None
         assert isinstance(comparison, dict)
@@ -332,7 +332,7 @@ class TestEdgeCases:
             "metrics": {"accuracy": 0.85},  # Missing cost
         }
 
-        prediction = predictor.forecast(incomplete_state, ForecastPeriod.DAILY)
+        prediction = predictor.forecast(incomplete_state)
 
         assert "warnings" in prediction
         assert "missing_metrics" in prediction["warnings"]

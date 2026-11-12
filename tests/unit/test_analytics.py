@@ -836,13 +836,10 @@ class TestResourceOptimizer:
 
         performance_requirements = {"target_cpu_utilization": 50}  # Low utilization
 
-        cost_constraints = {"max_hourly_cost": 1.0}
-
         optimization = self.optimizer.optimize_resource_configuration(
             resource_type=ResourceType.COMPUTE,
             current_config=current_config,
             performance_requirements=performance_requirements,
-            cost_constraints=cost_constraints,
         )
 
         assert "optimized_config" in optimization
@@ -857,13 +854,10 @@ class TestResourceOptimizer:
             "access_frequency_per_day": 0.5  # Low access frequency
         }
 
-        cost_constraints = {"max_monthly_cost": 50.0}
-
         optimization = self.optimizer.optimize_resource_configuration(
             resource_type=ResourceType.STORAGE,
             current_config=current_config,
             performance_requirements=performance_requirements,
-            cost_constraints=cost_constraints,
         )
 
         assert "optimized_config" in optimization
@@ -890,15 +884,9 @@ class TestSmartScheduler:
 
         cost_preferences = {"cost_priority": "high"}
 
-        time_constraints = {
-            "deadline": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
-            "max_delay_hours": 12,
-        }
-
         schedule = self.scheduler.schedule_optimization(
             optimization_request=optimization_request,
             cost_preferences=cost_preferences,
-            time_constraints=time_constraints,
         )
 
         assert "scheduled_start_time" in schedule

@@ -17,6 +17,7 @@ from typing import Any
 
 from ..core.constants import HISTORY_PRUNE_RATIO, MAX_OPTIMIZATION_HISTORY_SIZE
 from ..utils.logging import get_logger
+from ._options import reject_unsupported
 
 logger = get_logger(__name__)
 
@@ -82,6 +83,18 @@ class SchedulingPolicy:
     preemption_allowed: bool = False
     min_job_duration: timedelta = timedelta(minutes=1)
     max_job_duration: timedelta = timedelta(hours=24)
+
+    def __post_init__(self) -> None:
+        # These flags are not consulted by the scheduler; only defaults are valid.
+        reject_unsupported(
+            "SchedulingPolicy", "prefer_off_peak", self.prefer_off_peak, (True,)
+        )
+        reject_unsupported(
+            "SchedulingPolicy", "batch_similar_jobs", self.batch_similar_jobs, (True,)
+        )
+        reject_unsupported(
+            "SchedulingPolicy", "preemption_allowed", self.preemption_allowed, (False,)
+        )
 
 
 def _apply_schedule_defaults(
@@ -578,6 +591,9 @@ class SmartScheduler:
         **kwargs,
     ):
         """Schedule optimization tasks based on constraints and priorities."""
+        reject_unsupported(
+            "schedule_optimization", "time_constraints", time_constraints
+        )
 
         # Handle different calling patterns
         if optimization_request and not tasks:

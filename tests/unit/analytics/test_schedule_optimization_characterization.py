@@ -359,7 +359,6 @@ def test_extra_arguments_are_ignored():
     plain = _run(copy.deepcopy(tasks))
     extra = _run(
         copy.deepcopy(tasks),
-        time_constraints={"deadline": "x"},
         unexpected=object(),
     )
     assert plain == extra

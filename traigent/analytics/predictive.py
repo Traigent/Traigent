@@ -19,6 +19,7 @@ from ..core.constants import (
 )
 from ..utils.logging import get_logger
 from ..utils.relative_change import signed_relative_delta
+from ._options import reject_unsupported
 
 logger = get_logger(__name__)
 
@@ -101,11 +102,12 @@ class CostForecaster:
     def forecast_costs(
         self,
         historical_data_or_forecast_days=30,
-        confidence_level: float = 0.95,
+        confidence_level: float | None = None,
         forecast_period: ForecastPeriod | None = None,
         forecast_days: int | None = None,
     ):
         """Forecast various cost components."""
+        reject_unsupported("forecast_costs", "confidence_level", confidence_level)
 
         # Handle forecast_days keyword argument
         if forecast_days is not None:
@@ -723,6 +725,7 @@ class PerformanceForecaster:
         self, config_or_config_history, forecast_period: ForecastPeriod | None = None
     ) -> ForecastResult | dict[str, Any]:
         """Forecast performance based on configuration history."""
+        reject_unsupported("forecast", "forecast_period", forecast_period)
 
         # Handle both single config and config history
         if isinstance(config_or_config_history, dict):
