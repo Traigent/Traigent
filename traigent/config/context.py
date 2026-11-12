@@ -228,15 +228,42 @@ def merge_with_context(
     # This ensures trial configurations from the optimizer override default/static configurations
     if isinstance(context_config, TraigentConfig):
         # Start with override, then apply context on top (context wins)
+        override_plain, override_extras = TraigentConfig._split_extras(override_config)
+        extra_names = TraigentConfig._extra_field_names()
         context_dict = context_config.to_dict()
         context_dict.update(context_config.custom_params)
-        merged_dict = override_config.copy()
-        merged_dict.update({k: v for k, v in context_dict.items() if v is not None})
-        return TraigentConfig.from_dict(merged_dict)
+        merged_dict = override_plain.copy()
+        merged_dict.update(
+            {
+                k: v
+                for k, v in context_dict.items()
+                if v is not None and k not in extra_names
+            }
+        )
+        merged_config = TraigentConfig.from_dict(merged_dict)
+        # Fields outside the dict round trip (no_egress, content_identity,
+        # analytics settings, ...) go to their fields, never custom_params:
+        # the override's values first, then the context's with privacy fields
+        # never loosened.
+        for name, value in override_extras.items():
+            object.__setattr__(merged_config, name, value)
+        merged_config._merge_extra_fields(merged_config, context_config)
+        return merged_config
     elif isinstance(context_config, dict):
-        # Start with override, then apply context on top (context wins)
+        # Start with override, then apply context on top (context wins);
+        # privacy fields are the exception: the stricter value wins.
         merged = override_config.copy()
         merged.update(context_config)
+        for name in TraigentConfig._PRIVACY_FIELDS:
+            if name in override_config or name in context_config:
+                # Normalise even a single-sided value; a lone side is
+                # compared with the neutral default.
+                neutral = {"no_egress": False, "enable_usage_analytics": True}.get(name)
+                merged[name] = TraigentConfig._strictest(
+                    name,
+                    override_config.get(name, neutral),
+                    context_config.get(name, neutral),
+                )
         return merged
     else:
         # This should never happen based on get_config() return type

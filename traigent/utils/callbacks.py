@@ -909,6 +909,34 @@ def _format_trial_config(config: dict[str, Any]) -> str:
     return ", ".join(config_parts) if config_parts else "config"
 
 
+def _grid_size(config_space: dict[str, Any], algorithm: str) -> int:
+    """Number of configurations a grid run enumerates, or 0 when unknown.
+
+    Only a grid run over purely list-valued parameters has a known size.
+    Tuple/dict ranges are continuous and other algorithms are bounded by
+    ``max_trials``, which the orchestrator reports through
+    ``ProgressInfo.total_trials``; for those the size is unknown here.
+    """
+    if not config_space or str(algorithm).lower() != "grid":
+        return 0
+    total = 1
+    for values in config_space.values():
+        if not isinstance(values, list):
+            return 0
+        total *= len(values)
+    return total
+
+
+def _resolve_total(known: int, reported: int | None) -> int:
+    """Combine a locally-known size with the orchestrator's budget (0 = unknown)."""
+    candidates = [
+        v
+        for v in (known, reported)
+        if isinstance(v, int) and not isinstance(v, bool) and v > 0
+    ]
+    return min(candidates) if candidates else 0
+
+
 class _StartedTrials:
     """Remember which trial number started with which config.
 
@@ -966,6 +994,7 @@ class SimpleProgressCallback(OptimizationCallback):
         self.output = output
         self.show_details = show_details
         self.total_trials = 0
+        self._grid_total = 0
         self._primary_objective: str | None = None
         self.current_trial = 0
         self._started_trials = _StartedTrials()
@@ -994,17 +1023,16 @@ class SimpleProgressCallback(OptimizationCallback):
     ) -> None:
         """Called when optimization starts."""
         self._primary_objective = _primary_objective_name(objectives)
-        # Calculate total configurations
-        if config_space:
-            total_configs = 1
-            for _, values in config_space.items():
-                if isinstance(values, list):
-                    total_configs *= len(values)
-            self.total_trials = total_configs
+        self._grid_total = _grid_size(config_space, algorithm)
+        self.total_trials = self._grid_total
 
+        if self.total_trials > 0:
+            size = f"{self.total_trials} configurations"
+        else:
+            size = "an unknown number of configurations"
         self._output(
             f"\n🔄 Starting {_sanitize_user_label(algorithm)} optimization "
-            f"with {self.total_trials} configurations..."
+            f"with {size}..."
         )
         if self.show_details:
             self._output(f"📊 Objectives: {_sanitize_user_labels(objectives)}")
@@ -1017,13 +1045,19 @@ class SimpleProgressCallback(OptimizationCallback):
         if self.show_details:
             config_str = _format_trial_config(config)
             self._output(
-                f"[{self.current_trial}/{self.total_trials}] Testing: {config_str}"
+                f"[{self.current_trial}/{self._total_display()}] Testing: {config_str}"
             )
+
+    def _total_display(self) -> str:
+        return str(self.total_trials) if self.total_trials > 0 else "?"
 
     def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
         """Called when a trial completes."""
         trial_number = self._started_trials.take(
             getattr(trial, "config", None), self.current_trial
+        )
+        self.total_trials = _resolve_total(
+            self._grid_total, getattr(progress, "total_trials", None)
         )
         if progress.best_score is not None:
             self.best_score = progress.best_score
@@ -1034,12 +1068,12 @@ class SimpleProgressCallback(OptimizationCallback):
 
             if score is not None:
                 self._output(
-                    f"[{trial_number}/{self.total_trials}] "
+                    f"[{trial_number}/{self._total_display()}] "
                     f"Completed. Score: {score:.1%} | Best so far: {self.best_score:.1%}"
                 )
             elif self.best_score is not None:
                 self._output(
-                    f"[{trial_number}/{self.total_trials}] "
+                    f"[{trial_number}/{self._total_display()}] "
                     f"Completed. Best score so far: {self.best_score:.1%}"
                 )
 
@@ -1512,19 +1546,19 @@ class DetailedProgressCallback(OptimizationCallback):
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str
     ) -> None:
         """Called when optimization starts."""
-        # Calculate total number of configurations
-        total = 1
-        for _param, values in config_space.items():
-            if isinstance(values, list):
-                total *= len(values)
-        if total <= 0:
+        # Only a grid run over list-valued parameters has a known size; any
+        # other run is bounded by max_trials, reported later via ProgressInfo.
+        self.total_trials = _grid_size(config_space, algorithm)
+        if (
+            self.total_trials == 0
+            and config_space
+            and str(algorithm).lower() == "grid"
+            and all(isinstance(v, list) for v in config_space.values())
+        ):
             logger.warning(
                 "Calculated configuration combinations is zero; detailed progress "
                 "will fall back to runtime counts."
             )
-            self.total_trials = 0
-        else:
-            self.total_trials = total
 
         _safe_print("\n" + "=" * 60)
         _safe_print("🚀 OPTIMIZATION STARTING")
@@ -1568,7 +1602,12 @@ class DetailedProgressCallback(OptimizationCallback):
             getattr(trial, "config", None), self.trial_count
         )
 
-        total_display = self.total_trials or progress.total_trials
+        known_totals = [
+            v
+            for v in (self.total_trials, progress.total_trials)
+            if v is not None and v > 0
+        ]
+        total_display = min(known_totals) if known_totals else 0
         if not total_display or total_display <= 0:
             total_display_str = "?"
         else:

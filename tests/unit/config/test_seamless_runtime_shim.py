@@ -162,18 +162,18 @@ def test_seamless_no_injectable_target_opt_out_env_var(monkeypatch, caplog) -> N
 def test_seamless_fallback_fails_closed_for_dangerous_name(monkeypatch) -> None:
     """I2: `_seamless_fallback` builds the runtime shim unconditionally when
     `_transform_function` raises -- here because `_is_safe_function` rejects
-    a function name containing "eval". With no parameter matching the config
+    a function named exactly "eval". With no parameter matching the config
     key either, the shim would silently run the unvaried function and still
     count as a `runtime_shims` hit. Must raise instead, and raise again on
     repeat calls (no cache poisoning)."""
     monkeypatch.delenv("TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS", raising=False)
     provider = _reset_provider()
 
-    def evaluate_q(q: str) -> str:
+    def eval(q: str) -> str:
         model_name = "orig"
         return model_name
 
-    wrapped = provider.inject_config(evaluate_q, {"model": "varied"})
+    wrapped = provider.inject_config(eval, {"model": "varied"})
 
     for _ in range(2):
         with pytest.raises(ConfigurationError, match="no injectable target"):
@@ -210,11 +210,11 @@ def test_seamless_fallback_opt_out_env_var_still_shims(monkeypatch) -> None:
     monkeypatch.setenv("TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS", "true")
     provider = _reset_provider()
 
-    def evaluate_q(q: str) -> str:
+    def eval(q: str) -> str:
         model_name = "orig"
         return model_name
 
-    wrapped = provider.inject_config(evaluate_q, {"model": "varied"})
+    wrapped = provider.inject_config(eval, {"model": "varied"})
     assert wrapped("q") == "orig"
     assert provider.get_stats()["runtime_shims"] == 1
 

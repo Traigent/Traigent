@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from dataclasses import dataclass, field
 from enum import EnumType, StrEnum
 from inspect import Parameter, Signature
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 from traigent.utils.env_config import is_truthy
 from traigent.utils.validation import Validators, validate_or_raise
@@ -1010,7 +1011,14 @@ class TraigentConfig:
         explicit_override_keys: set[str] = set()
         if isinstance(other, dict):
             explicit_override_keys = set(other)
-            other = self.from_dict(other)
+            other = {
+                k: (self._coerce_privacy(k, v) if k in self._PRIVACY_FIELDS else v)
+                for k, v in other.items()
+            }
+            plain, extras = self._split_extras(other)
+            other = self.from_dict(plain)
+            for name, value in extras.items():
+                object.__setattr__(other, name, value)
 
         # Start with current values.
         merged_dict = self._to_dict(include_legacy=True)
@@ -1029,7 +1037,138 @@ class TraigentConfig:
 
         merged_dict.update(override_dict)
 
-        return self.from_dict(merged_dict)
+        merged = self.from_dict(merged_dict)
+        merged._merge_extra_fields(
+            self, other, explicit=frozenset(explicit_override_keys)
+        )
+        return merged
+
+    @classmethod
+    def _extra_field_names(cls) -> frozenset[str]:
+        """Dataclass fields that the dict round trip does not serialize."""
+        return frozenset(
+            f.name
+            for f in dataclasses.fields(cls)
+            if f.name not in cls._DICT_ROUND_TRIP_FIELDS
+        )
+
+    @classmethod
+    def _split_extras(
+        cls, values: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Split a dict into (round-trip keys, extra-field keys).
+
+        Extra-field names are routed to their fields, never custom_params.
+        """
+        names = cls._extra_field_names()
+        plain = {k: v for k, v in values.items() if k not in names}
+        extras = {k: v for k, v in values.items() if k in names}
+        return plain, extras
+
+    @staticmethod
+    def _coerce_privacy(name: str, value: Any) -> bool | None:
+        """Normalise a privacy value to a bool (None only for content_identity).
+
+        Accepts real bools and the strings "true"/"false" (case-insensitive,
+        trimmed). Anything else raises TypeError naming the field only.
+        """
+        if isinstance(value, bool):
+            return value
+        if value is None and name == "content_identity":
+            return None
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered == "true":
+                return True
+            if lowered == "false":
+                return False
+        raise TypeError(f"{name} must be a bool or the string 'true' or 'false'")
+
+    @staticmethod
+    def _strictest(name: str, first: Any, second: Any) -> Any:
+        """Stricter of two values for a privacy field (``second`` if neutral)."""
+        first = TraigentConfig._coerce_privacy(name, first)
+        second = TraigentConfig._coerce_privacy(name, second)
+        if name == "no_egress":
+            return bool(first) or bool(second)
+        if name == "enable_usage_analytics":
+            return bool(first) and bool(second)
+        # content_identity: an explicit False opt-out always wins.
+        if first is False or second is False:
+            return False
+        return second if second is not None else first
+
+    _PRIVACY_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"no_egress", "enable_usage_analytics", "content_identity"}
+    )
+
+    # Fields that _to_dict()/from_dict() serialize explicitly; every other
+    # dataclass field (privacy, analytics, runtime state) is merged by
+    # _merge_extra_fields so merge() cannot silently drop it.
+    _DICT_ROUND_TRIP_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "model",
+            "temperature",
+            "max_tokens",
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty",
+            "stop_sequences",
+            "seed",
+            "algorithm",
+            "offline",
+            "local_storage_path",
+            "minimal_logging",
+            "auto_sync",
+            "strict_metrics_nulls",
+            "comparability_mode",
+            "execution_mode",
+            "privacy_enabled",
+            "custom_params",
+        }
+    )
+
+    def _merge_extra_fields(
+        self,
+        base: TraigentConfig,
+        other: TraigentConfig,
+        explicit: frozenset[str] = frozenset(),
+    ) -> None:
+        """Set on ``self`` the fields not covered by the dict round trip.
+
+        ``base`` supplies the starting value, ``other`` overrides it when it
+        differs from the dataclass default. Privacy fields never loosen: the
+        stricter value wins (``no_egress`` True, ``enable_usage_analytics``
+        False and ``content_identity`` False beat any other value).
+        """
+        for f in dataclasses.fields(self):
+            name = f.name
+            if name in self._DICT_ROUND_TRIP_FIELDS:
+                continue
+            base_value = getattr(base, name)
+            other_value = getattr(other, name)
+            if f.default is not dataclasses.MISSING:
+                default = f.default
+            elif f.default_factory is not dataclasses.MISSING:
+                default = f.default_factory()
+            else:
+                default = None
+
+            if name in self._PRIVACY_FIELDS:
+                value = self._strictest(name, base_value, other_value)
+            elif name in explicit:
+                value = other_value
+            else:
+                value = other_value if other_value != default else base_value
+            object.__setattr__(self, name, value)
+
+        # Field names never live in custom_params, so the serialized dict and
+        # the fields cannot disagree.
+        field_names = {f.name for f in dataclasses.fields(self)}
+        if any(k in field_names for k in self.custom_params):
+            self.custom_params = {
+                k: v for k, v in self.custom_params.items() if k not in field_names
+            }
 
     def get(self, key: str, default: Any | None = None) -> Any:
         """Get configuration value with optional default.

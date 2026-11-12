@@ -46,7 +46,7 @@ def test_full_report_lines_and_flush(printed):
         _progress(total=10, completed=5, best=0.123456),
     )
     assert _lines(printed) == [
-        "✅ Trial 3/20 completed",
+        "✅ Trial 3/10 completed",  # #3088: the capped (smaller) total wins
         "   Metrics:",
         "     • acc: 0.500",
         "     • n: 4",
