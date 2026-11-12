@@ -47,6 +47,8 @@ import dataclasses
 import inspect
 import math
 import os
+import threading
+import warnings
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2448,6 +2450,28 @@ def _check_deprecated_objective_kwargs(
         )
 
 
+_SEED_WARNED_SPECS: set[str] = set()
+_SEED_WARNED_LOCK = threading.Lock()
+
+
+def _warn_evaluation_seed_unused(tvl_artifact: Any) -> None:
+    """Warn once per spec that ``evaluation_set.seed`` is not used by the SDK."""
+    evaluation_set = getattr(tvl_artifact, "evaluation_set", None)
+    if evaluation_set is None or getattr(evaluation_set, "seed", None) is None:
+        return
+    key = str(getattr(tvl_artifact, "path", "") or id(tvl_artifact))
+    with _SEED_WARNED_LOCK:
+        if key in _SEED_WARNED_SPECS:
+            return
+        _SEED_WARNED_SPECS.add(key)
+    warnings.warn(
+        "TVL field evaluation_set.seed is set but the SDK does not use it yet "
+        "for sampling or ordering; evaluation examples run in dataset order.",
+        UserWarning,
+        stacklevel=3,
+    )
+
+
 def _apply_tvl_options_if_present(
     tvl_options: TVLOptions | None,
     configuration_space: dict[str, Any] | None,
@@ -2501,6 +2525,8 @@ def _apply_tvl_options_if_present(
         and tvl_artifact.evaluation_set is not None
     ):
         eval_dataset = tvl_artifact.evaluation_set.dataset
+
+    _warn_evaluation_seed_unused(tvl_artifact)
 
     # Create PromotionGate from TVL spec if promotion_policy is defined
     promotion_gate = PromotionGate.from_spec_artifact(tvl_artifact)

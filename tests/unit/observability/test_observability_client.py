@@ -6807,3 +6807,205 @@ class TestLegacyPrivacyModeEnvParity:
         assert resolve_client_content_mode("record") == ("metadata", True)
         monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", "true")
         assert resolve_client_content_mode("record") == ("record", True)
+
+
+def _rejection_transport(sender):
+    return _SyncBatchTransport(
+        sender=sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=50,
+        max_batch_bytes=1_000_000,
+    )
+
+
+def test_permanently_rejected_trace_is_dropped_and_later_traces_flow_2991(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr(retry_module.time, "sleep", lambda _s: None)
+    delivered: list[str] = []
+    marker = "CONTENT-MARKER-2991"
+    requests: list[int] = []
+
+    def sender(traces):
+        requests.append(len(traces))
+        if any(marker in json.dumps(t) for t in traces):
+            raise ClientError("too large", status_code=413)
+        delivered.extend(t["id"] for t in traces)
+
+    transport = _rejection_transport(sender)
+    for i in range(5):
+        payload = {"id": f"t{i}", "name": "n"}
+        if i == 2:
+            payload["metadata"] = {"blob": marker}
+        transport.submit(f"t{i}", payload)
+    with caplog.at_level(logging.WARNING):
+        result = transport.flush()
+    transport.submit("later", {"id": "later", "name": "n"})
+    later = transport.flush()
+    stats = transport.get_stats()
+    transport.close()
+
+    assert sorted(delivered) == ["later", "t0", "t1", "t3", "t4"]
+    # A drop is reported: the flush is not fully successful (#2991 review).
+    assert result.success is False
+    assert result.items_dropped == 1
+    assert result.failed_batches == 0
+    assert later.items_pending == 0
+    assert stats["queue_depth"] == 0
+    assert stats["dropped_items"] == 1
+    assert stats["rejected_items"] == 1
+    assert stats["dropped_by_reason"] == {"permanent_rejection": 1}
+    assert marker not in caplog.text
+    assert marker not in " ".join(stats["errors"] + stats["warnings"])
+    assert len(requests) <= 2 * 5  # bounded isolation cost
+
+
+def test_transient_failure_is_still_retained_2991(monkeypatch):
+    monkeypatch.setattr(retry_module.time, "sleep", lambda _s: None)
+
+    def sender(traces):
+        raise ClientError("busy", status_code=503)
+
+    transport = _rejection_transport(sender)
+    transport.submit("t", {"id": "t", "name": "n"})
+    result = transport.flush()
+    stats = transport.get_stats()
+    transport.close()
+
+    assert result.failed_batches >= 1
+    assert stats["queue_depth"] == 1
+    assert "permanent_rejection" not in stats["dropped_by_reason"]
+
+
+def test_rejected_active_trace_is_not_resent_unchanged_via_public_flush_2991(
+    monkeypatch,
+):
+    monkeypatch.setattr(retry_module.time, "sleep", lambda _s: None)
+    calls: list[int] = []
+
+    def sender(traces):
+        calls.append(len(traces))
+        raise ClientError("too large", status_code=413)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_queue_size=50,
+            enable_atexit_flush=False,
+        ),
+        sender=sender,
+    )
+    client.start_trace("active", trace_id="trace_2991_active")
+    client.flush(timeout=5)
+    first = len(calls)
+    client.flush(timeout=5)
+    client.flush(timeout=5)
+
+    assert first == 1
+    assert len(calls) == first
+    stats = client.get_stats()
+    assert stats["dropped_by_reason"] == {"permanent_rejection": 1}
+    assert stats["queue_depth"] == 0
+
+
+def test_isolation_stops_at_first_transient_failure_and_keeps_order_2991(
+    monkeypatch,
+):
+    monkeypatch.setattr(retry_module.time, "sleep", lambda _s: None)
+    seen: list[list[str]] = []
+
+    def sender(traces):
+        ids = [t["id"] for t in traces]
+        seen.append(ids)
+        if len(ids) > 1 and "t0" in ids and "t3" in ids:
+            raise ClientError("too large", status_code=413)
+        if "t0" in ids:
+            raise ClientError("busy", status_code=503)
+
+    transport = _rejection_transport(sender)
+    for i in range(4):
+        transport.submit(f"t{i}", {"id": f"t{i}", "name": "n"})
+    transport.flush()
+
+    # After the full batch is rejected, only the first half is retried; the
+    # second half is never sent ahead of the failing first half.
+    later_ids = {i for batch in seen[1:] for i in batch}
+    buffered = list(transport._buffer)
+    transport.close()
+    assert later_ids == {"t0", "t1"}
+    assert buffered == ["t0", "t1", "t2", "t3"]
+
+
+def test_isolation_send_budget_counts_every_sender_call_2991(monkeypatch):
+    monkeypatch.setattr(retry_module.time, "sleep", lambda _s: None)
+    calls = 0
+
+    def sender(traces):
+        nonlocal calls
+        calls += 1
+        raise ClientError("too large", status_code=413)
+
+    transport = _rejection_transport(sender)
+    for i in range(64):
+        transport.submit(f"t{i}", {"id": f"t{i}", "name": "n"})
+    transport.flush()
+    stats = transport.get_stats()
+    sent_calls = calls
+    transport.close()
+
+    assert sent_calls <= 1 + 32
+    assert stats["dropped_items"] + stats["queue_depth"] == 64
+
+
+def test_isolation_budget_counts_retry_attempts_2991(monkeypatch):
+    monkeypatch.setattr(retry_module.time, "sleep", lambda _s: None)
+    calls = 0
+    flaked: set[str] = set()
+
+    def sender(traces):
+        nonlocal calls
+        calls += 1
+        if len(traces) > 1:
+            raise ClientError("too large", status_code=413)
+        trace_id = traces[0]["id"]
+        if trace_id not in flaked:
+            # Retryable status: the retry handler re-calls the sender inside
+            # an isolation send, and each retry must spend the budget too.
+            flaked.add(trace_id)
+            raise ClientError("busy", status_code=503)
+
+    transport = _rejection_transport(sender)
+    for i in range(32):
+        transport.submit(f"t{i}", {"id": f"t{i}", "name": "n"})
+    transport.flush()
+    sent_calls = calls
+    transport.close()
+
+    assert sent_calls <= 1 + 32
+
+
+def test_close_completes_after_permanent_rejection_2991(monkeypatch):
+    monkeypatch.setattr(retry_module.time, "sleep", lambda _s: None)
+
+    def sender(traces):
+        raise ClientError("too large", status_code=413)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            enable_atexit_flush=False,
+        ),
+        sender=sender,
+    )
+    tid = client.start_trace("t", trace_id="trace_2991_close")
+    client.end_trace(tid)
+    result = client.close(timeout=5)
+
+    assert client._closed is True
+    assert result.items_dropped == 1
+    assert result.items_pending == 0

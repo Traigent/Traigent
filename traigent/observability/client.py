@@ -66,6 +66,7 @@ from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
     ContentDisabledError,
+    NonRetryableError,
     TraigentConnectionError,
 )
 from traigent.utils.logging import get_logger
@@ -85,6 +86,25 @@ class _HealthDispatchStop:
 
 
 _HEALTH_DISPATCH_STOP = _HealthDispatchStop()
+
+
+# Statuses the service uses to say "this request body will never be accepted".
+# 429 and 5xx are transient and stay on the retain-and-retry path.
+_PERMANENT_REJECTION_STATUSES = frozenset({400, 413, 422})
+# Upper bound on requests spent isolating rejected traces in one outbox batch.
+_MAX_ISOLATION_SENDS = 32
+
+
+class _PermanentRejection(NonRetryableError):
+    """A batch the service rejected with a permanent 4xx (never retried)."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"Observability ingest permanently rejected: {status_code}")
+        self.status_code = status_code
+
+
+class _IsolationBudgetExhausted(NonRetryableError):
+    """Raised instead of sending once the isolation send budget is spent."""
 
 
 class _ClientErrorWithRetryAfter(ClientError):
@@ -124,6 +144,11 @@ class _NoRedirectHandler(request.HTTPRedirectHandler):
         newurl: str,
     ) -> None:
         return None
+
+
+def _is_client_timeout_or_rejection(exc: BaseException) -> bool:
+    """Failures that are not evidence the service itself is down."""
+    return isinstance(exc, _PermanentRejection) or _is_client_timeout(exc)
 
 
 def _is_client_timeout(exc: BaseException) -> bool:
@@ -1068,7 +1093,7 @@ class _SyncBatchTransport:
             replace(
                 CLOUD_API_RETRY_CONFIG,
                 callback_on_retry=self._record_retry,
-                circuit_breaker_ignore_failure=_is_client_timeout,
+                circuit_breaker_ignore_failure=_is_client_timeout_or_rejection,
             )
         )
         self._buffer: OrderedDict[str, _BufferedPayload] = OrderedDict()
@@ -1119,6 +1144,7 @@ class _SyncBatchTransport:
             "background_flushes": 0,
             "retry_attempts": 0,
             "skipped_unchanged_items": 0,
+            "rejected_items": 0,
         }
         self._dropped_by_reason: dict[str, int] = {}
         self._health_dispatcher_thread: threading.Thread | None = None
@@ -1835,18 +1861,109 @@ class _SyncBatchTransport:
 
         return events
 
+    def _send_with_classification(
+        self, payloads: list[dict[str, Any]], budget: list[int | None]
+    ) -> Any:
+        """One sender call. After isolation starts, every call (retries included)
+        spends the shared budget and is refused once it is exhausted."""
+        if budget[0] is not None:
+            if budget[0] <= 0:
+                raise _IsolationBudgetExhausted("isolation send budget exhausted")
+            budget[0] -= 1
+        try:
+            return self._sender(payloads)
+        except ClientError as exc:
+            status = getattr(exc, "status_code", None)
+            if type(status) is int and status in _PERMANENT_REJECTION_STATUSES:
+                raise _PermanentRejection(status) from exc
+            raise
+
     def _send_batch(
         self, batch_items: list[tuple[str, dict[str, Any]]]
     ) -> tuple[bool, list[tuple[str, dict[str, Any]]]]:
         events: list[tuple[str, dict[str, Any]]] = []
-        payloads = [payload for _, payload in batch_items]
-        result = self._retry_handler.execute_with_result(self._sender, payloads)
+        ok, failed_items, fail_result = self._send_isolating(
+            batch_items, [None], events
+        )
+        if ok:
+            return True, events
+        payloads = [payload for _, payload in failed_items]
+        return False, self._record_batch_failure(
+            failed_items, payloads, fail_result, events
+        )
 
+    def _send_isolating(
+        self,
+        batch_items: list[tuple[str, dict[str, Any]]],
+        budget: list[int | None],
+        events: list[tuple[str, dict[str, Any]]],
+    ) -> tuple[bool, list[tuple[str, dict[str, Any]]], Any]:
+        """Send ``batch_items``; returns ``(ok, undelivered_items, failure)``.
+
+        On a permanent rejection the batch is bisected so only the offending
+        trace is dropped. ``undelivered_items`` keeps the original order and
+        starts at the first non-permanent failure: nothing after it is sent,
+        so a later trace never overtakes an earlier retained one.
+        """
+        payloads = [payload for _, payload in batch_items]
+        result = self._retry_handler.execute_with_result(
+            self._send_with_classification, payloads, budget
+        )
         if result.success:
-            return True, self._record_batch_success(
-                batch_items, payloads, result, events
+            self._record_batch_success(batch_items, payloads, result, events)
+            return True, [], None
+        if not isinstance(result.error, _PermanentRejection):
+            return False, list(batch_items), result
+        if len(batch_items) == 1:
+            self._quarantine_rejected_item(
+                batch_items[0], result.error.status_code, events
             )
-        return False, self._record_batch_failure(batch_items, payloads, result, events)
+            return True, [], None
+        if budget[0] is None:
+            # Cost bound: at most _MAX_ISOLATION_SENDS further sender calls,
+            # retries included, for the rest of this outbox batch.
+            budget[0] = _MAX_ISOLATION_SENDS
+        mid = len(batch_items) // 2
+        first, second = batch_items[:mid], batch_items[mid:]
+        ok, failed, fail_result = self._send_isolating(first, budget, events)
+        if not ok:
+            return False, [*failed, *second], fail_result
+        ok, failed, fail_result = self._send_isolating(second, budget, events)
+        return ok, failed, fail_result
+
+    def _quarantine_rejected_item(
+        self,
+        item: tuple[str, dict[str, Any]],
+        status_code: int,
+        events: list[tuple[str, dict[str, Any]]],
+    ) -> None:
+        """Drop one permanently rejected trace; never log or store its content."""
+        item_id, _ = item
+        message = (
+            f"observability service permanently rejected trace '{item_id}' "
+            f"(status {status_code}); dropped so later traces are not blocked"
+        )
+        with self._lock:
+            digest = self._inflight_digests.pop(item_id, None)
+            if digest is not None:
+                # Remember the rejected snapshot so an unchanged resubmission
+                # (e.g. the next flush of an active trace) is not sent again.
+                # A changed snapshot has a new digest and is sent normally.
+                self._delivered_digests[item_id] = digest
+                self._delivered_digests.move_to_end(item_id)
+                while len(self._delivered_digests) > self.max_queue_size:
+                    self._delivered_digests.popitem(last=False)
+            self._stats["rejected_items"] += 1
+            events.append(
+                self._record_drop_locked(
+                    "permanent_rejection",
+                    message,
+                    item_id=item_id,
+                    status_code=status_code,
+                )
+            )
+        events.append(self._append_warning(message))
+        logger.warning(message)
 
     def _build_result(
         self,
@@ -1876,7 +1993,11 @@ class _SyncBatchTransport:
                     "delivery completed"
                 )
             return BatchFlushResult(
-                success=self._stats["failed_batches"] == 0 and remaining == 0,
+                success=(
+                    self._stats["failed_batches"] == 0
+                    and self._stats["rejected_items"] == 0
+                    and remaining == 0
+                ),
                 items_sent=self._stats["sent_items"],
                 items_pending=remaining,
                 items_dropped=self._stats["dropped_items"],
@@ -3187,9 +3308,19 @@ class ObservabilityClient:
         result = self._transport.flush(timeout=self._remaining_flush_time(deadline))
         return self._flush_result_from_transport(result)
 
+    def _only_permanent_rejections(self, result: BatchFlushResult) -> bool:
+        """Delivery is finished; the only blemish is traces the service refused."""
+        try:
+            rejected = int(
+                self._transport.get_stats(timeout=0).get("rejected_items", 0)
+            )
+        except Exception:  # noqa: BLE001 - silent-ok: unknown stats mean not complete
+            return False
+        return rejected > 0 and result.failed_batches == 0 and result.items_pending == 0
+
     def _transport_close_completed(self, result: BatchFlushResult) -> bool:
         """Whether transport close finished delivery and dispatcher teardown."""
-        if not result.success:
+        if not result.success and not self._only_permanent_rejections(result):
             return False
         if not getattr(self._transport, "_closed", True):
             return False
