@@ -942,6 +942,36 @@ class TestExactHypervolume2DCorrectness:
         hv = calc.calculate_hypervolume(front, {"a": 4.0, "b": 11.0})
         assert hv == pytest.approx(11.0)
 
+    def test_point_worse_than_reference_adds_no_volume(self):
+        # #3074: maximize both, point (0.2, 0.2) is outside the (0.5, 0.5)
+        # reference box, so the dominated volume is 0 (abs() gave 0.09).
+        calc = ParetoFrontCalculator(maximize={"a": True, "b": True})
+        hv = calc.calculate_hypervolume([_pt(a=0.2, b=0.2)], {"a": 0.5, "b": 0.5})
+        assert hv == 0.0
+
+    def test_mixed_orientation_reference_known_value(self):
+        calc = ParetoFrontCalculator(maximize={"acc": True, "cost": False})
+        hv = calc.calculate_hypervolume(
+            [_pt(acc=0.9, cost=0.2)], {"acc": 0.0, "cost": 1.0}
+        )
+        assert hv == pytest.approx(0.9 * 0.8)
+
+    def test_missing_reference_component_uses_orientation_aware_nadir(self):
+        # #3074: cost missing from the reference. Nadir for minimized cost is
+        # max+1 = 1.2, so HV = 0.9 * (1.2 - 0.2) = 0.9 (the old 0 default gave 0.18).
+        calc = ParetoFrontCalculator(maximize={"acc": True, "cost": False})
+        hv = calc.calculate_hypervolume([_pt(acc=0.9, cost=0.2)], {"acc": 0.0})
+        assert hv == pytest.approx(0.9)
+
+    def test_partially_outside_reference_front_is_clamped(self):
+        # maximize both, ref (2,2). Points (4,3) and (1,5): the second is
+        # worse than the reference on a, so only (4,3) counts: 2*1 = 2.
+        calc = ParetoFrontCalculator(maximize={"a": True, "b": True})
+        hv = calc.calculate_hypervolume(
+            [_pt(a=4.0, b=3.0), _pt(a=1.0, b=5.0)], {"a": 2.0, "b": 2.0}
+        )
+        assert hv == pytest.approx(2.0)
+
 
 @pytest.mark.unit
 class TestConfiguredObjectiveScope:

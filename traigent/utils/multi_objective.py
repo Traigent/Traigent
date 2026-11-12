@@ -439,25 +439,21 @@ class ParetoFrontCalculator:
         max1 = _should_maximize(obj1, self.maximize)
         max2 = _should_maximize(obj2, self.maximize)
 
-        # Set reference point. The auto reference is the *nadir* (worse than
-        # every point) and must be orientation-aware (#1940): min-1 for a
-        # maximize objective, max+1 for a minimize objective. Using min-1 for a
-        # minimize objective would place the reference on the wrong (better)
-        # side and measure the complement region.
-        if reference_point is None:
-            ref1 = (
-                (min(p.objectives[obj1] for p in pareto_front) - 1)
-                if max1
-                else (max(p.objectives[obj1] for p in pareto_front) + 1)
-            )
-            ref2 = (
-                (min(p.objectives[obj2] for p in pareto_front) - 1)
-                if max2
-                else (max(p.objectives[obj2] for p in pareto_front) + 1)
-            )
-        else:
-            ref1 = reference_point.get(obj1, 0)
-            ref2 = reference_point.get(obj2, 0)
+        # The reference is the *nadir* (worse than every point) and must be
+        # orientation-aware (#1940): min-1 for a maximize objective, max+1 for
+        # a minimize objective. A caller-supplied reference that omits an
+        # objective falls back to the same nadir for that objective only.
+        def _nadir(obj: str, maximize: bool) -> float:
+            values = [p.objectives[obj] for p in pareto_front]
+            return (min(values) - 1) if maximize else (max(values) + 1)
+
+        supplied = reference_point or {}
+        ref1 = supplied[obj1] if obj1 in supplied else _nadir(obj1, max1)
+        ref2 = supplied[obj2] if obj2 in supplied else _nadir(obj2, max2)
+
+        def _gain(value: float, ref: float, maximize: bool) -> float:
+            """Oriented distance from the reference, clamped at zero."""
+            return max(0.0, (value - ref) if maximize else (ref - value))
 
         # Sort so we iterate obj1 from best to worst (descending for maximize,
         # ascending for minimize). On a Pareto front obj2 then moves
@@ -469,23 +465,19 @@ class ParetoFrontCalculator:
             reverse=max1,
         )
 
-        # Decomposition consistent with the sort (#1940): full width to the
-        # reference on obj1 (``abs(curr_obj1 - ref1)``) times the *incremental*
-        # slab height on obj2 (``abs(curr_obj2 - prev_obj2)``, prev seeded at
-        # ``ref2``). The previous code mixed an incremental width with a full
-        # height under a descending sort, double-counting the first slab.
+        # Decomposition consistent with the sort (#1940): full oriented width
+        # to the reference on obj1 times the incremental oriented slab height
+        # on obj2. Points worse than the reference on an axis add no volume.
         hypervolume = 0.0
-        prev_obj2 = ref2
+        prev_gain2 = 0.0
 
         for point in sorted_points:
-            curr_obj1 = point.objectives[obj1]
-            curr_obj2 = point.objectives[obj2]
-
-            width = abs(curr_obj1 - ref1)
-            height = abs(curr_obj2 - prev_obj2)
+            width = _gain(point.objectives[obj1], ref1, max1)
+            gain2 = _gain(point.objectives[obj2], ref2, max2)
+            height = max(0.0, gain2 - prev_gain2)
 
             hypervolume += width * height
-            prev_obj2 = curr_obj2
+            prev_gain2 = max(prev_gain2, gain2)
 
         return hypervolume
 
