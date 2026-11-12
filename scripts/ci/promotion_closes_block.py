@@ -7,14 +7,16 @@ promotion. This helper collects the closing keywords from the commits (and,
 optionally, the PR bodies) being promoted and prints one de-duplicated block
 to paste into the promotion PR body.
 
-Offline by default (reads ``git log`` only)::
+Reads commit messages and the bodies of the PRs named in commit subjects
+(needs an authenticated ``gh``; any failed lookup exits non-zero)::
 
     python scripts/ci/promotion_closes_block.py origin/main..origin/develop
 
-Optional, needs an authenticated ``gh``::
+Git-only mode misses keywords that live only in PR bodies::
 
-    python scripts/ci/promotion_closes_block.py origin/main..origin/develop \
-        --use-gh-bodies --drop-closed
+    python scripts/ci/promotion_closes_block.py origin/main..origin/develop --offline
+
+Add ``--drop-closed`` to skip issues that are already closed.
 
 The block is printed to stdout; the check line goes to stderr. After opening
 the promotion PR, the number of lines in the block should equal its
@@ -29,7 +31,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 _KEYWORDS = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
 # keyword [:] <#N | owner/repo#N | https://github.com/owner/repo/issues/N>
@@ -49,11 +51,12 @@ IssueRef = tuple[str, int]  # ("" for the current repo, else "owner/repo"), numb
 def extract_closing_refs(text: str) -> list[IssueRef]:
     """Return closing-keyword issue refs in ``text`` in order of appearance.
 
-    Text inside fenced code blocks and HTML comments is ignored, as GitHub
+    HTML comments are stripped first (so an unmatched fence inside a comment
+    cannot swallow later text), then fenced code blocks; text in either is ignored, as GitHub
     does not treat it as a closing reference. One keyword closes one issue, so
     ``Closes #1, #2`` yields only ``#1`` (matching GitHub behaviour).
     """
-    cleaned = _COMMENT_RE.sub("", _FENCE_RE.sub("", text or ""))
+    cleaned = _FENCE_RE.sub("", _COMMENT_RE.sub("", text or ""))
     refs: list[IssueRef] = []
     for m in _CLOSING_RE.finditer(cleaned):
         repo = (m.group("repo") or m.group("urlrepo") or "").lower()
@@ -107,46 +110,54 @@ def _git_messages(rev_range: str) -> list[str]:
     return [m.strip() for m in out.split("\x1e") if m.strip()]
 
 
-def _gh_json(args: list[str]) -> object:
-    out = subprocess.run(
+class GhLookupError(RuntimeError):
+    """A gh lookup failed; the block would be incomplete."""
+
+
+Runner = Callable[[list[str]], str]
+
+
+def _run_gh(args: list[str]) -> str:
+    return subprocess.run(
         ["gh", *args], check=True, capture_output=True, text=True
     ).stdout
-    return json.loads(out)
 
 
-def _pr_bodies(numbers: list[int]) -> list[str]:
-    bodies = []
-    for n in numbers:
-        try:
-            data = _gh_json(["pr", "view", str(n), "--json", "body"])
-        except (subprocess.CalledProcessError, json.JSONDecodeError):
-            print(f"warning: could not read body of PR #{n}", file=sys.stderr)
-            continue
-        if isinstance(data, dict):
-            bodies.append(str(data.get("body") or ""))
-    return bodies
+def _gh_json(args: list[str], runner: Runner) -> dict[str, object]:
+    try:
+        data = json.loads(runner(args))
+    except (subprocess.CalledProcessError, OSError, json.JSONDecodeError) as exc:
+        raise GhLookupError(f"gh {' '.join(args[:3])} failed: {exc}") from exc
+    if not isinstance(data, dict):
+        raise GhLookupError(f"gh {' '.join(args[:3])} returned unexpected JSON")
+    return data
 
 
-def _closed_issue_numbers(numbers: list[int]) -> set[int]:
+def _pr_bodies(numbers: list[int], runner: Runner) -> list[str]:
+    return [
+        str(
+            _gh_json(["pr", "view", str(n), "--json", "body"], runner).get("body") or ""
+        )
+        for n in numbers
+    ]
+
+
+def _closed_issue_numbers(numbers: list[int], runner: Runner) -> set[int]:
     closed: set[int] = set()
     for n in numbers:
-        try:
-            data = _gh_json(["issue", "view", str(n), "--json", "state"])
-        except (subprocess.CalledProcessError, json.JSONDecodeError):
-            print(f"warning: could not read state of #{n}; keeping it", file=sys.stderr)
-            continue
-        if isinstance(data, dict) and data.get("state") == "CLOSED":
+        data = _gh_json(["issue", "view", str(n), "--json", "state"], runner)
+        if data.get("state") == "CLOSED":
             closed.add(n)
     return closed
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, runner: Runner | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("range", help="git revision range, e.g. origin/main..origin/develop")
     p.add_argument(
-        "--use-gh-bodies",
+        "--offline",
         action="store_true",
-        help="also read PR bodies via gh for PRs named in commit subjects",
+        help="git history only; misses keywords that live only in PR bodies",
     )
     p.add_argument(
         "--drop-closed",
@@ -156,9 +167,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repo", default="", help="owner/name, to shorten same-repo refs")
     args = p.parse_args(argv)
 
-    if (args.use_gh_bodies or args.drop_closed) and not shutil.which("gh"):
-        print("error: gh is not available; rerun without gh options", file=sys.stderr)
+    if args.offline and args.drop_closed:
+        print(
+            "error: --drop-closed needs gh; incompatible with --offline",
+            file=sys.stderr,
+        )
         return 2
+    if runner is None:
+        if not args.offline and not shutil.which("gh"):
+            print(
+                "error: gh is not available; install it or pass --offline",
+                file=sys.stderr,
+            )
+            return 2
+        runner = _run_gh
     try:
         messages = _git_messages(args.range)
     except subprocess.CalledProcessError as exc:
@@ -166,17 +188,25 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     texts = list(messages)
-    if args.use_gh_bodies:
-        texts += _pr_bodies(pr_numbers(messages))
-
     exclude: set[int] = set()
-    if args.drop_closed:
-        candidates = [
-            n
-            for r, n in {ref for t in texts for ref in extract_closing_refs(t)}
-            if r == ""
-        ]
-        exclude = _closed_issue_numbers(sorted(candidates))
+    try:
+        if args.offline:
+            print(
+                "warning: --offline reads commit messages only and misses closing "
+                "keywords that appear only in PR bodies",
+                file=sys.stderr,
+            )
+        else:
+            texts += _pr_bodies(pr_numbers(messages), runner)
+        if args.drop_closed:
+            here = args.repo.lower()
+            candidates = {
+                n for t in texts for r, n in extract_closing_refs(t) if r in ("", here)
+            }
+            exclude = _closed_issue_numbers(sorted(candidates), runner)
+    except GhLookupError as exc:
+        print(f"error: {exc}; refusing to print a partial block", file=sys.stderr)
+        return 1
 
     block = build_closes_block(texts, exclude=exclude, repo=args.repo)
     print("\n".join(block))

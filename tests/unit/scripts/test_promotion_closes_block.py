@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -110,10 +111,103 @@ def test_offline_git_range(tmp_path: Path) -> None:
     git("commit", "--allow-empty", "-q", "-m", "feat: a (#2)\n\nCloses #8\nFixes #3")
     git("commit", "--allow-empty", "-q", "-m", "fix: b\n\nresolves #8")
     out = subprocess.run(
-        [sys.executable, str(_PATH), "base..HEAD"],
+        [sys.executable, str(_PATH), "base..HEAD", "--offline"],
         cwd=tmp_path,
         check=True,
         capture_output=True,
         text=True,
     )
     assert out.stdout.splitlines() == ["Closes #3", "Closes #8"]
+
+
+def _repo_with_pr_commit(tmp_path: Path) -> Path:
+    def git(*a: str) -> None:
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path),
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                *a,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q")
+    git("commit", "--allow-empty", "-q", "-m", "base")
+    git("tag", "base")
+    git("commit", "--allow-empty", "-q", "-m", "feat: a (#2)")
+    git("commit", "--allow-empty", "-q", "-m", "feat: b (#3)")
+    return tmp_path
+
+
+def test_comment_with_unmatched_fence_does_not_swallow_text() -> None:
+    text = "<!-- ``` -->\nCloses #5\n"
+    assert mod.extract_closing_refs(text) == [("", 5)]
+
+
+def test_default_reads_pr_bodies(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(_repo_with_pr_commit(tmp_path))
+    bodies = {"2": "Closes #20", "3": "Fixes #10"}
+
+    def runner(args: list[str]) -> str:
+        assert args[:2] == ["pr", "view"]
+        return json.dumps({"body": bodies[args[2]]})
+
+    assert mod.main(["base..HEAD"], runner=runner) == 0
+    assert capsys.readouterr().out.splitlines() == ["Closes #10", "Closes #20"]
+
+
+def test_offline_warns_and_skips_bodies(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(_repo_with_pr_commit(tmp_path))
+
+    def runner(args: list[str]) -> str:
+        raise AssertionError("gh must not be called offline")
+
+    assert mod.main(["base..HEAD", "--offline"], runner=runner) == 0
+    cap = capsys.readouterr()
+    assert cap.out.strip() == ""
+    assert "misses" in cap.err
+
+
+def test_failed_pr_lookup_fails_closed(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(_repo_with_pr_commit(tmp_path))
+
+    def runner(args: list[str]) -> str:
+        if args[2] == "3":
+            raise subprocess.CalledProcessError(1, "gh")
+        return json.dumps({"body": "Closes #20"})
+
+    assert mod.main(["base..HEAD"], runner=runner) == 1
+    cap = capsys.readouterr()
+    assert "Closes" not in cap.out
+    assert "partial" in cap.err
+
+
+def test_drop_closed_checks_full_repo_refs_and_fails_closed(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(_repo_with_pr_commit(tmp_path))
+    checked: list[str] = []
+
+    def runner(args: list[str]) -> str:
+        if args[0] == "pr":
+            return json.dumps({"body": "Closes Traigent/Traigent#20\nCloses #21"})
+        checked.append(args[2])
+        return json.dumps({"state": "CLOSED" if args[2] == "20" else "OPEN"})
+
+    argv = ["base..HEAD", "--drop-closed", "--repo", "Traigent/Traigent"]
+    assert mod.main(argv, runner=runner) == 0
+    assert sorted(checked) == ["20", "21"]
+    assert capsys.readouterr().out.splitlines() == ["Closes #21"]
+
+    def bad(args: list[str]) -> str:
+        if args[0] == "pr":
+            return json.dumps({"body": "Closes #20"})
+        raise subprocess.CalledProcessError(1, "gh")
+
+    assert mod.main(argv, runner=bad) == 1

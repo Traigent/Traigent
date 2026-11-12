@@ -222,10 +222,13 @@ promotion unless the promotion PR carries the keywords. Before opening the
 promotion PR, build the block and paste it into the PR body:
 
 ```bash
-python scripts/ci/promotion_closes_block.py origin/main..origin/develop
-# optional, needs an authenticated gh: also read PR bodies, skip closed issues
-python scripts/ci/promotion_closes_block.py origin/main..origin/develop --use-gh-bodies --drop-closed
+python scripts/ci/promotion_closes_block.py origin/main..origin/develop --drop-closed
 ```
+
+This reads commit messages and the bodies of the PRs they name (needs an
+authenticated `gh`); any failed lookup exits non-zero rather than printing a
+partial block. `--offline` reads git history only and misses keywords that
+live only in PR bodies.
 
 After opening the PR, check that the number of lines in the block equals the
 PR's `closingIssuesReferences` count.
