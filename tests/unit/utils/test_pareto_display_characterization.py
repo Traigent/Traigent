@@ -129,11 +129,13 @@ def test_default_objective_mapping_reads_and_pareto_chart_order(analyzer, monkey
     assert all_x[:4] == [0.5, 0.8, 0.5, 0.4] and math.isnan(all_x[4])
     assert all_y == [10, 5, 10, 7, 6]
     pareto_x, pareto_y = ax.scatter.call_args_list[1].args
-    assert list(pareto_x[:3]) == [0.5, 0.5, 0.8] and math.isnan(pareto_x[3])
-    assert list(pareto_y) == [10, 10, 5, 6]
+    # latency resolves to the SDK-owned "minimize" default (#3094), so the
+    # (0.8, 5) trial dominates the slower, less accurate ones; NaN is retained.
+    assert list(pareto_x[:1]) == [0.8] and math.isnan(pareto_x[1])
+    assert list(pareto_y) == [5, 6]
     plot_x, plot_y = ax.plot.call_args_list[0].args[:2]
-    assert list(plot_x[:3]) == [0.5, 0.5, 0.8] and math.isnan(plot_x[3])
-    assert list(plot_y) == [10, 10, 5, 6]
+    assert list(plot_x[:1]) == [0.8] and math.isnan(plot_x[1])
+    assert list(plot_y) == [5, 6]
     assert plot_events[1][2] == {"alpha": 0.5, "label": "All trials"}
     assert plot_events[2][2] == {
         "color": "red",
@@ -180,6 +182,7 @@ def test_explicit_objectives_skip_saved_objective_reads(analyzer, monkeypatch):
         ("metrics", "contains", "cost"),
         ("metrics", "getitem", "quality"),
         ("metrics", "getitem", "cost"),
+        ("data", "get", "objectives"),  # orientation lookup (#3094)
     ]
 
 
@@ -223,3 +226,77 @@ def test_comparison_exception_propagates_before_plot_creation(analyzer, monkeypa
             "exp", "run", objectives=["quality", "cost"], show=False
         )
     subplots.assert_not_called()
+
+
+def test_minimised_axis_pareto_keeps_every_tradeoff_3094():
+    from traigent.utils.optimization_analyzer import _calculate_pareto_points
+
+    acc = [0.9, 0.8, 0.7, 0.6]
+    cost = [0.50, 0.10, 0.05, 0.01]
+    assert len(_calculate_pareto_points(acc, cost, maximize=(True, False))) == 4
+    # maximise-both (legacy default) still collapses to the single dominant point
+    assert len(_calculate_pareto_points(acc, cost)) == 1
+    # a strictly cheaper and more accurate point dominates the rest
+    dominated = _calculate_pareto_points([0.9, 0.8], [0.1, 0.5], maximize=(True, False))
+    assert dominated.tolist() == [[0.9, 0.1]]
+
+
+def test_orientation_lookup_prefers_recorded_then_canonical_3094(caplog):
+    from traigent.utils.optimization_analyzer import (
+        _is_minimized,
+        _objective_orientations,
+    )
+
+    data = {
+        "objectives": {
+            "objectives": [{"name": "quality", "orientation": "minimize"}],
+            "summary": {"orientations": {"score": "maximize"}},
+        }
+    }
+    found = _objective_orientations(data)
+    assert found == {"score": "maximize", "quality": "minimize"}
+    assert _is_minimized("quality", found) is True
+    assert _is_minimized("score", found) is False
+    assert _is_minimized("cost", {}) is True  # SDK-owned default
+    assert _is_minimized("mystery", {}) is False
+    assert "No recorded direction" in caplog.text
+
+
+def test_plot_convergence_best_so_far_uses_min_for_minimised_objective_3094(
+    analyzer, monkeypatch
+):
+    pytest.importorskip("matplotlib.pyplot")
+    import matplotlib.pyplot as plt
+
+    data = {
+        "trials": [{"metrics": {"cost": c}} for c in (0.5, 0.1, 0.05, 0.01)],
+        "objectives": {
+            "objectives": [{"name": "cost", "orientation": "minimize"}],
+        },
+    }
+    monkeypatch.setattr(analyzer, "load_run", MagicMock(return_value=data))
+    fig, ax = MagicMock(), MagicMock()
+    monkeypatch.setattr(plt, "subplots", MagicMock(return_value=(fig, ax)))
+    analyzer.plot_convergence("exp", "run", show=False)
+    best = ax.plot.call_args_list[1].args[1]
+    assert best == [0.5, 0.1, 0.05, 0.01]
+
+
+def test_plot_pareto_front_uses_recorded_minimise_direction_3094(analyzer, monkeypatch):
+    pytest.importorskip("matplotlib.pyplot")
+    import matplotlib.pyplot as plt
+
+    rows = [(0.9, 0.5), (0.8, 0.1), (0.7, 0.05), (0.6, 0.01)]
+    data = {
+        "trials": [{"metrics": {"accuracy": a, "cost": c}} for a, c in rows],
+        "objectives": {
+            "summary": {"orientations": {"accuracy": "maximize", "cost": "minimize"}},
+            "objectives": [{"name": "accuracy"}, {"name": "cost"}],
+        },
+    }
+    monkeypatch.setattr(analyzer, "load_run", MagicMock(return_value=data))
+    fig, ax = MagicMock(), MagicMock()
+    monkeypatch.setattr(plt, "subplots", MagicMock(return_value=(fig, ax)))
+    analyzer.plot_pareto_front("exp", "run", show=False)
+    front_x, _ = ax.scatter.call_args_list[1].args
+    assert len(front_x) == 4

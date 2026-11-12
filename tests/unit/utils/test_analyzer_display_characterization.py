@@ -82,6 +82,11 @@ def test_plot_convergence_objective_selection_and_metric_access_trace(
         ("data", "get", "objectives"),
         ("objectives", "get", "objectives"),
         ("objective0", "get", "name"),
+        ("data", "get", "objectives"),  # orientation lookup (#3094)
+        ("objectives", "get", "summary"),
+        ("objectives", "get", "objectives"),
+        ("objective0", "get", "name"),
+        ("objective0", "get", "orientation"),
         ("t0", "get", "metrics"),
         ("m0", "contains", "accuracy"),
         ("m0", "getitem", "accuracy"),
@@ -123,6 +128,7 @@ def test_plot_convergence_explicit_objective_skips_selection_reads(
     assert trace == [
         ("data", "contains", "trials"),
         ("data", "getitem", "trials"),
+        ("data", "get", "objectives"),  # orientation lookup (#3094)
         ("trial", "get", "metrics"),
         ("metrics", "contains", "latency"),
         ("metrics", "getitem", "latency"),
