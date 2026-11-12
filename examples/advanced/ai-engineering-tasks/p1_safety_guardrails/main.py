@@ -345,7 +345,7 @@ def optimize_safety_guardrails(
         "cache_results": cache_results,
         "batch_processing": batch_processing,
     }
-    return _trial_evaluation_function()(**{**trial_config, **tuned})
+    return _trial_evaluation_function()(**{**tuned, **trial_config})
 
 
 def run_baseline_comparison(

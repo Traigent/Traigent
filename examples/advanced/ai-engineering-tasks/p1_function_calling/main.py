@@ -305,7 +305,7 @@ def optimize_function_calling(
         "context_aware_selection": context_aware_selection,
         "progressive_hints": progressive_hints,
     }
-    return _trial_evaluation_function()(**{**trial_config, **tuned})
+    return _trial_evaluation_function()(**{**tuned, **trial_config})
 
 
 def run_baseline_comparison(tasks: list[Any]) -> dict[str, dict[str, float]]:

@@ -324,7 +324,7 @@ def optimize_token_budget(
         "preserve_critical_info": preserve_critical_info,
         "smart_compression": smart_compression,
     }
-    return _trial_evaluation_function()(**{**trial_config, **tuned})
+    return _trial_evaluation_function()(**{**tuned, **trial_config})
 
 
 def run_baseline_comparison(

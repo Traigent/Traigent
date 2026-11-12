@@ -295,7 +295,7 @@ def optimize_few_shot_selection(
         "curriculum_learning": curriculum_learning,
         "example_weighting": example_weighting,
     }
-    return _trial_evaluation_function()(**{**trial_config, **tuned})
+    return _trial_evaluation_function()(**{**tuned, **trial_config})
 
 
 def run_baseline_comparison(tasks: list[FewShotTask]) -> dict[str, dict[str, float]]:
