@@ -1330,14 +1330,21 @@ def with_usage(
             }
 
     Raises:
-        TypeError: If total_cost is not numeric
+        TypeError: If total_cost is not numeric (a bool or a non-numeric
+            string is rejected). Raised only inside an optimization trial.
+        ValueError: If total_cost is NaN, infinite or negative. Raised only
+            inside an optimization trial; outside one, ``text`` is returned
+            unchanged without validation.
 
     Validation:
         The returned __traigent_meta__ structure is validated at runtime using
         type guards from traigent.core.meta_types.TraigentMetadata:
-        - total_cost must be numeric (raises TypeError)
-        - tokens must be integers if provided
-        - negative values are clamped to 0 with warning
+        - total_cost must be numeric (raises TypeError); a numeric string such
+          as ``"0.5"`` is accepted and converted with ``float()``
+        - total_cost must be finite and non-negative (raises ValueError);
+          it is never clamped
+        - token counts that are not valid non-negative integers are ignored
+          with a warning (token usage is then treated as unknown, not 0)
 
     Type Safety:
         See traigent.core.meta_types.TraigentMetadata for the canonical TypedDict
