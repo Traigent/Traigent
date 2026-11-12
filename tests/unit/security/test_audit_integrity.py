@@ -101,3 +101,44 @@ def test_missing_checksum_is_tampered() -> None:
     logger, event = _logger_with_event()
     event.checksum = None
     assert len(logger.verify_integrity()["tampered_events"]) == 1
+
+
+def test_integrity_status_values() -> None:
+    logger, event = _logger_with_event()
+    assert logger.verify_integrity()["integrity_status"] == "verified"
+    event.user_id = "mallory"
+    assert logger.verify_integrity()["integrity_status"] == "tampered"
+
+
+def test_legacy_entries_are_never_a_plain_pass() -> None:
+    logger, event = _logger_with_event()
+    event.checksum = logger._calculate_legacy_checksum(event, None)
+    logger.event_chain_hash = None
+    logger.event_chain_hash = logger._update_chain_hash(event)  # as an old log
+    # Edit a field the legacy checksum never covered.
+    event.tenant_id = "other-tenant"
+    result = logger.verify_integrity()
+    assert result["tampered_events"] == []
+    assert result["integrity_status"] == "indeterminate_legacy"
+    assert result["chain_integrity"] is False
+
+
+COLLISION_PAIRS = [
+    ({1}, ["1"]),
+    (1, "1"),
+    ((1, 2), [1, 2]),
+    (True, 1),
+    (1, 1.0),
+    (None, "None"),
+    ({"a": 1}, {"a": "1"}),
+]
+
+
+@pytest.mark.parametrize(("left", "right"), COLLISION_PAIRS)
+def test_canonicalisation_distinguishes_types(left: object, right: object) -> None:
+    logger, event = _logger_with_event()
+    event.details = {"v": left}
+    a = logger._calculate_checksum_for_verification(event, None)
+    event.details = {"v": right}
+    b = logger._calculate_checksum_for_verification(event, None)
+    assert a != b

@@ -357,32 +357,57 @@ class AuditLogger:
 
     CHECKSUM_PREFIX = "v2:"
 
-    @staticmethod
-    def _canonical_default(value: Any) -> Any:
+    @classmethod
+    def _canon(cls, value: Any) -> Any:
+        """Type-tagged, injective encoding of a value into plain JSON."""
+        if value is None:
+            return ["n"]
         if isinstance(value, Enum):
-            return value.value
+            return ["e", type(value).__qualname__, cls._canon(value.value)]
+        if isinstance(value, bool):
+            return ["b", value]
+        if isinstance(value, int):
+            return ["i", str(value)]
+        if isinstance(value, float):
+            return ["f", repr(value)]
+        if isinstance(value, str):
+            return ["s", value]
+        if isinstance(value, bytes):
+            return ["y", value.hex()]
         if isinstance(value, datetime):
-            return value.isoformat()
+            return ["dt", value.isoformat()]
+        if isinstance(value, dict):
+            items = sorted(
+                ([cls._canon(k), cls._canon(v)] for k, v in value.items()),
+                key=lambda kv: json.dumps(kv[0], sort_keys=True),
+            )
+            return ["d", items]
+        if isinstance(value, list):
+            return ["l", [cls._canon(v) for v in value]]
+        if isinstance(value, tuple):
+            return ["t", [cls._canon(v) for v in value]]
         if isinstance(value, (set, frozenset)):
-            return sorted(str(v) for v in value)
-        return str(value)
+            return [
+                "set",
+                sorted(
+                    (cls._canon(v) for v in value),
+                    key=lambda c: json.dumps(c, sort_keys=True),
+                ),
+            ]
+        return ["o", type(value).__qualname__, str(value)]
 
     def _canonical_event_bytes(
         self, event: AuditEvent, previous_hash: str | None
     ) -> bytes:
         """Canonical serialization of every persisted field except the checksum."""
         data: dict[str, Any] = {
-            f.name: getattr(event, f.name)
+            f.name: self._canon(getattr(event, f.name))
             for f in dataclass_fields(event)
             if f.name != "checksum"
         }
-        data["previous_hash"] = previous_hash
+        data["previous_hash"] = self._canon(previous_hash)
         return json.dumps(
-            data,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            default=self._canonical_default,
+            data, sort_keys=True, separators=(",", ":"), ensure_ascii=True
         ).encode("utf-8")
 
     def _calculate_checksum(self, event: AuditEvent) -> str:
@@ -425,6 +450,7 @@ class AuditLogger:
             "legacy_events": legacy_events,
             "missing_events": missing_events,
             "chain_integrity": True,
+            "integrity_status": "verified",
         }
 
         expected_chain_hash = None
@@ -467,6 +493,14 @@ class AuditLogger:
 
         # Verify final chain hash
         if expected_chain_hash != chain_hash_snapshot:
+            verification_result["chain_integrity"] = False
+
+        # Legacy entries only bind six fields, so the log cannot be fully
+        # verified while any exist: never report a plain pass for them.
+        if tampered_events or not verification_result["chain_integrity"]:
+            verification_result["integrity_status"] = "tampered"
+        elif legacy_events:
+            verification_result["integrity_status"] = "indeterminate_legacy"
             verification_result["chain_integrity"] = False
 
         return verification_result
