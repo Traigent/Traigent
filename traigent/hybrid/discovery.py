@@ -335,11 +335,11 @@ def normalize_tvar_to_config_space(tvar: TVARDefinition) -> Any:
     Examples:
         >>> tvar = TVARDefinition(name="temp", type="float", domain={"range": [0.0, 1.0]})
         >>> normalize_tvar_to_config_space(tvar)
-        {"low": 0.0, "high": 1.0}
+        {'low': 0.0, 'high': 1.0}
 
         >>> tvar = TVARDefinition(name="model", type="enum", domain={"values": ["a", "b"]})
         >>> normalize_tvar_to_config_space(tvar)
-        ["a", "b"]
+        ['a', 'b']
     """
     return tvar.to_traigent_config_space()
 
@@ -363,7 +363,7 @@ def merge_config_spaces(
         >>> base = {"temperature": {"low": 0.0, "high": 2.0}}
         >>> override = {"temperature": {"low": 0.0, "high": 1.0}}
         >>> merge_config_spaces(base, override)
-        {"temperature": {"low": 0.0, "high": 1.0}}
+        {'temperature': {'low': 0.0, 'high': 1.0}}
     """
     if override is None:
         return dict(base)

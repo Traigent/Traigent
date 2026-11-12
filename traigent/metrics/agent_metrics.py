@@ -268,7 +268,7 @@ def compute_per_agent_metrics(
         ... }
         >>> per_agent = compute_per_agent_metrics(measures, ["grader", "generator"])
         >>> per_agent["grader"]
-        {'cost': 0.002, 'latency_ms': 150}
+        {'cost': 0.002, 'latency_ms': 150.0}
     """
     _ensure_valid_agent_ids(agents, "compute_per_agent_metrics")
     result: dict[str, dict[str, float]] = {}
@@ -408,7 +408,7 @@ def get_metrics_for_available_data(
         ...     has_contexts=True,
         ...     has_llm=False,
         ... )
-        []  # No metrics can be computed without LLM or reference
+        []
 
         >>> # Have LLM and contexts
         >>> get_metrics_for_available_data(
@@ -467,7 +467,9 @@ def build_agent_objectives(
         ValueError: If any agent ID is not a valid Python identifier
 
     Example:
-        >>> build_agent_objectives(["grader", "generator"], include_quality=False)
+        >>> build_agent_objectives(
+        ...     ["grader", "generator"], include_quality=False
+        ... )  # doctest: +NORMALIZE_WHITESPACE
         ['total_cost', 'total_latency_ms', 'grader_cost', 'grader_latency_ms',
          'generator_cost', 'generator_latency_ms']
     """

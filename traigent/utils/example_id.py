@@ -25,14 +25,14 @@ def generate_stable_example_id(dataset_hash: str, example_index: int) -> str:
         example_index: Zero-based index of example in dataset
 
     Returns:
-        Stable example ID like "ex_a3f4b2c8_0"
+        Stable example ID like "ex_14918e3c_0"
 
     Example:
         >>> dataset_hash = compute_dataset_hash("my_dataset")
         >>> generate_stable_example_id(dataset_hash, 0)
-        'ex_12345678_0'
+        'ex_14918e3c_0'
         >>> generate_stable_example_id(dataset_hash, 42)
-        'ex_12345678_42'
+        'ex_549346cb_42'
 
     Thread Safety: Safe - pure function with no shared state
     """
@@ -51,11 +51,14 @@ def compute_dataset_hash(dataset_name: str) -> str:
         dataset_name: Name or path of the dataset
 
     Returns:
-        12-character hexadecimal hash like "a3f4b2c891de"
+        12-character hexadecimal hash
 
     Example:
-        >>> compute_dataset_hash("customer_support_qa")
-        'a3f4b2c891de'
+        >>> dataset_hash = compute_dataset_hash("customer_support_qa")
+        >>> len(dataset_hash)
+        12
+        >>> dataset_hash == compute_dataset_hash("customer_support_qa")
+        True
 
     Thread Safety: Safe - pure function with no shared state
     """

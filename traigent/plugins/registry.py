@@ -1053,6 +1053,9 @@ def has_feature(feature: str) -> bool:
     Example:
         >>> from traigent.plugins import has_feature, FEATURE_PARALLEL
         >>> if has_feature(FEATURE_PARALLEL):
-        ...     print("Parallel execution available!")
+        ...     print("Parallel execution available!")  # doctest: +SKIP
+
+        (Skipped as a doctest: the output depends on which features the
+        installed plugins register.)
     """
     return _global_registry.has_feature(feature)

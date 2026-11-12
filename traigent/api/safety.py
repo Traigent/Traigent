@@ -4,10 +4,15 @@ This module provides factory presets for common LLM safety metrics that integrat
 with the @optimize decorator's constraint system. Safety constraints enforce
 minimum quality thresholds on metrics like faithfulness, relevancy, and toxicity.
 
+Note:
+    Examples marked ``# doctest: +SKIP`` are illustrative: they print object
+    reprs containing memory addresses, or need a trial history or a decorated
+    function that a doctest cannot supply.
+
 Example:
     >>> from traigent.api.safety import faithfulness, hallucination_rate
     >>>
-    >>> @traigent.optimize(
+    >>> @traigent.optimize(  # doctest: +SKIP
     ...     safety_constraints=[
     ...         faithfulness.above(0.9),           # Faithfulness >= 90%
     ...         hallucination_rate().below(0.1),   # Hallucination rate < 10%
@@ -272,8 +277,8 @@ class SafetyMetric(ABC):
             SafetyConstraint usable in @optimize(safety_constraints=[...]).
 
         Example:
-            >>> faithfulness.above(0.9)  # 95% Clopper-Pearson lower bound
-            >>> faithfulness.above(0.85, confidence=0.99)  # stricter CI
+            >>> faithfulness.above(0.9)  # 95% Clopper-Pearson lower bound  # doctest: +SKIP
+            >>> faithfulness.above(0.85, confidence=0.99)  # stricter CI  # doctest: +SKIP
         """
         return SafetyConstraint(
             metric=self,
@@ -306,7 +311,7 @@ class SafetyMetric(ABC):
             SafetyConstraint usable in @optimize(safety_constraints=[...]).
 
         Example:
-            >>> hallucination_rate().below(0.1)  # Max 10% hallucination
+            >>> hallucination_rate().below(0.1)  # Max 10% hallucination  # doctest: +SKIP
         """
         return SafetyConstraint(
             metric=self,
@@ -456,7 +461,7 @@ class SafetyConstraint:
         """Combine constraints with OR logic.
 
         Example:
-            >>> combined = accuracy.above(0.9) | accuracy.above(0.85)
+            >>> combined = accuracy.above(0.9) | accuracy.above(0.85)  # doctest: +SKIP
         """
         return CompoundSafetyConstraint(constraints=[self, other], combinator="or")
 
@@ -882,10 +887,10 @@ class SafetyValidator:
 
     Example:
         >>> validator = SafetyValidator()
-        >>> for trial in trials:
+        >>> for trial in trials:  # doctest: +SKIP
         ...     validator.record_result(constraint, config, metrics)
-        >>> result = validator.validate(constraint)
-        >>> print(result.message)
+        >>> result = validator.validate(constraint)  # doctest: +SKIP
+        >>> print(result.message)  # doctest: +SKIP
     """
 
     def __init__(self) -> None:
@@ -1103,7 +1108,7 @@ def hallucination_rate(metric_key: str = "hallucination_rate") -> MetricKeyMetri
         MetricKeyMetric configured for hallucination rate.
 
     Example:
-        >>> hallucination_rate().below(0.1)  # Max 10% hallucination rate
+        >>> hallucination_rate().below(0.1)  # Max 10% hallucination rate  # doctest: +SKIP
     """
     return MetricKeyMetric(
         name="hallucination_rate",
@@ -1127,7 +1132,7 @@ def toxicity_score(metric_key: str = "toxicity") -> MetricKeyMetric:
         MetricKeyMetric configured for toxicity scoring.
 
     Example:
-        >>> toxicity_score().below(0.05)  # Max 5% toxicity
+        >>> toxicity_score().below(0.05)  # Max 5% toxicity  # doctest: +SKIP
     """
     return MetricKeyMetric(
         name="toxicity_score",
@@ -1151,7 +1156,7 @@ def bias_score(metric_key: str = "bias") -> MetricKeyMetric:
         MetricKeyMetric configured for bias detection.
 
     Example:
-        >>> bias_score().below(0.1)  # Max 10% bias
+        >>> bias_score().below(0.1)  # Max 10% bias  # doctest: +SKIP
     """
     return MetricKeyMetric(
         name="bias_score",
@@ -1175,7 +1180,7 @@ def safety_score(metric_key: str = "safety_score") -> MetricKeyMetric:
         MetricKeyMetric configured for general safety.
 
     Example:
-        >>> safety_score().above(0.9)  # Require 90%+ safety
+        >>> safety_score().above(0.9)  # Require 90%+ safety  # doctest: +SKIP
     """
     return MetricKeyMetric(
         name="safety_score",

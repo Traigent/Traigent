@@ -1315,8 +1315,8 @@ def get_provider_for_model(model_name: str) -> str | None:
         'google'
         >>> get_provider_for_model("openai/gpt-4")  # LiteLLM format
         'openai'
-        >>> get_provider_for_model("my-custom-model")  # Unknown
-        None
+        >>> get_provider_for_model("my-custom-model") is None  # Unknown
+        True
     """
     # Map of LiteLLM provider prefixes (including those with underscores/digits) to
     # our canonical provider names.  None means "known prefix but not a Traigent-managed
