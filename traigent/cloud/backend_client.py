@@ -3355,9 +3355,20 @@ class BackendIntegratedClient:
 
         accepted = 0
         for chunk in chunks:
-            if not self._post_example_feature_chunk(
-                requests, experiment_run_id, feature_kind, chunk, url, headers
-            ):
+            try:
+                chunk_accepted = self._post_example_feature_chunk(
+                    requests, experiment_run_id, feature_kind, chunk, url, headers
+                )
+            except (CloudEgressBlockedError, oo_egress.OptimizationOnlyRefusal):
+                raise
+            except Exception as exc:
+                logger.debug(
+                    "Example feature upload failed for run %s: %s",
+                    experiment_run_id,
+                    exc,
+                )
+                return False
+            if not chunk_accepted:
                 logger.warning(
                     "Example feature upload for run %s stopped after %s of %s "
                     "feature rows were accepted; content analytics for the "
@@ -3381,6 +3392,12 @@ class BackendIntegratedClient:
         headers: dict[str, str],
     ) -> bool:
         """POST one feature chunk; True when the service accepted it."""
+        # Re-check policy at the send site: the chunk path must refuse exactly
+        # like the single-request upload when egress is disallowed.
+        self._raise_if_backend_egress_disabled("upload example features")
+        oo_egress.refuse_if_active(
+            "example_feature_upload", explicit=oo_egress.policy_of(self, headers, url)
+        )
         payload = {"feature_kind": feature_kind, "features": features}
 
         def _post_example_features() -> Any:
@@ -3407,20 +3424,14 @@ class BackendIntegratedClient:
             _raise_for_transient_backend_response(response, EXAMPLE_FEATURE_UPLOAD)
             return response
 
-        try:
-            response = _run_sync_backend_request_with_retry(
-                EXAMPLE_FEATURE_UPLOAD,
-                _post_example_features,
-                self.max_retries,
-            )
-            _refuse_redirect_response(response, EXAMPLE_FEATURE_UPLOAD)
-        except Exception as exc:
-            logger.debug(
-                "Example feature upload failed for run %s: %s",
-                experiment_run_id,
-                exc,
-            )
-            return False
+        # Transport/redirect failures propagate to upload_example_features,
+        # which reports them and returns False.
+        response = _run_sync_backend_request_with_retry(
+            EXAMPLE_FEATURE_UPLOAD,
+            _post_example_features,
+            self.max_retries,
+        )
+        _refuse_redirect_response(response, EXAMPLE_FEATURE_UPLOAD)
 
         if response.status_code >= 400:
             logger.warning(
