@@ -311,6 +311,19 @@ class ParameterImportanceAnalyzer:
             trials, parameter
         )
 
+        if not param_values:
+            present = [t.config[parameter] for t in trials if parameter in t.config]
+            if present and all(
+                isinstance(v, (list, dict, tuple, set)) for v in present
+            ):
+                return self._not_measurable(
+                    parameter,
+                    "correlation_based",
+                    "list or dict values are not supported by the correlation method",
+                    0,
+                    len(present),
+                )
+
         if len(param_values) < 10:
             return None
 

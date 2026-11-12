@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-import pytest
-
 from traigent.utils.callbacks import StatisticsCallback
 
 
@@ -61,7 +59,7 @@ def test_parameter_importance_preserves_zero_and_empty_results() -> None:
     assert callback.get_parameter_importance() == {}
 
 
-def test_parameter_importance_preserves_unhashable_value_exception_timing() -> None:
+def test_parameter_importance_groups_unhashable_values() -> None:
     callback = StatisticsCallback()
     scores = _CountingList([0.5])
     stats = _CountingStats(
@@ -70,9 +68,7 @@ def test_parameter_importance_preserves_unhashable_value_exception_timing() -> N
     )
     callback.stats = stats
 
-    with pytest.raises(TypeError):
-        callback.get_parameter_importance()
+    # List-valued parameters are grouped by a canonical key, not rejected (#3117).
+    assert callback.get_parameter_importance() == {"unhashable": 0.0}
 
-    assert stats.reads == {"parameter_values": 1, "scores_by_trial": 2}
-    assert scores.length_reads == 1
-    assert scores.index_reads == [0]
+    assert stats.reads["parameter_values"] == 1
