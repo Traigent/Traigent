@@ -9,6 +9,7 @@ following the Traigent hybrid API protocol.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import httpx
@@ -382,7 +383,10 @@ class HTTPTransport:
                     or example_id
                 )
 
-            legacy_inputs.append({"input_id": str(input_id or "")})
+            legacy_item: dict[str, Any] = {"input_id": str(input_id or "")}
+            if "data" in item:
+                legacy_item["data"] = payload_data
+            legacy_inputs.append(legacy_item)
 
         payload: dict[str, Any] = {
             "request_id": request.request_id,
@@ -394,7 +398,21 @@ class HTTPTransport:
             payload["session_id"] = request.session_id
         if request.timeout_ms is not None:
             payload["timeout_ms"] = request.timeout_ms
+        if request.batch_options is not None:
+            payload["batch_options"] = request.to_dict()["batch_options"]
         return payload
+
+    @staticmethod
+    def _is_invalid_inputs_error(exc: TransportError) -> bool:
+        """True when the service rejected the input array via the error code."""
+        if exc.status_code != 400 or not exc.response_body:
+            return False
+        try:
+            body = json.loads(exc.response_body)
+        except (ValueError, TypeError):
+            return False
+        error = body.get("error") if isinstance(body, dict) else None
+        return isinstance(error, dict) and error.get("code") == "INVALID_INPUTS"
 
     async def execute(
         self,
@@ -425,13 +443,9 @@ class HTTPTransport:
         except TransportError as exc:
             # Legacy compatibility: some deployed services still require
             # `inputs` with `input_id` instead of `examples` with `example_id`.
-            response_body = (exc.response_body or "").lower()
-            is_legacy_shape_error = (
-                exc.status_code == 400
-                and "missing required fields" in response_body
-                and "inputs" in response_body
-            )
-            if not is_legacy_shape_error:
+            # The decision uses the structured error code only, never the
+            # message text.
+            if not self._is_invalid_inputs_error(exc):
                 raise
 
             logger.info(
