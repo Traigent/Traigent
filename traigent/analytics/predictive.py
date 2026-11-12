@@ -107,7 +107,9 @@ class CostForecaster:
         forecast_days: int | None = None,
     ):
         """Forecast various cost components."""
-        warn_unsupported("forecast_costs", "confidence_level", confidence_level)
+        warn_unsupported(
+            "forecast_costs", "confidence_level", confidence_level, allowed=(None, 0.95)
+        )
 
         # Handle forecast_days keyword argument
         if forecast_days is not None:

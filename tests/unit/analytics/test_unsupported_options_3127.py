@@ -118,3 +118,23 @@ def test_scheduling_policy_later_assignment_warns():
     policy = SchedulingPolicy()
     with pytest.warns(UserWarning, match="preemption_allowed"):
         policy.preemption_allowed = True
+
+
+def test_forecast_costs_former_default_confidence_level_does_not_warn():
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        CostForecaster().forecast_costs(HISTORY, confidence_level=0.95)
+
+
+def test_scheduler_warns_at_use_time_even_for_default_flags_once_per_policy():
+    import warnings
+
+    scheduler = SmartScheduler(SchedulingPolicy())
+    assert scheduler.policy.preemption_allowed is False
+    with pytest.warns(UserWarning, match="preemption_allowed"):
+        scheduler.schedule_optimization(optimization_request={"function_name": "f"})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        scheduler.schedule_optimization(optimization_request={"function_name": "f"})

@@ -310,13 +310,13 @@ def _warn_if_option_unused(key: str) -> None:
     """
     if key in _WARNED_UNUSED_OPTIONS:
         return
-    _WARNED_UNUSED_OPTIONS.add(key)
     warnings.warn(
         f"configure_integrations: option '{key}' is stored but not yet read by "
         "any integration, so setting it has no effect.",
         UserWarning,
         stacklevel=3,
     )
+    _WARNED_UNUSED_OPTIONS.add(key)
 
 
 def configure_integrations(**kwargs) -> IntegrationConfig:

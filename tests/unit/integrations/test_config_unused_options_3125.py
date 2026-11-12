@@ -49,3 +49,12 @@ def test_warns_once_per_option_per_process():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         configure_integrations(strict_mode=False)
+
+
+def test_warning_turned_into_error_is_not_recorded_as_warned():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(UserWarning):
+            configure_integrations(strict_mode=True)
+    with pytest.warns(UserWarning, match="strict_mode"):
+        configure_integrations(strict_mode=True)
