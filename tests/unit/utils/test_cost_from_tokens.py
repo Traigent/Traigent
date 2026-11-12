@@ -322,6 +322,9 @@ class TestTaggedModelIds:
             ("anthropic:claude-3-haiku", "claude-3-haiku"),
             ("claude-3-haiku-20240307-v1:0", "claude-3-haiku-20240307-v1:0"),
             ("openai/gpt-4o", "gpt-4o"),
+            ("ollama/deepseek:7b", "deepseek:7b"),
+            ("deepseek:7b", "deepseek:7b"),
+            ("deepseek:latest", "deepseek:latest"),
         ],
     )
     def test_normalize_keeps_model_name(self, raw: str, expected: str) -> None:
@@ -342,5 +345,22 @@ class TestTaggedModelIds:
         assert in_cost == pytest.approx(1000 * 1.0e-6)
         assert out_cost == pytest.approx(1000 * 2.0e-6)
         for other in ("zzother-model:7b", "ollama/zzother-model:7b", "7b"):
+            with pytest.raises(UnknownModelError):
+                cost_from_tokens(1000, 1000, other)
+
+    def test_custom_price_for_deepseek_tag_does_not_price_bare_tag(
+        self, monkeypatch
+    ) -> None:
+        pricing = {
+            "deepseek:7b": {
+                "input_cost_per_token": 1.0e-6,
+                "output_cost_per_token": 2.0e-6,
+            }
+        }
+        monkeypatch.setenv("TRAIGENT_CUSTOM_MODEL_PRICING_JSON", json.dumps(pricing))
+        monkeypatch.delenv("TRAIGENT_CUSTOM_MODEL_PRICING_FILE", raising=False)
+        in_cost, _ = cost_from_tokens(1000, 1000, "ollama/deepseek:7b")
+        assert in_cost == pytest.approx(1000 * 1.0e-6)
+        for other in ("7b", "other:7b"):
             with pytest.raises(UnknownModelError):
                 cost_from_tokens(1000, 1000, other)

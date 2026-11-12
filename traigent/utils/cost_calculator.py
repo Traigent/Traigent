@@ -353,6 +353,8 @@ class UnknownModelError(KeyError):
     pass
 
 
+_TAG_ONLY_RE = re.compile(r"^(?:\d[\w.]*|latest)$", re.IGNORECASE)
+
 _PROVIDER_PREFIXES = frozenset(
     {
         "openai",
@@ -403,17 +405,26 @@ def _normalize_model_name(model: str) -> str:
     model = model.strip()
 
     # Handle / prefix (e.g., "openai/gpt-4o" or "bedrock/anthropic.claude...")
+    slash_stripped = False
     if "/" in model:
         model = model.split("/")[-1]
+        slash_stripped = True
 
     # Strip a "provider:" prefix only when the text before the first colon is a
     # known provider. Anything else is part of the model id and is kept whole:
     # a Bedrock revision ("claude-3-haiku-20240307-v1:0") and an Ollama-style
     # "name:tag" ("qwen2:7b") must keep their model name, so two different
     # models that share a tag never alias.
-    if ":" in model:
+    # At most one provider prefix is stripped in total: after a "provider/"
+    # strip the colon form is never applied, and a remainder that is only a
+    # tag or size ("7b", "latest") means the prefix is a model name.
+    if ":" in model and not slash_stripped:
         prefix, _, rest = model.partition(":")
-        if prefix.lower() in _PROVIDER_PREFIXES and rest:
+        if (
+            prefix.lower() in _PROVIDER_PREFIXES
+            and rest
+            and not _TAG_ONLY_RE.match(rest)
+        ):
             model = rest
 
     return model
