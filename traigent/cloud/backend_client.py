@@ -7,7 +7,6 @@ for better maintainability and adherence to software engineering principles.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Security FUNC-CLOUD-HYBRID FUNC-AGENTS FUNC-SECURITY REQ-CLOUD-009 REQ-AGNT-013 REQ-SEC-010
 
 import asyncio
-import concurrent.futures
 import dataclasses
 import json
 import logging
@@ -112,6 +111,7 @@ from traigent.utils.logging import get_logger
 from traigent.utils.numeric_validation import positive_int_env
 from traigent.utils.optimization_only_egress import parse_flag
 from traigent.utils.retry import RetryConfig, RetryHandler
+from traigent.utils.thread_timeout import run_in_thread_with_timeout
 
 BACKEND_CLIENT = "backend client"
 REQUESTS_IS_UNAVAILABLE = "requests is unavailable"
@@ -161,6 +161,8 @@ except ImportError:  # pragma: no cover - optional dependency for offline mode
 
 logger = get_logger(__name__)
 _ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
+# Service-side per-request cap on example features (HTTP 400 above it).
+_MAX_EXAMPLE_FEATURES_PER_REQUEST = 1000
 _JSON_CONTENT_TYPE = "application/json"
 _SDK_USER_AGENT = get_sdk_user_agent()
 _AGENT_ID_HEADER = "X-Traigent-Agent-Id"
@@ -2320,12 +2322,19 @@ class BackendIntegratedClient:
                 new_loop.close()
 
         try:
+            # Detect the loop first so a RuntimeError raised by the header work
+            # is not mistaken for "no running loop" (#3144).
             try:
                 asyncio.get_running_loop()
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    headers = future.result(timeout=min(self.timeout, 30.0))
+                in_running_loop = True
             except RuntimeError:
+                in_running_loop = False
+
+            if in_running_loop:
+                headers = run_in_thread_with_timeout(
+                    _run_in_new_loop, min(self.timeout, 30.0)
+                )
+            else:
                 headers = asyncio.run(_get_headers_async())
         except AuthenticationError:
             # Re-raise: a backend-rejected key must NEVER be downgraded to a
@@ -3334,6 +3343,61 @@ class BackendIntegratedClient:
         oo_egress.refuse_if_active(
             "example_feature_upload", explicit=oo_egress.policy_of(self, headers, url)
         )
+        # The service rejects more than _MAX_EXAMPLE_FEATURES_PER_REQUEST
+        # features per request with a 400; send larger sets in chunks (#2992).
+        if isinstance(features, list):
+            chunks: list[list[dict[str, Any]] | dict[str, Any]] = [
+                features[i : i + _MAX_EXAMPLE_FEATURES_PER_REQUEST]
+                for i in range(0, len(features), _MAX_EXAMPLE_FEATURES_PER_REQUEST)
+            ]
+        else:
+            chunks = [features]
+
+        accepted = 0
+        for chunk in chunks:
+            try:
+                chunk_accepted = self._post_example_feature_chunk(
+                    requests, experiment_run_id, feature_kind, chunk, url, headers
+                )
+            except (CloudEgressBlockedError, oo_egress.OptimizationOnlyRefusal):
+                raise
+            except Exception as exc:
+                logger.debug(
+                    "Example feature upload failed for run %s: %s",
+                    experiment_run_id,
+                    exc,
+                )
+                return False
+            if not chunk_accepted:
+                logger.warning(
+                    "Example feature upload for run %s stopped after %s of %s "
+                    "feature rows were accepted; content analytics for the "
+                    "remainder will be missing",
+                    experiment_run_id,
+                    accepted,
+                    len(features),
+                )
+                return False
+            accepted += len(chunk)
+
+        return True
+
+    def _post_example_feature_chunk(
+        self,
+        requests: Any,
+        experiment_run_id: str,
+        feature_kind: str,
+        features: list[dict[str, Any]] | dict[str, Any],
+        url: str,
+        headers: dict[str, str],
+    ) -> bool:
+        """POST one feature chunk; True when the service accepted it."""
+        # Re-check policy at the send site: the chunk path must refuse exactly
+        # like the single-request upload when egress is disallowed.
+        self._raise_if_backend_egress_disabled("upload example features")
+        oo_egress.refuse_if_active(
+            "example_feature_upload", explicit=oo_egress.policy_of(self, headers, url)
+        )
         payload = {"feature_kind": feature_kind, "features": features}
 
         def _post_example_features() -> Any:
@@ -3360,23 +3424,17 @@ class BackendIntegratedClient:
             _raise_for_transient_backend_response(response, EXAMPLE_FEATURE_UPLOAD)
             return response
 
-        try:
-            response = _run_sync_backend_request_with_retry(
-                EXAMPLE_FEATURE_UPLOAD,
-                _post_example_features,
-                self.max_retries,
-            )
-            _refuse_redirect_response(response, EXAMPLE_FEATURE_UPLOAD)
-        except Exception as exc:
-            logger.debug(
-                "Example feature upload failed for run %s: %s",
-                experiment_run_id,
-                exc,
-            )
-            return False
+        # Transport/redirect failures propagate to upload_example_features,
+        # which reports them and returns False.
+        response = _run_sync_backend_request_with_retry(
+            EXAMPLE_FEATURE_UPLOAD,
+            _post_example_features,
+            self.max_retries,
+        )
+        _refuse_redirect_response(response, EXAMPLE_FEATURE_UPLOAD)
 
         if response.status_code >= 400:
-            logger.debug(
+            logger.warning(
                 "Example feature upload rejected for run %s: %s",
                 experiment_run_id,
                 safe_http_error_summary(response.status_code, response.text),

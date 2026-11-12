@@ -4,6 +4,7 @@
 
 import asyncio
 import logging
+import math
 from contextlib import suppress
 from typing import Any, cast
 
@@ -580,6 +581,6 @@ class OptimizerDirectClient:
         Args:
             interval: Flush interval in seconds (must be > 0)
         """
-        if interval <= 0:
-            raise ValueError("Flush interval must be positive")
+        if not 0 < interval < math.inf:
+            raise ValueError("Flush interval must be a finite positive number")
         self._flush_interval = interval

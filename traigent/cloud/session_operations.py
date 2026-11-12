@@ -51,6 +51,7 @@ from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
+from traigent.utils.thread_timeout import run_in_thread_with_timeout
 from traigent.utils.validation import CoreValidators, validate_or_raise
 from traigent.utils.wire_text import filter_wire_metadata
 
@@ -1202,8 +1203,15 @@ class SessionOperations:
 
         # Run async method in sync context
         try:
+            # Detect the loop first so a RuntimeError raised by the work itself
+            # is not mistaken for "no running loop" (#3078).
             try:
                 asyncio.get_running_loop()
+                in_running_loop = True
+            except RuntimeError:
+                in_running_loop = False
+
+            if in_running_loop:
 
                 def _run_in_new_loop() -> SessionCreationResult:
                     new_loop = asyncio.new_event_loop()
@@ -1220,12 +1228,11 @@ class SessionOperations:
                 executor = _get_session_executor()
                 future = executor.submit(_run_in_new_loop)
                 return future.result(timeout=60)
-            except RuntimeError:
-                return asyncio.run(
-                    _with_loop_local_session(
-                        self.client, _create_session_async(self, context)
-                    )
+            return asyncio.run(
+                _with_loop_local_session(
+                    self.client, _create_session_async(self, context)
                 )
+            )
 
         except ValidationException:
             raise  # User input errors must propagate
@@ -2163,8 +2170,6 @@ class SessionOperations:
         stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session."""
-        import concurrent.futures
-
         self._validate_non_empty_string(session_id, "session_id")
         self._validate_optimization_outcome(optimization_outcome)
         self._validate_stop_reason(stop_reason)
@@ -2202,9 +2207,7 @@ class SessionOperations:
                 # We're in an async context - run in a separate thread to avoid deadlock
                 # Cannot use run_coroutine_threadsafe + future.result() from the same
                 # thread as the event loop - that causes deadlock
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    return future.result(timeout=60)
+                return run_in_thread_with_timeout(_run_in_new_loop, 60)
             else:
                 # No async context, run directly
                 return _run_in_new_loop()
@@ -2234,8 +2237,6 @@ class SessionOperations:
         This method safely handles being called from both sync and async contexts
         by using a ThreadPoolExecutor when a running event loop is detected.
         """
-        import concurrent.futures
-
         self._validate_non_empty_string(session_id, "session_id")
 
         def _run_in_new_loop() -> bool:
@@ -2263,9 +2264,7 @@ class SessionOperations:
                 # We're in an async context - run in a separate thread to avoid deadlock
                 # Cannot use run_coroutine_threadsafe + future.result() from the same
                 # thread as the event loop - that causes deadlock
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    return future.result(timeout=60)
+                return run_in_thread_with_timeout(_run_in_new_loop, 60)
             else:
                 # No async context, run directly
                 return _run_in_new_loop()

@@ -604,3 +604,20 @@ class TestMetricsComparison:
 
         # Missing metric
         assert not optimizer._is_better_result({"other_metric": 0.9})
+
+
+@pytest.mark.asyncio
+async def test_status_progress_with_zero_max_trials_does_not_raise(
+    optimizer, mock_remote_service
+):
+    """A zero-trial session reports completed progress instead of dividing by 0 (#3121)."""
+    mock_remote_service.create_session.return_value = SessionCreationResponse(
+        session_id="session-0",
+        status=OptimizationSessionStatus.ACTIVE,
+        optimization_strategy={},
+    )
+    await optimizer.initialize_session("test_function", 0)
+
+    status = await optimizer.get_optimization_status()
+
+    assert status["progress"] == 1.0

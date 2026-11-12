@@ -291,10 +291,27 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.upload_example_features",
         "log",
-        "cceaf2141f516f26",  # pragma: allowlist secret
+        "52781906c722fd80",  # pragma: allowlist secret
     ): (
         1,
-        _LEGACY_BACKEND,
+        (
+            "partial-upload warning (#2992 chunking): interpolates only the caller's "
+            "run id, an int count of accepted rows and len(features); no feature "
+            "values, exception text or response body"
+        ),
+    ),
+    (
+        "backend_client.py",
+        "BackendIntegratedClient._post_example_feature_chunk",
+        "log",
+        "cd36b3d066f1af11",  # pragma: allowlist secret
+    ): (
+        1,
+        (
+            "rejected-chunk warning: run id plus safe_http_error_summary only "
+            "(session_types.py:206: status code and a closed error code, never the "
+            "backend message or body text)"
+        ),
     ),
     (
         "backend_client.py",

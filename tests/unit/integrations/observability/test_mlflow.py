@@ -561,6 +561,24 @@ class TestTraigentMLflowTracker:
         assert comparison["run_1"]["best_metrics"]["accuracy"] == 0.85
         assert comparison["run_2"]["best_metrics"]["accuracy"] == 0.90
 
+    def test_compare_optimizations_honours_metrics_filter(
+        self, patched_mlflow: MockMLflow
+    ) -> None:
+        """The documented ``metrics`` argument limits the compared metrics (#3126)."""
+        tracker = mlflow_module.TraigentMLflowTracker()
+        mock_client = MockMLflowClient()
+        run1 = MockMLflowRun("run_1")
+        run1.data.metrics = {"best_accuracy": 0.85, "best_cost": 0.2}
+        run1.data.params = {"optimization_status": "completed"}
+        run1.data.tags = {}
+        run1.info.run_name = "run_1"
+        mock_client.runs["run_1"] = run1
+        patched_mlflow.tracking.MlflowClient = lambda: mock_client
+
+        comparison = tracker.compare_optimizations(["run_1"], metrics=["accuracy"])
+
+        assert comparison["run_1"]["best_metrics"] == {"accuracy": 0.85}
+
     def test_compare_optimizations_with_error(self, patched_mlflow: MockMLflow) -> None:
         """Test comparing optimizations handles errors gracefully."""
         tracker = mlflow_module.TraigentMLflowTracker()

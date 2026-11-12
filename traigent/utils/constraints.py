@@ -311,29 +311,52 @@ class ResourceConstraint(Constraint):
         super().__init__(name, f"Resource usage must be <= {max_resource}")
         self.resource_calculator = resource_calculator
         self.max_resource = max_resource
+        # Outcome of the last calculator call, so the violation message does
+        # not need to re-run the user calculator.
+        self._last_usage: Any = None
+        self._last_error_type: str | None = None
+        self._has_outcome = False
 
-    def validate(self, config: dict[str, Any]) -> bool:
-        """Check if resource usage is within limits."""
+    def _evaluate(self, config: dict[str, Any]) -> bool:
+        """Run the calculator once and record the outcome."""
+        self._last_usage = None
+        self._last_error_type = None
+        self._has_outcome = True
         try:
             usage = self.resource_calculator(config)
-            return usage <= self.max_resource
-        except KeyError:
-            # Missing keys mean we can't calculate usage, treat as invalid
-            return False
+            self._last_usage = usage
+            return bool(usage <= self.max_resource)
         except Exception as e:
+            # Missing keys or a buggy calculator: treat as invalid, but say so.
+            # Type only: exception text can carry customer content.
+            self._last_error_type = type(e).__name__
             logger.warning(
-                f"Resource constraint validation error (treating as invalid): {e}",
-                exc_info=True,
+                "Resource constraint '%s' calculator raised %s (treating as invalid)",
+                self.name,
+                type(e).__name__,
             )
             return False  # Invalid config for resource calculation
 
+    def validate(self, config: dict[str, Any]) -> bool:
+        """Check if resource usage is within limits."""
+        return self._evaluate(config)
+
     def get_violation_message(self, config: dict[str, Any]) -> str:
-        """Get violation message."""
+        """Get violation message from the recorded outcome (type only on error)."""
+        if not self._has_outcome:
+            self._evaluate(config)
+        if self._last_error_type is not None:
+            return (
+                f"Cannot calculate resource usage: calculator raised "
+                f"{self._last_error_type}"
+            )
         try:
-            usage = self.resource_calculator(config)
-            return f"Resource usage {usage:.3f} exceeds limit {self.max_resource}"
-        except Exception as e:
-            return f"Cannot calculate resource usage: {e}"
+            return (
+                f"Resource usage {self._last_usage:.3f} exceeds limit "
+                f"{self.max_resource}"
+            )
+        except (TypeError, ValueError):
+            return f"Resource usage exceeds limit {self.max_resource}"
 
     def get_suggestion(self, config: dict[str, Any]) -> str | None:
         """Get suggestion for fixing violation."""
@@ -361,24 +384,39 @@ class CustomConstraint(Constraint):
         super().__init__(name, "Custom constraint")
         self.validator = validator
         self.message_generator = message_generator
+        # Exception type from the last validate() call, so the violation
+        # message does not need to re-run the user validator.
+        self._last_error_type: str | None = None
         self.suggestion_generator = suggestion_generator
 
     def validate(self, config: dict[str, Any]) -> bool:
         """Check constraint using custom validator."""
+        self._last_error_type = None
         try:
             return self.validator(config)
         except Exception as e:
-            logger.debug(
-                f"Custom constraint '{self.name}' validation failed (treating as invalid): {e}"
+            # Type only: exception text can carry customer content.
+            self._last_error_type = type(e).__name__
+            logger.warning(
+                "Custom constraint '%s' validator raised %s (treating as invalid)",
+                self.name,
+                type(e).__name__,
             )
             return False
 
     def get_violation_message(self, config: dict[str, Any]) -> str:
         """Get violation message using custom generator."""
+        error_type = self._last_error_type
+        if error_type is not None:
+            # The validator crashed on its last call; do not blame the rule.
+            return f"Custom constraint '{self.name}' validator raised {error_type}"
         try:
             return self.message_generator(config)
         except Exception as e:
-            return f"Custom constraint '{self.name}' violated: {e}"
+            return (
+                f"Custom constraint '{self.name}' message generator raised "
+                f"{type(e).__name__}"
+            )
 
     def get_suggestion(self, config: dict[str, Any]) -> str | None:
         """Get suggestion using custom generator."""
