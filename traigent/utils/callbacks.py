@@ -1602,7 +1602,11 @@ class DetailedProgressCallback(OptimizationCallback):
             getattr(trial, "config", None), self.trial_count
         )
 
-        known_totals = [v for v in (self.total_trials, progress.total_trials) if v > 0]
+        known_totals = [
+            v
+            for v in (self.total_trials, progress.total_trials)
+            if v is not None and v > 0
+        ]
         total_display = min(known_totals) if known_totals else 0
         if not total_display or total_display <= 0:
             total_display_str = "?"
