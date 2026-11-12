@@ -3855,8 +3855,15 @@ class OptimizationOrchestrator:
         return filtered_configs
 
     def _maybe_log_checkpoint(self, trial_count: int) -> None:
-        """Log a checkpoint if the trial count is at a logging interval."""
-        if trial_count % PROGRESS_LOG_INTERVAL == 0:
+        """Log a checkpoint when the trial count crosses a logging interval.
+
+        Counts can jump by a whole parallel batch (e.g. 3, 6, 9, 12), so the
+        check is "crossed a multiple since the last checkpoint", not an exact
+        multiple (#2957). Used by both the sequential and parallel paths.
+        """
+        bucket = trial_count // PROGRESS_LOG_INTERVAL
+        if bucket > getattr(self, "_last_checkpoint_bucket", 0):
+            self._last_checkpoint_bucket = bucket
             optimizer_state = {}
             if hasattr(self.optimizer, "get_state"):
                 optimizer_state = self.optimizer.get_state()
@@ -3956,9 +3963,7 @@ class OptimizationOrchestrator:
                 self._stop_reason = "cost_limit"
                 return trial_count, "break"
 
-        # Phase 10: Checkpoint logging
-        self._maybe_log_checkpoint(trial_count)
-
+        # Checkpoint logging happens in _dispatch_trial for both paths (#2957).
         return trial_count, "continue"
 
     async def _submit_usage_analytics(self) -> None:
@@ -5092,7 +5097,7 @@ class OptimizationOrchestrator:
         """
         try:
             if self.parallel_trials > 1:
-                return await self._run_parallel_batch(
+                new_count, action = await self._run_parallel_batch(
                     func=func,
                     dataset=dataset,
                     session_id=session_id,
@@ -5101,16 +5106,22 @@ class OptimizationOrchestrator:
                     remaining=remaining,
                     remaining_samples=remaining_samples,
                 )
-            return cast(
-                tuple[int, str],
-                await self._trial_lifecycle.run_sequential_trial(
-                    func=func,
-                    dataset=dataset,
-                    session_id=session_id,
-                    function_name=function_identifier,
-                    trial_count=trial_count,
-                ),
-            )
+            else:
+                new_count, action = cast(
+                    tuple[int, str],
+                    await self._trial_lifecycle.run_sequential_trial(
+                        func=func,
+                        dataset=dataset,
+                        session_id=session_id,
+                        function_name=function_identifier,
+                        trial_count=trial_count,
+                    ),
+                )
+            if new_count > trial_count:
+                # Also on "break": a batch can cross an interval and then stop
+                # (vendor/budget) and its checkpoint must not be skipped.
+                self._maybe_log_checkpoint(new_count)
+            return new_count, action
         except VendorPauseError as e:
             decision = await self._handle_vendor_pause(e)
             if decision == "break":

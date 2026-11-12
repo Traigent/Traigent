@@ -900,3 +900,52 @@ def test_redacted_full_coverage_trial_is_still_reused_wholesale() -> None:
     prior = _prior([_redacted_trial(["a", "b", "c", "d"])])
     plan = plan_resume(prior, _FPS, dataset_example_ids=["a", "b", "c", "d"])
     assert len(plan.reusable) == 1
+
+
+# ---- explicit relative / home paths (#2959) ---------------------------------
+
+
+def _saved_result_dir(base: Path) -> str:
+    from traigent.utils.persistence import PersistenceManager
+
+    return PersistenceManager(base_dir=base).save_result(_prior([_trial("a")]), "run1")
+
+
+def test_dot_slash_path_resolves_against_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "elsewhere"))
+    saved = Path(_saved_result_dir(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    loaded = load_resume_source(f"./{saved.name}")
+    assert len(loaded.trials) == 1
+
+
+def test_tilde_path_is_expanded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    saved = Path(_saved_result_dir(tmp_path))
+    loaded = load_resume_source(f"~/{saved.name}")
+    assert len(loaded.trials) == 1
+
+
+def test_not_found_message_names_lookup_rule_without_echoing_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="default results folder") as exc:
+        load_resume_source("./secret_name_xyz")
+    assert "secret_name_xyz" not in str(exc.value)
+
+
+def test_nonexistent_parent_gives_value_free_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    target = "./no_such_parent_zq/inner"
+    with pytest.raises(ValueError, match="not found") as exc:
+        load_resume_source(target)
+    assert "no_such_parent_zq" not in str(exc.value)
+    assert not (tmp_path / "no_such_parent_zq").exists()
