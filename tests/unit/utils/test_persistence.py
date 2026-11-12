@@ -137,6 +137,38 @@ def test_resumable_can_resume_finds_checkpoint(tmp_path) -> None:
     )
 
 
+def test_can_resume_matches_tuple_range_and_key_order(tmp_path) -> None:
+    """A tuple range and a different key order still match the checkpoint (#3086)."""
+    persistence = PersistenceManager(base_dir=tmp_path)
+    resumable = ResumableOptimization(persistence)
+    result = _make_optimization_result()
+    result.metadata["configuration_space"] = {
+        "t": (0.0, 1.0),
+        "m": ["a", "b"],
+    }
+    resumable.save_checkpoint(result, "latest")
+
+    assert (
+        resumable.can_resume("demo_function", {"m": ["a", "b"], "t": (0.0, 1.0)})
+        == "checkpoint_latest"
+    )
+    # A genuinely different space never matches.
+    assert (
+        resumable.can_resume("demo_function", {"m": ["a", "b"], "t": (0.0, 2.0)})
+        is None
+    )
+    assert (
+        resumable.can_resume("demo_function", {"m": ["a", "c"], "t": (0.0, 1.0)})
+        is None
+    )
+    # A list of two numbers is choices, not the stored range.
+    assert (
+        resumable.can_resume("demo_function", {"m": ["a", "b"], "t": [0.0, 1.0]})
+        is None
+    )
+    assert resumable.can_resume("demo_function", {"m": ["a", "b"]}) is None
+
+
 def test_restricted_unpickler_rejects_issue_eval_exploit(tmp_path) -> None:
     """The issue #1634 eval/REDUCE payload must not execute."""
 

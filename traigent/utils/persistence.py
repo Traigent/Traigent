@@ -369,6 +369,18 @@ def _serialize_configuration_space(space: Any) -> Any:
     return _safe_json_value(space)
 
 
+def _canonical_space(space: Any) -> str:
+    """Order-independent canonical text of a config space.
+
+    Both the stored and the live space go through the writer's serialiser, so
+    a tuple range matches its stored ``{"low","high"}`` form. A list (choices)
+    and a tuple (range) stay different, as do any differing values.
+    """
+    return json.dumps(
+        _serialize_configuration_space(space), sort_keys=True, default=str
+    )
+
+
 def _restore_tuple_ranges(result: Any, curated_space: Any) -> None:
     """Turn flattened ranges in the decoded config space back into tuples.
 
@@ -1176,7 +1188,8 @@ class ResumableOptimization:
         for result_info in results:
             if (
                 result_info["function_name"] == function_name
-                and result_info["configuration_space"] == configuration_space
+                and _canonical_space(result_info["configuration_space"])
+                == _canonical_space(configuration_space)
                 and result_info["name"].startswith("checkpoint_")
             ):
                 return cast(str | None, result_info["name"])
