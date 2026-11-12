@@ -213,3 +213,19 @@ repository root.
 Your contributions help make Traigent SDK better for everyone. We appreciate your time and effort!
 
 If you have any questions, feel free to open an issue or start a discussion.
+
+## Release checklist: closing issues on promotion
+
+GitHub acts on closing keywords only when a PR merges into `main`, so issues
+fixed by PRs merged into `develop` stay open after a `develop` to `main`
+promotion unless the promotion PR carries the keywords. Before opening the
+promotion PR, build the block and paste it into the PR body:
+
+```bash
+python scripts/ci/promotion_closes_block.py origin/main..origin/develop
+# optional, needs an authenticated gh: also read PR bodies, skip closed issues
+python scripts/ci/promotion_closes_block.py origin/main..origin/develop --use-gh-bodies --drop-closed
+```
+
+After opening the PR, check that the number of lines in the block equals the
+PR's `closingIssuesReferences` count.
