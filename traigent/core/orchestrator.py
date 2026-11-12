@@ -3214,10 +3214,22 @@ class OptimizationOrchestrator:
                 "mode": "hybrid",
                 "dataset_size": len(dataset),
             }
-            return (
-                await self.optimizer.generate_candidates_async(
-                    remaining, remote_context=remote_context
+            gen_kwargs: dict[str, Any] = {"remote_context": remote_context}
+            # Optimizers that declare a ``history`` parameter (RemoteOptimizer)
+            # get the trials completed so far, as the sequential path does.
+            try:
+                accepts_history = (
+                    "history"
+                    in inspect.signature(
+                        self.optimizer.generate_candidates_async
+                    ).parameters
                 )
+            except (TypeError, ValueError):
+                accepts_history = False
+            if accepts_history:
+                gen_kwargs["history"] = list(self._trials)
+            return (
+                await self.optimizer.generate_candidates_async(remaining, **gen_kwargs)
                 or []
             )
         except (ValueError, TypeError, AttributeError, NotImplementedError) as e:
@@ -3569,6 +3581,12 @@ class OptimizationOrchestrator:
             ) = await self.parallel_execution_manager.run_with_cost_permits(
                 tasks,
                 cancel_sentinel=None,  # None indicates cost limit cancellation
+                cost_of_result=lambda r: (
+                    self._extract_trial_cost(r) if isinstance(r, TrialResult) else None
+                ),
+                unmeasured_of_result=lambda r: (
+                    isinstance(r, TrialResult) and is_cost_unmeasured(r.metrics)
+                ),
             )
         except (KeyboardInterrupt, asyncio.CancelledError):
             # #3234: pair every started trial with a completion, then propagate.

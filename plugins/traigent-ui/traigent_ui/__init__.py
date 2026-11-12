@@ -17,11 +17,12 @@ if TYPE_CHECKING:
     pass
 
 
-def launch_playground(port: int = 8501, **kwargs) -> None:
+def launch_playground(port: int = 8501, open_browser: bool = True, **kwargs) -> None:
     """Launch the Traigent playground Streamlit app.
 
     Args:
         port: Port to run the Streamlit app on (default: 8501)
+        open_browser: Open a browser tab automatically (default: True)
         **kwargs: Additional arguments passed to streamlit
     """
     try:
@@ -38,6 +39,8 @@ def launch_playground(port: int = 8501, **kwargs) -> None:
     app_path = app_module.__file__
 
     sys.argv = ["streamlit", "run", app_path, "--server.port", str(port)]
+    if not open_browser:
+        sys.argv += ["--server.headless", "true"]
     sys.exit(stcli.main())
 
 

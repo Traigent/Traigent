@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from traigent.core.cost_enforcement import CostEnforcer
 
 from traigent.core.cost_enforcement import Permit
@@ -352,11 +354,89 @@ class ParallelExecutionManager:
                 index,
             )
 
+    @staticmethod
+    def _known_exit_cost(exc: BaseException) -> float | None:
+        """Cost an interrupting exception reports for its trial, if any."""
+        cost = getattr(exc, "cost_usd", None)
+        if isinstance(cost, bool) or not isinstance(cost, int | float):
+            return None
+        if not math.isfinite(cost) or cost < 0:
+            return None
+        return float(cost)
+
+    async def _settle_interrupted_permit(
+        self,
+        permit: Permit | None,
+        cost: float | None,
+        index: int,
+        cost_unmeasured: bool = False,
+    ) -> None:
+        """Book known cost (or mark it unknown) and release the permit."""
+        if permit is None or not permit.is_granted or self.cost_enforcer is None:
+            return
+        try:
+            await self.cost_enforcer.track_cost_async(
+                cost,
+                permit=permit,
+                trial_failed=True,
+                trial_id=f"parallel_{index}",
+                cost_unmeasured=cost_unmeasured,
+            )
+        except Exception:
+            logger.warning(
+                "Could not book cost for interrupted trial %d; releasing permit",
+                index,
+                exc_info=True,
+            )
+            await self.cost_enforcer.release_permit_async(permit)
+
+    async def _settle_after_interrupt(
+        self,
+        indexed_results: list[Any],
+        cancel_sentinel: Any,
+        cost_of_result: Callable[[Any], float | None] | None,
+        unmeasured_of_result: Callable[[Any], bool] | None = None,
+    ) -> None:
+        """Settle finished siblings, then re-raise the interrupting exception."""
+        fatal: BaseException | None = None
+        for item in indexed_results:
+            if not (isinstance(item, tuple) and len(item) == 3):
+                continue
+            index, result, permit = item
+            if isinstance(result, BaseException):
+                if fatal is None and not isinstance(result, Exception):
+                    fatal = result
+                continue  # failed trials already released their permit
+            if result is cancel_sentinel and not permit.is_granted:
+                continue
+            cost: float | None = None
+            if cost_of_result is not None:
+                try:
+                    cost = cost_of_result(result)
+                except Exception:
+                    logger.warning("cost_of_result failed", exc_info=True)
+                if cost is not None and (
+                    isinstance(cost, bool) or not math.isfinite(cost) or cost < 0
+                ):
+                    cost = None
+            unmeasured = False
+            if unmeasured_of_result is not None:
+                try:
+                    unmeasured = bool(unmeasured_of_result(result))
+                except Exception:
+                    logger.warning("unmeasured_of_result failed", exc_info=True)
+                    unmeasured = True  # unknown flag state: do not claim exact
+            await self._settle_interrupted_permit(permit, cost, index, unmeasured)
+        if fatal is not None:
+            raise fatal
+
     async def run_with_cost_permits(
         self,
         coroutines: list[Any],
         *,
         cancel_sentinel: Any = None,
+        cost_of_result: Callable[[Any], float | None] | None = None,
+        unmeasured_of_result: Callable[[Any], bool] | None = None,
     ) -> tuple[list[PermittedTrialResult], int]:
         """Run coroutines with cost permit checking before each execution.
 
@@ -374,6 +454,14 @@ class ParallelExecutionManager:
         Args:
             coroutines: List of coroutines to execute with permit checking
             cancel_sentinel: Value to return for cancelled coroutines (default: None)
+            cost_of_result: Optional extractor for the USD cost of a finished
+                trial result. Used only when the run is interrupted by
+                ``SystemExit`` / ``KeyboardInterrupt`` to book the spend of
+                siblings that already finished; without it their cost is
+                marked unknown.
+            unmeasured_of_result: Optional predicate; True when a finished
+                result's cost is only a known floor (partly unmeasured), so it
+                is booked with ``cost_unmeasured=True``.
 
         Returns:
             Tuple of (permitted_results, cancelled_count) where each result is a
@@ -387,6 +475,8 @@ class ParallelExecutionManager:
 
         # Create a denied permit for cancelled/failed trials
         denied_permit = Permit(id=-1, amount=0.0, active=False)
+        interrupted = False
+        tasks: list[Any] = []
 
         async def execute_with_permit(coro: Any, index: int) -> tuple[int, Any, Permit]:
             """Execute coroutine if permit acquired, return (index, result, permit).
@@ -396,7 +486,7 @@ class ParallelExecutionManager:
             If an exception occurs after permit acquisition, the permit is released
             and a denied permit is returned (already released).
             """
-            nonlocal cancelled_count
+            nonlocal cancelled_count, interrupted
 
             permit: Permit | None = None
             coroutine_started = False
@@ -422,11 +512,31 @@ class ParallelExecutionManager:
                     # Success: return with the permit for track_cost_async
                     return (index, result, permit)
             except asyncio.CancelledError:
-                await ParallelExecutionManager._release_cancelled_permit(
-                    self, coro, index, permit, coroutine_started
-                )
+                if interrupted and coroutine_started:
+                    # Cancelled because a sibling was interrupted: the started
+                    # trial may have spent, so mark its cost unknown.
+                    await self._settle_interrupted_permit(permit, None, index)
+                else:
+                    await ParallelExecutionManager._release_cancelled_permit(
+                        self, coro, index, permit, coroutine_started
+                    )
                 raise
             except BaseException as e:
+                if not isinstance(e, Exception):
+                    # SystemExit / KeyboardInterrupt: settle this trial (book
+                    # the cost the exception reports, else mark it unknown),
+                    # stop the siblings, and let the post-pass re-raise.
+                    interrupted = True
+                    if not coroutine_started:
+                        _close_unstarted_coroutine(coro)
+                    await self._settle_interrupted_permit(
+                        permit, self._known_exit_cost(e), index
+                    )
+                    current = asyncio.current_task()
+                    for other in tasks:
+                        if other is not current:
+                            other.cancel()
+                    return (index, e, denied_permit)
                 # Release the permit on exception - the trial failed after permit
                 # was granted, so we need to release the reservation
                 if (
@@ -445,10 +555,20 @@ class ParallelExecutionManager:
                 return (index, e, denied_permit)
 
         # Create bounded tasks preserving order
-        tasks = [execute_with_permit(coro, idx) for idx, coro in enumerate(coroutines)]
+        tasks.extend(
+            asyncio.ensure_future(execute_with_permit(coro, idx))
+            for idx, coro in enumerate(coroutines)
+        )
 
         # Run all tasks and collect results
         indexed_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        if interrupted:
+            for coro in coroutines:
+                _close_unstarted_coroutine(coro)  # no-op for finished ones
+            await self._settle_after_interrupt(
+                indexed_results, cancel_sentinel, cost_of_result, unmeasured_of_result
+            )
 
         # Sort by index to preserve original order
         indexed_results = sorted(

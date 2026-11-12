@@ -123,6 +123,22 @@ def setup_logging(
     configure_litellm_logging(resolved_level)
 
 
+def warn_option_ignored(owner: str, option: str, value: Any, default: Any) -> None:
+    """Warn that an accepted-but-unused option was set to a non-default value.
+
+    Public APIs keep accepting these options for compatibility, so this never
+    raises. Passing the default explicitly does not warn.
+    """
+    if type(value) is type(default) and value == default:
+        return
+    logging.getLogger("traigent.options").warning(
+        "%s: option %s=%r is accepted but has no effect in this version.",
+        owner,
+        option,
+        value,
+    )
+
+
 def get_logger(name: str) -> logging.Logger:
     """Get a logger instance for the given name.
 

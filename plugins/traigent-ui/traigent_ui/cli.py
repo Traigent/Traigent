@@ -33,7 +33,7 @@ def main() -> None:
 
     from traigent_ui import launch_playground
 
-    launch_playground(port=args.port)
+    launch_playground(port=args.port, open_browser=not args.no_browser)
 
 
 if __name__ == "__main__":

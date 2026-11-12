@@ -26,7 +26,7 @@ from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.results import BatchResult, BatchTrial
 from traigent.utils.batch_processing import AdaptiveBatchSizer
-from traigent.utils.logging import get_logger
+from traigent.utils.logging import get_logger, warn_option_ignored
 from traigent.utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
@@ -104,6 +104,19 @@ class BatchOptimizationConfig:
                 f"early_stopping_min_delta must be a finite non-negative number, "
                 f"got {delta!r}"
             )
+        # Accepted for compatibility; nothing reads these yet.
+        warn_option_ignored(
+            "BatchOptimizationConfig",
+            "distributed_workers",
+            self.distributed_workers,
+            1,
+        )
+        warn_option_ignored(
+            "BatchOptimizationConfig",
+            "enable_checkpointing",
+            self.enable_checkpointing,
+            True,
+        )
 
 
 class ParallelBatchOptimizer(BaseOptimizer):

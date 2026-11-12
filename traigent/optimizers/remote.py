@@ -13,11 +13,17 @@ trials still execute locally.
 
 from __future__ import annotations
 
-from typing import Any, cast
+import math
+from typing import Any
 
+from traigent.api.parameter_ranges import ParameterRange
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.registry import register_optimizer
+from traigent.utils.discrete_domains import (
+    float_step_divides_span,
+    stepped_int_contains,
+)
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
 
@@ -37,6 +43,89 @@ _NO_REMOTE_CLIENT_MSG = (
 )
 
 
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+_HISTORY_STATUSES = frozenset(
+    {
+        "not_started",
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "pruned",
+    }
+)
+
+
+def _history_for_remote(history: list[Any] | None) -> list[dict[str, Any]]:
+    """Project trial history to a closed set of fields before it leaves.
+
+    Default-deny: only the trial index and a status from a fixed enum are
+    forwarded, whatever the privacy setting. Trial ids, configuration values,
+    metric names and values, and any free-form text never leave; an
+    unrecognised status becomes ``"unknown"``.
+    """
+    entries: list[dict[str, Any]] = []
+    for index, trial in enumerate(history or []):
+        status = trial.get("status") if isinstance(trial, dict) else None
+        if not isinstance(trial, dict):
+            status = getattr(trial, "status", None)
+        status = getattr(status, "value", status)
+        if not isinstance(status, str) or status not in _HISTORY_STATUSES:
+            status = "unknown"
+        entries.append({"index": index, "status": status})
+    return entries
+
+
+def _value_problem(key: str, spec: Any, value: Any) -> str | None:
+    """Return why ``value`` is outside ``spec`` for ``key``, or None when valid.
+
+    Unknown specification shapes are rejected (fail closed).
+    """
+    if isinstance(spec, ParameterRange):
+        spec = spec.to_config_value()
+    if isinstance(spec, list):
+        if not any(
+            isinstance(value, bool) == isinstance(o, bool) and value == o for o in spec
+        ):
+            return f"value for {key!r} is outside the configured options"
+        return None
+    low: Any = None
+    high: Any = None
+    step: Any = None
+    is_int = False
+    if isinstance(spec, tuple) and len(spec) == 2:
+        low, high = spec
+        is_int = isinstance(low, int) and isinstance(high, int)
+    elif isinstance(spec, dict) and spec.get("type") in ("int", "float"):
+        low, high, step = spec.get("low"), spec.get("high"), spec.get("step")
+        is_int = spec["type"] == "int"
+    if low is None:
+        return f"configuration specification for {key!r} is not supported"
+    if not (_is_number(low) and _is_number(high)):
+        return f"configuration specification for {key!r} is not supported"
+    if not _is_number(value) or not math.isfinite(value) or not low <= value <= high:
+        return f"value for {key!r} is outside the configured range"
+    if is_int:
+        if value != int(value):
+            return f"value for {key!r} is not an integer"
+        if step is not None:
+            if not (isinstance(step, int) and not isinstance(step, bool)) or step <= 0:
+                return f"configuration specification for {key!r} is not supported"
+            if not stepped_int_contains(int(low), int(high), step, int(value)):
+                return f"value for {key!r} is not on the configured step"
+    elif step is not None:
+        if not _is_number(step) or not math.isfinite(step) or step <= 0:
+            return f"configuration specification for {key!r} is not supported"
+        on_grid = value == high or float_step_divides_span(low, value, step)
+        if not on_grid:
+            return f"value for {key!r} is not on the configured step"
+    return None
+
+
 class RemoteOptimizer(BaseOptimizer):
     """Optimizer that requests suggestions from an injected remote service.
 
@@ -53,6 +142,10 @@ class RemoteOptimizer(BaseOptimizer):
     - Runtime fallback: when the injected client raises at suggest-time, the
       optimizer emits a WARNING and falls back to local random search for
       that single suggestion. This is logged, not silent.
+    - Malformed responses fail closed: a suggestion that is not a dict inside
+      the configuration space (or a batch that is not a non-empty list of
+      such dicts) raises ``OptimizationError``; it is never replaced by local
+      random search.
     """
 
     # The seed reaches only the local fallback; handled explicitly in __init__.
@@ -127,18 +220,25 @@ class RemoteOptimizer(BaseOptimizer):
         use these in remote calls to ensure privacy-safe behavior.
         """
         if self.remote_enabled and self._remote_client is not None:
-            try:
-                # Use single-suggestion path
-                if hasattr(self._remote_client, "suggest_next"):
-                    return cast(
-                        dict[str, Any],
-                        await self._remote_client.suggest_next(
-                            self.config_space, history, remote_context
-                        ),
+            suggestion: Any = None
+            has_method = hasattr(self._remote_client, "suggest_next")
+            if has_method:
+                try:
+                    suggestion = await self._remote_client.suggest_next(
+                        self.config_space,
+                        _history_for_remote(history),
+                        remote_context,
                     )
+                except Exception as e:
+                    logger.warning(f"Remote suggestion failed, using fallback: {e}")
+                    has_method = False
+            else:
                 logger.debug("Remote client missing suggest methods; using fallback")
-            except Exception as e:
-                logger.warning(f"Remote suggestion failed, using fallback: {e}")
+            if has_method:
+                problem = self._suggestion_problem(suggestion)
+                if problem is not None:
+                    raise OptimizationError(f"Remote suggestion rejected: {problem}")
+                return dict(suggestion)
         return self._fallback.suggest_next_trial(history)
 
     def should_stop(self, history: list[Any]) -> bool:
@@ -149,20 +249,69 @@ class RemoteOptimizer(BaseOptimizer):
     ) -> bool:
         return await super().should_stop_async(history, remote_context)
 
+    def _suggestion_problem(self, suggestion: Any) -> str | None:
+        """Return why a remote suggestion is unusable, or None when valid.
+
+        A valid suggestion is a dict that covers every config-space key, keeps
+        each value inside its declared specification, and carries no unknown
+        keys (dunder keys such as ``__subset_indices__`` are service metadata).
+        """
+        if not isinstance(suggestion, dict):
+            return f"expected a dict, got {type(suggestion).__name__}"
+        for key, spec in self.config_space.items():
+            if key not in suggestion:
+                return f"missing config key {key!r}"
+            problem = _value_problem(key, spec, suggestion[key])
+            if problem is not None:
+                return problem
+        for key in suggestion:
+            if key not in self.config_space and not str(key).startswith("__"):
+                return f"unknown config key {key!r}"
+        return None
+
     async def generate_candidates_async(
-        self, max_candidates: int, remote_context: dict[str, Any] | None = None
+        self,
+        max_candidates: int,
+        remote_context: dict[str, Any] | None = None,
+        history: list[Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Prefer remote batch suggestions when available."""
+        """Prefer remote batch suggestions when available.
+
+        ``history`` (prior trials) is forwarded to the remote service as a
+        closed projection of index and status only (see ``_history_for_remote``); omitted means an
+        empty list. A client that raises is logged at WARNING and replaced by
+        the local fallback. A response that is not a non-empty list of valid
+        suggestions raises ``OptimizationError`` (fail closed).
+        """
         if self.remote_enabled and self._remote_client is not None:
-            try:
-                if hasattr(self._remote_client, "suggest_batch"):
+            batch: Any = None
+            called = False
+            if hasattr(self._remote_client, "suggest_batch"):
+                try:
                     batch = await self._remote_client.suggest_batch(
-                        self.config_space, max_candidates, [], remote_context
+                        self.config_space,
+                        max_candidates,
+                        _history_for_remote(history),
+                        remote_context,
                     )
-                    if isinstance(batch, list) and batch:
-                        return batch
-            except Exception as e:
-                logger.warning(f"Remote batch suggestion failed, falling back: {e}")
+                    called = True
+                except Exception as e:
+                    logger.warning(f"Remote batch suggestion failed, falling back: {e}")
+            if called:
+                if not isinstance(batch, list) or not batch:
+                    raise OptimizationError(
+                        "Remote batch rejected: expected a non-empty list, "
+                        f"got {type(batch).__name__}"
+                    )
+                if len(batch) > max_candidates:
+                    raise OptimizationError(
+                        "Remote batch rejected: returned more candidates than requested"
+                    )
+                for candidate in batch:
+                    problem = self._suggestion_problem(candidate)
+                    if problem is not None:
+                        raise OptimizationError(f"Remote batch rejected: {problem}")
+                return [dict(c) for c in batch]
 
         # Runtime fallback remains explicit: use the local optimizer object,
         # not RemoteOptimizer.suggest_next_trial(), which intentionally fails
