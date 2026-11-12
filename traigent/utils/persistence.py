@@ -369,16 +369,25 @@ def _serialize_configuration_space(space: Any) -> Any:
     return _safe_json_value(space)
 
 
-def _canonical_space(space: Any) -> str:
-    """Order-independent canonical text of a config space.
+def _canonical_space(space: Any) -> Any:
+    """Canonical structure of a config space, for Python-equality comparison.
 
     Both the stored and the live space go through the writer's serialiser, so
-    a tuple range matches its stored ``{"low","high"}`` form. A list (choices)
-    and a tuple (range) stay different, as do any differing values.
+    a tuple range matches its stored ``{"low","high"}`` form. Key order is
+    irrelevant, ints equal floats of the same value, but a bool never equals
+    a number. A list (choices) and a tuple (range) stay different.
     """
-    return json.dumps(
-        _serialize_configuration_space(space), sort_keys=True, default=str
-    )
+
+    def norm(value: Any) -> Any:
+        if isinstance(value, bool):
+            return ("__bool__", value)
+        if isinstance(value, dict):
+            return {k: norm(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [norm(v) for v in value]
+        return value
+
+    return norm(_serialize_configuration_space(space))
 
 
 def _restore_tuple_ranges(result: Any, curated_space: Any) -> None:

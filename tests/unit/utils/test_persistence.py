@@ -169,6 +169,21 @@ def test_can_resume_matches_tuple_range_and_key_order(tmp_path) -> None:
     assert resumable.can_resume("demo_function", {"m": ["a", "b"]}) is None
 
 
+def test_can_resume_int_float_equal_but_bool_distinct(tmp_path) -> None:
+    """Ints match equal floats (as plain equality did); bools never match numbers."""
+    persistence = PersistenceManager(base_dir=tmp_path)
+    resumable = ResumableOptimization(persistence)
+    result = _make_optimization_result()
+    result.metadata["configuration_space"] = {"x": [1, 2], "flag": [True, False]}
+    resumable.save_checkpoint(result, "latest")
+
+    assert (
+        resumable.can_resume("demo_function", {"x": [1.0, 2.0], "flag": [True, False]})
+        == "checkpoint_latest"
+    )
+    assert resumable.can_resume("demo_function", {"x": [1, 2], "flag": [1, 0]}) is None
+
+
 def test_restricted_unpickler_rejects_issue_eval_exploit(tmp_path) -> None:
     """The issue #1634 eval/REDUCE payload must not execute."""
 
