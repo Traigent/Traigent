@@ -49,6 +49,41 @@ class AggregationMode(Enum):
     CHEBYSHEV = "chebyshev"
 
 
+def _check_dict_bounds(raw_bounds: Any, path: str) -> None:
+    if raw_bounds and (
+        not isinstance(raw_bounds, (list, tuple))
+        or len(raw_bounds) != 2
+        or any(
+            isinstance(b, bool) or not isinstance(b, (int, float)) for b in raw_bounds
+        )
+    ):
+        raise ValueError(f"{path}.bounds must be a [low, high] pair of numbers")
+
+
+def _check_dict_orientation_and_weight(data: dict[str, Any], path: str) -> None:
+    orientation = data.get("orientation")
+    if orientation is not None and orientation not in (
+        "maximize",
+        "minimize",
+        "band",
+    ):
+        raise ValueError(f"{path}.orientation must be 'maximize', 'minimize' or 'band'")
+    weight = data.get("weight")
+    if weight is not None and (
+        isinstance(weight, bool) or not isinstance(weight, (int, float))
+    ):
+        raise ValueError(f"{path}.weight must be a number")
+
+
+def _check_dict_band(band: Any, path: str) -> None:
+    if band is not None and not isinstance(band, dict):
+        raise ValueError(f"{path}.band must be a mapping")
+    if isinstance(band, dict) and "alpha" in band:
+        alpha = band["alpha"]
+        if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
+            raise ValueError(f"{path}.band.alpha must be a number")
+
+
 @dataclass
 class ObjectiveDefinition:
     """Definition of a single optimization objective.
@@ -83,6 +118,17 @@ class ObjectiveDefinition:
 
     def __post_init__(self) -> None:
         """Validate objective definition after initialization."""
+        self._validate_field_types()
+        self._validate_weight_and_orientation()
+        self._validate_band_configuration()
+        self._validate_bounds()
+        self._validate_normalization()
+
+        # Validate band_alpha
+        if not 0 < self.band_alpha < 1:
+            raise ValueError(f"band_alpha must be in (0, 1), got {self.band_alpha}")
+
+    def _validate_field_types(self) -> None:
         # Type checks first: fixed messages that name the field and never echo
         # the supplied value (#3196).
         if isinstance(self.weight, bool) or not isinstance(self.weight, (int, float)):
@@ -96,6 +142,7 @@ class ObjectiveDefinition:
             ):
                 raise TypeError("bounds must contain only real numbers (no None/str)")
 
+    def _validate_weight_and_orientation(self) -> None:
         # Validate weight
         if not math.isfinite(self.weight) or self.weight <= 0:
             raise ValueError(
@@ -110,6 +157,7 @@ class ObjectiveDefinition:
                 f"got '{self.orientation}' for objective '{self.name}'"
             )
 
+    def _validate_band_configuration(self) -> None:
         # Validate banded objective configuration
         if self.orientation == "band":
             if self.band is None:
@@ -120,6 +168,7 @@ class ObjectiveDefinition:
             # If band is provided but orientation is not "band", auto-set it
             object.__setattr__(self, "orientation", "band")
 
+    def _validate_bounds(self) -> None:
         # Validate bounds if provided
         if self.bounds is not None:
             if len(self.bounds) != 2:
@@ -129,6 +178,7 @@ class ObjectiveDefinition:
                     f"Invalid bounds: min ({self.bounds[0]}) must be less than max ({self.bounds[1]})"
                 )
 
+    def _validate_normalization(self) -> None:
         # Validate normalization — only "min_max" is implemented.
         # "z_score" and "robust" are reserved and will be supported in a future
         # version; accepting them silently would produce incorrect results.
@@ -143,10 +193,6 @@ class ObjectiveDefinition:
                 f"normalization='{self.normalization}' is not a recognised strategy "
                 f"for objective '{self.name}'. Only 'min_max' is supported."
             )
-
-        # Validate band_alpha
-        if not 0 < self.band_alpha < 1:
-            raise ValueError(f"band_alpha must be in (0, 1), got {self.band_alpha}")
 
     @property
     def is_banded(self) -> bool:
@@ -205,37 +251,9 @@ class ObjectiveDefinition:
         name = data["name"]
         if not isinstance(name, str) or not name:
             raise ValueError(f"{path}.name must be a non-empty string")
-        raw_bounds = data.get("bounds")
-        if raw_bounds and (
-            not isinstance(raw_bounds, (list, tuple))
-            or len(raw_bounds) != 2
-            or any(
-                isinstance(b, bool) or not isinstance(b, (int, float))
-                for b in raw_bounds
-            )
-        ):
-            raise ValueError(f"{path}.bounds must be a [low, high] pair of numbers")
-        orientation = data.get("orientation")
-        if orientation is not None and orientation not in (
-            "maximize",
-            "minimize",
-            "band",
-        ):
-            raise ValueError(
-                f"{path}.orientation must be 'maximize', 'minimize' or 'band'"
-            )
-        weight = data.get("weight")
-        if weight is not None and (
-            isinstance(weight, bool) or not isinstance(weight, (int, float))
-        ):
-            raise ValueError(f"{path}.weight must be a number")
-        band = data.get("band")
-        if band is not None and not isinstance(band, dict):
-            raise ValueError(f"{path}.band must be a mapping")
-        if isinstance(band, dict) and "alpha" in band:
-            alpha = band["alpha"]
-            if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
-                raise ValueError(f"{path}.band.alpha must be a number")
+        _check_dict_bounds(data.get("bounds"), path)
+        _check_dict_orientation_and_weight(data, path)
+        _check_dict_band(data.get("band"), path)
         try:
             return cls._from_dict_unchecked(data)
         except (KeyError, TypeError, AttributeError):
