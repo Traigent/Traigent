@@ -6,6 +6,8 @@ import sys
 import threading
 import time
 
+import pytest
+
 from traigent.cloud import billing, integration_manager, session_operations
 from traigent.labels import transport_gate
 from traigent.utils import env_config, langchain_interceptor
@@ -128,3 +130,59 @@ def test_dev_jwt_secret_race(monkeypatch):
             return env_config.get_jwt_secret()
 
     _race(getter, lambda: setattr(env_config, "_GENERATED_DEV_JWT_SECRET", None))
+
+
+# --- session id validation (#3128 review) ---------------------------------
+BAD_IDS = [["a"], {"k": "v"}, 7, 1.5, True, "x" * 257]
+
+
+@pytest.mark.parametrize("bad", BAD_IDS)
+def test_keep_alive_bad_ids_rejected_without_error(bad):
+    svc = _service()
+    assert svc.handle_keep_alive(bad) is False
+    assert svc._sessions == {}
+
+
+@pytest.mark.parametrize("bad", BAD_IDS)
+def test_touch_or_create_validates_before_lookup(bad):
+    svc = _service()
+    assert svc._touch_or_create_session(bad) is False
+
+
+@pytest.mark.parametrize("bad", BAD_IDS)
+@pytest.mark.asyncio
+async def test_execute_and_evaluate_ignore_bad_session_ids(bad):
+    svc = _service()
+
+    @svc.execute
+    def run(example_id, data, config):
+        return {"output": "ok"}
+
+    @svc.evaluate
+    def score(output, target, config):
+        return {"accuracy": 1.0}
+
+    await svc.handle_execute(
+        {"examples": [{"example_id": "i1", "data": {}}], "session_id": bad}
+    )
+    await svc.handle_evaluate(
+        {
+            "evaluations": [{"example_id": "i1", "output": "a", "target": "a"}],
+            "session_id": bad,
+        }
+    )
+    assert svc._sessions == {}
+
+
+@pytest.mark.parametrize("bad", [["a"], {"k": "v"}, 7, "x" * 257])
+def test_create_session_validates_id(bad):
+    svc = _service()
+    with pytest.raises(ValueError):
+        svc.create_session(bad)
+    assert svc._sessions == {}
+
+
+def test_create_session_accepts_valid_and_generates():
+    svc = _service()
+    assert svc.create_session("ok") == "ok"
+    assert len(svc.create_session()) <= 256

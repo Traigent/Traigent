@@ -1553,9 +1553,16 @@ class TraigentService:
 
         return self._touch_or_create_session(session_id)
 
+    @staticmethod
+    def _is_valid_session_id(session_id: Any) -> bool:
+        """A non-empty string within the contract's length limit."""
+        return (
+            isinstance(session_id, str) and 0 < len(session_id) <= MAX_SESSION_ID_LENGTH
+        )
+
     def _touch_or_create_session(self, session_id: str) -> bool:
         """Touch an existing session or create it when keep-alive is enabled."""
-        if not session_id:
+        if not self._is_valid_session_id(session_id):
             return False
 
         session = self._sessions.get(session_id)
@@ -1564,9 +1571,6 @@ class TraigentService:
             return True
 
         if not self.config.supports_keep_alive:
-            return False
-
-        if not isinstance(session_id, str) or len(session_id) > MAX_SESSION_ID_LENGTH:
             return False
 
         self._add_session(session_id)
@@ -1591,6 +1595,10 @@ class TraigentService:
             New session ID.
         """
         session_id = session_id or str(uuid.uuid4())
+        if not self._is_valid_session_id(session_id):
+            raise ValueError(
+                f"session_id must be a string of 1-{MAX_SESSION_ID_LENGTH} characters"
+            )
         self._add_session(session_id)
         return session_id
 
