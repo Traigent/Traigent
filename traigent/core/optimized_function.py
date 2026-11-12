@@ -2621,6 +2621,22 @@ class OptimizedFunction[**P, R]:
         finally:
             self._end_advancing_run()
 
+    def _assert_seamless_injectable(self, configuration_space: Any) -> None:
+        injection_mode_name = getattr(self.injection_mode, "value", self.injection_mode)
+        if injection_mode_name == "seamless" and isinstance(
+            self._provider, SeamlessParameterProvider
+        ):
+            sample_config = self._representative_seamless_config(configuration_space)
+            if sample_config:
+                self._provider.assert_injectable(self.func, sample_config)
+
+    def _new_snapshot_run(self) -> Any:
+        if getattr(self, "snapshot_store", None) is None:
+            return None
+        from traigent.certification.snapshot_binding import SnapshotRun
+
+        return SnapshotRun(self.snapshot_store)
+
     async def _optimize_run(
         self,
         *,
@@ -2700,13 +2716,7 @@ class OptimizedFunction[**P, R]:
         # `best_config: None`. It runs here, not at decoration, so a decorated
         # function that is only ever called directly is unaffected; the
         # per-call checks in providers.py remain as defence in depth.
-        injection_mode_name = getattr(self.injection_mode, "value", self.injection_mode)
-        if injection_mode_name == "seamless" and isinstance(
-            self._provider, SeamlessParameterProvider
-        ):
-            sample_config = self._representative_seamless_config(configuration_space)
-            if sample_config:
-                self._provider.assert_injectable(self.func, sample_config)
+        self._assert_seamless_injectable(configuration_space)
 
         original_schema = self.objective_schema
         runtime_objective_input = (
@@ -2731,11 +2741,7 @@ class OptimizedFunction[**P, R]:
             execution_mode=self._resolve_runtime_execution_mode(algorithm).value,
         )
 
-        snapshot_run: Any = None
-        if getattr(self, "snapshot_store", None) is not None:
-            from traigent.certification.snapshot_binding import SnapshotRun
-
-            snapshot_run = SnapshotRun(self.snapshot_store)
+        snapshot_run = self._new_snapshot_run()
         try:
             validate_objectives(self.objectives)
             # When cost is an objective, a model with no price must not be
