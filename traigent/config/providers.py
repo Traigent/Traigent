@@ -985,7 +985,8 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 raise SeamlessNoInjectableTargetsError(
                     "Seamless injection found no injectable target for "
                     f"{func.__name__} after the AST transform failed "
-                    f"({type(original_exc).__name__}): no parameter named "
+                    f"({type(original_exc).__name__}: {original_exc}): "
+                    "no parameter named "
                     "after the config key matched configuration keys "
                     f"{config_keys} (a `**kwargs` catch-all does not count "
                     "as a matching parameter). Running the runtime-shim "
@@ -1026,8 +1027,9 @@ class SeamlessParameterProvider(ConfigurationProvider):
         """
         # Validate function before transformation
         if not self._is_safe_function(func):
+            reason = self._unsafe_reason(func) or "rejected by the safety check"
             raise ConfigurationError(
-                f"Function {func.__name__} contains unsafe patterns"
+                f"Function {func.__name__} cannot be transformed: {reason}"
             )
 
         tree = _parse_transform_source(func)
@@ -1245,6 +1247,32 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 },
             }
 
+    _UNSAFE_FUNCTION_NAMES = frozenset({"exec", "eval", "compile"})
+    _UNSAFE_MODULE_SEGMENTS = frozenset({"builtins", "os", "sys", "subprocess"})
+
+    def _unsafe_reason(self, func: Callable[..., Any]) -> str | None:
+        """Return why *func* is unsafe to transform, or None when it is safe.
+
+        Names are matched exactly (function name) or by whole dotted path
+        segment (module), never by substring, so ``evaluate_answer`` or
+        ``cost_agent`` are not rejected.
+        """
+        func_name = func.__name__.lower()
+        if func_name in self._UNSAFE_FUNCTION_NAMES:
+            return f"function name '{func.__name__}' is a reserved dangerous name"
+        if func_name.startswith("__") and func_name.endswith("__"):
+            return f"function name '{func.__name__}' is a dunder name"
+
+        module = func.__module__
+        if module:
+            for segment in module.lower().split("."):
+                if segment in self._UNSAFE_MODULE_SEGMENTS:
+                    return (
+                        f"module '{module}' contains the restricted "
+                        f"path segment '{segment}'"
+                    )
+        return None
+
     def _is_safe_function(self, func: Callable[..., Any]) -> bool:
         """Check if a function is safe to transform.
 
@@ -1254,28 +1282,10 @@ class SeamlessParameterProvider(ConfigurationProvider):
         Returns:
             True if function appears safe
         """
-        # Check function name doesn't contain dangerous patterns
-        dangerous_patterns = ["exec", "eval", "__", "compile"]
-        func_name = func.__name__.lower()
-
-        for pattern in dangerous_patterns:
-            if pattern in func_name:
-                logger.warning(
-                    f"Function {func.__name__} contains dangerous pattern: {pattern}"
-                )
-                return False
-
-        # Check module isn't from dangerous sources
-        if func.__module__:
-            # Allow __main__ for testing and interactive use
-            dangerous_modules = ["builtins", "os", "sys", "subprocess"]
-            for mod in dangerous_modules:
-                if mod in func.__module__:
-                    logger.warning(
-                        f"Function {func.__name__} from dangerous module: {func.__module__}"
-                    )
-                    return False
-
+        reason = self._unsafe_reason(func)
+        if reason is not None:
+            logger.warning("Function %s rejected: %s", func.__name__, reason)
+            return False
         return True
 
     def _validate_config(self, config: dict[str, Any]) -> None:
