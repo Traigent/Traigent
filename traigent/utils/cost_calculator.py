@@ -353,6 +353,35 @@ class UnknownModelError(KeyError):
     pass
 
 
+_TAG_ONLY_RE = re.compile(r"^(?:\d[\w.]*|latest)$", re.IGNORECASE)
+
+_PROVIDER_PREFIXES = frozenset(
+    {
+        "openai",
+        "azure",
+        "anthropic",
+        "google",
+        "gemini",
+        "vertex_ai",
+        "bedrock",
+        "cohere",
+        "mistral",
+        "groq",
+        "together",
+        "together_ai",
+        "fireworks",
+        "fireworks_ai",
+        "deepseek",
+        "perplexity",
+        "xai",
+        "openrouter",
+        "huggingface",
+        "ollama",
+        "replicate",
+    }
+)
+
+
 def _normalize_model_name(model: str) -> str:
     """Normalize model name for litellm lookup.
 
@@ -364,9 +393,8 @@ def _normalize_model_name(model: str) -> str:
     - Bedrock-style numeric version suffixes are preserved (e.g., "model-v1:0" keeps ":0")
 
     Note:
-        Ollama-style "model:tag" identifiers (e.g., "llama3:latest") will have
-        the tag stripped. For tagged models, configure explicit aliasing or
-        custom pricing if needed.
+        Ollama-style "model:tag" identifiers (e.g., "llama3:latest") keep both
+        the model name and the tag; only a known "provider:" prefix is removed.
 
     Args:
         model: Raw model name
@@ -377,27 +405,27 @@ def _normalize_model_name(model: str) -> str:
     model = model.strip()
 
     # Handle / prefix (e.g., "openai/gpt-4o" or "bedrock/anthropic.claude...")
+    slash_stripped = False
     if "/" in model:
         model = model.split("/")[-1]
+        slash_stripped = True
 
-    # Handle : prefix ONLY if it looks like "provider:model" pattern
-    # NOT Bedrock-style "model-version:revision" (e.g., "claude-3-haiku-20240307-v1:0")
-    # Heuristic: only split on : if:
-    # 1. Colon appears early (within first 15 chars) - provider names are short
-    # 2. Suffix is NOT purely numeric (numeric = Bedrock version like ":0", ":10")
-    # This handles:
-    # - "anthropic:claude-3" -> "claude-3" (provider prefix stripped)
-    # - "openai:o1" -> "o1" (provider prefix stripped, short model name OK)
-    # - "model-v1:0" -> preserved (Bedrock version revision)
-    # NOTE: Ollama-style "model:tag" (e.g., "llama3:latest") will be stripped to "tag"
-    # which may cause lookup issues. Use full model name for Ollama models.
-    if ":" in model:
-        colon_idx = model.index(":")
-        after_colon = model[colon_idx + 1 :]
-        # Don't split if colon is late (not a provider prefix)
-        # or if suffix is purely numeric (Bedrock version revision like :0, :10)
-        if colon_idx < 15 and not after_colon.isdigit():
-            model = after_colon
+    # Strip a "provider:" prefix only when the text before the first colon is a
+    # known provider. Anything else is part of the model id and is kept whole:
+    # a Bedrock revision ("claude-3-haiku-20240307-v1:0") and an Ollama-style
+    # "name:tag" ("qwen2:7b") must keep their model name, so two different
+    # models that share a tag never alias.
+    # At most one provider prefix is stripped in total: after a "provider/"
+    # strip the colon form is never applied, and a remainder that is only a
+    # tag or size ("7b", "latest") means the prefix is a model name.
+    if ":" in model and not slash_stripped:
+        prefix, _, rest = model.partition(":")
+        if (
+            prefix.lower() in _PROVIDER_PREFIXES
+            and rest
+            and not _TAG_ONLY_RE.match(rest)
+        ):
+            model = rest
 
     return model
 
