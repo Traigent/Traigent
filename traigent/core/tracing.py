@@ -427,8 +427,8 @@ except ImportError:
 
         Replaces OpenTelemetry's automatic ``record_exception``: the event keeps
         the ``exception`` name and ``exception.type`` so downstream consumers
-        still see a failed span, but ``exception.message`` goes through
-        ``_scrub_error_text`` and no stacktrace is attached (a formatted
+        still see a failed span, but ``exception.message`` carries only the class and
+        a closed wire code, and no stacktrace is attached (a formatted
         traceback repeats the raw message and chained exception text).
         """
         if span is None:
@@ -436,14 +436,19 @@ except ImportError:
         is_recording = getattr(span, "is_recording", None)
         if callable(is_recording) and not is_recording():
             return
+        # Observability is not privacy-preserving (#3274): the message, even
+        # scrubbed, never reaches the span. Only the class and a closed code do.
+        from traigent.utils.wire_text import span_safe_error
+
+        safe = span_safe_error(exc) or type(exc).__name__
         span.add_event(
             "exception",
             {
                 "exception.type": type(exc).__qualname__,
-                "exception.message": _scrub_error_text(exc),
+                "exception.message": safe,
             },
         )
-        _set_error_status(span, f"{type(exc).__name__}: {exc}")
+        _set_error_status(span, safe)
 
     def _set_session_span_attributes(
         span: Span,

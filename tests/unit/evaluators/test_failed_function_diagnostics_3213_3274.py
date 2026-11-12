@@ -108,7 +108,8 @@ async def test_log_has_class_and_one_traceback_for_n_examples(caplog):
     assert len(failures) == 1
     text = failures[0].getMessage()
     assert "ValueError" in text
-    assert "boom" in text
+    assert "[code=" in text
+    assert "boom" not in text  # message is user data; it stays in the result
     assert text.count("Traceback (most recent call last)") == 1
     assert failures[0].levelno == logging.WARNING
 
@@ -183,3 +184,31 @@ async def test_two_evaluate_calls_without_trial_context_each_log_a_traceback(cap
 
     failures = [r for r in caplog.records if "Function call failed" in r.getMessage()]
     assert len(failures) == 2
+
+
+@pytest.mark.asyncio
+async def test_log_never_carries_exception_message_at_any_level(caplog):
+    def func(row):
+        raise ValueError("patient alice@example.com has diabetes")
+
+    with caplog.at_level(logging.DEBUG, logger="traigent"):
+        await _evaluate(func)
+
+    assert "diabetes" not in caplog.text
+    assert "alice@example.com" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_local_invoker_logs_class_and_code_not_message(caplog):
+    from traigent.invokers.local import LocalInvoker
+
+    def func(**kwargs):
+        raise ValueError("patient bob has diabetes")
+
+    with caplog.at_level(logging.DEBUG):
+        result = await LocalInvoker().invoke(func, {"m": "a"}, {"q": 1})
+
+    assert not result.is_successful
+    assert "diabetes" in result.error  # details stay in the result
+    assert "diabetes" not in caplog.text
+    assert "ValueError" in caplog.text

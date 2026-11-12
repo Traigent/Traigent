@@ -35,7 +35,7 @@ from opentelemetry.trace import StatusCode  # noqa: E402
 import traigent.core.tracing as core_tracing  # noqa: E402
 
 EMAIL_SENTINEL = "canary-1894@example.com"
-AWS_KEY_SENTINEL = "AKIACANARY1894EXAMPL"  # AKIA + 16 upper-case alphanumerics
+AWS_KEY_SENTINEL = "AKIACANARY1894EXAMPL"  # AKIA + 16 upper-case alphanumerics  # pragma: allowlist secret
 
 _PLUGIN_TRACING = (
     Path(__file__).resolve().parents[3]
@@ -93,6 +93,11 @@ def test_escaping_exception_is_scrubbed_on_export(
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     monkeypatch.setattr(module, "get_tracer", lambda: provider.get_tracer("t-1894"))
+    # Without the OTLP exporter installed the module's ``trace`` import guard
+    # leaves it None and the ERROR status is never set; the API is present.
+    from opentelemetry import trace as otel_trace
+
+    monkeypatch.setattr(module, "trace", otel_trace)
 
     with pytest.raises(RuntimeError):
         with _SPANS[span_kind](module):
@@ -111,12 +116,12 @@ def test_escaping_exception_is_scrubbed_on_export(
     assert len(exception_events) == 1
     attributes = dict(exception_events[0].attributes or {})
     assert attributes["exception.type"] == "RuntimeError"
-    assert "***EMAIL***" in attributes["exception.message"]
-    assert "***AWS_ACCESS_KEY***" in attributes["exception.message"]
+    # #3274: no message at all, scrubbed or not -- class and closed code only.
+    assert attributes["exception.message"].startswith("RuntimeError [code=")
     assert "exception.stacktrace" not in attributes
 
     assert span.status.status_code is StatusCode.ERROR
-    assert "***EMAIL***" in (span.status.description or "")
+    assert (span.status.description or "").startswith("RuntimeError [code=")
 
 
 @pytest.mark.parametrize("implementation", ["core", "plugin"])
