@@ -6014,6 +6014,10 @@ class SimpleScoringEvaluator(BaseEvaluator):
         if not (self.capture_llm_metrics and self._metrics_available):
             return None
 
+        from traigent.utils.langchain_interceptor import (
+            captured_responses_incomplete,
+        )
+
         captured_responses = [r for r in self._get_all_captured_responses() if r]
         if not captured_responses:
             return None
@@ -6039,7 +6043,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
             metrics_obj = first_metrics
             if metrics_obj is None:
                 return None
-        elif any_unmeasured:
+        elif any_unmeasured or captured_responses_incomplete():
+            # A capped global capture list that dropped responses leaves the
+            # total only a floor (#3098).
             metrics_obj.cost.unmeasured = True
             metrics_obj.cost.known_cost = measured_cost + unmeasured_known
 

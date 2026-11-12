@@ -350,6 +350,10 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         if not (self.capture_llm_metrics and self._metrics_available):
             return None
 
+        from traigent.utils.langchain_interceptor import (
+            captured_responses_incomplete,
+        )
+
         captured_responses = [r for r in self._get_all_captured_responses() if r]
         if not captured_responses:
             return None
@@ -360,7 +364,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         original_prompt = self._reconstruct_original_prompt(example)
         response_text = self._extract_response_text(example_result.actual_output)
         llm_metrics = None
-        any_unmeasured_call = False
+        # A capped global list that dropped responses leaves spend a floor (#3098).
+        any_unmeasured_call = captured_responses_incomplete()
         for position, response in enumerate(captured_responses):
             metrics = self._extract_llm_metrics(
                 response=response,

@@ -452,6 +452,9 @@ class LangChainMetadataCapture:
         self._lock = threading.Lock()
         # Keep all responses in order
         self._all_responses: list[Any] = []
+        # True once the global list dropped responses; spend read from it is
+        # then only a floor. Reset whenever the list is cleared/drained.
+        self._overflowed = False
         self._response_lock = threading.Lock()
         # Map correlation keys (e.g., example_id) to responses
         self._by_key: dict[str, Any] = {}
@@ -490,6 +493,7 @@ class LangChainMetadataCapture:
             overflow = len(self._all_responses) - _MAX_GLOBAL_RESPONSES
             if overflow > 0:
                 del self._all_responses[:overflow]
+                self._overflowed = True
 
         if key is not None:
             with self._by_key_lock:
@@ -561,6 +565,7 @@ class LangChainMetadataCapture:
         with self._response_lock:
             responses = self._all_responses.copy()
             self._all_responses.clear()
+            self._overflowed = False
         return responses, None, None
 
     def snapshot(
@@ -598,6 +603,7 @@ class LangChainMetadataCapture:
         else:
             with self._response_lock:
                 self._all_responses.clear()
+                self._overflowed = False
             with self._by_key_lock:
                 self._by_key.clear()
 
@@ -609,6 +615,13 @@ class LangChainMetadataCapture:
 
     def clear_current_key(self) -> None:
         _current_key.set(None)
+
+    def responses_incomplete(self) -> bool:
+        """True when the process-global list dropped responses (no scope)."""
+        if _capture_scope.get() is not None:
+            return False
+        with self._response_lock:
+            return self._overflowed
 
     def get_by_key(self, key: Any) -> Any:
         # Example ids are not unique ACROSS trials -- every trial evaluates the
@@ -684,6 +697,11 @@ def get_captured_response() -> Any | None:
 def get_all_captured_responses() -> list[Any]:
     """Get all captured responses for batch processing."""
     return _metadata_capture.get_all_responses()
+
+
+def captured_responses_incomplete() -> bool:
+    """True when the global fallback dropped responses, so spend is a floor."""
+    return _metadata_capture.responses_incomplete()
 
 
 def get_captured_response_by_key(key: Any) -> Any | None:
