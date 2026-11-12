@@ -297,6 +297,31 @@ def _request_of(node: BaseException) -> Any:
     return request
 
 
+def _scan_402_metadata(node: BaseException) -> tuple[bool, bool]:
+    """``(found_temporary, conflicting)`` over ``node``'s metadata pairs."""
+    found = False
+    for pair in _metadata_pairs(node):
+        if pair == (_TEMPORARY_402_LIMIT_SOURCE, _TEMPORARY_402_REASON):
+            found = True
+        elif pair != (None, None):
+            return found, True
+    return found, False
+
+
+def _next_402_link(
+    node: BaseException, exc: BaseException, request: Any
+) -> BaseException | None:
+    """The cause/context of ``node`` that is the same 402 request, if any."""
+    for link, explicit in ((node.__cause__, True), (node.__context__, False)):
+        if link is None or http_status_of(link) != 402:
+            continue
+        same_request = request is not None and _request_of(link) is request
+        direct_wrapper = explicit and request is None and node is exc
+        if same_request or direct_wrapper:
+            return link
+    return None
+
+
 def temporary_402_chain(exc: BaseException) -> list[BaseException] | None:
     """The validated exception chain of a temporary OpenRouter 402, else ``None``.
 
@@ -320,20 +345,11 @@ def temporary_402_chain(exc: BaseException) -> list[BaseException] | None:
             if id(node) in seen:
                 return None  # cycle
             seen.add(id(node))
-            for pair in _metadata_pairs(node):
-                if pair == (_TEMPORARY_402_LIMIT_SOURCE, _TEMPORARY_402_REASON):
-                    temporary = True
-                elif pair != (None, None):
-                    return None
-            nxt: BaseException | None = None
-            for link, explicit in ((node.__cause__, True), (node.__context__, False)):
-                if link is None or http_status_of(link) != 402:
-                    continue
-                same_request = request is not None and _request_of(link) is request
-                direct_wrapper = explicit and request is None and node is exc
-                if same_request or direct_wrapper:
-                    nxt = link
-                    break
+            found, conflicting = _scan_402_metadata(node)
+            if conflicting:
+                return None
+            temporary = temporary or found
+            nxt = _next_402_link(node, exc, request)
             if nxt is None:
                 return chain if temporary else None
             chain.append(nxt)
