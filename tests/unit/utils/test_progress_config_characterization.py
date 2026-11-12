@@ -59,7 +59,7 @@ def test_trial_start_falsey_primaries_keep_fallback_and_short_circuit_order() ->
     callback.on_trial_start(0, config)
 
     assert config.events == ["get:model", "get:approach", "get:method", "items"]
-    assert messages == ["[1/0] Testing: config"]
+    assert messages == ["[1/?] Testing: config"]
 
 
 def test_trial_start_without_details_updates_trial_without_reading_or_output() -> None:

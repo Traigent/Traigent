@@ -75,4 +75,4 @@ def test_identical_configs_complete_in_start_order() -> None:
     for index in range(3):
         trial = _trial(0)
         callback.on_trial_complete(trial, _progress(index + 1))
-    assert [line.split("]")[0] for line in lines] == ["[1/0", "[2/0", "[3/0"]
+    assert [line.split("]")[0] for line in lines] == ["[1/3", "[2/3", "[3/3"]
