@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from traigent.core.objective_directions import resolve_objective_orientation
@@ -135,6 +136,14 @@ class PlotGenerator:
             )
 
     @staticmethod
+    def _both_finite(x: Any, y: Any) -> bool:
+        """True when both values are finite real numbers."""
+        try:
+            return math.isfinite(x) and math.isfinite(y)
+        except (TypeError, OverflowError):
+            return False
+
+    @staticmethod
     def _extract_progress_series(
         result: OptimizationResult, objective: str, maximize: bool
     ) -> tuple[list[int], list[float], list[float]]:
@@ -152,7 +161,7 @@ class PlotGenerator:
                 continue
             try:
                 score = float(score_value)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
             trial_numbers.append(i + 1)
             scores.append(score)
@@ -210,6 +219,15 @@ class PlotGenerator:
         objective_label: str,
     ) -> str:
         """Create ASCII progress plot."""
+        # A NaN/inf score cannot be placed on the ASCII scale: drop that point.
+        kept = [
+            (n, s, b)
+            for n, s, b in zip(trial_numbers, scores, best_scores, strict=False)
+            if math.isfinite(s) and math.isfinite(b)
+        ]
+        trial_numbers = [k[0] for k in kept]
+        scores = [k[1] for k in kept]
+        best_scores = [k[2] for k in kept]
         if not scores:
             return _NO_DATA_TO_PLOT
 
@@ -313,11 +331,17 @@ class PlotGenerator:
 
         for trial in result.successful_trials:
             if obj1 in trial.metrics and obj2 in trial.metrics:
+                if not self._both_finite(trial.metrics[obj1], trial.metrics[obj2]):
+                    continue
                 all_points_x.append(trial.metrics[obj1])
                 all_points_y.append(trial.metrics[obj2])
 
         for point in pareto_front:
             if obj1 in point.objectives and obj2 in point.objectives:
+                if not self._both_finite(
+                    point.objectives[obj1], point.objectives[obj2]
+                ):
+                    continue
                 pareto_points_x.append(point.objectives[obj1])
                 pareto_points_y.append(point.objectives[obj2])
 
