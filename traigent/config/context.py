@@ -232,7 +232,11 @@ def merge_with_context(
         context_dict.update(context_config.custom_params)
         merged_dict = override_config.copy()
         merged_dict.update({k: v for k, v in context_dict.items() if v is not None})
-        return TraigentConfig.from_dict(merged_dict)
+        merged_config = TraigentConfig.from_dict(merged_dict)
+        # Carry over fields outside the dict round trip (no_egress,
+        # content_identity, analytics settings, ...) from the context config.
+        merged_config._merge_extra_fields(merged_config, context_config)
+        return merged_config
     elif isinstance(context_config, dict):
         # Start with override, then apply context on top (context wins)
         merged = override_config.copy()

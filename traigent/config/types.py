@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from dataclasses import dataclass, field
 from enum import EnumType, StrEnum
 from inspect import Parameter, Signature
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 from traigent.utils.env_config import is_truthy
 from traigent.utils.validation import Validators, validate_or_raise
@@ -1010,7 +1011,17 @@ class TraigentConfig:
         explicit_override_keys: set[str] = set()
         if isinstance(other, dict):
             explicit_override_keys = set(other)
-            other = self.from_dict(other)
+            extra_names = {
+                f.name
+                for f in dataclasses.fields(self)
+                if f.name not in self._DICT_ROUND_TRIP_FIELDS
+                and f.name != "content_identity"
+            }
+            plain = {k: v for k, v in other.items() if k not in extra_names}
+            extras = {k: v for k, v in other.items() if k in extra_names}
+            other = self.from_dict(plain)
+            for name, value in extras.items():
+                object.__setattr__(other, name, value)
 
         # Start with current values.
         merged_dict = self._to_dict(include_legacy=True)
@@ -1029,7 +1040,69 @@ class TraigentConfig:
 
         merged_dict.update(override_dict)
 
-        return self.from_dict(merged_dict)
+        merged = self.from_dict(merged_dict)
+        merged._merge_extra_fields(self, other)
+        return merged
+
+    # Fields that _to_dict()/from_dict() serialize explicitly; every other
+    # dataclass field (privacy, analytics, runtime state) is merged by
+    # _merge_extra_fields so merge() cannot silently drop it.
+    _DICT_ROUND_TRIP_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "model",
+            "temperature",
+            "max_tokens",
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty",
+            "stop_sequences",
+            "seed",
+            "algorithm",
+            "offline",
+            "local_storage_path",
+            "minimal_logging",
+            "auto_sync",
+            "strict_metrics_nulls",
+            "comparability_mode",
+            "execution_mode",
+            "privacy_enabled",
+            "custom_params",
+        }
+    )
+
+    def _merge_extra_fields(self, base: TraigentConfig, other: TraigentConfig) -> None:
+        """Set on ``self`` the fields not covered by the dict round trip.
+
+        ``base`` supplies the starting value, ``other`` overrides it when it
+        differs from the dataclass default. Privacy fields never loosen: the
+        stricter value wins (``no_egress`` True, ``enable_usage_analytics``
+        False and ``content_identity`` False beat any other value).
+        """
+        for f in dataclasses.fields(self):
+            name = f.name
+            if name in self._DICT_ROUND_TRIP_FIELDS:
+                continue
+            base_value = getattr(base, name)
+            other_value = getattr(other, name)
+            if f.default is not dataclasses.MISSING:
+                default = f.default
+            elif f.default_factory is not dataclasses.MISSING:
+                default = f.default_factory()
+            else:
+                default = None
+
+            if name == "no_egress":
+                value = bool(base_value) or bool(other_value)
+            elif name == "enable_usage_analytics":
+                value = bool(base_value) and bool(other_value)
+            elif name == "content_identity":
+                if base_value is False or other_value is False:
+                    value = False
+                else:
+                    value = other_value if other_value is not None else base_value
+            else:
+                value = other_value if other_value != default else base_value
+            object.__setattr__(self, name, value)
 
     def get(self, key: str, default: Any | None = None) -> Any:
         """Get configuration value with optional default.
