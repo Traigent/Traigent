@@ -17,18 +17,20 @@ logger = get_logger(__name__)
 _OPTIMIZER_REGISTRY: dict[str, type[BaseOptimizer]] = {}
 
 
-# Registry entries that exist only so a mistaken selection yields a clear
-# construction error; they are never offered as a choice.
-_INTERNAL_OPTIMIZER_NAMES = frozenset({"remote"})
-
-
 def _unknown_optimizer_message(name: str) -> str:
-    """Build the unknown-optimizer error from user-selectable names only."""
-    available = [n for n in _OPTIMIZER_REGISTRY if n not in _INTERNAL_OPTIMIZER_NAMES]
+    """Build the unknown-optimizer error from the public algorithm list.
+
+    The list is the same source ``traigent algorithms`` renders. Runtime-only
+    registry names (batch optimizers, ``remote``) keep working when named but
+    are not advertised.
+    """
+    from traigent.config.types import accepted_algorithm_values
+
+    available = list(accepted_algorithm_values())
     return (
         f"Unknown optimizer '{name}' for the algorithm argument. "
         f"Available optimizers: {available}. "
-        "Run `traigent algorithms` to list the public algorithm names."
+        "Run `traigent algorithms` to see them."
     )
 
 

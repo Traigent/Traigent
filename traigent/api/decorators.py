@@ -47,7 +47,6 @@ import dataclasses
 import inspect
 import math
 import os
-import re
 import threading
 import warnings
 from collections.abc import Callable, Collection, Mapping
@@ -119,6 +118,7 @@ from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.tvl.spec_loader import TVLSpecArtifact, load_tvl_spec
+from traigent.utils.config_keys import validate_configuration_space_keys
 from traigent.utils.exceptions import (
     ConfigurationError,
     TraigentWarning,
@@ -3314,24 +3314,10 @@ def _attach_optimized_function_extras(
             optimized_func._surrogate_evaluator_name = surrogate_evaluator_name
 
 
-_CONFIG_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
-
-
 def _validate_configuration_space_keys(configuration_space: Any) -> None:
-    """Reject configuration_space keys that are not dot-separated identifiers.
-
-    Same grammar as the JavaScript SDK and the TVL loader. The offending key
-    is not echoed; the message gives its position instead.
-    """
-    if not isinstance(configuration_space, dict):
-        return
-    for index, key in enumerate(configuration_space):
-        if not isinstance(key, str) or not _CONFIG_KEY_RE.match(key):
-            raise ValueError(
-                f"configuration_space key #{index + 1} is not a valid identifier: "
-                "keys must be dot-separated segments of letters, digits and "
-                "underscores, each starting with a letter or underscore"
-            )
+    """Apply the shared key rule to a dict configuration_space."""
+    if isinstance(configuration_space, dict):
+        validate_configuration_space_keys(configuration_space)
 
 
 _TEXT_ARGS = ("agent_name", "experiment_name", "run_title", "run_description")
@@ -4068,6 +4054,8 @@ def optimize(  # NOSONAR(S107)
         eval_dataset,
         combined_runtime_overrides,
     )
+    # A TVL spec supplies its space only now: re-check the final, resolved keys.
+    _validate_configuration_space_keys(configuration_space)
     constraint_scope_var_names = _augment_constraint_scope_var_names(
         constraint_scope_var_names, configuration_space
     )

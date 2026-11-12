@@ -19,6 +19,7 @@ import yaml
 
 from traigent.core.objective_directions import resolve_objective_orientation
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+from traigent.utils.config_keys import validate_configuration_space_keys
 from traigent.utils.exceptions import TVLValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.numeric_validation import validate_positive_int
@@ -1109,6 +1110,7 @@ def _parse_config_space_format(
         tvars, config_space, defaults, units = _parse_tvars(
             resolved, registry_resolver=registry_resolver
         )
+        _check_space_keys(config_space)
         return tvars, config_space, defaults, units
 
     if has_config_space:
@@ -1119,6 +1121,7 @@ def _parse_config_space_format(
             stacklevel=3,
         )
         config_space, defaults, units = _parse_configuration_space(resolved)
+        _check_space_keys(config_space)
         return None, config_space, defaults, units
 
     # Empty spec - no configuration space defined
@@ -1452,6 +1455,14 @@ def _declared_parameter_type(name: str, definition: dict[str, Any]) -> str:
     raise TVLValidationError(
         f"Parameter '{name}' must define 'type', 'values', or 'range'"
     )
+
+
+def _check_space_keys(config_space: dict[str, Any]) -> None:
+    """Apply the shared configuration_space key rule to a parsed TVL space."""
+    try:
+        validate_configuration_space_keys(config_space)
+    except ValueError as exc:
+        raise TVLValidationError(str(exc)) from exc
 
 
 def _parse_configuration_space(

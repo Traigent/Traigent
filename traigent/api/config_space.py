@@ -51,6 +51,7 @@ from traigent.api.validation_protocol import (
     SatResult,
     ValidationResult,
 )
+from traigent.utils.config_keys import validate_configuration_space_keys
 from traigent.utils.exceptions import ValidationError
 
 if TYPE_CHECKING:
@@ -146,6 +147,10 @@ def _validate_tvars_input(tvars: Any, *, strict_names: bool = True) -> None:
         if own_name in owner_by_name:
             raise ConfigSpaceInputError(f"Duplicate parameter name: {own_name!r}")
         owner_by_name[own_name] = key
+    try:
+        validate_configuration_space_keys(tvars)
+    except ValueError as exc:
+        raise ConfigSpaceInputError(str(exc)) from exc
 
 
 def _normalize_constraints_input(constraints: Any) -> tuple[Constraint, ...]:

@@ -137,7 +137,7 @@ class TestOptimizerRegistry:
             get_optimizer("unknown", {}, [])
 
         assert "Unknown optimizer 'unknown'" in str(exc_info.value)
-        assert "Available optimizers: ['known']" in str(exc_info.value)
+        assert "Available optimizers: ['auto'" in str(exc_info.value)
 
     def test_get_optimizer_creation_error(self):
         """Test handling optimizer creation errors."""
@@ -211,7 +211,7 @@ class TestOptimizerRegistry:
             get_optimizer_info("unknown")
 
         assert "Unknown optimizer 'unknown'" in str(exc_info.value)
-        assert "Available optimizers: ['known']" in str(exc_info.value)
+        assert "Available optimizers: ['auto'" in str(exc_info.value)
 
     def test_clear_registry(self):
         """Test clearing the registry."""
