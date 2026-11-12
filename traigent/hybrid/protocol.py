@@ -118,15 +118,23 @@ class HybridExecuteResponse:
     def from_dict(cls, data: dict[str, Any]) -> HybridExecuteResponse:
         """Create from dictionary (API response)."""
         execution_id = data.get("execution_id")
-        if not isinstance(execution_id, str) or not execution_id.strip():
+        status = data["status"]
+        valid_id = isinstance(execution_id, str) and bool(execution_id.strip())
+        if status in ("failed", "error"):
+            # A failed execution has nothing to evaluate; keep its structured
+            # error readable. No id is invented ("" means "none").
+            status = "failed"
+            if not valid_id:
+                execution_id = ""
+        elif not valid_id:
             raise ValueError(
                 "ExecuteResponse is missing a valid execution_id (required "
                 "by the Hybrid Mode API contract); refusing to fabricate one"
             )
         return cls(
             request_id=data["request_id"],
-            execution_id=execution_id,
-            status=data["status"],
+            execution_id=execution_id if isinstance(execution_id, str) else "",
+            status=status,
             outputs=data.get("outputs", []),
             operational_metrics=data.get("operational_metrics", {}),
             quality_metrics=data.get("quality_metrics"),

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 import httpx
@@ -372,16 +373,10 @@ class HTTPTransport:
                 legacy_inputs.append({"input_id": str(item)})
                 continue
 
-            example_id = item.get("example_id")
+            # The outer example_id is the correlation key; nested ids in the
+            # data never replace it.
+            input_id = item.get("example_id")
             payload_data = item.get("data")
-
-            input_id = example_id
-            if isinstance(payload_data, dict):
-                input_id = (
-                    payload_data.get("input_id")
-                    or payload_data.get("example_id")
-                    or example_id
-                )
 
             legacy_item: dict[str, Any] = {"input_id": str(input_id or "")}
             if "data" in item:
@@ -402,17 +397,37 @@ class HTTPTransport:
             payload["batch_options"] = request.to_dict()["batch_options"]
         return payload
 
-    @staticmethod
-    def _is_invalid_inputs_error(exc: TransportError) -> bool:
-        """True when the service rejected the input array via the error code."""
+    _LEGACY_INPUTS_MESSAGE = re.compile(
+        r"\s*missing required fields:?\s*inputs\s*\.?\s*", re.IGNORECASE
+    )
+
+    @classmethod
+    def _is_invalid_inputs_error(cls, exc: TransportError) -> bool:
+        """True when the service rejected the input array.
+
+        The structured ``INVALID_INPUTS`` code is checked first. Legacy
+        compatibility only: a 400 whose body carries no structured error code
+        and whose whole message is exactly the old "Missing required fields:
+        inputs" phrase is also accepted.
+        """
         if exc.status_code != 400 or not exc.response_body:
             return False
         try:
             body = json.loads(exc.response_body)
         except (ValueError, TypeError):
-            return False
+            body = None
         error = body.get("error") if isinstance(body, dict) else None
-        return isinstance(error, dict) and error.get("code") == "INVALID_INPUTS"
+        if isinstance(error, dict) and error.get("code") is not None:
+            return error.get("code") == "INVALID_INPUTS"
+        if isinstance(error, dict):
+            message = error.get("message")
+        elif isinstance(body, dict):
+            message = body.get("message") or error
+        else:
+            message = exc.response_body
+        return isinstance(message, str) and bool(
+            cls._LEGACY_INPUTS_MESSAGE.fullmatch(message)
+        )
 
     async def execute(
         self,
@@ -443,8 +458,7 @@ class HTTPTransport:
         except TransportError as exc:
             # Legacy compatibility: some deployed services still require
             # `inputs` with `input_id` instead of `examples` with `example_id`.
-            # The decision uses the structured error code only, never the
-            # message text.
+            # Structured code first; exact legacy phrase kept for compatibility.
             if not self._is_invalid_inputs_error(exc):
                 raise
 

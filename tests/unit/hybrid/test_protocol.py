@@ -573,6 +573,26 @@ class TestExecuteResponseMissingExecutionId:
         with pytest.raises(ValueError, match="execution_id"):
             HybridExecuteResponse.from_dict(self._data())
 
+    @pytest.mark.parametrize("status", ["failed", "error"])
+    @pytest.mark.parametrize("eid", [None, ""])
+    def test_failed_response_keeps_structured_error(
+        self, status: str, eid: object
+    ) -> None:
+        data = self._data(
+            status=status, error={"code": "AUTH_ERROR", "message": "nope"}
+        )
+        if eid is not None:
+            data["execution_id"] = eid
+        response = HybridExecuteResponse.from_dict(data)
+        assert response.status == "failed"
+        assert response.error == {"code": "AUTH_ERROR", "message": "nope"}
+        assert response.execution_id == ""
+
+    @pytest.mark.parametrize("status", ["completed", "partial"])
+    def test_success_shaped_without_id_still_raises(self, status: str) -> None:
+        with pytest.raises(ValueError, match="execution_id"):
+            HybridExecuteResponse.from_dict(self._data(status=status))
+
     def test_valid_execution_id_preserved(self) -> None:
         response = HybridExecuteResponse.from_dict(self._data(execution_id="exec_1"))
         assert response.execution_id == "exec_1"
