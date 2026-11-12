@@ -343,7 +343,21 @@ def register_provider_tiers(
         })
         ```
     """
+    if not isinstance(provider, str) or not provider.strip():
+        raise ValueError("provider must be a non-empty string")
+    if not isinstance(tiers, dict) or not all(
+        isinstance(t, str)
+        and isinstance(m, (list, tuple))
+        and all(isinstance(i, str) for i in m)
+        for t, m in tiers.items()
+    ):
+        raise ValueError("tiers must be a dict[str, list[str]]")
     provider_lower = provider.lower()
+    tiers = {t: list(m) for t, m in tiers.items()}
+    if provider_lower in _MODEL_TIERS:
+        logger.warning(
+            "Overriding existing tier classifications for provider '%s'", provider
+        )
     _MODEL_TIERS[provider_lower] = tiers
 
     # Also update fallback models so registered providers work without discovery

@@ -36,7 +36,18 @@ def register_discovery(
         provider: Provider name (e.g., "openai", "anthropic").
         discovery_class: ModelDiscovery subclass to register.
     """
+    if not isinstance(provider, str) or not provider.strip():
+        raise ValueError("provider must be a non-empty string")
+    if not isinstance(discovery_class, type) or not issubclass(
+        discovery_class, ModelDiscovery
+    ):
+        raise ValueError("discovery_class must be a ModelDiscovery subclass")
     with _registry_lock:
+        existing = _discovery_registry.get(provider.lower())
+        if existing is not None and existing is not discovery_class:
+            logger.warning(
+                "Overriding existing model discovery for provider '%s'", provider
+            )
         _discovery_registry[provider.lower()] = discovery_class
         logger.debug(f"Registered model discovery for {provider}")
 
