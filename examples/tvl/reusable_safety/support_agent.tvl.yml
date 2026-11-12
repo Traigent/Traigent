@@ -43,7 +43,7 @@ tvars:
     domain:
       - "gpt-4.1-mini"          # Cost-efficient
       - "claude-haiku-4-5-20251001"  # Fast and cheap
-      - "claude-3-5-sonnet-latest"  # Higher quality fallback
+      - "claude-sonnet-4-6"  # Higher quality fallback
     default: "gpt-4.1-mini"
 
   - name: temperature

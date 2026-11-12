@@ -17,7 +17,7 @@ optimization:
 models:
   # Claude models
   - provider: "anthropic"
-    model: "claude-3-5-haiku-latest"
+    model: "claude-haiku-4-5-20251001"
     temperature: [0.3, 0.5, 0.7]
     max_tokens: [500, 1000]
 
