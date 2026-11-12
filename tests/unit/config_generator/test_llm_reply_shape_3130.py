@@ -97,3 +97,15 @@ def test_benchmark_keeps_only_object_examples() -> None:
     )
     assert spec is not None
     assert spec.sample_examples == ({"input": "a", "output": "b"},)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        '[{"description": 5, "constraint_code": "x"}]',
+        '[{"description": "d", "constraint_code": {"a": 1}}]',
+        '[{"description": ["d"], "constraint_code": ["x"]}]',
+    ],
+)
+def test_constraints_non_string_fields_are_dropped(reply: str) -> None:
+    assert _llm_suggest_constraints([_TVAR, _TVAR], _Stub(reply), "src") == []

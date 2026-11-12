@@ -52,7 +52,7 @@ def _parse_constraint_item(item: Any) -> StructuralConstraintSpec | None:
         return None
     desc = item.get("description", "")
     code = item.get("constraint_code", "")
-    if not desc or not code:
+    if not isinstance(desc, str) or not isinstance(code, str) or not desc or not code:
         return None
     return StructuralConstraintSpec(
         description=desc,
