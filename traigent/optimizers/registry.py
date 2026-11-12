@@ -17,6 +17,23 @@ logger = get_logger(__name__)
 _OPTIMIZER_REGISTRY: dict[str, type[BaseOptimizer]] = {}
 
 
+def _unknown_optimizer_message(name: str) -> str:
+    """Build the unknown-optimizer error from the public algorithm list.
+
+    The list is the same source ``traigent algorithms`` renders. Runtime-only
+    registry names (batch optimizers, ``remote``) keep working when named but
+    are not advertised.
+    """
+    from traigent.config.types import accepted_algorithm_values
+
+    available = list(accepted_algorithm_values())
+    return (
+        f"Unknown optimizer '{name}' for the algorithm argument. "
+        f"Available optimizers: {available}. "
+        "Run `traigent algorithms` to see them."
+    )
+
+
 def register_optimizer(name: str, optimizer_class: type[BaseOptimizer]) -> None:
     """Register an optimization algorithm.
 
@@ -97,10 +114,7 @@ def get_optimizer(
         )
 
     if name not in _OPTIMIZER_REGISTRY:
-        available = list(_OPTIMIZER_REGISTRY.keys())
-        raise OptimizationError(
-            f"Unknown optimizer '{name}'. Available optimizers: {available}"
-        )
+        raise OptimizationError(_unknown_optimizer_message(name))
 
     optimizer_class = _OPTIMIZER_REGISTRY[name]
 
@@ -132,10 +146,7 @@ def get_optimizer_info(name: str) -> dict[str, Any]:
         OptimizationError: If optimizer name not found
     """
     if name not in _OPTIMIZER_REGISTRY:
-        available = list(_OPTIMIZER_REGISTRY.keys())
-        raise OptimizationError(
-            f"Unknown optimizer '{name}'. Available optimizers: {available}"
-        )
+        raise OptimizationError(_unknown_optimizer_message(name))
 
     optimizer_class = _OPTIMIZER_REGISTRY[name]
 

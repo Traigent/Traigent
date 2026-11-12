@@ -118,6 +118,7 @@ from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.tvl.spec_loader import TVLSpecArtifact, load_tvl_spec
+from traigent.utils.config_keys import validate_configuration_space_keys
 from traigent.utils.exceptions import (
     ConfigurationError,
     TraigentWarning,
@@ -3313,6 +3314,23 @@ def _attach_optimized_function_extras(
             optimized_func._surrogate_evaluator_name = surrogate_evaluator_name
 
 
+def _validate_configuration_space_keys(configuration_space: Any) -> None:
+    """Apply the shared key rule to a dict configuration_space."""
+    if isinstance(configuration_space, dict):
+        validate_configuration_space_keys(configuration_space)
+
+
+_TEXT_ARGS = ("agent_name", "experiment_name", "run_title", "run_description")
+
+
+def _validate_optional_text_args(settings: dict[str, Any]) -> None:
+    """Require agent_name/experiment_name/run_title/run_description be str or None."""
+    for arg in _TEXT_ARGS:
+        value = settings.get(arg)
+        if value is not None and not isinstance(value, str):
+            raise TypeError(f"{arg} must be a string or None")
+
+
 def optimize(  # NOSONAR(S107)
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
@@ -3739,6 +3757,8 @@ def optimize(  # NOSONAR(S107)
     eval_dataset = combined_settings["eval_dataset"]
     objectives = combined_settings["objectives"]
     configuration_space = combined_settings["configuration_space"]
+    _validate_configuration_space_keys(configuration_space)
+    _validate_optional_text_args(combined_settings)
     default_config = combined_settings["default_config"]
     _validate_default_config(default_config)
     constraints = combined_settings["constraints"]
@@ -4034,6 +4054,8 @@ def optimize(  # NOSONAR(S107)
         eval_dataset,
         combined_runtime_overrides,
     )
+    # A TVL spec supplies its space only now: re-check the final, resolved keys.
+    _validate_configuration_space_keys(configuration_space)
     constraint_scope_var_names = _augment_constraint_scope_var_names(
         constraint_scope_var_names, configuration_space
     )
