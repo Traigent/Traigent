@@ -38,6 +38,7 @@ from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
+from traigent.utils.retry_after import MAX_RETRY_AFTER_SECONDS, retry_after_from_headers
 from traigent.utils.thread_timeout import run_in_thread_with_timeout
 from traigent.utils.trial_costs import is_cost_unmeasured, lift_cost_floor_to_body
 from traigent.utils.wire_text import (
@@ -99,22 +100,23 @@ _TRANSIENT_SUBMIT_STATUSES = frozenset({408, 425, 429})
 #: blind re-send of the results could duplicate it; it is reported unacknowledged.
 _RETRYABLE_SUBMIT_STATUSES = frozenset({425, 429})
 _TRIAL_SUBMIT_MAX_ATTEMPTS = 3
-_TRIAL_SUBMIT_MAX_WAIT_SECONDS = 5.0
 
 
-def _submit_retry_delay(response: Any, attempt: int) -> float:
-    """Seconds to wait before retrying a transient submit: Retry-After, capped."""
+def _submit_retry_delay(response: Any, attempt: int) -> float | None:
+    """Seconds to wait before retrying a transient submit, or ``None`` to stop.
+
+    Honours ``Retry-After`` (seconds or HTTP-date) up to the shared ceiling;
+    a longer ask returns ``None`` so the caller surfaces the 429 rather than
+    re-sending inside the server's window (#3011).
+    """
+    own: float = 0.5 * (2**attempt)
     headers = getattr(response, "headers", None)
-    raw = None
-    if isinstance(headers, Mapping):
-        raw = headers.get("Retry-After")
-    try:
-        wait = float(raw) if raw is not None else 0.5 * (2**attempt)
-    except (TypeError, ValueError):
-        wait = 0.5 * (2**attempt)
-    if not math.isfinite(wait) or wait < 0:
-        wait = 0.5 * (2**attempt)
-    return min(wait, _TRIAL_SUBMIT_MAX_WAIT_SECONDS)
+    if not isinstance(headers, Mapping):
+        return own
+    wait: float | None = retry_after_from_headers(headers)
+    if wait is None:
+        return own
+    return None if wait > MAX_RETRY_AFTER_SECONDS else wait
 
 
 def _summary_aggregate_scalar(aggregate: Any) -> tuple[bool, Any]:
@@ -1382,6 +1384,16 @@ class TrialOperations:
                                 url,
                             )
                         delay = _submit_retry_delay(response, attempt)
+                        if delay is None:
+                            return await self._dispatch_results_response(
+                                response,
+                                session_id,
+                                trial_id,
+                                backend_status,
+                                result_data,
+                                clean_metrics,
+                                url,
+                            )
                     logger.info(
                         "Trial result submit got a transient HTTP status; "
                         "retrying in %.1fs (attempt %d of %d)",

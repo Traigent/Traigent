@@ -11,8 +11,7 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
-from datetime import UTC
-from email.utils import parsedate_to_datetime
+from datetime import UTC, datetime
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any
 from urllib.parse import urljoin, urlsplit
@@ -20,6 +19,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from traigent.labels.transport_gate import gate_session
+from traigent.utils.retry_after import MAX_RETRY_AFTER_SECONDS, parse_retry_after
 
 _REQUEST_DEADLINE_MSG = "connector request deadline exceeded"
 
@@ -177,21 +177,10 @@ class HttpKernel:
         return (parsed.scheme.lower(), (parsed.hostname or "").lower(), port)
 
     def _retry_after_delay(self, value: str) -> float | None:
-        try:
-            delay = float(value)
-        except ValueError:
-            try:
-                retry_at = parsedate_to_datetime(value)
-            except (TypeError, ValueError, IndexError, OverflowError):
-                return None
-            if retry_at.tzinfo is None:
-                # RFC 9110 permits asctime-date, whose historical spelling
-                # has no explicit zone and is defined as GMT.
-                retry_at = retry_at.replace(tzinfo=UTC)
-            delay = retry_at.timestamp() - self._wall_clock()
-        if not math.isfinite(delay):
-            return None
-        return min(self._max_backoff, max(0.0, delay))
+        """Server-requested wait in seconds (unclamped), or None if unusable."""
+        return parse_retry_after(
+            value, now=lambda: datetime.fromtimestamp(self._wall_clock(), UTC)
+        )
 
     def request(
         self,
@@ -343,6 +332,11 @@ class HttpKernel:
         server_delay = self._retry_after_delay(retry_after) if retry_after else None
         if server_delay is None:
             return random.uniform(0.0, delay)
+        if server_delay > MAX_RETRY_AFTER_SECONDS:
+            # Stop rather than retry inside the window the server asked for.
+            raise RuntimeError(
+                f"connector HTTP retry-after exceeds {MAX_RETRY_AFTER_SECONDS:.0f}s ceiling"
+            )
         return server_delay
 
     @staticmethod

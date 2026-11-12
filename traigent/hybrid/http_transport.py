@@ -34,6 +34,7 @@ from traigent.hybrid.transport import (
 )
 from traigent.labels.transport_gate import gate_session
 from traigent.utils.logging import get_logger
+from traigent.utils.retry_after import retry_after_from_headers
 
 logger = get_logger(__name__)
 
@@ -141,15 +142,9 @@ class HTTPTransport:
         """Extract Retry-After value from response headers.
 
         Returns:
-            Parsed float seconds, or None if absent/unparseable.
+            Seconds (delta-seconds or HTTP-date), or None if absent/unparseable.
         """
-        raw = headers.get("Retry-After")
-        if not raw:
-            return None
-        try:
-            return float(raw)
-        except ValueError:
-            return None  # Could be HTTP-date format, ignore for now
+        return retry_after_from_headers(headers)
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         """Raise the appropriate TransportError for non-2xx responses.

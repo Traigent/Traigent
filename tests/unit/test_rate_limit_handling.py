@@ -99,16 +99,17 @@ class TestRetryConfigWithRateLimits:
 
     @pytest.mark.unit
     def test_calculate_delay_caps_retry_after(self) -> None:
-        """RetryConfig should cap retry_after at max_delay."""
+        """retry_after is bounded by max_retry_after, not by the backoff max_delay (#3011)."""
         config = RetryConfig(
             initial_delay=1.0,
             max_delay=30.0,
+            max_retry_after=90.0,
             respect_retry_after=True,
         )
 
-        # retry_after should be capped at max_delay
-        delay = config.calculate_delay(attempt=1, retry_after=60.0)
-        assert delay == 30.0
+        assert config.calculate_delay(attempt=1, retry_after=60.0) == 60.0
+        assert config.retry_after_too_long(120.0)
+        assert not config.retry_after_too_long(60.0)
 
     @pytest.mark.unit
     def test_calculate_delay_ignores_retry_after_when_disabled(self) -> None:

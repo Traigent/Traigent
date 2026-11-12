@@ -324,13 +324,36 @@ def test_http_kernel_honours_retry_after_forms(monkeypatch):
             _test_transport_factory=_test_transport_factory(transport),
             max_retries=1,
             max_backoff=3,
+            deadline=120,
             clock=clock,
             wall_clock=lambda: wall_now,
             sleep=clock.sleep,
         )
         before = clock.now
         assert kernel.request("GET", "/").status_code == 200
-        assert clock.now - before == 3
+        # The server's 30 s is honoured in full, not clamped to max_backoff (#3011).
+        assert clock.now - before == 30
+
+
+def test_http_kernel_stops_when_retry_after_exceeds_ceiling():
+    clock = Clock()
+    transport = Transport(
+        [HttpResponse(429, {"Retry-After": "600"}, b""), HttpResponse(200, {}, b"")],
+        [],
+    )
+    kernel = HttpKernel(
+        "https://safe.example",
+        ConnectionCredentials("x"),
+        _test_transport_factory=_test_transport_factory(transport),
+        max_retries=1,
+        deadline=3600,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    before = clock.now
+    with pytest.raises(RuntimeError, match="retry-after exceeds"):
+        kernel.request("GET", "/")
+    assert clock.now == before
 
 
 def test_http_kernel_never_forwards_cookies_same_host():

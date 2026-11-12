@@ -34,6 +34,10 @@ from traigent.utils.exceptions import (
 )
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
+from traigent.utils.retry_after import (
+    MAX_RETRY_AFTER_SECONDS,
+    retry_after_from_error,
+)
 
 logger = get_logger(__name__)
 
@@ -138,6 +142,9 @@ class RetryConfig:
     retry_on_timeout: bool = True
     retry_on_connection_error: bool = True
     respect_retry_after: bool = True  # Honor Retry-After headers
+    #: Longest server-requested ``Retry-After`` we will wait out. A longer ask
+    #: stops the retry loop (the error propagates) instead of retrying early (#3011).
+    max_retry_after: float = MAX_RETRY_AFTER_SECONDS
 
     # Circuit breaker settings
     enable_circuit_breaker: bool = False
@@ -182,7 +189,7 @@ class RetryConfig:
     def calculate_delay(self, attempt: int, retry_after: float | None = None) -> float:
         """Calculate delay before next retry attempt."""
         if retry_after is not None and self.respect_retry_after:
-            return min(retry_after, self.max_delay)
+            return min(retry_after, self.max_retry_after)
 
         if self.strategy in (RetryStrategy.FIXED, RetryStrategy.FIXED_DELAY):
             delay = self.initial_delay
@@ -206,6 +213,14 @@ class RetryConfig:
         # Clamp last so jitter can never push the delay past the documented cap
         # (applies to every strategy, including FIXED and LINEAR).
         return min(delay, self.max_delay)
+
+    def retry_after_too_long(self, retry_after: float | None) -> bool:
+        """True when the server asked for a wait beyond ``max_retry_after``."""
+        return (
+            retry_after is not None
+            and self.respect_retry_after
+            and retry_after > self.max_retry_after
+        )
 
     def _exponential_delay(self, attempt: int) -> float:
         """Exponential delay capped at max_delay; safe for very large attempts."""
@@ -403,6 +418,8 @@ class RetryHandler:
 
                 # Calculate delay
                 retry_after = self._get_retry_after(e)
+                if self.config.retry_after_too_long(retry_after):
+                    break  # the server asked for longer than we will wait
                 delay = self.config.calculate_delay(attempt, retry_after)
 
                 # Log retry attempt
@@ -468,6 +485,8 @@ class RetryHandler:
 
                 # Calculate delay
                 retry_after = self._get_retry_after(e)
+                if self.config.retry_after_too_long(retry_after):
+                    break  # the server asked for longer than we will wait
                 delay = self.config.calculate_delay(attempt, retry_after)
 
                 # Log retry attempt
@@ -532,15 +551,7 @@ class RetryHandler:
     @staticmethod
     def _get_retry_after(exception: Exception) -> float | None:
         """Return an optional Retry-After delay exposed by an exception."""
-        for attr_name in ("retry_after", "retry_after_seconds"):
-            retry_after = getattr(exception, attr_name, None)
-            if retry_after is None:
-                continue
-            try:
-                return max(0.0, float(retry_after))
-            except (TypeError, ValueError):
-                continue
-        return None
+        return retry_after_from_error(exception)
 
 
 # Decorator functions for simple usage

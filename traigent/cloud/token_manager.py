@@ -20,6 +20,7 @@ from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.core.constants import MAX_RETRIES
 from traigent.labels.transport_gate import gate_session
 from traigent.utils.exceptions import NonRetryableError, RateLimitError
+from traigent.utils.retry_after import retry_after_from_headers
 
 if TYPE_CHECKING:
     from traigent.cloud.auth import (
@@ -521,7 +522,12 @@ class TokenManager:
             raise RefreshRejectedError("Refresh token invalid or expired")
         if response.status == 429:
             await response.text()  # drain body; do not propagate upstream content
-            raise RateLimitError("Token refresh failed with HTTP 429")
+            raise RateLimitError(
+                "Token refresh failed with HTTP 429",
+                retry_after=retry_after_from_headers(
+                    getattr(response, "headers", None)
+                ),
+            )
         if response.status != 200:
             await response.text()  # drain body; do not propagate upstream content
             raise RuntimeError(f"Token refresh failed with HTTP {response.status}")
