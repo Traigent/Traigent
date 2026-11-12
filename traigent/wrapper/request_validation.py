@@ -82,10 +82,13 @@ def _check_item_ids(items: Any, label: str) -> None:
     for item in items:
         if label == "evaluations" and not isinstance(item, dict):
             raise _fail("evaluations items must be objects")
-        if isinstance(item, dict) and "example_id" in item:
-            value = item["example_id"]
-            if not _is_valid_example_id(value):
-                raise _fail(f"{label} example_id is not a valid id")
+        if not isinstance(item, dict):
+            continue
+        # ``input_id`` is the contract key, ``example_id`` the deprecated alias;
+        # the service reads either, so both must be checked.
+        for key in ("input_id", "example_id"):
+            if key in item and not _is_valid_example_id(item[key]):
+                raise _fail(f"{label} {key} is not a valid id")
 
 
 def validate_execute_request(request: dict[str, Any]) -> None:
@@ -94,6 +97,7 @@ def validate_execute_request(request: dict[str, Any]) -> None:
     if "config" not in request:
         raise _fail("config is required")
     _check_config(request["config"])
+    _check_item_ids(request.get("inputs"), "inputs")
     _check_item_ids(request.get("examples"), "examples")
 
 

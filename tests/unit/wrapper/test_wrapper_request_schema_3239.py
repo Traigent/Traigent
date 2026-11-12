@@ -130,6 +130,19 @@ EXECUTE_BAD = {
     "id_empty": _execute(examples=[{"example_id": ""}]),
     "id_control_char": _execute(examples=[{"example_id": "a\x00b"}]),
     "id_inner_newline": _execute(examples=[{"example_id": "a\nb"}]),
+    "inputs_input_id_traversal": _execute(
+        examples=_MISSING, inputs=[{"input_id": "../etc"}]
+    ),
+    "inputs_input_id_integer": _execute(examples=_MISSING, inputs=[{"input_id": 1}]),
+    "inputs_input_id_too_long": _execute(
+        examples=_MISSING, inputs=[{"input_id": LONG_ID}]
+    ),
+    "inputs_example_id_alias_traversal": _execute(
+        examples=_MISSING, inputs=[{"example_id": "../etc"}]
+    ),
+    "input_id_wins_but_alias_bad": _execute(
+        examples=[{"input_id": "ok", "example_id": "../etc"}]
+    ),
 }
 
 EVALUATE_BAD = {
@@ -143,6 +156,8 @@ EVALUATE_BAD = {
     "id_traversal": _evaluate(evaluations=[{"example_id": "../etc"}]),
     "id_too_long": _evaluate(evaluations=[{"example_id": LONG_ID}]),
     "id_integer": _evaluate(evaluations=[{"example_id": 1}]),
+    "input_id_traversal": _evaluate(evaluations=[{"input_id": "../etc"}]),
+    "input_id_integer": _evaluate(evaluations=[{"input_id": 1}]),
 }
 
 
