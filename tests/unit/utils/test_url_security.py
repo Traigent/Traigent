@@ -41,9 +41,9 @@ def test_validate_outbound_url_normalizes_trailing_slash(
         ("file:///tmp/socket", "http or https"),
         ("https://example.com?token=abc", "query or fragment"),
         (
-            "https://user:pass@example.com",
+            "https://user:pass@example.com",  # pragma: allowlist secret
             "embedded credentials",
-        ),  # pragma: allowlist secret
+        ),
         ("https://example.com:99999", "invalid port"),
         ("https://api.example.com/v1/..", "dot-segment"),
         ("https://api.example.com/v1/%2e%2e", "dot-segment"),
@@ -142,3 +142,30 @@ def test_validate_outbound_url_allows_localhost_when_private_hosts_allowed(
 def test_validate_outbound_url_blocks_metadata_when_private_hosts_allowed() -> None:
     with pytest.raises(UnsafeUrlError, match="non-routable"):
         validate_outbound_url("http://169.254.169.254", allow_private_hosts=True)
+
+
+@pytest.mark.parametrize(
+    "url", ["http://[::1]/", "http://[::1]:8080/", "http://[::ffff:127.0.0.1]:8080/"]
+)
+def test_allow_private_hosts_accepts_ipv6_loopback(url: str) -> None:
+    assert validate_outbound_url(url, allow_private_hosts=True) == url.rstrip("/")
+
+
+@pytest.mark.parametrize("url", ["http://[::1]:8080/", "http://[::1]/"])
+def test_ipv6_loopback_rejected_without_allow_private_hosts(url: str) -> None:
+    with pytest.raises(UnsafeUrlError):
+        validate_outbound_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://[fe80::1]/",
+        "http://[::]/",
+        "http://[ff02::1]/",
+        "http://169.254.169.254/",
+    ],
+)
+def test_allow_private_hosts_still_rejects_non_loopback_nonroutable(url: str) -> None:
+    with pytest.raises(UnsafeUrlError):
+        validate_outbound_url(url, allow_private_hosts=True)
