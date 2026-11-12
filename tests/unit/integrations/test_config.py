@@ -16,7 +16,6 @@ from traigent.integrations.config import (
     IntegrationConfig,
     ParameterConstraints,
     configure_integrations,
-    integration_config,
 )
 from traigent.utils.exceptions import ValidationError
 
@@ -561,7 +560,7 @@ class TestConfigureIntegrations:
         # Should not raise, just warn
         configure_integrations(unknown_option="value")
         # Config unchanged
-        assert not hasattr(integration_config, "unknown_option")
+        assert not hasattr(config_module.integration_config, "unknown_option")
 
     def test_configure_invalid_boolean_type(self):
         """Test configuring boolean with invalid type raises error."""
