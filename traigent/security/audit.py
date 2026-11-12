@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 import threading
@@ -12,6 +13,7 @@ import uuid
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
@@ -353,17 +355,52 @@ class AuditLogger:
                     event.event_id,
                 )
 
+    CHECKSUM_PREFIX = "v2:"
+
+    @staticmethod
+    def _canonical_default(value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, (set, frozenset)):
+            return sorted(str(v) for v in value)
+        return str(value)
+
+    def _canonical_event_bytes(
+        self, event: AuditEvent, previous_hash: str | None
+    ) -> bytes:
+        """Canonical serialization of every persisted field except the checksum."""
+        data: dict[str, Any] = {
+            f.name: getattr(event, f.name)
+            for f in dataclass_fields(event)
+            if f.name != "checksum"
+        }
+        data["previous_hash"] = previous_hash
+        return json.dumps(
+            data,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            default=self._canonical_default,
+        ).encode("utf-8")
+
     def _calculate_checksum(self, event: AuditEvent) -> str:
-        """Calculate tamper-proof checksum for event."""
+        """Calculate tamper-evident checksum (HMAC over all event fields)."""
+        return self._calculate_checksum_for_verification(event, self.event_chain_hash)
+
+    def _calculate_legacy_checksum(
+        self, event: AuditEvent, previous_hash: str | None
+    ) -> str:
+        """Legacy 6-field checksum, kept only to recognise old entries."""
         event_data = {
             "event_id": event.event_id,
             "event_type": event.event_type.value,
             "timestamp": event.timestamp.isoformat(),
             "user_id": event.user_id,
             "details": event.details,
-            "previous_hash": self.event_chain_hash,
+            "previous_hash": previous_hash,
         }
-
         event_json = json.dumps(event_data, sort_keys=True)
         return hashlib.sha256((event_json + self.secret_key).encode()).hexdigest()
 
@@ -375,6 +412,7 @@ class AuditLogger:
     def verify_integrity(self) -> dict[str, Any]:
         """Verify audit log integrity (thread-safe)."""
         tampered_events: list[dict[str, Any]] = []
+        legacy_events: list[str] = []
         missing_events: list[str] = []
 
         with self._lock:
@@ -384,6 +422,7 @@ class AuditLogger:
         verification_result = {
             "total_events": len(events_snapshot),
             "tampered_events": tampered_events,
+            "legacy_events": legacy_events,
             "missing_events": missing_events,
             "chain_integrity": True,
         }
@@ -392,10 +431,27 @@ class AuditLogger:
 
         for i, event in enumerate(events_snapshot):
             # Verify event checksum
-            expected_checksum = self._calculate_checksum_for_verification(
-                event, expected_chain_hash
+            stored = event.checksum
+            is_legacy = isinstance(stored, str) and not stored.startswith(
+                self.CHECKSUM_PREFIX
             )
-            if event.checksum != expected_checksum:
+            if is_legacy:
+                # Entry written under the legacy 6-field scheme: it can only be
+                # checked against that scheme and is never reported as valid
+                # under the current one.
+                expected_checksum = self._calculate_legacy_checksum(
+                    event, expected_chain_hash
+                )
+            else:
+                expected_checksum = self._calculate_checksum_for_verification(
+                    event, expected_chain_hash
+                )
+            matches = isinstance(stored, str) and hmac.compare_digest(
+                stored, expected_checksum
+            )
+            if matches and is_legacy:
+                legacy_events.append(event.event_id)
+            elif not matches:
                 tampered_events.append(
                     {
                         "event_id": event.event_id,
@@ -418,18 +474,13 @@ class AuditLogger:
     def _calculate_checksum_for_verification(
         self, event: AuditEvent, previous_hash: str | None
     ) -> str:
-        """Calculate checksum for verification (without relying on stored chain hash)."""
-        event_data = {
-            "event_id": event.event_id,
-            "event_type": event.event_type.value,
-            "timestamp": event.timestamp.isoformat(),
-            "user_id": event.user_id,
-            "details": event.details,
-            "previous_hash": previous_hash,
-        }
-
-        event_json = json.dumps(event_data, sort_keys=True)
-        return hashlib.sha256((event_json + self.secret_key).encode()).hexdigest()
+        """Calculate the current-scheme checksum without using the stored chain hash."""
+        digest = hmac.new(
+            self.secret_key.encode("utf-8"),
+            self._canonical_event_bytes(event, previous_hash),
+            hashlib.sha256,
+        ).hexdigest()
+        return self.CHECKSUM_PREFIX + digest
 
     def get_events(
         self,
