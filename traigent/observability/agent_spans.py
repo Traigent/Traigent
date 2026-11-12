@@ -47,12 +47,17 @@ class SpanResult:
         return self.accepted
 
 
+#: Largest latency (one day, in ms) a span accepts; larger values are ignored.
+_MAX_LATENCY_MS = 86_400_000.0
+
+
 def _is_safe_number(value: Any) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(float(value))
-    )
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
 
 
 def _coerce_non_negative_int(value: int | None, *, field_name: str) -> int:
@@ -77,6 +82,9 @@ def _coerce_non_negative_float(value: float | None, *, field_name: str) -> float
     coerced = float(value)
     if coerced < 0:
         logger.debug("Ignoring negative %s for agent span", field_name)
+        return 0.0
+    if coerced > _MAX_LATENCY_MS:
+        logger.debug("Ignoring out-of-range %s for agent span", field_name)
         return 0.0
     return coerced
 
@@ -159,6 +167,9 @@ def _sanitize_metadata(
     dropped: list[str] = []
     if not metadata:
         return sanitized, ()
+    if not isinstance(metadata, Mapping):
+        logger.debug("Dropping non-mapping agent span metadata")
+        return sanitized, ("metadata",)
 
     for raw_key, value in metadata.items():
         key = str(raw_key)

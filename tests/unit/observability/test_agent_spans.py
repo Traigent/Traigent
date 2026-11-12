@@ -19,7 +19,7 @@ from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
 from traigent.evaluators.base import BaseEvaluator, Dataset
-from traigent.observability import add_agent_span
+from traigent.observability import SpanResult, add_agent_span
 from traigent.optimizers.base import BaseOptimizer
 
 
@@ -392,3 +392,41 @@ def test_credential_shaped_metadata_keys_still_dropped_2057() -> None:
         "total_tokens",
         "effort",
     }
+
+
+def test_add_agent_span_never_raises_on_malformed_input_3114() -> None:
+    manager = _manager()
+    bad_calls = [
+        {"latency_ms": 1e30},
+        {"latency_ms": 1e15},
+        {"latency_ms": 10**400},
+        {"metadata": [1, 2]},
+        {"metadata": {"k": 10**400}},
+    ]
+    with _active_trial(manager):
+        for kwargs in bad_calls:
+            result = add_agent_span("planner", **kwargs)
+            assert isinstance(result, SpanResult)
+
+
+def test_add_agent_span_huge_latency_is_ignored_not_backdated_3114() -> None:
+    manager = _manager()
+    with _active_trial(manager):
+        add_agent_span("planner", latency_ms=1e12)
+    span = manager._group_spans_by_config_run()["config-run-1"][0]
+    assert "latency_ms" not in span.to_dict()["metadata"]
+
+
+def test_add_agent_span_non_mapping_metadata_is_reported_3114() -> None:
+    manager = _manager()
+    with _active_trial(manager):
+        result = add_agent_span("planner", metadata=[1, 2])  # type: ignore[arg-type]
+    assert result.dropped_metadata_keys == ("metadata",)
+    assert result.accepted is True
+
+
+def test_add_agent_span_oversized_int_metadata_is_dropped_3114() -> None:
+    manager = _manager()
+    with _active_trial(manager):
+        result = add_agent_span("planner", metadata={"k": 10**400, "ok": 3})
+    assert result.dropped_metadata_keys == ("k",)
