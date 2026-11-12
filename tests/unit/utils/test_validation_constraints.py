@@ -954,11 +954,11 @@ class TestConvenienceConstraints:
         assert (
             constraint.validate({"model": "gpt-4o-mini", "max_tokens": 1000}) is True
         )  # Low cost
-        # gpt-4o with very high token count to exceed $0.1 limit
-        # At ~$0.00425 per 2000 tokens, we need ~47k tokens to exceed $0.1
+        # The limit is per 1k tokens, so a large max_tokens does not change
+        # the verdict for a model whose per-1k price is under the limit.
         assert (
-            constraint.validate({"model": "gpt-4o", "max_tokens": 50000}) is False
-        )  # High cost with many tokens
+            constraint.validate({"model": "gpt-4o", "max_tokens": 50000}) is True
+        )  # per-1k price of gpt-4o is far below $0.1
 
     def test_model_cost_constraint_custom_limit(self):
         """Test model cost constraint with custom cost limit."""
@@ -966,10 +966,35 @@ class TestConvenienceConstraints:
 
         assert constraint.max_resource == 0.001
 
-        # gpt-4o-mini at 10000 tokens costs ~$0.00128, which exceeds $0.001
+        # gpt-4o-mini per-1k price is ~$0.00015: independent of max_tokens.
         assert (
-            constraint.validate({"model": "gpt-4o-mini", "max_tokens": 10000}) is False
+            constraint.validate({"model": "gpt-4o-mini", "max_tokens": 10000}) is True
         )
+        assert constraint.validate({"model": "gpt-4o-mini", "max_tokens": 1000}) is True
+        # gpt-4o per-1k price (~$0.0025) exceeds the $0.001 limit at any size.
+        assert constraint.validate({"model": "gpt-4o", "max_tokens": 10000}) is False
+        assert constraint.validate({"model": "gpt-4o", "max_tokens": 100}) is False
+
+    def test_model_cost_constraint_is_independent_of_max_tokens(self):
+        """#3103: the per-1k cost must not scale with max_tokens."""
+        constraint = model_cost_constraint(max_cost_per_1k_tokens=0.01)
+        calc = constraint.resource_calculator
+        small = calc({"model": "gpt-4o-mini", "max_tokens": 1000})
+        large = calc({"model": "gpt-4o-mini", "max_tokens": 100000})
+        assert small == pytest.approx(large, rel=1e-9)
+        assert constraint.validate({"model": "gpt-4o-mini", "max_tokens": 100000})
+
+    @pytest.mark.parametrize(
+        "bad", [0, -5, 12.5, float("nan"), float("inf"), True, None, "1000"]
+    )
+    def test_model_cost_constraint_invalid_max_tokens_fails_closed(self, bad):
+        """#3103: an unusable token budget is never free or passing."""
+        constraint = model_cost_constraint()
+        cost = constraint.resource_calculator(
+            {"model": "gpt-4o-mini", "max_tokens": bad}
+        )
+        assert cost == float("inf")
+        assert constraint.validate({"model": "gpt-4o-mini", "max_tokens": bad}) is False
 
     def test_model_cost_constraint_unknown_model(self):
         """Test model cost constraint with unknown model fails (conservative fallback)."""
