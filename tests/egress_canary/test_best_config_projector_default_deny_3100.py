@@ -13,11 +13,11 @@ _SPEC = {
 }
 
 
-def test_unknown_top_level_members_are_dropped() -> None:
-    out = oo.project_best_config_payload(
-        {"spec": dict(_SPEC), "environment": "prod", "note": "free text here"}
-    )
-    assert set(out) == {"spec", "environment"}
+def test_unknown_top_level_members_are_refused() -> None:
+    with pytest.raises(oo.MetadataContractViolation):
+        oo.project_best_config_payload(
+            {"spec": dict(_SPEC), "environment": "prod", "note": "free text here"}
+        )
 
 
 def test_free_text_forward_compat_is_refused() -> None:

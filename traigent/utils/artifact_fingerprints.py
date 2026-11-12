@@ -29,6 +29,17 @@ _EXPECTED_OUTPUT_FIELDS = (
 )
 
 
+_SET_TAG = "__set__"
+
+
+def _uses_set_tag(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        return _SET_TAG in value or any(_uses_set_tag(v) for v in value.values())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_uses_set_tag(v) for v in value)
+    return False
+
+
 _MEMORY_ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]{4,}")
 
 
@@ -39,7 +50,9 @@ def _canonical_default(value: Any) -> Any:
     memory address (so it is the same in every process).
     """
     if isinstance(value, (set, frozenset)):
-        return sorted(value, key=_canonical_json_bytes)
+        # tagged so a set never collides with a list of the same items; items are
+        # ordered by their canonical bytes, which compare across mixed types
+        return {_SET_TAG: sorted(value, key=_canonical_json_bytes)}
     text = str(value)
     if _MEMORY_ADDRESS_RE.search(text):
         raise TypeError("value has no process-stable canonical form")
@@ -47,6 +60,8 @@ def _canonical_default(value: Any) -> Any:
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
+    if _uses_set_tag(value):
+        raise TypeError("input uses the reserved set tag")
     return json.dumps(
         value,
         sort_keys=True,

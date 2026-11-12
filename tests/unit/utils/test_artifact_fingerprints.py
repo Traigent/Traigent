@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -352,5 +355,32 @@ def test_stable_inputs_keep_their_fingerprint_3097() -> None:
     assert af._canonical_json_bytes(value) == expected
 
 
-def test_sets_serialise_as_sorted_lists_3097() -> None:
-    assert af._canonical_json_bytes({"s": {"b", "a"}}) == b'{"s":["a","b"]}'
+def test_sets_are_tagged_and_distinct_from_lists_3097() -> None:
+    assert (
+        af._canonical_json_bytes({"s": {"b", "a"}}) == b'{"s":{"__set__":["a","b"]}}'
+    )
+    assert af._canonical_json_bytes({"s": {"a", "b"}}) != af._canonical_json_bytes(
+        {"s": ["a", "b"]}
+    )
+    assert af._canonical_json_bytes({"s": {1, "a", None}})  # mixed types do not raise
+
+
+def test_reserved_set_tag_in_input_yields_no_fingerprint_3097() -> None:
+    assert af.compute_config_space_fingerprint({"k": {"__set__": [1]}}) is None
+
+
+def test_set_fingerprint_is_stable_across_hash_seeds_3097() -> None:
+    code = (
+        "from traigent.utils import artifact_fingerprints as af;"
+        "print(af.compute_config_space_fingerprint("
+        "{'t': {'alpha','beta','gamma','delta','eps'}}))"
+    )
+    outs = set()
+    for seed in ("1", "2", "3"):
+        env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONPATH": os.getcwd()}
+        res = subprocess.run(
+            [sys.executable, "-c", code], env=env, capture_output=True, text=True
+        )
+        assert res.returncode == 0, res.stderr
+        outs.add(res.stdout.strip())
+    assert len(outs) == 1 and "None" not in outs

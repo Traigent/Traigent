@@ -2842,8 +2842,10 @@ def project_best_config_payload(payload: Any) -> dict[str, Any]:
     """
     if not isinstance(payload, dict) or not isinstance(payload.get("spec"), dict):
         raise MetadataContractViolation
-    # Default-deny: only ``spec`` and ``environment`` may leave; other members are dropped.
-    out = {key: payload[key] for key in ("spec", "environment") if key in payload}
+    # Default-deny: only ``spec`` and ``environment`` may leave; any other member refuses.
+    if not set(payload) <= {"spec", "environment"}:
+        raise MetadataContractViolation
+    out = dict(payload)
     if out.get("environment") is not None:
         out["environment"] = _strict_id(out["environment"], _Ctx())
     spec = dict(out["spec"])
