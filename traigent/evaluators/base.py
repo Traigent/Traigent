@@ -68,7 +68,7 @@ from traigent.utils.trial_costs import (
     known_spend_lower_bound,
     trial_cost_unknown,
 )
-from traigent.utils.wire_text import error_code_for_wire
+from traigent.utils.wire_text import error_code_for_wire, span_safe_error
 
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
@@ -3413,7 +3413,7 @@ class BaseEvaluator(ABC):
                             span,
                             success=(error is None),
                             actual_output=output,
-                            error=error,
+                            error=span_safe_error(error),
                             execution_time=execution_time,
                         )
         except asyncio.CancelledError:
@@ -4626,7 +4626,7 @@ class BaseEvaluator(ABC):
             success=result.success,
             actual_output=None,
             metrics=result.metrics,
-            error=result.error_message,
+            error=span_safe_error(result.error_message),
             execution_time=result.execution_time,
         )
 

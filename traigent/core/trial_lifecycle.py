@@ -61,6 +61,7 @@ from traigent.utils.trial_costs import (
     is_cost_unmeasured,
     known_spend_lower_bound,
 )
+from traigent.utils.wire_text import span_safe_error
 
 from .tracing import record_trial_result, trial_span
 
@@ -985,7 +986,7 @@ class TrialLifecycle:
         self._apply_content_identity(
             result, evaluation_config, identity_run, example_results, capture_bucket
         )
-        record_trial_result(span, status=status, error=str(error))
+        record_trial_result(span, status=status, error=span_safe_error(error))
         end_time = time.time()
         self._collect_workflow_span(trial_id, result, start_time, end_time)
 

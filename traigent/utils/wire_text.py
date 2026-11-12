@@ -18,6 +18,7 @@ TraigentSchema/backend side of the closed list is tracked separately.
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -227,3 +228,25 @@ def filter_wire_metadata(metadata: Any) -> dict[str, Any]:
     if "summary_stats" in out:
         out["summary_stats"] = filter_summary_stats(out["summary_stats"])
     return out
+
+
+_FAILURE_CLASS = re.compile(r"^Function call failed: ([A-Za-z_][\w.]*): ")
+
+
+def span_safe_error(error: BaseException | str | None) -> str | None:
+    """Exception class and closed wire code only, for spans and metrics (#3274).
+
+    Observability is not privacy-preserving, so the message text, even
+    scrubbed, must not reach span attributes or status. The user-facing result
+    keeps the full text.
+    """
+    if error is None or error == "":
+        return None
+    if isinstance(error, BaseException):
+        name = type(error).__name__
+        text = f"{name}: {error}"
+    else:
+        text = str(error)
+        match = _FAILURE_CLASS.match(text)
+        name = match.group(1) if match else "Error"
+    return f"{name} [code={error_code_for_wire(text)}]"
