@@ -68,6 +68,7 @@ from traigent.utils.trial_costs import (
     known_spend_lower_bound,
     trial_cost_unknown,
 )
+from traigent.utils.wire_text import error_code_for_wire
 
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
@@ -3236,7 +3237,10 @@ class BaseEvaluator(ABC):
     def _log_function_failure(
         self, exc: BaseException, error_msg: str, config: dict[str, Any]
     ) -> None:
-        """Log a user-function failure with its class and call stack (#3274).
+        """Log a user-function failure with its class, a stable code and call stack (#3274).
+
+        The message text is never logged: it comes from user code and can carry
+        customer data. It stays available to the user in the example/trial error.
 
         The stack is logged once per (trial, exception class) at WARNING;
         repeats for later examples of the same trial log one line at DEBUG so N
@@ -3255,10 +3259,14 @@ class BaseEvaluator(ABC):
             # evaluate() call identifies that call. The dict value keeps the
             # config alive so its id cannot be reused by a later call.
             trial_id = id(config)
+        summary = (
+            f"Function call failed: {type(exc).__name__} "
+            f"[code={error_code_for_wire(error_msg)}]"
+        )
         key = (trial_id, type(exc))
         seen = self.__dict__.setdefault("_logged_function_failures", {})
         if key in seen:
-            logger.debug(redact_sensitive_text(error_msg))
+            logger.debug("%s", summary)
             return
         seen[key] = config
         frames = "\n".join(
@@ -3267,7 +3275,7 @@ class BaseEvaluator(ABC):
         )
         logger.warning(
             "%s\nTraceback (most recent call last):\n%s",
-            redact_sensitive_text(error_msg),
+            summary,
             redact_sensitive_text(frames),
         )
 

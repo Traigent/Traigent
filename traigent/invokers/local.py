@@ -22,6 +22,7 @@ from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import InvocationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
+from traigent.utils.wire_text import error_code_for_wire
 
 logger = get_logger(__name__)
 
@@ -158,7 +159,13 @@ class LocalInvoker(BaseInvoker):
             if is_provider_api_key_failure(e):
                 raise APIKeyError.from_provider_error(e) from e
 
-            logger.warning(error_msg)
+            # The message comes from user code and may hold customer data: log
+            # only the class and a stable code; the text stays in the result.
+            logger.warning(
+                "Function call failed: %s [code=%s]",
+                type(e).__name__,
+                error_code_for_wire(error_msg),
+            )
 
             return InvocationResult(
                 error=error_msg,
