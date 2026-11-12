@@ -3455,6 +3455,10 @@ def optimize(  # NOSONAR(S107)
                 ... )
                 ... def my_func(): ...
 
+        warm_start_from: Id of a prior experiment whose learned configurations seed
+            this run. Sent on managed session creation and recorded in
+            ``OptimizationResult.metadata["warm_start_from"]``; an empty string is
+            treated as not set.
         constraints: Optional validators receiving ``config`` and ``metrics``. Return
             True to accept a configuration or False to skip it. These are hard,
             per-trial constraints: a config that fails one is rejected outright.
@@ -3506,6 +3510,11 @@ def optimize(  # NOSONAR(S107)
         Execution options:
             execution: Grouped execution settings (ExecutionOptions or dict) spanning
                 orchestration, storage, and parallelism.
+            evaluator: External-service evaluator bundle
+                (``ExternalServiceEvaluator`` or dict) with ``kind="hybrid_api"``
+                and a ``hybrid_api`` block of ``HybridAPIOptions``; trials are
+                then run and scored by that hybrid-mode service instead of the
+                local function.
             algorithm: Optimizer selector. ``auto`` (default) uses managed
                 orchestration with local fallback, ``grid``/``random`` stay
                 local, and known smart optimizers require managed orchestration.
@@ -3561,6 +3570,60 @@ def optimize(  # NOSONAR(S107)
                 ``optimization/semantic_saturation_schema.json``. When provided,
                 the SDK evaluates per-example metric-vector churn and continuous
                 objective improvement using sanitized diagnostics only.
+
+        Multi-agent configuration:
+            agents: Explicit ``{agent_id: AgentDefinition}`` mapping that groups
+                configuration-space parameters and measures per agent. Takes
+                priority over every inferred grouping.
+            agent_prefixes: Prefixes used to infer agents from parameter names of
+                the form ``<prefix>_<param>``; a prefix that matches no parameter
+                raises ``ValueError``.
+            agent_measures: Map of agent id to the measure ids belonging to that
+                agent.
+            global_measures: Measure ids not tied to any one agent (for example
+                ``total_cost``).
+
+        Config persistence:
+            auto_load_best: Load a previously saved best configuration when the
+                function is decorated. Also sets the default of
+                ``enable_auto_load_dev_logs``. Default False.
+            load_from: Explicit path to a best-config JSON file, tried first. A
+                missing or invalid file raises instead of falling back to defaults.
+            config_id: Identifier of the best configuration to resolve for the
+                ``repo`` and ``cloud`` sources (trimmed before use).
+            best_config_source: Durable source mode, one of ``off`` (default),
+                ``repo``, ``cloud``, ``repo_then_cloud``, ``cloud_then_repo`` or
+                ``agent_head`` (the exact version the agent head pins; no
+                fallback). Unknown values are refused.
+            best_config_strict: Refuse, rather than skip with a warning, a best
+                config that is invalid, fails its identity check or cannot be
+                cached. Also refuses an identity-free legacy file.
+            best_config_cache_dir: Directory of the local cache for cloud best
+                configs; written on a cloud fetch and read before one.
+            best_config_cache_ttl_seconds: Age in seconds after which a cached
+                cloud best config is ignored. Default 86400 (24 hours).
+            best_config_stale_ok_ttl_seconds: When set, replaces
+                ``best_config_cache_ttl_seconds`` as the maximum cache age,
+                allowing a longer-lived (stale) entry to be used.
+            enable_auto_load_dev_logs: Fall back to the newest matching best-config
+                artifact in the local optimization logs when no other source
+                resolves. ``None`` (default) follows ``auto_load_best``.
+
+        Guided generation (configure here, then run
+        ``fn.optimize_with_guidance(provider)``):
+            prompt_rewrite: ``PromptRewriteOptions`` or dict (rounds,
+                candidates_per_round, max_total_candidates, prompt_param,
+                rewrite_model, privacy_mode) controlling LLM prompt rewriting that
+                adds candidates to the configuration space.
+            grow_dataset: ``DatasetGrowthOptions`` or dict (rounds,
+                examples_per_round, max_total_examples_added, gen_model,
+                privacy_mode) controlling synthesis of extra evaluation examples.
+            skill_train: ``SkillTrainOptions`` or dict (epochs, rollout_batch,
+                selection_split, score_metric, doc_param, ...) used as the default
+                options of ``fn.train_skill(document=..., optimizer_llm=...)``,
+                which trains a skill document behind a selection gate. Stored on
+                the function; it does not start training by itself. A per-call
+                ``skill_train`` argument to ``train_skill`` overrides it.
 
         Additional controls:
             legacy: Adapter for the legacy decorator signature. Accepts either a
