@@ -1378,7 +1378,18 @@ def validate_numeric_metric(
         )
 
     if isinstance(value, (int, float)):
-        if math.isnan(value) or math.isinf(value):
+        try:
+            as_float = float(value)
+        except OverflowError as e:
+            raise MetricExtractionError(
+                f"Metric '{field_name}' is NaN or Inf",
+                field=field_name,
+                value=value,
+                trial_id=trial_id,
+                example_id=example_id,
+                original_error=e,
+            ) from e
+        if math.isnan(as_float) or math.isinf(as_float):
             raise MetricExtractionError(
                 f"Metric '{field_name}' is NaN or Inf",
                 field=field_name,
@@ -1386,14 +1397,14 @@ def validate_numeric_metric(
                 trial_id=trial_id,
                 example_id=example_id,
             )
-        return float(value)
+        return as_float
 
     try:
         converted = float(value)
         if math.isnan(converted) or math.isinf(converted):
             raise ValueError("Converted to NaN or Inf")
         return converted
-    except (TypeError, ValueError) as e:
+    except (TypeError, ValueError, OverflowError) as e:
         raise MetricExtractionError(
             f"Cannot convert metric '{field_name}' to numeric: {value!r}",
             field=field_name,

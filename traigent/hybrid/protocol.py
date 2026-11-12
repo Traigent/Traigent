@@ -456,7 +456,7 @@ class EstimatedTokensPerExample:
             return value if value >= 0 else 0
         try:
             parsed = int(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return 0
         return parsed if parsed >= 0 else 0
 

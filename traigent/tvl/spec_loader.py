@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import functools
 import math
 import re
 import warnings
@@ -217,6 +218,11 @@ def _load_and_parse_yaml(path: Path) -> dict:
         raw_data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:  # pragma: no cover - defensive guard
         raise TVLValidationError(f"Failed to parse TVL spec: {exc}") from exc
+    except ValueError as exc:
+        # PyYAML surfaces CPython's integer-digit limit as a bare ValueError.
+        raise TVLValidationError(
+            f"Failed to parse TVL spec: numeric literal out of range ({exc})"
+        ) from exc
 
     if not isinstance(raw_data, dict):
         raise TVLValidationError("TVL specification must be a mapping")
@@ -1155,6 +1161,24 @@ def _parse_exploration_section(
     return budget, algorithm, convergence, exploration_budgets, exploration_parallelism
 
 
+def _numeric_overflow_as_validation_error(
+    func: Callable[..., TVLSpecArtifact],
+) -> Callable[..., TVLSpecArtifact]:
+    """Report numbers too large for float/int conversion as TVLValidationError."""
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> TVLSpecArtifact:
+        try:
+            return func(*args, **kwargs)
+        except OverflowError as exc:
+            raise TVLValidationError(
+                f"TVL spec contains a numeric value out of range: {exc}"
+            ) from exc
+
+    return wrapper
+
+
+@_numeric_overflow_as_validation_error
 def load_tvl_spec(
     *,
     spec_path: str | Path,

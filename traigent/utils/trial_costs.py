@@ -46,7 +46,7 @@ def coerce_finite_cost(value: Any) -> float | None:
         return None
     try:
         cost = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return cost if math.isfinite(cost) else None
 

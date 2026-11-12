@@ -50,7 +50,7 @@ def coerce_finite_objective_score(value: Any) -> float | None:
         return None
     try:
         score = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return score if math.isfinite(score) else None
 
