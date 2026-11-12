@@ -28,10 +28,10 @@ def _run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kwargs) -> Path:
         **kwargs,
     )
     def agent(q: str) -> str:
-        return traigent.get_config()["v"]
+        return str(traigent.get_config()["v"])
 
     agent.optimize_sync()
-    return tmp_path / "res"
+    return Path(tmp_path / "res")
 
 
 def _checkpoints(root: Path) -> list[Path]:
@@ -49,3 +49,27 @@ def test_parallel_run_with_non_dividing_concurrency_writes_a_checkpoint(
 ) -> None:
     root = _run(tmp_path, monkeypatch, parallel_config={"trial_concurrency": 3})
     assert _checkpoints(root)
+
+
+def test_checkpoint_written_when_crossing_batch_then_breaks() -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    orch = object.__new__(OptimizationOrchestrator)
+    orch.parallel_trials = 3
+    saved: list[int] = []
+    orch._log_checkpoint = lambda **kw: saved.append(kw["trial_count"])  # type: ignore[method-assign]
+    orch._trials = []
+    orch.optimizer = SimpleNamespace()
+
+    async def fake_batch(**kwargs):
+        return 12, "break"
+
+    orch._run_parallel_batch = fake_batch  # type: ignore[method-assign,assignment]
+    result = asyncio.run(
+        orch._dispatch_trial(None, None, None, None, 9, 5.0, None)  # type: ignore[arg-type]
+    )
+    assert result == (12, "break")
+    assert saved == [12]

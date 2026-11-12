@@ -938,3 +938,14 @@ def test_not_found_message_names_lookup_rule_without_echoing_path(
     with pytest.raises(ValueError, match="default results folder") as exc:
         load_resume_source("./secret_name_xyz")
     assert "secret_name_xyz" not in str(exc.value)
+
+
+def test_nonexistent_parent_gives_value_free_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    target = "./no_such_parent_zq/inner"
+    with pytest.raises(ValueError, match="not found") as exc:
+        load_resume_source(target)
+    assert "no_such_parent_zq" not in str(exc.value)
+    assert not (tmp_path / "no_such_parent_zq").exists()

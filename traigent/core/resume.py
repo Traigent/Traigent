@@ -121,10 +121,21 @@ def load_resume_source(
         # Explicit paths (absolute, multi-part, ``./``/``../``-prefixed or
         # ``~``-expanded) resolve against the cwd; bare names are looked up
         # under the default results folder.
-        manager = PersistenceManager(base_dir=Path(os.path.abspath(raw.parent)))
+        base_dir: Path | None = None
+        explicit_dir = Path(os.path.abspath(raw.parent))
+        base_dir = explicit_dir
+        if not explicit_dir.is_dir():
+            # Do not let PersistenceManager create the directory, and do not
+            # surface an OS error that carries the path.
+            raise ValueError("resume_from: saved result not found")
     else:
-        manager = PersistenceManager()
+        base_dir = None
     try:
+        manager = (
+            PersistenceManager(base_dir=base_dir)
+            if base_dir is not None
+            else PersistenceManager()
+        )
         if not allow_unverified_resume:
             _verify_resume_integrity(manager, raw)
         return manager.load_result(raw.name)

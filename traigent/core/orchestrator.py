@@ -5117,7 +5117,9 @@ class OptimizationOrchestrator:
                         trial_count=trial_count,
                     ),
                 )
-            if action == "continue" and new_count > trial_count:
+            if new_count > trial_count:
+                # Also on "break": a batch can cross an interval and then stop
+                # (vendor/budget) and its checkpoint must not be skipped.
                 self._maybe_log_checkpoint(new_count)
             return new_count, action
         except VendorPauseError as e:
