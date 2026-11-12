@@ -9,6 +9,7 @@ generation and distributed coordination support.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import logging
 import os
 import secrets
@@ -241,6 +242,13 @@ class SecureRateLimiter:
         self.config = config
         self.attempts: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=1000))
         self.lockouts: dict[str, float] = {}
+        # Bounded idle eviction: at most one sweep per interval, each
+        # examining at most ``_evict_batch`` entries, plus a hard cap.
+        self._evict_interval = 60.0
+        self._evict_batch = 256
+        self._max_identifiers = 10_000
+        self._last_evict = 0.0
+        self._evict_scanned = 0  # entries examined so far (observability/tests)
         self.token_buckets: dict[str, SecureTokenBucket] = {}
         self._lock = Lock()
 
@@ -350,6 +358,9 @@ class SecureRateLimiter:
         # Generate secure identifier if not provided
         if not identifier:
             identifier = self._generate_secure_identifier(ip_address, username, api_key)
+
+        with self._lock:
+            self._evict_idle(time.time())
 
         # Check multiple identifiers if enabled (prevents bypass via parameter switching)
         if self.config.check_multiple_identifiers:
@@ -513,27 +524,99 @@ class SecureRateLimiter:
         username: str | None = None,
         api_key: str | None = None,
         success: bool = False,
+        additional_context: dict[str, str] | None = None,
     ) -> None:
-        """Record an attempt with proper security tracking."""
+        """Record an attempt under every identifier ``check_rate_limit`` reads."""
         if not identifier:
-            identifier = self._generate_secure_identifier(ip_address, username, api_key)
+            identifier = self._generate_secure_identifier(
+                ip_address, username, api_key, additional_context
+            )
+
+        identifiers = [identifier]
+        if self.config.check_multiple_identifiers:
+            if ip_address:
+                identifiers.append(
+                    self._generate_secure_identifier(ip_address=ip_address)
+                )
+            if username:
+                identifiers.append(self._generate_secure_identifier(username=username))
+            if api_key:
+                identifiers.append(self._generate_secure_identifier(api_key=api_key))
+        # Preserve order, drop duplicates (single-component calls collapse)
+        identifiers = list(dict.fromkeys(identifiers))
+        # The per-IP bucket is shared by many principals and is never cleared
+        # on success, even when it is also the primary identifier.
+        shared_ip_id = (
+            self._generate_secure_identifier(ip_address=ip_address)
+            if ip_address
+            else None
+        )
 
         with self._lock:
             now = time.time()
+            self._evict_idle(now)
 
-            if success:
-                # Clear failed attempts on success
-                if identifier in self.attempts:
-                    self.attempts[identifier].clear()
-                if identifier in self.lockouts:
-                    del self.lockouts[identifier]
-                # Reset token bucket
-                if identifier in self.token_buckets:
-                    bucket = self.token_buckets[identifier]
-                    bucket.tokens = bucket.capacity
-            else:
-                # Record failed attempt
-                self.attempts[identifier].append(now)
+            for ident in identifiers:
+                if success:
+                    if ident == shared_ip_id:
+                        continue
+                    # Clear failed attempts on success
+                    if ident in self.attempts:
+                        self.attempts[ident].clear()
+                    if ident in self.lockouts:
+                        del self.lockouts[ident]
+                    # Reset token bucket
+                    if ident in self.token_buckets:
+                        bucket = self.token_buckets[ident]
+                        bucket.tokens = bucket.capacity
+                else:
+                    # Record failed attempt
+                    self.attempts[ident].append(now)
+
+    def _evict_idle(self, now: float) -> None:
+        """Bounded eviction of idle identifiers; never drops an active lockout.
+
+        Caller must hold ``self._lock``. Work per call is at most
+        ``_evict_batch`` examined entries per table, and the sweep runs at
+        most once per ``_evict_interval`` unless the table exceeds
+        ``_max_identifiers``. Examined survivors are moved to the end of the
+        (insertion-ordered) dict so successive sweeps rotate through all
+        entries.
+        """
+        over_cap = (
+            len(self.attempts) > self._max_identifiers
+            or len(self.lockouts) > self._max_identifiers
+        )
+        if not over_cap and now - self._last_evict < self._evict_interval:
+            return
+        self._last_evict = now
+        batch = self._evict_batch
+
+        for ident in list(itertools.islice(self.lockouts, batch)):
+            self._evict_scanned += 1
+            until = self.lockouts.pop(ident)
+            if until > now:
+                self.lockouts[ident] = until  # active: keep, rotate to end
+
+        window_start = now - self.config.window_seconds
+        for ident in list(itertools.islice(self.attempts, batch)):
+            self._evict_scanned += 1
+            attempts = self.attempts.pop(ident)
+            if ident in self.lockouts or (attempts and attempts[-1] >= window_start):
+                self.attempts[ident] = attempts  # still relevant: rotate
+
+        # Hard cap: if still over, drop the oldest non-locked entries (bounded).
+        excess = len(self.attempts) - self._max_identifiers
+        if excess > 0:
+            for ident in list(itertools.islice(self.attempts, batch + excess)):
+                if excess <= 0 or batch <= 0:
+                    break
+                self._evict_scanned += 1
+                if ident in self.lockouts:
+                    continue
+                del self.attempts[ident]
+                excess -= 1
+                batch -= 1
 
     def get_progressive_delay(self, identifier: str) -> float:
         """Get progressive delay with security limits."""
@@ -644,13 +727,20 @@ class SecureAuthenticationRateLimiter:
         ip_address: str | None = None,
         username: str | None = None,
         api_key: str | None = None,
+        user_agent: str | None = None,
     ) -> None:
         """Record authentication result."""
+        additional_context = {}
+        if user_agent:
+            additional_context["ua"] = hashlib.sha256(user_agent.encode()).hexdigest()[
+                :8
+            ]
         self.limiter.record_attempt(
             ip_address=ip_address,
             username=username,
             api_key=api_key,
             success=success,
+            additional_context=additional_context or None,
         )
 
         if not success:

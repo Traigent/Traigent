@@ -74,10 +74,8 @@ class DeploymentManager:
             }
         elif self.mode == DeploymentMode.VPC:
             return {
-                "vpc_id": "vpc-12345",
                 "private_subnets": True,
                 "nat_gateway": True,
-                "security_groups": ["sg-security"],
             }
         elif self.mode == DeploymentMode.ON_PREMISE:
             return {"data_residency": "local", "air_gapped": True, "custom_ca": True}
@@ -91,18 +89,30 @@ class DeploymentManager:
     def deploy_service(
         self, service_name: str, config: dict[str, Any]
     ) -> dict[str, Any]:
-        """Deploy a service."""
-        deployment_info = {
+        """Deploy a service.
+
+        No deployment executor is wired into the SDK, so nothing is
+        deployed. This returns ``status="unsupported"`` with a reason and
+        records nothing in ``self.services``. Override in a subclass to
+        provide a real implementation.
+        """
+        logger.error(
+            "DeploymentManager.deploy_service(%r) called but no deployment "
+            "executor is configured. Returning status='unsupported'; "
+            "nothing was deployed.",
+            service_name,
+        )
+        return {
             "service_name": service_name,
             "mode": self.mode.value,
-            "config": config,
-            "deployed_at": datetime.now(UTC).isoformat(),
-            "status": "deployed",
+            "status": "unsupported",
+            "reason": (
+                "No real deployment implementation is wired. Override "
+                "DeploymentManager.deploy_service in a subclass to provide "
+                "one. NOTHING WAS DEPLOYED."
+            ),
+            "requested_at": datetime.now(UTC).isoformat(),
         }
-
-        self.services[service_name] = deployment_info
-        logger.info(f"Deployed service {service_name} in {self.mode.value} mode")
-        return deployment_info
 
 
 class SLAMonitor:
@@ -350,16 +360,22 @@ class BackupManager:
         if not backup:
             return {"error": f"Backup {backup_id} not found"}
 
-        # Simulate restore process
-        restore_info = {
+        logger.error(
+            "BackupManager.restore_backup(%r) called but no restore executor "
+            "is configured. Returning status='unsupported'; no restore was "
+            "started.",
+            backup_id,
+        )
+        return {
             "backup_id": backup_id,
-            "restore_started_at": datetime.now(UTC).isoformat(),
-            "estimated_duration_minutes": 30,
-            "status": "in_progress",
+            "status": "unsupported",
+            "reason": (
+                "No real restore implementation is wired. Override "
+                "BackupManager.restore_backup in a subclass to provide one. "
+                "NO RESTORE WAS STARTED."
+            ),
+            "requested_at": datetime.now(UTC).isoformat(),
         }
-
-        logger.info(f"Started restore from backup: {backup_id}")
-        return restore_info
 
     def cleanup_expired_backups(self) -> int:
         """Clean up expired backups."""

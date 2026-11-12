@@ -183,10 +183,10 @@ class TestDeploymentManagerInit:
         """Test initialization with VPC mode."""
         manager = DeploymentManager(mode=DeploymentMode.VPC)
         assert manager.mode == DeploymentMode.VPC
-        assert manager.configuration["vpc_id"] == "vpc-12345"
+        assert "vpc_id" not in manager.configuration
         assert manager.configuration["private_subnets"] is True
         assert manager.configuration["nat_gateway"] is True
-        assert manager.configuration["security_groups"] == ["sg-security"]
+        assert "security_groups" not in manager.configuration
 
     def test_init_with_on_premise_mode(self) -> None:
         """Test initialization with ON_PREMISE mode."""
@@ -206,91 +206,50 @@ class TestDeploymentManagerInit:
 
 
 class TestDeploymentManagerDeployService:
-    """Tests for DeploymentManager.deploy_service method."""
+    """deploy_service has no real executor and must never report success."""
 
     @pytest.fixture
     def manager(self) -> DeploymentManager:
         """Create test deployment manager instance."""
         return DeploymentManager(mode=DeploymentMode.CLOUD)
 
-    def test_deploy_service_basic(self, manager: DeploymentManager) -> None:
-        """Test basic service deployment."""
+    def test_deploy_service_reports_unsupported(
+        self, manager: DeploymentManager
+    ) -> None:
+        """No deployment is performed, so status must not be 'deployed'."""
         config = {"replicas": 3, "port": 8080}
         result = manager.deploy_service("api-service", config)
 
         assert result["service_name"] == "api-service"
         assert result["mode"] == "cloud"
-        assert result["config"] == config
-        assert result["status"] == "deployed"
-        assert "deployed_at" in result
-        assert isinstance(result["deployed_at"], str)
+        assert result["status"] == "unsupported"
+        assert result["status"] != "deployed"
+        assert "deployed_at" not in result
+        assert "reason" in result
 
-    def test_deploy_service_stores_in_services(
+    def test_deploy_service_does_not_record_service(
         self, manager: DeploymentManager
     ) -> None:
-        """Test deployed service is stored in services dict."""
-        config = {"replicas": 3}
-        manager.deploy_service("api-service", config)
+        """Nothing was deployed, so nothing may be recorded as deployed."""
+        manager.deploy_service("api-service", {"replicas": 3})
 
-        assert "api-service" in manager.services
-        assert manager.services["api-service"]["service_name"] == "api-service"
-        assert manager.services["api-service"]["config"] == config
-
-    def test_deploy_multiple_services(self, manager: DeploymentManager) -> None:
-        """Test deploying multiple services."""
-        config1 = {"replicas": 3}
-        config2 = {"replicas": 5}
-
-        manager.deploy_service("api-service", config1)
-        manager.deploy_service("worker-service", config2)
-
-        assert len(manager.services) == 2
-        assert "api-service" in manager.services
-        assert "worker-service" in manager.services
-
-    def test_deploy_service_empty_config(self, manager: DeploymentManager) -> None:
-        """Test deploying service with empty config."""
-        result = manager.deploy_service("minimal-service", {})
-
-        assert result["service_name"] == "minimal-service"
-        assert result["config"] == {}
-        assert result["status"] == "deployed"
-
-    def test_deploy_service_complex_config(self, manager: DeploymentManager) -> None:
-        """Test deploying service with complex configuration."""
-        config = {
-            "replicas": 3,
-            "resources": {"cpu": "2", "memory": "4Gi"},
-            "env": {"DB_HOST": "localhost", "PORT": "5432"},
-            "volumes": ["/data", "/logs"],
-        }
-        result = manager.deploy_service("complex-service", config)
-
-        assert result["config"] == config
-        assert result["config"]["resources"]["cpu"] == "2"
+        assert manager.services == {}
 
     @patch("traigent.security.deployment.logger")
-    def test_deploy_service_logs_info(
+    def test_deploy_service_logs_error_not_success(
         self, mock_logger: MagicMock, manager: DeploymentManager
     ) -> None:
-        """Test deployment logs informational message."""
+        """The call is logged as an error, never as a successful deployment."""
         manager.deploy_service("test-service", {})
-        mock_logger.info.assert_called_once()
-        log_message = mock_logger.info.call_args[0][0]
-        assert "Deployed service test-service" in log_message
-        assert "cloud mode" in log_message
+        mock_logger.error.assert_called_once()
+        mock_logger.info.assert_not_called()
 
-    def test_deploy_service_preserves_mode_in_result(self) -> None:
-        """Test deployment result includes correct mode for different deployment modes."""
-        for mode in [
-            DeploymentMode.CLOUD,
-            DeploymentMode.VPC,
-            DeploymentMode.ON_PREMISE,
-            DeploymentMode.HYBRID,
-        ]:
-            manager = DeploymentManager(mode=mode)
-            result = manager.deploy_service("test-service", {})
+    def test_deploy_service_unsupported_in_every_mode(self) -> None:
+        """Every deployment mode is honest about not deploying."""
+        for mode in DeploymentMode:
+            result = DeploymentManager(mode=mode).deploy_service("svc", {})
             assert result["mode"] == mode.value
+            assert result["status"] == "unsupported"
 
 
 class TestSLAMonitorInit:
@@ -900,9 +859,10 @@ class TestBackupManagerRestoreBackup:
         restore = manager.restore_backup("backup_synth")
 
         assert restore["backup_id"] == "backup_synth"
-        assert restore["status"] == "in_progress"
-        assert restore["estimated_duration_minutes"] == 30
-        assert "restore_started_at" in restore
+        assert restore["status"] == "unsupported"
+        assert "estimated_duration_minutes" not in restore
+        assert "restore_started_at" not in restore
+        assert "reason" in restore
 
     def test_restore_backup_not_found(self, manager: BackupManager) -> None:
         """Test restoring from non-existent backup returns error."""
@@ -912,22 +872,15 @@ class TestBackupManagerRestoreBackup:
         assert "not found" in restore["error"]
 
     @patch("traigent.security.deployment.logger")
-    def test_restore_backup_logs_info(
+    def test_restore_backup_logs_error_not_success(
         self, mock_logger: MagicMock, manager: BackupManager
     ) -> None:
-        """Test restore operation logs informational message."""
+        """An unsupported restore is logged as an error, never as started."""
         manager.backups.append(_synthetic_backup_entry("backup_synth"))
         manager.restore_backup("backup_synth")
 
-        mock_logger.info.assert_called()
-        # Find the restore log message
-        restore_log_found = False
-        for call in mock_logger.info.call_args_list:
-            log_message = call[0][0]
-            if "Started restore from backup" in log_message:
-                restore_log_found = True
-                break
-        assert restore_log_found
+        mock_logger.error.assert_called_once()
+        mock_logger.info.assert_not_called()
 
 
 class TestBackupManagerCleanupExpiredBackups:

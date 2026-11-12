@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import NoReturn
 
 from traigent.utils.env_config import resolve_environment_name
+
+logger = logging.getLogger(__name__)
 
 
 class SecurityProfile(Enum):
@@ -46,11 +49,16 @@ def get_security_profile() -> SecurityProfile:
         try:
             return SecurityProfile(explicit.strip().lower())
         except ValueError:
-            pass
+            # Fail closed: an unrecognised explicit profile gets the
+            # strictest posture. Do not echo the configured value.
+            logger.warning(
+                "TRAIGENT_SECURITY_PROFILE is not a recognised profile "
+                "(allowed: %s); falling back to the strictest profile.",
+                ", ".join(p.value for p in SecurityProfile),
+            )
+            return SecurityProfile.PRODUCTION
 
     env = resolve_environment_name(default="production") or "production"
-    if os.getenv("PYTEST_CURRENT_TEST") and explicit is None:
-        return SecurityProfile.DEVELOPMENT
     if env in {"dev", "development", "local"}:
         return SecurityProfile.DEVELOPMENT
     if env in {"stage", "staging"}:
