@@ -105,6 +105,8 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from traigent.utils.outcome_matrix import CELL_FAIL, CELL_PASS, classify_cell
+
 if TYPE_CHECKING:
     from traigent.api.types import (
         DetectorStat,
@@ -304,21 +306,15 @@ def cell_is_correct(cell: dict[str, Any], threshold: float) -> bool | None:
     Returns ``None`` when correctness is indeterminable (no signal at all). A
     cell that errored or is explicitly ``success == False`` is wrong (``False``);
     otherwise the scoring signal (``score`` then ``accuracy``) decides against
-    ``threshold``, falling back to the ``success`` flag.
+    ``threshold``. A non-finite score, or ``success=True`` with no usable score,
+    is indeterminable (``None``). Shares its classifier with the failing-example
+    selection (:func:`traigent.utils.outcome_matrix.classify_cell`).
     """
-    if cell.get("error") is not None:
+    verdict = classify_cell(cell, threshold)
+    if verdict == CELL_PASS:
+        return True
+    if verdict == CELL_FAIL:
         return False
-    if cell.get("success") is False:
-        return False
-    score = cell.get("score")
-    if isinstance(score, (int, float)) and not isinstance(score, bool):
-        return float(score) >= threshold
-    accuracy = cell.get("accuracy")
-    if isinstance(accuracy, (int, float)) and not isinstance(accuracy, bool):
-        return float(accuracy) >= threshold
-    success = cell.get("success")
-    if isinstance(success, bool):
-        return success
     return None
 
 

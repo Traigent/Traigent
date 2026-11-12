@@ -17,6 +17,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 from traigent.api.types import (
     EvalAudit,
     ExampleResult,
@@ -567,3 +569,39 @@ def test_eval_audit_property_none_single_config() -> None:
         timestamp=datetime(2024, 1, 1, tzinfo=UTC),
     )
     assert result.eval_audit is None
+
+
+class TestCellClassifierAgreement:
+    """#3105: the audit and the failing-example selection share one classifier."""
+
+    CASES = [
+        {"score": float("nan")},
+        {"score": float("inf")},
+        {"success": True},
+        {"score": 0.9},
+        {"score": 0.1},
+        {"score": None, "accuracy": 0.2},
+        {"score": None, "accuracy": float("nan")},
+        {"score": 0.9, "success": False},
+        {"error": "boom"},
+        {},
+    ]
+
+    @pytest.mark.parametrize("cell", CASES)
+    def test_audit_and_selection_agree(self, cell):
+        from traigent.utils.eval_audit import cell_is_correct
+        from traigent.utils.outcome_matrix import classify_cell
+
+        verdict = classify_cell(cell, 0.5)
+        expected = {"pass": True, "fail": False, "unknown": None}[verdict]
+        assert cell_is_correct(cell, 0.5) is expected
+
+    def test_nan_score_is_unknown_not_wrong(self):
+        from traigent.utils.eval_audit import cell_is_correct
+
+        assert cell_is_correct({"score": float("nan")}, 0.5) is None
+
+    def test_success_without_score_is_unknown_not_correct(self):
+        from traigent.utils.eval_audit import cell_is_correct
+
+        assert cell_is_correct({"success": True}, 0.5) is None
