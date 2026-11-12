@@ -335,7 +335,7 @@ def main() -> None:
         )
         sys.exit(1)
 
-    verbose = not args.quiet
+    verbose = args.verbose and not args.quiet
 
     try:
         api_key = get_api_key(email, password, backend_url, verbose=verbose)

@@ -32,7 +32,7 @@ except ImportError:
     PSUTIL_AVAILABLE = False
 
 from traigent.invokers.base import InvocationResult
-from traigent.utils.logging import get_logger
+from traigent.utils.logging import get_logger, warn_option_ignored
 from traigent.utils.retry import RetryConfig, RetryHandler, RetryStrategy
 
 logger = get_logger(__name__)
@@ -534,7 +534,17 @@ async def process_with_retry_and_recovery(
     retry_delay: float = 1.0,
     checkpoint_interval: int = 10,
 ) -> list[InvocationResult]:
-    """Process items with automatic retry and recovery capabilities using unified retry handler."""
+    """Process items with automatic retry and recovery capabilities using unified retry handler.
+
+    ``checkpoint_interval`` is accepted for compatibility but no checkpointing
+    is performed; a non-default value logs a warning.
+    """
+    warn_option_ignored(
+        "process_with_retry_and_recovery",
+        "checkpoint_interval",
+        checkpoint_interval,
+        10,
+    )
 
     results_manager = PartialResultsManager()
     adaptive_sizer = AdaptiveBatchSizer()

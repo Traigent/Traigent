@@ -29,7 +29,7 @@ from traigent.cloud.auth import (
 )
 from traigent.cloud.billing import UsageTracker
 from traigent.cloud.client import CloudServiceError
-from traigent.utils.logging import get_logger
+from traigent.utils.logging import get_logger, warn_option_ignored
 
 logger = get_logger(__name__)
 
@@ -49,6 +49,8 @@ class BackendClientConfig:
 
     def __post_init__(self) -> None:
         """Populate missing configuration using global backend settings."""
+        # Accepted for compatibility; no code path reads it.
+        warn_option_ignored("BackendClientConfig", "use_mcp", self.use_mcp, False)
         from traigent.config.backend_config import (
             BackendConfig,
             get_no_credentials_hint,

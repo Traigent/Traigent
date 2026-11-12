@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from traigent.utils.logging import warn_option_ignored
 
 
 class PromptRewriteOptions(BaseModel):
@@ -20,12 +22,20 @@ class PromptRewriteOptions(BaseModel):
         description="Config-space parameter holding the prompt Choices; required if ambiguous.",
     )
     rewrite_model: str | None = Field(
-        None, description="Hint passed to the user's LLM provider."
+        None,
+        description="Accepted for compatibility; not used (a non-default value logs a warning).",
     )
     privacy_mode: bool = Field(
         True,
         description="When True, generation runs only on the user's LLM; content never leaves the client.",
     )
+
+    @model_validator(mode="after")
+    def _warn_unused_options(self) -> PromptRewriteOptions:
+        warn_option_ignored(
+            "PromptRewriteOptions", "rewrite_model", self.rewrite_model, None
+        )
+        return self
 
 
 class DatasetGrowthOptions(BaseModel):
@@ -37,12 +47,18 @@ class DatasetGrowthOptions(BaseModel):
     examples_per_round: int = Field(5, ge=1, le=200)
     max_total_examples_added: int = Field(50, ge=1, le=5000)
     gen_model: str | None = Field(
-        None, description="Hint passed to the user's LLM provider."
+        None,
+        description="Accepted for compatibility; not used (a non-default value logs a warning).",
     )
     privacy_mode: bool = Field(
         True,
         description="When True, synthesis runs only on the user's LLM; content never leaves the client.",
     )
+
+    @model_validator(mode="after")
+    def _warn_unused_options(self) -> DatasetGrowthOptions:
+        warn_option_ignored("DatasetGrowthOptions", "gen_model", self.gen_model, None)
+        return self
 
 
 class SkillTrainOptions(BaseModel):

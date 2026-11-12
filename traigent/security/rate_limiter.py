@@ -23,6 +23,7 @@ from typing import Any, cast
 from cryptography.hazmat.primitives import hashes, hmac
 
 from traigent.security.config import get_security_flags
+from traigent.utils.logging import warn_option_ignored
 
 logger = logging.getLogger(__name__)
 _FALLBACK_IDENTIFIER_KEY = b"traigent-rate-limit-identifier-v1"
@@ -72,6 +73,12 @@ class SecureRateLimitConfig:
     check_multiple_identifiers: bool = True  # Check IP, user, key separately
     global_rate_limit: int = 1000  # Global limit across all identifiers
     subnet_aggregation: bool = True  # Aggregate IPs by subnet
+
+    def __post_init__(self) -> None:
+        # Accepted for compatibility; no limiter reads it yet.
+        warn_option_ignored(
+            "SecureRateLimitConfig", "global_rate_limit", self.global_rate_limit, 1000
+        )
 
 
 class SecureTokenBucket:

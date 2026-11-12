@@ -25,7 +25,7 @@ from typing import Any, cast
 from traigent.config.backend_config import PRICING_URL
 from traigent.utils.exceptions import ConfigurationError, TraigentError
 from traigent.utils.file_lock import storage_lock
-from traigent.utils.logging import get_logger
+from traigent.utils.logging import get_logger, warn_option_ignored
 from traigent.utils.money import format_usd
 
 logger = get_logger(__name__)
@@ -146,6 +146,15 @@ class CostTrackingConfig:
     currency: str = "USD"
     enable_real_time_alerts: bool = False
     cost_alert_threshold: float = 50.0  # Alert if costs exceed $50
+
+    def __post_init__(self) -> None:
+        # Accepted for compatibility; client-side tracking is always on.
+        warn_option_ignored(
+            "CostTrackingConfig",
+            "enable_client_tracking",
+            self.enable_client_tracking,
+            True,
+        )
 
 
 # Original Billing Classes
