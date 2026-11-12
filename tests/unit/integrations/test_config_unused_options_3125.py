@@ -14,6 +14,7 @@ from traigent.integrations.config import IntegrationConfig, configure_integratio
 @pytest.fixture(autouse=True)
 def _restore_config():
     saved = config_module.integration_config
+    config_module._WARNED_UNUSED_OPTIONS.clear()
     config_module.integration_config = IntegrationConfig()
     yield
     config_module.integration_config = saved
@@ -37,7 +38,14 @@ def test_every_unread_option_warns_when_changed(name):
         configure_integrations(**{name: changed})
 
 
-def test_default_value_does_not_warn():
+def test_explicit_default_value_still_warns():
+    with pytest.warns(UserWarning, match="sanitize_parameters"):
+        configure_integrations(sanitize_parameters=True)
+
+
+def test_warns_once_per_option_per_process():
+    with pytest.warns(UserWarning, match="strict_mode"):
+        configure_integrations(strict_mode=True)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        configure_integrations(strict_mode=False, max_fallback_attempts=4)
+        configure_integrations(strict_mode=False)

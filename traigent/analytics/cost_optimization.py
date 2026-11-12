@@ -22,7 +22,7 @@ from ..core.constants import (
     MAX_USAGE_HISTORY_SIZE,
 )
 from ..utils.logging import get_logger
-from ._options import reject_unsupported
+from ._options import warn_unsupported
 
 _NO_CHANGE = "no change"
 
@@ -871,7 +871,7 @@ class ResourceOptimizer:
         strategy: OptimizationStrategy | None = None,
     ) -> list[CostOptimizationAction]:
         """Generate optimization actions based on usage patterns."""
-        reject_unsupported(
+        warn_unsupported(
             "generate_optimization_actions",
             "strategy",
             strategy,
@@ -1260,7 +1260,7 @@ class ResourceOptimizer:
         **kwargs,
     ):
         """Optimize resource configuration based on usage patterns."""
-        reject_unsupported(
+        warn_unsupported(
             "optimize_resource_configuration", "cost_constraints", cost_constraints
         )
         # Handle ResourceType enum or string

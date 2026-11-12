@@ -298,15 +298,19 @@ def _validate_config_option(key: str, value: Any) -> None:
         validate_or_raise(CoreValidators.validate_type(value, expected_type, key))
 
 
-def _warn_if_option_unused(key: str, value: Any) -> None:
-    """Warn when a non-default value is set for an option nothing reads.
+_WARNED_UNUSED_OPTIONS: set[str] = set()
 
-    No integration module consults any IntegrationConfig field yet, so a
-    non-default value is stored but has no effect on behaviour.
+
+def _warn_if_option_unused(key: str) -> None:
+    """Warn once per process that an explicitly supplied option is not read.
+
+    No integration module consults any IntegrationConfig field yet, so the
+    value is stored but has no effect. The warning fires whatever the value,
+    so setting a safety option to its default does not look enforced.
     """
-    default = getattr(IntegrationConfig(), key)
-    if value == default and type(value) is type(default):
+    if key in _WARNED_UNUSED_OPTIONS:
         return
+    _WARNED_UNUSED_OPTIONS.add(key)
     warnings.warn(
         f"configure_integrations: option '{key}' is stored but not yet read by "
         "any integration, so setting it has no effect.",
@@ -334,7 +338,7 @@ def configure_integrations(**kwargs) -> IntegrationConfig:
         except ValidationException as exc:
             raise ValidationException(f"Invalid value for '{key}': {exc}") from exc
 
-        _warn_if_option_unused(key, value)
+        _warn_if_option_unused(key)
         setattr(integration_config, key, value)
 
     return integration_config

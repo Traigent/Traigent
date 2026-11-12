@@ -1,4 +1,6 @@
-"""Analytics options that are not implemented must be rejected, not ignored (#3127)."""
+"""Analytics options that are not implemented must warn, not be silently ignored (#3127)."""
+
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -15,16 +17,25 @@ from traigent.analytics.predictive import (
 )
 from traigent.analytics.scheduling import SchedulingPolicy, SmartScheduler
 
+USAGE = [
+    {
+        "timestamp": datetime.now(UTC) - timedelta(hours=h),
+        "cost": 10.0 + h,
+        "resource_type": "compute",
+        "usage": {"cpu_hours": 5.0, "memory_gb_hours": 2.0},
+    }
+    for h in range(24)
+]
 HISTORY = [{"cost": 10}, {"cost": 12}, {"cost": 15}]
 
 
-def test_cost_ai_rejects_days_back():
-    with pytest.raises(ValueError, match="days_back"):
-        CostOptimizationAI().analyze_cost_patterns(days_back=7)
+def test_cost_ai_warns_on_days_back():
+    with pytest.warns(UserWarning, match="days_back"):
+        CostOptimizationAI().analyze_cost_patterns(USAGE, days_back=7)
 
 
-def test_forecast_costs_rejects_confidence_level():
-    with pytest.raises(ValueError, match="confidence_level"):
+def test_forecast_costs_warns_on_confidence_level():
+    with pytest.warns(UserWarning, match="confidence_level"):
         CostForecaster().forecast_costs(HISTORY, confidence_level=0.5)
 
 
@@ -35,8 +46,8 @@ def test_forecast_costs_still_accepts_forecast_period():
     assert result.forecast_horizon_days == 30
 
 
-def test_performance_forecast_rejects_forecast_period():
-    with pytest.raises(ValueError, match="forecast_period"):
+def test_performance_forecast_warns_on_forecast_period():
+    with pytest.warns(UserWarning, match="forecast_period"):
         PerformanceForecaster().forecast([], forecast_period=ForecastPeriod.DAILY)
 
 
@@ -54,15 +65,15 @@ def test_performance_forecast_rejects_forecast_period():
         ("optimize_multi_cloud", {"workload": {"a": 1}}),
     ],
 )
-def test_cost_ai_rejects_ignored_options(method, kwargs):
+def test_cost_ai_warns_on_ignored_options(method, kwargs):
     name = next(iter(k for k in kwargs if k != "resources"))
-    with pytest.raises(ValueError, match=name):
+    with pytest.warns(UserWarning, match=name):
         getattr(CostOptimizationAI(), method)(**kwargs)
 
 
-def test_generate_actions_rejects_strategy_but_allows_default():
+def test_generate_actions_warns_on_strategy_but_allows_default():
     opt = ResourceOptimizer()
-    with pytest.raises(ValueError, match="strategy"):
+    with pytest.warns(UserWarning, match="strategy"):
         opt.generate_optimization_actions(
             ResourceType.COMPUTE, {}, strategy=OptimizationStrategy.AGGRESSIVE
         )
@@ -71,15 +82,15 @@ def test_generate_actions_rejects_strategy_but_allows_default():
     )
 
 
-def test_resource_configuration_rejects_cost_constraints():
-    with pytest.raises(ValueError, match="cost_constraints"):
+def test_resource_configuration_warns_on_cost_constraints():
+    with pytest.warns(UserWarning, match="cost_constraints"):
         ResourceOptimizer().optimize_resource_configuration(
             ResourceType.COMPUTE, {}, cost_constraints={"max_hourly_cost": 1.0}
         )
 
 
-def test_schedule_optimization_rejects_time_constraints():
-    with pytest.raises(ValueError, match="time_constraints"):
+def test_schedule_optimization_warns_on_time_constraints():
+    with pytest.warns(UserWarning, match="time_constraints"):
         SmartScheduler().schedule_optimization(
             optimization_request={"function_name": "f"},
             time_constraints={"max_delay_hours": 1},
@@ -89,7 +100,21 @@ def test_schedule_optimization_rejects_time_constraints():
 @pytest.mark.parametrize(
     "field", ["prefer_off_peak", "batch_similar_jobs", "preemption_allowed"]
 )
-def test_scheduling_policy_rejects_non_default_flags(field):
+def test_scheduling_policy_warns_on_non_default_flags(field):
     default = getattr(SchedulingPolicy(), field)
-    with pytest.raises(ValueError, match=field):
+    with pytest.warns(UserWarning, match=field):
         SchedulingPolicy(**{field: not default})
+
+
+def test_days_back_former_default_does_not_warn():
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        CostOptimizationAI().analyze_cost_patterns(USAGE, days_back=30)
+
+
+def test_scheduling_policy_later_assignment_warns():
+    policy = SchedulingPolicy()
+    with pytest.warns(UserWarning, match="preemption_allowed"):
+        policy.preemption_allowed = True

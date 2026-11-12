@@ -68,7 +68,22 @@ class TestCostOptimizationAI:
         """Test optimization recommendation generation."""
         ai = CostOptimizationAI()
 
-        recommendations = ai.get_optimization_recommendations()
+        current_usage = {
+            "compute": {"instances": 10, "utilization": 0.3, "cost_per_hour": 1.0},
+            "storage": {
+                "total_gb": 1000,
+                "accessed_percentage": 0.2,
+                "cost_per_gb": 0.1,
+            },
+            "network": {"egress_gb": 500, "cost_per_gb": 0.12},
+        }
+
+        objectives = ["reduce_cost", "maintain_performance"]
+        constraints = {"min_availability": 0.99, "max_latency_ms": 100}
+
+        recommendations = ai.get_optimization_recommendations(
+            current_usage, objectives, constraints
+        )
 
         assert isinstance(recommendations, list)
         assert len(recommendations) > 0
@@ -218,8 +233,15 @@ class TestCostOptimizationAI:
             },
         }
 
+        workload_requirements = {
+            "min_compute": 30,
+            "min_storage": 500,
+            "min_memory": 350,
+            "peak_multiplier": 2.0,
+        }
+
         optimization = ai.optimize_resource_allocation(
-            resources, optimization_goal="cost"
+            resources, workload_requirements, optimization_goal="cost"
         )
 
         assert "recommended_allocation" in optimization

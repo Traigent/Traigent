@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 
-def reject_unsupported(
+def warn_unsupported(
     func: str, name: str, value: Any, allowed: tuple = (None,)
 ) -> None:
-    """Raise if a caller supplies an option this release does not honour.
+    """Warn if a caller supplies an option this release does not honour.
 
-    Silently ignoring a supplied option would return results that look tuned
-    by it, so unsupported values fail with a clear error instead.
+    The call still proceeds, but the caller is told the option has no effect
+    instead of silently receiving results that look tuned by it. Passing a
+    value listed in ``allowed`` (the former default) changes nothing and does
+    not warn.
     """
     if any(value is a or (type(value) is type(a) and value == a) for a in allowed):
         return
-    raise ValueError(
-        f"{func}() does not support the {name!r} option; it is not implemented "
-        f"and would be ignored. Omit it."
+    warnings.warn(
+        f"{func}() option {name!r} is not implemented and has no effect.",
+        UserWarning,
+        stacklevel=3,
     )
