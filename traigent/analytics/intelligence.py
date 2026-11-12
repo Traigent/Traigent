@@ -22,6 +22,7 @@ from ..core.constants import (
     MAX_USAGE_HISTORY_SIZE,
 )
 from ..utils.logging import get_logger
+from ._options import warn_unsupported
 
 # Import from split modules
 from .cost_optimization import (
@@ -755,7 +756,7 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
 
     # Implemented methods for backward compatibility
     def analyze_cost_patterns(
-        self, usage_data=None, days_back=30, safe_mode=False, **kwargs
+        self, usage_data=None, days_back=None, safe_mode=False, **kwargs
     ):
         """Analyze cost patterns and trends from LLM usage data.
 
@@ -764,7 +765,7 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
 
         Args:
             usage_data: Optional usage data dict. If None, uses stored data
-            days_back: Number of days to analyze (default: 30)
+            days_back: Not supported; any value other than 30 warns and is ignored
             safe_mode: Enable additional validation and error handling (default: False)
             **kwargs: Additional analysis parameters
 
@@ -781,6 +782,9 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
             >>> results = analyzer.analyze_cost_patterns(days_back=7, safe_mode=True)  # doctest: +SKIP
             >>> print(f"Total cost: ${results['total_cost']:.2f}")  # doctest: +SKIP
         """
+        warn_unsupported(
+            "analyze_cost_patterns", "days_back", days_back, allowed=(None, 30)
+        )
         usage_data = self._prepare_usage_data(usage_data)
 
         validation_result = self._run_safe_mode_validation(usage_data, safe_mode)
@@ -1104,6 +1108,13 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
         **kwargs,
     ):
         """Get optimization recommendations based on usage."""
+        for _name, _val in (
+            ("current_usage", current_usage),
+            ("objectives", objectives),
+            ("constraints", constraints),
+            ("usage_history", usage_history),
+        ):
+            warn_unsupported("get_optimization_recommendations", _name, _val)
         recommendations = []
 
         # Analyze current configuration
@@ -1526,6 +1537,7 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
 
     def optimize_resource_allocation(self, resources, constraints=None, **kwargs):
         """Optimize resource allocation across models and tasks."""
+        warn_unsupported("optimize_resource_allocation", "constraints", constraints)
         if not resources:
             return {"allocations": [], "expected_cost": 0}
 
@@ -1650,6 +1662,7 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
         **kwargs,
     ):
         """Optimize workload distribution across cloud providers."""
+        warn_unsupported("optimize_multi_cloud", "workload", workload)
         cloud_usage = cloud_usage or {}
         # Extract providers from cloud_usage if not explicitly provided
         if not providers and cloud_usage:

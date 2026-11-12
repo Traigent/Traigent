@@ -22,6 +22,7 @@ from ..core.constants import (
     MAX_USAGE_HISTORY_SIZE,
 )
 from ..utils.logging import get_logger
+from ._options import warn_unsupported
 
 _NO_CHANGE = "no change"
 
@@ -867,9 +868,15 @@ class ResourceOptimizer:
         self,
         resource_type: ResourceType,
         patterns: dict[str, Any],
-        strategy: OptimizationStrategy = OptimizationStrategy.BALANCED,
+        strategy: OptimizationStrategy | None = None,
     ) -> list[CostOptimizationAction]:
         """Generate optimization actions based on usage patterns."""
+        warn_unsupported(
+            "generate_optimization_actions",
+            "strategy",
+            strategy,
+            allowed=(None, OptimizationStrategy.BALANCED),
+        )
         actions = []
 
         # Underutilization optimization
@@ -1253,6 +1260,9 @@ class ResourceOptimizer:
         **kwargs,
     ):
         """Optimize resource configuration based on usage patterns."""
+        warn_unsupported(
+            "optimize_resource_configuration", "cost_constraints", cost_constraints
+        )
         # Handle ResourceType enum or string
         if hasattr(resource_type, "value"):
             resource_str = resource_type.value

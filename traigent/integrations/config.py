@@ -7,6 +7,7 @@ This module defines configuration options and constraints for framework integrat
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -297,6 +298,27 @@ def _validate_config_option(key: str, value: Any) -> None:
         validate_or_raise(CoreValidators.validate_type(value, expected_type, key))
 
 
+_WARNED_UNUSED_OPTIONS: set[str] = set()
+
+
+def _warn_if_option_unused(key: str) -> None:
+    """Warn once per process that an explicitly supplied option is not read.
+
+    No integration module consults any IntegrationConfig field yet, so the
+    value is stored but has no effect. The warning fires whatever the value,
+    so setting a safety option to its default does not look enforced.
+    """
+    if key in _WARNED_UNUSED_OPTIONS:
+        return
+    warnings.warn(
+        f"configure_integrations: option '{key}' is stored but not yet read by "
+        "any integration, so setting it has no effect.",
+        UserWarning,
+        stacklevel=3,
+    )
+    _WARNED_UNUSED_OPTIONS.add(key)
+
+
 def configure_integrations(**kwargs) -> IntegrationConfig:
     """Configure integration behavior.
 
@@ -316,6 +338,7 @@ def configure_integrations(**kwargs) -> IntegrationConfig:
         except ValidationException as exc:
             raise ValidationException(f"Invalid value for '{key}': {exc}") from exc
 
+        _warn_if_option_unused(key)
         setattr(integration_config, key, value)
 
     return integration_config

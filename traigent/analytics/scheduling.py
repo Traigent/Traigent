@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 import time
+import warnings
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -17,6 +18,7 @@ from typing import Any
 
 from ..core.constants import HISTORY_PRUNE_RATIO, MAX_OPTIMIZATION_HISTORY_SIZE
 from ..utils.logging import get_logger
+from ._options import warn_unsupported
 
 logger = get_logger(__name__)
 
@@ -82,6 +84,37 @@ class SchedulingPolicy:
     preemption_allowed: bool = False
     min_job_duration: timedelta = timedelta(minutes=1)
     max_job_duration: timedelta = timedelta(hours=24)
+
+    _UNHONOURED_FLAGS = {
+        "prefer_off_peak": True,
+        "batch_similar_jobs": True,
+        "preemption_allowed": False,
+    }
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # The scheduler does not consult these flags; warn on construction and
+        # on later assignment alike so a caller never believes they are enforced.
+        if name in self._UNHONOURED_FLAGS:
+            warn_unsupported(
+                "SchedulingPolicy", name, value, (self._UNHONOURED_FLAGS[name],)
+            )
+        object.__setattr__(self, name, value)
+
+    def warn_flags_unenforced(self) -> None:
+        """Warn once per instance that the three flags are not enforced.
+
+        Fires at any flag value (including the defaults), because a caller may
+        rely on e.g. ``preemption_allowed=False`` being a restriction.
+        """
+        if self.__dict__.get("_flags_warned"):
+            return
+        warnings.warn(
+            "SchedulingPolicy flags prefer_off_peak, batch_similar_jobs and "
+            "preemption_allowed are not enforced by the scheduler and have no effect.",
+            UserWarning,
+            stacklevel=3,
+        )
+        object.__setattr__(self, "_flags_warned", True)
 
 
 def _apply_schedule_defaults(
@@ -578,6 +611,8 @@ class SmartScheduler:
         **kwargs,
     ):
         """Schedule optimization tasks based on constraints and priorities."""
+        self.policy.warn_flags_unenforced()
+        warn_unsupported("schedule_optimization", "time_constraints", time_constraints)
 
         # Handle different calling patterns
         if optimization_request and not tasks:
