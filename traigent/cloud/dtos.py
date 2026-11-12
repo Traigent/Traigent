@@ -811,7 +811,7 @@ def _int_or_default(value: Any, default: int) -> int:
         return default
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 

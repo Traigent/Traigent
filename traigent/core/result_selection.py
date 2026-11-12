@@ -68,7 +68,7 @@ def _coerce_int(value: Any) -> int | None:
         if value is None or isinstance(value, bool):
             return None
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -77,7 +77,7 @@ def _coerce_float(value: Any) -> float | None:
         if value is None or isinstance(value, bool):
             return None
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 

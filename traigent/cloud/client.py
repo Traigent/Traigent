@@ -810,7 +810,7 @@ def _best_metrics_from_score(objective: str, best_score_raw: Any) -> dict[str, f
     if best_score_raw is not None:
         try:
             metrics = {objective: float(best_score_raw)}
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             metrics = {}
     return metrics
 

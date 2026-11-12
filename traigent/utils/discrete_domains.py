@@ -256,7 +256,7 @@ def _int_range_args(
         step = 1
     try:
         return int(low), int(high), int(step)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -270,7 +270,7 @@ def _float_range_args(
         return None
     try:
         return float(low), float(high), float(step)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 

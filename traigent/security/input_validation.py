@@ -340,7 +340,7 @@ class InputValidator:
         """
         try:
             num_value = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise ValidationError("Value must be numeric") from None
 
         if min_value is not None and num_value < min_value:
@@ -373,7 +373,7 @@ class InputValidator:
         """
         try:
             int_value = int(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise ValidationError("Value must be an integer") from None
 
         if min_value is not None and int_value < min_value:
