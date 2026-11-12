@@ -219,15 +219,28 @@ class PlotGenerator:
         objective_label: str,
     ) -> str:
         """Create ASCII progress plot."""
-        # A NaN/inf score cannot be placed on the ASCII scale: drop that point.
-        kept = [
-            (n, s, b)
-            for n, s, b in zip(trial_numbers, scores, best_scores, strict=False)
-            if math.isfinite(s) and math.isfinite(b)
-        ]
-        trial_numbers = [k[0] for k in kept]
-        scores = [k[1] for k in kept]
-        best_scores = [k[2] for k in kept]
+        # A NaN/inf score cannot be placed on the ASCII scale: drop that point
+        # BEFORE the running best is computed, so a non-finite earlier score
+        # cannot poison the best line for later finite points. Direction comes
+        # from the label suffix written by ``_format_objective_label``.
+        maximize = not objective_label.endswith("(min)")
+        trial_numbers_f: list[int] = []
+        scores_f: list[float] = []
+        best_scores_f: list[float] = []
+        current_best: float | None = None
+        for n, sc in zip(trial_numbers, scores, strict=False):
+            if not math.isfinite(sc):
+                continue
+            if current_best is None:
+                current_best = sc
+            else:
+                current_best = (
+                    max(current_best, sc) if maximize else min(current_best, sc)
+                )
+            trial_numbers_f.append(n)
+            scores_f.append(sc)
+            best_scores_f.append(current_best)
+        trial_numbers, scores, best_scores = trial_numbers_f, scores_f, best_scores_f
         if not scores:
             return _NO_DATA_TO_PLOT
 

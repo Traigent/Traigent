@@ -3007,6 +3007,10 @@ class ConfigurationComparison:
         (largest wins), or ``orientation`` (``"maximize"`` / ``"minimize"``)
         when given. A custom metric name with no declared direction raises
         instead of silently ranking the worst configuration first.
+
+        Raises:
+            ValueError: If ``metric`` is unknown or every value is NaN (no
+                configuration was scored). NaN values never win.
         """
         import numpy as np  # noqa: PLC0415
 
@@ -3017,12 +3021,18 @@ class ConfigurationComparison:
         values: np.ndarray[Any, Any] = np.asarray(
             self.comparison_metrics[metric], dtype=float
         )
-        if values.size == 0 or bool(np.isnan(values).all()):
+        # A NaN value is an unscored configuration and must never win: choose
+        # only among explicitly valid (non-NaN) indices.
+        valid = np.flatnonzero(~np.isnan(values))
+        if valid.size == 0:
             raise ValueError(f"No comparable (non-NaN) values for metric '{metric}'")
-        # A NaN value is an unscored configuration and must never win.
-        best_idx = int(
-            np.nanargmin(values) if direction == "minimize" else np.nanargmax(values)
+        valid_values = values[valid]
+        pick = (
+            np.argmin(valid_values)
+            if direction == "minimize"
+            else np.argmax(valid_values)
         )
+        best_idx = int(valid[int(pick)])
         return best_idx, self.configurations[best_idx]
 
 
@@ -3036,28 +3046,32 @@ class ParetoFront:
     is_maximized: list[bool]
 
     def get_best_balanced_config(self) -> dict[str, Any]:
-        """Get configuration with best balance across objectives."""
+        """Get configuration with best balance across objectives.
+
+        Raises:
+            ValueError: If the front is empty, or no configuration has a
+                complete (non-NaN) set of objective values.
+        """
         import numpy as np  # noqa: PLC0415
 
         # Simple implementation: closest to ideal point
         if len(self.configurations) == 0 or self.objective_values.size == 0:
             raise ValueError("No configurations in Pareto front")
 
-        # Handle single configuration case
-        if len(self.configurations) == 1:
-            return self.configurations[0]
-
         # Normalize objectives to [0, 1]
-        normalized = self.objective_values.copy()
+        normalized = self.objective_values.astype(float, copy=True)
 
         # Handle 1D array (single objective)
         if normalized.ndim == 1:
             normalized = normalized.reshape(-1, 1)
 
-        # Rows with a NaN objective are unscored and cannot be the best balance.
+        # Rows with a NaN objective are unscored and cannot be the best balance
+        # (checked before the single-configuration shortcut).
         valid_rows = np.flatnonzero(~np.isnan(normalized).any(axis=1))
         if valid_rows.size == 0:
             raise ValueError("No Pareto configurations with complete objective values")
+        if len(self.configurations) == 1:
+            return self.configurations[0]
         if valid_rows.size < normalized.shape[0]:
             normalized = normalized[valid_rows]
         else:

@@ -49,3 +49,30 @@ def _result(bad: float) -> OptimizationResult:
 @pytest.mark.parametrize("kind", ["progress", "pareto", "report"])
 def test_quick_plot_survives_nonfinite_metric(bad: float, kind: str) -> None:
     assert isinstance(create_quick_plot(_result(bad), kind), str)
+
+
+def _ascii(scores: list[float], label: str) -> str:
+    from traigent.visualization.plots import PlotGenerator
+
+    gen = PlotGenerator(use_matplotlib=False)
+    # Mimic _extract_progress_series: running best that NaN/inf can poison.
+    best: list[float] = []
+    cur = None
+    for s in scores:
+        cur = s if cur is None else (max(cur, s) if "max" in label else min(cur, s))
+        best.append(cur)
+    return gen._plot_progress_ascii(
+        list(range(1, len(scores) + 1)), scores, best, label
+    )
+
+
+def test_leading_nan_keeps_later_finite_points() -> None:
+    out = _ascii([float("nan"), 0.2, 0.9], "Accuracy (max)")
+    assert "Score range: 0.20 -> 0.90" in out
+    assert "Final best score: 0.900" in out
+
+
+def test_plus_inf_does_not_hide_later_points_when_maximizing() -> None:
+    out = _ascii([0.1, float("inf"), 0.9], "Accuracy (max)")
+    assert "Score range: 0.10 -> 0.90" in out
+    assert "Final best score: 0.900" in out

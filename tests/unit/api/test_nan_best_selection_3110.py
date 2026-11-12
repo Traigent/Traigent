@@ -45,3 +45,27 @@ def test_top_parameters_sorts_nan_last() -> None:
     names = [n for n, _ in sa.get_top_parameters(4)]
     assert names[:2] == ["c", "b"]
     assert set(names[2:]) == {"a", "d"}
+
+
+def test_best_configuration_nan_with_infinite_neighbours() -> None:
+    assert _cmp([NAN, float("-inf")]).get_best_configuration("accuracy")[0] == 1
+    assert (
+        _cmp([NAN, float("inf")]).get_best_configuration("accuracy", "minimize")[0] == 1
+    )
+
+
+def test_balanced_config_single_nan_configuration_raises() -> None:
+    front = ParetoFront([{"a": 1}], np.array([[NAN, 1.0]]), ["x", "y"], [True, True])
+    with pytest.raises(ValueError):
+        front.get_best_balanced_config()
+
+
+def test_balanced_config_all_nan_rows_raise() -> None:
+    front = ParetoFront(
+        [{"a": 1}, {"a": 2}],
+        np.array([[NAN, 1.0], [0.5, NAN]]),
+        ["x", "y"],
+        [True, True],
+    )
+    with pytest.raises(ValueError):
+        front.get_best_balanced_config()
