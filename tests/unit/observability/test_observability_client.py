@@ -6961,6 +6961,33 @@ def test_isolation_send_budget_counts_every_sender_call_2991(monkeypatch):
     assert stats["dropped_items"] + stats["queue_depth"] == 64
 
 
+def test_isolation_budget_counts_retry_attempts_2991(monkeypatch):
+    monkeypatch.setattr(retry_module.time, "sleep", lambda _s: None)
+    calls = 0
+    flaked: set[str] = set()
+
+    def sender(traces):
+        nonlocal calls
+        calls += 1
+        if len(traces) > 1:
+            raise ClientError("too large", status_code=413)
+        trace_id = traces[0]["id"]
+        if trace_id not in flaked:
+            # Retryable status: the retry handler re-calls the sender inside
+            # an isolation send, and each retry must spend the budget too.
+            flaked.add(trace_id)
+            raise ClientError("busy", status_code=503)
+
+    transport = _rejection_transport(sender)
+    for i in range(32):
+        transport.submit(f"t{i}", {"id": f"t{i}", "name": "n"})
+    transport.flush()
+    sent_calls = calls
+    transport.close()
+
+    assert sent_calls <= 1 + 32
+
+
 def test_close_completes_after_permanent_rejection_2991(monkeypatch):
     monkeypatch.setattr(retry_module.time, "sleep", lambda _s: None)
 

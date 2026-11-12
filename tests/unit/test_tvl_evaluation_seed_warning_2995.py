@@ -44,3 +44,38 @@ def test_each_spec_warns_and_unset_seed_is_silent_2995():
             SimpleNamespace(path="d", evaluation_set=None)
         )
     assert len(caught) == 2
+
+
+def test_decorating_with_seeded_tvl_spec_warns_exactly_once_2995(tmp_path):
+    from traigent import optimize
+
+    spec_path = tmp_path / "seeded.tvl.yml"
+    spec_path.write_text("""tvl:
+  module: test.seeded
+tvl_version: "0.9"
+evaluation_set:
+  dataset: test.jsonl
+  seed: 424242
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: accuracy
+    direction: maximize
+""")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+
+        @optimize(tvl_spec=spec_path)
+        def first(question: str) -> str:
+            return question
+
+        @optimize(tvl_spec=spec_path)
+        def second(question: str) -> str:
+            return question
+
+    seed_warnings = [w for w in caught if "evaluation_set.seed" in str(w.message)]
+    assert len(seed_warnings) == 1
+    assert "424242" not in str(seed_warnings[0].message)
