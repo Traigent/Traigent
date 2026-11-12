@@ -43,7 +43,11 @@ _CLOSING_RE = re.compile(
 )
 _FENCE_RE = re.compile(r"(```|~~~).*?(\1|\Z)", re.DOTALL)
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
-_PR_REF_RE = re.compile(r"(?:\(#(\d+)\)|Merge pull request #(\d+))")
+_MERGE_PR_RE = re.compile(r"Merge pull request #(\d+)")
+_SUFFIX_PR_RE = re.compile(r"\(#(\d+)\)\s*$")
+_REMOTE_RE = re.compile(
+    r"github\.com[:/](?P<repo>[\w.-]+/[\w.-]+?)(?:\.git)?/?$", re.IGNORECASE
+)
 
 IssueRef = tuple[str, int]  # ("" for the current repo, else "owner/repo"), number
 
@@ -90,14 +94,31 @@ def build_closes_block(
     return [f"Closes {r}#{n}" if r else f"Closes #{n}" for r, n in ordered]
 
 
-def pr_numbers(texts: Iterable[str]) -> list[int]:
-    """PR numbers referenced by squash subjects or merge-commit subjects."""
-    nums: set[int] = set()
+def pr_candidates(texts: Iterable[str]) -> tuple[list[int], list[int]]:
+    """Split subject refs into (certain PR numbers, maybe-PR numbers).
+
+    ``Merge pull request #N`` subjects are certain PRs. A ``(#N)`` subject
+    suffix may be a PR (squash merge) or an issue number, so it must be
+    looked up before use.
+    """
+    certain: set[int] = set()
+    maybe: set[int] = set()
     for t in texts:
         first = (t or "").splitlines()[0] if t else ""
-        for m in _PR_REF_RE.finditer(first):
-            nums.add(int(m.group(1) or m.group(2)))
-    return sorted(nums)
+        m = _MERGE_PR_RE.search(first)
+        if m:
+            certain.add(int(m.group(1)))
+            continue
+        m = _SUFFIX_PR_RE.search(first)
+        if m:
+            maybe.add(int(m.group(1)))
+    return sorted(certain), sorted(maybe - certain)
+
+
+def parse_remote_url(url: str) -> str:
+    """Return ``owner/name`` for a GitHub remote URL, or ``""``."""
+    m = _REMOTE_RE.search((url or "").strip())
+    return m.group("repo") if m else ""
 
 
 def _git_messages(rev_range: str) -> list[str]:
@@ -133,13 +154,63 @@ def _gh_json(args: list[str], runner: Runner) -> dict[str, object]:
     return data
 
 
-def _pr_bodies(numbers: list[int], runner: Runner) -> list[str]:
-    return [
+def _is_not_found(exc: subprocess.CalledProcessError) -> bool:
+    text = f"{exc.stderr or ''} {exc.output or ''}"
+    return "404" in text or "not found" in text.lower()
+
+
+def _pr_bodies(
+    certain: list[int], maybe: list[int], repo: str, runner: Runner
+) -> list[str]:
+    bodies = [
         str(
             _gh_json(["pr", "view", str(n), "--json", "body"], runner).get("body") or ""
         )
-        for n in numbers
+        for n in certain
     ]
+    for n in maybe:
+        if not repo:
+            raise GhLookupError("cannot classify (#N) subjects without a repository")
+        args = ["api", f"repos/{repo}/pulls/{n}"]
+        try:
+            data = _gh_json(args, runner)
+        except GhLookupError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, subprocess.CalledProcessError) and _is_not_found(
+                cause
+            ):
+                continue  # an issue number, not a PR
+            raise
+        bodies.append(str(data.get("body") or ""))
+    return bodies
+
+
+def _git_remote_url() -> str:
+    try:
+        return subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        return ""
+
+
+def infer_repo(
+    remote_url: Callable[[], str] = _git_remote_url,
+    runner: Runner | None = None,
+) -> str:
+    """Infer ``owner/name`` from the origin remote, else ``gh repo view``."""
+    repo = parse_remote_url(remote_url())
+    if repo or runner is None:
+        return repo
+    try:
+        data = json.loads(runner(["repo", "view", "--json", "nameWithOwner"]))
+    except (subprocess.CalledProcessError, OSError, json.JSONDecodeError):
+        return ""
+    name = data.get("nameWithOwner") if isinstance(data, dict) else ""
+    return name if isinstance(name, str) else ""
 
 
 def _closed_issue_numbers(numbers: list[int], runner: Runner) -> set[int]:
@@ -181,6 +252,7 @@ def main(argv: list[str] | None = None, runner: Runner | None = None) -> int:
             )
             return 2
         runner = _run_gh
+    remote_url = _git_remote_url
     try:
         messages = _git_messages(args.range)
     except subprocess.CalledProcessError as exc:
@@ -189,6 +261,8 @@ def main(argv: list[str] | None = None, runner: Runner | None = None) -> int:
 
     texts = list(messages)
     exclude: set[int] = set()
+    if args.offline and not args.repo:
+        args.repo = infer_repo(remote_url)
     try:
         if args.offline:
             print(
@@ -197,8 +271,15 @@ def main(argv: list[str] | None = None, runner: Runner | None = None) -> int:
                 file=sys.stderr,
             )
         else:
-            texts += _pr_bodies(pr_numbers(messages), runner)
+            certain, maybe = pr_candidates(messages)
+            if maybe and not args.repo:
+                args.repo = infer_repo(remote_url, runner)
+            texts += _pr_bodies(certain, maybe, args.repo, runner)
         if args.drop_closed:
+            if not args.repo:
+                args.repo = infer_repo(remote_url, runner)
+            if not args.repo:
+                raise GhLookupError("cannot determine the repository for --drop-closed")
             here = args.repo.lower()
             candidates = {
                 n for t in texts for r, n in extract_closing_refs(t) if r in ("", here)

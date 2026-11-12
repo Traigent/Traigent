@@ -228,7 +228,10 @@ python scripts/ci/promotion_closes_block.py origin/main..origin/develop --drop-c
 This reads commit messages and the bodies of the PRs they name (needs an
 authenticated `gh`); any failed lookup exits non-zero rather than printing a
 partial block. `--offline` reads git history only and misses keywords that
-live only in PR bodies.
+live only in PR bodies. The repository is inferred from the `origin` remote
+(falling back to `gh repo view`); pass `--repo owner/name` to override. With
+`--drop-closed` the script exits non-zero if the repository cannot be
+determined.
 
 After opening the PR, check that the number of lines in the block equals the
 PR's `closingIssuesReferences` count.

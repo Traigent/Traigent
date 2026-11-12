@@ -83,9 +83,9 @@ def test_empty_input() -> None:
     assert mod.extract_closing_refs("") == []
 
 
-def test_pr_numbers_from_subjects() -> None:
+def test_pr_candidates_split_certain_and_maybe() -> None:
     msgs = ["feat: x (#12)\n\nbody (#99)", "Merge pull request #7 from a/b", "plain"]
-    assert mod.pr_numbers(msgs) == [7, 12]
+    assert mod.pr_candidates(msgs) == ([7], [12])
 
 
 def test_offline_git_range(tmp_path: Path) -> None:
@@ -142,6 +142,7 @@ def _repo_with_pr_commit(tmp_path: Path) -> Path:
     git("tag", "base")
     git("commit", "--allow-empty", "-q", "-m", "feat: a (#2)")
     git("commit", "--allow-empty", "-q", "-m", "feat: b (#3)")
+    git("commit", "--allow-empty", "-q", "-m", "Merge pull request #4 from o/b")
     return tmp_path
 
 
@@ -150,16 +151,72 @@ def test_comment_with_unmatched_fence_does_not_swallow_text() -> None:
     assert mod.extract_closing_refs(text) == [("", 5)]
 
 
-def test_default_reads_pr_bodies(tmp_path: Path, monkeypatch, capsys) -> None:
-    monkeypatch.chdir(_repo_with_pr_commit(tmp_path))
-    bodies = {"2": "Closes #20", "3": "Fixes #10"}
+REPO = "Traigent/Traigent"
 
+
+def _pr_runner(bodies: dict[str, str], not_found: tuple[str, ...] = ()):
     def runner(args: list[str]) -> str:
+        if args[0] == "api":
+            n = args[1].rsplit("/", 1)[1]
+            assert args[1] == f"repos/{REPO}/pulls/{n}"
+            if n in not_found:
+                raise subprocess.CalledProcessError(
+                    1, "gh", stderr="gh: Not Found (HTTP 404)"
+                )
+            return json.dumps({"body": bodies[n]})
         assert args[:2] == ["pr", "view"]
         return json.dumps({"body": bodies[args[2]]})
 
-    assert mod.main(["base..HEAD"], runner=runner) == 0
-    assert capsys.readouterr().out.splitlines() == ["Closes #10", "Closes #20"]
+    return runner
+
+
+def test_default_reads_pr_bodies(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(_repo_with_pr_commit(tmp_path))
+    runner = _pr_runner({"2": "Closes #20", "3": "Fixes #10", "4": "Fixes #5"})
+    assert mod.main(["base..HEAD", "--repo", REPO], runner=runner) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "Closes #5",
+        "Closes #10",
+        "Closes #20",
+    ]
+
+
+def test_suffix_404_is_an_issue_not_a_pr(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(_repo_with_pr_commit(tmp_path))
+    runner = _pr_runner(
+        {"2": "Closes #20", "3": "x", "4": "Fixes #5"}, not_found=("2",)
+    )
+    assert mod.main(["base..HEAD", "--repo", REPO], runner=runner) == 0
+    assert capsys.readouterr().out.splitlines() == ["Closes #5"]
+
+
+def test_suffix_non_404_failure_fails_closed(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(_repo_with_pr_commit(tmp_path))
+    good = _pr_runner({"2": "Closes #20", "3": "x", "4": "Fixes #5"})
+
+    def runner(args: list[str]) -> str:
+        if args[0] == "api" and args[1].endswith("/2"):
+            raise subprocess.CalledProcessError(1, "gh", stderr="HTTP 502 Bad Gateway")
+        return good(args)
+
+    assert mod.main(["base..HEAD", "--repo", REPO], runner=runner) == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_merge_commit_pr_is_not_probed_via_api(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(_repo_with_pr_commit(tmp_path))
+    seen: list[list[str]] = []
+    good = _pr_runner({"2": "", "3": "", "4": "Fixes #5"})
+
+    def runner(args: list[str]) -> str:
+        seen.append(args)
+        return good(args)
+
+    mod.main(["base..HEAD", "--repo", REPO], runner=runner)
+    assert ["pr", "view", "4", "--json", "body"] in seen
+    assert not any(a[0] == "api" and a[1].endswith("/4") for a in seen)
 
 
 def test_offline_warns_and_skips_bodies(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -178,11 +235,11 @@ def test_failed_pr_lookup_fails_closed(tmp_path: Path, monkeypatch, capsys) -> N
     monkeypatch.chdir(_repo_with_pr_commit(tmp_path))
 
     def runner(args: list[str]) -> str:
-        if args[2] == "3":
+        if args[:3] == ["pr", "view", "4"]:
             raise subprocess.CalledProcessError(1, "gh")
         return json.dumps({"body": "Closes #20"})
 
-    assert mod.main(["base..HEAD"], runner=runner) == 1
+    assert mod.main(["base..HEAD", "--repo", REPO], runner=runner) == 1
     cap = capsys.readouterr()
     assert "Closes" not in cap.out
     assert "partial" in cap.err
@@ -195,19 +252,90 @@ def test_drop_closed_checks_full_repo_refs_and_fails_closed(
     checked: list[str] = []
 
     def runner(args: list[str]) -> str:
-        if args[0] == "pr":
+        if args[0] in ("pr", "api"):
             return json.dumps({"body": "Closes Traigent/Traigent#20\nCloses #21"})
         checked.append(args[2])
         return json.dumps({"state": "CLOSED" if args[2] == "20" else "OPEN"})
 
-    argv = ["base..HEAD", "--drop-closed", "--repo", "Traigent/Traigent"]
+    argv = ["base..HEAD", "--drop-closed", "--repo", REPO]
     assert mod.main(argv, runner=runner) == 0
     assert sorted(checked) == ["20", "21"]
     assert capsys.readouterr().out.splitlines() == ["Closes #21"]
 
     def bad(args: list[str]) -> str:
-        if args[0] == "pr":
+        if args[0] in ("pr", "api"):
             return json.dumps({"body": "Closes #20"})
         raise subprocess.CalledProcessError(1, "gh")
 
     assert mod.main(argv, runner=bad) == 1
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/Traigent/Traigent.git",
+        "https://github.com/Traigent/Traigent",
+        "git@github.com:Traigent/Traigent.git",
+        "ssh://git@github.com/Traigent/Traigent.git",
+        "https://github.com/Traigent/Traigent.git/",
+    ],
+)
+def test_parse_remote_url(url: str) -> None:
+    assert mod.parse_remote_url(url) == "Traigent/Traigent"
+
+
+def test_parse_remote_url_rejects_non_github() -> None:
+    assert mod.parse_remote_url("https://example.com/a/b.git") == ""
+    assert mod.parse_remote_url("") == ""
+
+
+def test_infer_repo_prefers_remote_then_gh() -> None:
+    def boom(args: list[str]) -> str:
+        raise AssertionError("gh must not be used when the remote parses")
+
+    assert mod.infer_repo(lambda: "git@github.com:A/B.git", boom) == "A/B"
+
+    def gh(args: list[str]) -> str:
+        assert args == ["repo", "view", "--json", "nameWithOwner"]
+        return json.dumps({"nameWithOwner": "C/D"})
+
+    assert mod.infer_repo(lambda: "", gh) == "C/D"
+
+    def fail(args: list[str]) -> str:
+        raise subprocess.CalledProcessError(1, "gh")
+
+    assert mod.infer_repo(lambda: "", fail) == ""
+
+
+def test_main_infers_repo_from_origin(tmp_path: Path, monkeypatch, capsys) -> None:
+    repo = _repo_with_pr_commit(tmp_path)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "remote",
+            "add",
+            "origin",
+            f"https://github.com/{REPO}.git",
+        ],
+        check=True,
+    )
+    monkeypatch.chdir(repo)
+    runner = _pr_runner({"2": "Closes Traigent/Traigent#9", "3": "", "4": ""})
+    assert mod.main(["base..HEAD"], runner=runner) == 0
+    assert capsys.readouterr().out.splitlines() == ["Closes #9"]
+
+
+def test_drop_closed_without_resolvable_repo_fails_closed(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(_repo_with_pr_commit(tmp_path))  # no origin remote
+
+    def runner(args: list[str]) -> str:
+        if args[:2] == ["repo", "view"]:
+            raise subprocess.CalledProcessError(1, "gh")
+        return json.dumps({"body": "Closes #20"})
+
+    assert mod.main(["base..HEAD", "--drop-closed"], runner=runner) == 1
+    assert capsys.readouterr().out == ""
