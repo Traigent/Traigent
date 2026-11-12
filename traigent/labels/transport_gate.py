@@ -30,7 +30,7 @@ import json
 import os
 import threading
 import urllib.request
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urlencode, urlsplit
@@ -50,7 +50,8 @@ _mode_override: str | None = None
 _origins_override: frozenset[tuple[str, str, int]] | None = None
 _totals: Counter[str] = Counter()
 _errors: Counter[str] = Counter()
-_refusals: list[tuple[str, dict[str, int]]] = []
+_MAX_REFUSALS = 1000
+_refusals: deque[tuple[str, dict[str, int]]] = deque(maxlen=_MAX_REFUSALS)
 _lock = threading.Lock()
 _CLASS_CACHE: dict[tuple[type, str], type] = {}
 
