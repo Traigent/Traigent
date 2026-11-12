@@ -1611,3 +1611,49 @@ class TestFixedWindowStrategy:
         assert result.allowed is True
         assert result.security_metadata is not None
         assert result.security_metadata["strategy"] == "sliding_window"
+
+
+class TestAuthLimiterRecordsUnderCheckedIdentifiers:
+    """Failures must be recorded under the identifiers the check reads."""
+
+    @pytest.mark.asyncio
+    async def test_lockout_with_user_agent_after_max_failures(self) -> None:
+        limiter = SecureAuthenticationRateLimiter()
+        limiter.config.progressive_delay = False
+        for _ in range(limiter.config.max_attempts):
+            limiter.record_auth_result(
+                success=False,
+                ip_address="203.0.113.7",
+                username="alice",
+                user_agent="Mozilla/5.0",
+            )
+        result = await limiter.check_auth_attempt(
+            ip_address="203.0.113.7", username="alice", user_agent="Mozilla/5.0"
+        )
+        assert result.allowed is False
+
+    @pytest.mark.asyncio
+    async def test_ip_spray_across_usernames_is_limited(self) -> None:
+        limiter = SecureAuthenticationRateLimiter()
+        limiter.config.progressive_delay = False
+        for i in range(limiter.config.max_attempts):
+            limiter.record_auth_result(
+                success=False, ip_address="203.0.113.8", username=f"user{i}"
+            )
+        result = await limiter.check_auth_attempt(
+            ip_address="203.0.113.8", username="brand-new-user"
+        )
+        assert result.allowed is False
+
+    @pytest.mark.asyncio
+    async def test_unrelated_ip_not_limited(self) -> None:
+        limiter = SecureAuthenticationRateLimiter()
+        limiter.config.progressive_delay = False
+        for i in range(limiter.config.max_attempts):
+            limiter.record_auth_result(
+                success=False, ip_address="203.0.113.9", username=f"user{i}"
+            )
+        result = await limiter.check_auth_attempt(
+            ip_address="198.51.100.1", username="other"
+        )
+        assert result.allowed is True
