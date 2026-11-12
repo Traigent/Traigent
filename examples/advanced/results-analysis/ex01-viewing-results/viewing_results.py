@@ -181,7 +181,11 @@ def _sentiment_accuracy(
     max_trials=10,
 )
 def sentiment_classifier(text: str) -> str | dict:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.0),
+    )
     prompt = f"Classify sentiment as positive, negative, or neutral: {text}"
     resp = llm.invoke([HumanMessage(content=prompt)])
     return _fallback_usage(getattr(resp, "content", str(resp)), prompt)

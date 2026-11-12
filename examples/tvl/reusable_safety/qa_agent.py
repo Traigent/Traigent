@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 # Import Traigent SDK
+from traigent import get_config
 from traigent.api import optimize
 from traigent.api.safety import faithfulness, hallucination_rate, toxicity_score
 from traigent.core.objectives import create_default_objectives
@@ -97,6 +98,14 @@ def qa_agent(
     Returns:
         Dict containing the answer and metadata.
     """
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = get_config() or {}
+    model = trial_config.get("model", model)
+    temperature = trial_config.get("temperature", temperature)
+    max_tokens = trial_config.get("max_tokens", max_tokens)
+    retrieval_k = trial_config.get("retrieval_k", retrieval_k)
+    chunk_size = trial_config.get("chunk_size", chunk_size)
+    use_reranking = trial_config.get("use_reranking", use_reranking)
     # Step 1: Retrieve relevant context
     context = retrieve_context(question, k=retrieval_k)
 

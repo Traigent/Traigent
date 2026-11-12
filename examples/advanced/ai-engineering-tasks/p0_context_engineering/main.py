@@ -263,6 +263,12 @@ def optimize_context_engineering(
     This function will be called by Traigent with different parameter combinations
     to find the optimal RAG configuration.
     """
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = traigent.get_config() or {}
+    retrieval_method = trial_config.get("retrieval_method", retrieval_method)
+    embedding_model = trial_config.get("embedding_model", embedding_model)
+    chunk_size = trial_config.get("chunk_size", chunk_size)
+    chunk_overlap = trial_config.get("chunk_overlap", chunk_overlap)
 
     # This is a placeholder - the actual evaluation happens in the evaluation function
     # Traigent will inject the optimal parameters and track results

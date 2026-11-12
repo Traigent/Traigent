@@ -106,7 +106,12 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 )
 def optimized_summary(text: str) -> str:
     """Same implementation; Traigent injects optimal parameters at runtime."""
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7, max_tokens=150)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.7),
+        max_tokens=trial_config.get("max_tokens", 150),
+    )
     prompt = f"Summarize this text in 2-3 sentences: {text}"
     response = llm.invoke(prompt)
     return getattr(response, "content", str(response))

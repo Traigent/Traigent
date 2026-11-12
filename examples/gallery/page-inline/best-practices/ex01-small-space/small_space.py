@@ -112,7 +112,12 @@ def _exact_match(output: str | None, expected: str | None, llm_metrics=None) -> 
     max_trials=10,
 )
 def classify_text(text: str) -> str:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0, max_tokens=80)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.0),
+        max_tokens=trial_config.get("max_tokens", 80),
+    )
     prompt = f"Label this text as one of [animal, vehicle, other]: {text}"
     resp = llm.invoke([HumanMessage(content=prompt)])
     return getattr(resp, "content", str(resp))

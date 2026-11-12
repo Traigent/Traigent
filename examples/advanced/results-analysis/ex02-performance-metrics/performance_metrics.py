@@ -198,7 +198,12 @@ def _contains_accuracy(
     max_trials=10,
 )
 def faq_answer(question: str) -> str | dict:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0, max_tokens=150)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.0),
+        max_tokens=trial_config.get("max_tokens", 150),
+    )
     prompt = f"Answer this customer FAQ briefly and precisely: {question}"
     resp = llm.invoke([HumanMessage(content=prompt)])
     return _fallback_usage(getattr(resp, "content", str(resp)), prompt)

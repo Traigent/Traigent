@@ -71,10 +71,17 @@ def generate_summary(text: str) -> str:
 )
 def optimized_summary(text: str) -> str:
     # Exact same code - Traigent seamlessly injects optimal parameters
+    trial_config = traigent.get_config() or {}
     llm = ChatOpenAI(
-        model="gpt-4.1-mini",  # Becomes optimal model automatically
-        temperature=0.7,  # Becomes optimal temperature automatically
-        max_tokens=150,  # Becomes optimal token limit automatically
+        model=trial_config.get(
+            "model", "gpt-4.1-mini"
+        ),  # Becomes optimal model automatically
+        temperature=trial_config.get(
+            "temperature", 0.7
+        ),  # Becomes optimal temperature automatically
+        max_tokens=trial_config.get(
+            "max_tokens", 150
+        ),  # Becomes optimal token limit automatically
     )
 
     prompt = f"Summarize this text in 2-3 sentences: {text}"

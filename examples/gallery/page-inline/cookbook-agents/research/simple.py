@@ -27,8 +27,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -61,7 +61,10 @@ DATASET = os.path.join(os.path.dirname(__file__), "research_eval.jsonl")
     max_trials=10,
 )
 def answer(question: str) -> str:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model="gpt-4.1-mini", temperature=trial_config.get("temperature", 0.0)
+    )
     prompt = f"Answer concisely with one short phrase: {question}"
     return llm.invoke([HumanMessage(content=prompt)]).content.strip().lower()
 

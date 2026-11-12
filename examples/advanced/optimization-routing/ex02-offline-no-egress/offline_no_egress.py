@@ -210,7 +210,11 @@ def _processed_accuracy(
 )
 def sensitive_function(customer_data: str) -> str | dict:
     """Process sensitive customer data with no Traigent backend egress."""
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.7),
+    )
     # Customer data is untrusted: isolate it in a delimited block and tell
     # the model to treat it as data, never as instructions.
     prompt = (

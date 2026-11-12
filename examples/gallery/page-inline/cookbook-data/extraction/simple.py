@@ -29,8 +29,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -82,7 +82,10 @@ def _json_accuracy(
     max_trials=10,
 )
 def extract_fields(text: str) -> str:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model="gpt-4.1-mini", temperature=trial_config.get("temperature", 0.0)
+    )
     prompt = (
         "Extract company and amount as JSON with keys 'company' and 'amount'."
         f"\nText: {text}\nReturn only JSON."

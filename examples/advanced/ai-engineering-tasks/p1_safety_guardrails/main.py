@@ -252,6 +252,35 @@ def optimize_safety_guardrails(
     This function will be called by Traigent with different parameter combinations
     to find the optimal configuration for safety-utility balance.
     """
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = traigent.get_config() or {}
+    pii_detection = trial_config.get("pii_detection", pii_detection)
+    pii_threshold = trial_config.get("pii_threshold", pii_threshold)
+    redaction_method = trial_config.get("redaction_method", redaction_method)
+    hallucination_strategy = trial_config.get(
+        "hallucination_strategy", hallucination_strategy
+    )
+    confidence_threshold = trial_config.get(
+        "confidence_threshold", confidence_threshold
+    )
+    fact_checking_enabled = trial_config.get(
+        "fact_checking_enabled", fact_checking_enabled
+    )
+    safety_level = trial_config.get("safety_level", safety_level)
+    verification_method = trial_config.get("verification_method", verification_method)
+    verification_threshold = trial_config.get(
+        "verification_threshold", verification_threshold
+    )
+    allow_medical_info = trial_config.get("allow_medical_info", allow_medical_info)
+    allow_financial_info = trial_config.get(
+        "allow_financial_info", allow_financial_info
+    )
+    context_awareness = trial_config.get("context_awareness", context_awareness)
+    max_processing_time_ms = trial_config.get(
+        "max_processing_time_ms", max_processing_time_ms
+    )
+    cache_results = trial_config.get("cache_results", cache_results)
+    batch_processing = trial_config.get("batch_processing", batch_processing)
 
     # This is a placeholder - the actual evaluation happens in the evaluation function
     # Traigent will inject the optimal parameters and track results

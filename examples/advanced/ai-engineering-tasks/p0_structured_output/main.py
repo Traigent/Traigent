@@ -164,6 +164,11 @@ def extract_entities(
     extraction_style: str = "concise",
 ) -> str:
     """Extract structured entities from text."""
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = traigent.get_config() or {}
+    output_format = trial_config.get("output_format", output_format)
+    validation = trial_config.get("validation", validation)
+    extraction_style = trial_config.get("extraction_style", extraction_style)
 
     entities: dict[str, str] = {}
     person = _match_pattern(text, PERSON_PATTERNS)

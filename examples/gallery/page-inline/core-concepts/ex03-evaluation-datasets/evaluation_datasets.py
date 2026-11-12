@@ -28,8 +28,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 try:
     import traigent
@@ -49,7 +49,6 @@ except ImportError:  # pragma: no cover - support IDE execution paths
     traigent = importlib.import_module("traigent")
 
 from traigent.core.objectives import create_default_objectives
-
 from traigent.evaluators.base import Dataset, EvaluationExample  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
@@ -121,7 +120,11 @@ def _records_to_dataset(records: list[dict[str, Any]], name: str) -> Dataset:
 )
 def classifier_with_jsonl(text: str) -> str:
     """Classifier using JSONL dataset for evaluation."""
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.3)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.3),
+    )
 
     prompt = (
         "Classify the text into one of these categories: complaint, feedback, inquiry.\n"

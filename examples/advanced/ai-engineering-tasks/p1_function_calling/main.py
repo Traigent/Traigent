@@ -230,6 +230,21 @@ def optimize_function_calling(
     This function will be called by Traigent with different parameter combinations
     to find the optimal configuration for reliable tool use.
     """
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = traigent.get_config() or {}
+    description_format = trial_config.get("description_format", description_format)
+    parameter_schema = trial_config.get("parameter_schema", parameter_schema)
+    selection_strategy = trial_config.get("selection_strategy", selection_strategy)
+    error_strategy = trial_config.get("error_strategy", error_strategy)
+    validation = trial_config.get("validation", validation)
+    max_retries = trial_config.get("max_retries", max_retries)
+    temperature = trial_config.get("temperature", temperature)
+    include_examples = trial_config.get("include_examples", include_examples)
+    example_format = trial_config.get("example_format", example_format)
+    context_aware_selection = trial_config.get(
+        "context_aware_selection", context_aware_selection
+    )
+    progressive_hints = trial_config.get("progressive_hints", progressive_hints)
 
     # This is a placeholder - the actual evaluation happens in the evaluation function
     # Traigent will inject the optimal parameters and track results

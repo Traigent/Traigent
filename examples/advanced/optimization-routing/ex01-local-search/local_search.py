@@ -181,7 +181,11 @@ def _greeting_accuracy(
 )
 def my_llm_function(prompt: str) -> str | dict:
     """Simple LLM call for a mock-friendly local search example."""
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.7),
+    )
     resp = llm.invoke([HumanMessage(content=prompt)])
     return _fallback_usage(getattr(resp, "content", str(resp)), prompt)
 

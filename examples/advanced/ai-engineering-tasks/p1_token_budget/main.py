@@ -237,6 +237,31 @@ def optimize_token_budget(
     This function will be called by Traigent with different parameter combinations
     to find the optimal configuration for cost-effective token allocation.
     """
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = traigent.get_config() or {}
+    allocation_strategy = trial_config.get("allocation_strategy", allocation_strategy)
+    system_prompt_pct = trial_config.get("system_prompt_pct", system_prompt_pct)
+    examples_pct = trial_config.get("examples_pct", examples_pct)
+    retrieved_context_pct = trial_config.get(
+        "retrieved_context_pct", retrieved_context_pct
+    )
+    conversation_history_pct = trial_config.get(
+        "conversation_history_pct", conversation_history_pct
+    )
+    buffer_pct = trial_config.get("buffer_pct", buffer_pct)
+    truncation_strategy = trial_config.get("truncation_strategy", truncation_strategy)
+    context_selection = trial_config.get("context_selection", context_selection)
+    adaptive_reallocation = trial_config.get(
+        "adaptive_reallocation", adaptive_reallocation
+    )
+    query_classification = trial_config.get(
+        "query_classification", query_classification
+    )
+    output_buffer = trial_config.get("output_buffer", output_buffer)
+    preserve_critical_info = trial_config.get(
+        "preserve_critical_info", preserve_critical_info
+    )
+    smart_compression = trial_config.get("smart_compression", smart_compression)
 
     # This is a placeholder - the actual evaluation happens in the evaluation function
     # Traigent will inject the optimal parameters and track results

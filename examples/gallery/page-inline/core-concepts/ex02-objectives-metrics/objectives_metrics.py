@@ -28,8 +28,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 try:
     import traigent
@@ -173,7 +173,11 @@ def _min_quality_score(
 )
 def cost_optimized_bot(query: str) -> str:
     """Bot optimized purely for cost efficiency."""
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.5)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.5),
+    )
     response = llm.invoke([HumanMessage(content=query)])
     return str(getattr(response, "content", response))
 

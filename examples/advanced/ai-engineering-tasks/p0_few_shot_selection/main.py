@@ -234,6 +234,10 @@ def optimize_few_shot_selection(
     This function will be called by Traigent with different parameter combinations
     to find the optimal selection strategy for few-shot learning.
     """
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = traigent.get_config() or {}
+    selection_method = trial_config.get("selection_method", selection_method)
+    n_examples = trial_config.get("n_examples", n_examples)
 
     # This is a placeholder - the actual evaluation happens in the evaluation function
     # Traigent will inject the optimal parameters and track results

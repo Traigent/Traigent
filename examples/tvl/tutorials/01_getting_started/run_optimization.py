@@ -12,6 +12,7 @@ import random
 from pathlib import Path
 
 import traigent
+from traigent import get_config
 from traigent.tvl import load_tvl_spec
 
 # Load the TVL spec to see what we're optimizing
@@ -55,6 +56,11 @@ def optimized_chatbot(
     The decorator injects optimized parameter values for model,
     temperature, and max_tokens based on the TVL spec.
     """
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = get_config() or {}
+    model = trial_config.get("model", model)
+    temperature = trial_config.get("temperature", temperature)
+    max_tokens = trial_config.get("max_tokens", max_tokens)
     # Simulate the response
     metrics = simulate_chatbot_response(model, temperature, max_tokens)
 
