@@ -153,10 +153,11 @@ class OptimizedChatBot:
             max_trials=5,
         )
         def _generate_response(user_input: str, context: str = "") -> str:
+            effective = {**config, **(traigent.get_config() or {})}
             llm = ChatOpenAI(
-                model=str(config.get("model", "gpt-4.1-mini")),
-                temperature=float(config.get("temperature", 0.7)),
-                max_tokens=int(config.get("max_tokens", 300)),
+                model=str(effective.get("model", "gpt-4.1-mini")),
+                temperature=float(effective.get("temperature", 0.7)),
+                max_tokens=int(effective.get("max_tokens", 300)),
             )
             prompt = f"Context: {context}\nUser: {user_input}\nAssistant:"
             reply = llm.invoke(prompt)

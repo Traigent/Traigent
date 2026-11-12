@@ -80,18 +80,18 @@ class CampaignState(TypedDict):
     review_notes: list[str]
     recommendation: str
     revision_count: int
+    trial_config: dict[str, object]
 
 
-def _config_value(name: str, default: object) -> object:
-    """Read a Traigent config value with a safe default."""
-    config = traigent.get_config() or {}
-    return config.get(name, default)
+def _config_value(state: CampaignState, name: str, default: object) -> object:
+    """Read a tuned value from the trial config carried in the graph state."""
+    return state.get("trial_config", {}).get(name, default)
 
 
 def discover_audiences(state: CampaignState) -> CampaignState:
     """Translate the campaign brief into high-value audience segments."""
     brief = state["campaign_brief"].lower()
-    lookback_days = int(_config_value("discover.lookback_days", 30))
+    lookback_days = int(_config_value(state, "discover.lookback_days", 30))
     segments: list[str] = []
 
     if "parent" in brief or "family" in brief or "back-to-school" in brief:
@@ -107,7 +107,7 @@ def discover_audiences(state: CampaignState) -> CampaignState:
     if "streaming" in brief or "video" in brief or "series" in brief:
         segments.append("premium_video_viewers")
 
-    if _config_value("discover.use_identity_graph", True):
+    if _config_value(state, "discover.use_identity_graph", True):
         segments.append("identity_graph")
 
     if not segments:
@@ -124,7 +124,7 @@ def discover_audiences(state: CampaignState) -> CampaignState:
 def plan_channel_mix(state: CampaignState) -> CampaignState:
     """Build a channel plan from the brief and discovered audiences."""
     brief = state["campaign_brief"].lower()
-    ctv_share = float(_config_value("plan.ctv_share", 0.6))
+    ctv_share = float(_config_value(state, "plan.ctv_share", 0.6))
     channels: list[str] = []
 
     if ctv_share >= 0.5 or "ctv" in brief or "streaming" in brief:
@@ -145,8 +145,8 @@ def plan_channel_mix(state: CampaignState) -> CampaignState:
 
 def select_supply_strategy(state: CampaignState) -> CampaignState:
     """Choose how the plan accesses inventory across the media supply path."""
-    preferred_path = str(_config_value("supply.path", "full_stack"))
-    primary_kpi = str(_config_value("measure.primary_kpi", "completed_events"))
+    preferred_path = str(_config_value(state, "supply.path", "full_stack"))
+    primary_kpi = str(_config_value(state, "measure.primary_kpi", "completed_events"))
 
     # If review previously flagged the open exchange path, revise to a safer option.
     if state["revision_count"] > 0 and preferred_path == "open_exchange":
@@ -174,7 +174,7 @@ def select_supply_strategy(state: CampaignState) -> CampaignState:
 def review_activation_plan(state: CampaignState) -> CampaignState:
     """Apply an operational review before recommending activation."""
     brief = state["campaign_brief"].lower()
-    strictness = str(_config_value("review.strictness", "balanced"))
+    strictness = str(_config_value(state, "review.strictness", "balanced"))
     notes: list[str] = []
 
     if state["supply_strategy"] == "open_exchange" and (
@@ -205,7 +205,7 @@ def decide_after_review(state: CampaignState) -> str:
 
 def generate_recommendation(state: CampaignState) -> CampaignState:
     """Compose the final recommendation in either ops or executive style."""
-    style = str(_config_value("generate.style", "executive"))
+    style = str(_config_value(state, "generate.style", "executive"))
     audience_text = ", ".join(state["audience_segments"])
     channel_text = ", ".join(state["channel_mix"])
     review_text = (
@@ -438,6 +438,8 @@ def run_campaign_copilot(campaign_brief: str) -> str:
         "review_notes": [],
         "recommendation": "",
         "revision_count": 0,
+        # Hand the tuned values to every node through the graph state.
+        "trial_config": dict(traigent.get_config() or {}),
     }
     result = app.invoke(initial_state)
     return result["recommendation"]

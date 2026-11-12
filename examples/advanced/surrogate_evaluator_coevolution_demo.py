@@ -142,14 +142,20 @@ eval_dataset = [
 ]
 
 
-def polymath_synthetic_agent_impl(question: str) -> str:
+def polymath_synthetic_agent_impl(question: str, temperature: float = 0.0) -> str:
     """Pure-Python synthetic PolyMath agent — no LLM call, no network egress.
 
     Deterministically returns the canonical correct answer for each scenario
     question so the primary evaluator sees real (correct) captured outputs
-    for the surrogate to score.
+    for the surrogate to score. At temperature >= 0.5 it hedges, which the
+    primary evaluator scores as a miss.
     """
-    return _CANONICAL_ANSWERS.get(question, "UNKNOWN")
+    answer = _CANONICAL_ANSWERS.get(question, "UNKNOWN")
+    if temperature >= 0.5:
+        # At a high sampling temperature the synthetic agent hedges, so the
+        # tuned value really changes the output the evaluators score.
+        return f"{answer} (unsure)"
+    return answer
 
 
 def exact_match(output, expected, llm_metrics=None) -> float:
@@ -187,7 +193,10 @@ def judge_surrogate_lenient(output, expected_output=None, example=None) -> float
     max_trials=10,
 )
 def polymath_agent(question: str) -> str:
-    return polymath_synthetic_agent_impl(question)
+    trial_config = traigent.get_config() or {}
+    return polymath_synthetic_agent_impl(
+        question, temperature=float(trial_config.get("temperature", 0.0))
+    )
 
 
 class _CheckFailed(Exception):

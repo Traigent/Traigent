@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 # Import Traigent SDK
+from traigent import get_config
 from traigent.api import optimize
 from traigent.api.safety import (
     bias_score,
@@ -127,6 +128,19 @@ def support_agent(
     Returns:
         Dict containing the response and metadata.
     """
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = get_config() or {}
+    model = trial_config.get("model", model)
+    temperature = trial_config.get("temperature", temperature)
+    max_tokens = trial_config.get("max_tokens", max_tokens)
+    use_streaming = trial_config.get("use_streaming", use_streaming)
+    response_style = trial_config.get("response_style", response_style)
+    include_escalation_option = trial_config.get(
+        "include_escalation_option", include_escalation_option
+    )
+    canned_response_threshold = trial_config.get(
+        "canned_response_threshold", canned_response_threshold
+    )
     # Step 1: Get customer context
     context = get_customer_context(customer_id)
 

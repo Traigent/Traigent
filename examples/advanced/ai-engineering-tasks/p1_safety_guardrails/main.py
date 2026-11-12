@@ -23,6 +23,7 @@ Run with (from repo root): .venv/bin/python examples/advanced/ai-engineering-tas
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import sys
@@ -204,6 +205,50 @@ def _create_dummy_eval_dataset() -> str:
     return _write_eval_dataset(samples)
 
 
+def _as_custom_evaluator(evaluation_function: Callable) -> Callable:
+    """Adapt this example's metrics function to Traigent's custom_evaluator contract.
+
+    Traigent calls ``custom_evaluator(func, config, example)`` once per dataset
+    example with the trial config; the metrics come from the evaluator this
+    example builds, so the tuned values decide the scores.
+    """
+
+    cache: dict[str, dict] = {}
+
+    def _evaluator(_func: Callable, config: dict, example: Any) -> Any:
+        from traigent.api.types import ExampleResult
+
+        # One metrics pass per trial config, shared by every dataset example.
+        key = json.dumps(config, sort_keys=True, default=str)
+        if key not in cache:
+            cache[key] = evaluation_function(**config)
+        metrics = cache[key]
+        return ExampleResult(
+            example_id=str(getattr(example, "example_id", "trial")),
+            input_data=dict(example.input_data),
+            expected_output=example.expected_output,
+            actual_output=metrics,
+            metrics={
+                k: float(v)
+                for k, v in metrics.items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            },
+            execution_time=0.0,
+            success=True,
+        )
+
+    return _evaluator
+
+
+@functools.lru_cache(maxsize=1)
+def _trial_evaluation_function() -> Callable:
+    """Small deterministic task set used when a trial calls the decorated function."""
+    return create_evaluation_function(
+        create_safety_guardrails_dataset(total_queries=12, category_distribution=None),
+        "balanced_safety",
+    )
+
+
 @traigent.optimize(
     configuration_space=SAFETY_SEARCH_SPACE,  # Fixed: should be configuration_space
     eval_dataset=_create_dummy_eval_dataset(),
@@ -245,17 +290,62 @@ def optimize_safety_guardrails(
     cache_results: bool = True,
     batch_processing: bool = False,
     **kwargs,
-) -> None:
+) -> dict[str, float]:
     """
     Traigent-optimized function for safety guardrails optimization.
 
     This function will be called by Traigent with different parameter combinations
     to find the optimal configuration for safety-utility balance.
     """
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = traigent.get_config() or {}
+    pii_detection = trial_config.get("pii_detection", pii_detection)
+    pii_threshold = trial_config.get("pii_threshold", pii_threshold)
+    redaction_method = trial_config.get("redaction_method", redaction_method)
+    hallucination_strategy = trial_config.get(
+        "hallucination_strategy", hallucination_strategy
+    )
+    confidence_threshold = trial_config.get(
+        "confidence_threshold", confidence_threshold
+    )
+    fact_checking_enabled = trial_config.get(
+        "fact_checking_enabled", fact_checking_enabled
+    )
+    safety_level = trial_config.get("safety_level", safety_level)
+    verification_method = trial_config.get("verification_method", verification_method)
+    verification_threshold = trial_config.get(
+        "verification_threshold", verification_threshold
+    )
+    allow_medical_info = trial_config.get("allow_medical_info", allow_medical_info)
+    allow_financial_info = trial_config.get(
+        "allow_financial_info", allow_financial_info
+    )
+    context_awareness = trial_config.get("context_awareness", context_awareness)
+    max_processing_time_ms = trial_config.get(
+        "max_processing_time_ms", max_processing_time_ms
+    )
+    cache_results = trial_config.get("cache_results", cache_results)
+    batch_processing = trial_config.get("batch_processing", batch_processing)
 
-    # This is a placeholder - the actual evaluation happens in the evaluation function
-    # Traigent will inject the optimal parameters and track results
-    pass
+    # Run the tuned configuration through this example's evaluator.
+    tuned = {
+        "pii_detection": pii_detection,
+        "pii_threshold": pii_threshold,
+        "redaction_method": redaction_method,
+        "hallucination_strategy": hallucination_strategy,
+        "confidence_threshold": confidence_threshold,
+        "fact_checking_enabled": fact_checking_enabled,
+        "safety_level": safety_level,
+        "verification_method": verification_method,
+        "verification_threshold": verification_threshold,
+        "allow_medical_info": allow_medical_info,
+        "allow_financial_info": allow_financial_info,
+        "context_awareness": context_awareness,
+        "max_processing_time_ms": max_processing_time_ms,
+        "cache_results": cache_results,
+        "batch_processing": batch_processing,
+    }
+    return _trial_evaluation_function()(**{**tuned, **trial_config})
 
 
 def run_baseline_comparison(
@@ -584,7 +674,7 @@ async def main() -> None:
     # CORRECT API USAGE: Call .optimize() method with parameters
     try:
         optimization_results = await optimize_safety_guardrails.optimize(
-            custom_evaluator=evaluation_function,
+            custom_evaluator=_as_custom_evaluator(evaluation_function),
             max_trials=140,  # Moved here from decorator
             timeout=3000,  # 50 minutes in seconds (was timeout_minutes=50)
             algorithm="random",  # Offline local example; smart algorithms require cloud

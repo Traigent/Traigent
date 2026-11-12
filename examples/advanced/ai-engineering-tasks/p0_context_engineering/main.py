@@ -24,6 +24,7 @@ Run with (from repo root): .venv/bin/python examples/advanced/ai-engineering-tas
 """
 
 import asyncio
+import functools
 import json
 import os
 import sys
@@ -59,6 +60,7 @@ except ImportError as e:
 # Import local components
 from context_config import CONTEXT_ENGINEERING_SEARCH_SPACE, create_context_config
 from dataset import (
+    DocumentChunk,
     RAGDataset,
     analyze_retrieval_quality,
     create_rag_dataset,
@@ -83,6 +85,25 @@ def print_header() -> None:
             border_style="blue",
         )
     )
+
+
+def _as_document_chunks(chunks: list, documents: list) -> list[DocumentChunk]:
+    """Wrap retrieved chunk text as DocumentChunk objects tied to their source doc."""
+    wrapped = []
+    for index, chunk in enumerate(chunks):
+        text = chunk if isinstance(chunk, str) else str(chunk)
+        source = next((d for d in documents if text[:40] in d.content), None)
+        wrapped.append(
+            DocumentChunk(
+                doc_id=source.id if source else "",
+                chunk_id=f"chunk_{index}",
+                content=text,
+                start_pos=0,
+                end_pos=len(text),
+                metadata={},
+            )
+        )
+    return wrapped
 
 
 def create_evaluation_function(dataset: RAGDataset) -> Callable:
@@ -113,7 +134,7 @@ def create_evaluation_function(dataset: RAGDataset) -> Callable:
                 context_result = retrieve_context(
                     query=query.question,
                     config=config,
-                    documents=dataset.documents,
+                    documents=[d.content for d in dataset.documents],
                 )
 
                 # Evaluate answer quality
@@ -127,7 +148,9 @@ def create_evaluation_function(dataset: RAGDataset) -> Callable:
 
                 # Analyze retrieval quality
                 retrieval_quality = analyze_retrieval_quality(
-                    retrieved_chunks=context_result["retrieved_chunks"],
+                    retrieved_chunks=_as_document_chunks(
+                        context_result["retrieved_chunks"], dataset.documents
+                    ),
                     query=query,
                     documents=dataset.documents,
                 )
@@ -222,6 +245,49 @@ def _create_eval_dataset() -> str:
 
 
 # CORRECT API USAGE: Only valid decorator parameters
+def _as_custom_evaluator(evaluation_function: Callable) -> Callable:
+    """Adapt this example's metrics function to Traigent's custom_evaluator contract.
+
+    Traigent calls ``custom_evaluator(func, config, example)`` once per dataset
+    example with the trial config; the metrics come from the evaluator this
+    example builds, so the tuned values decide the scores.
+    """
+
+    cache: dict[str, dict] = {}
+
+    def _evaluator(_func: Callable, config: dict, example: Any) -> Any:
+        from traigent.api.types import ExampleResult
+
+        # One metrics pass per trial config, shared by every dataset example.
+        key = json.dumps(config, sort_keys=True, default=str)
+        if key not in cache:
+            cache[key] = evaluation_function(**config)
+        metrics = cache[key]
+        return ExampleResult(
+            example_id=str(getattr(example, "example_id", "trial")),
+            input_data=dict(example.input_data),
+            expected_output=example.expected_output,
+            actual_output=metrics,
+            metrics={
+                k: float(v)
+                for k, v in metrics.items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            },
+            execution_time=0.0,
+            success=True,
+        )
+
+    return _evaluator
+
+
+@functools.lru_cache(maxsize=1)
+def _trial_evaluation_function() -> Callable:
+    """Small deterministic task set used when a trial calls the decorated function."""
+    return create_evaluation_function(
+        create_rag_dataset(num_documents=4, num_queries=6)
+    )
+
+
 @traigent.optimize(
     configuration_space=CONTEXT_ENGINEERING_SEARCH_SPACE,  # Fixed: was config_space
     eval_dataset=_create_eval_dataset(),
@@ -251,7 +317,7 @@ def optimize_context_engineering(
     token_budget: int = 2000,
     budget_allocation: str = "uniform",
     **kwargs,
-) -> None:
+) -> dict[str, float]:
     """
     Traigent-optimized function for context engineering and RAG.
 
@@ -263,10 +329,29 @@ def optimize_context_engineering(
     This function will be called by Traigent with different parameter combinations
     to find the optimal RAG configuration.
     """
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = traigent.get_config() or {}
+    retrieval_method = trial_config.get("retrieval_method", retrieval_method)
+    embedding_model = trial_config.get("embedding_model", embedding_model)
+    chunk_size = trial_config.get("chunk_size", chunk_size)
+    chunk_overlap = trial_config.get("chunk_overlap", chunk_overlap)
 
-    # This is a placeholder - the actual evaluation happens in the evaluation function
-    # Traigent will inject the optimal parameters and track results
-    pass
+    # Run the tuned configuration through this example's evaluator.
+    tuned = {
+        "retrieval_method": retrieval_method,
+        "embedding_model": embedding_model,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "n_chunks": n_chunks,
+        "reranking": reranking,
+        "reranking_model": reranking_model,
+        "query_expansion": query_expansion,
+        "expansion_method": expansion_method,
+        "hyde": hyde,
+        "token_budget": token_budget,
+        "budget_allocation": budget_allocation,
+    }
+    return _trial_evaluation_function()(**{**tuned, **trial_config})
 
 
 def run_baseline_comparison(dataset: RAGDataset) -> dict[str, dict[str, float]]:
@@ -546,7 +631,7 @@ async def main() -> None:
     # CORRECT API USAGE: Call .optimize() method with parameters
     try:
         optimization_results = await optimize_context_engineering.optimize(
-            custom_evaluator=evaluation_function,
+            custom_evaluator=_as_custom_evaluator(evaluation_function),
             max_trials=100,  # Moved here from decorator
             timeout=1800,  # 30 minutes in seconds (was timeout_minutes=30)
             algorithm="random",  # Offline local example; smart algorithms require cloud

@@ -27,8 +27,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -70,7 +70,12 @@ def customer_support_agent(question: str, choices: list[str]) -> int:
 
     Returns a 0-based index corresponding to the best choice.
     """
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.3, max_tokens=120)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.3),
+        max_tokens=trial_config.get("max_tokens", 120),
+    )
 
     labeled_choices = "\n".join(
         f"{chr(65 + i)}. {opt}" for i, opt in enumerate(choices)
@@ -161,10 +166,17 @@ def load_and_apply_saved_config():
         )
         def production_support_agent(question: str, choices: list[str]) -> int:
             """Production MCQ selector using saved config."""
+            trial_config = traigent.get_config() or {}
             llm = ChatOpenAI(
-                model="gpt-4.1-mini",  # Overridden by saved config
-                temperature=0.3,  # Overridden by saved config
-                max_tokens=120,  # Overridden by saved config
+                model=trial_config.get(
+                    "model", "gpt-4.1-mini"
+                ),  # Overridden by saved config
+                temperature=trial_config.get(
+                    "temperature", 0.3
+                ),  # Overridden by saved config
+                max_tokens=trial_config.get(
+                    "max_tokens", 120
+                ),  # Overridden by saved config
             )
             labeled = "\n".join(
                 f"{chr(65 + i)}. {opt}" for i, opt in enumerate(choices)

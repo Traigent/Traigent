@@ -83,9 +83,10 @@ wrap_untrusted = _SAFE_HELPERS.wrap_untrusted
 def intelligent_content_system(topic: str) -> str:
     # Step 1: Analyze topic requirements. The topic is untrusted user input.
     safe_topic = wrap_untrusted("topic", topic)
+    trial_config = traigent.get_config() or {}
     analyzer = ChatOpenAI(
-        model="gpt-4.1-mini",  # Uses analyzer_model from optimization
-        temperature=0.1,  # Uses analyzer_temp from optimization
+        model=trial_config.get("analyzer_model", "gpt-4.1-mini"),
+        temperature=trial_config.get("analyzer_temp", 0.1),
         max_tokens=500,
     )
 
@@ -99,9 +100,9 @@ def intelligent_content_system(topic: str) -> str:
     # Step 2: Generate content based on analysis. Treat the analyzer's output
     # as untrusted as well, since it can echo adversarial topic content.
     generator = ChatOpenAI(
-        model="gpt-4.1",  # Uses generator_model from optimization
-        temperature=0.7,  # Uses generator_temp from optimization
-        max_tokens=2000,  # Uses max_context from optimization
+        model=trial_config.get("generator_model", "gpt-4.1"),
+        temperature=trial_config.get("generator_temp", 0.7),
+        max_tokens=trial_config.get("max_context", 2000),
     )
 
     content_result = generator.invoke(

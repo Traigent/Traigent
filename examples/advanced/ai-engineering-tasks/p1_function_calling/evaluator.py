@@ -395,6 +395,13 @@ def evaluate_function_calling_task(
 ) -> ToolExecutionResult:
     """Evaluate a complete function calling task."""
 
+    if not isinstance(task, dict):
+        # The dataset yields FunctionCallingTask dataclasses.
+        task = {
+            "description": task.description,
+            "expected_tool": task.expected_tool,
+            "available_tools": task.available_tools,
+        }
     task_description = task["description"]
     expected_tool = task["expected_tool"]
     available_tools = task["available_tools"]

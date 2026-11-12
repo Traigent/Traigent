@@ -827,7 +827,17 @@ class PlatformRegistry:
             platform: Platform name
             executor_class: Executor class
         """
-        cls._executors[platform.lower()] = executor_class
+        if not isinstance(platform, str) or not platform.strip():
+            raise ValueError("platform must be a non-empty string")
+        if not isinstance(executor_class, type) or not issubclass(
+            executor_class, AgentExecutor
+        ):
+            raise ValueError("executor_class must be an AgentExecutor subclass")
+        key = platform.lower()
+        existing = cls._executors.get(key)
+        if existing is not None and existing is not executor_class:
+            logger.warning("Overriding existing executor for platform '%s'", platform)
+        cls._executors[key] = executor_class
 
     @classmethod
     def get_executor(cls, platform: str) -> type[AgentExecutor]:

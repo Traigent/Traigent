@@ -119,7 +119,11 @@ def _calc_accuracy(
     max_trials=10,
 )
 def calculate(expression: str) -> str:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.0),
+    )
     # The expression is untrusted: isolate it in a tagged block so embedded
     # directives cannot override the calculator task.
     prompt = f"""

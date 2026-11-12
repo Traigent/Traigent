@@ -53,11 +53,15 @@ traigent.configure(logging_level="DEBUG")
     },
 )
 def debug_example(prompt: str) -> str:
+    trial_config = traigent.get_config() or {}
     print("Original parameters in code:")
     print("- model: gpt-4.1-mini")
     print("- temperature: 0.7")
 
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.7),
+    )
 
     # Debug output will show:
     # [Traigent] Intercepted ChatOpenAI constructor

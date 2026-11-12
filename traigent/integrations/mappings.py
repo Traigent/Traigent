@@ -19,6 +19,10 @@ IMPORTANT — constructor vs method params:
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 _HF_ASYNC_INFERENCE_CLIENT = "huggingface_hub.AsyncInferenceClient"
 
 _HF_INFERENCE_CLIENT = "huggingface_hub.InferenceClient"
@@ -564,8 +568,26 @@ def register_parameter_mapping(class_name: str, mapping: dict[str, str]) -> None
     Args:
         class_name: Fully-qualified class name
         mapping: Parameter mapping dict (traigent_param -> framework_param)
+
+    Raises:
+        ValueError: If ``class_name`` is empty or ``mapping`` is not a
+            ``dict[str, str]``.
+
+    Replacing an existing mapping logs a warning. The mapping is copied so later
+    caller-side mutation cannot change the registry.
     """
-    PARAMETER_MAPPINGS[class_name] = mapping
+    if not isinstance(class_name, str) or not class_name.strip():
+        raise ValueError("class_name must be a non-empty string")
+    if not isinstance(mapping, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()
+    ):
+        raise ValueError("mapping must be a dict[str, str]")
+    if class_name in PARAMETER_MAPPINGS:
+        logger.warning(
+            "Overriding existing parameter mapping for '%s' (replaces, does not merge)",
+            class_name,
+        )
+    PARAMETER_MAPPINGS[class_name] = dict(mapping)
 
 
 def register_method_mapping(class_name: str, mapping: dict[str, list[str]]) -> None:
@@ -574,8 +596,28 @@ def register_method_mapping(class_name: str, mapping: dict[str, list[str]]) -> N
     Args:
         class_name: Fully-qualified class name
         mapping: Method mapping dict (method_name -> list of params)
+
+    Raises:
+        ValueError: If ``class_name`` is empty or ``mapping`` is not a
+            ``dict[str, list[str]]``.
+
+    Replacing an existing mapping logs a warning. The mapping is copied.
     """
-    METHOD_MAPPINGS[class_name] = mapping
+    if not isinstance(class_name, str) or not class_name.strip():
+        raise ValueError("class_name must be a non-empty string")
+    if not isinstance(mapping, dict) or not all(
+        isinstance(k, str)
+        and isinstance(v, (list, tuple))
+        and all(isinstance(i, str) for i in v)
+        for k, v in mapping.items()
+    ):
+        raise ValueError("mapping must be a dict[str, list[str]]")
+    if class_name in METHOD_MAPPINGS:
+        logger.warning(
+            "Overriding existing method mapping for '%s' (replaces, does not merge)",
+            class_name,
+        )
+    METHOD_MAPPINGS[class_name] = {k: list(v) for k, v in mapping.items()}
 
 
 def get_all_supported_classes() -> list[str]:

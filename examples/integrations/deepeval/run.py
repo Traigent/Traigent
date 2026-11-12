@@ -60,9 +60,13 @@ scorer = DeepEvalScorer(
 )
 def answer_question(question: str) -> str:
     """Simple Q&A agent whose parameters are optimized by Traigent."""
+    trial_config = traigent.get_config() or {}
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.7),
+    )
     return llm.invoke(question).content
 
 

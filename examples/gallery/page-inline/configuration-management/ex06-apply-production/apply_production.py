@@ -146,7 +146,7 @@ class OptimizedChatService:
         )
         def generate_greeting(name: str) -> str:
             """Generate personalized greeting."""
-            config = self.config
+            config = {**self.config, **(traigent.get_config() or {})}
 
             style_prompt = {
                 "friendly": "in a warm and friendly manner",
@@ -184,7 +184,7 @@ class OptimizedChatService:
         )
         def generate_response(query: str, context: str = "") -> str:
             """Generate response using optimized parameters."""
-            config = self.config
+            config = {**self.config, **(traigent.get_config() or {})}
 
             creativity_map = {"low": 0.1, "medium": 0.5, "high": 0.9}
 

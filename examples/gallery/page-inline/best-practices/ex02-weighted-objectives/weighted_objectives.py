@@ -142,7 +142,11 @@ def _mcq_accuracy(output: int | None, expected: int | None, llm_metrics=None) ->
     max_trials=10,
 )
 def select_answer(question: str, choices: list[str]) -> int:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
+    trial_config = traigent.get_config() or {}
+    llm = ChatOpenAI(
+        model=trial_config.get("model", "gpt-4.1-mini"),
+        temperature=trial_config.get("temperature", 0.0),
+    )
     labeled = "\n".join(f"{chr(65 + i)}. {opt}" for i, opt in enumerate(choices))
     prompt = f"Question: {question}\nOptions:\n{labeled}\nRespond with only the letter (A-D)."
     resp = llm.invoke([HumanMessage(content=prompt)])

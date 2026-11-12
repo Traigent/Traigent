@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -52,6 +53,8 @@ class KnobStrategy(Protocol):
         ...
 
 
+logger = logging.getLogger(__name__)
+
 STRATEGY_REGISTRY: dict[str, KnobStrategy] = {}
 
 
@@ -70,6 +73,11 @@ def register_strategy(strategy: KnobStrategy) -> KnobStrategy:
             f"{sorted(invalid_kinds)}"
         )
 
+    existing = STRATEGY_REGISTRY.get(strategy_id)
+    if existing is not None and existing is not strategy:
+        logger.warning(
+            "Overriding existing knob strategy registration for %r", strategy_id
+        )
     STRATEGY_REGISTRY[strategy_id] = strategy
     return strategy
 

@@ -22,6 +22,7 @@ Run with (from repo root): .venv/bin/python examples/advanced/ai-engineering-tas
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import sys
@@ -194,6 +195,50 @@ def _create_dummy_eval_dataset() -> str:
     return _write_eval_dataset(samples)
 
 
+def _as_custom_evaluator(evaluation_function: Callable) -> Callable:
+    """Adapt this example's metrics function to Traigent's custom_evaluator contract.
+
+    Traigent calls ``custom_evaluator(func, config, example)`` once per dataset
+    example with the trial config; the metrics come from the evaluator this
+    example builds, so the tuned values decide the scores.
+    """
+
+    cache: dict[str, dict] = {}
+
+    def _evaluator(_func: Callable, config: dict, example: Any) -> Any:
+        from traigent.api.types import ExampleResult
+
+        # One metrics pass per trial config, shared by every dataset example.
+        key = json.dumps(config, sort_keys=True, default=str)
+        if key not in cache:
+            cache[key] = evaluation_function(**config)
+        metrics = cache[key]
+        return ExampleResult(
+            example_id=str(getattr(example, "example_id", "trial")),
+            input_data=dict(example.input_data),
+            expected_output=example.expected_output,
+            actual_output=metrics,
+            metrics={
+                k: float(v)
+                for k, v in metrics.items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            },
+            execution_time=0.0,
+            success=True,
+        )
+
+    return _evaluator
+
+
+@functools.lru_cache(maxsize=1)
+def _trial_evaluation_function() -> Callable:
+    """Small deterministic task set used when a trial calls the decorated function."""
+    return create_evaluation_function(
+        create_token_budget_dataset(total_tasks=12, task_distribution=None),
+        "constrained_demo",
+    )
+
+
 @traigent.optimize(
     configuration_space=TOKEN_BUDGET_SEARCH_SPACE,
     eval_dataset=_create_dummy_eval_dataset(),
@@ -230,17 +275,56 @@ def optimize_token_budget(
     preserve_critical_info: bool = True,
     smart_compression: bool = False,
     **kwargs,
-) -> None:
+) -> dict[str, float]:
     """
     Traigent-optimized function for token budget optimization.
 
     This function will be called by Traigent with different parameter combinations
     to find the optimal configuration for cost-effective token allocation.
     """
+    # CONTEXT mode never overrides parameters: apply the per-trial config explicitly.
+    trial_config = traigent.get_config() or {}
+    allocation_strategy = trial_config.get("allocation_strategy", allocation_strategy)
+    system_prompt_pct = trial_config.get("system_prompt_pct", system_prompt_pct)
+    examples_pct = trial_config.get("examples_pct", examples_pct)
+    retrieved_context_pct = trial_config.get(
+        "retrieved_context_pct", retrieved_context_pct
+    )
+    conversation_history_pct = trial_config.get(
+        "conversation_history_pct", conversation_history_pct
+    )
+    buffer_pct = trial_config.get("buffer_pct", buffer_pct)
+    truncation_strategy = trial_config.get("truncation_strategy", truncation_strategy)
+    context_selection = trial_config.get("context_selection", context_selection)
+    adaptive_reallocation = trial_config.get(
+        "adaptive_reallocation", adaptive_reallocation
+    )
+    query_classification = trial_config.get(
+        "query_classification", query_classification
+    )
+    output_buffer = trial_config.get("output_buffer", output_buffer)
+    preserve_critical_info = trial_config.get(
+        "preserve_critical_info", preserve_critical_info
+    )
+    smart_compression = trial_config.get("smart_compression", smart_compression)
 
-    # This is a placeholder - the actual evaluation happens in the evaluation function
-    # Traigent will inject the optimal parameters and track results
-    pass
+    # Run the tuned configuration through this example's evaluator.
+    tuned = {
+        "allocation_strategy": allocation_strategy,
+        "system_prompt_pct": system_prompt_pct,
+        "examples_pct": examples_pct,
+        "retrieved_context_pct": retrieved_context_pct,
+        "conversation_history_pct": conversation_history_pct,
+        "buffer_pct": buffer_pct,
+        "truncation_strategy": truncation_strategy,
+        "context_selection": context_selection,
+        "adaptive_reallocation": adaptive_reallocation,
+        "query_classification": query_classification,
+        "output_buffer": output_buffer,
+        "preserve_critical_info": preserve_critical_info,
+        "smart_compression": smart_compression,
+    }
+    return _trial_evaluation_function()(**{**tuned, **trial_config})
 
 
 def run_baseline_comparison(
@@ -548,7 +632,7 @@ async def main() -> None:
     baseline_results = run_baseline_comparison(tasks, budget_scenario)
 
     # Set up Traigent evaluation
-    create_evaluation_function(tasks, budget_scenario)
+    evaluation_function = create_evaluation_function(tasks, budget_scenario)
 
     # Configure Traigent optimization
     # traigent.configure(
@@ -564,6 +648,7 @@ async def main() -> None:
     # Run the optimization
     try:
         optimization_results = await optimize_token_budget.optimize(
+            custom_evaluator=_as_custom_evaluator(evaluation_function),
             max_trials=120,
             timeout=2400,  # 40 minutes
         )

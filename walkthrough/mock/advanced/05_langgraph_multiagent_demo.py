@@ -114,6 +114,7 @@ class RAGState(TypedDict):
     web_results: list[str]
     answer: str
     iteration: int
+    trial_config: dict[str, object]
 
 
 # =============================================================================
@@ -139,7 +140,9 @@ def retrieve_documents(state: RAGState) -> RAGState:
     else:
         docs = ["Generic document 1.", "Generic document 2."]
 
-    return {**state, "documents": docs}
+    # Tuned value: how many retrieved documents flow into the rest of the graph.
+    top_k = int(state.get("trial_config", {}).get("retrieve.top_k", len(docs)))
+    return {**state, "documents": docs[: max(top_k, 0)]}
 
 
 def grade_documents(state: RAGState) -> RAGState:
@@ -227,8 +230,9 @@ def generate_answer(state: RAGState) -> RAGState:
     The LangChain interceptor automatically captures tokens and cost.
 
     NOTE: LangGraphAdapter will:
-    - Auto-inject temperature from config_space["generate.temperature"]
     - Auto-create OTEL spans
+    The tuned generate.model / generate.temperature come from the trial config
+    carried in the graph state.
     """
     docs = state["relevant_docs"] or state["documents"]
     question = state["question"]
@@ -236,15 +240,16 @@ def generate_answer(state: RAGState) -> RAGState:
     if MOCK_MODE:
         # Mock answer generation
         if docs:
-            answer = f"Based on the context: {docs[0]}"
+            answer = "Based on the context: " + " ".join(docs)
         else:
             answer = f"I don't have enough information to answer: {question}"
     else:
         # Real LLM generation - use LangChain wrapper for automatic cost tracking
+        tuned = state.get("trial_config", {})
         llm = ChatOpenAI(
-            model=DEFAULT_MODEL,
+            model=str(tuned.get("generate.model", DEFAULT_MODEL)),
             max_tokens=150,
-            temperature=0.7,  # NOTE: Will be injected from config_space when LangGraphAdapter is available
+            temperature=float(tuned.get("generate.temperature", 0.7)),
         )
         context = "\n".join(docs) if docs else "No relevant documents found."
 
@@ -547,6 +552,8 @@ def run_rag_workflow(question: str) -> str:
         "web_results": [],
         "answer": "",
         "iteration": 0,
+        # Hand the tuned values to every node through the graph state.
+        "trial_config": dict(traigent.get_config() or {}),
     }
 
     # Run the workflow
