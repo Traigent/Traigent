@@ -166,3 +166,42 @@ def test_explicit_default_dict_override_is_honoured_for_non_privacy() -> None:
     assert base.merge({"analytics_endpoint": None}).analytics_endpoint is None
     base = TraigentConfig(result_source="x")
     assert base.merge({"result_source": None}).result_source is None
+
+
+# --- review round 2: privacy values are normalised before merging ---
+
+
+@pytest.mark.parametrize("raw,expected", [("false", False), (" FALSE ", False)])
+def test_string_false_content_identity_is_normalised(raw: str, expected: bool) -> None:
+    merged = TraigentConfig().merge({"content_identity": raw})
+    assert merged.content_identity is expected
+
+
+def test_string_true_no_egress_is_a_bool() -> None:
+    merged = TraigentConfig().merge({"no_egress": " True "})
+    assert merged.no_egress is True
+
+
+def test_string_false_analytics_opt_out_wins() -> None:
+    merged = TraigentConfig().merge({"enable_usage_analytics": "false"})
+    assert merged.enable_usage_analytics is False
+
+
+@pytest.mark.parametrize(
+    "name", ["no_egress", "enable_usage_analytics", "content_identity"]
+)
+@pytest.mark.parametrize("bad", ["maybe", 1, 0, [], "yes"])
+def test_invalid_privacy_value_raises_without_echo(name: str, bad: object) -> None:
+    with pytest.raises(TypeError) as excinfo:
+        TraigentConfig().merge({name: bad})
+    assert name in str(excinfo.value)
+    assert str(bad) not in str(excinfo.value) or str(bad) in name
+
+
+def test_dict_context_single_sided_string_is_normalised() -> None:
+    set_config({})
+    try:
+        merged = merge_with_context({"no_egress": "true"})
+    finally:
+        set_config(None)
+    assert merged["no_egress"] is True

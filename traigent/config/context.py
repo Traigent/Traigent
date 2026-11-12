@@ -255,9 +255,14 @@ def merge_with_context(
         merged = override_config.copy()
         merged.update(context_config)
         for name in TraigentConfig._PRIVACY_FIELDS:
-            if name in override_config and name in context_config:
+            if name in override_config or name in context_config:
+                # Normalise even a single-sided value; a lone side is
+                # compared with the neutral default.
+                neutral = {"no_egress": False, "enable_usage_analytics": True}.get(name)
                 merged[name] = TraigentConfig._strictest(
-                    name, override_config[name], context_config[name]
+                    name,
+                    override_config.get(name, neutral),
+                    context_config.get(name, neutral),
                 )
         return merged
     else:

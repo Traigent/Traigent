@@ -1011,6 +1011,10 @@ class TraigentConfig:
         explicit_override_keys: set[str] = set()
         if isinstance(other, dict):
             explicit_override_keys = set(other)
+            other = {
+                k: (self._coerce_privacy(k, v) if k in self._PRIVACY_FIELDS else v)
+                for k, v in other.items()
+            }
             plain, extras = self._split_extras(other)
             other = self.from_dict(plain)
             for name, value in extras.items():
@@ -1062,8 +1066,29 @@ class TraigentConfig:
         return plain, extras
 
     @staticmethod
+    def _coerce_privacy(name: str, value: Any) -> bool | None:
+        """Normalise a privacy value to a bool (None only for content_identity).
+
+        Accepts real bools and the strings "true"/"false" (case-insensitive,
+        trimmed). Anything else raises TypeError naming the field only.
+        """
+        if isinstance(value, bool):
+            return value
+        if value is None and name == "content_identity":
+            return None
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered == "true":
+                return True
+            if lowered == "false":
+                return False
+        raise TypeError(f"{name} must be a bool or the string 'true' or 'false'")
+
+    @staticmethod
     def _strictest(name: str, first: Any, second: Any) -> Any:
         """Stricter of two values for a privacy field (``second`` if neutral)."""
+        first = TraigentConfig._coerce_privacy(name, first)
+        second = TraigentConfig._coerce_privacy(name, second)
         if name == "no_egress":
             return bool(first) or bool(second)
         if name == "enable_usage_analytics":

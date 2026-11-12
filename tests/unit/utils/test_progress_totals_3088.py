@@ -72,3 +72,12 @@ def test_detailed_grid_of_lists_keeps_exact_size(capsys) -> None:
     cb.on_optimization_start({"m": ["a", "b"], "k": [1, 2, 3]}, ["accuracy"], "grid")
     assert cb.total_trials == 6
     assert "Total configurations to test: 6" in capsys.readouterr().out
+
+
+def test_detailed_grid_capped_by_budget_prints_the_budget(capsys) -> None:
+    cb = DetailedProgressCallback()
+    cb.on_optimization_start({"m": ["a", "b", "c"], "k": [1, 2]}, ["accuracy"], "grid")
+    cb.on_trial_start(0, {"m": "a"})
+    trial = SimpleNamespace(status="completed", metrics={}, config={"m": "a"})
+    cb.on_trial_complete(trial, _progress(4))
+    assert "Trial 1/4 completed" in capsys.readouterr().out
