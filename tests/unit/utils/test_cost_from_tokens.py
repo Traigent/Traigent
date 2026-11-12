@@ -294,3 +294,53 @@ class TestCostFromTokensCustomPricing:
         input_cost, output_cost = cost_from_tokens(100, 50, "file-model")
         assert input_cost == pytest.approx(100 * 1.0e-6)
         assert output_cost == pytest.approx(50 * 2.0e-6)
+
+
+class TestTaggedModelIds:
+    """'name:tag' ids keep the model name; distinct models never alias (#3081)."""
+
+    @pytest.fixture(autouse=True)
+    def reset_custom_pricing_cache(self):
+        old_cache = cc._CUSTOM_PRICING_CACHE
+        old_cache_key = cc._CUSTOM_PRICING_CACHE_KEY
+        cc._CUSTOM_PRICING_CACHE = None
+        cc._CUSTOM_PRICING_CACHE_KEY = None
+        try:
+            yield
+        finally:
+            cc._CUSTOM_PRICING_CACHE = old_cache
+            cc._CUSTOM_PRICING_CACHE_KEY = old_cache_key
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("llama3:latest", "llama3:latest"),
+            ("qwen2:7b", "qwen2:7b"),
+            ("ollama/qwen2:7b", "qwen2:7b"),
+            ("ollama:qwen2:7b", "qwen2:7b"),
+            ("openai:o1", "o1"),
+            ("anthropic:claude-3-haiku", "claude-3-haiku"),
+            ("claude-3-haiku-20240307-v1:0", "claude-3-haiku-20240307-v1:0"),
+            ("openai/gpt-4o", "gpt-4o"),
+        ],
+    )
+    def test_normalize_keeps_model_name(self, raw: str, expected: str) -> None:
+        assert cc._normalize_model_name(raw) == expected
+
+    def test_custom_price_for_one_tagged_model_does_not_price_another(
+        self, monkeypatch
+    ) -> None:
+        pricing = {
+            "zzcorp-small:7b": {
+                "input_cost_per_token": 1.0e-6,
+                "output_cost_per_token": 2.0e-6,
+            }
+        }
+        monkeypatch.setenv("TRAIGENT_CUSTOM_MODEL_PRICING_JSON", json.dumps(pricing))
+        monkeypatch.delenv("TRAIGENT_CUSTOM_MODEL_PRICING_FILE", raising=False)
+        in_cost, out_cost = cost_from_tokens(1000, 1000, "zzcorp-small:7b")
+        assert in_cost == pytest.approx(1000 * 1.0e-6)
+        assert out_cost == pytest.approx(1000 * 2.0e-6)
+        for other in ("zzother-model:7b", "ollama/zzother-model:7b", "7b"):
+            with pytest.raises(UnknownModelError):
+                cost_from_tokens(1000, 1000, other)
