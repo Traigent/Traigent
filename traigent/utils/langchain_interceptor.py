@@ -409,6 +409,9 @@ def capture_owner(owner: int) -> Iterator[None]:
 
 # Cap on the per-thread "last response" stack (see set_last_response).
 _MAX_THREAD_LOCAL_RESPONSES = 64
+# Cap on the process-global fallback list/dict used outside any capture scope.
+# Oldest entries are dropped so a long-lived process cannot grow without bound.
+_MAX_GLOBAL_RESPONSES = 10_000
 
 
 def _capture_response_in_bucket(
@@ -484,10 +487,16 @@ class LangChainMetadataCapture:
 
         with self._response_lock:
             self._all_responses.append(response)
+            overflow = len(self._all_responses) - _MAX_GLOBAL_RESPONSES
+            if overflow > 0:
+                del self._all_responses[:overflow]
 
         if key is not None:
             with self._by_key_lock:
+                self._by_key.pop(key, None)
                 self._by_key[key] = response
+                while len(self._by_key) > _MAX_GLOBAL_RESPONSES:
+                    del self._by_key[next(iter(self._by_key))]
 
     def get_last_response(self) -> Any | None:
         """Get and clear the last LangChain response."""
