@@ -82,3 +82,82 @@ def test_configure_applies_feature_flags(monkeypatch):
 
     configure(feature_flags={"test": {"infrastructure": {"flag": True}}})
     assert flag_registry.is_enabled(_TEST_FLAG_NAME) is True
+
+
+def test_override_restores_preexisting_override():
+    flag_registry.set_override(_TEST_FLAG_NAME, False)
+    with flag_registry.override(_TEST_FLAG_NAME, True):
+        assert flag_registry.is_enabled(_TEST_FLAG_NAME) is True
+    assert flag_registry.is_enabled(_TEST_FLAG_NAME) is False
+
+
+def test_nested_overrides_restore_outer_value():
+    with flag_registry.override(_TEST_FLAG_NAME, False):
+        with flag_registry.override(_TEST_FLAG_NAME, True):
+            assert flag_registry.is_enabled(_TEST_FLAG_NAME) is True
+        assert flag_registry.is_enabled(_TEST_FLAG_NAME) is False
+    # No override left: back to the registered default.
+    assert flag_registry.is_enabled(_TEST_FLAG_NAME) is True
+    assert _TEST_FLAG_NAME not in flag_registry._context_overrides.get()
+
+
+def test_override_restores_previous_on_exception():
+    flag_registry.set_override(_TEST_FLAG_NAME, False)
+    with pytest.raises(RuntimeError):
+        with flag_registry.override(_TEST_FLAG_NAME, True):
+            raise RuntimeError("boom")
+    assert flag_registry.is_enabled(_TEST_FLAG_NAME) is False
+
+
+def test_override_clears_when_no_previous_on_exception():
+    with pytest.raises(RuntimeError):
+        with flag_registry.override(_TEST_FLAG_NAME, False):
+            raise RuntimeError("boom")
+    assert _TEST_FLAG_NAME not in flag_registry._context_overrides.get()
+
+
+def test_apply_config_empty_mapping_clears_previous_values():
+    flag_registry.apply_config({"test": {"infrastructure": {"flag": False}}})
+    assert flag_registry.is_enabled(_TEST_FLAG_NAME) is False
+    flag_registry.apply_config({})
+    assert flag_registry.is_enabled(_TEST_FLAG_NAME) is True
+
+
+def test_apply_config_none_leaves_values_unchanged():
+    flag_registry.apply_config({"test": {"infrastructure": {"flag": False}}})
+    flag_registry.apply_config(None)
+    assert flag_registry.is_enabled(_TEST_FLAG_NAME) is False
+
+
+def test_overlapping_overrides_in_threads_do_not_clobber():
+    import threading
+
+    a_in, b_in = threading.Event(), threading.Event()
+    a_out, b_out = threading.Event(), threading.Event()
+    seen: dict[str, bool] = {}
+
+    def worker_a():
+        with flag_registry.override(_TEST_FLAG_NAME, False):
+            a_in.set()
+            b_in.wait(5)
+            seen["a_inside"] = flag_registry.is_enabled(_TEST_FLAG_NAME)
+        a_out.set()
+        b_out.wait(5)
+
+    def worker_b():
+        a_in.wait(5)
+        with flag_registry.override(_TEST_FLAG_NAME, True):
+            b_in.set()
+            a_out.wait(5)  # A exits first, out of LIFO order
+            seen["b_inside"] = flag_registry.is_enabled(_TEST_FLAG_NAME)
+        b_out.set()
+
+    threads = [threading.Thread(target=worker_a), threading.Thread(target=worker_b)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert seen == {"a_inside": False, "b_inside": True}
+    assert flag_registry._context_overrides.get() == {}
+    assert flag_registry._overrides == {}
+    assert flag_registry.is_enabled(_TEST_FLAG_NAME) is True

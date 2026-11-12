@@ -121,6 +121,14 @@ def _validate_ip_address(
     purpose: str,
     allow_private_hosts: bool,
 ) -> None:
+    # Normalise IPv4-mapped IPv6 (::ffff:a.b.c.d) to IPv4 so every check below
+    # behaves identically across Python versions.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if allow_private_hosts and ip.is_loopback:
+        # Loopback (127.0.0.0/8, ::1, ::ffff:127.0.0.1) is explicitly allowed
+        # in this mode; CPython also flags ::1 as reserved, so test it first.
+        return
     if ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
         raise UnsafeUrlError(f"{purpose} points at a non-routable address")
     if not allow_private_hosts and (ip.is_private or ip.is_loopback):
