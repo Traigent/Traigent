@@ -95,3 +95,74 @@ def test_merge_with_context_keeps_context_privacy_fields() -> None:
     assert isinstance(merged, TraigentConfig)
     assert merged.no_egress is True
     assert merged.enable_usage_analytics is False
+
+
+# --- review round 1: dict overrides, context routing, serialisation ---
+
+_PRIVACY = ("no_egress", "enable_usage_analytics", "content_identity")
+
+
+def test_context_config_with_dict_override_routes_privacy_to_fields() -> None:
+    set_config(TraigentConfig())
+    try:
+        merged = merge_with_context(
+            {"no_egress": True, "enable_usage_analytics": False}
+        )
+    finally:
+        set_config(None)
+    assert merged.no_egress is True
+    assert merged.enable_usage_analytics is False
+    assert "no_egress" not in merged.custom_params
+    assert "enable_usage_analytics" not in merged.custom_params
+
+
+def test_context_config_cannot_loosen_override_privacy() -> None:
+    set_config(TraigentConfig(no_egress=False))
+    try:
+        merged = merge_with_context({"no_egress": True})
+    finally:
+        set_config(None)
+    assert merged.no_egress is True
+
+
+def test_dict_context_privacy_stricter_wins() -> None:
+    set_config({"no_egress": False, "enable_usage_analytics": True})
+    try:
+        merged = merge_with_context(
+            {"no_egress": True, "enable_usage_analytics": False}
+        )
+    finally:
+        set_config(None)
+    assert merged["no_egress"] is True
+    assert merged["enable_usage_analytics"] is False
+
+
+def test_merge_dict_override_does_not_leave_privacy_in_custom_params() -> None:
+    merged = TraigentConfig(no_egress=True).merge({"no_egress": False})
+    assert merged.no_egress is True
+    assert "no_egress" not in merged.custom_params
+    assert merged.to_dict().get("no_egress", True) is True
+
+
+def test_existing_custom_params_privacy_key_is_stripped() -> None:
+    base = TraigentConfig(custom_params={"no_egress": False, "keep": 1})
+    merged = base.merge({"temperature": 0.1})
+    assert merged.custom_params == {"keep": 1}
+
+
+@pytest.mark.parametrize("override", [{"no_egress": False}, {}, {"no_egress": True}])
+def test_to_dict_agrees_with_fields_for_privacy(override: dict) -> None:
+    merged = TraigentConfig(no_egress=True, enable_usage_analytics=False).merge(
+        {**override, "enable_usage_analytics": True}
+    )
+    serialised = merged.to_dict()
+    for name in _PRIVACY:
+        if name in serialised:
+            assert serialised[name] == getattr(merged, name)
+
+
+def test_explicit_default_dict_override_is_honoured_for_non_privacy() -> None:
+    base = TraigentConfig(analytics_endpoint="https://example.invalid/a")
+    assert base.merge({"analytics_endpoint": None}).analytics_endpoint is None
+    base = TraigentConfig(result_source="x")
+    assert base.merge({"result_source": None}).result_source is None
