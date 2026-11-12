@@ -53,15 +53,36 @@ class TestAcceptedValues:
         )
         assert item.total_tokens == 0
 
-    def test_cost_tolerance_boundary_is_inclusive(self):
-        item = _build(input_cost=0.0, output_cost=0.0, total_cost=0.0001)
-        assert item.total_cost == 0.0001
+    def test_sub_tolerance_wrong_total_is_rejected(self):
+        # #3109: a fixed 0.0001 USD absolute tolerance accepted these.
+        assert len(_errors(input_cost=0.0, output_cost=0.0, total_cost=0.0001)) == 1
+        assert len(_errors(input_cost=4e-5, output_cost=4e-5, total_cost=0.0)) == 1
+        assert len(_errors(input_cost=0.0, output_cost=0.0, total_cost=9e-5)) == 1
+
+    def test_float_rounding_noise_is_accepted(self):
+        item = _build(input_cost=0.1, output_cost=0.2, total_cost=0.1 + 0.2)
+        assert item.total_cost == pytest.approx(0.3)
+        item = _build(input_cost=4e-5, output_cost=4e-5, total_cost=8e-5)
+        assert item.total_cost == 8e-5
 
     def test_cost_just_past_tolerance_is_rejected(self):
         assert _errors(input_cost=0.0, output_cost=0.0, total_cost=0.00011) == [
             "total_cost (0.00011000) must equal input_cost (0.00000000) + "
             "output_cost (0.00000000) = 0.00000000"
         ]
+
+    @pytest.mark.parametrize(
+        "over",
+        [
+            {"input_tokens": INF, "total_tokens": INF},
+            {"input_tokens": True, "total_tokens": 6},
+            {"input_tokens": 10.0},
+            {"output_tokens": NAN, "total_tokens": NAN},
+        ],
+    )
+    def test_non_integer_or_non_finite_tokens_are_rejected(self, over):
+        errors = _errors(**over)
+        assert any("must be an integer" in e for e in errors)
 
     def test_negative_difference_uses_absolute_value(self):
         assert len(_errors(total_cost=0.74)) == 1

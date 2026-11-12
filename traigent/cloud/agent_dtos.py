@@ -11,6 +11,29 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+# Costs are compared with a relative tolerance (plus a negligible absolute
+# floor for exact zeros) so that sub-cent calls are validated as strictly as
+# large ones; a fixed absolute dollar tolerance would accept any wrong total
+# below it.
+_COST_REL_TOL = 1e-9
+_COST_ABS_TOL = 1e-12
+
+
+def _costs_match(actual: float, expected: float) -> bool:
+    """True when two finite costs agree; NaN and Inf never match."""
+    if not (math.isfinite(actual) and math.isfinite(expected)):
+        return False
+    return math.isclose(actual, expected, rel_tol=_COST_REL_TOL, abs_tol=_COST_ABS_TOL)
+
+
+def _token_type_errors(fields: list[tuple[str, Any]]) -> list[str]:
+    """Token counts must be real integers (not bool, float, NaN or Inf)."""
+    return [
+        f"{name} must be an integer: {value!r}"
+        for name, value in fields
+        if isinstance(value, bool) or not isinstance(value, int)
+    ]
+
 
 @dataclass
 class AgentCostBreakdown:
@@ -92,6 +115,15 @@ class AgentCostBreakdown:
                 f"input_tokens ({self.input_tokens}) + "
                 f"output_tokens ({self.output_tokens}) = {expected_total_tokens}"
             )
+        errors.extend(
+            _token_type_errors(
+                [
+                    ("input_tokens", self.input_tokens),
+                    ("output_tokens", self.output_tokens),
+                    ("total_tokens", self.total_tokens),
+                ]
+            )
+        )
         return errors
 
     def _cost_errors(self) -> list[str]:
@@ -109,9 +141,18 @@ class AgentCostBreakdown:
             if math.isinf(value):
                 errors.append(f"{field_name} cannot be Inf")
 
-        # Validate cost arithmetic (with floating point tolerance)
+        # Validate cost arithmetic (relative floating point tolerance)
         expected_total_cost = self.input_cost + self.output_cost
-        if abs(self.total_cost - expected_total_cost) > 0.0001:
+        # Non-finite parts and a NaN total are already reported above; a finite
+        # pair whose sum overflows (or an Inf total) still fails here.
+        parts_finite = math.isfinite(self.input_cost) and math.isfinite(
+            self.output_cost
+        )
+        if (
+            parts_finite
+            and not math.isnan(self.total_cost)
+            and not _costs_match(self.total_cost, expected_total_cost)
+        ):
             errors.append(
                 f"total_cost ({self.total_cost:.8f}) must equal "
                 f"input_cost ({self.input_cost:.8f}) + "
@@ -264,27 +305,37 @@ class WorkflowCostSummary:
                 f"Hint: Use WorkflowCostSummary.from_agents() to compute totals automatically."
             )
 
-        # Use floating point tolerance for costs
-        if abs(self.total_input_cost - expected_input_cost) > 0.0001:
+        # Use a relative floating point tolerance for costs; NaN never matches
+        if not _costs_match(self.total_input_cost, expected_input_cost):
             validation_errors.append(
                 f"total_input_cost ({self.total_input_cost:.8f}) must equal "
                 f"sum of agent input_costs ({expected_input_cost:.8f}). "
                 f"Hint: Use WorkflowCostSummary.from_agents() to compute totals automatically."
             )
 
-        if abs(self.total_output_cost - expected_output_cost) > 0.0001:
+        if not _costs_match(self.total_output_cost, expected_output_cost):
             validation_errors.append(
                 f"total_output_cost ({self.total_output_cost:.8f}) must equal "
                 f"sum of agent output_costs ({expected_output_cost:.8f}). "
                 f"Hint: Use WorkflowCostSummary.from_agents() to compute totals automatically."
             )
 
-        if abs(self.total_cost - expected_total_cost) > 0.0001:
+        if not _costs_match(self.total_cost, expected_total_cost):
             validation_errors.append(
                 f"total_cost ({self.total_cost:.8f}) must equal "
                 f"sum of agent total_costs ({expected_total_cost:.8f}). "
                 f"Hint: Use WorkflowCostSummary.from_agents() to compute totals automatically."
             )
+
+        validation_errors.extend(
+            _token_type_errors(
+                [
+                    ("total_input_tokens", self.total_input_tokens),
+                    ("total_output_tokens", self.total_output_tokens),
+                    ("total_tokens", self.total_tokens),
+                ]
+            )
+        )
 
         if validation_errors:
             raise ValueError(

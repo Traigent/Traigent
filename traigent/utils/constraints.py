@@ -13,6 +13,7 @@ reintroduce the #1958 divergence for those models.
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -632,8 +633,9 @@ def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstr
     3. **inf** — if BOTH return ``None`` the model is unknown to every source and
        FAILS the constraint (returns infinity) to prevent silent passing.
 
-    The constraint validates that this estimated cost per 1k-token budget is
-    within the specified limit.
+    The constraint validates that the estimated cost per 1k tokens (the
+    ``max_tokens`` budget price divided by ``max_tokens / 1000``) is within the
+    specified limit. A missing or invalid ``max_tokens`` fails the constraint.
     """
 
     def calculate_cost(config: dict[str, Any]) -> float:
@@ -645,17 +647,36 @@ def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstr
         model = config.get("model", DEFAULT_MODEL)
         max_tokens = config.get("max_tokens", 150)
 
+        # Without a usable positive token budget the per-1k price cannot be
+        # derived; fail closed rather than let the config pass as free.
+        if (
+            isinstance(max_tokens, bool)
+            or not isinstance(max_tokens, (int, float))
+            or not math.isfinite(max_tokens)
+            or max_tokens <= 0
+            or int(max_tokens) != max_tokens
+        ):
+            # Type only: the value is caller-supplied and may carry content.
+            logger.warning(
+                "Invalid max_tokens (%s) - failing cost constraint",
+                type(max_tokens).__name__,
+            )
+            return float("inf")
+        max_tokens = int(max_tokens)
+
         # 1. Canonical first: deterministic for the curated table + aliases.
-        result = _try_fallback_pricing(model, max_tokens)
-        if result is not None:
-            return result
+        total = _try_fallback_pricing(model, max_tokens)
 
         # 2. litellm fallback: coverage for models outside the curated table.
-        result = _try_litellm_pricing(model, max_tokens)
-        if result is not None:
-            return result
+        if total is None:
+            total = _try_litellm_pricing(model, max_tokens)
 
-        # 3. Unknown to both -> fail the constraint.
+        if total is not None and math.isfinite(total) and total >= 0:
+            # Both helpers price the whole max_tokens budget; normalise to the
+            # cost of 1k tokens so the value matches the parameter name.
+            return float(total) / (max_tokens / 1000)
+
+        # 3. Unknown to both (or non-finite) -> fail the constraint.
         logger.warning(
             "Unknown model %r has no pricing info - failing cost constraint", model
         )
