@@ -428,6 +428,9 @@ def _safe_allowlisted_observation_snapshot(
     return safe
 
 
+_TERMINAL_OBSERVATION_STATUSES = frozenset({"completed", "failed", "rejected"})
+
+
 def _keep_if_none(value: Any, fallback: Any) -> Any:
     """``value`` unless it is None, in which case ``fallback``."""
     return value if value is not None else fallback
@@ -683,7 +686,7 @@ class _ObservationCall:
     effective_type: ObservationType
     name: str
     parent_observation_id: str | None
-    status: str
+    status: str | None
     started_at: datetime | None
     ended_at: datetime | None
     latency_ms: int | None
@@ -2571,7 +2574,7 @@ class ObservabilityClient:
         effective_type = call.effective_type
         name = call.name
         parent_observation_id = call.parent_observation_id
-        status = call.status
+        status = call.status or "running"
         started_at = call.started_at
         ended_at = call.ended_at
         latency_ms = call.latency_ms
@@ -2645,7 +2648,13 @@ class ObservabilityClient:
         effective_type = call.effective_type
         name = call.name
         parent_observation_id = call.parent_observation_id
+        # An update that omits status keeps the stored one, and a terminal
+        # status is never moved back to "running" by a later update.
         status = call.status
+        if status is None or (
+            status == "running" and existing.status in _TERMINAL_OBSERVATION_STATUSES
+        ):
+            status = existing.status
         started_at = call.started_at
         ended_at = call.ended_at
         latency_ms = call.latency_ms
@@ -2756,7 +2765,7 @@ class ObservabilityClient:
         observation_type: ObservationType | str | None = None,
         observation_id: str | None = None,
         parent_observation_id: str | None = None,
-        status: str = "running",
+        status: str | None = None,
         started_at: datetime | None = None,
         ended_at: datetime | None = None,
         latency_ms: int | None = None,
