@@ -122,11 +122,18 @@ class FlagRegistry:
     def override(self, name: str, value: bool) -> Generator[None, None, None]:
         """Context manager for temporary flag overrides."""
 
+        with self._lock:
+            self._ensure_flag(name)
+            previous = self._overrides.get(name)
         self.set_override(name, value)
         try:
             yield
         finally:
-            self.clear_override(name)
+            with self._lock:
+                if previous is None:
+                    self._overrides.pop(name, None)
+                else:
+                    self._overrides[name] = previous
 
     def is_enabled(self, name: str) -> bool:
         """Return the evaluated boolean state for a flag."""

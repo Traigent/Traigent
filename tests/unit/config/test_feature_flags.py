@@ -82,3 +82,35 @@ def test_configure_applies_feature_flags(monkeypatch):
 
     configure(feature_flags={"test": {"infrastructure": {"flag": True}}})
     assert flag_registry.is_enabled(_TEST_FLAG_NAME) is True
+
+
+def test_override_restores_preexisting_override():
+    flag_registry.set_override(_TEST_FLAG_NAME, False)
+    with flag_registry.override(_TEST_FLAG_NAME, True):
+        assert flag_registry.is_enabled(_TEST_FLAG_NAME) is True
+    assert flag_registry.is_enabled(_TEST_FLAG_NAME) is False
+
+
+def test_nested_overrides_restore_outer_value():
+    with flag_registry.override(_TEST_FLAG_NAME, False):
+        with flag_registry.override(_TEST_FLAG_NAME, True):
+            assert flag_registry.is_enabled(_TEST_FLAG_NAME) is True
+        assert flag_registry.is_enabled(_TEST_FLAG_NAME) is False
+    # No override left: back to the registered default.
+    assert flag_registry.is_enabled(_TEST_FLAG_NAME) is True
+    assert _TEST_FLAG_NAME not in flag_registry._overrides
+
+
+def test_override_restores_previous_on_exception():
+    flag_registry.set_override(_TEST_FLAG_NAME, False)
+    with pytest.raises(RuntimeError):
+        with flag_registry.override(_TEST_FLAG_NAME, True):
+            raise RuntimeError("boom")
+    assert flag_registry.is_enabled(_TEST_FLAG_NAME) is False
+
+
+def test_override_clears_when_no_previous_on_exception():
+    with pytest.raises(RuntimeError):
+        with flag_registry.override(_TEST_FLAG_NAME, False):
+            raise RuntimeError("boom")
+    assert _TEST_FLAG_NAME not in flag_registry._overrides
