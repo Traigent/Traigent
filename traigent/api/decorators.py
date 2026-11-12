@@ -47,6 +47,7 @@ import dataclasses
 import inspect
 import math
 import os
+import re
 import threading
 import warnings
 from collections.abc import Callable, Collection, Mapping
@@ -3313,6 +3314,37 @@ def _attach_optimized_function_extras(
             optimized_func._surrogate_evaluator_name = surrogate_evaluator_name
 
 
+_CONFIG_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
+
+
+def _validate_configuration_space_keys(configuration_space: Any) -> None:
+    """Reject configuration_space keys that are not dot-separated identifiers.
+
+    Same grammar as the JavaScript SDK and the TVL loader. The offending key
+    is not echoed; the message gives its position instead.
+    """
+    if not isinstance(configuration_space, dict):
+        return
+    for index, key in enumerate(configuration_space):
+        if not isinstance(key, str) or not _CONFIG_KEY_RE.match(key):
+            raise ValueError(
+                f"configuration_space key #{index + 1} is not a valid identifier: "
+                "keys must be dot-separated segments of letters, digits and "
+                "underscores, each starting with a letter or underscore"
+            )
+
+
+_TEXT_ARGS = ("agent_name", "experiment_name", "run_title", "run_description")
+
+
+def _validate_optional_text_args(settings: dict[str, Any]) -> None:
+    """Require agent_name/experiment_name/run_title/run_description be str or None."""
+    for arg in _TEXT_ARGS:
+        value = settings.get(arg)
+        if value is not None and not isinstance(value, str):
+            raise TypeError(f"{arg} must be a string or None")
+
+
 def optimize(  # NOSONAR(S107)
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
@@ -3739,6 +3771,8 @@ def optimize(  # NOSONAR(S107)
     eval_dataset = combined_settings["eval_dataset"]
     objectives = combined_settings["objectives"]
     configuration_space = combined_settings["configuration_space"]
+    _validate_configuration_space_keys(configuration_space)
+    _validate_optional_text_args(combined_settings)
     default_config = combined_settings["default_config"]
     _validate_default_config(default_config)
     constraints = combined_settings["constraints"]

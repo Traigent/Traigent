@@ -17,6 +17,21 @@ logger = get_logger(__name__)
 _OPTIMIZER_REGISTRY: dict[str, type[BaseOptimizer]] = {}
 
 
+# Registry entries that exist only so a mistaken selection yields a clear
+# construction error; they are never offered as a choice.
+_INTERNAL_OPTIMIZER_NAMES = frozenset({"remote"})
+
+
+def _unknown_optimizer_message(name: str) -> str:
+    """Build the unknown-optimizer error from user-selectable names only."""
+    available = [n for n in _OPTIMIZER_REGISTRY if n not in _INTERNAL_OPTIMIZER_NAMES]
+    return (
+        f"Unknown optimizer '{name}' for the algorithm argument. "
+        f"Available optimizers: {available}. "
+        "Run `traigent algorithms` to list the public algorithm names."
+    )
+
+
 def register_optimizer(name: str, optimizer_class: type[BaseOptimizer]) -> None:
     """Register an optimization algorithm.
 
@@ -97,10 +112,7 @@ def get_optimizer(
         )
 
     if name not in _OPTIMIZER_REGISTRY:
-        available = list(_OPTIMIZER_REGISTRY.keys())
-        raise OptimizationError(
-            f"Unknown optimizer '{name}'. Available optimizers: {available}"
-        )
+        raise OptimizationError(_unknown_optimizer_message(name))
 
     optimizer_class = _OPTIMIZER_REGISTRY[name]
 
@@ -132,10 +144,7 @@ def get_optimizer_info(name: str) -> dict[str, Any]:
         OptimizationError: If optimizer name not found
     """
     if name not in _OPTIMIZER_REGISTRY:
-        available = list(_OPTIMIZER_REGISTRY.keys())
-        raise OptimizationError(
-            f"Unknown optimizer '{name}'. Available optimizers: {available}"
-        )
+        raise OptimizationError(_unknown_optimizer_message(name))
 
     optimizer_class = _OPTIMIZER_REGISTRY[name]
 
