@@ -121,6 +121,10 @@ def _validate_ip_address(
     purpose: str,
     allow_private_hosts: bool,
 ) -> None:
+    # Normalise IPv4-mapped IPv6 (::ffff:a.b.c.d) to IPv4 so every check below
+    # behaves identically across Python versions.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
     if allow_private_hosts and ip.is_loopback:
         # Loopback (127.0.0.0/8, ::1, ::ffff:127.0.0.1) is explicitly allowed
         # in this mode; CPython also flags ::1 as reserved, so test it first.

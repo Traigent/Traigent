@@ -8,11 +8,13 @@ environment variables, configuration mappings, and test overrides.
 
 from __future__ import annotations
 
+import contextvars
 import os
 import threading
 from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from traigent.utils.logging import get_logger
@@ -61,6 +63,14 @@ class FlagRegistry:
         self._overrides: dict[str, bool] = {}
         self._config_values: dict[str, bool] = {}
         self._lock = threading.RLock()
+        # Context-local overrides (override() context manager). Holds an
+        # immutable mapping, replaced (never mutated) and reset by token, so
+        # each thread/task has its own nesting.
+        self._context_overrides: contextvars.ContextVar[Mapping[str, bool]] = (
+            contextvars.ContextVar(
+                f"traigent_flag_overrides_{id(self)}", default=MappingProxyType({})
+            )
+        )
 
     # ------------------------------------------------------------------
     # Registration & configuration
@@ -77,9 +87,11 @@ class FlagRegistry:
     def apply_config(self, mapping: Mapping[str, Any] | None) -> None:
         """Apply configuration mapping to populate flag defaults."""
 
-        if not mapping:
+        if mapping is None:
             return
 
+        # An explicit empty mapping means "no config": it clears previous
+        # config-derived values just as a non-empty mapping replaces them.
         with self._lock:
             self._config_values.clear()
             for flag in self._flags.values():
@@ -124,22 +136,23 @@ class FlagRegistry:
 
         with self._lock:
             self._ensure_flag(name)
-            previous = self._overrides.get(name)
-        self.set_override(name, value)
+        token = self._context_overrides.set(
+            MappingProxyType({**self._context_overrides.get(), name: bool(value)})
+        )
         try:
             yield
         finally:
-            with self._lock:
-                if previous is None:
-                    self._overrides.pop(name, None)
-                else:
-                    self._overrides[name] = previous
+            self._context_overrides.reset(token)
 
     def is_enabled(self, name: str) -> bool:
         """Return the evaluated boolean state for a flag."""
 
         with self._lock:
             flag = self._ensure_flag(name)
+
+            context_overrides = self._context_overrides.get()
+            if name in context_overrides:
+                return context_overrides[name]
 
             if name in self._overrides:
                 return self._overrides[name]

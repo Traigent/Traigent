@@ -169,3 +169,45 @@ def test_ipv6_loopback_rejected_without_allow_private_hosts(url: str) -> None:
 def test_allow_private_hosts_still_rejects_non_loopback_nonroutable(url: str) -> None:
     with pytest.raises(UnsafeUrlError):
         validate_outbound_url(url, allow_private_hosts=True)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://[::ffff:169.254.169.254]/",
+        "http://[::ffff:0.0.0.0]/",
+        "http://[::ffff:224.0.0.1]/",
+    ],
+)
+def test_mapped_nonroutable_rejected_even_with_allow_private_hosts(url: str) -> None:
+    with pytest.raises(UnsafeUrlError):
+        validate_outbound_url(url, allow_private_hosts=True)
+
+
+@pytest.mark.parametrize(
+    "url", ["http://[::ffff:127.0.0.1]/", "http://[::ffff:10.0.0.1]/"]
+)
+def test_mapped_private_rejected_without_allow_private_hosts(url: str) -> None:
+    with pytest.raises(UnsafeUrlError):
+        validate_outbound_url(url)
+
+
+def test_validate_ip_address_normalises_mapped_loopback(monkeypatch) -> None:
+    import ipaddress
+
+    from traigent.utils import url_security
+
+    class _FakeMapped(ipaddress.IPv6Address):
+        # Simulate Python 3.12, where a mapped loopback is not is_loopback.
+        @property
+        def is_loopback(self) -> bool:
+            return False
+
+        @property
+        def is_reserved(self) -> bool:
+            return True
+
+    ip = _FakeMapped("::ffff:127.0.0.1")
+    url_security._validate_ip_address(ip, purpose="x", allow_private_hosts=True)
+    with pytest.raises(UnsafeUrlError):
+        url_security._validate_ip_address(ip, purpose="x", allow_private_hosts=False)
