@@ -3569,6 +3569,9 @@ class OptimizationOrchestrator:
             ) = await self.parallel_execution_manager.run_with_cost_permits(
                 tasks,
                 cancel_sentinel=None,  # None indicates cost limit cancellation
+                cost_of_result=lambda r: (
+                    self._extract_trial_cost(r) if isinstance(r, TrialResult) else None
+                ),
             )
         except (KeyboardInterrupt, asyncio.CancelledError):
             # #3234: pair every started trial with a completion, then propagate.

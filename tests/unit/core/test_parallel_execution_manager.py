@@ -394,6 +394,125 @@ class TestParallelExecutionManagerAsync:
         assert unawaited_warnings == []
 
 
+class TestProcessExitPropagation:
+    """SystemExit / KeyboardInterrupt in a trial must stop the run (#3124)."""
+
+    @pytest.mark.parametrize("exc_type", [SystemExit, KeyboardInterrupt])
+    def test_exit_propagates_and_permit_is_settled(self, monkeypatch, exc_type):
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        enforcer = CostEnforcer(
+            CostEnforcerConfig(limit=10.0, estimated_cost_per_trial=1.0)
+        )
+        manager = ParallelExecutionManager(parallel_trials=1, cost_enforcer=enforcer)
+
+        async def exits():
+            raise exc_type(3)
+
+        async def run():
+            return await manager.run_with_cost_permits([exits()])
+
+        with pytest.raises(exc_type):
+            asyncio.run(run())
+
+        # The reservation was released on the re-raise path and no spend was
+        # recorded for the aborted trial.
+        assert enforcer._reserved_cost == pytest.approx(0.0)
+        assert enforcer._accumulated_cost == pytest.approx(0.0)
+
+    @staticmethod
+    def _make(monkeypatch, parallel=2):
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        enforcer = CostEnforcer(
+            CostEnforcerConfig(limit=10.0, estimated_cost_per_trial=1.0)
+        )
+        return enforcer, ParallelExecutionManager(
+            parallel_trials=parallel, cost_enforcer=enforcer
+        )
+
+    def test_known_cost_is_booked_before_exit_propagates(self, monkeypatch):
+        enforcer, manager = self._make(monkeypatch, 1)
+
+        class PaidExit(SystemExit):
+            cost_usd = 0.3
+
+        async def exits():
+            raise PaidExit(3)
+
+        with pytest.raises(PaidExit):
+            asyncio.run(manager.run_with_cost_permits([exits()]))
+
+        assert enforcer._accumulated_cost == pytest.approx(0.3)
+        assert enforcer._reserved_cost == pytest.approx(0.0)
+
+    def test_unknown_cost_is_marked_untracked_before_exit_propagates(self, monkeypatch):
+        enforcer, manager = self._make(monkeypatch, 1)
+
+        async def exits():
+            raise SystemExit(3)
+
+        with pytest.raises(SystemExit):
+            asyncio.run(manager.run_with_cost_permits([exits()]))
+
+        assert enforcer.get_status().unknown_cost_mode is True
+        assert enforcer._reserved_cost == pytest.approx(0.0)
+
+    def test_finished_sibling_cost_is_booked_on_interrupt(self, monkeypatch):
+        enforcer, manager = self._make(monkeypatch, 2)
+
+        async def finishes():
+            return {"cost": 0.2}
+
+        async def interrupted():
+            await asyncio.sleep(0.05)
+            raise KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            asyncio.run(
+                manager.run_with_cost_permits(
+                    [finishes(), interrupted()],
+                    cost_of_result=lambda r: r["cost"],
+                )
+            )
+
+        assert enforcer._accumulated_cost == pytest.approx(0.2)
+        assert enforcer._reserved_cost == pytest.approx(0.0)
+
+    def test_unfinished_sibling_is_cancelled_and_marked_unknown(self, monkeypatch):
+        enforcer, manager = self._make(monkeypatch, 2)
+
+        async def interrupted():
+            await asyncio.sleep(0.05)
+            raise KeyboardInterrupt
+
+        async def runs_long():
+            await asyncio.sleep(30)
+
+        with pytest.raises(KeyboardInterrupt):
+            asyncio.run(manager.run_with_cost_permits([interrupted(), runs_long()]))
+
+        assert enforcer._reserved_cost == pytest.approx(0.0)
+        assert enforcer.get_status().unknown_cost_mode is True
+
+    @pytest.mark.asyncio
+    async def test_ordinary_exception_still_becomes_result_and_releases(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
+        enforcer = CostEnforcer(
+            CostEnforcerConfig(limit=10.0, estimated_cost_per_trial=1.0)
+        )
+        manager = ParallelExecutionManager(parallel_trials=1, cost_enforcer=enforcer)
+
+        async def boom():
+            raise ValueError("bad trial")
+
+        results, cancelled = await manager.run_with_cost_permits([boom()])
+
+        assert cancelled == 0
+        assert isinstance(results[0].result, ValueError)
+        assert enforcer._reserved_cost == pytest.approx(0.0)
+
+
 class TestBackwardCompatibilityWithOrchestrator:
     """Test that ParallelExecutionManager works with orchestrator patterns."""
 
