@@ -7,10 +7,7 @@ This module defines configuration options and constraints for framework integrat
 
 from __future__ import annotations
 
-import inspect
-import sys
 from dataclasses import dataclass, field
-from types import ModuleType
 from typing import Any
 
 from ..utils.exceptions import ValidationError as ValidationException
@@ -27,53 +24,6 @@ __all__ = (
     "integration_config",
     "get_integration_config",
 )
-
-
-_integration_config_subscribers: set[ModuleType] = set()
-
-
-def _should_register_module(module: ModuleType | None) -> bool:
-    if module is None:
-        return False
-    if module is sys.modules.get(__name__):
-        return False
-    if not hasattr(module, "__dict__"):
-        return False
-    return True
-
-
-def _register_integration_config_subscribers() -> None:
-    """Register importing modules to keep integration_config in sync."""
-    try:
-        stack = inspect.stack()
-    except Exception as e:
-        logger.debug(f"Could not inspect call stack for integration config: {e}")
-        return
-
-    for frame_info in stack:
-        module = inspect.getmodule(frame_info.frame)
-        if not _should_register_module(module):
-            continue
-        if module is None:
-            logger.debug(
-                "Skipping integration config registration: module resolved to None"
-            )
-            continue
-        if module not in _integration_config_subscribers:
-            _integration_config_subscribers.add(module)
-        module.__dict__.setdefault("integration_config", None)
-
-
-def _propagate_integration_config() -> None:
-    """Propagate integration_config reference to subscriber modules."""
-    stale: list[ModuleType] = []
-    for module in _integration_config_subscribers:
-        try:
-            module.__dict__["integration_config"] = integration_config
-        except Exception:
-            stale.append(module)
-    for module in stale:
-        _integration_config_subscribers.discard(module)
 
 
 @dataclass
@@ -300,14 +250,10 @@ class FrameworkConstraints:
 
 # Global configuration instance
 integration_config = IntegrationConfig()
-_register_integration_config_subscribers()
-_propagate_integration_config()
 
 
 def get_integration_config() -> IntegrationConfig:
     """Return the active integration configuration."""
-    _register_integration_config_subscribers()
-    _propagate_integration_config()
     return integration_config
 
 
@@ -360,8 +306,6 @@ def configure_integrations(**kwargs) -> IntegrationConfig:
     Returns:
         Updated IntegrationConfig instance.
     """
-    _register_integration_config_subscribers()
-
     for key, value in kwargs.items():
         if not hasattr(integration_config, key):
             logger.warning(f"Unknown configuration option: {key}")
@@ -374,17 +318,4 @@ def configure_integrations(**kwargs) -> IntegrationConfig:
 
         setattr(integration_config, key, value)
 
-    _propagate_integration_config()
     return integration_config
-
-
-class _IntegrationConfigModule(ModuleType):
-    def __setattr__(self, name: str, value: Any) -> None:
-        super().__setattr__(name, value)
-        if name == "integration_config":
-            _propagate_integration_config()
-
-
-_module = sys.modules.get(__name__)
-if _module is not None and not isinstance(_module, _IntegrationConfigModule):
-    _module.__class__ = _IntegrationConfigModule

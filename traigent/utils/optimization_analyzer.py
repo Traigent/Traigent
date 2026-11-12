@@ -22,6 +22,7 @@ except ImportError:
         "Install it with: pip install 'traigent[analytics]'"
     ) from None
 
+from traigent.core.objective_directions import resolve_objective_orientation
 from traigent.utils.file_versioning import FileVersionManager
 from traigent.utils.logging import get_logger
 from traigent.utils.optimization_logger import OptimizationLogger
@@ -583,6 +584,10 @@ class OptimizationAnalyzer:
 
         objective = _select_convergence_objective(data, objective)
 
+        pick_best = (
+            min if _is_minimized(objective, _objective_orientations(data)) else max
+        )
+
         # Extract metric values
         values = []
         best_values: list[float] = []
@@ -592,7 +597,7 @@ class OptimizationAnalyzer:
                 value = metrics[objective]
                 values.append(value)
                 if best_values:
-                    best_values.append(max(value, best_values[-1]))
+                    best_values.append(pick_best(value, best_values[-1]))
                 else:
                     best_values.append(value)
 
@@ -653,7 +658,15 @@ class OptimizationAnalyzer:
             return None
         obj1_values, obj2_values = metric_values
 
-        pareto_points = _calculate_pareto_points(obj1_values, obj2_values)
+        orientations = _objective_orientations(data)
+        pareto_points = _calculate_pareto_points(
+            obj1_values,
+            obj2_values,
+            maximize=(
+                not _is_minimized(objectives[0], orientations),
+                not _is_minimized(objectives[1], orientations),
+            ),
+        )
 
         # Create plot
         fig, ax = plt.subplots(figsize=(10, 8))
@@ -935,10 +948,62 @@ def _get_pareto_metric_values(
     return obj1_values, obj2_values
 
 
+def _objective_orientations(data: dict[str, Any]) -> dict[str, str]:
+    """Return the orientations recorded for the run's objectives, by name."""
+    found: dict[str, str] = {}
+    objectives_data = data.get("objectives")
+    entries: Any = objectives_data
+    if isinstance(objectives_data, dict):
+        summary = objectives_data.get("summary")
+        if isinstance(summary, dict):
+            recorded = summary.get("orientations")
+            if isinstance(recorded, dict):
+                for name, orientation in recorded.items():
+                    if isinstance(name, str) and isinstance(orientation, str):
+                        found[name] = orientation
+        entries = objectives_data.get("objectives")
+    if isinstance(entries, list):
+        for entry in entries:
+            if isinstance(entry, dict):
+                name = entry.get("name")
+                orientation = entry.get("orientation")
+                if isinstance(name, str) and isinstance(orientation, str):
+                    found.setdefault(name, orientation)
+    return found
+
+
+def _is_minimized(name: str, orientations: dict[str, str]) -> bool:
+    """True when ``name`` is minimised: recorded direction, else SDK-owned default.
+
+    A name with neither is plotted as maximised (the legacy behaviour) and a
+    warning says so, because the SDK does not guess directions for custom metrics.
+    """
+    declared = orientations.get(name)
+    if declared in ("maximize", "minimize"):
+        return declared == "minimize"
+    try:
+        return resolve_objective_orientation(name) == "minimize"
+    except ValueError:
+        logger.warning(
+            "No recorded direction for objective %r; plotting it as maximised",
+            name,
+        )
+        return False
+
+
 def _calculate_pareto_points(
-    obj1_values: list[Any], obj2_values: list[Any]
+    obj1_values: list[Any],
+    obj2_values: list[Any],
+    maximize: tuple[bool, bool] = (True, True),
 ) -> np.ndarray:
-    """Return nondominated points with the original maximize-both comparison."""
+    """Return nondominated points, honouring each axis's direction."""
+
+    def at_least_as_good(axis: int, other: Any, point: Any) -> bool:
+        return bool(other >= point if maximize[axis] else other <= point)
+
+    def better(axis: int, other: Any, point: Any) -> bool:
+        return bool(other > point if maximize[axis] else other < point)
+
     points = np.array(list(zip(obj1_values, obj2_values, strict=False)))
     pareto_points = []
 
@@ -946,11 +1011,10 @@ def _calculate_pareto_points(
         dominated = False
         for j, other in enumerate(points):
             if i != j:
-                # Check if 'other' dominates 'point' (assuming maximization)
                 if (
-                    other[0] >= point[0]
-                    and other[1] >= point[1]
-                    and (other[0] > point[0] or other[1] > point[1])
+                    at_least_as_good(0, other[0], point[0])
+                    and at_least_as_good(1, other[1], point[1])
+                    and (better(0, other[0], point[0]) or better(1, other[1], point[1]))
                 ):
                     dominated = True
                     break

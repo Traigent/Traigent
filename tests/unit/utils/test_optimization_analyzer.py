@@ -609,17 +609,17 @@ class TestOptimizationAnalyzer:
             "test_exp", "run_001", objectives=["accuracy", "latency"], show=False
         )
 
-        # mock_run_structure trials: (accuracy=0.85, latency=100) is dominated
-        # by (accuracy=0.92, latency=200) under maximize-both semantics, so
-        # only the second point survives onto the Pareto front.
+        # latency is minimised (SDK-owned default, #3094): the faster, less
+        # accurate (0.85, 100) and the slower, more accurate (0.92, 200) are
+        # both non-dominated trade-offs, so both are on the Pareto front.
         mock_ax.set_xlabel.assert_called_once_with("Accuracy")
         mock_ax.set_ylabel.assert_called_once_with("Latency")
         scatter_calls = mock_ax.scatter.call_args_list
         assert list(scatter_calls[0].args[0]) == [0.85, 0.92]
         assert list(scatter_calls[0].args[1]) == [100, 200]
         assert scatter_calls[0].kwargs.get("label") == "All trials"
-        assert list(scatter_calls[1].args[0]) == [0.92]
-        assert list(scatter_calls[1].args[1]) == [200]
+        assert list(scatter_calls[1].args[0]) == [0.85, 0.92]
+        assert list(scatter_calls[1].args[1]) == [100, 200]
         assert scatter_calls[1].kwargs.get("label") == "Pareto front"
         mock_show.assert_not_called()
 
@@ -688,12 +688,11 @@ class TestOptimizationAnalyzer:
 
         analyzer.plot_pareto_front("test_exp", "run_001", show=False)
 
-        # Under maximize-both semantics none of these 3 points dominates
-        # another, so all 3 survive onto the Pareto front, sorted by the
-        # first objective (accuracy) ascending: 0.8, 0.85, 0.9.
+        # accuracy is maximised and latency minimised (#3094): the most
+        # accurate and fastest trial dominates the other two.
         pareto_call = mock_ax.scatter.call_args_list[1]
-        assert list(pareto_call.args[0]) == pytest.approx([0.8, 0.85, 0.9])
-        assert list(pareto_call.args[1]) == pytest.approx([100, 95, 90])
+        assert list(pareto_call.args[0]) == pytest.approx([0.9])
+        assert list(pareto_call.args[1]) == pytest.approx([90])
         assert pareto_call.kwargs.get("label") == "Pareto front"
         mock_show.assert_not_called()
 

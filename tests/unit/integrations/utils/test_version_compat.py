@@ -299,7 +299,8 @@ class TestVersionCompatibilityManager:
         """Test that newest applicable mapping is selected."""
         # For openai 2.0.0, should get the 2.0+ mapping
         mapping = manager.get_compatible_mapping("openai", "2.0.0")
-        assert mapping["model"] == "model_id"  # Hypothetical change in 2.0
+        assert mapping["model"] == "model"
+        assert mapping["max_tokens"] == "max_completion_tokens"
 
     def test_get_compatible_mapping_selects_older_mapping(
         self, manager: VersionCompatibilityManager
@@ -315,7 +316,7 @@ class TestVersionCompatibilityManager:
         """Test getting mapping for anthropic package."""
         mapping = manager.get_compatible_mapping("anthropic", "0.5.0")
         assert "max_tokens" in mapping
-        assert mapping["max_tokens"] == "max_tokens_to_sample"
+        assert mapping["max_tokens"] == "max_tokens"
 
     def test_get_compatible_mapping_for_langchain_old(
         self, manager: VersionCompatibilityManager
@@ -452,9 +453,9 @@ class TestVersionCompatibilityManager:
         params = {"model": "gpt-4", "max_tokens": 100, "temperature": 0.7}
         migrated = manager.migrate_parameters("openai", "1.0.0", "2.0.0", params)
 
-        # model should map to model_id
-        assert "model_id" in migrated
-        assert migrated["model_id"] == "gpt-4"
+        # model keeps its real name; the SDK has no model_id parameter
+        assert "model_id" not in migrated
+        assert migrated["model"] == "gpt-4"
 
         # max_tokens should map to max_completion_tokens
         assert "max_completion_tokens" in migrated
@@ -605,3 +606,24 @@ class TestVersionCompatibilityManager:
         # Should now use model instead of model_name
         assert "model" in new_params
         assert new_params["model"] == "gpt-4"
+
+
+class TestMappedNamesMatchInstalledSdk:
+    """Mapped vendor parameter names must exist on the installed SDK (#3150)."""
+
+    def test_openai_mapped_names_exist_on_chat_completions_create(self) -> None:
+        import inspect
+
+        openai_resources = pytest.importorskip("openai.resources.chat.completions")
+        accepted = set(
+            inspect.signature(openai_resources.Completions.create).parameters
+        )
+        manager = VersionCompatibilityManager()
+        for version in ("1.5.0", "2.0.0", "2.54.0"):
+            mapped = set(manager.get_compatible_mapping("openai", version).values())
+            assert mapped <= accepted, (version, mapped - accepted)
+
+    def test_anthropic_mapping_does_not_use_legacy_completion_name(self) -> None:
+        manager = VersionCompatibilityManager()
+        mapped = set(manager.get_compatible_mapping("anthropic", "0.125.0").values())
+        assert "max_tokens_to_sample" not in mapped
