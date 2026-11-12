@@ -6,6 +6,7 @@ into the standard role/content dict format used by most LLM APIs.
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
 
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -218,6 +219,15 @@ def coerce_to_gemini_format(
         String for single message, or content list for multi-turn.
     """
     normalized = coerce_messages(messages)
+
+    if any(msg.get("role") in ("system", "developer") for msg in normalized):
+        warnings.warn(
+            "coerce_to_gemini_format keeps the system role in contents, which "
+            "Gemini rejects; use coerce_to_gemini_request to get a "
+            "system_instruction.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     if len(normalized) == 1 and normalized[0].get("role") == "user":
         # Single user message -> return just the content string

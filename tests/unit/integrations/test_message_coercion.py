@@ -352,3 +352,24 @@ def test_gemini_request_requires_a_user_or_model_message() -> None:
     for bad in ([], [{"role": "system", "content": "only system"}]):
         with pytest.raises(ValueError, match="at least one user or model message"):
             coerce_to_gemini_request(bad)
+
+
+def test_gemini_format_warns_when_system_role_present() -> None:
+    import warnings
+
+    import pytest
+
+    for role in ("system", "developer"):
+        with pytest.warns(DeprecationWarning, match="coerce_to_gemini_request"):
+            result = coerce_to_gemini_format(
+                [
+                    {"role": role, "content": "Be terse"},
+                    {"role": "user", "content": "hi"},
+                ]
+            )
+        assert result[0]["role"] == role  # return value unchanged
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        coerce_to_gemini_format([{"role": "user", "content": "hi"}])
+        coerce_to_gemini_format("hello")
