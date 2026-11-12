@@ -2842,10 +2842,13 @@ def project_best_config_payload(payload: Any) -> dict[str, Any]:
     """
     if not isinstance(payload, dict) or not isinstance(payload.get("spec"), dict):
         raise MetadataContractViolation
-    out = dict(payload)
+    # Default-deny: only ``spec`` and ``environment`` may leave; other members are dropped.
+    out = {key: payload[key] for key in ("spec", "environment") if key in payload}
     if out.get("environment") is not None:
         out["environment"] = _strict_id(out["environment"], _Ctx())
     spec = dict(out["spec"])
+    if "forward_compat" in spec and not isinstance(spec["forward_compat"], bool):
+        raise MetadataContractViolation
     _project_best_config_ids(spec)
     if "provenance" in spec and spec["provenance"] is not None:
         try:
