@@ -30,6 +30,10 @@ def overflowed(monkeypatch):
     li.clear_captured_responses()
 
 
+def _incomplete():
+    return li._read_captured_responses(li.get_all_captured_responses)[1]
+
+
 def _fill(n):
     for _ in range(n):
         li._metadata_capture.set_last_response(_response())
@@ -37,17 +41,17 @@ def _fill(n):
 
 def test_flag_set_on_overflow_and_reset_by_clear(overflowed):
     _fill(2)
-    assert li.captured_responses_incomplete() is False
+    assert _incomplete() is False
     _fill(1)
-    assert li.captured_responses_incomplete() is True
+    assert _incomplete() is True
     li.clear_captured_responses()
-    assert li.captured_responses_incomplete() is False
+    assert _incomplete() is False
 
 
 def test_drain_resets_flag(overflowed):
     _fill(3)
     li._metadata_capture.drain()
-    assert li.captured_responses_incomplete() is False
+    assert _incomplete() is False
 
 
 def _custom_metrics():
@@ -102,3 +106,39 @@ def test_simple_evaluator_complete_without_overflow(overflowed):
 def test_simple_evaluator_unmeasured_after_overflow(overflowed):
     _fill(5)
     assert _simple_metrics().get("cost_unmeasured")
+
+
+def test_pair_is_read_under_one_lock_acquisition(overflowed, monkeypatch):
+    """Responses and the flag come from one critical section (no clear between)."""
+    _fill(5)
+    cap = li._metadata_capture
+    real = cap._response_lock
+    acquisitions = []
+
+    class CountingLock:
+        def __enter__(self):
+            acquisitions.append(1)
+            return real.__enter__()
+
+        def __exit__(self, *a):
+            return real.__exit__(*a)
+
+    monkeypatch.setattr(cap, "_response_lock", CountingLock())
+    responses, incomplete = li._read_captured_responses(li.get_all_captured_responses)
+    assert len(acquisitions) == 1
+    assert len(responses) == 2 and incomplete is True
+
+
+def test_clear_after_overflow_cannot_yield_complete_with_stale_responses(overflowed):
+    _fill(5)
+    responses, incomplete = li._read_captured_responses(li.get_all_captured_responses)
+    li.clear_captured_responses()  # a later clear cannot rewrite the pair taken
+    assert responses and incomplete is True
+    # and after the clear the pair is consistent (empty, complete)
+    responses, incomplete = li._read_captured_responses(li.get_all_captured_responses)
+    assert responses == [] and incomplete is False
+
+
+def test_injected_getter_is_used_as_is():
+    sentinel = [object()]
+    assert li._read_captured_responses(lambda: sentinel) == (sentinel, False)

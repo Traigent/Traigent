@@ -10,7 +10,7 @@ import importlib.util
 import threading
 import time
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -616,12 +616,18 @@ class LangChainMetadataCapture:
     def clear_current_key(self) -> None:
         _current_key.set(None)
 
-    def responses_incomplete(self) -> bool:
-        """True when the process-global list dropped responses (no scope)."""
-        if _capture_scope.get() is not None:
-            return False
+    def _snapshot_with_status(self) -> tuple[list[Any], bool]:
+        """Responses and the "global list dropped some" flag, under ONE lock.
+
+        Inside a capture scope the scoped bucket is never capped, so the flag
+        is False there.
+        """
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                return bucket.responses.copy(), False
         with self._response_lock:
-            return self._overflowed
+            return self._all_responses.copy(), self._overflowed
 
     def get_by_key(self, key: Any) -> Any:
         # Example ids are not unique ACROSS trials -- every trial evaluates the
@@ -699,9 +705,19 @@ def get_all_captured_responses() -> list[Any]:
     return _metadata_capture.get_all_responses()
 
 
-def captured_responses_incomplete() -> bool:
-    """True when the global fallback dropped responses, so spend is a floor."""
-    return _metadata_capture.responses_incomplete()
+def _read_captured_responses(
+    getter: Callable[[], list[Any]],
+) -> tuple[list[Any], bool]:
+    """Internal: ``(responses, incomplete)`` read atomically for the cost readers.
+
+    ``incomplete`` is True when the capped global fallback dropped responses,
+    so spend computed from them is only a floor. The stock getter is read
+    together with the flag under the capture lock; an injected getter (a test
+    or custom seam) is called as-is and cannot report a drop.
+    """
+    if getter is get_all_captured_responses:
+        return _metadata_capture._snapshot_with_status()
+    return getter(), False
 
 
 def get_captured_response_by_key(key: Any) -> Any | None:
