@@ -36,3 +36,19 @@ def test_security_profile_unknown_environment_fails_closed(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "qa")
 
     assert get_security_profile() is SecurityProfile.PRODUCTION
+
+
+def test_invalid_explicit_profile_fails_closed_without_echoing_value(
+    monkeypatch, caplog
+):
+    """An unrecognised explicit profile must not fall back to a weaker one."""
+    _clear_security_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("TRAIGENT_SECURITY_PROFILE", "prod-secret-typo")
+
+    with caplog.at_level("WARNING"):
+        profile = get_security_profile()
+
+    assert profile is SecurityProfile.PRODUCTION
+    assert "TRAIGENT_SECURITY_PROFILE" in caplog.text
+    assert "prod-secret-typo" not in caplog.text
