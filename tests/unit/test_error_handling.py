@@ -115,25 +115,27 @@ class TestErrorRecovery:
     """Test error recovery and fallback patterns."""
 
     def test_graceful_degradation(self):
-        """Test graceful degradation when optional components fail."""
-        # This tests the pattern where we continue operation even if
-        # non-critical components fail
+        """A failing optional component (significance post-processing) must
+        not fail the run: the real orchestrator method swallows the error."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
 
-        def optional_operation():
-            raise Exception("Optional component failed")
+        from traigent.core.orchestrator import OptimizationOrchestrator
 
-        def main_operation_with_fallback():
-            result = {"status": "success", "optional_data": None}
-            try:
-                result["optional_data"] = optional_operation()
-            except Exception:
-                # Graceful degradation - continue without optional data
-                pass
-            return result
+        fake_self = SimpleNamespace(
+            objective_schema=None,
+            optimizer=SimpleNamespace(objectives=["accuracy"]),
+        )
+        result = SimpleNamespace(trials=[], metadata={"status": "success"})
 
-        result = main_operation_with_fallback()
-        assert result["status"] == "success"
-        assert result["optional_data"] is None
+        with patch(
+            "traigent.core.orchestrator.compute_significance",
+            side_effect=Exception("Optional component failed"),
+        ) as mocked:
+            OptimizationOrchestrator._attach_statistical_significance(fake_self, result)
+
+        assert mocked.call_count == 1
+        assert result.metadata == {"status": "success"}
 
     def test_retry_pattern(self):
         """Test retry patterns with exponential backoff."""

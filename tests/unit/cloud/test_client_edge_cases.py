@@ -332,31 +332,49 @@ class TestCloudClientEdgeCases:
 
     @pytest.mark.asyncio
     async def test_memory_leak_prevention(self, client):
-        """Test that client doesn't leak memory on repeated operations."""
+        """Repeated successful optimize calls must not retain responses or
+        grow the client's own state."""
         import gc
-        import sys
+        import weakref
 
-        # Get initial reference count
-        initial_refs = sys.getrefcount(client)
+        from traigent.cloud.models import AgentOptimizationResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
 
-        # Perform many operations
-        mock_response = create_mock_response(
-            status=200, json_data={"optimization_id": "test"}
+        payload = {
+            "session_id": "s-1",
+            "optimization_id": "test",
+            "status": "started",
+        }
+        mock_response = create_mock_response(status=200, json_data=payload)
+        client._aio_session = Mock()
+        client._aio_session.closed = False
+        client._aio_session.post = Mock(return_value=mock_response)
+        client._get_headers = AsyncMock(return_value={"X-API-Key": "k"})
+
+        request = AgentOptimizationRequest(
+            agent_spec=AgentSpecification(
+                id="a", name="a", agent_type="conversational", agent_platform="openai"
+            ),
+            dataset=Dataset([EvaluationExample({"input": "x"}, "y")]),
+            configuration_space={"model": ["gpt-4"]},
+            objectives=["accuracy"],
         )
-        client._session.post = Mock(return_value=mock_response)
 
+        state_keys_before = set(vars(client))
+        refs = []
         for _ in range(100):
-            try:
-                await client.start_agent_optimization(Mock())
-            except Exception:
-                pass
+            # No swallowing: every call must succeed.
+            response = await client.start_agent_optimization(request)
+            assert isinstance(response, AgentOptimizationResponse)
+            assert response.optimization_id == "test"
+            refs.append(weakref.ref(response))
+            del response
 
-        # Force garbage collection
+        assert client._aio_session.post.call_count == 100
         gc.collect()
-
-        # Reference count should not grow significantly
-        final_refs = sys.getrefcount(client)
-        assert final_refs - initial_refs < 10  # Allow small growth
+        alive = [r for r in refs if r() is not None]
+        assert alive == []
+        assert set(vars(client)) == state_keys_before
 
     @pytest.mark.asyncio
     async def test_empty_configuration_space(self, client):

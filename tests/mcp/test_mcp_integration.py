@@ -269,29 +269,33 @@ class TestErrorRecoveryScenarios:
 
     @pytest.mark.asyncio
     async def test_resource_cleanup_on_error(
-        self, mock_cloud_client, sample_agent_spec, mcp_test_context
+        self,
+        mock_cloud_client,
+        mock_mcp_service,
+        sample_agent_spec,
+        mcp_test_context,
     ):
-        """Test that resources are properly cleaned up even when errors occur."""
-        try:
-            # Create agent
-            agent_result = await mock_cloud_client.create_agent(sample_agent_spec)
-            mcp_test_context.created_agents.append(agent_result["agent_id"])
+        """An execution error propagates (is not swallowed) and leaves the
+        service-side agent registered and tracked for cleanup."""
+        agent_result = await mock_cloud_client.create_agent(sample_agent_spec)
+        agent_id = agent_result["agent_id"]
+        mcp_test_context.created_agents.append(agent_id)
 
-            # Simulate an error during execution
-            invalid_request = AgentExecutionRequest(
-                agent_spec=sample_agent_spec,
-                input_data=None,  # Invalid: missing input data
-            )
+        # AgentExecutionRequest normalises missing input to {}, so the failure
+        # is injected at the transport instead.
+        mock_cloud_client.execute_agent.side_effect = RuntimeError("backend down")
+        request = AgentExecutionRequest(
+            agent_spec=sample_agent_spec, input_data={"query": "q"}
+        )
 
-            # This might fail in a real implementation
-            await mock_cloud_client.execute_agent(invalid_request)
+        with pytest.raises(RuntimeError, match="backend down"):
+            await mock_cloud_client.execute_agent(request)
 
-        except Exception:
-            # Error occurred, but cleanup should still happen
-            pass
-
-        # Verify cleanup tracking
-        assert len(mcp_test_context.created_agents) >= 1
+        # The service (not the test's own list) still holds the created agent.
+        assert agent_id in mock_mcp_service.agents
+        assert mock_mcp_service.agents[agent_id] is sample_agent_spec
+        assert [name for name, _ in mock_mcp_service.call_history] == ["create_agent"]
+        assert mcp_test_context.created_agents == [agent_id]
 
 
 class TestDatasetSubsetOptimization:

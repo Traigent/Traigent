@@ -133,6 +133,7 @@ class TestLocalEvaluatorTokenEstimation:
         result = await evaluator.evaluate(llm_response_function, config, sample_dataset)
 
         # Check that real LLM metrics are used (not estimated)
+        assert result.example_results
         for example_result in result.example_results:
             assert example_result.metrics["input_tokens"] == 150
             assert example_result.metrics["output_tokens"] == 75
@@ -182,6 +183,7 @@ class TestLocalEvaluatorTokenEstimation:
         result = await evaluator.evaluate(empty_function, config, sample_dataset)
 
         # Empty strings should still get minimum 1 token
+        assert len(result.example_results) == len(sample_dataset)
         for example_result in result.example_results:
             assert example_result.metrics["output_tokens"] >= 1
 
@@ -223,6 +225,7 @@ class TestLocalEvaluatorTokenEstimation:
         result = await evaluator.evaluate(simple_function, config, sample_dataset)
 
         # Check that example_results have token metrics in both places
+        assert result.example_results
         for example_result in result.example_results:
             # In metrics dict (for measures array)
             assert "input_tokens" in example_result.metrics
@@ -264,6 +267,7 @@ class TestLocalEvaluatorTokenEstimation:
         result = await evaluator.evaluate(string_function, config, sample_dataset)
 
         # Unknown cost is left out of the example metrics (#2517).
+        assert result.example_results
         for example_result in result.example_results:
             assert "input_cost" not in example_result.metrics
             assert "output_cost" not in example_result.metrics
@@ -293,6 +297,7 @@ class TestLocalEvaluatorTokenEstimation:
         assert result.aggregated_metrics["input_tokens"] > 0
 
         # Check example results have token data
+        assert result.example_results
         for example_result in result.example_results:
             assert "input_tokens" in example_result.metrics
             assert example_result.metrics["input_tokens"] > 0
@@ -376,6 +381,7 @@ class TestLocalEvaluatorIntegration:
         assert result.aggregated_metrics["total_tokens"] > 0
 
         # Each example should have realistic token counts
+        assert result.example_results
         for example_result in result.example_results:
             assert example_result.metrics["input_tokens"] > 5  # Longer inputs
             assert (
