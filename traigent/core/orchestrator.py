@@ -1252,13 +1252,19 @@ class OptimizationOrchestrator:
             else 0
         )
         raw_plateau_epsilon = self.config.get("plateau_epsilon")
+        # Validate every supplied value before deciding whether the condition
+        # is enabled, so a bad epsilon fails even when plateau_window is unset.
+        validated_epsilon = (
+            None
+            if raw_plateau_epsilon is None
+            else validate_plateau_epsilon(raw_plateau_epsilon)
+        )
+        raw_metric_limit = self.config.get("metric_limit")
+        if raw_metric_limit is not None:
+            validate_metric_limit(raw_metric_limit)
         plateau_epsilon: float | None = None
         if plateau_window > 0:
-            plateau_epsilon = (
-                1e-6
-                if raw_plateau_epsilon is None
-                else validate_plateau_epsilon(raw_plateau_epsilon)
-            )
+            plateau_epsilon = 1e-6 if validated_epsilon is None else validated_epsilon
         samples_include_pruned = bool(self.config.get("samples_include_pruned", True))
         metric_limit, metric_name, metric_include_pruned = (
             self._resolve_metric_limit_config()

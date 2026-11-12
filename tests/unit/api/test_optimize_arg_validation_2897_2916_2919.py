@@ -110,3 +110,55 @@ class TestEmptyObjectives:
         f = _decorate()
         with pytest.raises(ValueError, match="objectives"):
             await f.optimize(objectives=[], max_trials=1)
+
+
+SENTINEL = "zz-distinct-9137"
+
+
+class TestMessagesDoNotEchoValues:
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda: _sc.validate_plateau_epsilon(SENTINEL),
+            lambda: _sc.validate_plateau_epsilon(-912345.5),
+            lambda: _sc.validate_metric_limit(SENTINEL),
+            lambda: _sc.validate_metric_limit(-912345.5),
+            lambda: _sc.validate_metric_limit(float("nan")),
+            lambda: _decorate(content_less=SENTINEL),
+        ],
+    )
+    def test_value_absent_from_message(self, call):
+        with pytest.raises((TypeError, ValueError)) as info:
+            call()
+        text = str(info.value)
+        assert "zz-distinct-9137" not in text
+        assert "912345" not in text
+
+
+class TestCallTimeStopOverrides:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"plateau_epsilon": float("nan")},
+            {"plateau_epsilon": -1.0},
+            {"plateau_window": 0, "plateau_epsilon": "x"},
+            {"metric_limit": float("nan"), "metric_name": "accuracy"},
+        ],
+    )
+    async def test_bad_call_time_value_rejected_without_plateau_window(self, kwargs):
+        f = _decorate()
+        with pytest.raises((TypeError, ValueError)):
+            await f.optimize(max_trials=1, **kwargs)
+
+
+class TestEmptyObjectivesLeaveNoTvlState:
+    @pytest.mark.asyncio
+    async def test_empty_objectives_rejected_before_tvl_applied(self):
+        from unittest.mock import patch
+
+        f = _decorate()
+        with patch.object(f, "_process_tvl_options") as process:
+            with pytest.raises(ValueError, match="objectives"):
+                await f.optimize(objectives=[], tvl_spec="demo.tvl.yml", max_trials=1)
+        process.assert_not_called()

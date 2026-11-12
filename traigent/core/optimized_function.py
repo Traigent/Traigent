@@ -2675,6 +2675,17 @@ class OptimizedFunction[**P, R]:
             objectives, algorithm_kwargs
         )
 
+        # An explicit empty list is an error; reject it before any TVL state is
+        # applied so a failed call leaves the function untouched.
+        _explicit_objectives = (
+            objectives if objectives is not None else legacy_objectives
+        )
+        if isinstance(_explicit_objectives, (list, tuple)) and not _explicit_objectives:
+            raise ValueError(
+                "objectives must contain at least one objective; "
+                "omit it (or pass None) to keep the configured objectives"
+            )
+
         # Process TVL options
         algorithm, max_trials, timeout, configuration_space, objectives, tvl_state = (
             self._process_tvl_options(
@@ -2716,13 +2727,6 @@ class OptimizedFunction[**P, R]:
         runtime_objective_input = (
             objectives if objectives is not None else legacy_objectives
         )
-        if isinstance(runtime_objective_input, (list, tuple)) and not (
-            runtime_objective_input
-        ):
-            raise ValueError(
-                "objectives must contain at least one objective; "
-                "omit it (or pass None) to keep the configured objectives"
-            )
         try:
             runtime_schema = normalize_objectives(runtime_objective_input)
         except TypeError as exc:
