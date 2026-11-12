@@ -76,6 +76,7 @@ from traigent.utils.example_id import (
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
+from traigent.utils.retry_after import MAX_RETRY_AFTER_SECONDS, retry_after_from_error
 from traigent.utils.trial_costs import (
     COST_FLOOR_WIRE_KEY,
     TRIAL_COST_FIELDS,
@@ -92,7 +93,7 @@ logger = get_logger(__name__)
 _WARNING_RULE = "=" * 72
 _FINALIZE_MAX_ATTEMPTS = 3
 _FINALIZE_BACKOFF_SECONDS = (1.0, 2.0, 4.0)
-_FINALIZE_RETRYABLE_STATUSES = frozenset({403, 429, 500, 502, 503, 504})
+_FINALIZE_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 _FINALIZE_CONNECTION_ERROR_NAMES = (
     "ClientConnectorError",
     "ClientConnectionError",
@@ -3898,6 +3899,9 @@ class BackendSessionManager:
         delay = _FINALIZE_BACKOFF_SECONDS[
             min(attempt - 1, len(_FINALIZE_BACKOFF_SECONDS) - 1)
         ]
+        requested = retry_after_from_error(exc)
+        if requested is not None:
+            delay = requested  # server's Retry-After wins (bounded by caller)
         http_status = _log_safe_http_status(exc)
         status_part = "" if http_status is None else f" (HTTP {http_status})"
         logger.warning(
@@ -3988,6 +3992,9 @@ class BackendSessionManager:
                     or not _is_transient_finalize_error(exc)
                 ):
                     raise
+                requested = retry_after_from_error(exc)
+                if requested is not None and requested > MAX_RETRY_AFTER_SECONDS:
+                    raise  # the server asked for longer than we wait: no early retry
 
                 delay = self._log_finalize_retry(session_id, attempt, exc)
                 time.sleep(delay)

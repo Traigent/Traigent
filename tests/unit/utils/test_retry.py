@@ -336,7 +336,7 @@ class TestRetryHandler:
         assert isinstance(result.error, NonRetryableError)
 
     def test_retry_handler_honors_retry_after_for_status_retry(self, monkeypatch):
-        """Retry-After delays should be capped and used for status retries."""
+        """Retry-After delays are honoured (not clamped to max_delay) for status retries."""
         sleep_calls: list[float] = []
         monkeypatch.setattr(retry_module.time, "sleep", sleep_calls.append)
         error = ClientError("rate limited", status_code=429)
@@ -355,7 +355,7 @@ class TestRetryHandler:
 
         assert result.success is True
         assert result.attempts == 2
-        assert sleep_calls == [3.0]
+        assert sleep_calls == [10.0]
 
     def test_retry_handler_honors_retry_after_seconds_alias(self, monkeypatch):
         """Status retries also accept a retry_after_seconds exception attribute."""
@@ -377,7 +377,7 @@ class TestRetryHandler:
 
         assert result.success is True
         assert result.attempts == 2
-        assert sleep_calls == [2.5]
+        assert sleep_calls == [4.0]
 
     @pytest.mark.asyncio
     async def test_async_retry_handler(self):

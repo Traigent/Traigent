@@ -23,6 +23,7 @@ from traigent.utils.exceptions import (
     RateLimitError,
     RetryableError,
 )
+from traigent.utils.retry_after import parse_retry_after, retry_after_from_error
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,10 @@ class ResilientClient:
         error_str = str(error).lower()
         error_type_name = type(error).__name__.lower()
 
+        # 0. The typed rate-limit exception is structured evidence of a 429.
+        if isinstance(error, RateLimitError):
+            return ErrorType.RATE_LIMIT
+
         # 1. Structured HTTP status (error.status / status_code / response.*)
         # is authoritative over any message text (#3228).
         status = self._extract_status(error)
@@ -120,7 +125,11 @@ class ResilientClient:
             return ErrorType.CLIENT
 
         # 5. Last resort: loose network words in the message text.
-        if any(ind in error_str for ind in self._NETWORK_INDICATORS):
+        # Match at a word start so "preset" does not read as "reset" (#3010).
+        if re.search(
+            r"\b(?:" + "|".join(re.escape(i) for i in self._NETWORK_INDICATORS) + ")",
+            error_str,
+        ):
             return ErrorType.NETWORK
 
         return ErrorType.UNKNOWN
@@ -199,6 +208,17 @@ class ResilientClient:
         if isinstance(error, NonRetryableError):
             logger.debug("NonRetryableError - not retrying")
             return False
+        # A structured 401/403 is never retried, whatever the exception type
+        # (fail closed on the auth path, #3010).
+        if self._extract_status(error) in (401, 403):
+            logger.debug("Structured auth status - not retrying")
+            return False
+        # The server asked for longer than we will wait: stop and surface the
+        # error rather than retry inside its window (#3011).
+        requested = retry_after_from_error(error)
+        if requested is not None and requested > self.max_delay:
+            logger.debug("Retry-After exceeds max_delay - not retrying")
+            return False
         if isinstance(error, RetryableError):
             logger.debug("RetryableError - will retry")
             return True
@@ -248,14 +268,19 @@ class ResilientClient:
             # values are ignored and fall back to the normal backoff.
             retry_after = getattr(error, "retry_after", None)
             if retry_after is not None:
-                try:
-                    server_delay = float(retry_after)
-                    delay = ResilientClient._structured_retry_delay(self, server_delay)
-                except (TypeError, ValueError) as exc:
-                    logger.debug(
-                        "Ignoring invalid Retry-After %r: %s", retry_after, exc
-                    )
+                server_delay = parse_retry_after(retry_after)  # seconds or HTTP-date
+                if (
+                    server_delay is None
+                    and isinstance(retry_after, int | float)
+                    and not isinstance(retry_after, bool)
+                    and math.isfinite(retry_after)
+                ):
+                    server_delay = 0.0  # a negative number means "no wait"
+                if server_delay is None:
+                    logger.debug("Ignoring invalid Retry-After")
                     retry_after = None
+                else:
+                    delay = ResilientClient._structured_retry_delay(self, server_delay)
 
             if retry_after is None:
                 # Backward compatibility for callers that embed the header in

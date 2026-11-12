@@ -20,7 +20,6 @@ import time
 import weakref
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
@@ -112,6 +111,7 @@ from traigent.utils.logging import get_logger
 from traigent.utils.numeric_validation import positive_int_env
 from traigent.utils.optimization_only_egress import parse_flag
 from traigent.utils.retry import RetryConfig, RetryHandler
+from traigent.utils.retry_after import retry_after_from_headers
 from traigent.utils.thread_timeout import run_in_thread_with_timeout
 
 BACKEND_CLIENT = "backend client"
@@ -408,27 +408,8 @@ _SYNC_BACKEND_RETRY_CONFIG = RetryConfig(
 
 
 def _parse_retry_after(headers: Any) -> float | None:
-    if not headers:
-        return None
-    try:
-        value = headers.get("Retry-After")
-    except AttributeError:
-        return None
-    if value is None:
-        return None
-
-    try:
-        return max(0.0, float(value))
-    except (TypeError, ValueError):
-        pass
-
-    try:
-        retry_at = parsedate_to_datetime(str(value))
-    except (TypeError, ValueError, IndexError, OverflowError):
-        return None
-    if retry_at.tzinfo is None:
-        retry_at = retry_at.replace(tzinfo=UTC)
-    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+    """Seconds from ``Retry-After`` (delta-seconds or HTTP-date); unclamped (#3011)."""
+    return retry_after_from_headers(headers)
 
 
 _RETRY_AFTER_DECIMAL_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?")
