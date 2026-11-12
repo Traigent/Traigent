@@ -69,3 +69,24 @@ def test_balanced_config_all_nan_rows_raise() -> None:
     )
     with pytest.raises(ValueError):
         front.get_best_balanced_config()
+
+
+def test_balanced_config_excludes_infinite_rows() -> None:
+    front = ParetoFront(
+        [{"a": 1}, {"a": 2}, {"a": 3}],
+        np.array([[float("inf"), 1.0], [0.5, 0.5], [0.4, 0.4]]),
+        ["x", "y"],
+        [True, True],
+    )
+    assert front.get_best_balanced_config() == {"a": 2}
+
+
+def test_balanced_config_all_infinite_raises() -> None:
+    front = ParetoFront(
+        [{"a": 1}, {"a": 2}],
+        np.array([[float("inf"), 1.0], [0.5, float("-inf")]]),
+        ["x", "y"],
+        [True, True],
+    )
+    with pytest.raises(ValueError):
+        front.get_best_balanced_config()

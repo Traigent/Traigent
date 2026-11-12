@@ -329,9 +329,15 @@ class PlotGenerator:
         # Calculate Pareto front
         orientations = self._determine_objective_orientations(result, [obj1, obj2])
         pareto_calc = ParetoFrontCalculator(maximize=orientations)
-        pareto_front = pareto_calc.calculate_pareto_front(
-            result.successful_trials, [obj1, obj2]
-        )
+        # Non-finite points must not enter the dominance check: a NaN/inf
+        # trial could otherwise dominate (or displace) a finite one.
+        scorable_trials = [
+            t
+            for t in result.successful_trials
+            if not (obj1 in t.metrics and obj2 in t.metrics)
+            or self._both_finite(t.metrics[obj1], t.metrics[obj2])
+        ]
+        pareto_front = pareto_calc.calculate_pareto_front(scorable_trials, [obj1, obj2])
 
         if not pareto_front:
             return "No Pareto-optimal solutions found"
@@ -342,7 +348,7 @@ class PlotGenerator:
         pareto_points_x = []
         pareto_points_y = []
 
-        for trial in result.successful_trials:
+        for trial in scorable_trials:
             if obj1 in trial.metrics and obj2 in trial.metrics:
                 if not self._both_finite(trial.metrics[obj1], trial.metrics[obj2]):
                     continue

@@ -76,3 +76,42 @@ def test_plus_inf_does_not_hide_later_points_when_maximizing() -> None:
     out = _ascii([0.1, float("inf"), 0.9], "Accuracy (max)")
     assert "Score range: 0.10 -> 0.90" in out
     assert "Final best score: 0.900" in out
+
+
+def test_nan_trial_cannot_displace_finite_trial_from_pareto_front() -> None:
+    from unittest.mock import patch
+
+    from traigent.visualization.plots import PlotGenerator
+
+    trials = [
+        TrialResult(
+            trial_id=f"t{i}",
+            config={"i": i},
+            metrics={"accuracy": acc, "cost": cost},
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            metadata={},
+        )
+        for i, (acc, cost) in enumerate([(float("nan"), 0.0), (0.9, 1.0)])
+    ]
+    result = OptimizationResult(
+        trials=trials,
+        best_config=trials[1].config,
+        best_score=0.9,
+        optimization_id="opt-3107b",
+        duration=1.0,
+        convergence_info={},
+        status=OptimizationStatus.COMPLETED,
+        objectives=["accuracy", "cost"],
+        algorithm="test_algo",
+        timestamp=datetime.now(UTC),
+        metadata={
+            "objective_orientations": {"accuracy": "maximize", "cost": "minimize"}
+        },
+    )
+    gen = PlotGenerator(use_matplotlib=False)
+    with patch.object(gen, "_plot_pareto_ascii", return_value="ok") as ascii_:
+        gen.plot_pareto_front(result, "accuracy", "cost")
+    pareto_x, pareto_y = ascii_.call_args.args[2], ascii_.call_args.args[3]
+    assert (pareto_x, pareto_y) == ([0.9], [1.0])

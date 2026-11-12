@@ -3050,7 +3050,7 @@ class ParetoFront:
 
         Raises:
             ValueError: If the front is empty, or no configuration has a
-                complete (non-NaN) set of objective values.
+                complete (finite) set of objective values.
         """
         import numpy as np  # noqa: PLC0415
 
@@ -3065,9 +3065,9 @@ class ParetoFront:
         if normalized.ndim == 1:
             normalized = normalized.reshape(-1, 1)
 
-        # Rows with a NaN objective are unscored and cannot be the best balance
+        # Rows with a NaN or infinite objective are unscored and cannot be the best balance
         # (checked before the single-configuration shortcut).
-        valid_rows = np.flatnonzero(~np.isnan(normalized).any(axis=1))
+        valid_rows = np.flatnonzero(np.isfinite(normalized).all(axis=1))
         if valid_rows.size == 0:
             raise ValueError("No Pareto configurations with complete objective values")
         if len(self.configurations) == 1:
