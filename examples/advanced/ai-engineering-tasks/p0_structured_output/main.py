@@ -121,9 +121,13 @@ COMPANY_PATTERNS = {
 }
 
 
-def _match_pattern(text: str, patterns: dict[str, str]) -> str | None:
+def _match_pattern(
+    text: str, patterns: dict[str, str], ignore_case: bool = False
+) -> str | None:
+    haystack = text.lower() if ignore_case else text
     for key, value in patterns.items():
-        if key in text:
+        needle = key.lower() if ignore_case else key
+        if needle in haystack:
             return value
     return None
 
@@ -171,12 +175,17 @@ def extract_entities(
     extraction_style = trial_config.get("extraction_style", extraction_style)
 
     entities: dict[str, str] = {}
-    person = _match_pattern(text, PERSON_PATTERNS)
+    # strict matches the exact casing only; lenient also accepts case variants.
+    ignore_case = validation == "lenient"
+    person = _match_pattern(text, PERSON_PATTERNS, ignore_case=ignore_case)
     if person:
         entities["person"] = person
-    company = _match_pattern(text, COMPANY_PATTERNS)
+    company = _match_pattern(text, COMPANY_PATTERNS, ignore_case=ignore_case)
     if company:
         entities["company"] = company
+    if extraction_style == "verbose":
+        # verbose adds the evidence span the entities were found in.
+        entities["evidence"] = text.strip()[:80]
     return _format_entities(entities, output_format)
 
 

@@ -445,13 +445,32 @@ def evaluate_token_budget_task(
         "standard": 4000,
         "generous": 8000,
         "enterprise": 16000,
+        # Mock components total a few hundred tokens, so only a very small
+        # budget makes the allocation and truncation settings matter.
+        "constrained_demo": 900,
+        "tight_budget": 2000,
+        "standard_budget": 4000,
+        "generous_budget": 8000,
+        "enterprise_budget": 16000,
     }
 
     total_budget = budget_map.get(budget_scenario, 4000)
 
     # Create context components for task
+    if isinstance(task, dict):
+        task_type = task.get("type", "qa")
+        complexity = task.get("complexity", "medium")
+    else:
+        # The dataset yields TokenBudgetTask dataclasses with a TaskType enum.
+        kind = getattr(task.task_type, "value", str(task.task_type))
+        task_type = {
+            "simple_qa": "qa",
+            "research_qa": "qa",
+            "code_generation": "code",
+        }.get(kind, "other")
+        complexity = "high" if kind in ("complex_analysis", "research_qa") else "medium"
     components = create_mock_context_components(
-        task_type=task.get("type", "qa"), complexity=task.get("complexity", "medium")
+        task_type=task_type, complexity=complexity
     )
 
     # Apply budget allocation

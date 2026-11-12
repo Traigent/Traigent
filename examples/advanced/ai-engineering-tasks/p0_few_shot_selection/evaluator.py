@@ -18,6 +18,13 @@ def _select_random_examples(example_pool: list[dict], n_examples: int) -> list[d
     return [example_pool[i] for i in indices]
 
 
+def _input_text(example) -> str:
+    """Example text for dict pools and FewShotExample dataclass pools alike."""
+    if isinstance(example, dict):
+        return example["input"]
+    return example.input
+
+
 def _tokenize(text: str) -> set[str]:
     return set(text.lower().split())
 
@@ -34,7 +41,7 @@ def _select_semantic_knn(
 ) -> list[dict]:
     query_words = _tokenize(query)
     similarities = [
-        _jaccard_similarity(query_words, _tokenize(example["input"]))
+        _jaccard_similarity(query_words, _tokenize(_input_text(example)))
         for example in example_pool
     ]
     top_indices = np.argsort(similarities)[-n_examples:]
@@ -46,7 +53,7 @@ def _select_semantic_diverse(
 ) -> list[dict]:
     query_words = _tokenize(query)
     similarities = [
-        (_jaccard_similarity(query_words, _tokenize(example["input"])), idx)
+        (_jaccard_similarity(query_words, _tokenize(_input_text(example))), idx)
         for idx, example in enumerate(example_pool)
     ]
     similarities.sort(reverse=True)
@@ -59,10 +66,10 @@ def _select_semantic_diverse(
         best_idx = None
         best_diversity = -1.0
         for candidate_idx in list(remaining):
-            candidate_words = _tokenize(example_pool[candidate_idx]["input"])
+            candidate_words = _tokenize(_input_text(example_pool[candidate_idx]))
             min_similarity = min(
                 _jaccard_similarity(
-                    candidate_words, _tokenize(example_pool[sel]["input"])
+                    candidate_words, _tokenize(_input_text(example_pool[sel]))
                 )
                 for sel in selected_indices
             )
@@ -158,7 +165,7 @@ def evaluate_with_examples(
     if n_examples > 1:
         unique_words = set()
         for ex in examples:
-            unique_words.update(ex["input"].lower().split())
+            unique_words.update(_input_text(ex).lower().split())
         diversity_bonus = min(0.2, len(unique_words) * 0.01)
     else:
         diversity_bonus = 0
@@ -167,7 +174,7 @@ def evaluate_with_examples(
     query_words = set(query.lower().split())
     relevance_scores = []
     for ex in examples:
-        ex_words = set(ex["input"].lower().split())
+        ex_words = set(_input_text(ex).lower().split())
         relevance = (
             len(query_words & ex_words) / len(query_words | ex_words)
             if query_words | ex_words

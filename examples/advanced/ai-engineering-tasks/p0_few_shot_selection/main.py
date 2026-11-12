@@ -19,12 +19,14 @@ Run with (from repo root): .venv/bin/python examples/advanced/ai-engineering-tas
 """
 
 import asyncio
+import functools
 import json
 import os
 import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -202,6 +204,47 @@ def _create_dummy_eval_dataset() -> str:
     return _write_eval_dataset(samples)
 
 
+def _as_custom_evaluator(evaluation_function: Callable) -> Callable:
+    """Adapt this example's metrics function to Traigent's custom_evaluator contract.
+
+    Traigent calls ``custom_evaluator(func, config, example)`` once per dataset
+    example with the trial config; the metrics come from the evaluator this
+    example builds, so the tuned values decide the scores.
+    """
+
+    cache: dict[str, dict] = {}
+
+    def _evaluator(_func: Callable, config: dict, example: Any) -> Any:
+        from traigent.api.types import ExampleResult
+
+        # One metrics pass per trial config, shared by every dataset example.
+        key = json.dumps(config, sort_keys=True, default=str)
+        if key not in cache:
+            cache[key] = evaluation_function(**config)
+        metrics = cache[key]
+        return ExampleResult(
+            example_id=str(getattr(example, "example_id", "trial")),
+            input_data=dict(example.input_data),
+            expected_output=example.expected_output,
+            actual_output=metrics,
+            metrics={
+                k: float(v)
+                for k, v in metrics.items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            },
+            execution_time=0.0,
+            success=True,
+        )
+
+    return _evaluator
+
+
+@functools.lru_cache(maxsize=1)
+def _trial_evaluation_function() -> Callable:
+    """Small deterministic task set used when a trial calls the decorated function."""
+    return create_evaluation_function(generate_evaluation_tasks(num_tasks=6))
+
+
 @traigent.optimize(
     configuration_space=EXAMPLE_SELECTION_SEARCH_SPACE,
     eval_dataset=_create_dummy_eval_dataset(),
@@ -227,7 +270,7 @@ def optimize_few_shot_selection(
     curriculum_learning: bool = False,
     example_weighting: str = "uniform",
     **kwargs,
-) -> None:
+) -> dict[str, float]:
     """
     Traigent-optimized function for few-shot example selection.
 
@@ -239,9 +282,20 @@ def optimize_few_shot_selection(
     selection_method = trial_config.get("selection_method", selection_method)
     n_examples = trial_config.get("n_examples", n_examples)
 
-    # This is a placeholder - the actual evaluation happens in the evaluation function
-    # Traigent will inject the optimal parameters and track results
-    pass
+    # Run the tuned configuration through this example's evaluator.
+    tuned = {
+        "selection_method": selection_method,
+        "n_examples": n_examples,
+        "similarity_metric": similarity_metric,
+        "diversity_weight": diversity_weight,
+        "ordering_strategy": ordering_strategy,
+        "formatting": formatting,
+        "cache_strategy": cache_strategy,
+        "adaptive_selection": adaptive_selection,
+        "curriculum_learning": curriculum_learning,
+        "example_weighting": example_weighting,
+    }
+    return _trial_evaluation_function()(**{**trial_config, **tuned})
 
 
 def run_baseline_comparison(tasks: list[FewShotTask]) -> dict[str, dict[str, float]]:
@@ -462,7 +516,7 @@ async def main() -> None:
     baseline_results = run_baseline_comparison(tasks)
 
     # Set up Traigent evaluation
-    create_evaluation_function(tasks)
+    evaluation_function = create_evaluation_function(tasks)
 
     # Configure Traigent optimization
     # traigent.configure(
@@ -480,6 +534,7 @@ async def main() -> None:
     # Run the optimization
     try:
         optimization_results = await optimize_few_shot_selection.optimize(
+            custom_evaluator=_as_custom_evaluator(evaluation_function),
             max_trials=100,
             timeout=1800,  # 30 minutes
         )
