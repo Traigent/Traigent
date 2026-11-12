@@ -3214,10 +3214,22 @@ class OptimizationOrchestrator:
                 "mode": "hybrid",
                 "dataset_size": len(dataset),
             }
-            return (
-                await self.optimizer.generate_candidates_async(
-                    remaining, remote_context=remote_context
+            gen_kwargs: dict[str, Any] = {"remote_context": remote_context}
+            # Optimizers that declare a ``history`` parameter (RemoteOptimizer)
+            # get the trials completed so far, as the sequential path does.
+            try:
+                accepts_history = (
+                    "history"
+                    in inspect.signature(
+                        self.optimizer.generate_candidates_async
+                    ).parameters
                 )
+            except (TypeError, ValueError):
+                accepts_history = False
+            if accepts_history:
+                gen_kwargs["history"] = list(self._trials)
+            return (
+                await self.optimizer.generate_candidates_async(remaining, **gen_kwargs)
                 or []
             )
         except (ValueError, TypeError, AttributeError, NotImplementedError) as e:
