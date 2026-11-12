@@ -3584,6 +3584,9 @@ class OptimizationOrchestrator:
                 cost_of_result=lambda r: (
                     self._extract_trial_cost(r) if isinstance(r, TrialResult) else None
                 ),
+                unmeasured_of_result=lambda r: (
+                    isinstance(r, TrialResult) and is_cost_unmeasured(r.metrics)
+                ),
             )
         except (KeyboardInterrupt, asyncio.CancelledError):
             # #3234: pair every started trial with a completion, then propagate.

@@ -141,39 +141,52 @@ def _remote(client, space=None):
     )
 
 
-def test_remote_batch_receives_caller_history_3153():
+def test_remote_batch_history_is_index_and_status_only_3153():
     good = [{"model": "a", "t": 0.1}]
     client = _RecordingClient(batch=good)
-    trial = {"trial_id": "t1", "config": {"model": "a"}, "metrics": {"score": 0.5}}
-    out = asyncio.run(_remote(client).generate_candidates_async(1, history=[trial]))
-    assert out == good
-    # No explicit privacy_enabled=False: indices and statuses only.
-    assert client.histories == [[{"index": 0, "status": None}]]
-
-
-def test_remote_batch_history_carries_config_only_when_privacy_is_off_3153():
-    client = _RecordingClient(batch=[{"model": "a", "t": 0.1}])
-    trial = {
-        "trial_id": "t1",
-        "config": {"model": "a"},
-        "metrics": {"score": 0.5, "note": "free text"},
-        "status": None,
-    }
-    asyncio.run(
-        _remote(client).generate_candidates_async(
-            1, remote_context={"privacy_enabled": False}, history=[trial]
-        )
-    )
-    (sent,) = client.histories
-    assert sent == [
+    trials = [
         {
-            "index": 0,
-            "status": None,
             "trial_id": "t1",
             "config": {"model": "a"},
             "metrics": {"score": 0.5},
-        }
+            "status": "completed",
+        },
+        {"status": "SECRET free text"},
+        {"status": None},
     ]
+    # Whatever the privacy setting says, nothing beyond index/status leaves.
+    for ctx in (None, {"privacy_enabled": False}, {"privacy_enabled": True}):
+        client.histories.clear()
+        out = asyncio.run(
+            _remote(client).generate_candidates_async(
+                1, remote_context=ctx, history=trials
+            )
+        )
+        assert out == good
+        assert client.histories == [
+            [
+                {"index": 0, "status": "completed"},
+                {"index": 1, "status": "unknown"},
+                {"index": 2, "status": "unknown"},
+            ]
+        ]
+
+
+def test_remote_single_history_is_closed_projection_3153():
+    from types import SimpleNamespace
+
+    seen: list = []
+
+    class Single(_RecordingClient):
+        async def suggest_next(self, config_space, history=None, ctx=None):
+            seen.append(history)
+            return {"model": "a", "t": 0.1}
+
+    trial = SimpleNamespace(
+        trial_id="t9", config={"model": "a"}, metrics={"x": 1}, status="failed"
+    )
+    asyncio.run(_remote(Single()).suggest_next_trial_async([trial]))
+    assert seen == [[{"index": 0, "status": "failed"}]]
 
 
 def test_orchestrator_batch_path_sends_completed_trials_as_closed_history_3153():
@@ -197,7 +210,7 @@ def test_orchestrator_batch_path_sends_completed_trials_as_closed_history_3153()
         for i in range(3)
     ]
     fake_self = SimpleNamespace(
-        traigent_config=SimpleNamespace(privacy_enabled=False),
+        traigent_config=SimpleNamespace(),
         optimizer=_remote(client),
         _trials=trials,
     )
@@ -206,10 +219,7 @@ def test_orchestrator_batch_path_sends_completed_trials_as_closed_history_3153()
     )
     assert out == [{"model": "a", "t": 0.1}]
     (sent,) = client.histories
-    assert [e["trial_id"] for e in sent] == ["t0", "t1", "t2"]
-    assert set(sent[0]) == {"index", "trial_id", "config", "metrics", "status"}
-    assert sent[0]["status"] == "completed"
-    assert "note" not in sent[0]["metrics"]
+    assert sent == [{"index": i, "status": "completed"} for i in range(3)]
     assert "SECRET" not in repr(sent)
 
 
@@ -281,3 +291,27 @@ def test_remote_unsupported_spec_fails_closed_3153():
     client = _RecordingClient(batch=[{"x": 1}])
     with pytest.raises(OptimizationError, match="not supported"):
         asyncio.run(_remote(client, {"x": object()}).generate_candidates_async(1))
+
+
+def test_remote_oversize_batch_is_rejected_3153():
+    batch = [{"model": "a", "t": 0.1}, {"model": "b", "t": 0.2}]
+    with pytest.raises(OptimizationError, match="more candidates"):
+        asyncio.run(_remote(_RecordingClient(batch=batch)).generate_candidates_async(1))
+
+
+def test_remote_step_grids_accept_valid_endpoints_and_reject_off_grid_3153():
+    from traigent.api.parameter_ranges import IntRange, Range
+
+    space = {"n": IntRange(0, 10, step=3), "t": Range(0.0, 1.0, step=0.25)}
+
+    def run(cand):
+        return asyncio.run(
+            _remote(_RecordingClient(batch=[cand]), space).generate_candidates_async(1)
+        )
+
+    # 10 is the inclusive upper endpoint although (10 - 0) % 3 != 0.
+    assert run({"n": 10, "t": 0.75}) == [{"n": 10, "t": 0.75}]
+    assert run({"n": 6, "t": 1.0}) == [{"n": 6, "t": 1.0}]
+    for bad in ({"n": 4, "t": 0.5}, {"n": 3, "t": 0.3}, {"n": 3, "t": 0.1}):
+        with pytest.raises(OptimizationError, match="step"):
+            run(bad)

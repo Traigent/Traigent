@@ -477,6 +477,31 @@ class TestProcessExitPropagation:
         assert enforcer._accumulated_cost == pytest.approx(0.2)
         assert enforcer._reserved_cost == pytest.approx(0.0)
 
+    def test_partly_unmeasured_sibling_keeps_floor_and_flag_on_interrupt(
+        self, monkeypatch
+    ):
+        enforcer, manager = self._make(monkeypatch, 2)
+
+        async def finishes():
+            return {"cost": 0.2, "partial": True}
+
+        async def interrupted():
+            await asyncio.sleep(0.05)
+            raise KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            asyncio.run(
+                manager.run_with_cost_permits(
+                    [finishes(), interrupted()],
+                    cost_of_result=lambda r: r["cost"],
+                    unmeasured_of_result=lambda r: r["partial"],
+                )
+            )
+
+        assert enforcer._accumulated_cost == pytest.approx(0.2)
+        assert enforcer._unmeasured_trial_count >= 1
+        assert enforcer.get_status().unknown_cost_mode is True
+
     def test_unfinished_sibling_is_cancelled_and_marked_unknown(self, monkeypatch):
         enforcer, manager = self._make(monkeypatch, 2)
 

@@ -20,6 +20,10 @@ from traigent.api.parameter_ranges import ParameterRange
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.registry import register_optimizer
+from traigent.utils.discrete_domains import (
+    float_step_divides_span,
+    stepped_int_contains,
+)
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
 
@@ -43,39 +47,36 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool)
 
 
-def _attr_getter(obj: Any) -> Any:
-    return lambda name: getattr(obj, name, None)
+_HISTORY_STATUSES = frozenset(
+    {
+        "not_started",
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "pruned",
+    }
+)
 
 
-def _history_for_remote(
-    history: list[Any] | None, privacy_enabled: bool
-) -> list[dict[str, Any]]:
+def _history_for_remote(history: list[Any] | None) -> list[dict[str, Any]]:
     """Project trial history to a closed set of fields before it leaves.
 
-    Only an explicit ``privacy_enabled=False`` context forwards trial
-    configurations and numeric metrics (id, config, metrics, status). In every
-    other case (privacy on, or no context) the projection is indices and
-    statuses only: configurations and caller-chosen metric names stay local.
-    No example content, outputs or free-form metadata is ever forwarded.
+    Default-deny: only the trial index and a status from a fixed enum are
+    forwarded, whatever the privacy setting. Trial ids, configuration values,
+    metric names and values, and any free-form text never leave; an
+    unrecognised status becomes ``"unknown"``.
     """
     entries: list[dict[str, Any]] = []
     for index, trial in enumerate(history or []):
-        getter = trial.get if isinstance(trial, dict) else _attr_getter(trial)
-        status = getter("status")
-        entry: dict[str, Any] = {
-            "index": index,
-            "status": getattr(status, "value", status),
-        }
-        if not privacy_enabled:
-            metrics = getter("metrics")
-            entry["trial_id"] = getter("trial_id")
-            entry["config"] = dict(getter("config") or {})
-            entry["metrics"] = {
-                str(k): v
-                for k, v in (metrics.items() if isinstance(metrics, dict) else [])
-                if _is_number(v) and math.isfinite(v)
-            }
-        entries.append(entry)
+        status = trial.get("status") if isinstance(trial, dict) else None
+        if not isinstance(trial, dict):
+            status = getattr(trial, "status", None)
+        status = getattr(status, "value", status)
+        if not isinstance(status, str) or status not in _HISTORY_STATUSES:
+            status = "unknown"
+        entries.append({"index": index, "status": status})
     return entries
 
 
@@ -111,7 +112,16 @@ def _value_problem(key: str, spec: Any, value: Any) -> str | None:
     if is_int:
         if value != int(value):
             return f"value for {key!r} is not an integer"
-        if _is_number(step) and step > 0 and (value - low) % step != 0:
+        if step is not None:
+            if not (isinstance(step, int) and not isinstance(step, bool)) or step <= 0:
+                return f"configuration specification for {key!r} is not supported"
+            if not stepped_int_contains(int(low), int(high), step, int(value)):
+                return f"value for {key!r} is not on the configured step"
+    elif step is not None:
+        if not _is_number(step) or not math.isfinite(step) or step <= 0:
+            return f"configuration specification for {key!r} is not supported"
+        on_grid = value == high or float_step_divides_span(low, value, step)
+        if not on_grid:
             return f"value for {key!r} is not on the configured step"
     return None
 
@@ -215,7 +225,9 @@ class RemoteOptimizer(BaseOptimizer):
             if has_method:
                 try:
                     suggestion = await self._remote_client.suggest_next(
-                        self.config_space, history, remote_context
+                        self.config_space,
+                        _history_for_remote(history),
+                        remote_context,
                     )
                 except Exception as e:
                     logger.warning(f"Remote suggestion failed, using fallback: {e}")
@@ -265,8 +277,8 @@ class RemoteOptimizer(BaseOptimizer):
     ) -> list[dict[str, Any]]:
         """Prefer remote batch suggestions when available.
 
-        ``history`` (prior trials) is forwarded to the remote service in a
-        closed projection (see ``_history_for_remote``); omitted means an
+        ``history`` (prior trials) is forwarded to the remote service as a
+        closed projection of index and status only (see ``_history_for_remote``); omitted means an
         empty list. A client that raises is logged at WARNING and replaced by
         the local fallback. A response that is not a non-empty list of valid
         suggestions raises ``OptimizationError`` (fail closed).
@@ -275,15 +287,11 @@ class RemoteOptimizer(BaseOptimizer):
             batch: Any = None
             called = False
             if hasattr(self._remote_client, "suggest_batch"):
-                private = not (
-                    isinstance(remote_context, dict)
-                    and remote_context.get("privacy_enabled") is False
-                )
                 try:
                     batch = await self._remote_client.suggest_batch(
                         self.config_space,
                         max_candidates,
-                        _history_for_remote(history, private),
+                        _history_for_remote(history),
                         remote_context,
                     )
                     called = True
@@ -294,6 +302,10 @@ class RemoteOptimizer(BaseOptimizer):
                     raise OptimizationError(
                         "Remote batch rejected: expected a non-empty list, "
                         f"got {type(batch).__name__}"
+                    )
+                if len(batch) > max_candidates:
+                    raise OptimizationError(
+                        "Remote batch rejected: returned more candidates than requested"
                     )
                 for candidate in batch:
                     problem = self._suggestion_problem(candidate)

@@ -297,8 +297,8 @@ def main() -> None:
         "--verbose",
         "-v",
         action="store_true",
-        default=True,
-        help="Show redacted response diagnostics (default: True)",
+        default=False,
+        help="Show redacted response diagnostics (on unless --quiet; overrides --quiet)",
     )
     parser.add_argument(
         "--quiet",
@@ -335,7 +335,7 @@ def main() -> None:
         )
         sys.exit(1)
 
-    verbose = args.verbose and not args.quiet
+    verbose = args.verbose or not args.quiet
 
     try:
         api_key = get_api_key(email, password, backend_url, verbose=verbose)

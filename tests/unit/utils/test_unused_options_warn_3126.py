@@ -92,3 +92,34 @@ def test_no_browser_flag_reaches_streamlit_3126(monkeypatch) -> None:
         launch_playground(port=1)
     assert "--server.headless" in seen[0]
     assert "--server.headless" not in seen[1]
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        ([], True),
+        (["--quiet"], False),
+        (["--quiet", "--verbose"], True),
+        (["--verbose"], True),
+    ],
+)
+def test_get_api_key_verbose_flag_is_read_3126(monkeypatch, argv, expected) -> None:
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[3] / "scripts" / "auth" / "get_api_key.py"
+    spec = importlib.util.spec_from_file_location("get_api_key_script", path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    seen: dict = {}
+
+    def fake(email, password, url, verbose=True):
+        seen["verbose"] = verbose
+        return "k"
+
+    monkeypatch.setattr(mod, "get_api_key", fake)
+    monkeypatch.setattr(mod, "_write_secret_to_stdout", lambda *a, **k: None)
+    monkeypatch.setenv("TRAIGENT_AUTH_PASSWORD", "x")
+    monkeypatch.setattr(sys, "argv", ["g", "--email", "a@b.c", *argv])
+    mod.main()
+    assert seen["verbose"] is expected

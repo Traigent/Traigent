@@ -365,7 +365,11 @@ class ParallelExecutionManager:
         return float(cost)
 
     async def _settle_interrupted_permit(
-        self, permit: Permit | None, cost: float | None, index: int
+        self,
+        permit: Permit | None,
+        cost: float | None,
+        index: int,
+        cost_unmeasured: bool = False,
     ) -> None:
         """Book known cost (or mark it unknown) and release the permit."""
         if permit is None or not permit.is_granted or self.cost_enforcer is None:
@@ -376,6 +380,7 @@ class ParallelExecutionManager:
                 permit=permit,
                 trial_failed=True,
                 trial_id=f"parallel_{index}",
+                cost_unmeasured=cost_unmeasured,
             )
         except Exception:
             logger.warning(
@@ -390,6 +395,7 @@ class ParallelExecutionManager:
         indexed_results: list[Any],
         cancel_sentinel: Any,
         cost_of_result: Callable[[Any], float | None] | None,
+        unmeasured_of_result: Callable[[Any], bool] | None = None,
     ) -> None:
         """Settle finished siblings, then re-raise the interrupting exception."""
         fatal: BaseException | None = None
@@ -413,7 +419,14 @@ class ParallelExecutionManager:
                     isinstance(cost, bool) or not math.isfinite(cost) or cost < 0
                 ):
                     cost = None
-            await self._settle_interrupted_permit(permit, cost, index)
+            unmeasured = False
+            if unmeasured_of_result is not None:
+                try:
+                    unmeasured = bool(unmeasured_of_result(result))
+                except Exception:
+                    logger.warning("unmeasured_of_result failed", exc_info=True)
+                    unmeasured = True  # unknown flag state: do not claim exact
+            await self._settle_interrupted_permit(permit, cost, index, unmeasured)
         if fatal is not None:
             raise fatal
 
@@ -423,6 +436,7 @@ class ParallelExecutionManager:
         *,
         cancel_sentinel: Any = None,
         cost_of_result: Callable[[Any], float | None] | None = None,
+        unmeasured_of_result: Callable[[Any], bool] | None = None,
     ) -> tuple[list[PermittedTrialResult], int]:
         """Run coroutines with cost permit checking before each execution.
 
@@ -445,6 +459,9 @@ class ParallelExecutionManager:
                 ``SystemExit`` / ``KeyboardInterrupt`` to book the spend of
                 siblings that already finished; without it their cost is
                 marked unknown.
+            unmeasured_of_result: Optional predicate; True when a finished
+                result's cost is only a known floor (partly unmeasured), so it
+                is booked with ``cost_unmeasured=True``.
 
         Returns:
             Tuple of (permitted_results, cancelled_count) where each result is a
@@ -550,7 +567,7 @@ class ParallelExecutionManager:
             for coro in coroutines:
                 _close_unstarted_coroutine(coro)  # no-op for finished ones
             await self._settle_after_interrupt(
-                indexed_results, cancel_sentinel, cost_of_result
+                indexed_results, cancel_sentinel, cost_of_result, unmeasured_of_result
             )
 
         # Sort by index to preserve original order
