@@ -47,6 +47,7 @@ import dataclasses
 import inspect
 import math
 import os
+import threading
 import warnings
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
@@ -2450,6 +2451,7 @@ def _check_deprecated_objective_kwargs(
 
 
 _SEED_WARNED_SPECS: set[str] = set()
+_SEED_WARNED_LOCK = threading.Lock()
 
 
 def _warn_evaluation_seed_unused(tvl_artifact: Any) -> None:
@@ -2458,9 +2460,10 @@ def _warn_evaluation_seed_unused(tvl_artifact: Any) -> None:
     if evaluation_set is None or getattr(evaluation_set, "seed", None) is None:
         return
     key = str(getattr(tvl_artifact, "path", "") or id(tvl_artifact))
-    if key in _SEED_WARNED_SPECS:
-        return
-    _SEED_WARNED_SPECS.add(key)
+    with _SEED_WARNED_LOCK:
+        if key in _SEED_WARNED_SPECS:
+            return
+        _SEED_WARNED_SPECS.add(key)
     warnings.warn(
         "TVL field evaluation_set.seed is set but the SDK does not use it yet "
         "for sampling or ordering; evaluation examples run in dataset order.",
