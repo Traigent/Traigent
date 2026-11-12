@@ -54,3 +54,10 @@ def test_statistics_callback_groups_unhashable_values() -> None:
         _parameter_importance_for_values(cb, [{"k": 1}, {"k": 2}, {"k": 1}, {"k": 2}])
         > 0
     )
+
+
+def test_mixed_complex_and_scalar_values_are_not_measurable() -> None:
+    trials = _trials(lambda i: ["END"] if i % 4 == 0 else ("a" if i % 2 else "b"))
+    result = ParameterImportanceAnalyzer("accuracy").analyze_correlation_based(trials)
+    assert result["stop"].importance_score is None
+    assert result["stop"].not_measurable_reason

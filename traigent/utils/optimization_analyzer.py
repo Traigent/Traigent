@@ -165,13 +165,13 @@ class OptimizationAnalyzer:
         entries: list[Any] = []
         validated_path = validate_path(file_path, run_path, must_exist=True)
         try:
-            with safe_open(validated_path, run_path, mode="r", encoding="utf-8") as f:
-                for line in f:
-                    stripped = line.strip()
-                    if not stripped:
+            with safe_open(validated_path, run_path, mode="rb") as f:
+                for raw_line in f:
+                    if not raw_line.strip():
                         continue
                     try:
-                        entry = json.loads(stripped)
+                        # Strict per-line decoding: a bad line must not end the read.
+                        entry = json.loads(raw_line.decode("utf-8"))
                     except (ValueError, RecursionError):
                         logger.warning("Skipping malformed line in %s", file_path)
                         continue
@@ -259,7 +259,14 @@ class OptimizationAnalyzer:
         runs = []
         experiments = index_data.get("experiments", {})
         if not isinstance(experiments, dict):
-            experiments = {}
+            logger.warning(
+                "Index %s has a malformed 'experiments' field, rebuilding from "
+                "directories",
+                index_file,
+            )
+            return OptimizationAnalyzer._build_experiment_index(
+                base_path, file_manager, legacy_manager
+            )
         for exp_name, exp_data in experiments.items():
             run_entries = exp_data.get("runs", []) if isinstance(exp_data, dict) else []
             if not isinstance(run_entries, list):
@@ -282,6 +289,14 @@ class OptimizationAnalyzer:
                     )
 
         if not runs:
+            if experiments:
+                logger.warning(
+                    "Index %s has no usable entries, rebuilding from directories",
+                    index_file,
+                )
+                return OptimizationAnalyzer._build_experiment_index(
+                    base_path, file_manager, legacy_manager
+                )
             return pd.DataFrame()
 
         df = pd.DataFrame(runs)

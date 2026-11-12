@@ -246,3 +246,50 @@ def test_history_continues_past_a_bad_line(tmp_path: Path, bad: str) -> None:
     hist.add_record(_record(2))
     reloaded = OptimizationHistory(storage_path=str(path))
     assert [r.optimization_id for r in reloaded.records] == ["o1", "o2"]
+
+
+def test_history_invalid_utf8_and_deep_nesting_lines_are_counted(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "h.jsonl"
+    hist = OptimizationHistory(storage_path=str(path))
+    hist.add_record(_record(1))
+    good = path.read_bytes().splitlines()[0]
+    bad_utf8 = good.replace(b'"f"', b'"f\xff"')
+    assert bad_utf8 != good
+    with open(path, "ab") as fh:
+        fh.write(bad_utf8 + b"\n")
+        fh.write(b"[" * 100000 + b"\n")
+    hist.add_record(_record(2))
+    reloaded = OptimizationHistory(storage_path=str(path))
+    assert [r.optimization_id for r in reloaded.records] == ["o1", "o2"]
+    assert reloaded._skipped_lines == 2
+
+
+def test_trial_jsonl_non_utf8_line_is_skipped(tmp_path: Path) -> None:
+    run_dir = _write_run(tmp_path, "e", "r1", GOOD)
+    first = json.dumps({"trial_id": "a"}).encode()
+    last = json.dumps({"trial_id": "c"}).encode()
+    (run_dir / "trials" / "trials_v2.jsonl").write_bytes(
+        first + b'\n{"trial_id": "b\xff"}\n' + last + b"\n"
+    )
+    data = OptimizationAnalyzer(base_path=tmp_path, file_version="2").load_run(
+        "e", "r1"
+    )
+    assert [t["trial_id"] for t in data["trials"]] == ["a", "c"]
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        '{"experiments": []}',
+        '{"experiments": "x"}',
+        '{"experiments": {"e": {"runs": [{"run_id": "bad"}]}}}',
+        '{"experiments": {"e": 5}}',
+    ],
+)
+def test_index_with_unusable_experiments_rebuilds(tmp_path: Path, index: str) -> None:
+    _write_run(tmp_path, "good", "r1", GOOD)
+    (tmp_path / "index.json").write_text(index)
+    df = OptimizationAnalyzer(base_path=tmp_path, file_version="2").list_experiments()
+    assert df["experiment"].tolist() == ["good"]

@@ -249,14 +249,21 @@ class OptimizationHistory:
     def _load_history(self) -> None:
         """Load optimization history from storage."""
         try:
-            with open(self.storage_path, encoding="utf-8", errors="replace") as f:
-                for line_no, line in enumerate(f, start=1):
-                    if not line.strip():
+            with open(self.storage_path, "rb") as f:
+                for line_no, raw_line in enumerate(f, start=1):
+                    if not raw_line.strip():
                         continue
                     try:
-                        record_data = json.loads(line)
+                        # Strict decoding: UnicodeDecodeError is a ValueError.
+                        record_data = json.loads(raw_line.decode("utf-8"))
                         record = OptimizationRecord.from_dict(record_data)
-                    except (ValueError, TypeError, KeyError, AttributeError) as e:
+                    except (
+                        ValueError,
+                        TypeError,
+                        KeyError,
+                        AttributeError,
+                        RecursionError,
+                    ) as e:
                         logger.warning(
                             f"Skipping malformed history line {line_no}: {e}"
                         )
