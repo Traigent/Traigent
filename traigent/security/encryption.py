@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -128,13 +129,13 @@ class DataRecord:
 
 
 class EncryptionKeyNotFoundError(SecurityError):
-    """Raised when the key needed to decrypt is absent, expired or inactive."""
+    """Raised when the key needed to decrypt is absent from the key store."""
 
     def __init__(self, key_id: str) -> None:
         self.key_id = key_id
         super().__init__(
             f"Encryption key '{key_id}' is not available in this key store "
-            "(missing, expired or inactive); data can only be decrypted with "
+            "(missing or deleted); data can only be decrypted with "
             "the key store that encrypted it."
         )
 
@@ -193,8 +194,8 @@ class EncryptionManager:
         if not isinstance(classification, DataClassification):
             raise ValueError("Data classification must be a DataClassification value")
 
-        # Generate a key for this encryption
-        key_id: str = self.key_manager.generate_key("AES-256")
+        # Reuse the active key; a key is created only when none is usable.
+        key_id: str = self.key_manager.get_or_create_active_key("AES-256")
         key_data: bytes | None = self.key_manager.get_key(key_id)
         key_buffer = self._to_mutable_key_buffer(key_data)
 
@@ -282,7 +283,8 @@ class EncryptionManager:
         if len(tag) != 16:
             raise ValueError("Authentication tag must be 16 bytes for AES-GCM")
 
-        key_data: bytes | None = self.key_manager.get_key(key_id)
+        # Decrypt-only keys (rotated or expired) remain usable for decryption.
+        key_data: bytes | None = self.key_manager.get_key_for_decryption(key_id)
         if key_data is None:
             raise EncryptionKeyNotFoundError(key_id)
         key_buffer = self._to_mutable_key_buffer(key_data)
@@ -1371,6 +1373,7 @@ class KeyManager:
         master_password: str | None = None,
     ) -> None:
         """Initialize key manager."""
+        self._lock = threading.RLock()
         self.keys: dict[str, Any] = {}  # key_id -> key_bytes
         self.key_metadata: dict[str, Any] = {}  # key_id -> KeyMetadata
         configured_path = storage_path or os.getenv("TRAIGENT_KEY_MANAGER_STORE")
@@ -1491,11 +1494,22 @@ class KeyManager:
             "salt": base64.b64encode(salt).decode("ascii"),
             "payload": encrypted_payload.decode("ascii"),
         }
-        self.storage_path.write_text(
-            json.dumps(stored_payload, sort_keys=True), encoding="utf-8"
+        # Atomic replace: write a private temp file, fsync, then rename so a
+        # crash cannot truncate the existing key store.
+        tmp_path = self.storage_path.with_name(
+            f".{self.storage_path.name}.{secrets.token_hex(4)}.tmp"
         )
-        if os.name != "nt":
-            self.storage_path.chmod(0o600)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        fd = os.open(tmp_path, flags, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(stored_payload, sort_keys=True))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, self.storage_path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
     def generate_key(self, algorithm: str, expires_in_days: int | None = None) -> str:
         """Generate a new encryption key.
@@ -1533,11 +1547,42 @@ class KeyManager:
 
         return key_id
 
+    def get_active_key_id(self, algorithm: str = "AES-256") -> str | None:
+        """Return the newest active, unexpired key id for ``algorithm`` (or None)."""
+        with self._lock:
+            candidates = [
+                (meta.created_at, key_id)
+                for key_id, meta in self.key_metadata.items()
+                if key_id in self.keys
+                and meta.algorithm == algorithm
+                and meta.is_valid()
+            ]
+        if not candidates:
+            return None
+        return max(candidates)[1]
+
+    def get_or_create_active_key(self, algorithm: str = "AES-256") -> str:
+        """Return the active key id, generating a key only if none exists."""
+        with self._lock:
+            key_id = self.get_active_key_id(algorithm)
+            if key_id is None:
+                key_id = self.generate_key(algorithm)
+            return key_id
+
+    def get_key_for_decryption(self, key_id: str) -> bytes | None:
+        """Get key bytes for decryption only.
+
+        Rotated (inactive) and expired keys are decrypt-only: they are never
+        returned by :meth:`get_key` for new encryption but stay available
+        here until explicitly deleted.
+        """
+        return self.keys.get(key_id)
+
     def get_key(self, key_id: str) -> bytes | None:
-        """Get encryption key by ID.
+        """Get an encryption key by ID for new encryption.
 
         Returns:
-            Key bytes if valid, None if expired or not found
+            Key bytes if active and unexpired, None if decrypt-only or not found
         """
         if key_id not in self.keys:
             return None
