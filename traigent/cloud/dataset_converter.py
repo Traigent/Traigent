@@ -670,11 +670,11 @@ class DatasetConverter:
             stats = result
         counts: dict[str, int] = {}
         for key in ("added", "skipped", "invalid"):
-            value = stats.get(key, 0)
-            if value is None:
-                value = 0
+            value = stats.get(key)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f"example upload reply has an invalid '{key}' count")
+                raise ValueError(
+                    f"example upload reply has a missing or invalid '{key}' count"
+                )
             counts[key] = value
         return counts
 

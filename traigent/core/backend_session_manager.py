@@ -73,7 +73,7 @@ from traigent.utils.example_id import (
     TRIAL_ROW_INDICES_ATTR,
     rows_from_indices,
 )
-from traigent.utils.exceptions import ConfigurationError
+from traigent.utils.exceptions import ConfigurationError, RateLimitError
 from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
 from traigent.utils.retry_after import MAX_RETRY_AFTER_SECONDS, retry_after_from_error
@@ -209,6 +209,9 @@ def _log_safe_http_status(exc: BaseException) -> int | None:
 
 def _is_transient_finalize_error(exc: BaseException) -> bool:
     if isinstance(exc, _BackendFinalizeNotAcknowledgedError):
+        return True
+
+    if isinstance(exc, RateLimitError):
         return True
 
     status = _status_from_exception(exc)

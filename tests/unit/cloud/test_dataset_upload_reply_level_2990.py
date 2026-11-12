@@ -66,7 +66,15 @@ async def test_clean_nested_reply_is_success(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "reply",
-    [{}, {"message": "ok"}, {"stats": {"invalid": "2"}}, {"stats": {"added": True}}],
+    [
+        {},
+        {"message": "ok"},
+        {"stats": {}},
+        {"stats": {"added": 3}},
+        {"stats": {"added": 3, "skipped": 0, "invalid": None}},
+        {"stats": {"added": 3, "skipped": 0, "invalid": "2"}},
+        {"stats": {"added": True, "skipped": 0, "invalid": 0}},
+    ],
 )
 async def test_unreadable_reply_is_never_success(monkeypatch, reply):
     result = await _run(monkeypatch, reply)
