@@ -95,13 +95,14 @@ class VersionCompatibilityManager:
                         "tools": "tools",
                     },
                 ),
-                # Future version example
+                # openai >= 2.0: chat completions accept max_completion_tokens
+                # (max_tokens is deprecated); the model parameter is still `model`.
                 VersionMapping(
                     min_version="2.0.0",
                     parameter_mapping={
-                        "model": "model_id",  # Hypothetical change
+                        "model": "model",
                         "temperature": "temperature",
-                        "max_tokens": "max_completion_tokens",  # Hypothetical change
+                        "max_tokens": "max_completion_tokens",
                     },
                     deprecated_params={"max_tokens"},
                     new_params={"max_completion_tokens"},
@@ -112,7 +113,7 @@ class VersionCompatibilityManager:
                     min_version="0.1.0",
                     parameter_mapping={
                         "model": "model",
-                        "max_tokens": "max_tokens_to_sample",
+                        "max_tokens": "max_tokens",
                         "temperature": "temperature",
                     },
                 ),
