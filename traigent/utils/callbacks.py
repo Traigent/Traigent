@@ -7,6 +7,7 @@ from __future__ import annotations
 import concurrent.futures
 import contextvars
 import copy
+import json
 import sys
 import threading
 import time
@@ -767,6 +768,19 @@ def _declared_objective_score(trial: Any, primary_objective: str | None) -> Any:
     return value if value is not None else metrics.get("score")
 
 
+def _hashable_group_key(value: Any) -> Any:
+    """Group key for a config value; list/dict values get a canonical form."""
+    try:
+        hash(value)
+    except TypeError:
+        try:
+            canonical = json.dumps(value, sort_keys=True, default=repr)
+        except (TypeError, ValueError, RecursionError):
+            canonical = repr(value)
+        return ("unhashable", type(value).__qualname__, canonical)
+    return value
+
+
 def _parameter_importance_for_values(stats_owner: Any, values: list[Any]) -> float:
     """Calculate one parameter's between-value score variance."""
     if len(values) < 2:
@@ -779,9 +793,10 @@ def _parameter_importance_for_values(stats_owner: Any, values: list[Any]) -> flo
             i < len(stats_owner.stats["scores_by_trial"])
             and stats_owner.stats["scores_by_trial"][i] is not None
         ):
-            if value not in value_scores:
-                value_scores[value] = []
-            value_scores[value].append(stats_owner.stats["scores_by_trial"][i])
+            key = _hashable_group_key(value)
+            if key not in value_scores:
+                value_scores[key] = []
+            value_scores[key].append(stats_owner.stats["scores_by_trial"][i])
 
     if len(value_scores) < 2:
         return 0.0

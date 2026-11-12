@@ -432,8 +432,10 @@ class TestParameterImportanceAnalyzer:
         result = analyzer._calculate_parameter_correlation_importance(
             trials, "param1", objective_values
         )
-        # Should return None for unsupported types
-        assert result is None
+        # Unsupported types are reported explicitly, not silently omitted (#3117)
+        assert result is not None
+        assert result.importance_score is None
+        assert result.not_measurable_reason
 
     def test_calculate_correlation_empty_lists(
         self, analyzer: ParameterImportanceAnalyzer

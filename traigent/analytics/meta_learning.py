@@ -153,6 +153,7 @@ class OptimizationHistory:
         self.storage_path = storage_path or "optimization_history.jsonl"
         self._lock = threading.Lock()
         self.records: list[OptimizationRecord] = []
+        self._skipped_lines = 0  # damaged lines skipped while loading
         self._load_history()
 
     def add_record(self, record: OptimizationRecord) -> None:
@@ -248,12 +249,27 @@ class OptimizationHistory:
     def _load_history(self) -> None:
         """Load optimization history from storage."""
         try:
-            with open(self.storage_path) as f:
-                for line in f:
-                    if line.strip():
-                        record_data = json.loads(line)
+            with open(self.storage_path, "rb") as f:
+                for line_no, raw_line in enumerate(f, start=1):
+                    if not raw_line.strip():
+                        continue
+                    try:
+                        # Strict decoding: UnicodeDecodeError is a ValueError.
+                        record_data = json.loads(raw_line.decode("utf-8"))
                         record = OptimizationRecord.from_dict(record_data)
-                        self.records.append(record)
+                    except (
+                        ValueError,
+                        TypeError,
+                        KeyError,
+                        AttributeError,
+                        RecursionError,
+                    ) as e:
+                        logger.warning(
+                            f"Skipping malformed history line {line_no}: {e}"
+                        )
+                        self._skipped_lines += 1
+                        continue
+                    self.records.append(record)
             logger.info(f"Loaded {len(self.records)} optimization records")
         except FileNotFoundError:
             logger.info("No existing optimization history found")

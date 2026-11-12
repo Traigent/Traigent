@@ -262,10 +262,20 @@ class ParameterImportanceAnalyzer:
 
         return results
 
-    @staticmethod
+    @classmethod
     def _encode_parameter_values(
-        trials: list[TrialResult], parameter: str
+        cls, trials: list[TrialResult], parameter: str
     ) -> tuple[list[float], list[int], list[object]]:
+        """See :meth:`_encode_parameter_values_counting`."""
+        param_values, valid_indices, raw_values, _ = (
+            cls._encode_parameter_values_counting(trials, parameter)
+        )
+        return param_values, valid_indices, raw_values
+
+    @staticmethod
+    def _encode_parameter_values_counting(
+        trials: list[TrialResult], parameter: str
+    ) -> tuple[list[float], list[int], list[object], int]:
         """Encode a parameter's values as floats (strings by first-seen order).
 
         The string codes are arbitrary and only used to detect distinct values;
@@ -279,11 +289,14 @@ class ParameterImportanceAnalyzer:
         valid_indices: list[int] = []
         raw_values: list[object] = []
         categorical_mapping: dict[str, int] = {}
+        complex_count = 0
 
         for i, trial in enumerate(trials):
             if parameter not in trial.config:
                 continue
             param_value = trial.config[parameter]
+            if isinstance(param_value, (list, dict, tuple, set)):
+                complex_count += 1
 
             # bool is an int subclass, so it is encoded by the numeric branch
             if isinstance(param_value, (int, float)):
@@ -297,7 +310,7 @@ class ParameterImportanceAnalyzer:
             param_values.append(encoded)
             valid_indices.append(i)
             raw_values.append(param_value)
-        return param_values, valid_indices, raw_values
+        return param_values, valid_indices, raw_values, complex_count
 
     def _calculate_parameter_correlation_importance(
         self, trials: list[TrialResult], parameter: str, objective_values: list[float]
@@ -307,9 +320,19 @@ class ParameterImportanceAnalyzer:
         Numeric values use |Pearson r|; unordered string categories use the
         correlation ratio. No confidence interval is reported.
         """
-        param_values, valid_indices, raw_values = self._encode_parameter_values(
-            trials, parameter
+        param_values, valid_indices, raw_values, complex_count = (
+            self._encode_parameter_values_counting(trials, parameter)
         )
+
+        if complex_count:
+            # All-complex or mixed: never score the scalar subset alone.
+            return self._not_measurable(
+                parameter,
+                "correlation_based",
+                "list or dict values are not supported by the correlation method",
+                len(param_values),
+                len(param_values) + complex_count,
+            )
 
         if len(param_values) < 10:
             return None

@@ -601,10 +601,23 @@ class RunVersionInfo:
         validated_version_file = validate_path(
             self.version_file, self.version_file.parent, must_exist=True
         )
-        with safe_open(
-            validated_version_file, self.version_file.parent, mode="r", encoding="utf-8"
-        ) as f:
-            return cast(dict[str, Any] | None, json.load(f))
+        try:
+            with safe_open(
+                validated_version_file,
+                self.version_file.parent,
+                mode="r",
+                encoding="utf-8",
+            ) as f:
+                data = json.load(f)
+        except (ValueError, RecursionError) as exc:
+            raise ValueError(
+                f"Corrupt version info at {self.version_file}: {exc}"
+            ) from exc
+        if data is not None and not isinstance(data, dict):
+            raise ValueError(
+                f"Corrupt version info at {self.version_file}: expected a JSON object"
+            )
+        return cast(dict[str, Any] | None, data)
 
     def check_compatibility(self, current_version: str) -> dict[str, Any]:
         """Check compatibility between current and run versions.
@@ -625,6 +638,11 @@ class RunVersionInfo:
             }
 
         run_version = version_info.get("traigent_version", "unknown")
+        if not isinstance(run_version, str):
+            raise ValueError(
+                f"Corrupt version info at {self.version_file}: "
+                "traigent_version is not a string"
+            )
 
         # Simple version comparison (could be enhanced with semantic versioning)
         major_run = run_version.split(".")[0] if "." in run_version else "0"

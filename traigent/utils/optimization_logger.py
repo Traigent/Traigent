@@ -43,6 +43,21 @@ _FILE_LOCKS: dict[Path, threading.Lock] = {}
 _FILE_LOCKS_GUARD = threading.Lock()
 
 
+def _load_checkpoint_json(
+    handle: Any, path: Any, expect: tuple[type, ...] = (dict,)
+) -> Any:
+    """Decode checkpoint JSON, raising one typed ValueError for damaged files."""
+    try:
+        data = json.load(handle)
+    except (ValueError, RecursionError) as exc:
+        raise ValueError(f"Corrupt checkpoint file {path}: {exc}") from exc
+    if not isinstance(data, expect):
+        raise ValueError(
+            f"Corrupt checkpoint file {path}: unexpected JSON {type(data).__name__}"
+        )
+    return data
+
+
 def _validate_run_child_dir(
     run_path: Path,
     child_name: str,
@@ -1319,21 +1334,27 @@ class OptimizationLogger:
         with safe_open(
             validated_latest_file, run_path, mode="r", encoding="utf-8"
         ) as handle:
-            latest_data = json.load(handle)
+            latest_data = _load_checkpoint_json(handle, latest_file)
+        checkpoint_ref = latest_data.get("checkpoint_file")
+        if not isinstance(checkpoint_ref, str):
+            raise ValueError(
+                f"Invalid checkpoint reference in {latest_file}: "
+                "missing or non-string checkpoint_file"
+            )
 
         # Constrain the checkpoint reference to the run's checkpoints directory.
         # The filename comes from latest.json on disk; a tampered manifest
         # could otherwise traverse out of run_path via "../" segments.
         try:
             checkpoint_file = validate_path(
-                latest_data["checkpoint_file"], checkpoints_dir, must_exist=True
+                checkpoint_ref, checkpoints_dir, must_exist=True
             )
         except PathTraversalError as exc:
             raise ValueError(
                 f"Invalid checkpoint reference in {latest_file}: {exc}"
             ) from exc
         with safe_open(checkpoint_file, run_path, mode="r", encoding="utf-8") as handle:
-            checkpoint_data = json.load(handle)
+            checkpoint_data = _load_checkpoint_json(handle, checkpoint_file)
 
         history_file = (
             run_path / "checkpoints" / file_manager.get_filename("trial_history")
@@ -1344,7 +1365,9 @@ class OptimizationLogger:
         with safe_open(
             validated_history_file, run_path, mode="r", encoding="utf-8"
         ) as handle:
-            trial_history = json.load(handle)
+            trial_history = _load_checkpoint_json(
+                handle, validated_history_file, expect=(dict, list)
+            )
 
         checkpoint_data["trial_history"] = trial_history
         checkpoint_data["run_path"] = str(run_path)
