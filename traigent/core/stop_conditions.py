@@ -7,11 +7,12 @@ from __future__ import annotations
 import copy
 import json
 import math
+import warnings
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.safety import (
     CompoundSafetyConstraint,
@@ -23,7 +24,8 @@ from traigent.config.feature_flags import _coerce_bool as _coerce_config_bool_va
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.utils import extract_examples_attempted
 from traigent.utils.logging import get_logger
-from traigent.utils.money import format_usd
+from traigent.utils.metric_name_tokens import classify_metric_kind
+from traigent.utils.money import cost_cap_reached, format_usd
 
 if TYPE_CHECKING:
     from traigent.core.cost_enforcement import CostEnforcer
@@ -279,13 +281,17 @@ def _coerce_numeric_or_bool(value: Any) -> float | None:
 
 
 def _looks_like_quality_metric(name: str) -> bool:
-    lowered = name.lower()
-    return any(marker in lowered for marker in _QUALITY_NAME_MARKERS)
+    return (
+        classify_metric_kind(name, _QUALITY_NAME_MARKERS, _CONTINUOUS_NAME_MARKERS)
+        == "quality"
+    )
 
 
 def _looks_like_continuous_metric(name: str) -> bool:
-    lowered = name.lower()
-    return any(marker in lowered for marker in _CONTINUOUS_NAME_MARKERS)
+    return (
+        classify_metric_kind(name, _QUALITY_NAME_MARKERS, _CONTINUOUS_NAME_MARKERS)
+        == "continuous"
+    )
 
 
 def _infer_direction_from_name(name: str) -> str:
@@ -311,14 +317,17 @@ class StopCondition(ABC):
 class MaxTrialsStopCondition(StopCondition):
     """Stop once a maximum number of executed trials has been reached.
 
-    Counts all trials except those explicitly marked as abandoned in metadata.
-    This keeps cache/cap-abandoned trials from reducing the execution budget,
-    while still counting pruned trials produced during execution.
+    Counts all trials except those explicitly marked as abandoned in metadata
+    and configs rejected by a pre-evaluation constraint (never evaluated; they
+    must not reduce the execution budget, Traigent#3210). This keeps
+    cache/cap-abandoned trials from reducing the execution budget, while still
+    counting pruned trials produced during execution.
     """
 
     reason = "max_trials"
 
     _ABANDONED_METADATA_KEY = "abandoned"
+    _CONSTRAINT_REJECTED_METADATA_KEY = "constraint_rejected"
 
     def __init__(self, max_trials: int | None) -> None:
         if max_trials is None:
@@ -339,14 +348,61 @@ class MaxTrialsStopCondition(StopCondition):
 
         def is_abandoned(trial: TrialResult) -> bool:
             metadata = getattr(trial, "metadata", None) or {}
-            return bool(metadata.get(self._ABANDONED_METADATA_KEY, False))
+            return bool(
+                metadata.get(self._ABANDONED_METADATA_KEY, False)
+                or metadata.get(self._CONSTRAINT_REJECTED_METADATA_KEY, False)
+            )
 
         count = sum(1 for trial in trials if not is_abandoned(trial))
         return count >= self._max_trials
 
 
+def validate_plateau_window(window: object) -> int:
+    """Validate a configured ``plateau_window`` and return it as an int.
+
+    ``plateau_window`` is a positive integer: the number of running-best
+    values compared (``N - 1`` comparisons), per the ``optimize.stop-rules.v1``
+    contract. Integral floats such as ``3.0`` are normalised to ``int``.
+    Bools, non-integral floats, strings and values below 1 raise ``ValueError``.
+    A window of 1 is accepted but warns: it stops after the first trial.
+    """
+    value: object = window
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            "plateau_window must be a positive integer, "
+            f"got {type(window).__name__} {window!r}"
+        )
+    if value < 1:
+        raise ValueError(f"plateau_window must be a positive integer (got {value})")
+    if value == 1:
+        warnings.warn(
+            "plateau_window=1 stops the run after the first trial under the "
+            "stop-rules contract (a window of 1 running-best value always "
+            "spans zero); use a larger plateau_window to compare trials.",
+            UserWarning,
+            stacklevel=3,
+        )
+    return value
+
+
+@dataclass(frozen=True)
+class _MetricsOnly:
+    """Minimal trial view so ``observed_metric_ranges`` can read cleaned metrics."""
+
+    metrics: dict[str, Any]
+
+
 class PlateauAfterNStopCondition(StopCondition):
-    """Stop when the best weighted score plateaus for ``window_size`` trials."""
+    """Stop when the best weighted score plateaus over ``window_size`` values.
+
+    Follows the ``optimize.stop-rules.v1`` rule: once ``window_size``
+    running-best values exist, take the last ``window_size`` values (including
+    the one after the trial just completed); stop if max - min <= epsilon.
+    That is ``window_size - 1`` comparisons; ``window_size`` must be a
+    positive integer (1 stops after the first trial).
+    """
 
     reason = "plateau"
 
@@ -359,8 +415,7 @@ class PlateauAfterNStopCondition(StopCondition):
     ) -> None:
         if objective_schema is None:
             raise ValueError("objective_schema is required for plateau detection")
-        if not isinstance(window_size, int) or window_size <= 0:
-            raise ValueError("window_size must be a positive integer")
+        window_size = validate_plateau_window(window_size)
         if epsilon < 0:
             raise ValueError("epsilon must be non-negative")
 
@@ -370,11 +425,100 @@ class PlateauAfterNStopCondition(StopCondition):
         self._history: deque[float] = deque(maxlen=self._window_size)
         self._best_score: float | None = None
         self._last_index = 0
+        self._ranged_metrics: list[dict[str, Any]] = []
+        self._ranged_ranges: dict[str, tuple[float, float]] = {}
+        self._ranged_scores: list[float] = []
+        self._ranged_scored = 0
+        self._ranged = self._uses_observed_ranges()
 
     def reset(self) -> None:
         self._history.clear()
         self._best_score = None
         self._last_index = 0
+        self._ranged_metrics = []
+        self._ranged_ranges = {}
+        self._ranged_scores = []
+        self._ranged_scored = 0
+
+    def _uses_observed_ranges(self) -> bool:
+        """True for multi-objective, non-banded schemas (#3219).
+
+        Those are scored with observed min-max ranges, the normalization the
+        orchestrator's incumbent tracking and terminal selection use. Single-
+        objective and banded schemas keep the range-free score, so ``epsilon``
+        stays in the metric's own units there (unchanged behaviour).
+        """
+        from traigent.core.result_selection import resolve_result_selection_schema
+
+        return resolve_result_selection_schema(self._schema) is not None
+
+    def _ranged_should_stop(self, trial_seq: Sequence[TrialResult]) -> bool:
+        """Plateau decision under the CURRENT observed ranges (#3219).
+
+        Ranges widen as trials arrive, so earlier scores are not stored as
+        history: whenever a range changes, every trial's score is recomputed
+        under the new ranges and the running best rebuilt. Unchanged ranges
+        score only the new trials. Cost per call is O(new trials) plus
+        O(trials seen) on a call where a range widens. Ranges widen rarely for
+        exchangeable data (about log T times) but on every trial for a steadily
+        improving objective, where the total is O(T^2) scorings (each a few
+        arithmetic operations per objective); that is fine for the usual
+        hundreds of trials and is the price of never using stale scores.
+        """
+        from traigent.core.result_selection import (
+            _ranking_metrics,
+            observed_metric_ranges,
+        )
+
+        names = [obj.name for obj in self._schema.objectives]
+        widened = False
+        for trial in trial_seq[self._last_index :]:
+            if not getattr(trial, "is_successful", True):
+                continue
+            # Same view of the metrics as ranking: flagged cost is dropped
+            # (never scored as a cheap zero); non-finite values are skipped.
+            clean = {
+                key: value
+                for key, value in _ranking_metrics(trial.metrics).items()
+                if not (
+                    key in names
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and not math.isfinite(value)
+                )
+            }
+            self._ranged_metrics.append(clean)
+            for name, (low, high) in observed_metric_ranges(
+                [cast("TrialResult", _MetricsOnly(clean))], names
+            ).items():
+                cur = self._ranged_ranges.get(name)
+                merged = (
+                    (low, high)
+                    if cur is None
+                    else (min(cur[0], low), max(cur[1], high))
+                )
+                if merged != cur:
+                    self._ranged_ranges[name] = merged
+                    widened = True
+        self._last_index = len(trial_seq)
+
+        if widened:
+            self._ranged_scored = 0
+            self._ranged_scores = []
+        for metrics in self._ranged_metrics[self._ranged_scored :]:
+            score = self._schema.compute_weighted_score(
+                metrics, ranges=self._ranged_ranges
+            )
+            if score is None or not math.isfinite(score):
+                continue
+            best = self._ranged_scores[-1] if self._ranged_scores else None
+            self._ranged_scores.append(score if best is None or score > best else best)
+        self._ranged_scored = len(self._ranged_metrics)
+
+        window = self._ranged_scores[-self._window_size :]
+        if len(window) < self._window_size:
+            return False
+        return abs(window[-1] - window[0]) <= self._epsilon
 
     def should_stop(self, trials: Iterable[TrialResult]) -> bool:
         if isinstance(trials, Sequence):
@@ -386,12 +530,18 @@ class PlateauAfterNStopCondition(StopCondition):
         if not new_trials:
             return False
 
+        if self._ranged:
+            return self._ranged_should_stop(trial_seq)
+
         for trial in new_trials:
             score = self._schema.compute_weighted_score(trial.metrics)
             if score is None:
                 continue
 
-            if self._best_score is None or score > self._best_score + self._epsilon:
+            # Running best is the true maximum so far (stop-rules.v1); only the
+            # span across the window is compared against epsilon, so several
+            # sub-epsilon gains cannot hide an accumulated improvement.
+            if self._best_score is None or score > self._best_score:
                 self._best_score = score
 
             if self._best_score is not None:
@@ -448,7 +598,7 @@ class MetricLimitStopCondition(StopCondition):
 
         new_trials = trial_seq[self._last_index :]
         if not new_trials:
-            return self._running_total >= self._limit
+            return cost_cap_reached(self._running_total, self._limit)
 
         for trial in new_trials:
             if not self._include_pruned and trial.status == TrialStatus.PRUNED:
@@ -467,12 +617,12 @@ class MetricLimitStopCondition(StopCondition):
 
             self._running_total += self._to_numeric(trial, value)
 
-            if self._running_total >= self._limit:
+            if cost_cap_reached(self._running_total, self._limit):
                 self._last_index = len(trial_seq)
                 return True
 
         self._last_index = len(trial_seq)
-        return self._running_total >= self._limit
+        return cost_cap_reached(self._running_total, self._limit)
 
     def _raw_metric_value(self, trial: TrialResult) -> Any:
         metrics = trial.metrics or {}

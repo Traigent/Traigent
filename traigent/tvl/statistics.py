@@ -15,6 +15,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+try:  # scipy ships only in the optional ``[bayesian]`` extra
+    from scipy import stats as _scipy_stats
+except ImportError:  # pragma: no cover - exercised by hiding scipy in tests
+    _scipy_stats = None  # type: ignore[assignment]
+
 
 @dataclass(slots=True)
 class PairedComparisonResult:
@@ -26,6 +31,9 @@ class PairedComparisonResult:
         effect_size: Estimated effect size (difference in means).
         test_statistic: The computed test statistic.
         degrees_of_freedom: Degrees of freedom for the test.
+        zero_variance_inconclusive: True when the differences had no spread
+            and the caller asked for ``zero_variance="inconclusive"``; the
+            p-value is then forced to 1.0 because a mean cannot be tested.
     """
 
     reject_null: bool
@@ -33,6 +41,7 @@ class PairedComparisonResult:
     effect_size: float
     test_statistic: float
     degrees_of_freedom: int
+    zero_variance_inconclusive: bool = False
 
 
 def benjamini_hochberg_adjust(p_values: Sequence[float]) -> list[float]:
@@ -138,15 +147,19 @@ def clopper_pearson_lower_bound(
     trials: int,
     confidence: float,
 ) -> float:
-    """Compute binomial confidence interval lower bound.
+    """Compute the exact Clopper-Pearson lower confidence bound.
 
-    For small samples (n < 30), uses exact Clopper-Pearson method via beta
-    quantile. For large samples (n >= 30), uses Wilson score interval which
-    provides a good approximation with better computational stability.
+    The bound is the ``(1 - confidence) / 2`` quantile of
+    ``Beta(successes, trials - successes + 1)`` at every ``trials`` (the
+    two-sided convention). With scipy installed (the ``[bayesian]`` extra) the
+    quantile comes from :func:`scipy.stats.beta.ppf`; without it a bisection on
+    the regularized incomplete beta (:func:`_beta_quantile`) gives the same
+    value to about 1e-12 relative accuracy for practical sample sizes. ``successes == 0`` returns 0.0 and
+    ``successes == trials`` is the closed form ``(alpha/2) ** (1/trials)``.
 
-    Note: Wilson intervals may be slightly less conservative than exact
-    Clopper-Pearson for borderline cases. For strict safety-critical
-    applications requiring exact bounds, consider using scipy.stats.
+    Earlier versions used a Wilson interval for ``trials >= 30`` (looser than
+    exact at small counts, e.g. 1/40 at 95%: 0.004425 vs 0.000633) and a
+    non-converging Newton iteration for ``trials < 30`` (#3222, #3051).
 
     Args:
         successes: Number of successes (non-negative).
@@ -168,33 +181,19 @@ def clopper_pearson_lower_bound(
     if confidence <= 0 or confidence >= 1:  # NOSONAR - defensive validation
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
 
-    # Special cases
     if successes == 0:
         return 0.0
 
-    alpha = 1 - confidence
+    tail = (1 - confidence) / 2
     k = successes
     n = trials
+    if k == n:
+        # Beta(n, 1) has CDF x**n, so the quantile is exact in closed form.
+        return float(tail ** (1.0 / n))
 
-    # For small samples, use exact Clopper-Pearson via beta quantile
-    # For large samples, use Wilson score interval for computational efficiency
-    # Wilson is accurate and more stable for large n
-
-    if n < 30:
-        # Exact Clopper-Pearson: beta.ppf(alpha/2, k, n-k+1)
-        return _beta_quantile_approx(alpha / 2, k, n - k + 1)
-    else:
-        # Wilson score interval lower bound
-        # For lower bound, we need the (1-alpha/2) quantile (positive z)
-        z = _inverse_normal_cdf(1 - alpha / 2)
-        p_hat = k / n
-
-        denominator = 1 + z * z / n
-        center = (p_hat + z * z / (2 * n)) / denominator
-        margin = z * math.sqrt(p_hat * (1 - p_hat) / n + z * z / (4 * n * n))
-        margin = margin / denominator
-
-        return max(0.0, center - margin)
+    if _scipy_stats is not None:
+        return float(_scipy_stats.beta.ppf(tail, k, n - k + 1))
+    return _beta_quantile(tail, k, n - k + 1)
 
 
 def _inverse_normal_cdf(p: float) -> float:
@@ -227,51 +226,31 @@ def _inverse_normal_cdf(p: float) -> float:
     )
 
 
-def _beta_quantile_approx(p: float, alpha: float, beta: float) -> float:
-    """Approximate beta distribution quantile.
+def _beta_quantile(p: float, a: float, b: float) -> float:
+    """Beta quantile by bisection on the regularized incomplete beta.
 
-    Uses Newton-Raphson iteration with a normal approximation as starting point.
-
-    Args:
-        p: Probability (quantile level).
-        alpha: First shape parameter.
-        beta: Second shape parameter.
+    I_x(a, b) is strictly increasing in x, so bisection on (0, 1) converges
+    monotonically. Stops when the bracket is below 1e-13 of its upper end (relative, so
+    extreme tails stay accurate) or after 200 halvings, so it always terminates.
 
     Returns:
-        x such that P(X <= x) = p for X ~ Beta(alpha, beta).
+        x such that P(X <= x) = p for X ~ Beta(a, b).
     """
     if p <= 0:
         return 0.0
     if p >= 1:  # NOSONAR - defensive boundary check
         return 1.0
 
-    # Use normal approximation for starting point
-    mean = alpha / (alpha + beta)
-    var = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1))
-    std = math.sqrt(var)
-
-    # Initial estimate using normal approximation
-    z = _inverse_normal_cdf(p)
-    x = max(0.001, min(0.999, mean + z * std))
-
-    # Newton-Raphson refinement (limited iterations)
-    for _ in range(10):
-        # Compute beta CDF at x using regularized incomplete beta
-        fx = _regularized_beta(x, alpha, beta) - p
-        if abs(fx) < 1e-10:
+    lo, hi = 0.0, 1.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if _regularized_beta(mid, a, b) < p:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo <= 1e-13 * hi:
             break
-
-        # Compute beta PDF at x
-        fpx = _beta_pdf(x, alpha, beta)
-        if fpx < 1e-15:
-            break
-
-        # Newton step with damping
-        step = fx / fpx
-        x = x - 0.5 * step  # Damped step for stability
-        x = max(0.001, min(0.999, x))
-
-    return x
+    return 0.5 * (lo + hi)
 
 
 def _compute_beta_coefficient(x: float, a: float, b: float) -> float:
@@ -331,7 +310,7 @@ def _regularized_beta(x: float, a: float, b: float) -> float:
     d = 1.0 / d
     h = d
 
-    for m in range(1, 100):
+    for m in range(1, 10000):
         m2 = 2 * m
         # Even step
         aa_even = m * (b - m) * x / ((a + m2 - 1) * (a + m2))
@@ -364,32 +343,12 @@ def _log_beta(a: float, b: float) -> float:
     return math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
 
 
-def _beta_pdf(x: float, a: float, b: float) -> float:
-    """Beta distribution PDF.
-
-    Args:
-        x: Point to evaluate.
-        a: First shape parameter.
-        b: Second shape parameter.
-
-    Returns:
-        PDF value at x.
-    """
-    if x <= 0 or x >= 1:
-        return 0.0
-
-    try:
-        log_pdf = (a - 1) * math.log(x) + (b - 1) * math.log(1 - x) - _log_beta(a, b)
-        return math.exp(log_pdf)
-    except (ValueError, OverflowError):
-        return 0.0
-
-
 def paired_comparison_test(
     x_samples: Sequence[float],
     y_samples: Sequence[float],
     epsilon: float,
     direction: Literal["greater", "less"],
+    zero_variance: Literal["inconclusive", "sign"] = "inconclusive",
 ) -> PairedComparisonResult:
     """Test if x is better than y by at least epsilon using a paired t-test.
 
@@ -407,6 +366,13 @@ def paired_comparison_test(
         y_samples: Samples from the second distribution (must match x_samples length).
         epsilon: The margin/tolerance for the comparison.
         direction: Direction of the test ("greater" or "less").
+        zero_variance: How to decide a zero-variance difference vector, where
+            the t statistic is undefined. ``"inconclusive"`` (default, fails
+            closed for mean-based policy decisions such as the promotion gate)
+            returns ``p_value=1.0`` and sets ``zero_variance_inconclusive``.
+            ``"sign"`` decides it with an exact sign test (see
+            :func:`zero_variance_sign_test_p_value`), which answers "better on
+            more examples than chance", not a mean difference.
 
     Returns:
         PairedComparisonResult with test outcome and statistics.
@@ -423,7 +389,16 @@ def paired_comparison_test(
     df = max(1, n - 1)
 
     if se_diff < 1e-15:
-        return _handle_degenerate_case(mean_diff, epsilon, direction, df)
+        if zero_variance == "inconclusive":
+            return PairedComparisonResult(
+                reject_null=False,
+                p_value=1.0,
+                effect_size=mean_diff,
+                test_statistic=0.0,
+                degrees_of_freedom=df,
+                zero_variance_inconclusive=True,
+            )
+        return _handle_degenerate_case(differences, epsilon, direction, df)
 
     t_stat, p_value = _compute_test_statistics(
         mean_diff, epsilon, se_diff, direction, df
@@ -459,19 +434,63 @@ def _compute_difference_stats(differences: list[float], n: int) -> tuple[float, 
     return mean_diff, var_diff
 
 
+def zero_variance_sign_test_p_value(
+    differences: Sequence[float],
+    epsilon: float,
+    direction: Literal["greater", "less"],
+) -> float:
+    """One-sided exact sign-test p-value for a (near) zero-variance sample.
+
+    When the paired differences have no spread the t statistic is undefined
+    (zero standard error), so a t-test cannot decide the case. The exact sign
+    test is used instead. For ``direction == "greater"`` let ``k`` be the number
+    of differences strictly above ``epsilon`` (``"less"``: strictly below
+    ``-epsilon``). Under the null ``P(diff beyond epsilon) <= 1/2`` each pair is
+    on the alternative side with probability at most ``1/2``, so
+    ``p = P(Binomial(n, 1/2) >= k)`` is exact and conservative, assuming only
+    independent pairs (no normality). For a constant difference beyond epsilon
+    ``k = n`` and ``p = 0.5**n``; if ``k = 0`` then ``p = 1.0``.
+
+    Estimand: this tests the *median* (sign) of the differences, not the mean.
+    A zero-variance sample carries no information about the spread of the
+    population, so a mean-based claim would need extra assumptions (e.g.
+    symmetry); the sign test is the assumption-light choice and it is
+    deliberately conservative at small ``n`` (``n = 5`` cannot go below
+    ``0.03125`` one-sided, ``0.0625`` two-sided).
+
+    The result is never exactly 0: it is floored at the smallest positive float.
+    """
+    n = len(differences)
+    if direction == "greater":
+        k = sum(1 for d in differences if d > epsilon)
+    else:
+        k = sum(1 for d in differences if d < -epsilon)
+    if k == 0:
+        return 1.0
+    tail = sum(math.comb(n, i) for i in range(k, n + 1))
+    p = tail / (2**n)  # exact big-int ratio; no 0.5**n underflow
+    return float(min(1.0, max(p, math.ulp(0.0))))
+
+
 def _handle_degenerate_case(
-    effect_size: float,
+    differences: Sequence[float],
     epsilon: float,
     direction: Literal["greater", "less"],
     df: int,
 ) -> PairedComparisonResult:
-    """Handle degenerate case with zero variance."""
-    reject = effect_size > epsilon if direction == "greater" else effect_size < -epsilon
+    """Decide the zero-variance case with an exact sign test.
+
+    See :func:`zero_variance_sign_test_p_value`. ``reject_null`` is deprecated
+    and left ``False`` like the non-degenerate path, so callers must compare
+    ``p_value`` with their own alpha.
+    """
+    p_value = zero_variance_sign_test_p_value(differences, epsilon, direction)
+    effect_size = sum(differences) / len(differences)
     return PairedComparisonResult(
-        reject_null=reject,
-        p_value=0.0 if reject else 1.0,
+        reject_null=False,
+        p_value=p_value,
         effect_size=effect_size,
-        test_statistic=float("inf") if reject else 0.0,
+        test_statistic=float("inf") if p_value < 1.0 else 0.0,
         degrees_of_freedom=df,
     )
 
@@ -494,55 +513,58 @@ def _compute_test_statistics(
 
 
 def _t_cdf_lower(t: float, df: int) -> float:
-    """Lower tail probability P(T <= t)."""
-    return _t_cdf_approx(t, df)
+    """Lower tail probability P(T <= t), computed directly (no 1 - upper)."""
+    return _t_sf(-t, df)
 
 
 def _t_cdf_upper(t: float, df: int) -> float:
-    """Upper tail probability P(T >= t) = 1 - P(T <= t)."""
-    return 1.0 - _t_cdf_approx(t, df)
+    """Upper tail probability P(T >= t), computed directly (never as 1 - CDF)."""
+    return _t_sf(t, df)
 
 
 def _t_cdf_approx(t: float, df: int) -> float:
-    """Compute CDF of t-distribution using regularized incomplete beta.
+    """CDF of the t-distribution, P(T <= t), exact for every ``df``.
 
-    The t-distribution CDF is related to the regularized incomplete beta:
-    F(t; df) = 1 - 0.5 * I_x(df/2, 0.5) where x = df/(df + t^2) for t > 0
-    F(t; df) = 0.5 * I_x(df/2, 0.5) where x = df/(df + t^2) for t < 0
+    Equal to the lower tail; use :func:`_t_cdf_upper` for upper-tail p-values,
+    since ``1 - _t_cdf_approx`` loses the tail to rounding (#3223).
+    """
+    return _t_sf(-t, df)
 
-    Args:
-        t: t-statistic value.
-        df: Degrees of freedom.
 
-    Returns:
-        Cumulative probability P(T <= t).
+def _t_sf(t: float, df: int) -> float:
+    """Survival function P(T >= t) of Student's t with ``df`` degrees of freedom.
+
+    Uses :func:`scipy.stats.t.sf` when scipy is importable. Otherwise it uses
+    ``sf(t) = 0.5 * I_x(df / 2, 1 / 2)`` with ``x = df / (df + t**2)`` for
+    ``t > 0`` (and ``1`` minus that for ``t < 0``) on the regularized incomplete
+    beta, for every ``df`` -- there is no normal-approximation switch, and the
+    tail is never obtained as ``1 - CDF`` so it neither loses precision nor
+    underflows to 0.0 before the true value does (#3223).
     """
     if df <= 0:
         return 0.5
-
-    # Handle infinities
     if t == float("inf"):
-        return 1.0
-    if t == float("-inf"):
         return 0.0
-
-    # For large df, use normal approximation
-    if df > 100:
-        return _normal_cdf(t)
-
-    # For t = 0, CDF is exactly 0.5
-    if abs(t) < 1e-15:
+    if t == float("-inf"):
+        return 1.0
+    if t == 0:
         return 0.5
-
-    # Use relationship with regularized incomplete beta function
-    # F(t; df) = I_{x}(df/2, 1/2) where x = df/(df + t^2) for lower tail
-    x = df / (df + t * t)
-    beta_val = _regularized_beta(x, df / 2.0, 0.5)
-
-    if t > 0:
-        return 1.0 - 0.5 * beta_val
-    else:
-        return 0.5 * beta_val
+    if abs(t) > 1e100:
+        # t * t would overflow and scipy returns 0.0 for a representable tail.
+        # For x = df / (df + t**2) -> 0, I_x(a, 1/2) ~ x**a / (a * B(a, 1/2)).
+        a = df / 2.0
+        log_tail = (
+            math.log(0.5)
+            + a * (math.log(df) - 2.0 * math.log(abs(t)))
+            - math.log(a)
+            - _log_beta(a, 0.5)
+        )
+        tail = math.exp(log_tail) if log_tail > -745 else 0.0
+        return tail if t > 0 else 1.0 - tail
+    if _scipy_stats is not None:
+        return float(_scipy_stats.t.sf(t, df))
+    tail = 0.5 * _regularized_beta(df / (df + t * t), df / 2.0, 0.5)
+    return tail if t > 0 else 1.0 - tail
 
 
 def _normal_cdf(x: float) -> float:

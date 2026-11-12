@@ -1,0 +1,99 @@
+"""Security-relevant TRAIGENT_* flags share one boolean grammar (#2989)."""
+
+from __future__ import annotations
+
+import pytest
+
+from traigent.config.types import TraigentConfig, is_traigent_disabled
+from traigent.security import credentials
+from traigent.security.credentials import SecurityLevel, get_secure_credential_store
+
+TRUE_SPELLINGS = ["true", " true", "True", "1", "yes", "on", "yes\n"]
+FALSE_SPELLINGS = ["", "0", "False", "off"]
+
+
+@pytest.mark.parametrize("value", TRUE_SPELLINGS)
+def test_disabled_flag_accepts_all_true_spellings(monkeypatch, value) -> None:
+    monkeypatch.setenv("TRAIGENT_DISABLED", value)
+    assert is_traigent_disabled() is True
+
+
+@pytest.mark.parametrize("value", FALSE_SPELLINGS)
+def test_disabled_flag_false_spellings(monkeypatch, value) -> None:
+    monkeypatch.setenv("TRAIGENT_DISABLED", value)
+    assert is_traigent_disabled() is False
+
+
+@pytest.mark.parametrize("value", TRUE_SPELLINGS)
+def test_edge_analytics_mode_forces_offline_for_all_true_spellings(
+    monkeypatch, value
+) -> None:
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.setenv("TRAIGENT_EDGE_ANALYTICS_MODE", value)
+    assert TraigentConfig.from_environment().offline is True
+
+
+@pytest.mark.parametrize("value", ["production", "production\n", " Production", "prod"])
+def test_credential_store_production_spellings_get_maximum(monkeypatch, value) -> None:
+    for key in ("ENVIRONMENT", "TRAIGENT_ENV"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("TRAIGENT_ENVIRONMENT", value)
+    captured: dict[str, SecurityLevel] = {}
+
+    def fake_store(*, security_level, **_kwargs):
+        captured["level"] = security_level
+
+    monkeypatch.setattr(credentials, "EnhancedCredentialStore", fake_store)
+    get_secure_credential_store()
+    assert captured["level"] == SecurityLevel.MAXIMUM
+
+
+@pytest.mark.parametrize(
+    ("key", "other"),
+    [("ENVIRONMENT", "TRAIGENT_ENVIRONMENT"), ("TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")],
+)
+def test_any_production_variable_keeps_maximum_security(
+    monkeypatch, key, other
+) -> None:
+    for name in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(key, "development")
+    monkeypatch.setenv(other, "production")
+    captured: dict[str, SecurityLevel] = {}
+
+    def fake_store(*, security_level, **_kwargs):
+        captured["level"] = security_level
+
+    monkeypatch.setattr(credentials, "EnhancedCredentialStore", fake_store)
+    get_secure_credential_store()
+    assert captured["level"] == SecurityLevel.MAXIMUM
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, SecurityLevel.MAXIMUM),
+        ({"ENVIRONMENT": "banana"}, SecurityLevel.MAXIMUM),
+        ({"TRAIGENT_ENVIRONMENT": "banana"}, SecurityLevel.MAXIMUM),
+        (
+            {"ENVIRONMENT": "development", "TRAIGENT_ENV": "banana"},
+            SecurityLevel.MAXIMUM,
+        ),
+        ({"ENVIRONMENT": "development"}, SecurityLevel.STANDARD),
+        ({"TRAIGENT_ENVIRONMENT": "test"}, SecurityLevel.STANDARD),
+        ({"TRAIGENT_ENVIRONMENT": "staging"}, SecurityLevel.HIGH),
+    ],
+)
+def test_unknown_or_unset_environment_fails_closed(monkeypatch, env, expected) -> None:
+    for name in ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    captured: dict[str, SecurityLevel] = {}
+
+    def fake_store(*, security_level, **_kwargs):
+        captured["level"] = security_level
+
+    monkeypatch.setattr(credentials, "EnhancedCredentialStore", fake_store)
+    get_secure_credential_store()
+    assert captured["level"] == expected

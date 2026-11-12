@@ -39,6 +39,12 @@ class AlgorithmType(Enum):
     SIMULATED_ANNEALING = "simulated_annealing"
 
 
+def _typed_range_kind(definition: dict[str, Any]) -> str:
+    """Classify a typed range dict as ``integer`` or ``continuous`` by its type."""
+    declared = str(definition.get("type", "")).lower()
+    return "integer" if declared in {"int", "integer"} else "continuous"
+
+
 @dataclass
 class OptimizationRecord:
     """Single optimization run record."""
@@ -219,6 +225,8 @@ class OptimizationHistory:
                 param_types[param] = "categorical"
             elif isinstance(value, tuple) and len(value) == 2:
                 param_types[param] = "continuous"
+            elif isinstance(value, dict) and "low" in value and "high" in value:
+                param_types[param] = _typed_range_kind(value)
             else:
                 param_types[param] = "unknown"
 
@@ -362,6 +370,8 @@ class AlgorithmSelector:
                 param_types[param] = "categorical"
             elif isinstance(value, tuple) and len(value) == 2:
                 param_types[param] = "continuous"
+            elif isinstance(value, dict) and "low" in value and "high" in value:
+                param_types[param] = _typed_range_kind(value)
             else:
                 param_types[param] = "unknown"
 
@@ -614,6 +624,8 @@ class PerformancePredictor:
                 param_types[param] = "categorical"
             elif isinstance(value, tuple):
                 param_types[param] = "continuous"
+            elif isinstance(value, dict) and "low" in value and "high" in value:
+                param_types[param] = _typed_range_kind(value)
             else:
                 param_types[param] = "unknown"
 

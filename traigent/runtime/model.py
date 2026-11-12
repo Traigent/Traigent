@@ -19,6 +19,8 @@ from typing import Any
 
 import yaml
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 KIND_LATENCY = "latency_violation_rate"
 TVL_VERSION = "1.3"
 #: Declared by any document that uses a TVL 1.4 reactive construct.
@@ -122,7 +124,7 @@ E_LOCK_TIMEOUT = "state_lock_timeout"
 E_LOCK_UNAVAILABLE = "state_lock_unavailable"
 
 
-class RuntimeRequirementError(Exception):
+class RuntimeRequirementError(PicklableExceptionMixin, Exception):
     """A failure with a closed ``code`` and an optional structural ``path``.
 
     Messages never echo user values, request bodies or server bodies.

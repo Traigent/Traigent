@@ -23,6 +23,9 @@ class _Client:
 @pytest.fixture
 def manager():
     mgr = FrameworkOverrideManager()
+    # An unmapped target is reported as not applied (#2940); give the fake
+    # client a mapping so these tests keep exercising the activation paths.
+    mgr._parameter_mappings[f"{MOD}.Client"] = {"model": "model"}
     yield mgr
     mgr._override_active.enabled = False
 

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import copy
 import itertools
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -17,6 +18,36 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 DEFAULT_MAX_GRID_COMBINATIONS = 100_000
+
+
+class _Unfreezable(Exception):
+    """A value has no hashable form that preserves ``==`` semantics."""
+
+
+def _freeze(value: Any, *, top: bool = True) -> Any:
+    """Hashable stand-in for ``value`` that is equal exactly when ``==`` is.
+
+    Containers are tagged by kind so ``[1]`` never matches ``(1,)``. A
+    top-level NaN gets a fresh sentinel because ``nan != nan`` always held in
+    the grid scan this index replaces.
+    """
+    if isinstance(value, float) and value != value:
+        return object() if top else value
+    if isinstance(value, (list, tuple)):
+        tag = "tuple" if isinstance(value, tuple) else "list"
+        return (tag, tuple(_freeze(v, top=False) for v in value))
+    if isinstance(value, Mapping):
+        return (
+            "dict",
+            frozenset((k, _freeze(v, top=False)) for k, v in value.items()),
+        )
+    if isinstance(value, (set, frozenset)):
+        return ("set", frozenset(value))
+    try:
+        hash(value)
+    except TypeError:
+        raise _Unfreezable from None
+    return value
 
 
 class GridSearchOptimizer(BaseOptimizer):
@@ -113,6 +144,8 @@ class GridSearchOptimizer(BaseOptimizer):
         self._guard_grid_cardinality()
 
         # Generate all parameter combinations
+        self._pending_resume_marks: list[dict[str, Any]] = []
+        self._pending_slow_marks: list[dict[str, Any]] = []
         self._grid_points = self._generate_grid()
         self._current_index = 0
 
@@ -305,14 +338,99 @@ class GridSearchOptimizer(BaseOptimizer):
 
         return config
 
+    @property
+    def _grid_points(self) -> list[dict[str, Any]]:
+        """Not-yet-suggested grid, with any pending resume marks applied."""
+        if self._pending_resume_marks or self._pending_slow_marks:
+            self._apply_pending_resume_marks()
+        return self._grid_store
+
+    @_grid_points.setter
+    def _grid_points(self, value: list[dict[str, Any]]) -> None:
+        self._grid_store = value
+        self._pending_resume_marks = []
+        self._pending_slow_marks = []
+
+    def __getstate__(self) -> dict[str, Any]:
+        _ = self._grid_points  # never serialize half-applied marks
+        return self.__dict__.copy()
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        state = dict(state)
+        if "_grid_points" in state:  # pickled before the lazy-mark store existed
+            state["_grid_store"] = state.pop("_grid_points")
+        state.setdefault("_pending_resume_marks", [])
+        state.setdefault("_pending_slow_marks", [])
+        self.__dict__.update(state)
+
+    def __copy__(self) -> GridSearchOptimizer:
+        _ = self._grid_points  # copies must not share pending marks
+        clone = self.__class__.__new__(self.__class__)
+        clone.__dict__.update(self.__dict__)
+        clone._grid_store = list(self._grid_store)
+        clone._pending_resume_marks = []
+        clone._pending_slow_marks = []
+        return clone
+
     def mark_config_evaluated(self, config: dict[str, Any]) -> None:
-        """Drop an already-evaluated point from the not-yet-suggested grid (#1697)."""
+        """Drop an already-evaluated point from the not-yet-suggested grid (#1697).
+
+        Marks are O(1): a snapshot is recorded and all pending marks are
+        applied in one hashed pass the next time the grid is read, so resuming
+        R reused trials over a G-point grid costs O(R + G) instead of O(R * G)
+        (#3271). The snapshot is taken now, so later mutation of ``config``
+        cannot undo the mark.
+        """
         super().mark_config_evaluated(config)
-        keep = list(self._grid_points[: self._current_index])
-        for point in self._grid_points[self._current_index :]:
-            if any(k not in config or config[k] != v for k, v in point.items()):
-                keep.append(point)
-        self._grid_points = keep
+        try:
+            self._pending_resume_marks.append(
+                {k: _freeze(v) for k, v in config.items()}
+            )
+        except _Unfreezable:
+            try:
+                snapshot = copy.deepcopy(config)
+            except Exception:  # noqa: BLE001 - fall back to a shallow snapshot
+                snapshot = dict(config)
+            self._pending_slow_marks.append(snapshot)
+
+    def _apply_pending_resume_marks(self) -> None:
+        """Remove marked points at or after the cursor in one pass."""
+        marks = self._pending_resume_marks
+        slow_marks = self._pending_slow_marks
+        self._pending_resume_marks = []
+        self._pending_slow_marks = []
+        keysets: dict[tuple[str, ...], set[tuple[Any, ...]]] = {}
+
+        def keys_for(names: tuple[str, ...]) -> set[tuple[Any, ...]]:
+            cached = keysets.get(names)
+            if cached is None:
+                cached = {
+                    tuple(m[n] for n in names)
+                    for m in marks
+                    if all(n in m for n in names)
+                }
+                keysets[names] = cached
+            return cached
+
+        def linear(point: dict[str, Any]) -> bool:
+            return any(
+                all(k in m and not (m[k] != v) for k, v in point.items())
+                for m in slow_marks
+            )
+
+        def matches(point: dict[str, Any]) -> bool:
+            try:
+                key = tuple(_freeze(v) for v in point.values())
+            except _Unfreezable:
+                return bool(slow_marks) and linear(point)
+            if key in keys_for(tuple(point)):
+                return True
+            return bool(slow_marks) and linear(point)
+
+        grid = self._grid_store
+        keep = grid[: self._current_index]
+        keep.extend(p for p in grid[self._current_index :] if not matches(p))
+        self._grid_store = keep
 
     def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop.
@@ -330,6 +448,7 @@ class GridSearchOptimizer(BaseOptimizer):
     def reset(self) -> None:
         """Reset optimizer state for new optimization run."""
         super().reset()
+        _ = self._grid_points  # apply pending resume marks at the old cursor
         self._current_index = 0
 
     @property

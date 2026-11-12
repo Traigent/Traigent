@@ -7,7 +7,7 @@ import time
 from collections.abc import Iterator
 from typing import Any, Literal, cast, overload
 from urllib import error, request
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 from traigent.cloud.url_security import open_no_redirect
 from traigent.evaluation.config import EvaluationConfig
@@ -46,6 +46,7 @@ from traigent.utils.exceptions import (
     TraigentConnectionError,
 )
 from traigent.utils.pagination import iter_pages
+from traigent.utils.url_segments import quote_path_segment
 from traigent.utils.wire_text import filter_wire_metadata
 
 
@@ -124,7 +125,10 @@ class EvaluationClient:
         )
 
     def get_evaluator(self, evaluator_id: str) -> EvaluatorDefinitionDTO:
-        payload = self._request_json("GET", f"/evaluators/{evaluator_id}")
+        payload = self._request_json(
+            "GET",
+            f"/evaluators/{quote_path_segment(evaluator_id, field='evaluator_id')}",
+        )
         return EvaluatorDefinitionDTO.from_dict(
             self._unwrap_data(payload, "evaluator detail")
         )
@@ -182,7 +186,11 @@ class EvaluationClient:
             judge_config = payload["judge_config"]
             if isinstance(judge_config, JudgeConfigDTO):
                 payload["judge_config"] = judge_config.to_dict()
-        response = self._request_json("PATCH", f"/evaluators/{evaluator_id}", payload)
+        response = self._request_json(
+            "PATCH",
+            f"/evaluators/{quote_path_segment(evaluator_id, field='evaluator_id')}",
+            payload,
+        )
         return EvaluatorDefinitionDTO.from_dict(
             self._unwrap_data(response, "evaluator update")
         )
@@ -203,7 +211,7 @@ class EvaluationClient:
             payload["override_judge_config"] = override_judge_config.to_dict()
         response = self._request_json(
             "POST",
-            f"/evaluators/{evaluator_id}/execute",
+            f"/evaluators/{quote_path_segment(evaluator_id, field='evaluator_id')}/execute",
             payload,
         )
         return EvaluatorRunDTO.from_dict(
@@ -230,7 +238,7 @@ class EvaluationClient:
             payload["target_type"] = target_type.value
         response = self._request_json(
             "POST",
-            f"/evaluators/{evaluator_id}/backfill",
+            f"/evaluators/{quote_path_segment(evaluator_id, field='evaluator_id')}/backfill",
             payload,
         )
         return BackfillResultDTO.from_dict(
@@ -295,7 +303,9 @@ class EvaluationClient:
         )
 
     def get_evaluator_run(self, run_id: str) -> EvaluatorRunDTO:
-        payload = self._request_json("GET", f"/evaluator-runs/{run_id}")
+        payload = self._request_json(
+            "GET", f"/evaluator-runs/{quote_path_segment(run_id, field='run_id')}"
+        )
         return EvaluatorRunDTO.from_dict(
             self._unwrap_data(payload, "evaluator run detail")
         )
@@ -323,7 +333,7 @@ class EvaluationClient:
         response = self._request_json(
             "POST",
             "/observability/traces/"
-            f"{quote(trace_id, safe='')}/evaluation-dataset-example-candidate",
+            f"{quote_path_segment(trace_id, field='trace_id')}/evaluation-dataset-example-candidate",
             payload,
         )
         return EvaluationDatasetExampleCandidateDTO.from_dict(
@@ -353,7 +363,7 @@ class EvaluationClient:
         response = self._request_json(
             "POST",
             "/evaluation-datasets/"
-            f"{quote(evaluation_dataset_id, safe='')}/examples/from-trace",
+            f"{quote_path_segment(evaluation_dataset_id, field='evaluation_dataset_id')}/examples/from-trace",
             payload,
         )
         return EvaluationDatasetExampleFromTraceDTO.from_dict(
@@ -372,7 +382,9 @@ class EvaluationClient:
                 override_judge_config = JudgeConfigDTO.from_dict(override_judge_config)
             payload["override_judge_config"] = override_judge_config.to_dict()
         response = self._request_json(
-            "POST", f"/evaluator-runs/{run_id}/retry", payload
+            "POST",
+            f"/evaluator-runs/{quote_path_segment(run_id, field='run_id')}/retry",
+            payload,
         )
         return EvaluatorRunDTO.from_dict(
             self._unwrap_data(response, "evaluator run retry")
@@ -524,7 +536,10 @@ class EvaluationClient:
         )
 
     def get_annotation_queue(self, queue_id: str) -> AnnotationQueueDTO:
-        payload = self._request_json("GET", f"/annotation-queues/{queue_id}")
+        payload = self._request_json(
+            "GET",
+            f"/annotation-queues/{quote_path_segment(queue_id, field='queue_id')}",
+        )
         return AnnotationQueueDTO.from_dict(
             self._unwrap_data(payload, "annotation queue detail")
         )
@@ -564,7 +579,9 @@ class EvaluationClient:
         if "status" in payload and isinstance(payload["status"], AnnotationQueueStatus):
             payload["status"] = payload["status"].value
         response = self._request_json(
-            "PATCH", f"/annotation-queues/{queue_id}", payload
+            "PATCH",
+            f"/annotation-queues/{quote_path_segment(queue_id, field='queue_id')}",
+            payload,
         )
         return AnnotationQueueDTO.from_dict(
             self._unwrap_data(response, "annotation queue update")
@@ -589,7 +606,7 @@ class EvaluationClient:
             self._unwrap_data(
                 self._request_json(
                     "POST",
-                    f"/annotation-queues/{queue_id}/items",
+                    f"/annotation-queues/{quote_path_segment(queue_id, field='queue_id')}/items",
                     {
                         "targets": normalized_targets,
                         "assigned_user_id": assigned_user_id,
@@ -612,7 +629,7 @@ class EvaluationClient:
         if isinstance(status, str):
             status = AnnotationQueueItemStatus(status)
         path = self._build_query_path(
-            f"/annotation-queues/{queue_id}/items",
+            f"/annotation-queues/{quote_path_segment(queue_id, field='queue_id')}/items",
             page=page,
             per_page=per_page,
             status=status.value if status else None,
@@ -662,7 +679,7 @@ class EvaluationClient:
         assigned_user_id: str | None = None,
     ) -> AnnotationQueueItemDTO | None:
         path = self._build_query_path(
-            f"/annotation-queues/{queue_id}/next",
+            f"/annotation-queues/{quote_path_segment(queue_id, field='queue_id')}/next",
             assigned_user_id=assigned_user_id,
         )
         payload = self._request_json("GET", path)
@@ -680,7 +697,9 @@ class EvaluationClient:
         ):
             payload["status"] = payload["status"].value
         response = self._request_json(
-            "PATCH", f"/annotation-queues/items/{item_id}", payload
+            "PATCH",
+            f"/annotation-queues/items/{quote_path_segment(item_id, field='item_id')}",
+            payload,
         )
         return AnnotationQueueItemDTO.from_dict(
             self._unwrap_data(response, "annotation queue item update")
@@ -695,7 +714,7 @@ class EvaluationClient:
     ) -> AnnotationQueueItemCompleteResultDTO:
         response = self._request_json(
             "POST",
-            f"/annotation-queues/items/{item_id}/complete",
+            f"/annotation-queues/items/{quote_path_segment(item_id, field='item_id')}/complete",
             {
                 "scores": scores,
                 "note": note,
@@ -719,7 +738,11 @@ class EvaluationClient:
         measure_data: dict[str, Any],
     ) -> TypedMeasureDTO:
         return TypedMeasureDTO.from_dict(
-            self._request_measure_json("PUT", f"/{measure_id}", measure_data)
+            self._request_measure_json(
+                "PUT",
+                f"/{quote_path_segment(measure_id, field='measure_id')}",
+                measure_data,
+            )
         )
 
     def judge_config_from_benchmark_payload(

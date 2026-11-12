@@ -10,16 +10,16 @@ from __future__ import annotations
 
 import asyncio
 import math
-import os
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
-from traigent.core.utils import safe_get_nested_attr
+from traigent.core.utils import safe_get_nested_attr, strict_metrics_nulls_enabled
 from traigent.evaluators.base import (
     EXAMPLE_TIMEOUT_ERROR_PREFIX,
     MEASURED_ONLY_METRICS,
+    OBJECTIVE_SOURCE_METRICS,
     BaseEvaluator,
     Dataset,
     EvaluationExample,
@@ -58,12 +58,8 @@ def _truthy_flag(value: Any) -> bool:
 
 
 def _strict_metrics_nulls() -> bool:
-    """TRAIGENT_STRICT_METRICS_NULLS: report a missing metric as None, not 0.0."""
-    return os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    )
+    """Strict nulls (config or TRAIGENT_STRICT_METRICS_NULLS): None, not 0.0."""
+    return strict_metrics_nulls_enabled()
 
 
 def _measured_number(value: Any) -> float | None:
@@ -373,6 +369,12 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 # the legacy estimator's input when that call had no usage.
                 original_prompt=original_prompt if position == 0 else None,
                 response_text=response_text if position == 0 else None,
+                # A captured response with missing/null usage is an unknown
+                # spend, never an estimate from the prompt/answer text
+                # (Traigent#3251). This deliberately does NOT claim the
+                # response is provider-billed (``response_captured``): the
+                # capture buffer also holds caller-supplied objects (#2505).
+                estimate_from_text=False,
             )
             if not self._has_llm_measurement(metrics):
                 # A call with no usage is an unknown spend, and it stays
@@ -421,6 +423,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         total.cost.output_cost += extra.cost.output_cost
         total.cost.total_cost += extra.cost.total_cost
         total.cost.unpriced = total.cost.unpriced or extra.cost.unpriced
+        total.cost.cache_rate_unknown = (
+            total.cost.cache_rate_unknown or extra.cost.cache_rate_unknown
+        )
         total.response.response_time_ms += extra.response.response_time_ms
 
     def _enhance_result_with_llm_metrics(
@@ -611,7 +616,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 continue
             if _any_row_measured(all_metrics, metric):
                 continue
-            source = "total_cost" if metric == "cost" else metric
+            source = OBJECTIVE_SOURCE_METRICS.get(metric, (metric,))[0]
             captured = _measured_number(aggregated.get(source))
             if captured is not None:
                 aggregated[metric] = captured

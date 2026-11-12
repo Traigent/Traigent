@@ -20,6 +20,15 @@ pytest.importorskip("langchain_openai")
 import traigent  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _restore_mock_mode():
+    """The test enables the process-wide mock flag; do not leak it to later tests."""
+    yield
+    from traigent.testing import disable_mock_mode
+
+    disable_mock_mode()
+
+
 @pytest.fixture
 def qa_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))

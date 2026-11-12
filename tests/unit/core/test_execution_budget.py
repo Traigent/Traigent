@@ -385,6 +385,33 @@ def test_debit_trial_never_raises_on_bad_examples() -> None:
     # debit was swallowed — either way, no exception escaped.
 
 
+def test_debit_trial_non_numeric_cost_marks_tracking_incomplete() -> None:
+    budget = ExecutionBudget(max_cost_usd=1.0)
+    budget.debit_trial(cost=0.4)
+    budget.debit_trial(cost="n/a")  # type: ignore[arg-type]
+    snap = budget.snapshot()
+    assert snap.trials == 2
+    assert snap.untracked_trials == 1
+    assert snap.cost_tracking != "complete"
+
+
+def test_debit_trial_valid_cost_is_booked_despite_bad_examples() -> None:
+    budget = ExecutionBudget(max_cost_usd=1.0, max_examples=10)
+    budget.debit_trial(cost=0.4, examples="not-an-int")  # type: ignore[arg-type]
+    snap = budget.snapshot()
+    assert budget.consumed_cost == pytest.approx(0.4)
+    assert snap.trials == 1
+    assert snap.cost_tracking != "complete"
+
+
+def test_debit_trial_non_finite_cost_marks_tracking_incomplete() -> None:
+    budget = ExecutionBudget(max_cost_usd=1.0)
+    budget.debit_trial(cost=float("nan"))
+    snap = budget.snapshot()
+    assert snap.cost_tracking != "complete"
+    assert budget.consumed_cost == 0.0
+
+
 # ---------------------------------------------------------------------------
 # remaining_* — inf when unbounded, floors at zero
 # ---------------------------------------------------------------------------
@@ -727,3 +754,19 @@ class TestExecutionBudgetConcurrency:
             thread.join()
 
         assert errors == []
+
+
+@pytest.mark.parametrize("bad", [INF, -INF, float("nan")])
+def test_max_cost_usd_rejects_non_finite_naming_parameter(bad: float) -> None:
+    with pytest.raises(ConfigurationError, match="max_cost_usd"):
+        ExecutionBudget(max_cost_usd=bad)
+
+
+def test_valid_budget_snapshot_as_dict_is_json_serializable() -> None:
+    import json
+
+    snap = ExecutionBudget(max_cost_usd=1.5, max_examples=3).snapshot().as_dict()
+    assert json.loads(json.dumps(snap, allow_nan=False))["max_cost_usd"] == 1.5
+    unbounded = ExecutionBudget(max_examples=3).snapshot().as_dict()
+    assert unbounded["max_cost_usd"] is None
+    json.dumps(unbounded, allow_nan=False)

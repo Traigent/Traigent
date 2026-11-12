@@ -319,7 +319,10 @@ def _format_examples(examples: list[dict[str, Any]] | None) -> str:
     if not examples:
         return ""
     return "\n".join(
-        [f"Example {i+1}: {json.dumps(ex, indent=2)}" for i, ex in enumerate(examples)]
+        [
+            f"Example {i + 1}: {json.dumps(ex, indent=2)}"
+            for i, ex in enumerate(examples)
+        ]
     )
 
 

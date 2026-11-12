@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from _cost_display import format_cost
+
 # Environment setup must happen before imports
 MOCK = str(os.getenv("TRAIGENT_MOCK_LLM", "")).lower() in {"1", "true", "yes", "y"}
 BASE = Path(__file__).parent
@@ -240,10 +242,7 @@ if model_env:
 else:
     MODEL_CHOICES = [
         "openai/gpt-4.1-mini",  # Very cheap baseline
-        "openai/gpt-4.1-mini",
-        # "openai/gpt-5-nano",
-        # "openai/gpt-4.1",  # Noticeably more expensive, good pruning signal
-        # "openai/gpt-4.1"
+        "openai/gpt-4.1",  # Noticeably more expensive, good pruning signal
     ]
 
 TEMPERATURE_CHOICES = [0.0, 0.5]
@@ -259,8 +258,15 @@ DEFAULT_WORKERS = max(
 )
 TOTAL_CONFIGS = len(MODEL_CHOICES) * len(TEMPERATURE_CHOICES) * len(MAX_TOKENS_CHOICES)
 ENV_BATCH_SIZE = max(1, _parse_int_env("TRAIGENT_BATCH_SIZE", DEFAULT_WORKERS))
+# With a cost limit, default to one trial at a time: parallel trials can be
+# cancelled by the cost-limit gate before they start (Traigent#2943). Set
+# TRAIGENT_TRIAL_CONCURRENCY explicitly to opt back in.
+_BUDGETED = BUDGET_LIMIT is not None and BUDGET_LIMIT > 0
 ENV_TRIAL_CONCURRENCY = max(
-    1, _parse_int_env("TRAIGENT_TRIAL_CONCURRENCY", min(DEFAULT_WORKERS, 6))
+    1,
+    _parse_int_env(
+        "TRAIGENT_TRIAL_CONCURRENCY", 1 if _BUDGETED else min(DEFAULT_WORKERS, 6)
+    ),
 )
 CONCURRENCY_PROFILE = os.getenv("TRAIGENT_CONCURRENCY_PROFILE", "auto").strip().lower()
 
@@ -428,7 +434,9 @@ def _print_results(result: OptimizationResult) -> None:
     # Display summary statistics
     summary = result.get_summary()
     print("\nOptimization summary:")
-    total_cost = float(summary.get("total_cost", 0.0) or 0.0)
+    total_cost_text = format_cost(
+        summary.get("total_cost"), summary.get("cost_lower_bound")
+    )
     total_duration = float(summary.get("total_duration", 0.0) or 0.0)
     total_examples = int(summary.get("total_examples_attempted", 0) or 0)
 
@@ -437,7 +445,7 @@ def _print_results(result: OptimizationResult) -> None:
     print(f"    pruned: {summary.get('pruned_trials', 0)}")
     print(f"    failed: {summary.get('failed_trials', 0)}")
     print(f"  total_examples_attempted: {total_examples}")
-    print(f"  total_cost: ${total_cost:.6f}")
+    print(f"  total_cost: {total_cost_text}")
     print(f"  total_duration: {total_duration:.3f}s")
 
     per_model = summary.get("trials_per_model") or {}
@@ -615,7 +623,8 @@ def answer(
 ) -> str:
     """Simple function that answers math questions using LLM."""
     if MOCK:
-        return _evaluate_expression(question)
+        # No model is called in mock mode, so the measured cost is exactly $0.
+        return traigent.with_usage(_evaluate_expression(question), total_cost=0.0)
 
     assert os.getenv("OPENAI_API_KEY"), "Missing OPENAI_API_KEY"
 
@@ -636,6 +645,20 @@ def answer(
 # ==============================================================================
 # Entry Point
 # ==============================================================================
+
+
+def _build_runtime_kwargs(trials: int, budget: float | None) -> dict[str, Any]:
+    """Per-run overrides for ``answer.optimize``.
+
+    Only the trial count and the cost limit are overridden. The objectives and
+    the grid algorithm announced in the header stay as declared on the
+    decorator, so a budget never silently turns this into a cost-only random
+    search.
+    """
+    kwargs: dict[str, Any] = {"max_trials": trials}
+    if budget is not None and budget > 0:
+        kwargs["cost_limit"] = budget
+    return kwargs
 
 
 async def main() -> None:
@@ -669,17 +692,19 @@ async def main() -> None:
         args.budget_limit if args.budget_limit is not None else BUDGET_LIMIT
     )
 
-    optimize_kwargs: dict[str, Any] = {"max_trials": trials}
-    if runtime_budget is not None and runtime_budget > 0:
-        optimize_kwargs.update(
-            {
-                "cost_limit": runtime_budget,
-                "algorithm": "random",
-                "objectives": ["cost"],
-            }
-        )
+    optimize_kwargs = _build_runtime_kwargs(trials, runtime_budget)
 
     print(f"Optimizing with parameters: {optimize_kwargs}")
+    if (
+        optimize_kwargs.get("cost_limit")
+        and (PARALLEL_CONFIG.trial_concurrency or 1) > 1
+    ):
+        print(
+            "⚠️  A cost limit with trial_concurrency > 1 can cancel trials "
+            "that never started (Traigent#2943); use "
+            "TRAIGENT_CONCURRENCY_PROFILE=sequential (the 'parallel' profile "
+            "ignores TRAIGENT_TRIAL_CONCURRENCY) for a faithful budgeted run."
+        )
     print(
         "Concurrency summary for this run:"
         f" profile={CONCURRENCY_PROFILE or 'auto'},"

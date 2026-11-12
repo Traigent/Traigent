@@ -35,6 +35,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 BUNDLE_SCHEMA = "traigent.commitment_bundle.v1"
 
 #: The only roles the Backend accepts openings for (agent/evaluator are withheld).
@@ -91,8 +93,12 @@ class CommitmentLinkageClientError(Exception):
         self.code = code if code in ERROR_TEXT else "BACKEND_REFUSED"
         super().__init__(f"{self.code}: {ERROR_TEXT[self.code]}")
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Rebuild from the sanitised code, never from the raw constructor input.
+        return (type(self), (self.code,))
 
-class ProcessRecordRequestError(Exception):
+
+class ProcessRecordRequestError(PicklableExceptionMixin, Exception):
     """Transport-level refusal carrying only the HTTP status and a plain error code."""
 
     def __init__(self, status_code: int | None, error_code: str | None) -> None:

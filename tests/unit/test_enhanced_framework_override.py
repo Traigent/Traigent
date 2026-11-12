@@ -404,7 +404,9 @@ class TestParameterMappings:
         # Check basic parameters
         assert anthropic_mapping["model"] == "model"
         assert anthropic_mapping["temperature"] == "temperature"
-        assert anthropic_mapping["max_tokens"] == "max_tokens_to_sample"
+        # max_tokens is injected per call (messages.create), never as the legacy
+        # max_tokens_to_sample constructor kwarg (#2923).
+        assert "max_tokens" not in anthropic_mapping
 
         # Check Anthropic-specific parameters
         assert anthropic_mapping["top_p"] == "top_p"

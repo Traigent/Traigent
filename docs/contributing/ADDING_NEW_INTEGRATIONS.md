@@ -457,13 +457,13 @@ Before submitting, ensure your code passes all checks:
 make format
 # Or manually:
 isort traigent/ tests/
-black traigent/ tests/
+ruff format traigent/ tests/
 
 # Lint code
 make lint
 # Or manually:
 ruff check traigent/ --fix
-black --check traigent/
+ruff format --check traigent/
 isort --check-only traigent/
 ```
 

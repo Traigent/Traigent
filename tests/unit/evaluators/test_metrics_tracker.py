@@ -55,7 +55,24 @@ class TestMetricsTracker:
 
         assert stats["mean"] == 0.0
         assert stats["median"] == 0.0
-        assert stats["std"] == 0.0
+        assert stats["std"] is None  # undefined, not a fake 0.0 (#3226)
+
+    def test_calculate_statistics_single_value_std_undefined(self):
+        """#3226: sample std of one value is undefined (pandas NaN), not 0.0."""
+        stats = MetricsTracker().calculate_statistics([120.0])
+        assert stats["mean"] == 120.0
+        assert stats["std"] is None
+
+    def test_describe_stats_single_value_std_undefined(self):
+        """#3226: describe std for n=1 is None; other stats stay defined."""
+        stats = MetricsTracker()._calculate_describe_stats([120.0])
+        assert stats["count"] == 1
+        assert stats["std"] is None
+        assert stats["mean"] == stats["min"] == stats["max"] == 120.0
+
+    def test_describe_stats_two_values_std_matches_sample_std(self):
+        stats = MetricsTracker()._calculate_describe_stats([1.0, 3.0])
+        assert stats["std"] == pytest.approx(2**0.5)
 
     def test_format_for_backend(self):
         """Test formatting metrics for backend submission."""
@@ -176,13 +193,9 @@ class TestMetricsTracker:
         stats = tracker._calculate_describe_stats([])
 
         assert stats["count"] == 0
-        assert stats["mean"] == 0.0
-        assert stats["std"] == 0.0
-        assert stats["min"] == 0.0
-        assert stats["25%"] == 0.0
-        assert stats["50%"] == 0.0
-        assert stats["75%"] == 0.0
-        assert stats["max"] == 0.0
+        # Zero values: every statistic is undefined (pandas NaN) -> None (#3226)
+        for key in ("mean", "std", "min", "25%", "50%", "75%", "max"):
+            assert stats[key] is None, key
 
     def test_empty_summary_stats(self):
         """Test empty summary stats structure."""
@@ -494,6 +507,27 @@ class TestExtractLLMMetrics:
             "Cost calculation skipped: model_name is None/empty" in record.message
             for record in caplog.records
         )
+
+    def test_model_free_response_logs_no_warning_and_cost_unmeasured(
+        self, monkeypatch, caplog
+    ):
+        """#3235: no tokens + no model name is a model-free objective; the
+        per-example skip message must not be a WARNING, but the cost must
+        still be marked unmeasured (never an honest-looking $0)."""
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+        with caplog.at_level("DEBUG"):
+            metrics = extract_llm_metrics("plain string output", model_name=None)
+
+        skipped = [
+            r
+            for r in caplog.records
+            if "Cost calculation skipped: model_name is None/empty" in r.message
+        ]
+        assert skipped, "message should still be emitted at debug"
+        assert all(r.levelname == "DEBUG" for r in skipped)
+        assert metrics.cost.unmeasured is True
 
     def test_extract_llm_metrics_survives_raising_model_property(
         self, monkeypatch, caplog
@@ -1517,3 +1551,10 @@ def test_failed_row_without_provenance_is_unmeasured(monkeypatch):
     value, stats = _both(tracker)
     assert value is None
     assert stats["count"] == 0
+
+
+def test_empty_aggregate_metrics_std_is_undefined_not_zero():
+    """#3226: no examples -> std is None in aggregate_metrics (any strict mode)."""
+    agg = MetricsTracker().aggregate_metrics()
+    for key in ("input_tokens", "response_time_ms", "total_cost"):
+        assert agg[key]["std"] is None, key

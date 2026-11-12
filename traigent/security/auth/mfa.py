@@ -53,7 +53,7 @@ class MultiFactorAuth:
             logger.warning("Invalid user_id for MFA verification")
             return False
 
-        if not code or not re.match(r"^\d{6,8}$", code):
+        if not code or not re.match(r"^\d{6,8}\Z", code):
             logger.warning(f"Invalid code format for MFA method {method}")
             return False
 

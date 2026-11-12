@@ -12,6 +12,7 @@ from traigent.security.credentials import SecurityError
 from traigent.security.encryption import (
     DataClassification,
     DataProtectionManager,
+    EncryptionKeyNotFoundError,
     EncryptionManager,
     KeyManager,
     PIIDetector,
@@ -412,6 +413,27 @@ class TestPIIDetector:
         assert "555-123-4567" in anonymized  # Phone should remain
         assert "[EMAIL_REDACTED]" in anonymized
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "card 4111111111111111 end",
+            "card 4111-1111-1111-1112 end",  # fails the checksum
+            "ssn 123456789 end",
+            "acct 1234567890123 x",
+        ],
+    )
+    def test_anonymize_text_overlapping_matches_leave_no_digits(self, text):
+        detector = PIIDetector()
+
+        anonymized = detector.anonymize_text(text)
+
+        assert not any(ch.isdigit() for ch in anonymized.replace("[", ""))
+        assert anonymized.startswith(text.split()[0])
+        assert anonymized.endswith(text.split()[-1])
+        # Exactly one placeholder, never a cut-into one.
+        assert anonymized.count("_REDACTED]") == 1
+        assert anonymized.count("[") == 1
+
     def test_custom_pattern_validation(self):
         """Invalid custom patterns should raise ValueError."""
         detector = PIIDetector()
@@ -454,6 +476,79 @@ class TestDataProtectionManager:
         assert "555-123-4567" not in unprotected_data
         assert "[EMAIL_REDACTED]" in unprotected_data
         assert "[PHONE_REDACTED]" in unprotected_data
+
+    def test_protect_data_encrypted_result_holds_no_plaintext(self):
+        """is_encrypted=True must never carry the plaintext (#3058)."""
+        manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+        sensitive = "patient record 4471 diagnosis X"
+
+        result = manager.protect_data(sensitive, encrypt=True)
+
+        assert result["is_encrypted"] is True
+        assert sensitive not in repr(result)
+        assert result["protected_data"] != sensitive
+        assert manager.unprotect_data(result) == sensitive
+
+    def test_unprotect_data_rejects_tampered_ciphertext(self):
+        """Tampered ciphertext must fail closed rather than return data."""
+        manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+        result = manager.protect_data("some secret value", encrypt=True)
+        payload = json.loads(result["protected_data"])
+        first = payload["ciphertext"]
+        payload["ciphertext"] = ("0" if first[0] != "0" else "1") + first[1:]
+        result["protected_data"] = json.dumps(payload)
+
+        with pytest.raises(RuntimeError, match="Decryption operation failed"):
+            manager.unprotect_data(result)
+
+    def test_unprotect_data_unencrypted_json_with_envelope_keys_round_trips(self):
+        manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+        payload = '{"ciphertext": "ab", "iv": "cd", "tag": "ef", "key_id": "k"}'
+
+        result = manager.protect_data(payload, encrypt=False)
+
+        assert manager.unprotect_data(result) == payload
+
+    def test_unprotect_data_require_encrypted_rejects_flipped_flag(self):
+        manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+        result = manager.protect_data("patient record 4471", encrypt=True)
+        no_tag = json.loads(result["protected_data"])
+        del no_tag["tag"]
+
+        flipped = {**result, "is_encrypted": False}
+        flipped_no_tag = {
+            **result,
+            "is_encrypted": False,
+            "protected_data": json.dumps(no_tag),
+        }
+        removed = {k: v for k, v in result.items() if k != "is_encrypted"}
+
+        for record in (flipped, flipped_no_tag, removed):
+            with pytest.raises(SecurityError, match="Expected encrypted data"):
+                manager.unprotect_data(record, require_encrypted=True)
+        assert manager.unprotect_data(result, require_encrypted=True) == (
+            "patient record 4471"
+        )
+
+    def test_unprotect_data_encrypted_flag_without_envelope_raises(self):
+        manager = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+        forged = {"is_encrypted": True, "protected_data": "plain text"}
+
+        with pytest.raises(ValueError, match="not a valid encryption envelope"):
+            manager.unprotect_data(forged)
+
+    def test_unprotect_data_unknown_key_names_key_id(self):
+        """A different key store must raise a typed error naming the key."""
+        sensitive = "patient record 4471 diagnosis X"
+        result = DataProtectionManager(
+            EncryptionManager(KeyManager()), PIIDetector()
+        ).protect_data(sensitive, encrypt=True)
+        key_id = json.loads(result["protected_data"])["key_id"]
+        other = DataProtectionManager(EncryptionManager(KeyManager()), PIIDetector())
+
+        with pytest.raises(EncryptionKeyNotFoundError, match=key_id) as exc_info:
+            other.unprotect_data(result)
+        assert exc_info.value.key_id == key_id
 
     def test_protect_data_without_encryption(self):
         """Test data protection without encryption"""

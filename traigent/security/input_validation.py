@@ -14,14 +14,6 @@ from typing import Any, ClassVar, TypeVar
 from urllib.parse import urlparse
 
 from traigent.security.config import get_security_flags
-
-try:
-    import bleach
-
-    BLEACH_AVAILABLE = True
-except ImportError:  # pragma: no cover - optional dependency
-    BLEACH_AVAILABLE = False
-
 from traigent.utils.exceptions import ValidationError
 from traigent.utils.logging import get_logger
 
@@ -37,20 +29,20 @@ class InputValidator:
 
     # Regex patterns for validation
     PATTERNS = {
-        "email": re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"),
-        "username": re.compile(r"^[a-zA-Z0-9_-]{3,32}$"),
-        "alphanumeric": re.compile(r"^[a-zA-Z0-9]+$"),
-        "numeric": re.compile(r"^[0-9]+$"),
+        "email": re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\Z"),
+        "username": re.compile(r"^[a-zA-Z0-9_-]{3,32}\Z"),
+        "alphanumeric": re.compile(r"^[a-zA-Z0-9]+\Z"),
+        "numeric": re.compile(r"^[0-9]+\Z"),
         "uuid": re.compile(
-            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z",
             re.IGNORECASE,
         ),
-        "url": re.compile(r"^https?://[^\s\"'<>]+$"),
+        "url": re.compile(r"^https?://[^\s\"'<>]+\Z"),
         "hostname_label": re.compile(
-            r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
+            r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\Z"
         ),
-        "phone": re.compile(r"^\+?[1-9]\d{1,14}$"),  # E.164 format
-        "safe_filename": re.compile(r"^[a-zA-Z0-9._-]+$"),
+        "phone": re.compile(r"^\+?[1-9]\d{1,14}\Z"),  # E.164 format
+        "safe_filename": re.compile(r"^[a-zA-Z0-9._-]+\Z"),
     }
 
     # SQL injection patterns (common attack vectors)
@@ -244,24 +236,14 @@ class InputValidator:
         flags = get_security_flags()
 
         # First, remove dangerous tags and their content using regex
-        # This handles script/iframe/etc content that bleach's strip=True preserves
+        # This handles script/iframe/etc content before the escape below
         sanitized = html_content
         for pattern in cls.XSS_PATTERNS:
             sanitized = re.sub(pattern, "", sanitized, flags=re.IGNORECASE | re.DOTALL)
 
-        if BLEACH_AVAILABLE:
-            # Use bleach to strip any remaining HTML tags
-            sanitized = str(
-                bleach.clean(
-                    sanitized,
-                    tags=[],
-                    attributes={},
-                    strip=True,
-                )
-            )
-        else:
-            # Escape remaining HTML entities
-            sanitized = html.escape(sanitized)
+        # Escape remaining HTML entities. Deterministic: output never depends on
+        # whether an optional sanitizer package (bleach) happens to be installed.
+        sanitized = html.escape(sanitized)
 
         if flags.emit_security_telemetry and sanitized != html_content:
             logger.info("HTML content sanitized under profile %s", flags.profile.value)

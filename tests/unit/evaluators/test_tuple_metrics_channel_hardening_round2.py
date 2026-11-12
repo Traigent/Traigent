@@ -158,6 +158,9 @@ def test_user_metric_pattern_matches_measuresdict_pattern() -> None:
     for key in reject:
         assert not USER_METRIC_KEY_PATTERN.match(key), key
         assert not wire.match(key), key
+    # A trailing newline must be rejected by both (#2985).
+    assert not USER_METRIC_KEY_PATTERN.match("ok_key\n")
+    assert not wire.match("ok_key\n")
 
 
 # ---------------------------------------------------------------------------

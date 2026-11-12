@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -17,8 +18,17 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
-from traigent.core.exception_handler import classify_systematic_provider_failure
-from traigent.evaluators.base import count_timed_out_examples
+from traigent.core.exception_handler import (
+    ClassifiedErrorText,
+    classify_systematic_provider_failure,
+    preserve_error_text,
+)
+from traigent.evaluators.base import (
+    MEASURED_ONLY_METRICS,
+    OBJECTIVE_SOURCE_METRICS,
+    _measured_value,
+    count_timed_out_examples,
+)
 from traigent.evaluators.metrics_tracker import enforce_user_metric_ceiling
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import TrialPrunedError
@@ -220,6 +230,56 @@ def _build_warning_codes(
     return []
 
 
+def _was_timed(example_result: Any) -> bool:
+    """True when the example has a measured wall-clock time (what latency averages)."""
+    execution_time = getattr(example_result, "execution_time", 0)
+    return (
+        isinstance(execution_time, (int, float))
+        and not isinstance(execution_time, bool)
+        and execution_time > 0
+    )
+
+
+def _count_primary_objective_rows(
+    primary_objective: str,
+    per_metric_counts: dict[str, int],
+    example_results: list[Any] | None,
+) -> int:
+    """Count examples carrying the primary objective under any of its names.
+
+    cost/latency objectives are reported per example under their source metric
+    (``total_cost``, ...), never under the objective name itself, and rows may
+    mix names; a row counts once however many names it carries (Traigent#3217).
+    """
+    names = (primary_objective, *OBJECTIVE_SOURCE_METRICS.get(primary_objective, ()))
+    if example_results is None:
+        return max((per_metric_counts.get(name, 0) for name in names), default=0)
+    count = 0
+    for example_result in example_results:
+        metrics = getattr(example_result, "metrics", {}) or {}
+        if not isinstance(metrics, dict):
+            continue
+        if primary_objective == "latency":
+            # Only timed rows feed the latency average; a zero-filled
+            # ``latency`` on a failed row is not a measurement.
+            covered = _was_timed(example_result)
+        else:
+            # Count what the aggregator counts: cost rows with a non-finite
+            # value are excluded from the mean, so they are not coverage.
+            covered = any(
+                (
+                    _measured_value(metrics.get(name)) is not None
+                    if name in MEASURED_ONLY_METRICS
+                    else isinstance(metrics.get(name), (int, float))
+                    and not isinstance(metrics.get(name), bool)
+                )
+                for name in names
+            )
+        if covered:
+            count += 1
+    return count
+
+
 def _build_fallback_comparability(
     eval_result: Any, run_primary_objective: str | None = None
 ) -> dict[str, Any]:
@@ -259,7 +319,11 @@ def _build_fallback_comparability(
         per_metric_counts,
     )
 
-    examples_with_primary_metric = per_metric_counts.get(primary_objective, 0)
+    examples_with_primary_metric = _count_primary_objective_rows(
+        primary_objective,
+        per_metric_counts,
+        example_results if has_detailed_example_results else None,
+    )
     coverage_ratio = (
         examples_with_primary_metric / total_examples
         if total_examples > 0 and examples_with_primary_metric > 0
@@ -411,7 +475,12 @@ def _provider_failure_summary(
     for error in errors:
         if not error:
             continue
-        category = classify_systematic_provider_failure(str(error))
+        error_text = preserve_error_text(error)
+        if not isinstance(error_text, ClassifiedErrorText):
+            # The class marker is for humans; classification reads the text
+            # without it. A ClassifiedErrorText already carries its verdict.
+            error_text = _EXCEPTION_CLASS_MARKER.sub(r"\1", error_text)
+        category = classify_systematic_provider_failure(error_text)
         if category is None:
             continue
         fatal_failures += 1
@@ -454,6 +523,50 @@ def _all_attempted_examples_failed(
         else total_examples
     )
     return attempted is not None and attempted > 0
+
+
+_NO_EXAMPLES_SUCCEEDED = "No examples succeeded"
+# "Function call failed: <ExceptionClass>: <msg>" -- the class marker is for
+# humans; vendor-failure classification reads the text without it so adding the
+# marker cannot change which failures are treated as provider failures.
+_EXCEPTION_CLASS_MARKER = re.compile(r"^(Function call failed: )[A-Za-z_][\w.]*: ")
+_ERROR_MESSAGE_MAX_CHARS = 500
+
+
+def _all_failed_error_message(eval_result: Any) -> str:
+    """Name the cause when every example failed (#3213).
+
+    Uses the most common per-example error (with a count when examples differ),
+    redacted like every other error text that leaves the SDK. The text keeps the
+    "No examples succeeded" prefix so the closed wire code derived from it
+    (``wire_text``) is unchanged. Falls back to the bare generic message when no
+    example carries an error.
+    """
+    counts: dict[str, int] = {}
+    total = 0
+    messages: list[Any] = [
+        (
+            getattr(row, "error_message", None)
+            if not isinstance(row, dict)
+            else row.get("error_message")
+        )
+        for row in getattr(eval_result, "example_results", None) or []
+    ]
+    if not any(isinstance(m, str) and m for m in messages):
+        errors = getattr(eval_result, "errors", None)
+        messages = [m for m in errors if m] if isinstance(errors, list) else []
+    for message in messages:
+        total += 1
+        if isinstance(message, str) and message:
+            counts[message] = counts.get(message, 0) + 1
+    if not counts:
+        return _NO_EXAMPLES_SUCCEEDED
+    top, top_count = max(counts.items(), key=lambda item: item[1])
+    text = redact_sensitive_text(top)
+    if len(text) > _ERROR_MESSAGE_MAX_CHARS:
+        text = text[:_ERROR_MESSAGE_MAX_CHARS] + "..."
+    suffix = f" ({top_count} of {total} examples)" if len(counts) > 1 else ""
+    return f"{_NO_EXAMPLES_SUCCEEDED}: {text}{suffix}"
 
 
 def _set_metric_if_convertible(
@@ -646,7 +759,7 @@ def build_success_result(
         duration=duration,
         timestamp=datetime.now(UTC),
         error_message=(
-            "No examples succeeded"
+            _all_failed_error_message(eval_result)
             if _all_attempted_examples_failed(eval_result, examples_attempted)
             else None
         ),

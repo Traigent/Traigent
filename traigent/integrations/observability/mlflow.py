@@ -121,16 +121,22 @@ else:
 
 
 from traigent.api.types import OptimizationResult, TrialResult
+from traigent.integrations.observability._offline_guard import offline_guarded
+from traigent.utils.callbacks import OptimizationCallback
 
 from ...utils.logging import get_logger
 from ...utils.secure_path import safe_write_text
 
 logger = get_logger(__name__)
 
+#: Run-name prefix when the optimized function's name is not available.
+_DEFAULT_RUN_LABEL = "traigent"
+
 
 class TraigentMLflowTracker:
     """MLflow experiment tracker for Traigent optimizations."""
 
+    @offline_guarded("MLflow tracking")
     def __init__(
         self,
         tracking_uri: str | None = None,
@@ -159,24 +165,33 @@ class TraigentMLflowTracker:
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
 
-        self.experiment_id: str | None
+        # No server contact here: the tracker may be built before an
+        # ``offline=True`` run starts. The experiment is looked up or created on
+        # the first guarded call (``start_optimization_run``).
+        self.experiment_name = experiment_name
+        self.experiment_id: str | None = None
+        self._experiment_ready = False
 
-        # Set or create experiment
+        self.current_run = None
+
+    def _ensure_experiment(self) -> None:
+        """Look up / create the experiment once, on first use inside a run."""
+        if self._experiment_ready:
+            return
         try:
-            experiment = mlflow.get_experiment_by_name(experiment_name)
+            experiment = mlflow.get_experiment_by_name(self.experiment_name)
             if experiment is None:
-                experiment_id = mlflow.create_experiment(experiment_name)
-                self.experiment_id = experiment_id
+                self.experiment_id = mlflow.create_experiment(self.experiment_name)
             else:
                 self.experiment_id = experiment.experiment_id
         except Exception as e:
             logger.warning(f"Failed to set MLflow experiment: {e}")
             self.experiment_id = None
 
-        mlflow.set_experiment(experiment_name)
+        mlflow.set_experiment(self.experiment_name)
+        self._experiment_ready = True
 
-        self.current_run = None
-
+    @offline_guarded("MLflow tracking")
     def start_optimization_run(
         self,
         function_name: str,
@@ -197,6 +212,7 @@ class TraigentMLflowTracker:
         Returns:
             MLflow run ID
         """
+        self._ensure_experiment()
         if not run_name:
             timestamp = int(time.time())
             run_name = f"{function_name}_optimization_{timestamp}"
@@ -223,6 +239,38 @@ class TraigentMLflowTracker:
         logger.info(f"Started MLflow run: {self.current_run.info.run_id}")  # type: ignore[attr-defined]
         return cast(str, self.current_run.info.run_id)  # type: ignore[attr-defined]
 
+    def _ensure_run_active(self) -> bool:
+        """Re-activate ``current_run`` on the calling thread if needed.
+
+        Returns True when this call pushed the run onto the calling thread's
+        stack; the caller must then hand it back with ``_release_resumed_run``
+        unless it is about to end the run (otherwise a pooled worker keeps the
+        run active and its next ``start_run`` fails).
+
+        MLflow's active-run stack is thread-local, while ``CallbackManager`` may
+        dispatch successive hooks on different worker threads. Resuming by run
+        id keeps trial logging and run termination bound to our run (#3187).
+        """
+        run = self.current_run
+        active_run = getattr(mlflow, "active_run", None)
+        if run is None or not callable(active_run):
+            return False
+        active = active_run()
+        if active is not None and active.info.run_id == run.info.run_id:
+            return False
+        mlflow.start_run(run_id=run.info.run_id)
+        return True
+
+    @staticmethod
+    def _release_resumed_run() -> None:
+        """Pop a run resumed on this thread without finishing it.
+
+        ``end_run(status="RUNNING")`` clears the thread-local entry and keeps the
+        run open; ``end_optimization_run`` still finishes it.
+        """
+        mlflow.end_run(status="RUNNING")
+
+    @offline_guarded("MLflow tracking")
     def log_trial(
         self, trial: TrialResult, trial_number: int, step: int | None = None
     ) -> None:
@@ -236,7 +284,16 @@ class TraigentMLflowTracker:
         if not self.current_run:
             logger.warning("No active MLflow run. Call start_optimization_run first.")
             return
+        resumed = self._ensure_run_active()
+        try:
+            self._log_trial_body(trial, trial_number, step)
+        finally:
+            if resumed:
+                self._release_resumed_run()
 
+    def _log_trial_body(
+        self, trial: TrialResult, trial_number: int, step: int | None
+    ) -> None:
         if step is None:
             step = trial_number
 
@@ -315,6 +372,7 @@ class TraigentMLflowTracker:
                 ** 0.5,
             )
 
+    @offline_guarded("MLflow tracking")
     def log_optimization_result(
         self, result: OptimizationResult, dataset_path: str | None = None
     ) -> None:
@@ -327,7 +385,16 @@ class TraigentMLflowTracker:
         if not self.current_run:
             logger.warning("No active MLflow run. Call start_optimization_run first.")
             return
+        resumed = self._ensure_run_active()
+        try:
+            self._log_result_body(result, dataset_path)
+        finally:
+            if resumed:
+                self._release_resumed_run()
 
+    def _log_result_body(
+        self, result: OptimizationResult, dataset_path: str | None
+    ) -> None:
         # Log best configuration as parameters
         if result.best_config:
             for param_name, param_value in result.best_config.items():
@@ -367,13 +434,15 @@ class TraigentMLflowTracker:
         if dataset_path and Path(dataset_path).exists():
             mlflow.log_artifact(dataset_path, "datasets")
 
-        logger.info(
-            f"Logged optimization result to MLflow run: {self.current_run.info.run_id}"
-        )
+        run = self.current_run
+        if run is not None:
+            logger.info(f"Logged optimization result to MLflow run: {run.info.run_id}")
 
+    @offline_guarded("MLflow tracking")
     def end_optimization_run(self) -> None:
         """End current MLflow run."""
         if self.current_run:
+            self._ensure_run_active()
             # mlflow.end_run() is the real API. This called mlflow.finish() until
             # #2183 -- a method MLflow has never exposed -- so every real-MLflow
             # run raised AttributeError here. It passed CI only because the mock
@@ -382,6 +451,7 @@ class TraigentMLflowTracker:
             logger.info(f"Ended MLflow run: {self.current_run.info.run_id}")
             self.current_run = None
 
+    @offline_guarded("MLflow tracking")
     def compare_optimizations(
         self, run_ids: list[str], metrics: list[str] | None = None
     ) -> dict[str, Any]:
@@ -408,7 +478,9 @@ class TraigentMLflowTracker:
                 best_metrics = {}
                 for key, value in run.data.metrics.items():
                     if key.startswith("best_"):
-                        metric_name = key.replace("best_", "")
+                        metric_name = key.replace("best_", "", 1)
+                        if metrics is not None and metric_name not in metrics:
+                            continue
                         best_metrics[metric_name] = value
 
                 # Extract best config
@@ -434,6 +506,7 @@ class TraigentMLflowTracker:
 
         return comparison_data
 
+    @offline_guarded("MLflow tracking")
     def get_best_run(
         self, experiment_name: str, metric_name: str, maximize: bool = True
     ) -> dict[str, Any] | None:
@@ -484,7 +557,7 @@ class TraigentMLflowTracker:
             return None
 
 
-class MLflowOptimizationCallback:
+class MLflowOptimizationCallback(OptimizationCallback):
     """Callback for automatic MLflow logging during optimization."""
 
     def __init__(self, tracker: TraigentMLflowTracker) -> None:
@@ -495,23 +568,51 @@ class MLflowOptimizationCallback:
         """
         self.tracker = tracker
         self.trial_count = 0
+        self._function_name: str | None = None
 
-    def on_optimization_start(
+    def on_run_settings(self, settings: dict[str, Any]) -> None:
+        """Remember the optimized function's name for the MLflow run name."""
+        name = settings.get("function_name")
+        if isinstance(name, str) and name:
+            self._function_name = name
+
+    def on_optimization_start(  # type: ignore[override]
         self,
-        function_name: str,
-        objectives: list[str],
-        configuration_space: dict[str, Any],
-        **kwargs,
+        config_space: dict[str, Any] | None = None,
+        objectives: list[str] | None = None,
+        algorithm: str | None = None,
+        *,
+        function_name: str | None = None,
+        configuration_space: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
-        """Called when optimization starts."""
+        """Called when optimization starts.
+
+        Accepts the ``OptimizationCallback`` signature
+        ``(config_space, objectives, algorithm)``. The legacy keyword form
+        ``function_name=..., configuration_space=...`` still works.
+        """
+        if isinstance(config_space, str):
+            # Legacy positional order (function_name, objectives, config_space),
+            # possibly mixed with keywords.
+            function_name = function_name or config_space
+            config_space = algorithm if isinstance(algorithm, dict) else None
+        space = config_space if config_space is not None else configuration_space
+        name = function_name or self._function_name or _DEFAULT_RUN_LABEL
         self.tracker.start_optimization_run(
-            function_name=function_name,
-            objectives=objectives,
-            configuration_space=configuration_space,
+            function_name=name,
+            objectives=list(objectives or []),
+            configuration_space=dict(space or {}),
             tags=kwargs.get("mlflow_tags", {}),
         )
 
-    def on_trial_complete(self, trial: TrialResult) -> None:
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts (nothing to log until it completes)."""
+        return None
+
+    def on_trial_complete(  # type: ignore[override]
+        self, trial: TrialResult, progress: Any = None
+    ) -> None:
         """Called when trial completes."""
         self.trial_count += 1
         self.tracker.log_trial(trial, self.trial_count)

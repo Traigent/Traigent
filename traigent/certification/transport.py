@@ -14,12 +14,14 @@ from dataclasses import dataclass
 from typing import Any, Final, Protocol, cast
 from urllib.parse import urlparse, urlunparse
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 __all__ = ["BackendG1Transport", "G1RequestError", "G1Response", "G1Transport"]
 
 _SAFE_CODE_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
-class G1RequestError(Exception):
+class G1RequestError(PicklableExceptionMixin, Exception):
     """A G1 request failed. ``status`` is None for transport faults; ``code`` is a plain token."""
 
     def __init__(self, status: int | None, code: str | None) -> None:

@@ -15,6 +15,7 @@ from collections.abc import Coroutine
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeVar, cast
 
+from traigent.cloud._detached_raise import raise_detached
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
 from traigent.cloud.client import (
@@ -50,6 +51,7 @@ from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
+from traigent.utils.thread_timeout import run_in_thread_with_timeout
 from traigent.utils.validation import CoreValidators, validate_or_raise
 from traigent.utils.wire_text import filter_wire_metadata
 
@@ -1201,8 +1203,15 @@ class SessionOperations:
 
         # Run async method in sync context
         try:
+            # Detect the loop first so a RuntimeError raised by the work itself
+            # is not mistaken for "no running loop" (#3078).
             try:
                 asyncio.get_running_loop()
+                in_running_loop = True
+            except RuntimeError:
+                in_running_loop = False
+
+            if in_running_loop:
 
                 def _run_in_new_loop() -> SessionCreationResult:
                     new_loop = asyncio.new_event_loop()
@@ -1219,12 +1228,11 @@ class SessionOperations:
                 executor = _get_session_executor()
                 future = executor.submit(_run_in_new_loop)
                 return future.result(timeout=60)
-            except RuntimeError:
-                return asyncio.run(
-                    _with_loop_local_session(
-                        self.client, _create_session_async(self, context)
-                    )
+            return asyncio.run(
+                _with_loop_local_session(
+                    self.client, _create_session_async(self, context)
                 )
+            )
 
         except ValidationException:
             raise  # User input errors must propagate
@@ -1372,8 +1380,8 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("create_hybrid_session network error")
-            logger.exception(f"Network error creating hybrid session: {e}")
-            raise CloudServiceError(f"Network error: {e}") from None
+            logger.error(f"Network error creating hybrid session: {e}")
+            raise_detached(CloudServiceError(f"Network error: {e}"))
 
     async def get_hybrid_session_status(self, session_id: str) -> dict[str, Any]:
         """Get status of a hybrid session.
@@ -1422,8 +1430,8 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("get_hybrid_session_status network error")
-            logger.exception(f"Network error getting session status: {e}")
-            raise CloudServiceError(f"Network error: {e}") from None
+            logger.error(f"Network error getting session status: {e}")
+            raise_detached(CloudServiceError(f"Network error: {e}"))
 
     async def finalize_hybrid_session(self, session_id: str) -> dict[str, Any]:
         """Finalize hybrid session and get results.
@@ -1477,8 +1485,8 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("finalize_hybrid_session network error")
-            logger.exception(f"Network error finalizing session: {e}")
-            raise CloudServiceError(f"Network error: {e}") from None
+            logger.error(f"Network error finalizing session: {e}")
+            raise_detached(CloudServiceError(f"Network error: {e}"))
 
     async def finalize_session(
         self,
@@ -1487,6 +1495,7 @@ class SessionOperations:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
 
@@ -1511,6 +1520,7 @@ class SessionOperations:
         """
         self._validate_non_empty_string(session_id, "session_id")
         self._validate_optimization_outcome(optimization_outcome)
+        self._validate_stop_reason(stop_reason)
         logger.info(f"Finalizing optimization session {session_id}")
 
         # Get session mapping for experiment_run_id, or reconstruct it from the
@@ -1533,6 +1543,7 @@ class SessionOperations:
                     certified_selection=certified_selection,
                     session_aggregation=session_aggregation,
                     optimization_outcome=optimization_outcome,
+                    stop_reason=stop_reason,
                 )
             except (CloudServiceError, EndpointNotConfiguredError):
                 raise
@@ -1884,6 +1895,7 @@ class SessionOperations:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> dict[str, Any] | None:
         """Call backend session finalization endpoint.
 
@@ -1935,6 +1947,7 @@ class SessionOperations:
                     certified_selection,
                     session_aggregation,
                     optimization_outcome,
+                    stop_reason,
                 )
                 finalize_body = oo_egress.project_for_send(
                     oo_egress.PHASE_FINALIZE,
@@ -2006,8 +2019,10 @@ class SessionOperations:
         certified_selection: dict[str, Any] | None,
         session_aggregation: dict[str, Any] | None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> dict[str, Any]:
         SessionOperations._validate_optimization_outcome(optimization_outcome)
+        SessionOperations._validate_stop_reason(stop_reason)
         finalize_body: dict[str, Any] = {
             "reason": "sdk_explicit_finalization",
         }
@@ -2018,6 +2033,8 @@ class SessionOperations:
             # An older backend ignores the unknown key and keeps its
             # COMPLETED behaviour, so deploy the Backend first.
             finalize_body["optimization_outcome"] = optimization_outcome
+        # #2508: ``stop_reason`` is deliberately NOT put on the wire yet; the
+        # field waits for the TraigentSchema finalize request contract.
         if certified_selection is not None:
             # Phase 8: the client-attested, content-free certified-
             # selection report — TOP-LEVEL key only (the backend
@@ -2140,8 +2157,8 @@ class SessionOperations:
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("delete_session network error")
-            logger.exception(f"Network error deleting session: {e}")
-            raise CloudServiceError(f"Network error: {e}") from None
+            logger.error(f"Network error deleting session: {e}")
+            raise_detached(CloudServiceError(f"Network error: {e}"))
 
     def finalize_session_sync(
         self,
@@ -2150,12 +2167,12 @@ class SessionOperations:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session."""
-        import concurrent.futures
-
         self._validate_non_empty_string(session_id, "session_id")
         self._validate_optimization_outcome(optimization_outcome)
+        self._validate_stop_reason(stop_reason)
 
         def _run_in_new_loop() -> OptimizationFinalizationResponse | None:
             """Run the async operation in a fresh event loop on this thread."""
@@ -2171,6 +2188,7 @@ class SessionOperations:
                             certified_selection=certified_selection,
                             session_aggregation=session_aggregation,
                             optimization_outcome=optimization_outcome,
+                            stop_reason=stop_reason,
                         ),
                     )
                 )
@@ -2189,9 +2207,7 @@ class SessionOperations:
                 # We're in an async context - run in a separate thread to avoid deadlock
                 # Cannot use run_coroutine_threadsafe + future.result() from the same
                 # thread as the event loop - that causes deadlock
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    return future.result(timeout=60)
+                return run_in_thread_with_timeout(_run_in_new_loop, 60)
             else:
                 # No async context, run directly
                 return _run_in_new_loop()
@@ -2208,14 +2224,19 @@ class SessionOperations:
                 "optimization_outcome must be completed, failed, or cancelled"
             )
 
+    @staticmethod
+    def _validate_stop_reason(value: Any) -> None:
+        if value is not None and (
+            not isinstance(value, str) or value not in oo_egress.FINALIZE_STOP_REASONS
+        ):
+            raise ValueError("stop_reason must be a known StopReason value")
+
     def delete_session_sync(self, session_id: str, cascade: bool = True) -> bool:
         """Synchronous wrapper for delete_session.
 
         This method safely handles being called from both sync and async contexts
         by using a ThreadPoolExecutor when a running event loop is detected.
         """
-        import concurrent.futures
-
         self._validate_non_empty_string(session_id, "session_id")
 
         def _run_in_new_loop() -> bool:
@@ -2243,9 +2264,7 @@ class SessionOperations:
                 # We're in an async context - run in a separate thread to avoid deadlock
                 # Cannot use run_coroutine_threadsafe + future.result() from the same
                 # thread as the event loop - that causes deadlock
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    return future.result(timeout=60)
+                return run_in_thread_with_timeout(_run_in_new_loop, 60)
             else:
                 # No async context, run directly
                 return _run_in_new_loop()

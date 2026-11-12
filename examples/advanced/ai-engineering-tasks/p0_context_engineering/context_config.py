@@ -407,7 +407,7 @@ class ContextAssembler:
         examples = []
         for i in range(self.config.n_examples):
             examples.append(
-                {"input": f"Example input {i+1}", "output": f"Example output {i+1}"}
+                {"input": f"Example input {i + 1}", "output": f"Example output {i + 1}"}
             )
 
         return examples
@@ -426,7 +426,7 @@ class ContextAssembler:
         formatted = []
         for i, ex in enumerate(examples):
             formatted.append(
-                f"Example {i+1}:\nInput: {ex['input']}\nOutput: {ex['output']}"
+                f"Example {i + 1}:\nInput: {ex['input']}\nOutput: {ex['output']}"
             )
         return "\n\n".join(formatted)
 

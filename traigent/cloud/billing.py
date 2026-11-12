@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 import uuid
 from contextlib import suppress
@@ -22,7 +23,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from traigent.config.backend_config import PRICING_URL
-from traigent.utils.exceptions import ConfigurationError
+from traigent.utils.exceptions import ConfigurationError, TraigentError
+from traigent.utils.file_lock import storage_lock
 from traigent.utils.logging import get_logger
 from traigent.utils.money import format_usd
 
@@ -39,12 +41,30 @@ def _read_json_file(path: Path) -> Any:
 
 
 def _write_json_file(path: Path, data: Any) -> None:
-    """Write JSON data to disk."""
-    with path.open("w") as file_obj:
-        json.dump(data, file_obj, indent=2)
+    """Write JSON data to disk atomically (temp file, then replace)."""
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        with tmp_path.open("w") as file_obj:
+            json.dump(data, file_obj, indent=2)
+            file_obj.flush()
+            os.fsync(file_obj.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        with suppress(OSError):  # silent-ok: best-effort temp-file cleanup
+            tmp_path.unlink()
+
+
+class UsageStorageError(TraigentError):
+    """The usage file cannot be read or set aside; history is left untouched."""
+
+
+_storage_lock = storage_lock
 
 
 # Cost Tracking Enums and Classes (from cost_tracking.py)
+
+
+_CACHE_WRITE_LOCK = threading.Lock()
 
 
 class CostCategory(Enum):
@@ -220,6 +240,7 @@ class UsageTracker:
             self.storage_path = Path.cwd() / ".traigent_local" / _USAGE_STORAGE_FILENAME
             self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._usage_records: list[UsageRecord] = []
+        self._pending_records: list[UsageRecord] = []
         self._load_usage_data()
 
         # Billing plans
@@ -294,8 +315,7 @@ class UsageTracker:
             billing_tier=billing_tier,
         )
 
-        self._usage_records.append(usage_record)
-        await self._save_usage_data()
+        self._append_record_and_save(usage_record)
 
         logger.info(
             f"Recorded optimization: {function_name} "
@@ -352,6 +372,8 @@ class UsageTracker:
             )
         if end_date is None:
             end_date = datetime.now(UTC)
+
+        self._refresh_from_disk()
 
         # Filter records by date range
         filtered_records = [
@@ -474,33 +496,96 @@ class UsageTracker:
             "cost_per_credit": plan.cost_per_credit,
         }
 
+    def _read_records_from_disk(self) -> list[UsageRecord]:
+        """Read the stored records; quarantine an unreadable file, never drop it."""
+        if not self.storage_path.exists():
+            return []
+        try:
+            with open(self.storage_path) as f:
+                data = json.load(f)
+            return [
+                UsageRecord.from_dict(record_data)
+                for record_data in data.get("usage_records", [])
+            ]
+        except Exception as e:
+            quarantine = self.storage_path.with_name(
+                f"{self.storage_path.name}.corrupt-{time.time_ns()}"
+            )
+            try:
+                os.replace(self.storage_path, quarantine)
+                logger.error(
+                    "Prior usage history was unreadable and has been quarantined "
+                    f"as {quarantine.name}; local usage limits restart from zero"
+                )
+                logger.warning(
+                    f"Usage data unreadable ({e}); moved to {quarantine} and "
+                    "starting a fresh usage file"
+                )
+            except OSError as move_error:
+                raise UsageStorageError(
+                    f"Usage file {self.storage_path} is unreadable ({e}) and "
+                    f"could not be set aside ({move_error}); leaving it untouched"
+                ) from e
+            return []
+
     def _load_usage_data(self) -> None:
         """Load usage data from storage."""
+        with _storage_lock(self.storage_path):
+            self._usage_records = self._read_records_from_disk()
+        logger.debug(f"Loaded {len(self._usage_records)} usage records")
+
+    def _write_records(self, records: list[UsageRecord]) -> None:
+        data = {
+            "usage_records": [record.to_dict() for record in records],
+            "last_updated": datetime.now(UTC).isoformat(),
+        }
+        _write_json_file(self.storage_path, data)
+
+    def _refresh_from_disk(self) -> None:
+        """Reload so other trackers' writes count; keep our unsaved records.
+
+        Fails closed: a lock or read error raises ``UsageStorageError`` rather
+        than answering limit questions from stale memory.
+        """
         try:
-            if self.storage_path.exists():
-                with open(self.storage_path) as f:
-                    data = json.load(f)
-                    self._usage_records = [
-                        UsageRecord.from_dict(record_data)
-                        for record_data in data.get("usage_records", [])
-                    ]
-                logger.debug(f"Loaded {len(self._usage_records)} usage records")
-            else:
-                self._usage_records = []
+            with _storage_lock(self.storage_path):
+                records = self._read_records_from_disk()
+        except OSError as e:
+            raise UsageStorageError(f"Could not refresh usage data: {e}") from e
+        self._usage_records = records + self._pending_records
+
+    def _append_record_and_save(self, record: UsageRecord) -> None:
+        """Append under an inter-process lock, merging what other writers saved.
+
+        A record that could not be written stays pending and is merged into the
+        next successful write. An unreadable, unquarantinable file raises
+        ``UsageStorageError`` and is never overwritten.
+        """
+        self._pending_records.append(record)
+        try:
+            with _storage_lock(self.storage_path):
+                records = self._read_records_from_disk() + self._pending_records
+                self._write_records(records)
+                self._usage_records = records
+                self._pending_records = []
+        except UsageStorageError:
+            self._usage_records.append(record)
+            raise
         except Exception as e:
-            logger.warning(f"Failed to load usage data: {e}")
-            self._usage_records = []
+            self._usage_records.append(record)
+            logger.exception(f"Failed to save usage data: {e}")
+            raise UsageStorageError(
+                "Usage record was not saved; it is kept pending and will be "
+                "written with the next successful save"
+            ) from e
 
     async def _save_usage_data(self) -> None:
         """Save usage data to storage."""
         try:
-            data = {
-                "usage_records": [record.to_dict() for record in self._usage_records],
-                "last_updated": datetime.now(UTC).isoformat(),
-            }
             # Keep billing persistence synchronous to avoid leaking threadpool
             # executors across many short-lived asyncio.run() calls in tests/CLI usage.
-            _write_json_file(self.storage_path, data)
+            with _storage_lock(self.storage_path):
+                self._write_records(self._usage_records)
         except Exception as e:
             logger.exception(f"Failed to save usage data: {e}")
 
@@ -1019,12 +1104,35 @@ class CostTracker:
 
         # Cache locally if enabled
         if self.config.cache_costs_locally:
-            cache_task = asyncio.create_task(self._cache_cost_item(cost_item))
-            self._register_background_task(cache_task)
+            self._schedule_local_cache(cost_item)
 
         # Check for cost alerts
         if self.config.enable_real_time_alerts:
             self._check_cost_alerts()
+
+    def _schedule_local_cache(self, cost_item: CostItem) -> None:
+        """Persist ``cost_item`` to the local cache without ever raising.
+
+        The cost is already recorded when this runs, so a failure here must not
+        propagate: a caller retry would double count it (Traigent#3246). Inside
+        a running loop the write is scheduled as a background task; outside one
+        it runs to completion synchronously.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            try:
+                asyncio.run(self._cache_cost_item(cost_item))
+            except Exception:
+                logger.warning("Local cost cache write failed", exc_info=True)
+            return
+        coro = self._cache_cost_item(cost_item)
+        try:
+            cache_task = asyncio.create_task(coro)
+            self._register_background_task(cache_task)
+        except Exception:
+            coro.close()
+            logger.warning("Could not schedule local cost cache write", exc_info=True)
 
     def _add_session_cost_item(self, cost_item: CostItem) -> None:
         """Group ``cost_item`` under its session, enforcing the session bounds.
@@ -1312,30 +1420,32 @@ class CostTracker:
             cache_path = Path(self.config.cost_cache_file)
             cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Load existing cache
-            cached_items = []
-            if cache_path.exists():
-                cached_items = _read_json_file(cache_path)
+            # Serialize the read-modify-write across threads and loops (#3246).
+            with _CACHE_WRITE_LOCK:
+                # Load existing cache
+                cached_items = []
+                if cache_path.exists():
+                    cached_items = _read_json_file(cache_path)
 
-            # Add new item
-            cached_items.append(
-                {
-                    "item_id": cost_item.item_id,
-                    "category": cost_item.category.value,
-                    "description": cost_item.description,
-                    "quantity": cost_item.quantity,
-                    "unit_cost": cost_item.unit_cost,
-                    "total_cost": cost_item.total_cost,
-                    "currency": cost_item.currency,
-                    "timestamp": cost_item.timestamp,
-                    "session_id": cost_item.session_id,
-                    "trial_id": cost_item.trial_id,
-                    "metadata": cost_item.metadata,
-                }
-            )
+                # Add new item
+                cached_items.append(
+                    {
+                        "item_id": cost_item.item_id,
+                        "category": cost_item.category.value,
+                        "description": cost_item.description,
+                        "quantity": cost_item.quantity,
+                        "unit_cost": cost_item.unit_cost,
+                        "total_cost": cost_item.total_cost,
+                        "currency": cost_item.currency,
+                        "timestamp": cost_item.timestamp,
+                        "session_id": cost_item.session_id,
+                        "trial_id": cost_item.trial_id,
+                        "metadata": cost_item.metadata,
+                    }
+                )
 
-            # Save cache
-            _write_json_file(cache_path, cached_items)
+                # Save cache
+                _write_json_file(cache_path, cached_items)
 
         except Exception as e:
             logger.warning(f"Failed to cache cost item: {e}")

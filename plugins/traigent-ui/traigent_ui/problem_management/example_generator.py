@@ -8,7 +8,7 @@ and difficulty levels for LangChain optimization problems.
 import random
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .domain_knowledge import DomainKnowledge
 from .intelligence import ProblemInsights
@@ -18,11 +18,11 @@ from .intelligence import ProblemInsights
 class GeneratedExample:
     """A generated example with metadata."""
 
-    input_data: Dict[str, Any]
+    input_data: dict[str, Any]
     expected_output: Any
     difficulty: str
     reasoning: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 class ExampleGenerator:
@@ -78,8 +78,8 @@ class ExampleGenerator:
         description: str,
         count: int,
         difficulty: str = "Advanced",
-        insights: Optional[ProblemInsights] = None,
-    ) -> List[GeneratedExample]:
+        insights: ProblemInsights | None = None,
+    ) -> list[GeneratedExample]:
         """
         Generate examples for a new problem.
 
@@ -124,10 +124,10 @@ class ExampleGenerator:
         self,
         existing_problem: str,
         count: int,
-        difficulty: Optional[str] = None,
+        difficulty: str | None = None,
         balance: bool = False,
         edge_cases: bool = False,
-    ) -> List[GeneratedExample]:
+    ) -> list[GeneratedExample]:
         """
         Generate additional examples for an existing problem.
 
@@ -142,13 +142,7 @@ class ExampleGenerator:
             List of generated examples
         """
         # Analyze existing problem to understand patterns
-        try:
-            from ..langchain_problems import get_problem_class
-        except ImportError:
-            try:
-                from langchain_problems import get_problem_class
-            except ImportError:
-                from examples.langchain_problems import get_problem_class
+        from ..langchain_problems import get_problem_class
 
         problem_class = get_problem_class(existing_problem)
         problem_instance = problem_class()
@@ -186,7 +180,7 @@ class ExampleGenerator:
 
         return examples
 
-    def _get_default_tiers(self, difficulty: str) -> List[str]:
+    def _get_default_tiers(self, difficulty: str) -> list[str]:
         """Get default difficulty tiers for a difficulty level."""
         tier_sets = {
             "Beginner": ["easy", "medium", "hard"],
@@ -195,7 +189,7 @@ class ExampleGenerator:
         }
         return tier_sets.get(difficulty, tier_sets["Advanced"])
 
-    def _calculate_distribution(self, count: int, tiers: List[str]) -> Dict[str, int]:
+    def _calculate_distribution(self, count: int, tiers: list[str]) -> dict[str, int]:
         """Calculate how many examples to generate for each difficulty tier."""
         if len(tiers) == 0:
             return {"medium": count}
@@ -231,8 +225,8 @@ class ExampleGenerator:
         description: str,
         difficulty: str,
         count: int,
-        insights: Optional[ProblemInsights],
-    ) -> List[GeneratedExample]:
+        insights: ProblemInsights | None,
+    ) -> list[GeneratedExample]:
         """Generate examples for a specific difficulty tier."""
         examples = []
         difficulty_spec = self.difficulty_specs[difficulty]
@@ -298,9 +292,9 @@ class ExampleGenerator:
         domain: str,
         description: str,
         difficulty: str,
-        difficulty_spec: Dict,
-        domain_patterns: Dict,
-        insights: Optional[ProblemInsights],
+        difficulty_spec: dict,
+        domain_patterns: dict,
+        insights: ProblemInsights | None,
     ) -> GeneratedExample:
         """Generate a classification example."""
         # Get categories from insights or domain patterns
@@ -334,7 +328,7 @@ class ExampleGenerator:
             )
 
     def _generate_customer_service_example(
-        self, difficulty: str, difficulty_spec: Dict, categories: List[str]
+        self, difficulty: str, difficulty_spec: dict, categories: list[str]
     ) -> GeneratedExample:
         """Generate customer service classification example."""
         templates = {
@@ -410,7 +404,7 @@ class ExampleGenerator:
         )
 
     def _generate_technical_example(
-        self, difficulty: str, difficulty_spec: Dict, categories: List[str]
+        self, difficulty: str, difficulty_spec: dict, categories: list[str]
     ) -> GeneratedExample:
         """Generate technical support classification example."""
         templates = {
@@ -511,7 +505,7 @@ class ExampleGenerator:
         )
 
     def _generate_medical_example(
-        self, difficulty: str, difficulty_spec: Dict, categories: List[str]
+        self, difficulty: str, difficulty_spec: dict, categories: list[str]
     ) -> GeneratedExample:
         """Generate medical classification example."""
         templates = {
@@ -600,7 +594,7 @@ class ExampleGenerator:
         )
 
     def _generate_financial_example(
-        self, difficulty: str, difficulty_spec: Dict, categories: List[str]
+        self, difficulty: str, difficulty_spec: dict, categories: list[str]
     ) -> GeneratedExample:
         """Generate financial classification example."""
         templates = {
@@ -696,7 +690,7 @@ class ExampleGenerator:
         )
 
     def _generate_legal_example(
-        self, difficulty: str, difficulty_spec: Dict, categories: List[str]
+        self, difficulty: str, difficulty_spec: dict, categories: list[str]
     ) -> GeneratedExample:
         """Generate legal analysis example."""
         contract_types = ["employment", "service", "purchase", "rental", "partnership"]
@@ -770,8 +764,8 @@ class ExampleGenerator:
     def _generate_general_classification_example(
         self,
         difficulty: str,
-        difficulty_spec: Dict,
-        categories: List[str],
+        difficulty_spec: dict,
+        categories: list[str],
         description: str,
     ) -> GeneratedExample:
         """Generate a general classification example."""
@@ -812,9 +806,9 @@ class ExampleGenerator:
         domain: str,
         description: str,
         difficulty: str,
-        difficulty_spec: Dict,
-        domain_patterns: Dict,
-        insights: Optional[ProblemInsights],
+        difficulty_spec: dict,
+        domain_patterns: dict,
+        insights: ProblemInsights | None,
     ) -> GeneratedExample:
         """Generate a text generation example."""
 
@@ -1020,9 +1014,9 @@ class ExampleGenerator:
         domain: str,
         description: str,
         difficulty: str,
-        difficulty_spec: Dict,
-        domain_patterns: Dict,
-        insights: Optional[ProblemInsights],
+        difficulty_spec: dict,
+        domain_patterns: dict,
+        insights: ProblemInsights | None,
     ) -> GeneratedExample:
         """Generate an analysis example."""
 
@@ -1343,9 +1337,9 @@ class ExampleGenerator:
         domain: str,
         description: str,
         difficulty: str,
-        difficulty_spec: Dict,
-        domain_patterns: Dict,
-        insights: Optional[ProblemInsights],
+        difficulty_spec: dict,
+        domain_patterns: dict,
+        insights: ProblemInsights | None,
     ) -> GeneratedExample:
         """Generate a structured extraction example."""
 
@@ -1733,7 +1727,7 @@ class ExampleGenerator:
             metadata={"domain": domain, "type": "structured"},
         )
 
-    async def _analyze_existing_examples(self, examples: List[Any]) -> Dict[str, Any]:
+    async def _analyze_existing_examples(self, examples: list[Any]) -> dict[str, Any]:
         """Analyze existing examples to understand patterns."""
         analysis = {
             "total_count": len(examples),
@@ -1776,8 +1770,8 @@ class ExampleGenerator:
         return analysis
 
     def _balance_distribution(
-        self, count: int, existing_distribution: Dict[str, int]
-    ) -> Dict[str, int]:
+        self, count: int, existing_distribution: dict[str, int]
+    ) -> dict[str, int]:
         """Create balanced distribution across existing tiers."""
         tiers = list(existing_distribution.keys())
         if not tiers:
@@ -1793,8 +1787,8 @@ class ExampleGenerator:
         return distribution
 
     def _follow_existing_distribution(
-        self, count: int, existing_distribution: Dict[str, int]
-    ) -> Dict[str, int]:
+        self, count: int, existing_distribution: dict[str, int]
+    ) -> dict[str, int]:
         """Follow existing distribution pattern."""
         total_existing = sum(existing_distribution.values())
         if total_existing == 0:
@@ -1820,11 +1814,11 @@ class ExampleGenerator:
 
     async def _generate_examples_matching_pattern(
         self,
-        existing_analysis: Dict[str, Any],
+        existing_analysis: dict[str, Any],
         difficulty: str,
         count: int,
         edge_cases: bool = False,
-    ) -> List[GeneratedExample]:
+    ) -> list[GeneratedExample]:
         """Generate examples that match existing patterns."""
         examples = []
 

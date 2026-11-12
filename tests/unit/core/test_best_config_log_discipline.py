@@ -176,10 +176,17 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._protected_request",
         "raise",
-        "d9d06232d3947c89",  # pragma: allowlist secret
+        "37ca82e44c547aba",  # pragma: allowlist secret
     ): (
         1,
-        _COUNT,
+        (
+            "transport-failure text via raise_detached (#3264): the message is the "
+            "operation argument plus ' transport failed'. The three callers pass SDK-owned "
+            "constants only (backend_client.py:2650 AGENT_HEAD_FETCH, :2778 'Token-refs "
+            "issuance', :2825 BEST_CONFIG_PUBLISH). The transport exception is caught "
+            "without being formatted, and raise_detached clears __cause__ and __context__, "
+            "so no URL, header, host or exception text reaches the message"
+        ),
     ),
     (
         "backend_client.py",
@@ -221,7 +228,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_agent_head_generation_sync",
         "raise",
-        "dcfa7ba99288b9d4",  # pragma: allowlist secret
+        "83ecb930d9de43aa",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -230,7 +237,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_best_config_sync",
         "raise",
-        "6e05c0b1ccc04f75",  # pragma: allowlist secret
+        "343f67dfe3e706e1",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -257,7 +264,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.publish_best_config_sync",
         "raise",
-        "66eeefe89a47633b",  # pragma: allowlist secret
+        "e3ccb8bc5bbbab21",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -284,10 +291,27 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.upload_example_features",
         "log",
-        "a00ec674afa6f7c5",  # pragma: allowlist secret
+        "52781906c722fd80",  # pragma: allowlist secret
     ): (
         1,
-        _LEGACY_BACKEND,
+        (
+            "partial-upload warning (#2992 chunking): interpolates only the caller's "
+            "run id, an int count of accepted rows and len(features); no feature "
+            "values, exception text or response body"
+        ),
+    ),
+    (
+        "backend_client.py",
+        "BackendIntegratedClient._post_example_feature_chunk",
+        "log",
+        "cd36b3d066f1af11",  # pragma: allowlist secret
+    ): (
+        1,
+        (
+            "rejected-chunk warning: run id plus safe_http_error_summary only "
+            "(session_types.py:206: status code and a closed error code, never the "
+            "backend message or body text)"
+        ),
     ),
     (
         "backend_client.py",
@@ -341,7 +365,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_run_sync_backend_request_with_retry",
         "raise",
-        "402529dd40c51ccc",
+        "02feea07c69229b3",  # pragma: allowlist secret
     ): (
         1,
         "operation literal + pre-sanitized transient text or exception type name",
@@ -350,7 +374,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_run_sync_backend_request_with_retry",
         "raise",
-        "9c8bd3bbaf3e6fe9",  # pragma: allowlist secret
+        "fe383c90ba16fa5d",  # pragma: allowlist secret
     ): (
         1,
         "operation literal + pre-sanitized transient text or exception type name",
@@ -359,7 +383,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "_run_sync_backend_request_with_retry",
         "raise",
-        "f1072a0fa4f123e2",  # pragma: allowlist secret
+        "6703b185d33ae951",  # pragma: allowlist secret
     ): (
         1,
         "operation literal + pre-sanitized transient text or exception type name",
@@ -626,6 +650,19 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         (
             "fixed text plus the exception type name; the session id lives on details "
             "only (local_storage.py _save_session except-block)"
+        ),
+    ),
+    (
+        "local_storage.py",
+        "LocalStorageManager._persist_append",
+        "raise",
+        "2db4ce80f15be02d",  # pragma: allowlist secret
+    ): (
+        1,
+        (
+            "fixed text plus the exception type name; the session id lives on details "
+            "only (same shape as _save_session; local_storage.py _persist_append "
+            "except-block, #3272)"
         ),
     ),
     (
@@ -1195,6 +1232,14 @@ class _Scan(ast.NodeVisitor):
         return None
 
     def visit_Call(self, node: ast.Call) -> None:
+        callee = node.func
+        name = (
+            callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", "")
+        )
+        if name == "raise_detached" and node.args:
+            # ``raise_detached(X)`` raises X (see traigent/cloud/_detached_raise.py):
+            # judge X exactly as a ``raise X`` expression, keyed on the call's text
+            self._judge_raise(node, node.args[0])
         sink = self._sink(node)
         if sink is not None:
             method, msgs = sink
@@ -1284,7 +1329,13 @@ class _Scan(ast.NodeVisitor):
         return found
 
     def visit_Raise(self, node: ast.Raise) -> None:
-        exc = node.exc
+        if node.exc is not None:
+            self._judge_raise(node, node.exc)
+        self.generic_visit(node)
+
+    def _judge_raise(self, node: ast.AST, exc: ast.AST) -> None:
+        """Judge the exception expression ``exc`` raised at ``node`` (a raise or a
+        ``raise_detached(...)`` call, which raises its argument)."""
         hv = set(self.handler_vars)
         if isinstance(exc, (ast.Name, ast.Attribute)):
             # ``err = ValueError(f"..{x}"); raise err``: judge the call that built it
@@ -1313,7 +1364,6 @@ class _Scan(ast.NodeVisitor):
             )
             if builds_text:
                 self._add("raise", node, feeders, node.lineno)
-        self.generic_visit(node)
 
     def _call_builds_text(self, exc: ast.Call, hv: set[str]) -> bool:
         """Does this exception constructor print a value (not just a literal)?"""
@@ -1472,6 +1522,9 @@ def _kinds(source: str) -> list[str]:
         ("def f(p):\n logger.exception('fixed')\n", ["log"]),
         ("def f(p):\n logger.warning('fixed', exc_info=True)\n", ["log"]),
         ("def f(p):\n msg = 'bad ' + p\n raise ValueError(msg)\n", ["raise"]),
+        ("def f(p):\n raise_detached(ValueError(f'bad {p}'))\n", ["raise"]),
+        ("def f(p):\n raise_detached(ValueError(p))\n", ["raise"]),
+        ("def f(p):\n m.raise_detached(ValueError(str(p)))\n", ["raise"]),
         ("def f(p):\n raise ValueError(str(p))\n", ["raise"]),
         (
             "class E(ValueError):\n def __init__(self, v):\n  super().__init__(f'bad {v}')\n",
@@ -1536,6 +1589,7 @@ def test_guard_catches_each_bypass(source: str, expected: list[str]) -> None:
         "def f():\n logger.warning('fixed')\n",
         "def f():\n logger.warning('fixed', exc_info=False)\n",
         "def f():\n raise ValueError('fixed')\n",
+        "def f():\n raise_detached(ValueError('fixed'))\n",
         "def f(e):\n diag.log(logger, 30, 'fixed', category=c, exc=e)\n",
         "class E(ValueError):\n def __init__(self):\n  super().__init__('fixed')\n",
     ],

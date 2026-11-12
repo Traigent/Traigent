@@ -9,8 +9,10 @@ import json
 import math
 import os
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from dataclasses import fields as dataclass_fields
 from datetime import UTC, datetime, timedelta
@@ -23,6 +25,7 @@ import psutil
 
 from ..api.types import OptimizationStatus
 from ..utils.exceptions import TraigentStorageError
+from ..utils.file_lock import storage_lock
 from ..utils.function_identity import sanitize_identifier
 from ..utils.logging import get_logger
 from ..utils.objectives import is_minimization_objective
@@ -237,6 +240,27 @@ class OptimizationSession:
             self.total_trials = recorded_trials
 
 
+# Session fields that change on every appended trial. Everything else on the
+# session is serialized once and reused until the file changes under us.
+_PER_TRIAL_FIELDS = (
+    "completed_trials",
+    "total_trials",
+    "updated_at",
+    "best_score",
+    "best_config",
+)
+
+
+@dataclass
+class _AppendState:
+    """A session plus its already-serialized static part and trials (#3272)."""
+
+    signature: Any
+    session: "OptimizationSession"
+    static_json: str
+    trial_json: list[str]
+
+
 def _dataclass_kwargs(cls: type, data: dict[str, Any]) -> dict[str, Any]:
     """Keep only keys that ``cls`` (a dataclass) accepts.
 
@@ -264,6 +288,10 @@ class LocalStorageManager:
         """
         self.storage_path = self._get_storage_path(storage_path)
         self._ensure_directories()
+        # Serialized form of the last few sessions this manager appended trials
+        # to, so a trial does not reload the file or re-serialize what is
+        # already stored (#3272). Private to ``add_trial_result``.
+        self._append_cache: OrderedDict[str, _AppendState] = OrderedDict()
 
     def _get_storage_path(self, custom_path: str | None) -> Path:
         """Get storage path from custom path, env var, or default."""
@@ -437,14 +465,27 @@ class LocalStorageManager:
         logger.info("Created optimization session")
         return session_id
 
+    @contextmanager
+    def _session_lock(self, session_id: str):
+        """Serialise load-modify-save of one session across threads and processes."""
+        session_file = validate_path(
+            self.storage_path / "sessions" / f"{session_id}.json",
+            self.storage_path,
+            must_exist=False,
+        )
+        session_file.parent.mkdir(parents=True, exist_ok=True)
+        with storage_lock(session_file):
+            yield
+
     def update_session_status(self, session_id: str, status: str) -> None:
         """Update session status."""
-        session = self.load_session(session_id)
-        if session:
-            session.status = status
-            session.updated_at = datetime.now(UTC).isoformat()
-            self._save_session(session)
-            logger.debug("Updated session status")
+        with self._session_lock(session_id):
+            session = self.load_session(session_id)
+            if session:
+                session.status = status
+                session.updated_at = datetime.now(UTC).isoformat()
+                self._save_session(session)
+                logger.debug("Updated session status")
 
     def _session_summary_orientation(self, session: Any) -> str | None:
         """Direction of the session's primary objective, or None when unknown."""
@@ -474,7 +515,9 @@ class LocalStorageManager:
         orientation = self._resolve_primary_objective_orientation(
             session.optimization_config, primary_objective
         )
-        if session.best_score is None:
+        if not math.isfinite(score):
+            return False
+        if session.best_score is None or not math.isfinite(session.best_score):
             return True
         if orientation == "band":
             low, high = self._resolve_primary_objective_band(
@@ -520,58 +563,166 @@ class LocalStorageManager:
             input_cost: Optional input-token cost in USD
             output_cost: Optional output-token cost in USD
         """
-        session = self.load_session(session_id)
-        if not session:
-            raise TraigentStorageError(
-                "Session <id> not found", details={"session_id": session_id}
-            ) from None
+        with self._session_lock(session_id):
+            state = self._append_state(session_id)
+            if state is None:
+                raise TraigentStorageError(
+                    "Session <id> not found", details={"session_id": session_id}
+                ) from None
+            session = state.session
 
-        if session.trials is None:
-            session.trials = []
+            if session.trials is None:
+                session.trials = []
 
-        extracted_costs = extract_trial_cost_fields(metadata)
-        explicit_costs = {
-            "cost": cost,
-            "total_cost": total_cost,
-            "input_cost": input_cost,
-            "output_cost": output_cost,
-        }
-        for field, value in explicit_costs.items():
-            coerced_value = _coerce_optional_cost(value)
-            if coerced_value is not None:
-                extracted_costs[field] = coerced_value
+            extracted_costs = extract_trial_cost_fields(metadata)
+            explicit_costs = {
+                "cost": cost,
+                "total_cost": total_cost,
+                "input_cost": input_cost,
+                "output_cost": output_cost,
+            }
+            for field, value in explicit_costs.items():
+                coerced_value = _coerce_optional_cost(value)
+                if coerced_value is not None:
+                    extracted_costs[field] = coerced_value
 
-        _complete_total_and_cost(extracted_costs)
+            _complete_total_and_cost(extracted_costs)
 
-        trial_result = TrialResult(
-            trial_id=len(session.trials) + 1,
-            config=config,
-            score=score,
-            timestamp=datetime.now(UTC).isoformat(),
-            metadata=metadata,
-            error=error,
-            cost=extracted_costs["cost"],
-            total_cost=extracted_costs["total_cost"],
-            input_cost=extracted_costs["input_cost"],
-            output_cost=extracted_costs["output_cost"],
+            trial_result = TrialResult(
+                trial_id=len(session.trials) + 1,
+                config=config,
+                score=score,
+                timestamp=datetime.now(UTC).isoformat(),
+                metadata=metadata,
+                error=error,
+                cost=extracted_costs["cost"],
+                total_cost=extracted_costs["total_cost"],
+                input_cost=extracted_costs["input_cost"],
+                output_cost=extracted_costs["output_cost"],
+            )
+
+            # Work out the new session-level values first and persist before
+            # touching the cached session: a failed write must not leave memory
+            # ahead of the file.
+            trial_count = len(session.trials) + 1
+            updated: dict[str, Any] = {
+                # total_trials counts recorded trials, so it moves with the trial
+                # list rather than staying at the 0 stamped at construction (#2032).
+                "completed_trials": trial_count,
+                "total_trials": trial_count,
+                "updated_at": datetime.now(UTC).isoformat(),
+                "best_score": session.best_score,
+                "best_config": session.best_config,
+            }
+            # Update best score if this is better
+            if score is not None and self._is_better_trial_score(session, score):
+                updated["best_score"] = score
+                updated["best_config"] = deepcopy(config)
+
+            new_trial_json, signature = self._persist_append(
+                state, trial_result, updated
+            )
+
+            session.trials.append(trial_result)
+            for field_name, value in updated.items():
+                setattr(session, field_name, value)
+            state.trial_json.append(new_trial_json)
+            state.signature = signature
+            logger.debug("Added trial result to session")
+
+    _APPEND_CACHE_SIZE = 4
+
+    def _session_file_path(self, session_id: str) -> Path:
+        return validate_path(
+            self.storage_path / "sessions" / f"{session_id}.json",
+            self.storage_path,
+            must_exist=False,
         )
 
-        session.trials.append(trial_result)
-        session.completed_trials = len(session.trials)
-        # total_trials counts recorded trials, so it moves with the trial list
-        # rather than staying at the 0 stamped at construction (#2032).
-        session.total_trials = len(session.trials)
-        session.updated_at = datetime.now(UTC).isoformat()
+    def _file_signature(self, session_id: str) -> Any:
+        try:
+            st = self._session_file_path(session_id).stat()
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size, st.st_ino)
 
-        # Update best score if this is better
-        if score is not None:
-            is_better = self._is_better_trial_score(session, score)
-            if is_better:
-                session.best_score = score
-                session.best_config = config.copy()
+    def _append_state(self, session_id: str) -> "_AppendState | None":
+        """Cached serialized state for ``session_id``, rebuilt if the file changed."""
+        cached = self._append_cache.get(session_id)
+        if cached is not None:
+            if cached.signature == self._file_signature(session_id):
+                self._append_cache.move_to_end(session_id)
+                return cached
+            self._append_cache.pop(session_id, None)
 
-        self._save_session(session)
-        logger.debug("Added trial result to session")
+        signature = self._file_signature(session_id)
+        session = self.load_session(session_id)
+        if session is None:
+            return None
+        static = asdict(session)
+        trials = static.pop("trials") or []
+        for name in _PER_TRIAL_FIELDS:
+            static.pop(name, None)
+        state = _AppendState(
+            signature=signature,
+            session=session,
+            static_json=json.dumps(self._make_json_serializable(static)),
+            trial_json=[json.dumps(self._make_json_serializable(t)) for t in trials],
+        )
+        self._append_cache[session_id] = state
+        while len(self._append_cache) > self._APPEND_CACHE_SIZE:
+            self._append_cache.popitem(last=False)
+        return state
+
+    def _persist_append(
+        self,
+        state: _AppendState,
+        trial_result: TrialResult,
+        updated: dict[str, Any],
+    ) -> tuple[str, Any]:
+        """Atomically write the session with ``trial_result`` appended.
+
+        Serializes only the new trial and the per-trial fields; the rest comes
+        from ``state``. Returns the new trial's JSON and the written file's
+        signature on success. The signature is taken from the temp file before
+        the rename (which preserves it), so a writer that replaces the file in
+        between cannot be mistaken for ours.
+        """
+        session = state.session
+        session_file = self._session_file_path(session.session_id)
+        try:
+            new_trial_json = json.dumps(
+                self._make_json_serializable(asdict(trial_result))
+            )
+            per_trial_json = json.dumps(self._make_json_serializable(updated))
+            text = (
+                state.static_json[:-1]
+                + ',"trials":['
+                + ",".join([*state.trial_json, new_trial_json])
+                + "],"
+                + per_trial_json[1:]
+            )
+            temp_path = validate_path(
+                session_file.with_suffix(f".json.tmp.{os.getpid()}.{uuid4().hex}"),
+                session_file.parent,
+                must_exist=False,
+            )
+            try:
+                with safe_open(temp_path, session_file.parent, mode="w") as f:
+                    f.write(text)
+                st = temp_path.stat()
+                signature = (st.st_mtime_ns, st.st_size, st.st_ino)
+                temp_path.replace(session_file)  # Atomic rename on POSIX
+            finally:
+                if temp_path.exists():
+                    temp_path.unlink()
+        except Exception as e:
+            # the exception text can quote the session file's full path
+            raise TraigentStorageError(
+                f"Failed to save session ({type(e).__name__})",
+                details={"session_id": session.session_id},
+            ) from None
+        return new_trial_json, signature
 
     @staticmethod
     def _extract_objective_name_candidate(candidate: Any) -> str | None:
@@ -750,27 +901,28 @@ class LocalStorageManager:
         Returns:
             The finalized session data or None if not found
         """
-        session = self.load_session(session_id)
-        if not session:
-            logger.error("Session to finalize not found")
-            return None
+        with self._session_lock(session_id):
+            session = self.load_session(session_id)
+            if not session:
+                logger.error("Session to finalize not found")
+                return None
 
-        session.status = status or OptimizationStatus.COMPLETED.value
-        if apply_best:
-            session.best_config = dict(best_config) if best_config else None
-            session.best_score = best_score if best_config else None
-        elif best_config is not None:
-            session.best_config = dict(best_config)
-            session.best_score = best_score
-        # Re-assert the recorded-trial invariant at the end of the run: an
-        # early-stopped run records fewer trials than it planned, and the count
-        # that persists is the one that actually happened (#2032).
-        session.total_trials = len(session.trials or [])
-        session.updated_at = datetime.now(UTC).isoformat()
-        self._save_session(session)
+            session.status = status or OptimizationStatus.COMPLETED.value
+            if apply_best:
+                session.best_config = dict(best_config) if best_config else None
+                session.best_score = best_score if best_config else None
+            elif best_config is not None:
+                session.best_config = dict(best_config)
+                session.best_score = best_score
+            # Re-assert the recorded-trial invariant at the end of the run: an
+            # early-stopped run records fewer trials than it planned, and the count
+            # that persists is the one that actually happened (#2032).
+            session.total_trials = len(session.trials or [])
+            session.updated_at = datetime.now(UTC).isoformat()
+            self._save_session(session)
 
-        logger.info("Finalized session")
-        return session
+            logger.info("Finalized session")
+            return session
 
     def update_sync_state(
         self,
@@ -787,25 +939,26 @@ class LocalStorageManager:
         across resumable sync attempts. Returns the updated session, or None if
         the session is missing.
         """
-        session = self.load_session(session_id)
-        if not session:
-            logger.warning("Cannot update sync_state: session not found")
-            return None
+        with self._session_lock(session_id):
+            session = self.load_session(session_id)
+            if not session:
+                logger.warning("Cannot update sync_state: session not found")
+                return None
 
-        state: dict[str, Any] = dict(session.sync_state or {})
-        state.update(patch)
-        if trial_updates:
-            trials_state: dict[str, Any] = dict(state.get("trials") or {})
-            for trial_key, trial_patch in trial_updates.items():
-                merged = dict(trials_state.get(trial_key) or {})
-                merged.update(trial_patch)
-                trials_state[trial_key] = merged
-            state["trials"] = trials_state
+            state: dict[str, Any] = dict(session.sync_state or {})
+            state.update(patch)
+            if trial_updates:
+                trials_state: dict[str, Any] = dict(state.get("trials") or {})
+                for trial_key, trial_patch in trial_updates.items():
+                    merged = dict(trials_state.get(trial_key) or {})
+                    merged.update(trial_patch)
+                    trials_state[trial_key] = merged
+                state["trials"] = trials_state
 
-        session.sync_state = state
-        session.updated_at = datetime.now(UTC).isoformat()
-        self._save_session(session)
-        return session
+            session.sync_state = state
+            session.updated_at = datetime.now(UTC).isoformat()
+            self._save_session(session)
+            return session
 
     def load_session(self, session_id: str) -> OptimizationSession | None:
         """Load a session from storage."""
@@ -1007,6 +1160,7 @@ class LocalStorageManager:
         if session_file.exists():
             try:
                 session_file.unlink()
+                self._append_cache.pop(session_id, None)
                 logger.info("Deleted session")
                 return True
             except Exception as e:
@@ -1148,14 +1302,15 @@ class LocalStorageManager:
 
             # Atomic write: write to temp file, then rename
             temp_path = validate_path(
-                session_file.with_suffix(f".json.tmp.{os.getpid()}"),
+                session_file.with_suffix(f".json.tmp.{os.getpid()}.{uuid4().hex}"),
                 session_file.parent,
                 must_exist=False,
             )
             try:
                 with safe_open(temp_path, session_file.parent, mode="w") as f:
-                    json.dump(session_data, f, indent=2)
+                    json.dump(session_data, f)
                 temp_path.replace(session_file)  # Atomic rename on POSIX
+                self._append_cache.pop(session.session_id, None)
             finally:
                 if temp_path.exists():
                     temp_path.unlink()

@@ -984,3 +984,54 @@ class TestDiscoveryWithMockedSDK:
         assert isinstance(models, list)
         # Should contain known models from config
         assert any("mistral" in m for m in models)
+
+
+def test_openai_sdk_discovery_keeps_reasoning_and_drops_non_chat_ids_3152(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3152: o1/o3/o3-mini/o4-mini are listed; embedding, image, audio and
+    moderation ids are not."""
+    ids = [
+        "gpt-4o",
+        "gpt-5",
+        "o1",
+        "o3",
+        "o3-mini",
+        "o4-mini",
+        "o1-preview",
+        "chatgpt-4o-latest",
+        "text-embedding-3-small",
+        "gpt-image-1",
+        "gpt-4o-mini-tts",
+        "gpt-4o-transcribe",
+        "gpt-4o-realtime-preview",
+        "omni-moderation-latest",
+        "tts-1",
+        "whisper-1",
+        "dall-e-3",
+    ]
+    fake_models = types.SimpleNamespace(
+        list=lambda: types.SimpleNamespace(
+            data=[types.SimpleNamespace(id=i) for i in ids]
+        )
+    )
+    fake_openai = types.SimpleNamespace(
+        OpenAI=lambda api_key=None: types.SimpleNamespace(models=fake_models)
+    )
+    monkeypatch.setitem(__import__("sys").modules, "openai", fake_openai)
+    monkeypatch.setenv("OPENAI_API_KEY", "placeholder")
+
+    result = OpenAIDiscovery()._fetch_models_from_sdk()
+
+    assert result == sorted(
+        [
+            "gpt-4o",
+            "gpt-5",
+            "o1",
+            "o3",
+            "o3-mini",
+            "o4-mini",
+            "o1-preview",
+            "chatgpt-4o-latest",
+        ]
+    )

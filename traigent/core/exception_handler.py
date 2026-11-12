@@ -154,6 +154,32 @@ _PROVIDER_MARKER_RE = re.compile(
     r"(?:error code|status(?: code)?)[: ]+[45]\d\d|invalid_api_key|insufficient_quota"
 )
 
+#: Provider error codes a non-SDK exception may carry in ``.code`` / ``.error_code``.
+_KNOWN_PROVIDER_ERROR_CODES = {
+    "insufficient_quota": VendorErrorCategory.QUOTA_EXHAUSTED,
+    "invalid_api_key": VendorErrorCategory.AUTHENTICATION,
+    "rate_limit_exceeded": VendorErrorCategory.RATE_LIMIT,
+}
+
+
+def _structured_only_category(exc: Exception) -> VendorErrorCategory | None:
+    """Classify a non-SDK exception from structured fields only, never its words.
+
+    A numeric HTTP status (402/429/5xx; 401/403 count only from SDK exceptions)
+    or a known provider error-code value. The message text is not read, so
+    ``ValueError("insufficient_quota")`` or a user exception with
+    ``.code = "E42"`` is an ordinary per-example failure.
+    """
+    status = http_status_of(exc)
+    if status is not None and _status_is_vendor_signal(exc, status):
+        return _STATUS_CATEGORIES[status]
+    for attr in ("code", "error_code"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, str) and value in _KNOWN_PROVIDER_ERROR_CODES:
+            return _KNOWN_PROVIDER_ERROR_CODES[value]
+    return None
+
+
 _HTTP_LIBRARY_ROOTS = frozenset({"requests", "urllib3", "httpx", "aiohttp", "httpcore"})
 
 
@@ -234,6 +260,92 @@ def http_status_of(exc: BaseException) -> int | None:
         if status is not None:
             return status
     return None
+
+
+#: OpenRouter's documented *temporary* 402 subtype: an in-flight spending
+#: budget that clears on its own (the response carries ``Retry-After``).
+#: Permanent credit failures use other ``limit_source``/``reason`` values.
+_TEMPORARY_402_LIMIT_SOURCE = "openrouter_in_flight_budget"
+_TEMPORARY_402_REASON = "in_flight_budget_exhausted"
+_MAX_CHAIN_DEPTH = 8
+
+
+def _metadata_pairs(node: BaseException) -> list[tuple[Any, Any]]:
+    """``(limit_source, reason)`` pairs in ``node``'s body / response JSON."""
+    bodies: list[Any] = [getattr(node, "body", None)]
+    response = getattr(node, "response", None)
+    if response is not None and not isinstance(response, dict):
+        try:
+            bodies.append(response.json())
+        except Exception:  # noqa: BLE001 - unreadable body is simply no metadata
+            pass
+    pairs: list[tuple[Any, Any]] = []
+    for body in bodies:
+        if not isinstance(body, dict):
+            continue
+        inner = body.get("error", body)
+        metadata = inner.get("metadata") if isinstance(inner, dict) else None
+        if isinstance(metadata, dict):
+            pairs.append((metadata.get("limit_source"), metadata.get("reason")))
+    return pairs
+
+
+def _request_of(node: BaseException) -> Any:
+    request = getattr(node, "request", None)
+    if request is None:
+        request = getattr(getattr(node, "response", None), "request", None)
+    return request
+
+
+def temporary_402_chain(exc: BaseException) -> list[BaseException] | None:
+    """The validated exception chain of a temporary OpenRouter 402, else ``None``.
+
+    Requires an HTTP 402 and the exact ``limit_source``/``reason`` pair of the
+    temporary subtype. Metadata comes from ``exc`` itself and from linked
+    exceptions only when each link is a 402 for the *same* ``httpx.Request``
+    object as ``exc`` (an explicit ``__cause__`` of an exception with no
+    request of its own is also accepted when it is the direct link). An
+    unrelated earlier exception never supplies metadata. Other or
+    contradictory metadata, or a cycle, keeps the error terminal.
+    """
+    try:
+        if http_status_of(exc) != 402:
+            return None
+        request = _request_of(exc)
+        node: BaseException = exc
+        chain: list[BaseException] = [exc]
+        seen: set[int] = set()
+        temporary = False
+        for _ in range(_MAX_CHAIN_DEPTH):
+            if id(node) in seen:
+                return None  # cycle
+            seen.add(id(node))
+            for pair in _metadata_pairs(node):
+                if pair == (_TEMPORARY_402_LIMIT_SOURCE, _TEMPORARY_402_REASON):
+                    temporary = True
+                elif pair != (None, None):
+                    return None
+            nxt: BaseException | None = None
+            for link, explicit in ((node.__cause__, True), (node.__context__, False)):
+                if link is None or http_status_of(link) != 402:
+                    continue
+                same_request = request is not None and _request_of(link) is request
+                direct_wrapper = explicit and request is None and node is exc
+                if same_request or direct_wrapper:
+                    nxt = link
+                    break
+            if nxt is None:
+                return chain if temporary else None
+            chain.append(nxt)
+            node = nxt
+        return None  # chain deeper than the bound: do not guess
+    except Exception:  # noqa: BLE001 - classification must never mask the error
+        return None
+
+
+def is_temporary_in_flight_budget_402(exc: BaseException) -> bool:
+    """True only for a structured, unambiguous temporary OpenRouter 402."""
+    return temporary_402_chain(exc) is not None
 
 
 _STATUS_CATEGORIES: dict[int, VendorErrorCategory] = {
@@ -325,7 +437,9 @@ def _category_from_status(exc: Exception, status: int) -> VendorErrorCategory:
     return _STATUS_CATEGORIES[status]
 
 
-def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
+def classify_vendor_error(
+    exc: Exception, *, provider_text_only: bool = False
+) -> VendorErrorCategory | None:
     """Classify an exception as a vendor-pausable error category.
 
     Order: known Traigent exception types, then a structured HTTP status, then
@@ -336,6 +450,11 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
 
     Args:
         exc: The exception to classify.
+        provider_text_only: Match message wording only for provider-SDK
+            exceptions or text that carries structured provider markers
+            (``Error code: 429``, ``invalid_api_key``...). Used for errors
+            raised inside the user's own function, whose domain text
+            ("authentication header missing") is not a provider verdict.
 
     Returns:
         VendorErrorCategory if the error is vendor-pausable, None otherwise.
@@ -343,6 +462,12 @@ def classify_vendor_error(exc: Exception) -> VendorErrorCategory | None:
     typed = _typed_vendor_category(exc)
     if typed is not None:
         return typed
+
+    if is_temporary_in_flight_budget_402(exc):
+        return VendorErrorCategory.RATE_LIMIT
+
+    if provider_text_only and not _is_provider_sdk_exception(exc):
+        return _structured_only_category(exc)
 
     status = http_status_of(exc)
     if status is not None and _status_is_vendor_signal(exc, status):
@@ -491,11 +616,53 @@ def is_provider_api_key_failure(exc: BaseException) -> bool:
     return _MISSING_KEY_RE.search(str(exc)) is not None
 
 
+class ClassifiedErrorText(str):
+    """Error text that carries the verdict decided from the real exception.
+
+    The evaluators only keep the message string once a function call fails, so
+    re-classifying that string cannot see the exception type or status. The
+    verdict is decided once, where the exception is in hand, and travels with
+    the text (``str`` subclass: survives list copies, ``copy`` and ``pickle``).
+    ``systematic_category`` is already restricted to run-aborting categories.
+    """
+
+    systematic_category: VendorErrorCategory | None
+
+    def __new__(
+        cls, text: str, systematic_category: VendorErrorCategory | None = None
+    ) -> ClassifiedErrorText:
+        obj = super().__new__(cls, text)
+        obj.systematic_category = systematic_category
+        return obj
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (ClassifiedErrorText, (str(self), self.systematic_category))
+
+
+def function_call_failure_text(exc: Exception, text: str) -> ClassifiedErrorText:
+    """Wrap ``text`` for a failure raised inside the user's function call."""
+    category = classify_vendor_error(exc, provider_text_only=True)
+    if category not in _SYSTEMATIC_FATAL_CATEGORIES:
+        category = None
+    return ClassifiedErrorText(text, category)
+
+
+def preserve_error_text(error: object) -> str:
+    """``str(error)`` that keeps a :class:`ClassifiedErrorText` verdict intact."""
+    if isinstance(error, ClassifiedErrorText):
+        return error
+    if isinstance(error, Exception):
+        return function_call_failure_text(error, str(error))
+    return str(error)
+
+
 def classify_systematic_provider_failure(
     error: Exception | str,
 ) -> VendorErrorCategory | None:
     """Classify non-transient provider failures that should abort when systematic."""
 
+    if isinstance(error, ClassifiedErrorText):
+        return error.systematic_category
     exc = error if isinstance(error, Exception) else RuntimeError(str(error))
     category = classify_vendor_error(exc)
     if category in _SYSTEMATIC_FATAL_CATEGORIES:

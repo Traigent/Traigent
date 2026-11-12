@@ -113,14 +113,17 @@ class ParameterDiscovery:
 
     @staticmethod
     def find_similar_parameters(
-        source_param: str, target_params: list[str], threshold: float = 0.8
+        source_param: str, target_params: list[str], threshold: float = 0.0
     ) -> str | None:
         """Use fuzzy matching to find similar parameter names.
 
         Args:
             source_param: The parameter name to match
             target_params: List of possible target parameter names
-            threshold: Similarity threshold (0-1)
+            threshold: Minimum similarity (0-1) for a substring match, measured
+                as shorter-name length over longer-name length. The default
+                0.0 accepts any substring match; exact and known-variation
+                matches are unaffected.
 
         Returns:
             Best matching parameter name or None
@@ -150,8 +153,11 @@ class ParameterDiscovery:
 
         # Substring matching
         for target in target_params:
-            if source_lower in target.lower() or target.lower() in source_lower:
-                return target
+            target_lower = target.lower()
+            if source_lower in target_lower or target_lower in source_lower:
+                shorter, longer = sorted((source_lower, target_lower), key=len)
+                if longer and len(shorter) / len(longer) >= threshold:
+                    return target
 
         return None
 

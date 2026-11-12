@@ -10,7 +10,8 @@ import math
 import traceback as traceback_module
 import warnings
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -23,6 +24,7 @@ from traigent.core.objective_directions import (
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import PlatformCapabilityError
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_checks import require_finite_number
 
 logger = get_logger(__name__)
 
@@ -53,6 +55,79 @@ def _apply_example_count_columns(row: Any, metadata: Any) -> None:
             f"{metadata.get('successful_examples')}/"
             f"{metadata.get('examples_attempted')} examples succeeded"
         )
+
+
+def _disambiguate_column(name: str, prefix: str, taken: set[str]) -> str:
+    """Return ``name`` prefixed with ``prefix.`` (plus ``_`` until unique)."""
+    candidate = f"{prefix}.{name}"
+    while candidate in taken:
+        candidate += "_"
+    return candidate
+
+
+def _column_rename_map(
+    names: Iterable[str],
+    reserved: AbstractSet[str],
+    prefix: str,
+    also_taken: AbstractSet[str] = frozenset(),
+) -> dict[str, str]:
+    """Map each name that collides with a ``reserved`` column to a prefixed one.
+
+    Names that do not collide are absent from the map, so non-colliding
+    exports keep their original column names byte-for-byte. ``also_taken``
+    lists column names owned by another namespace so a new prefixed name never
+    lands on them. The result is deterministic: names are processed in sorted
+    order.
+    """
+    names = {str(n) for n in names}
+    taken = names | reserved | also_taken
+    renames: dict[str, str] = {}
+    for name in sorted(names & reserved):
+        new = _disambiguate_column(name, prefix, taken)
+        taken.add(new)
+        renames[name] = new
+    return renames
+
+
+def _metric_and_config_renames(
+    metric_names: AbstractSet[str],
+    config_names: AbstractSet[str],
+    metric_reserved: AbstractSet[str],
+    config_reserved: AbstractSet[str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Return ``(metric_renames, config_renames)`` allocated across both namespaces."""
+    metric_renames = _column_rename_map(
+        metric_names, metric_reserved, "metric", also_taken=config_names
+    )
+    config_renames = _column_rename_map(
+        config_names,
+        config_reserved | metric_names,
+        "config",
+        also_taken=frozenset(metric_renames.values()),
+    )
+    return metric_renames, config_renames
+
+
+_TRIAL_IDENTITY_COLUMNS = frozenset({"trial_id", "status", "duration", "timestamp"})
+_TRIAL_DERIVED_COLUMNS = frozenset(
+    {
+        "avg_response_time",
+        "avg_response_time_ms",
+        "total_cost",
+        "successful_examples",
+        "examples_attempted",
+        "example_success_summary",
+    }
+)
+_AGGREGATED_RESERVED_COLUMNS = frozenset(
+    {
+        "config_hash",
+        "samples_count",
+        "duration",
+        "avg_response_time",
+        "avg_response_time_ms",
+    }
+)
 
 
 def _name_suggests_minimize(name: str) -> bool:
@@ -2468,6 +2543,19 @@ class OptimizationResult:
         """Convert results to pandas DataFrame."""
         pd = _require_pandas()
 
+        # Config keys that collide with an identity/derived column or a metric
+        # are exported as ``config.<name>``; metrics that collide with an
+        # identity or derived column are exported as ``metric.<name>``. Nothing is
+        # silently overwritten.
+        metric_names = {str(k) for t in self.trials for k in (t.metrics or {})}
+        config_names = {str(k) for t in self.trials for k in (t.config or {})}
+        metric_renames, config_renames = _metric_and_config_renames(
+            metric_names,
+            config_names,
+            _TRIAL_IDENTITY_COLUMNS | _TRIAL_DERIVED_COLUMNS,
+            _TRIAL_IDENTITY_COLUMNS | _TRIAL_DERIVED_COLUMNS,
+        )
+
         data = []
         for trial in self.trials:
             row = {
@@ -2475,8 +2563,8 @@ class OptimizationResult:
                 "status": trial.status.value,
                 "duration": trial.duration,
                 "timestamp": trial.timestamp,
-                **trial.config,
-                **trial.metrics,
+                **{config_renames.get(k, k): v for k, v in trial.config.items()},
+                **{metric_renames.get(k, k): v for k, v in trial.metrics.items()},
             }
             avg_response_time = self._compute_average_response_time(trial.metadata)
             avg_response_time_ms = self._compute_average_response_time_ms(
@@ -2494,8 +2582,11 @@ class OptimizationResult:
             _apply_example_count_columns(row, metadata)
             if "total_example_cost" in metadata:
                 row["total_cost"] = metadata.get("total_example_cost")
-            elif "total_cost" not in row:
-                # Fall back to metrics if already present
+            elif "total_cost" in (trial.metrics or {}):
+                # The raw metric is exported as ``metric.total_cost``; the
+                # derived column falls back to it when metadata has no total.
+                row["total_cost"] = trial.metrics["total_cost"]
+            else:
                 row["total_cost"] = metadata.get("total_cost")
             data.append(row)
         return pd.DataFrame(data)
@@ -2555,20 +2646,35 @@ class OptimizationResult:
         return groups
 
     @staticmethod
+    def _aggregated_renames(
+        groups: dict[str, dict[str, Any]],
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        metric_names = {str(k) for g in groups.values() for k in g["metrics_sum"]}
+        config_names = {str(k) for g in groups.values() for k in (g["config"] or {})}
+        return _metric_and_config_renames(
+            metric_names,
+            config_names,
+            _AGGREGATED_RESERVED_COLUMNS,
+            _AGGREGATED_RESERVED_COLUMNS,
+        )
+
+    @classmethod
     def _build_aggregated_rows(
+        cls,
         groups: dict[str, dict[str, Any]],
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        metric_renames, config_renames = cls._aggregated_renames(groups)
         for cfg_hash, group in groups.items():
             row: dict[str, Any] = {
                 "config_hash": cfg_hash,
                 "samples_count": group["samples_count"],
             }
             for ck, cv in (group["config"] or {}).items():
-                row[ck] = cv
+                row[config_renames.get(ck, ck)] = cv
             for mk, total in group["metrics_sum"].items():
                 count = max(1, group["metrics_count"].get(mk, 1))
-                row[f"{mk}"] = total / count
+                row[metric_renames.get(mk, mk)] = total / count
             row["duration"] = (
                 (group["duration_sum"] / group["samples_count"])
                 if group["samples_count"] > 0
@@ -2586,15 +2692,21 @@ class OptimizationResult:
         return rows
 
     def _sort_aggregated_dataframe(
-        self, df: pd.DataFrame, primary_objective: str | None
+        self,
+        df: pd.DataFrame,
+        primary_objective: str | None,
+        metric_renames: Mapping[str, str] | None = None,
     ) -> pd.DataFrame:
-        if not primary_objective or primary_objective not in df.columns:
+        if not primary_objective:
+            return df
+        # The objective's direction is keyed by its metric name; the column may
+        # have been exported under a collision-free ``metric.<name>`` alias.
+        column = (metric_renames or {}).get(primary_objective, primary_objective)
+        if column not in df.columns:
             return df
         orientation = self._objective_orientation(primary_objective)
         ascending = orientation == "minimize"
-        return df.sort_values(
-            by=[primary_objective], ascending=ascending, na_position="last"
-        )
+        return df.sort_values(by=[column], ascending=ascending, na_position="last")
 
     def to_aggregated_dataframe(
         self, primary_objective: str | None = None
@@ -2622,7 +2734,8 @@ class OptimizationResult:
         groups = self._group_trials_for_aggregation()
         rows = self._build_aggregated_rows(groups)
         df = pd.DataFrame(rows)
-        return self._sort_aggregated_dataframe(df, primary_objective)
+        metric_renames, _ = self._aggregated_renames(groups)
+        return self._sort_aggregated_dataframe(df, primary_objective, metric_renames)
 
     def _extract_examples_attempted(self, trial: TrialResult) -> int | None:
         metadata = trial.metadata or {}
@@ -3016,6 +3129,7 @@ class StrategyConfig:
 
     def validate(self) -> None:
         """Validate strategy configuration."""
+        require_finite_number("parallel_workers", self.parallel_workers, integer=True)
         if self.parallel_workers < 1:
             raise ValueError("parallel_workers must be >= 1")
 

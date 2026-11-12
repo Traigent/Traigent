@@ -50,7 +50,7 @@ import os
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeGuard, TypeVar, cast
 
 if TYPE_CHECKING:
     from traigent.api.config_space import ConfigSpace
@@ -123,6 +123,7 @@ from traigent.utils.exceptions import (
     ValidationError,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import validate_positive_int
 
 _OFFLINE_MUST_BE_BOOL = "offline must be a bool"
 
@@ -184,6 +185,14 @@ class EvaluationOptions(BaseModel):
     #: anonymous scorers). A runtime ``optimize(surrogate_evaluator_name=...)``
     #: overrides this decorator value.
     surrogate_evaluator_name: str | None = None
+
+    @field_validator("eval_dataset", mode="before")
+    @classmethod
+    def _eval_dataset_path_to_str(cls, value: Any) -> Any:
+        """Accept ``pathlib.Path`` (any ``os.PathLike``) like a str path (#3199)."""
+        if isinstance(value, os.PathLike):
+            return os.fspath(value)
+        return value
 
     @field_validator("dataset_id", mode="before")
     @classmethod
@@ -452,6 +461,14 @@ class ExecutionOptions(BaseModel):
     require_run_id: bool | None = None
     snapshot_store: Any = None
     snapshot_g1_deadline_days: int | None = None
+
+    @field_validator("max_total_examples", mode="before")
+    @classmethod
+    def _validate_max_total_examples(cls, value: Any) -> Any:
+        """Reject bool/NaN/inf/non-integral/non-positive before pydantic coerces."""
+        if value is None:
+            return None
+        return validate_positive_int("max_total_examples", value)
 
     @model_validator(mode="wrap")
     @classmethod
@@ -1077,7 +1094,123 @@ def _warn_degenerate_configuration_space(
     logger.warning("%s", message)
 
 
+# A numeric knob whose whole span is under this fraction of its canonical
+# range (or, for knobs without a preset, of its own magnitude) offers no
+# distinguishable choice (#2025).
+_NEAR_IDENTICAL_SPAN_FRACTION = 0.01
+_NEAR_IDENTICAL_RELATIVE_FALLBACK = 0.001
+_NEAR_IDENTICAL_FLOAT_TOLERANCE = 1e-9
+
+
+def _plain_number(value: Any) -> TypeGuard[int | float]:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _canonical_span(name: Any) -> float | None:
+    """Span of the canonical preset range for knob *name*, if one exists."""
+    from traigent.config_generator.presets.range_presets import get_preset_range
+
+    if not isinstance(name, str):
+        return None
+    preset = get_preset_range(name)
+    kwargs = (preset or {}).get("kwargs") or {}
+    low, high = kwargs.get("low"), kwargs.get("high")
+    if (
+        preset
+        and preset.get("range_type") == "Range"
+        and _plain_number(low)
+        and _plain_number(high)
+        and high > low
+    ):
+        return float(high - low)
+    return None
+
+
+def _knob_variation_problems(name: Any, values: Any) -> list[str]:
+    """Closed-form descriptions of why a list knob cannot vary usefully."""
+    if not isinstance(values, (list, tuple)) or len(values) < 2:
+        return []
+    problems: list[str] = []
+    distinct: list[Any] = []
+    for value in values:
+        if not any(
+            isinstance(value, bool) == isinstance(seen, bool) and value == seen
+            for seen in distinct
+        ):
+            distinct.append(value)
+    if len(distinct) < len(values):
+        problems.append(
+            f"'{name}' lists {len(values)} values but only {len(distinct)} are "
+            f"distinct, so the space claims more configurations than it has"
+        )
+    if len(distinct) >= 2 and all(_plain_number(v) for v in distinct):
+        floats = sorted(float(v) for v in distinct)
+        canonical = _canonical_span(name)
+        for low, high in zip(floats, floats[1:], strict=False):
+            if canonical is not None:
+                floor = canonical * _NEAR_IDENTICAL_SPAN_FRACTION
+            else:
+                floor = max(abs(low), abs(high)) * _NEAR_IDENTICAL_RELATIVE_FALLBACK
+            # Tolerance absorbs float error (0.71 - 0.70 is 0.010000000000000009).
+            if high - low <= floor * (1 + _NEAR_IDENTICAL_FLOAT_TOLERANCE):
+                problems.append(
+                    f"'{name}' has values only {high - low:g} apart, a very "
+                    f"narrow gap that may not separate the trials"
+                )
+                break
+    return problems
+
+
+def _warn_degenerate_knob_variation(
+    func: Callable[..., Any], configuration_space: Any
+) -> None:
+    """Warn about list knobs whose values cannot give a meaningful comparison (#2025).
+
+    Covers duplicate values within one knob and numeric values clustered inside
+    a negligible span (1% of the knob's canonical preset range, or 0.1% of the
+    magnitude when no preset exists). Advisory only; each message states what it
+    costs the user. Complements ``_warn_degenerate_configuration_space``.
+    """
+    if not isinstance(configuration_space, dict):
+        return
+    problems: list[str] = []
+    for name, values in sorted(configuration_space.items(), key=lambda kv: str(kv[0])):
+        try:
+            problems.extend(_knob_variation_problems(name, values))
+        except Exception:  # advisory only; never block decoration
+            logger.debug("knob variation check skipped for %r", name, exc_info=True)
+    if not problems:
+        return
+
+    import warnings
+
+    func_name = getattr(func, "__name__", repr(func))
+    message = (
+        f"@traigent.optimize: the configuration_space for '{func_name}' has "
+        f"knobs whose values may not differ enough to compare: "
+        + "; ".join(problems)
+        + ". "
+        "Trials built from such values may be indistinguishable; check that "
+        "each value is intended, remove duplicates, or widen the span."
+    )
+    warnings.warn(message, TraigentWarning, stacklevel=3)
+    logger.warning("%s", message)
+
+
 _DEFAULT_SENTINEL = object()
+
+
+class _AutoAlgorithmDefault(str):
+    """The ``algorithm`` default; identity distinguishes "not passed" from "auto"."""
+
+    __slots__ = ()
+
+
+_AUTO_ALGORITHM_DEFAULT = _AutoAlgorithmDefault("auto")
 _AUTO_DETECT_TVARS_MODES = frozenset({"off", "suggest", "apply"})
 
 _OPTIMIZE_DEFAULTS: dict[str, Any] = {
@@ -1625,6 +1758,8 @@ def _build_settings_recorder(
                 source == "optimize parameter"
                 and default_value is not _DEFAULT_SENTINEL
                 and value == default_value
+                # An explicit algorithm="auto" is a real choice, not the default.
+                and not (key == "algorithm" and value is not _AUTO_ALGORITHM_DEFAULT)
             ):
                 return
             if existing_value != value:
@@ -1666,6 +1801,10 @@ def _normalize_runtime_override_aliases(
 
 def _validate_runtime_overrides(remaining_overrides: dict[str, Any]) -> None:
     """Validate that runtime overrides don't contain unknown keys."""
+    if remaining_overrides.get("plateau_window") is not None:
+        from traigent.core.stop_conditions import validate_plateau_window
+
+        validate_plateau_window(remaining_overrides["plateau_window"])
     unknown_keys = (
         set(remaining_overrides.keys())
         - _DIRECT_OPTION_KEYS
@@ -2450,19 +2589,35 @@ def _normalize_config_space_and_defaults(
     return normalized_space, default_config, constraints
 
 
-def _constraints_for_satisfiability(constraints: list[Any] | None) -> list[Any]:
-    """Return structural constraints that the satisfiability checker can evaluate."""
+def _constraints_for_satisfiability(
+    constraints: list[Any] | None,
+    scope_var_names: dict[int, str] | None = None,
+) -> list[Any]:
+    """Return structural constraints that the satisfiability checker can evaluate.
+
+    Constraints that reference a parameter outside ``scope_var_names`` are left
+    out: with three-valued evaluation a missing parameter is unknown and never
+    passes, so they would read as unsatisfiable. They are reported as a
+    ``ConstraintScopeError`` when constraints are normalized, which is the
+    accurate diagnosis.
+    """
     if not constraints:
         return []
 
-    from traigent.api.constraints import BoolExpr, Constraint
+    from traigent.api.constraints import BoolExpr, Constraint, ConstraintScopeError
 
     satisfiability_constraints: list[Constraint] = []
     for constraint in constraints:
-        if isinstance(constraint, Constraint):
-            satisfiability_constraints.append(constraint)
-        elif isinstance(constraint, BoolExpr):
-            satisfiability_constraints.append(Constraint(expr=constraint))
+        if isinstance(constraint, BoolExpr):
+            constraint = Constraint(expr=constraint)
+        if not isinstance(constraint, Constraint):
+            continue
+        if scope_var_names:
+            try:
+                constraint._validate_scope(scope_var_names)
+            except ConstraintScopeError:
+                continue
+        satisfiability_constraints.append(constraint)
     return satisfiability_constraints
 
 
@@ -2470,9 +2625,12 @@ def _validate_constraint_satisfiability(
     raw_configuration_space: dict[str, Any] | ConfigSpace | None,
     inline_params: dict[str, Any],
     constraints: list[Any] | None,
+    scope_var_names: dict[int, str] | None = None,
 ) -> None:
     """Fail fast when structural constraints make a finite space impossible."""
-    satisfiability_constraints = _constraints_for_satisfiability(constraints)
+    satisfiability_constraints = _constraints_for_satisfiability(
+        constraints, scope_var_names
+    )
     if not satisfiability_constraints:
         return
 
@@ -2485,7 +2643,11 @@ def _validate_constraint_satisfiability(
             tvars.update(
                 ConfigSpace.from_decorator_args(inline_params=inline_params).tvars
             )
-        space = ConfigSpace(tvars=tvars, constraints=tuple(satisfiability_constraints))
+        space = ConfigSpace(
+            tvars=tvars,
+            constraints=tuple(satisfiability_constraints),
+            strict_names=False,
+        )
     else:
         space = ConfigSpace.from_decorator_args(
             configuration_space=raw_configuration_space,
@@ -2792,6 +2954,89 @@ def _collect_optimize_settings(
     return combined_settings, remaining_overrides, inline_params
 
 
+def _validate_flat_bundle_options(
+    *,
+    eval_dataset: Any,
+    custom_evaluator: Any,
+    scoring_function: Any,
+    metric_functions: Any,
+    config_param: Any,
+    auto_override_frameworks: Any,
+    framework_targets: Any,
+    effectuation: Any,
+) -> dict[str, Any]:
+    """Run flat ``@optimize`` kwargs through the grouped-bundle models.
+
+    ``evaluation=`` / ``injection=`` bundles are validated by pydantic at
+    decoration time; the same options passed flat used to skip that and fail
+    later (or never). Validating the flat values with the very same models keeps
+    one source of truth, so both spellings reject a bad value identically and
+    the error names the argument (#2922).
+
+    Returns:
+        The model-validated value for every flat option that was given, keyed by
+        option name, so a flat value behaves exactly like its bundled form
+        (tuple dataset -> list, ``"no"`` -> ``False``). Options left ``None`` are
+        absent from the result.
+    """
+    # Materialise a one-shot iterable so validation does not consume it; a bare
+    # string is left alone so the model rejects it by name.
+    if framework_targets is not None and not isinstance(
+        framework_targets, (str, bytes, dict, list)
+    ):
+        try:
+            framework_targets = list(framework_targets)
+        except TypeError:
+            pass
+    evaluation_fields = {
+        name: value
+        for name, value in (
+            ("eval_dataset", eval_dataset),
+            ("custom_evaluator", custom_evaluator),
+            ("scoring_function", scoring_function),
+            ("metric_functions", metric_functions),
+        )
+        if value is not None
+    }
+    injection_fields = {
+        name: value
+        for name, value in (
+            ("config_param", config_param),
+            ("auto_override_frameworks", auto_override_frameworks),
+            ("framework_targets", framework_targets),
+            ("effectuation", effectuation),
+        )
+        if value is not None
+    }
+    validated: dict[str, Any] = {}
+    if evaluation_fields:
+        evaluation = EvaluationOptions.model_validate(evaluation_fields)
+        validated.update({k: getattr(evaluation, k) for k in evaluation_fields})
+    if injection_fields:
+        injection = InjectionOptions.model_validate(injection_fields)
+        validated.update({k: getattr(injection, k) for k in injection_fields})
+    return validated
+
+
+def _validate_default_config(default_config: Any) -> None:
+    """Fail at decoration when ``default_config`` is not a finite-valued dict."""
+    if default_config is None:
+        return
+    if not isinstance(default_config, dict):
+        raise TypeError(
+            f"default_config must be a dict or None, got {type(default_config).__name__}"
+        )
+    for key, value in default_config.items():
+        if not isinstance(key, str):
+            raise TypeError(
+                f"default_config keys must be strings, got {type(key).__name__}"
+            )
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(
+                f"default_config[{key!r}] cannot be NaN or Infinity (got {value})"
+            )
+
+
 def _validate_framework_targets(framework_targets: Any) -> None:
     if not framework_targets:
         return
@@ -3035,7 +3280,7 @@ def optimize(  # NOSONAR(S107)
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None,
-    algorithm: str = "auto",
+    algorithm: str = _AUTO_ALGORITHM_DEFAULT,
     offline: bool = False,
     strategy_params: Mapping[str, Any] | None = None,
     smart_pruning: SmartPruningOptions | dict[str, Any] | None = None,
@@ -3386,6 +3631,9 @@ def optimize(  # NOSONAR(S107)
 
     legacy_args = _parse_legacy_args(legacy)
     max_trials_explicit = _is_max_trials_explicit(runtime_overrides, legacy_args)
+    algorithm_explicit = algorithm is not _AUTO_ALGORITHM_DEFAULT or (
+        legacy_args is not None and legacy_args.algorithm is not None
+    )
 
     direct_inputs = {
         "objectives": objectives,
@@ -3436,6 +3684,7 @@ def optimize(  # NOSONAR(S107)
     objectives = combined_settings["objectives"]
     configuration_space = combined_settings["configuration_space"]
     default_config = combined_settings["default_config"]
+    _validate_default_config(default_config)
     constraints = combined_settings["constraints"]
     safety_constraints = combined_settings["safety_constraints"]
 
@@ -3465,6 +3714,7 @@ def optimize(  # NOSONAR(S107)
         raw_configuration_space,
         inline_params,
         constraints,
+        constraint_scope_var_names,
     )
 
     # Note: Constraint normalization is deferred until after TVL artifact application
@@ -3473,7 +3723,6 @@ def optimize(  # NOSONAR(S107)
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
-    _validate_framework_targets(framework_targets)
     effectuation = combined_settings["effectuation"]
     algorithm_value = validate_algorithm_name(combined_settings["algorithm"])
     offline_value = _require_bool_offline(combined_settings["offline"])
@@ -3487,6 +3736,10 @@ def optimize(  # NOSONAR(S107)
     minimal_logging = combined_settings["minimal_logging"]
     parallel_config = combined_settings["parallel_config"]
     max_total_examples = combined_settings["max_total_examples"]
+    if max_total_examples is not None:
+        max_total_examples = validate_positive_int(
+            "max_total_examples", max_total_examples
+        )
     samples_include_pruned = combined_settings["samples_include_pruned"]
     winner_stability_reps = _coerce_winner_stability_reps(
         combined_settings["winner_stability_reps"]
@@ -3496,6 +3749,27 @@ def optimize(  # NOSONAR(S107)
     custom_evaluator = combined_settings["custom_evaluator"]
     scoring_function = combined_settings["scoring_function"]
     metric_functions = combined_settings["metric_functions"]
+    flat_validated = _validate_flat_bundle_options(
+        eval_dataset=eval_dataset,
+        custom_evaluator=custom_evaluator,
+        scoring_function=scoring_function,
+        metric_functions=metric_functions,
+        config_param=config_param,
+        auto_override_frameworks=auto_override_frameworks,
+        framework_targets=framework_targets,
+        effectuation=effectuation,
+    )
+    eval_dataset = flat_validated.get("eval_dataset", eval_dataset)
+    custom_evaluator = flat_validated.get("custom_evaluator", custom_evaluator)
+    scoring_function = flat_validated.get("scoring_function", scoring_function)
+    metric_functions = flat_validated.get("metric_functions", metric_functions)
+    config_param = flat_validated.get("config_param", config_param)
+    framework_targets = flat_validated.get("framework_targets", framework_targets)
+    # The boolean flags are coerced only AFTER bundle resolution: coercing first
+    # would turn a flat "no" into the default False and let a conflicting
+    # injection= bundle win silently instead of raising the conflict error.
+    flat_auto_override = auto_override_frameworks
+    flat_effectuation = effectuation
     tvl_spec_value = combined_settings["tvl_spec"]
     tvl_environment_value = combined_settings["tvl_environment"]
     # Multi-agent configuration
@@ -3565,6 +3839,11 @@ def optimize(  # NOSONAR(S107)
         combined_settings["execution"], ExecutionOptions, "execution"
     )
     tvl_bundle = _coerce_bundle(combined_settings["tvl"], TVLOptions, "tvl")
+    if (
+        execution_bundle is not None
+        and "algorithm" in execution_bundle.model_fields_set
+    ):
+        algorithm_explicit = True
 
     # Resolve options from bundles
     eval_dataset, custom_evaluator, scoring_function, metric_functions = (
@@ -3610,6 +3889,14 @@ def optimize(  # NOSONAR(S107)
         effectuation,
         defaults,
     )
+    if auto_override_frameworks is flat_auto_override:
+        auto_override_frameworks = flat_validated.get(
+            "auto_override_frameworks", auto_override_frameworks
+        )
+    if effectuation is flat_effectuation:
+        effectuation = flat_validated.get("effectuation", effectuation)
+    # Validate the effective targets (flat or bundled) once, at decoration.
+    _validate_framework_targets(framework_targets)
 
     base_execution_options = ResolvedExecutionOptions(
         algorithm=algorithm_value,
@@ -3640,6 +3927,10 @@ def optimize(  # NOSONAR(S107)
     )
     parallel_config = resolved_execution.parallel_config
     max_total_examples = resolved_execution.max_total_examples
+    if max_total_examples is not None:
+        max_total_examples = validate_positive_int(
+            "max_total_examples", max_total_examples
+        )
     samples_include_pruned = resolved_execution.samples_include_pruned
     smart_pruning_value = resolved_execution.smart_pruning
     winner_stability_reps_value = resolved_execution.winner_stability_reps
@@ -3690,6 +3981,17 @@ def optimize(  # NOSONAR(S107)
     constraint_scope_var_names = _augment_constraint_scope_var_names(
         constraint_scope_var_names, configuration_space
     )
+
+    # A TVL spec's exploration budget/strategy applies unless the decorator
+    # supplied an explicit value (explicit arguments win).
+    tvl_algorithm = combined_runtime_overrides.pop("algorithm", None)
+    tvl_max_trials = combined_runtime_overrides.pop("max_trials", None)
+    if tvl_algorithm is not None and not algorithm_explicit:
+        algorithm_value = validate_algorithm_name(tvl_algorithm)
+    if tvl_max_trials is not None and not max_trials_explicit:
+        _validate_max_trials(tvl_max_trials)
+        max_trials_value = tvl_max_trials
+        max_trials_explicit = True
 
     if samples_include_pruned is None:
         samples_include_pruned = True
@@ -3854,6 +4156,7 @@ def optimize(  # NOSONAR(S107)
         # #2021: loudly warn if the space enumerates exactly one configuration
         # (every knob pinned), so the reported "best" is the only candidate.
         _warn_degenerate_configuration_space(func, resolved_configuration_space)
+        _warn_degenerate_knob_variation(func, resolved_configuration_space)  # #2025
 
         # Experiment name resolution (#1422).
         #

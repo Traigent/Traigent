@@ -34,6 +34,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 if TYPE_CHECKING:
     from traigent.tvl.models import ChanceConstraint
 
@@ -77,7 +79,7 @@ Documentation: https://docs.ragas.io/
 # =============================================================================
 
 
-class RAGASMetricNotAvailableError(ImportError):
+class RAGASMetricNotAvailableError(PicklableExceptionMixin, ImportError):
     """Raised when RAGAS metrics are used but ragas is not installed."""
 
     def __init__(self, metric_name: str) -> None:

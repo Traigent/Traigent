@@ -66,6 +66,7 @@ from traigent.core.sample_budget import (
 )
 from traigent.utils.exceptions import ConfigurationError, TrialPrunedError
 from traigent.utils.logging import get_logger
+from traigent.utils.money import cost_cap_reached
 
 logger = get_logger(__name__)
 
@@ -274,7 +275,12 @@ def _validate_positive(value: object, name: str) -> float | None:
             f"{name} must be a positive number, got {value!r} ({type(value).__name__})."
         )
     numeric = float(value)
-    if math.isnan(numeric) or numeric <= 0:  # NaN or non-positive
+    if not math.isfinite(numeric):
+        raise ConfigurationError(
+            f"{name} must be a positive finite number, got {numeric!r}. "
+            "Leave it unset (None) to leave that dimension unbounded."
+        )
+    if numeric <= 0:  # non-positive
         raise ConfigurationError(
             f"{name} must be > 0, got {numeric!r}. A nonpositive limit would "
             "block every trial before it starts (silent 0-trial run). Leave it "
@@ -508,21 +514,53 @@ class ExecutionBudget:
             untracked: Force-mark the trial as untracked even if a cost is given.
             trial_id: Trial identifier, for debug logging only.
         """
+        # A valid observed cost is booked independently of a bad ``examples``
+        # value (and vice versa), so one malformed field never hides the other.
+        cost_value: float | None = None
+        cost_ok = True
+        try:
+            if cost is not None:
+                cost_value = float(cost)
+                if not math.isfinite(cost_value):
+                    raise ValueError("non-finite trial cost")
+        except Exception:
+            cost_ok = False
+            cost_value = None
+        examples_value = 0
+        examples_ok = True
+        try:
+            examples_value = int(examples) if examples else 0
+        except Exception:
+            examples_ok = False
         try:
             with self._lock:
                 self._start_clock_locked()
                 self._trials += 1
-                if cost is not None:
-                    self._consumed_cost += float(cost)
-                if untracked or cost is None:
+                if cost_value is not None:
+                    self._consumed_cost += cost_value
+                if untracked or cost is None or not cost_ok:
                     self._untracked_trials += 1
-                if examples:
-                    self._consumed_examples += int(examples)
-        except Exception:  # pragma: no cover - defensive; never break a run
-            logger.debug(
-                "ExecutionBudget.debit_trial swallowed an error for trial %s",
+                if not cost_ok or not examples_ok:
+                    self._external_untracked = True
+                if examples_value:
+                    self._consumed_examples += examples_value
+        except Exception:  # never break a run, but never report a clean verdict
+            logger.warning(
+                "ExecutionBudget.debit_trial could not account trial %s; "
+                "marking cost tracking incomplete",
                 trial_id,
                 exc_info=True,
+            )
+            with self._lock:
+                self._untracked_trials += 1
+                self._external_untracked = True
+            return
+        if not cost_ok or not examples_ok:
+            logger.warning(
+                "ExecutionBudget.debit_trial received an invalid %s for trial %s; "
+                "marking cost tracking incomplete",
+                "cost" if not cost_ok else "examples",
+                trial_id,
             )
 
     def record_external(
@@ -590,6 +628,8 @@ class ExecutionBudget:
     def _remaining_cost_locked(self) -> float:
         if self.max_cost_usd is None:
             return float("inf")
+        if cost_cap_reached(self._consumed_cost, self.max_cost_usd):
+            return 0.0
         return max(self.max_cost_usd - self._consumed_cost, 0.0)
 
     def _remaining_examples_locked(self) -> float:

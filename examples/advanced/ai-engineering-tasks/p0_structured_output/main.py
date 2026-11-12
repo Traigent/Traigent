@@ -13,7 +13,6 @@ import asyncio
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
@@ -43,6 +42,32 @@ from traigent.core.objectives import create_default_objectives
 
 # Mock mode for demo
 os.environ["TRAIGENT_MOCK_LLM"] = "true"
+
+
+def _write_eval_dataset(samples: list[dict]) -> str:
+    """Write the demo dataset next to this script and return its path.
+
+    The SDK only loads datasets under the current directory or
+    TRAIGENT_DATASET_ROOT, so the system temp dir is not usable. Default the
+    root to this script's directory so the example runs from any cwd.
+    """
+    # Write under the effective dataset root: the configured one, else this
+    # script's directory (which is then made the root).
+    configured = os.environ.get("TRAIGENT_DATASET_ROOT")
+    root = Path(configured) if configured else Path(__file__).resolve().parent
+    root.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(root))
+    path = root / f"_demo_{Path(__file__).resolve().parent.name}_eval_dataset.jsonl"
+    text = "".join(json.dumps(s) + "\n" for s in samples)
+    # Never clobber a file this example did not create: a rerun regenerates
+    # identical content, anything else at this path belongs to someone else.
+    if path.exists() and path.read_text(encoding="utf-8") != text:
+        raise SystemExit(
+            f"Refusing to overwrite {path}: it exists and was not written by this "
+            "example. Delete it or point TRAIGENT_DATASET_ROOT at another directory."
+        )
+    path.write_text(text, encoding="utf-8")
+    return str(path)
 
 
 def create_extraction_dataset() -> str:
@@ -80,11 +105,7 @@ def create_extraction_dataset() -> str:
         },
     ]
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-        for sample in samples:
-            json.dump(sample, f)
-            f.write("\n")
-        return f.name
+    return _write_eval_dataset(samples)
 
 
 PERSON_PATTERNS = {

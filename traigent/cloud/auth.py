@@ -9,7 +9,6 @@ secure token management, and resilient HTTP client integration.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import hashlib
 import hmac
 import inspect
@@ -643,7 +642,9 @@ class AuthManager:
         self._unified_auth = self
 
         self._provided_credentials: AuthCredentials | None = None
-        initial_api_key = api_key or os.getenv("TRAIGENT_API_KEY")
+        initial_api_key = (
+            api_key or (os.getenv("TRAIGENT_API_KEY") or "").strip() or None
+        )
         initial_source: str | None
         if api_key:
             initial_source = "explicit"
@@ -1802,14 +1803,15 @@ class AuthManager:
         if not AIOHTTP_AVAILABLE:
             try:
                 loop = asyncio.get_running_loop()
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    return await loop.run_in_executor(
-                        executor,
-                        self._validate_api_key_with_backend_sync,
-                        url,
-                        headers,
-                        validation_payload,
-                    )
+                # Default executor, not a ``with`` pool: pool exit would join
+                # the worker and hold a cancellation (#3142).
+                return await loop.run_in_executor(
+                    None,
+                    self._validate_api_key_with_backend_sync,
+                    url,
+                    headers,
+                    validation_payload,
+                )
             except ImportError:
                 return "requests library not available for backend validation"
             except Exception as exc:  # pragma: no cover - defensive thread boundary

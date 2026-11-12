@@ -270,6 +270,92 @@ class TestProgressBarCallback:
         assert "Best score: 0.920" in captured.out
         assert "Total time: 120.5s" in captured.out
 
+    def test_final_progress_bar_reports_executed_trials_not_budget_3207(
+        self,
+        callback: ProgressBarCallback,
+        trial_result: TrialResult,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A 4-point grid with max_trials=8 must close on (4/4), not (8/8)."""
+        last = ProgressInfo(
+            current_trial=4,
+            total_trials=8,  # max_trials budget seeded by the orchestrator
+            completed_trials=4,
+            successful_trials=4,
+            failed_trials=0,
+            best_score=0.9,
+            best_config={"model": "gpt-4"},
+            elapsed_time=3.0,
+            estimated_remaining=0.0,
+            current_algorithm="grid",
+        )
+        callback._last_progress = last
+        result = OptimizationResult(
+            trials=[trial_result] * 4,
+            best_config={"model": "gpt-4"},
+            best_score=0.9,
+            optimization_id="opt_3207",
+            duration=3.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="grid",
+            timestamp=datetime.now(UTC),
+        )
+
+        callback.on_optimization_complete(result)
+
+        out = capsys.readouterr().out
+        assert "100.0% (4/4)" in out
+        assert "(8/8)" not in out
+
+    def test_final_progress_bar_skips_never_started_placeholders_3207(
+        self,
+        callback: ProgressBarCallback,
+        trial_result: TrialResult,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Permit-denied placeholders in result.trials did not run; do not count."""
+        placeholder = TrialResult(
+            trial_id="trial_9_not_started",
+            config={"model": "gpt-4"},
+            metrics={},
+            status=TrialStatus.CANCELLED,
+            duration=0.0,
+            timestamp=datetime.now(UTC),
+            metadata={"abandoned": True, "_traigent_never_started": True},
+        )
+        callback._last_progress = ProgressInfo(
+            current_trial=3,
+            total_trials=8,
+            completed_trials=3,
+            successful_trials=3,
+            failed_trials=0,
+            best_score=0.9,
+            best_config={"model": "gpt-4"},
+            elapsed_time=3.0,
+            estimated_remaining=None,
+            current_algorithm="grid",
+        )
+        result = OptimizationResult(
+            trials=[trial_result] * 3 + [placeholder],
+            best_config={"model": "gpt-4"},
+            best_score=0.9,
+            optimization_id="opt_3207b",
+            duration=3.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="grid",
+            timestamp=datetime.now(UTC),
+        )
+
+        callback.on_optimization_complete(result)
+
+        out = capsys.readouterr().out
+        assert "(3/3)" in out
+        assert "(4/4)" not in out
+
     def test_on_optimization_complete_prints_results_table(
         self,
         callback: ProgressBarCallback,

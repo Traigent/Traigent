@@ -14,8 +14,8 @@ silently hit ``api.openai.com``. NousDiscovery MUST pass
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import types
 
 import pytest
@@ -115,7 +115,9 @@ def test_cache_partitions_persistent_models_by_real_nous_identity(
     identity_setup(monkeypatch, tmp_path)
     first = NousDiscovery(cache=ModelCache(cache_dir=cache_dir))
     monkeypatch.setattr(
-        first, "_fetch_models_from_identity", lambda _identity: ["account-one"]
+        first,
+        "_fetch_models_from_identity",
+        lambda _identity, _base_url=None: ["account-one"],
     )
     assert first.list_models() == ["account-one"]
 
@@ -132,7 +134,9 @@ def test_cache_partitions_persistent_models_by_real_nous_identity(
         )
     second = NousDiscovery(cache=ModelCache(cache_dir=cache_dir))
     monkeypatch.setattr(
-        second, "_fetch_models_from_identity", lambda _identity: ["account-two"]
+        second,
+        "_fetch_models_from_identity",
+        lambda _identity, _base_url=None: ["account-two"],
     )
     assert second.list_models() == ["account-two"]
 
@@ -207,7 +211,9 @@ def test_malformed_auth_file_list_models_falls_back_without_reusing_valid_cache(
 
     valid = NousDiscovery(cache=ModelCache(cache_dir=cache_dir))
     monkeypatch.setattr(
-        valid, "_fetch_models_from_identity", lambda _identity: ["valid-account"]
+        valid,
+        "_fetch_models_from_identity",
+        lambda _identity, _base_url=None: ["valid-account"],
     )
     assert valid.list_models() == ["valid-account"]
 
@@ -217,7 +223,7 @@ def test_malformed_auth_file_list_models_falls_back_without_reusing_valid_cache(
     monkeypatch.setattr(
         broken,
         "_fetch_models_from_identity",
-        lambda _identity: (_ for _ in ()).throw(
+        lambda _identity, _base_url=None: (_ for _ in ()).throw(
             nous_auth.NousAuthError("malformed auth")
         ),
     )
@@ -252,9 +258,8 @@ def test_fetch_uses_nous_base_url_and_minted_key(monkeypatch):
 
     # The api.openai.com regression guard: explicit Nous base_url + minted key.
     assert captured["base_url"] == NOUS_BASE_URL
-    assert (
-        captured["api_key"] == "minted-token-xyz"
-    )  # from the helper, not OPENAI_API_KEY
+    # from the helper, not OPENAI_API_KEY
+    assert captured["api_key"] == "minted-token-xyz"  # pragma: allowlist secret
     # All advertised ids returned, sorted, and UNFILTERED (third-party kept).
     assert result == sorted(payload)
     assert "openai/gpt-4o" in result
@@ -493,3 +498,25 @@ def test_get_model_discovery_by_string():
 def test_get_model_discovery_by_framework():
     discovery = get_model_discovery(Framework.NOUS)
     assert isinstance(discovery, NousDiscovery)
+
+
+def test_prepared_fetch_uses_the_endpoint_snapshot_of_its_cache_key(monkeypatch):
+    """An env change between key and fetch must not mix endpoints (#3270)."""
+    from traigent.integrations.model_discovery.nous_discovery import NousDiscovery
+
+    monkeypatch.setenv("NOUS_API_KEY", "static-jwt")  # pragma: allowlist secret
+    monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", "https://a.test/v1")
+    discovery = NousDiscovery()
+    key_a, fetch = discovery._prepare_model_fetch()
+    monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", "https://b.test/v1")
+    used = {}
+
+    def _fake(self, bearer, base_url=None):
+        used["base_url"] = base_url
+        return []
+
+    monkeypatch.setattr(NousDiscovery, "_fetch_models_with_bearer", _fake)
+    fetch()
+    assert used["base_url"] == "https://a.test/v1"
+    key_b, _ = discovery._prepare_model_fetch()
+    assert key_a != key_b

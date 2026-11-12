@@ -36,6 +36,7 @@ from typing import Any
 from urllib.parse import urlencode, urlsplit
 
 from traigent.utils import optimization_only_egress as oo_egress
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 from traigent.utils.logging import get_logger
 
 from .content_classes import BLOCKING, classify_request, get_table
@@ -54,7 +55,7 @@ _lock = threading.Lock()
 _CLASS_CACHE: dict[tuple[type, str], type] = {}
 
 
-class TransportGateRefusal(RuntimeError):
+class TransportGateRefusal(PicklableExceptionMixin, RuntimeError):
     """A request was refused before send. Carries counts only, never values."""
 
     def __init__(

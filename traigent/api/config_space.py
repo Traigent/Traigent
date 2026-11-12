@@ -32,8 +32,8 @@ Example:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import InitVar, dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
@@ -51,6 +51,7 @@ from traigent.api.validation_protocol import (
     SatResult,
     ValidationResult,
 )
+from traigent.utils.exceptions import ValidationError
 
 if TYPE_CHECKING:
     from traigent.knobs import Knob
@@ -104,6 +105,75 @@ def _first_canonical_values_spec(
     return None
 
 
+class ConfigSpaceInputError(ValidationError, TypeError, ValueError):
+    """A ConfigSpace constructor input is malformed.
+
+    Also a ``TypeError`` and a ``ValueError`` so callers that caught the raw
+    errors this constructor used to leak keep working. Messages name the
+    offending argument (``tvars[...]``, ``constraints[i]``) and never echo a
+    user-supplied value beyond tvar names.
+    """
+
+
+def _validate_tvars_input(tvars: Any, *, strict_names: bool = True) -> None:
+    """Reject malformed ``tvars`` before they are copied or projected."""
+    if not isinstance(tvars, Mapping):
+        raise ConfigSpaceInputError(
+            f"tvars must be a mapping of name to parameter range, got "
+            f"{type(tvars).__name__}"
+        )
+    owner_by_name: dict[str, str] = {}
+    for key, tvar in tvars.items():
+        if not isinstance(key, str):
+            raise ConfigSpaceInputError(
+                f"tvars keys must be strings, got {type(key).__name__}"
+            )
+        if not isinstance(tvar, ParameterRange):
+            raise ConfigSpaceInputError(
+                f"tvars[{key!r}] must be a parameter range (Range, IntRange, "
+                f"Choices, ...), got {type(tvar).__name__}"
+            )
+        own_name = getattr(tvar, "name", None)
+        if own_name is None or not strict_names:
+            # Decorator path: the config key is authoritative, a differing
+            # ``tvar.name`` is supported (constraints resolve names by key).
+            continue
+        if own_name != key:
+            raise ConfigSpaceInputError(
+                f"tvars[{key!r}] has name {own_name!r}; the mapping key and the "
+                "parameter's own name must agree"
+            )
+        if own_name in owner_by_name:
+            raise ConfigSpaceInputError(f"Duplicate parameter name: {own_name!r}")
+        owner_by_name[own_name] = key
+
+
+def _normalize_constraints_input(constraints: Any) -> tuple[Constraint, ...]:
+    """Return ``constraints`` as a tuple of ``Constraint`` objects.
+
+    A bare ``BoolExpr`` (``k.gte(3)``, ``a & b``) is wrapped exactly like the
+    decorator path does: ``Constraint(expr=...)``.
+    """
+    if constraints is None:
+        return ()
+    if isinstance(constraints, (str, bytes)) or not isinstance(constraints, Iterable):
+        raise ConfigSpaceInputError(
+            f"constraints must be a sequence, got {type(constraints).__name__}"
+        )
+    normalized: list[Constraint] = []
+    for i, constraint in enumerate(constraints):
+        if isinstance(constraint, Constraint):
+            normalized.append(constraint)
+        elif isinstance(constraint, BoolExpr):
+            normalized.append(Constraint(expr=constraint))
+        else:
+            raise ConfigSpaceInputError(
+                f"constraints[{i}]: expected Constraint or BoolExpr, got "
+                f"{type(constraint).__name__}"
+            )
+    return tuple(normalized)
+
+
 @dataclass(frozen=True)
 class ConfigSpace:
     """A complete configuration space with TVARs and constraints.
@@ -141,8 +211,11 @@ class ConfigSpace:
     constraints: tuple[Constraint, ...] = field(default_factory=tuple)
     description: str | None = None
     knobs: Mapping[str, Knob] | None = None
+    # Construction-time switch, not stored: False lets a tvar's own ``name``
+    # differ from its mapping key (the decorator path, where the key rules).
+    strict_names: InitVar[bool] = True
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, strict_names: bool = True) -> None:
         """Validate the configuration space after initialization.
 
         Knob/tvar coherence (RFC 0001, the one-Knob model):
@@ -153,11 +226,20 @@ class ConfigSpace:
           ``knobs`` is synthesized as all-Tuned via the adapter, so the two
           surfaces can never drift apart.
         """
+        if self.knobs is None:
+            _validate_tvars_input(self.tvars, strict_names=strict_names)
+        elif not isinstance(self.tvars, Mapping):
+            raise ConfigSpaceInputError(
+                f"tvars must be a mapping of name to parameter range, got "
+                f"{type(self.tvars).__name__}"
+            )
+        object.__setattr__(
+            self, "constraints", _normalize_constraints_input(self.constraints)
+        )
         if self.knobs is not None:
             self._adopt_knobs(dict(self.knobs))
         else:
             self._synthesize_knobs()
-        object.__setattr__(self, "constraints", tuple(self.constraints))
 
         # Ensure all tvars have unique names
         seen_names: set[str] = set()
@@ -279,8 +361,9 @@ class ConfigSpace:
 
         return cls(
             tvars=tvars,
-            constraints=tuple(constraints or ()),
+            constraints=() if constraints is None else constraints,  # type: ignore[arg-type]
             description=description,
+            strict_names=False,
         )
 
     @classmethod
@@ -669,8 +752,14 @@ class ConfigSpace:
                     unit=spec.get("unit"),
                 )
 
-            # Use IntRange if both bounds are integers (with or without step)
-            if isinstance(low, int) and isinstance(high, int):
+            # Use IntRange if both bounds are integers (with or without step),
+            # unless the spec explicitly declares a float domain (#3211).
+            declared_type = str(spec.get("type", "")).lower()
+            if (
+                declared_type != "float"
+                and isinstance(low, int)
+                and isinstance(high, int)
+            ):
                 return IntRange(
                     low=low,
                     high=high,

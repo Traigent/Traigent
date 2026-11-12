@@ -20,6 +20,7 @@ from traigent.core.objective_directions import resolve_objective_orientation
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.utils.exceptions import TVLValidationError
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import validate_positive_int
 
 from .models import (
     ConvergenceCriteria,
@@ -942,6 +943,93 @@ def _validate_constraints_structure(constraints: Any) -> list[str]:
     return []
 
 
+def _positive_number_issues(
+    field: str,
+    value: Any,
+    *,
+    integer: bool,
+    allow_zero: bool = False,
+    allow_wrapper: bool = False,
+) -> list[str]:
+    """Report a value that is not a finite positive number (bool is rejected).
+
+    ``allow_wrapper`` accepts the ``{value: N}`` form, only for fields whose
+    parser unwraps it (see ``_extract_numeric_field``).
+    """
+    kind = "integer" if integer else "number"
+    if allow_wrapper and isinstance(value, dict) and set(value) == {"value"}:
+        value = value["value"]
+    valid_type = isinstance(value, int) if integer else isinstance(value, (int, float))
+    if isinstance(value, bool) or not valid_type:
+        return [f"{field} should be {kind}, got {value!r}"]
+    if not math.isfinite(value) or value < 0 or (value == 0 and not allow_zero):
+        bound = "non-negative" if allow_zero else "positive"
+        return [f"{field} should be a {bound} {kind}, got {value!r}"]
+    return []
+
+
+def _validate_exploration_budgets(budgets: Any) -> list[str]:
+    """Validate exploration.budgets (TVL 0.9) values.
+
+    Range and integrality rules live in ``ExplorationBudgets`` (#1616); this
+    only rejects what it would silently coerce: quoted numbers, other
+    non-numeric types, and a non-finite ``max_spend_usd``.
+    """
+    if budgets is None:
+        return []
+    if not isinstance(budgets, dict):
+        return ["exploration.budgets should be a mapping"]
+    issues: list[str] = []
+    for key in ("max_trials", "max_spend_usd", "max_wallclock_s"):
+        value = budgets.get(key)
+        if value is None:
+            continue
+        field = f"exploration.budgets.{key}"
+        if isinstance(value, bool):
+            # ExplorationBudgets rejects bool for the integer fields with its own
+            # message (#1616); max_spend_usd would otherwise coerce True to 1.0.
+            if key == "max_spend_usd":
+                issues.append(f"{field} should be a number, got {value!r}")
+        elif not isinstance(value, (int, float)):
+            issues.append(f"{field} should be a number, got {value!r}")
+        elif key == "max_spend_usd" and not math.isfinite(value):
+            issues.append(f"{field} should be a finite number, got {value!r}")
+    return issues
+
+
+def _validate_exploration_budget(budget: Any) -> list[str]:
+    """Validate exploration.budget values (no silent dropping of bad values)."""
+    if budget is None:
+        return []
+    if not isinstance(budget, dict):
+        return ["exploration.budget should be a mapping"]
+    issues: list[str] = []
+    # The parsers unwrap {value: N} for these three only.
+    for key, integer, wrapper in (
+        ("max_trials", True, True),
+        ("timeout_seconds", False, True),
+        ("max_total_examples", True, True),
+        ("parallel_trials", True, False),
+    ):
+        if key in budget:
+            issues.extend(
+                _positive_number_issues(
+                    f"exploration.budget.{key}",
+                    budget[key],
+                    integer=integer,
+                    allow_wrapper=wrapper,
+                )
+            )
+    if "samples_include_pruned" in budget and not isinstance(
+        budget["samples_include_pruned"], bool
+    ):
+        issues.append(
+            "exploration.budget.samples_include_pruned should be boolean, "
+            f"got {budget['samples_include_pruned']!r}"
+        )
+    return issues
+
+
 def _validate_exploration_structure(exploration: dict[str, Any]) -> list[str]:
     """Validate structure of exploration section."""
     issues: list[str] = []
@@ -964,10 +1052,25 @@ def _validate_exploration_structure(exploration: dict[str, Any]) -> list[str]:
 
     # Validate budget if present
     if "budget" in exploration:
-        budget = exploration["budget"]
-        if isinstance(budget, dict):
-            if "max_trials" in budget and not isinstance(budget["max_trials"], int):
-                issues.append("exploration.budget.max_trials should be integer")
+        issues.extend(_validate_exploration_budget(exploration["budget"]))
+
+    # Validate TVL 0.9 budgets if present
+    if "budgets" in exploration:
+        issues.extend(_validate_exploration_budgets(exploration["budgets"]))
+
+    # Validate parallelism if present
+    if "parallelism" in exploration:
+        parallelism = exploration["parallelism"]
+        if parallelism is not None and not isinstance(parallelism, dict):
+            issues.append("exploration.parallelism should be a mapping")
+        elif isinstance(parallelism, dict) and "max_parallel_trials" in parallelism:
+            issues.extend(
+                _positive_number_issues(
+                    "exploration.parallelism.max_parallel_trials",
+                    parallelism["max_parallel_trials"],
+                    integer=True,
+                )
+            )
 
     # Validate convergence if present
     if "convergence" in exploration:
@@ -2136,11 +2239,15 @@ def _parse_budget(optimization_section: Any) -> TVLBudget:
 
     timeout_seconds = _extract_numeric_field(budget_section.get("timeout_seconds"))
 
-    max_total_examples_raw = _extract_numeric_field(
-        budget_section.get("max_total_examples")
-    )
+    # Validate the raw value: int() would turn True into 1 and 2.5 into 2
+    # silently, and NaN/inf raise errors that do not name the field (#2898).
+    budget_examples_field = budget_section.get("max_total_examples")
+    if isinstance(budget_examples_field, dict) and "value" in budget_examples_field:
+        budget_examples_field = budget_examples_field["value"]
     max_total_examples = (
-        int(max_total_examples_raw) if max_total_examples_raw is not None else None
+        validate_positive_int("max_total_examples", budget_examples_field)
+        if budget_examples_field is not None
+        else None
     )
 
     parallel_trials_value = budget_section.get("parallel_trials")
@@ -2626,7 +2733,9 @@ def _translate_expression(expression: str) -> str:
         if quote is not None
         else _rewrite_segment(expression[segment_start:])
     )
-    return "".join(out)
+    # The `!` -> " not " rewrite can leave leading/trailing whitespace, which
+    # ast.parse(mode="eval") rejects as "unexpected indent" (#3229).
+    return "".join(out).strip()
 
 
 _ALLOWED_AST_NODES = (

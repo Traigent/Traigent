@@ -243,3 +243,25 @@ class TestCoerceToGeminiFormat:
         messages = [{"role": "assistant", "content": "Hello"}]
         result = coerce_to_gemini_format(messages)
         assert isinstance(result, list)
+
+
+def test_block_content_is_joined_not_stringified_3151() -> None:
+    from traigent.integrations.utils.message_coercion import (
+        coerce_to_anthropic_format,
+        coerce_to_gemini_format,
+    )
+
+    blocks = [{"type": "text", "text": "Be terse"}]
+    system, _ = coerce_to_anthropic_format(
+        [{"role": "system", "content": blocks}, {"role": "user", "content": "hi"}]
+    )
+    assert system == "Be terse"
+
+    gem = coerce_to_gemini_format(
+        [
+            {"role": "user", "content": [{"type": "text", "text": "q"}]},
+            {"role": "assistant", "content": "a"},
+        ]
+    )
+    assert gem[0]["parts"] == [{"text": "q"}]
+    assert coerce_to_gemini_format([{"role": "user", "content": blocks}]) == "Be terse"

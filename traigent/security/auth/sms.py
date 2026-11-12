@@ -56,7 +56,7 @@ class SMSAuthProvider:
         self.rate_limit_minutes = int(settings.get("rate_limit_minutes", 1))
         self.max_codes_per_hour = int(settings.get("max_codes_per_hour", 5))
 
-        if not re.match(r"^\+[1-9]\d{1,14}$", self.from_number):
+        if not re.match(r"^\+[1-9]\d{1,14}\Z", self.from_number):
             raise ValueError("Invalid from_number format. Must be E.164 format")
 
         self.client = TwilioClient(self.account_sid, self.auth_token)
@@ -66,7 +66,7 @@ class SMSAuthProvider:
     def send_verification_code(self, phone_number: str, user_id: str) -> str:
         """Send SMS verification code to user."""
         try:
-            if not re.match(r"^\+[1-9]\d{1,14}$", phone_number):
+            if not re.match(r"^\+[1-9]\d{1,14}\Z", phone_number):
                 raise ValueError("Invalid phone number format. Must be E.164 format")
 
             if not user_id or not isinstance(user_id, str) or len(user_id) > 255:
@@ -135,7 +135,7 @@ class SMSAuthProvider:
             logger.warning("Invalid user_id for SMS verification")
             return False
 
-        if not code or not re.match(r"^\d{6}$", code):
+        if not code or not re.match(r"^\d{6}\Z", code):
             logger.warning("Invalid code format for SMS verification")
             return False
 
