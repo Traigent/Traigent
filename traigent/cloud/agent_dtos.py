@@ -20,7 +20,9 @@ _COST_ABS_TOL = 1e-12
 
 
 def _costs_match(actual: float, expected: float) -> bool:
-    """True when two costs agree; NaN never matches anything."""
+    """True when two finite costs agree; NaN and Inf never match."""
+    if not (math.isfinite(actual) and math.isfinite(expected)):
+        return False
     return math.isclose(actual, expected, rel_tol=_COST_REL_TOL, abs_tol=_COST_ABS_TOL)
 
 
@@ -141,9 +143,16 @@ class AgentCostBreakdown:
 
         # Validate cost arithmetic (relative floating point tolerance)
         expected_total_cost = self.input_cost + self.output_cost
-        if not (
-            math.isnan(self.total_cost) or math.isnan(expected_total_cost)
-        ) and not _costs_match(self.total_cost, expected_total_cost):
+        # Non-finite parts and a NaN total are already reported above; a finite
+        # pair whose sum overflows (or an Inf total) still fails here.
+        parts_finite = math.isfinite(self.input_cost) and math.isfinite(
+            self.output_cost
+        )
+        if (
+            parts_finite
+            and not math.isnan(self.total_cost)
+            and not _costs_match(self.total_cost, expected_total_cost)
+        ):
             errors.append(
                 f"total_cost ({self.total_cost:.8f}) must equal "
                 f"input_cost ({self.input_cost:.8f}) + "

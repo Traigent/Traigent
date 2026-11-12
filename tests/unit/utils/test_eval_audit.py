@@ -590,9 +590,9 @@ class TestCellClassifierAgreement:
     @pytest.mark.parametrize("cell", CASES)
     def test_audit_and_selection_agree(self, cell):
         from traigent.utils.eval_audit import cell_is_correct
-        from traigent.utils.outcome_matrix import classify_cell
+        from traigent.utils.outcome_matrix import _classify_cell
 
-        verdict = classify_cell(cell, 0.5)
+        verdict = _classify_cell(cell, 0.5)
         expected = {"pass": True, "fail": False, "unknown": None}[verdict]
         assert cell_is_correct(cell, 0.5) is expected
 

@@ -735,3 +735,34 @@ class TestWorkflowCostSummaryStrictTotals:
     def test_float_token_total_is_rejected(self):
         with pytest.raises(ValueError, match="must be an integer"):
             WorkflowCostSummary("w", "n", [self._agent()], 1.0, 2, 3, 4e-5, 4e-5, 8e-5)
+
+    def test_overflowing_aggregate_is_rejected(self):
+        big = AgentCostBreakdown(
+            agent_id="a",
+            agent_name="n",
+            input_tokens=1,
+            output_tokens=1,
+            total_tokens=2,
+            input_cost=1e308,
+            output_cost=0.0,
+            total_cost=1e308,
+            model_used="m",
+        )
+        with pytest.raises(ValueError, match="total_cost"):
+            WorkflowCostSummary("w", "n", [big, big], 2, 2, 4, math.inf, 0.0, math.inf)
+        with pytest.raises(ValueError, match="total_cost"):
+            WorkflowCostSummary.from_agents("w", "n", [big, big])
+
+    def test_agent_costs_summing_to_inf_are_rejected(self):
+        with pytest.raises(ValueError, match="total_cost"):
+            AgentCostBreakdown(
+                agent_id="a",
+                agent_name="n",
+                input_tokens=1,
+                output_tokens=1,
+                total_tokens=2,
+                input_cost=1.7e308,
+                output_cost=1.7e308,
+                total_cost=1.7e308,
+                model_used="m",
+            )

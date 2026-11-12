@@ -459,15 +459,12 @@ def load_outcome_matrix(run_path: str | Path) -> dict[str, Any] | None:
 #: Selection modes accepted by :func:`select_failing_example_ids`.
 FAILING_EXAMPLE_MODES: tuple[str, ...] = ("all_configs", "best_config")
 
-CELL_FAIL = "fail"
-CELL_PASS = "pass"
-CELL_UNKNOWN = "unknown"
-_FAIL = CELL_FAIL
-_PASS = CELL_PASS
-_UNKNOWN = CELL_UNKNOWN
+_FAIL = "fail"
+_PASS = "pass"
+_UNKNOWN = "unknown"
 
 
-def classify_cell(cell: Any, threshold: float) -> str:
+def _classify_cell(cell: Any, threshold: float) -> str:
     """Classify one matrix cell as ``fail``, ``pass`` or ``unknown``.
 
     A non-``None`` error or an explicit ``success=False`` is a failure whatever
@@ -591,7 +588,7 @@ def select_failing_example_ids(
     Pure function over the matrix built by :func:`build_outcome_matrix` (or
     loaded by :func:`load_outcome_matrix`); it re-scores nothing. A cell fails
     on an error, on ``success=False``, or on a finite score strictly below
-    ``threshold`` (see :func:`classify_cell`). An example is selected only
+    ``threshold`` (see :func:`_classify_cell`). An example is selected only
     when **every** selected column holds a failing cell — a passing, missing or
     unscorable cell excludes it, so the result measures persistent failure, not
     failure frequency.
@@ -645,7 +642,7 @@ def select_failing_example_ids(
     for position, row in enumerate(examples):
         example_id, cells_by_id = _row_id_and_cells(position, row)
         verdicts = [
-            classify_cell(cells_by_id.get(trial_id), threshold)
+            _classify_cell(cells_by_id.get(trial_id), threshold)
             for trial_id in selected_ids
         ]
         if any(verdict != _UNKNOWN for verdict in verdicts):
