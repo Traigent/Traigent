@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 __all__ = [
     "CacheUsage",
@@ -218,6 +218,87 @@ def _read_ttl_split(payload: dict[str, Any]) -> dict[str, int]:
     return split
 
 
+class _ShapeReading(NamedTuple):
+    read_tokens: int | None = None
+    creation_tokens: int | None = None
+    shape: str | None = None
+    input_is_inclusive: bool = False
+    creation_is_inclusive: bool = False
+
+
+def _litellm_creation_tokens(usage: dict[str, Any]) -> int | None:
+    """Write count carried by LiteLLM's Anthropic transform (Traigent#3225)."""
+    lite_creation = _coerce_count(usage.get("cache_creation_input_tokens"))
+    if lite_creation is None:
+        lite_creation = _coerce_count(
+            _dig(usage, ("prompt_tokens_details", "cache_creation_tokens"))
+        )
+    return lite_creation
+
+
+def _read_provider_shape(usage: dict[str, Any]) -> _ShapeReading:
+    """First provider shape that reports a read or write count, else empty."""
+    for name, read_path, creation_path, inclusive in _PROVIDER_SHAPES:
+        candidate_read = _coerce_count(_dig(usage, read_path))
+        candidate_creation = (
+            _coerce_count(_dig(usage, creation_path)) if creation_path else None
+        )
+        if candidate_read is None and candidate_creation is None:
+            continue
+        creation_is_inclusive = False
+        if inclusive and name == "openai_chat":
+            # LiteLLM's Anthropic transform emits the OpenAI chat shape, where
+            # prompt_tokens includes cache reads AND cache writes, and also carries
+            # the write count (top-level or in prompt_tokens_details). Reading it as
+            # plain OpenAI would count writes as fresh input and drop the write
+            # count (Traigent#3225).
+            lite_creation = _litellm_creation_tokens(usage)
+            if lite_creation is not None:
+                candidate_creation = lite_creation
+                creation_is_inclusive = True
+        return _ShapeReading(
+            candidate_read, candidate_creation, name, inclusive, creation_is_inclusive
+        )
+    return _ShapeReading()
+
+
+def _is_litellm_anthropic_prompt_tokens(shape: str, usage: dict[str, Any]) -> bool:
+    return (
+        shape == "anthropic"
+        and "prompt_tokens" in usage
+        and "input_tokens" not in usage
+    )
+
+
+def _disjoint_input_tokens(
+    input_tokens: int | None,
+    read_tokens: int | None,
+    creation_tokens: int | None,
+    *,
+    input_is_inclusive: bool,
+    creation_is_inclusive: bool,
+) -> int | None:
+    """Normalize to the disjoint convention: input_tokens excludes cache reads.
+
+    Without this, the same three numbers mean two different costs depending on
+    which provider sent them.
+    """
+    cached_in_input = (read_tokens or 0) + (
+        creation_tokens or 0 if creation_is_inclusive else 0
+    )
+    if input_is_inclusive and input_tokens is not None and cached_in_input:
+        if cached_in_input > input_tokens:
+            # Traigent#2166: an internally inconsistent payload -- the provider
+            # claims more cached tokens than it reported as total input. Clamping
+            # via max(0, ...) would report a confident zero-fresh result,
+            # indistinguishable from "every token was cached", and downstream
+            # cost code treats that 0 as authoritative. An honest unknown is
+            # the correct answer here, same as any other unreported field.
+            return None
+        return input_tokens - cached_in_input
+    return input_tokens
+
+
 def normalize_cache_usage(usage: dict[str, Any] | None) -> CacheUsage:
     """Read prompt-cache counts out of any supported provider's usage payload.
 
@@ -230,38 +311,12 @@ def normalize_cache_usage(usage: dict[str, Any] | None) -> CacheUsage:
         )
 
     input_tokens = _read_input_tokens(usage)
-    read_tokens: int | None = None
-    creation_tokens: int | None = None
-    shape: str | None = None
-    input_is_inclusive = False
-    creation_is_inclusive = False
-
-    for name, read_path, creation_path, inclusive in _PROVIDER_SHAPES:
-        candidate_read = _coerce_count(_dig(usage, read_path))
-        candidate_creation = (
-            _coerce_count(_dig(usage, creation_path)) if creation_path else None
-        )
-        if candidate_read is None and candidate_creation is None:
-            continue
-        read_tokens = candidate_read
-        creation_tokens = candidate_creation
-        shape = name
-        input_is_inclusive = inclusive
-        if inclusive and name == "openai_chat":
-            # LiteLLM's Anthropic transform emits the OpenAI chat shape, where
-            # prompt_tokens includes cache reads AND cache writes, and also carries
-            # the write count (top-level or in prompt_tokens_details). Reading it as
-            # plain OpenAI would count writes as fresh input and drop the write
-            # count (Traigent#3225).
-            lite_creation = _coerce_count(usage.get("cache_creation_input_tokens"))
-            if lite_creation is None:
-                lite_creation = _coerce_count(
-                    _dig(usage, ("prompt_tokens_details", "cache_creation_tokens"))
-                )
-            if lite_creation is not None:
-                creation_tokens = lite_creation
-                creation_is_inclusive = True
-        break
+    reading = _read_provider_shape(usage)
+    read_tokens = reading.read_tokens
+    creation_tokens = reading.creation_tokens
+    shape = reading.shape
+    input_is_inclusive = reading.input_is_inclusive
+    creation_is_inclusive = reading.creation_is_inclusive
 
     if shape is None:
         # Write-only LiteLLM payload: no cached-read detail, but a write count.
@@ -272,11 +327,7 @@ def normalize_cache_usage(usage: dict[str, Any] | None) -> CacheUsage:
             creation_tokens = only_creation
             shape = "openai_chat"
             input_is_inclusive = creation_is_inclusive = True
-    elif (
-        shape == "anthropic"
-        and "prompt_tokens" in usage
-        and "input_tokens" not in usage
-    ):
+    elif _is_litellm_anthropic_prompt_tokens(shape, usage):
         # LiteLLM's Anthropic transform: OpenAI-style prompt_tokens (inclusive of
         # reads and writes) next to top-level Anthropic cache counts, with no
         # prompt_tokens_details.cached_tokens. Raw Anthropic uses input_tokens.
@@ -288,23 +339,13 @@ def normalize_cache_usage(usage: dict[str, Any] | None) -> CacheUsage:
         creation_tokens = sum(ttl_split.values())
         shape = shape or "anthropic"
 
-    # Normalize to the disjoint convention: input_tokens excludes cache reads.
-    # Without this, the same three numbers mean two different costs depending on
-    # which provider sent them.
-    cached_in_input = (read_tokens or 0) + (
-        creation_tokens or 0 if creation_is_inclusive else 0
+    input_tokens = _disjoint_input_tokens(
+        input_tokens,
+        read_tokens,
+        creation_tokens,
+        input_is_inclusive=input_is_inclusive,
+        creation_is_inclusive=creation_is_inclusive,
     )
-    if input_is_inclusive and input_tokens is not None and cached_in_input:
-        if cached_in_input > input_tokens:
-            # Traigent#2166: an internally inconsistent payload -- the provider
-            # claims more cached tokens than it reported as total input. Clamping
-            # via max(0, ...) would report a confident zero-fresh result,
-            # indistinguishable from "every token was cached", and downstream
-            # cost code treats that 0 as authoritative. An honest unknown is
-            # the correct answer here, same as any other unreported field.
-            input_tokens = None
-        else:
-            input_tokens = input_tokens - cached_in_input
 
     unreported = tuple(
         name
