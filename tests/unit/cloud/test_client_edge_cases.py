@@ -332,31 +332,86 @@ class TestCloudClientEdgeCases:
 
     @pytest.mark.asyncio
     async def test_memory_leak_prevention(self, client):
-        """Test that client doesn't leak memory on repeated operations."""
+        """Repeated successful optimize calls must not retain responses or
+        grow the client's own state."""
         import gc
-        import sys
+        import weakref
+        from collections import deque
 
-        # Get initial reference count
-        initial_refs = sys.getrefcount(client)
+        from traigent.cloud.models import AgentOptimizationResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
 
-        # Perform many operations
-        mock_response = create_mock_response(
-            status=200, json_data={"optimization_id": "test"}
-        )
-        client._session.post = Mock(return_value=mock_response)
+        payload = {
+            "session_id": "s-1",
+            "optimization_id": "test",
+            "status": "started",
+        }
+        mock_response = create_mock_response(status=200, json_data=payload)
+        client._aio_session = Mock()
+        client._aio_session.closed = False
+        client._aio_session.post = Mock(return_value=mock_response)
+        client._get_headers = AsyncMock(return_value={"X-API-Key": "k"})
 
+        def make_request():
+            return AgentOptimizationRequest(
+                agent_spec=AgentSpecification(
+                    id="a",
+                    name="a",
+                    agent_type="conversational",
+                    agent_platform="openai",
+                ),
+                dataset=Dataset([EvaluationExample({"input": "x"}, "y")]),
+                configuration_space={"model": ["gpt-4"]},
+                objectives=["accuracy"],
+            )
+
+        def container_sizes():
+            """Size of every list/dict/set/deque held by the client and by its
+            helper objects (auth, usage tracker, subset selector, ...)."""
+            sizes = {}
+            owners = {"client": client}
+            # Mocks record every call by design; they are test scaffolding.
+            for name, value in vars(client).items():
+                if (
+                    hasattr(value, "__dict__")
+                    and not isinstance(value, (type, Mock))
+                    and not name.startswith("_get_headers")
+                ):
+                    owners[name] = value
+            for owner_name, owner in owners.items():
+                for name, value in vars(owner).items():
+                    if name in {"_get_headers", "_aio_session"}:
+                        continue
+                    if isinstance(value, (list, dict, set, frozenset, deque)):
+                        sizes[f"{owner_name}.{name}"] = len(value)
+            return sizes
+
+        # Warm up once so lazily created state does not count as growth.
+        await client.start_agent_optimization(make_request())
+        state_keys_before = set(vars(client))
+        sizes_before = container_sizes()
+        assert sizes_before  # the check below must actually look at something
+        post_calls_before = client._aio_session.post.call_count
+
+        refs = []
         for _ in range(100):
-            try:
-                await client.start_agent_optimization(Mock())
-            except Exception:
-                pass
+            request = make_request()
+            # No swallowing: every call must succeed.
+            response = await client.start_agent_optimization(request)
+            assert isinstance(response, AgentOptimizationResponse)
+            assert response.optimization_id == "test"
+            refs.extend(
+                weakref.ref(obj)
+                for obj in (response, request, request.agent_spec, request.dataset)
+            )
+            del response, request
 
-        # Force garbage collection
+        assert client._aio_session.post.call_count - post_calls_before == 100
         gc.collect()
-
-        # Reference count should not grow significantly
-        final_refs = sys.getrefcount(client)
-        assert final_refs - initial_refs < 10  # Allow small growth
+        alive = [r for r in refs if r() is not None]
+        assert alive == []
+        assert set(vars(client)) == state_keys_before
+        assert container_sizes() == sizes_before
 
     @pytest.mark.asyncio
     async def test_empty_configuration_space(self, client):

@@ -1358,11 +1358,17 @@ def validate_numeric_metric(
         >>> validate_numeric_metric("0.95", "accuracy")
         0.95
         >>> validate_numeric_metric(None, "accuracy")
-        MetricExtractionError: Metric 'accuracy' is None
+        Traceback (most recent call last):
+            ...
+        traigent.utils.exceptions.MetricExtractionError: Metric 'accuracy' is None
         >>> validate_numeric_metric(float('nan'), "accuracy")
-        MetricExtractionError: Metric 'accuracy' is NaN or Inf
+        Traceback (most recent call last):
+            ...
+        traigent.utils.exceptions.MetricExtractionError: Metric 'accuracy' is NaN or Inf
         >>> validate_numeric_metric("invalid", "accuracy")
-        MetricExtractionError: Cannot convert metric 'accuracy' to numeric
+        Traceback (most recent call last):
+            ...
+        traigent.utils.exceptions.MetricExtractionError: Cannot convert metric 'accuracy' to numeric: 'invalid'
     """
     import math
 

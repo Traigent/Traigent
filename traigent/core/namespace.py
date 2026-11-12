@@ -16,7 +16,7 @@ Example:
     >>>
     >>> # Parse namespaced parameter
     >>> parse_namespaced_param("grader__temperature")
-    ("grader", "temperature")
+    ('grader', 'temperature')
     >>>
     >>> # Check if parameter is namespaced
     >>> is_namespaced("grader__temperature")
@@ -97,13 +97,13 @@ def parse_namespaced_param(param: str) -> tuple[str, str]:
 
     Examples:
         >>> parse_namespaced_param("grader__temperature")
-        ("grader", "temperature")
+        ('grader', 'temperature')
         >>> parse_namespaced_param("generator__model")
-        ("generator", "model")
+        ('generator', 'model')
         >>> parse_namespaced_param("temperature")
-        ("", "temperature")
+        ('', 'temperature')
         >>> parse_namespaced_param("grader__nested__param")  # Multiple delimiters
-        ("grader", "nested__param")
+        ('grader', 'nested__param')
     """
     if NAMESPACE_DELIMITER in param:
         # Split on first __ only (in case param name contains __)
@@ -145,7 +145,7 @@ def create_namespaced_param(agent: str, param: str) -> str:
         Namespaced parameter name (e.g., "grader__temperature")
 
     Example:
-        >>> create_namespaced_param("grader", "temperature")
+        >>> create_namespaced_param('grader', 'temperature')
         'grader__temperature'
     """
     return f"{agent}{NAMESPACE_DELIMITER}{param}"
@@ -169,8 +169,8 @@ def extract_agents_from_config(
         ...     "generator__temperature": [0.5, 0.7],
         ...     "max_retries": [3],  # Global, not namespaced
         ... }
-        >>> extract_agents_from_config(config)
-        {'grader', 'generator'}
+        >>> sorted(extract_agents_from_config(config))
+        ['generator', 'grader']
     """
     agents: set[str] = set()
     for param in configuration_space:
@@ -340,7 +340,9 @@ def build_per_agent_objectives(
         List of objective names
 
     Example:
-        >>> build_per_agent_objectives(["grader", "generator"], ["cost", "latency_ms"])
+        >>> build_per_agent_objectives(
+        ...     ["grader", "generator"], ["cost", "latency_ms"]
+        ... )  # doctest: +NORMALIZE_WHITESPACE
         ['total_cost', 'total_latency_ms', 'grader_cost', 'grader_latency_ms',
          'generator_cost', 'generator_latency_ms']
     """

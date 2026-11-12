@@ -444,6 +444,7 @@ class TestHybridModeCostControl:
         response = await transport.execute(request)
 
         # Each output should have its own cost
+        assert len(response.outputs) == 2
         for output in response.outputs:
             assert "cost_usd" in output
             assert output["cost_usd"] == pytest.approx(0.02)  # $0.01 * 2x

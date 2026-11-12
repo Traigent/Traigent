@@ -1204,3 +1204,17 @@ class TestTypeAliases:
         }
 
         assert all(isinstance(c, dict) for c in [config1, config2, config3, config4])
+
+
+def test_stop_reason_docstring_lists_every_literal_value():
+    """OptimizationResult.stop_reason docs must name every StopReason value."""
+    import inspect
+    import typing
+
+    from traigent.api.types import OptimizationResult, StopReason
+
+    doc = inspect.getdoc(OptimizationResult)
+    values = typing.get_args(StopReason)
+    assert values
+    missing = [v for v in values if f'"{v}"' not in doc]
+    assert missing == []

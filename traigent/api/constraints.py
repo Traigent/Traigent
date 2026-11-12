@@ -1274,7 +1274,9 @@ def check_constraints_conflict(
         ...     samples_exhaustive=True,  # samples cover full domain
         ... )
         >>> if conflict:
-        ...     print(conflict)
+        ...     print(conflict)  # doctest: +ELLIPSIS
+        Constraint conflict detected:
+        ...
 
         >>> # With sparse samples, avoid false positives
         >>> result = check_constraints_conflict(

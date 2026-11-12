@@ -712,10 +712,14 @@ def create_quick_plot(result: OptimizationResult, plot_type: str = "progress") -
 
     Args:
         result: Optimization result
-        plot_type: Type of plot ("progress", "pareto", "importance")
+        plot_type: Type of plot: ``"progress"``, ``"pareto"`` (needs at least
+            two objectives) or ``"report"`` (full text report). There is no
+            ``"importance"`` plot.
 
     Returns:
-        Plot as string
+        Plot as string. An unsupported ``plot_type``, or ``"pareto"`` with
+        fewer than two objectives, does not raise: the string
+        ``"Unknown plot type: <plot_type>"`` is returned instead.
     """
     plotter = PlotGenerator(use_matplotlib=False)  # Use ASCII for quick plots
 

@@ -1081,9 +1081,16 @@ class OptimizationResult:
             - "convergence": Built-in hypervolume convergence condition triggered
             - "semantic_saturation": Per-example quality and continuous
               objectives saturated
+            - "safety_constraint": A statistical chance-constraint was violated
+            - "safety_constraint_insufficient_evidence": Halted because safety
+              could not be proven (not because it was violated)
+            - "no_usage_captured": Strict cost objective, but the first
+              successful trial captured no usage
             - "user_cancelled": User cancelled or declined cost approval
             - "condition": Generic stop condition was triggered
             - "error": Optimization failed due to an exception
+            - "vendor_error": Provider error (rate limit, quota or service)
+            - "network_error": Connectivity failure
             - None: Unknown or not set
         experiment_id: Backend experiment identifier (None if offline/not synced).
         experiment_run_id: Backend experiment-run identifier for analytics reads

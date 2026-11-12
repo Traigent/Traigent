@@ -148,7 +148,10 @@ class ParetoFrontCalculator:
 
         Args:
             maximize: Dictionary indicating whether to maximize each objective.
-                     Defaults to maximizing all objectives.
+                     Objectives missing from it (or all of them, when omitted)
+                     have their orientation inferred from the objective name,
+                     so e.g. a cost objective is minimised and an accuracy
+                     objective is maximised.
             objective_schema: ObjectiveSchema with orientations (overrides maximize).
             random_seed: Seed for Monte Carlo calculations. None for non-deterministic.
             monte_carlo_samples: Number of samples for Monte Carlo hypervolume.

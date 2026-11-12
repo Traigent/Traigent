@@ -714,29 +714,33 @@ class TestOrchestratorSignificanceWiring:
         assert 0 in sig["winners"], "Trial 0 (higher acc) should be a winner"
         assert sig["n_shared_examples"] == 10
 
-    def test_significance_failure_does_not_crash(self):
-        """If compute_significance raises, the orchestrator's try/except
-        catches it and continues (optimization result is unaffected)."""
-        metadata: dict = {}
+    def test_significance_failure_does_not_crash(self, caplog):
+        """If compute_significance raises, the real orchestrator method
+        catches it, logs, and leaves result.metadata untouched."""
+        import logging
+        from types import SimpleNamespace
+        from unittest.mock import patch
 
-        def _exploding_compute(**kwargs):
-            raise RuntimeError("boom")
+        from traigent.core.orchestrator import OptimizationOrchestrator
 
-        # Replicate the exact guard pattern from orchestrator._finalize_optimization
-        try:
-            significance = _exploding_compute(
-                trials=[],
-                objectives=["accuracy"],
-                objective_orientations={"accuracy": "maximize"},
-                alpha=0.05,
-            )
-            if significance:
-                metadata["statistical_significance"] = significance
-        except Exception:
-            # Orchestrator swallows and logs — optimization result unaffected
-            pass
+        fake_self = SimpleNamespace(
+            objective_schema=None,
+            optimizer=SimpleNamespace(objectives=["accuracy"]),
+        )
+        result = SimpleNamespace(trials=[], metadata={})
 
-        assert "statistical_significance" not in metadata
+        with (
+            patch(
+                "traigent.core.orchestrator.compute_significance",
+                side_effect=RuntimeError("boom"),
+            ) as mocked,
+            caplog.at_level(logging.WARNING, logger="traigent.core.orchestrator"),
+        ):
+            OptimizationOrchestrator._attach_statistical_significance(fake_self, result)
+
+        assert mocked.call_count == 1
+        assert "statistical_significance" not in result.metadata
+        assert "Statistical significance computation failed" in caplog.text
 
     def test_significance_uses_shared_example_aggregate(self):
         """metric_value should be the mean of shared examples, not the
