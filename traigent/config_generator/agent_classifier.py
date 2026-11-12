@@ -229,14 +229,14 @@ def _llm_classify(
 
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return None
 
     if not isinstance(data, dict):
         return None
 
     agent_type = data.get("agent_type", "")
-    if agent_type not in AGENT_TYPES:
+    if not isinstance(agent_type, str) or agent_type not in AGENT_TYPES:
         return None
 
     try:
@@ -244,6 +244,8 @@ def _llm_classify(
     except (ValueError, TypeError):
         confidence = 0.5
     reasoning = data.get("reasoning", "LLM classification")
+    if not isinstance(reasoning, str):
+        reasoning = "LLM classification"
 
     return ClassificationResult(
         agent_type=agent_type,

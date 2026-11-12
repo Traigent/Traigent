@@ -217,7 +217,7 @@ def _parse_llm_range_response(name: str, response: str) -> TVarSpec | None:
 
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return None
 
     if not isinstance(data, dict):
@@ -225,7 +225,11 @@ def _parse_llm_range_response(name: str, response: str) -> TVarSpec | None:
 
     range_type = data.get("range_type")
     kwargs = data.get("kwargs")
-    if not range_type or not isinstance(kwargs, dict):
+    if (
+        not isinstance(range_type, str)
+        or not range_type
+        or not isinstance(kwargs, dict)
+    ):
         return None
 
     if range_type not in ("Range", "IntRange", "LogRange", "Choices"):

@@ -82,10 +82,13 @@ def _llm_generate_examples(
 
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return None
 
-    if not isinstance(data, list) or len(data) == 0:
+    if not isinstance(data, list):
+        return None
+    data = [ex for ex in data if isinstance(ex, dict)]
+    if not data:
         return None
 
     return BenchmarkSpec(

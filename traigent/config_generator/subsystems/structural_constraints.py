@@ -6,6 +6,8 @@ LLM enrichment for domain-specific constraints.
 
 from __future__ import annotations
 
+from typing import Any
+
 from traigent.config_generator.llm_backend import BudgetExhausted, ConfigGenLLM
 from traigent.config_generator.presets.constraint_templates import (
     get_matching_constraints,
@@ -44,8 +46,10 @@ def generate_structural_constraints(
     return constraints
 
 
-def _parse_constraint_item(item: dict) -> StructuralConstraintSpec | None:
+def _parse_constraint_item(item: Any) -> StructuralConstraintSpec | None:
     """Parse a single LLM-suggested constraint, or *None* if invalid."""
+    if not isinstance(item, dict):
+        return None
     desc = item.get("description", "")
     code = item.get("constraint_code", "")
     if not desc or not code:
@@ -92,7 +96,7 @@ def _llm_suggest_constraints(
 
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return []
 
     if not isinstance(data, list):

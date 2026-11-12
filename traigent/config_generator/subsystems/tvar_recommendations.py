@@ -618,12 +618,20 @@ def _edge_analytics_env_enabled() -> bool:
 _VALID_RANGE_TYPES = frozenset({"Range", "IntRange", "LogRange", "Choices"})
 
 
-def _parse_recommendation_item(item: dict) -> TVarRecommendation | None:
+def _parse_recommendation_item(item: Any) -> TVarRecommendation | None:
     """Parse a single LLM-suggested recommendation, or *None* if invalid."""
+    if not isinstance(item, dict):
+        return None
     name = item.get("name", "")
     range_type = item.get("range_type", "")
     kwargs = item.get("kwargs", {})
-    if not name or not range_type or not isinstance(kwargs, dict):
+    if (
+        not isinstance(name, str)
+        or not isinstance(range_type, str)
+        or not name
+        or not range_type
+        or not isinstance(kwargs, dict)
+    ):
         return None
     if range_type not in _VALID_RANGE_TYPES:
         return None
@@ -671,7 +679,7 @@ def _llm_recommend(
 
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return []
 
     if not isinstance(data, list):

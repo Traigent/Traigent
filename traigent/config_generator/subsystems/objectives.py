@@ -7,6 +7,8 @@ adds domain-specific objectives.
 
 from __future__ import annotations
 
+from typing import Any
+
 from traigent.config_generator.agent_classifier import ClassificationResult
 from traigent.config_generator.llm_backend import BudgetExhausted, ConfigGenLLM
 from traigent.config_generator.types import ObjectiveSpec, TVarSpec
@@ -155,13 +157,15 @@ def _normalize_weights(objectives: list[ObjectiveSpec]) -> list[ObjectiveSpec]:
     ]
 
 
-def _parse_objective_item(item: dict, current_names: set[str]) -> ObjectiveSpec | None:
+def _parse_objective_item(item: Any, current_names: set[str]) -> ObjectiveSpec | None:
     """Parse a single LLM-suggested objective, or *None* if invalid."""
+    if not isinstance(item, dict):
+        return None
     name = item.get("name", "")
-    if not name or name in current_names:
+    if not isinstance(name, str) or not name or name in current_names:
         return None
     orientation = item.get("orientation")
-    if orientation not in ("maximize", "minimize"):
+    if orientation not in ("maximize", "minimize"):  # tuple membership, no hashing
         return None
     try:
         weight = float(item.get("weight", 0.15))
@@ -207,7 +211,7 @@ def _llm_enrich_objectives(
 
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return None
 
     if not isinstance(data, list):
