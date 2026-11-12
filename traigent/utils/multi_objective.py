@@ -133,6 +133,19 @@ def _is_exact_float_like(value: Any) -> bool:
     return type(value) in (int, bool) and abs(value) <= 2**53
 
 
+def _count_prefix(xs: list[float], x_p: float, inclusive: bool, epsilon: float) -> int:
+    # xs[a] - x_p is monotone in xs[a], so the matching a form a prefix.
+    lo, hi = 0, len(xs)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        diff = xs[mid] - x_p
+        if (diff <= epsilon) if inclusive else (diff < -epsilon):
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
 class ParetoFrontCalculator:
     """Calculates Pareto fronts for multi-objective optimization."""
 
@@ -226,6 +239,34 @@ class ParetoFrontCalculator:
         names = sorted(set(objectives))
         if len(names) != 2:
             return None
+        coords = self._smaller_is_better_coords(points, names)
+        if coords is None:
+            return None
+
+        order = sorted(range(len(points)), key=lambda i: coords[i][0])
+        xs = [coords[i][0] for i in order]
+        prefix_min = []
+        running = math.inf
+        for i in order:
+            running = min(running, coords[i][1])
+            prefix_min.append(running)
+
+        front: list[ParetoPoint] = []
+        for idx, point in enumerate(points):
+            x_p, y_p = coords[idx]
+            n_strict = _count_prefix(xs, x_p, False, epsilon)
+            n_loose = _count_prefix(xs, x_p, True, epsilon)
+            dominated = (
+                n_strict > 0 and prefix_min[n_strict - 1] - y_p <= epsilon
+            ) or (n_loose > 0 and prefix_min[n_loose - 1] - y_p < -epsilon)
+            if not dominated:
+                front.append(point)
+        return front
+
+    def _smaller_is_better_coords(
+        self, points: list[ParetoPoint], names: list[str]
+    ) -> list[tuple[float, float]] | None:
+        """Per-point (x, y) with both axes "smaller is better", or None to fall back."""
         signs = [-1.0 if _should_maximize(n, self.maximize) else 1.0 for n in names]
         coords: list[tuple[float, float]] = []
         for point in points:
@@ -244,38 +285,7 @@ class ParetoFrontCalculator:
             if not all(math.isfinite(v) for v in xy):
                 return None
             coords.append((xy[0], xy[1]))
-
-        order = sorted(range(len(points)), key=lambda i: coords[i][0])
-        xs = [coords[i][0] for i in order]
-        prefix_min = []
-        running = math.inf
-        for i in order:
-            running = min(running, coords[i][1])
-            prefix_min.append(running)
-
-        def count_prefix(x_p: float, inclusive: bool) -> int:
-            # xs[a] - x_p is monotone in xs[a], so the matching a form a prefix.
-            lo, hi = 0, len(xs)
-            while lo < hi:
-                mid = (lo + hi) // 2
-                diff = xs[mid] - x_p
-                if (diff <= epsilon) if inclusive else (diff < -epsilon):
-                    lo = mid + 1
-                else:
-                    hi = mid
-            return lo
-
-        front: list[ParetoPoint] = []
-        for idx, point in enumerate(points):
-            x_p, y_p = coords[idx]
-            n_strict = count_prefix(x_p, inclusive=False)
-            n_loose = count_prefix(x_p, inclusive=True)
-            dominated = (
-                n_strict > 0 and prefix_min[n_strict - 1] - y_p <= epsilon
-            ) or (n_loose > 0 and prefix_min[n_loose - 1] - y_p < -epsilon)
-            if not dominated:
-                front.append(point)
-        return front
+        return coords
 
     @staticmethod
     def _trial_to_pareto_point(
