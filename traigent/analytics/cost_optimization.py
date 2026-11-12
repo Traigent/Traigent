@@ -413,7 +413,17 @@ class CostOptimizationAI:
                 )
 
         # Analyze cross-resource trends if we have optimization history
-        for result in self._get_recent_history_records():
+        history_records = self._get_recent_history_records()
+        skipped = getattr(self.optimization_history, "_skipped_lines", 0)
+        if history_records and isinstance(skipped, int) and skipped > 0:
+            # Incomplete history must not drive savings claims.
+            logger.warning(
+                "Optimization history is incomplete (%d damaged line(s) skipped); "
+                "omitting history-based cost opportunities",
+                skipped,
+            )
+            history_records = []
+        for result in history_records:
             cost_reduction = self._get_cost_reduction(result)
             if cost_reduction > 10:
                 analysis["optimization_opportunities"].append(

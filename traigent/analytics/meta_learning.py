@@ -153,6 +153,7 @@ class OptimizationHistory:
         self.storage_path = storage_path or "optimization_history.jsonl"
         self._lock = threading.Lock()
         self.records: list[OptimizationRecord] = []
+        self._skipped_lines = 0  # damaged lines skipped while loading
         self._load_history()
 
     def add_record(self, record: OptimizationRecord) -> None:
@@ -259,6 +260,7 @@ class OptimizationHistory:
                         logger.warning(
                             f"Skipping malformed history line {line_no}: {e}"
                         )
+                        self._skipped_lines += 1
                         continue
                     self.records.append(record)
             logger.info(f"Loaded {len(self.records)} optimization records")
