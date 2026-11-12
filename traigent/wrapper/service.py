@@ -1225,7 +1225,7 @@ class TraigentService:
         tunable_id = request.get("tunable_id", self.config.tunable_id)
         config = request.get("config", {})
         input_field, examples = self._select_execute_inputs(request)
-        session_id = request.get("session_id")
+        session_id = self._valid_session_id_or_none(request.get("session_id"))
 
         TraigentService._validate_execute_batch(self, examples, tunable_id, input_field)
 
@@ -1414,7 +1414,7 @@ class TraigentService:
         evaluations = request.get("evaluations", [])
         raw_kwargs = request.get("kwargs")
         raw_config_alias = request.get("config")
-        session_id = request.get("session_id")
+        session_id = self._valid_session_id_or_none(request.get("session_id"))
 
         TraigentService._validate_evaluation_batch(self, evaluations, tunable_id)
 
@@ -1560,6 +1560,11 @@ class TraigentService:
             isinstance(session_id, str) and 0 < len(session_id) <= MAX_SESSION_ID_LENGTH
         )
 
+    @staticmethod
+    def _valid_session_id_or_none(session_id: Any) -> str | None:
+        """An invalid session id is treated as absent: never echoed or cached."""
+        return session_id if TraigentService._is_valid_session_id(session_id) else None
+
     def _touch_or_create_session(self, session_id: str) -> bool:
         """Touch an existing session or create it when keep-alive is enabled."""
         if not self._is_valid_session_id(session_id):
@@ -1567,8 +1572,12 @@ class TraigentService:
 
         session = self._sessions.get(session_id)
         if session is not None:
-            session.touch()
-            return True
+            if time.time() - session.last_activity > SESSION_TTL_SECONDS:
+                # Expired: evict, then treat as absent rather than reviving it.
+                self._sessions.pop(session_id, None)
+            else:
+                session.touch()
+                return True
 
         if not self.config.supports_keep_alive:
             return False

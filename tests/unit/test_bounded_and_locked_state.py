@@ -260,3 +260,98 @@ def test_create_session_accepts_valid_and_generates():
     svc = _service()
     assert svc.create_session("ok") == "ok"
     assert len(svc.create_session()) <= 256
+
+
+# --- round 2: invalid ids are treated as absent; TTL enforced on lookup -----
+@pytest.mark.parametrize("bad", ["x" * 257, ["a"], {"k": "v"}, 7])
+@pytest.mark.asyncio
+async def test_invalid_session_id_not_echoed_or_cached(bad):
+    svc = _service()
+
+    @svc.execute
+    def run(example_id, data, config):
+        return {"output": "ok"}
+
+    resp = await svc.handle_execute(
+        {
+            "examples": [{"example_id": "i1", "data": {}}],
+            "session_id": bad,
+        }
+    )
+    assert "session_id" not in resp
+    assert svc._execution_context_cache  # the execution itself is still cached
+    assert all(
+        e.execute_session_id is None for e in svc._execution_context_cache.values()
+    )
+
+    @svc.evaluate
+    def score(output, target, config):
+        return {"accuracy": 1.0}
+
+    eresp = await svc.handle_evaluate(
+        {
+            "execution_id": resp["execution_id"],
+            "evaluations": [{"example_id": "i1", "output": "a", "target": "a"}],
+            "session_id": bad,
+        }
+    )
+    assert "session_id" not in eresp
+
+
+@pytest.mark.asyncio
+async def test_valid_session_id_still_echoed_and_cached():
+    svc = _service()
+
+    @svc.execute
+    def run(example_id, data, config):
+        return {"output": "ok"}
+
+    resp = await svc.handle_execute(
+        {
+            "examples": [{"example_id": "i1", "data": {}}],
+            "session_id": "good",
+        }
+    )
+    assert resp["session_id"] == "good"
+    assert svc._execution_context_cache[resp["execution_id"]].execute_session_id == (
+        "good"
+    )
+
+
+def _expire(svc, sid, clock):
+    svc._sessions[sid].last_activity = clock[0] - service_mod.SESSION_TTL_SECONDS - 1
+
+
+def test_expired_session_is_not_revived_on_lookup(monkeypatch):
+    svc = _service()
+    clock = [10_000.0]
+    monkeypatch.setattr(service_mod.time, "time", lambda: clock[0])
+    svc.create_session("s")
+    old = svc._sessions["s"]
+    old.created_at = 1.0
+    _expire(svc, "s", clock)
+    assert svc.handle_keep_alive("s") is True  # keep-alive enabled: new session
+    fresh = svc._sessions["s"]
+    assert fresh is not old
+    assert fresh.created_at != 1.0
+
+
+def test_expired_session_absent_when_keep_alive_disabled(monkeypatch):
+    svc = TraigentService(supports_keep_alive=False)
+    clock = [10_000.0]
+    monkeypatch.setattr(service_mod.time, "time", lambda: clock[0])
+    svc.create_session("s")
+    _expire(svc, "s", clock)
+    assert svc._touch_or_create_session("s") is False
+    assert "s" not in svc._sessions
+
+
+def test_unexpired_session_is_touched(monkeypatch):
+    svc = _service()
+    clock = [10_000.0]
+    monkeypatch.setattr(service_mod.time, "time", lambda: clock[0])
+    svc.create_session("s")
+    svc._sessions["s"].created_at = 1.0
+    svc._sessions["s"].last_activity = clock[0] - service_mod.SESSION_TTL_SECONDS + 5
+    assert svc._touch_or_create_session("s") is True
+    assert svc._sessions["s"].created_at == 1.0
