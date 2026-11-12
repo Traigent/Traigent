@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -329,3 +332,53 @@ def test_build_payload_strict_reraises_instead_of_silent_fallback(
             configuration_space={"temperature": [0.1]},
             strict=True,
         )
+
+
+def test_set_valued_inputs_fingerprint_independent_of_iteration_order_3097() -> None:
+    first = {"input": {"tags": {"alpha", "beta", "gamma", "delta"}}, "expected": "x"}
+    second = {"input": {"tags": {"delta", "gamma", "beta", "alpha"}}, "expected": "x"}
+    assert af._canonical_json_bytes(first) == af._canonical_json_bytes(second)
+    assert af._canonical_json_bytes({"s": frozenset({3, 1, 2})}) == (
+        af._canonical_json_bytes({"s": frozenset({2, 3, 1})})
+    )
+
+
+def test_address_bearing_values_leave_fingerprint_none_3097() -> None:
+    examples = [{"input": {"obj": object()}, "expected_output": "x"}]
+    assert af.compute_dataset_fingerprint(examples) is None
+    assert af.compute_config_space_fingerprint({"k": object()}) is None
+
+
+def test_stable_inputs_keep_their_fingerprint_3097() -> None:
+    value = {"b": [1, 2.5, "s", None, True], "a": {"z": 1}}
+    expected = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    assert af._canonical_json_bytes(value) == expected
+
+
+def test_sets_are_tagged_and_distinct_from_lists_3097() -> None:
+    assert af._canonical_json_bytes({"s": {"b", "a"}}) == b'{"s":{"__set__":["a","b"]}}'
+    assert af._canonical_json_bytes({"s": {"a", "b"}}) != af._canonical_json_bytes(
+        {"s": ["a", "b"]}
+    )
+    assert af._canonical_json_bytes({"s": {1, "a", None}})  # mixed types do not raise
+
+
+def test_reserved_set_tag_in_input_yields_no_fingerprint_3097() -> None:
+    assert af.compute_config_space_fingerprint({"k": {"__set__": [1]}}) is None
+
+
+def test_set_fingerprint_is_stable_across_hash_seeds_3097() -> None:
+    code = (
+        "from traigent.utils import artifact_fingerprints as af;"
+        "print(af.compute_config_space_fingerprint("
+        "{'t': {'alpha','beta','gamma','delta','eps'}}))"
+    )
+    outs = set()
+    for seed in ("1", "2", "3"):
+        env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONPATH": os.getcwd()}
+        res = subprocess.run(
+            [sys.executable, "-c", code], env=env, capture_output=True, text=True
+        )
+        assert res.returncode == 0, res.stderr
+        outs.add(res.stdout.strip())
+    assert len(outs) == 1 and "None" not in outs
