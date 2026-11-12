@@ -699,3 +699,39 @@ class TestWorkflowCostSummaryValidation:
         error_msg = str(exc_info.value)
         assert "from_agents()" in error_msg
         assert "automatically" in error_msg.lower()
+
+
+class TestWorkflowCostSummaryStrictTotals:
+    """#3109: NaN totals and sub-0.0001 USD mismatches must be rejected."""
+
+    @staticmethod
+    def _agent() -> AgentCostBreakdown:
+        return AgentCostBreakdown(
+            agent_id="a",
+            agent_name="n",
+            input_tokens=1,
+            output_tokens=2,
+            total_tokens=3,
+            input_cost=4e-5,
+            output_cost=4e-5,
+            total_cost=8e-5,
+            model_used="m",
+        )
+
+    def test_nan_total_cost_is_rejected(self):
+        with pytest.raises(ValueError, match="total_cost"):
+            WorkflowCostSummary(
+                "w", "n", [self._agent()], 1, 2, 3, 4e-5, 4e-5, math.nan
+            )
+
+    def test_wrong_tiny_total_is_rejected(self):
+        with pytest.raises(ValueError, match="total_cost"):
+            WorkflowCostSummary("w", "n", [self._agent()], 1, 2, 3, 4e-5, 4e-5, 0.0)
+
+    def test_from_agents_still_valid(self):
+        summary = WorkflowCostSummary.from_agents("w", "n", [self._agent()] * 3)
+        assert summary.total_cost == pytest.approx(2.4e-4)
+
+    def test_float_token_total_is_rejected(self):
+        with pytest.raises(ValueError, match="must be an integer"):
+            WorkflowCostSummary("w", "n", [self._agent()], 1.0, 2, 3, 4e-5, 4e-5, 8e-5)
