@@ -2979,8 +2979,10 @@ class SensitivityAnalysis:
 
     def get_top_parameters(self, n: int = 5) -> list[tuple[str, float]]:
         """Get top N most important parameters."""
+        # Non-finite (NaN) scores have no defined order: rank them last.
         sorted_params = sorted(
-            self.parameter_importance.items(), key=lambda x: abs(x[1]), reverse=True
+            self.parameter_importance.items(),
+            key=lambda x: (math.isnan(x[1]), -abs(x[1]) if not math.isnan(x[1]) else 0),
         )
         return sorted_params[:n]
 
@@ -3012,9 +3014,14 @@ class ConfigurationComparison:
             raise ValueError(f"Metric '{metric}' not found in comparison") from None
 
         direction = resolve_objective_orientation(metric, orientation)
-        values = self.comparison_metrics[metric]
+        values: np.ndarray[Any, Any] = np.asarray(
+            self.comparison_metrics[metric], dtype=float
+        )
+        if values.size == 0 or bool(np.isnan(values).all()):
+            raise ValueError(f"No comparable (non-NaN) values for metric '{metric}'")
+        # A NaN value is an unscored configuration and must never win.
         best_idx = int(
-            np.argmin(values) if direction == "minimize" else np.argmax(values)
+            np.nanargmin(values) if direction == "minimize" else np.nanargmax(values)
         )
         return best_idx, self.configurations[best_idx]
 
@@ -3047,6 +3054,15 @@ class ParetoFront:
         if normalized.ndim == 1:
             normalized = normalized.reshape(-1, 1)
 
+        # Rows with a NaN objective are unscored and cannot be the best balance.
+        valid_rows = np.flatnonzero(~np.isnan(normalized).any(axis=1))
+        if valid_rows.size == 0:
+            raise ValueError("No Pareto configurations with complete objective values")
+        if valid_rows.size < normalized.shape[0]:
+            normalized = normalized[valid_rows]
+        else:
+            valid_rows = np.arange(normalized.shape[0])
+
         for i, maximize in enumerate(self.is_maximized):
             col = normalized[:, i]
             min_val: float = float(col.min())
@@ -3068,7 +3084,7 @@ class ParetoFront:
             distances = np.linalg.norm(normalized - 1.0, axis=1)
             best_idx = np.argmin(distances)
 
-        return self.configurations[best_idx]  # type: ignore[no-any-return]
+        return self.configurations[int(valid_rows[best_idx])]  # type: ignore[no-any-return]
 
     def plot_trade_offs(self, x_objective: str, y_objective: str) -> None:
         """Plot trade-offs between two objectives.
