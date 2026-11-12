@@ -7,7 +7,6 @@ and the configure_integrations function with extensive edge case coverage.
 from __future__ import annotations
 
 from dataclasses import fields
-from unittest.mock import Mock
 
 import pytest
 
@@ -521,7 +520,7 @@ class TestConfigureIntegrations:
     def test_configure_single_option(self):
         """Test configuring a single option."""
         configure_integrations(auto_discover=False)
-        assert integration_config.auto_discover is False
+        assert config_module.integration_config.auto_discover is False
 
     def test_configure_multiple_options(self):
         """Test configuring multiple options."""
@@ -531,9 +530,9 @@ class TestConfigureIntegrations:
             fuzzy_matching_threshold=0.9,
         )
 
-        assert integration_config.auto_discover is False
-        assert integration_config.strict_mode is True
-        assert integration_config.fuzzy_matching_threshold == 0.9
+        assert config_module.integration_config.auto_discover is False
+        assert config_module.integration_config.strict_mode is True
+        assert config_module.integration_config.fuzzy_matching_threshold == 0.9
 
     def test_configure_boolean_options(self):
         """Test configuring boolean options."""
@@ -543,9 +542,9 @@ class TestConfigureIntegrations:
             log_override_details=True,
         )
 
-        assert integration_config.validate_types is False
-        assert integration_config.sanitize_parameters is False
-        assert integration_config.log_override_details is True
+        assert config_module.integration_config.validate_types is False
+        assert config_module.integration_config.sanitize_parameters is False
+        assert config_module.integration_config.log_override_details is True
 
     def test_configure_numeric_options(self):
         """Test configuring numeric options."""
@@ -554,8 +553,8 @@ class TestConfigureIntegrations:
             max_fallback_attempts=10,
         )
 
-        assert integration_config.discovery_cache_ttl == 7200
-        assert integration_config.max_fallback_attempts == 10
+        assert config_module.integration_config.discovery_cache_ttl == 7200
+        assert config_module.integration_config.max_fallback_attempts == 10
 
     def test_configure_unknown_option_warns(self):
         """Test configuring unknown option logs warning."""
@@ -596,22 +595,22 @@ class TestConfigureIntegrations:
 
     def test_configure_preserves_unmodified_options(self):
         """Test that unmodified options remain unchanged."""
-        original_ttl = integration_config.discovery_cache_ttl
-        original_strict = integration_config.strict_mode
+        original_ttl = config_module.integration_config.discovery_cache_ttl
+        original_strict = config_module.integration_config.strict_mode
 
         configure_integrations(auto_discover=False)
 
-        assert integration_config.auto_discover is False
-        assert integration_config.discovery_cache_ttl == original_ttl
-        assert integration_config.strict_mode == original_strict
+        assert config_module.integration_config.auto_discover is False
+        assert config_module.integration_config.discovery_cache_ttl == original_ttl
+        assert config_module.integration_config.strict_mode == original_strict
 
     def test_configure_valid_threshold_boundary(self):
         """Test threshold at exact boundaries."""
         configure_integrations(fuzzy_matching_threshold=0.0)
-        assert integration_config.fuzzy_matching_threshold == 0.0
+        assert config_module.integration_config.fuzzy_matching_threshold == 0.0
 
         configure_integrations(fuzzy_matching_threshold=1.0)
-        assert integration_config.fuzzy_matching_threshold == 1.0
+        assert config_module.integration_config.fuzzy_matching_threshold == 1.0
 
     def test_configure_all_options(self):
         """Test configuring all available options."""
@@ -635,10 +634,10 @@ class TestConfigureIntegrations:
         )
 
         # Verify all were set
-        assert integration_config.auto_discover is False
-        assert integration_config.discovery_cache_ttl == 7200
-        assert integration_config.strict_mode is True
-        assert integration_config.max_fallback_attempts == 10
+        assert config_module.integration_config.auto_discover is False
+        assert config_module.integration_config.discovery_cache_ttl == 7200
+        assert config_module.integration_config.strict_mode is True
+        assert config_module.integration_config.max_fallback_attempts == 10
 
 
 class TestEdgeCases:
@@ -683,39 +682,28 @@ class TestEdgeCases:
         assert config.fuzzy_matching_threshold == 0.999
 
 
-class TestRegisterIntegrationConfigSubscribers:
-    """Test _register_integration_config_subscribers function."""
+class TestNoCallerNamespaceMutation:
+    """Accessors must not write into or pin the calling module (#3160)."""
 
-    def test_module_none_after_should_register(self, monkeypatch):
-        """Test that module=None is handled gracefully.
+    def test_get_and_configure_leave_caller_global_untouched(
+        self, tmp_path, monkeypatch
+    ):
+        import importlib
 
-        This tests the defensive code path where _should_register_module
-        returns True but getmodule returns None.
-        """
-        import inspect
-
-        from traigent.integrations import config as config_module
-
-        # Mock the stack to return a frame where getmodule returns None
-        # but _should_register_module would return True
-        mock_frame_info = Mock()
-        mock_frame_info.frame.f_globals = {"__name__": "test"}
-
-        def mock_stack():
-            return [mock_frame_info]
-
-        def mock_getmodule(_frame):
-            return None
-
-        def mock_should_register(module):
-            # Return True even for None to test the defensive check
-            return True
-
-        monkeypatch.setattr(inspect, "stack", mock_stack)
-        monkeypatch.setattr(inspect, "getmodule", mock_getmodule)
-        monkeypatch.setattr(
-            config_module, "_should_register_module", mock_should_register
+        (tmp_path / "caller_mod_3160.py").write_text(
+            "from traigent.integrations.config import (\n"
+            "    configure_integrations, get_integration_config)\n"
+            "integration_config = {'my': 'settings'}\n"
+            "def run():\n"
+            "    get_integration_config()\n"
+            "    configure_integrations(strict_mode=False)\n"
         )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        mod = importlib.import_module("caller_mod_3160")
+        try:
+            mod.run()
+            assert mod.integration_config == {"my": "settings"}
+        finally:
+            import sys
 
-        # Should not raise - just skip the None module
-        config_module._register_integration_config_subscribers()
+            sys.modules.pop("caller_mod_3160", None)
