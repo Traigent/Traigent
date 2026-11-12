@@ -447,11 +447,18 @@ def load_outcome_matrix(run_path: str | Path) -> dict[str, Any] | None:
             ) from None
         try:
             with open(candidate, encoding="utf-8") as handle:
-                return dict(json.load(handle))
-        except json.JSONDecodeError as exc:
+                data = json.load(handle)
+        except (ValueError, RecursionError) as exc:
+            # JSONDecodeError and UnicodeDecodeError are both ValueErrors.
             raise ValueError(
                 f"Corrupt outcome matrix artifact at {candidate}: {exc}"
             ) from exc
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"Corrupt outcome matrix artifact at {candidate}: "
+                "expected a JSON object"
+            )
+        return dict(data)
 
     return None
 

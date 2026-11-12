@@ -248,12 +248,19 @@ class OptimizationHistory:
     def _load_history(self) -> None:
         """Load optimization history from storage."""
         try:
-            with open(self.storage_path) as f:
-                for line in f:
-                    if line.strip():
+            with open(self.storage_path, encoding="utf-8", errors="replace") as f:
+                for line_no, line in enumerate(f, start=1):
+                    if not line.strip():
+                        continue
+                    try:
                         record_data = json.loads(line)
                         record = OptimizationRecord.from_dict(record_data)
-                        self.records.append(record)
+                    except (ValueError, TypeError, KeyError, AttributeError) as e:
+                        logger.warning(
+                            f"Skipping malformed history line {line_no}: {e}"
+                        )
+                        continue
+                    self.records.append(record)
             logger.info(f"Loaded {len(self.records)} optimization records")
         except FileNotFoundError:
             logger.info("No existing optimization history found")

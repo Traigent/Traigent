@@ -35,6 +35,11 @@ from traigent.utils.secure_path import (
 logger = get_logger(__name__)
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    """Return ``value`` when it is a dict, else an empty dict (damaged files)."""
+    return value if isinstance(value, dict) else {}
+
+
 class OptimizationAnalyzer:
     """Utilities for analyzing logged optimization runs."""
 
@@ -127,8 +132,20 @@ class OptimizationAnalyzer:
         if not file_path:
             return None
         validated_path = validate_path(file_path, run_path, must_exist=True)
-        with safe_open(validated_path, run_path, mode="r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with safe_open(validated_path, run_path, mode="r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (ValueError, OSError, RecursionError) as exc:
+            logger.warning(
+                "Skipping unreadable optimization file %s: %s", file_path, exc
+            )
+            return None
+        if not isinstance(data, dict):
+            logger.warning(
+                "Skipping optimization file %s: expected a JSON object", file_path
+            )
+            return None
+        return data
 
     @staticmethod
     def _load_jsonl_file(
@@ -147,11 +164,23 @@ class OptimizationAnalyzer:
 
         entries: list[Any] = []
         validated_path = validate_path(file_path, run_path, must_exist=True)
-        with safe_open(validated_path, run_path, mode="r", encoding="utf-8") as f:
-            for line in f:
-                stripped = line.strip()
-                if stripped:
-                    entries.append(json.loads(stripped))
+        try:
+            with safe_open(validated_path, run_path, mode="r", encoding="utf-8") as f:
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        entry = json.loads(stripped)
+                    except (ValueError, RecursionError):
+                        logger.warning("Skipping malformed line in %s", file_path)
+                        continue
+                    if isinstance(entry, dict):
+                        entries.append(entry)
+                    else:
+                        logger.warning("Skipping non-object line in %s", file_path)
+        except (ValueError, OSError) as exc:
+            logger.warning("Stopped reading %s: %s", file_path, exc)
         return entries
 
     @staticmethod
@@ -211,23 +240,46 @@ class OptimizationAnalyzer:
             )
 
         validated_index = validate_path(index_file, base_path, must_exist=True)
-        with safe_open(validated_index, base_path, mode="r", encoding="utf-8") as f:
-            index_data = json.load(f)
+        try:
+            with safe_open(validated_index, base_path, mode="r", encoding="utf-8") as f:
+                index_data = json.load(f)
+            if not isinstance(index_data, dict):
+                raise ValueError("index.json is not a JSON object")
+        except (ValueError, OSError, RecursionError) as exc:
+            logger.warning(
+                "Ignoring unreadable index %s, rebuilding from directories: %s",
+                index_file,
+                exc,
+            )
+            return OptimizationAnalyzer._build_experiment_index(
+                base_path, file_manager, legacy_manager
+            )
 
         # Convert to DataFrame
         runs = []
-        for exp_name, exp_data in index_data.get("experiments", {}).items():
-            for run in exp_data.get("runs", []):
-                runs.append(
-                    {
-                        "experiment": exp_name,
-                        "run_id": run["run_id"],
-                        "session_id": run["session_id"],
-                        "timestamp": run["timestamp"],
-                        "execution_mode": run.get("execution_mode", "unknown"),
-                        "path": run["path"],
-                    }
-                )
+        experiments = index_data.get("experiments", {})
+        if not isinstance(experiments, dict):
+            experiments = {}
+        for exp_name, exp_data in experiments.items():
+            run_entries = exp_data.get("runs", []) if isinstance(exp_data, dict) else []
+            if not isinstance(run_entries, list):
+                continue
+            for run in run_entries:
+                try:
+                    runs.append(
+                        {
+                            "experiment": exp_name,
+                            "run_id": run["run_id"],
+                            "session_id": run["session_id"],
+                            "timestamp": run["timestamp"],
+                            "execution_mode": run.get("execution_mode", "unknown"),
+                            "path": run["path"],
+                        }
+                    )
+                except (KeyError, TypeError, AttributeError):
+                    logger.warning(
+                        "Skipping malformed index entry in experiment %s", exp_name
+                    )
 
         if not runs:
             return pd.DataFrame()
@@ -455,32 +507,27 @@ class OptimizationAnalyzer:
             if not data:
                 continue
 
+            session = _as_dict(data.get("session"))
+            summary = _as_dict(data.get("metrics_summary"))
             comparison = {
                 "run_id": run_id,
-                "status": data.get("session", {}).get("status", "unknown"),
-                "duration": data.get("metrics_summary", {}).get("duration", 0),
-                "total_trials": data.get("metrics_summary", {}).get("total_trials", 0),
-                "successful_trials": data.get("metrics_summary", {}).get(
-                    "successful_trials", 0
-                ),
-                "algorithm": data.get("metrics_summary", {}).get(
-                    "algorithm", "unknown"
-                ),
+                "status": session.get("status", "unknown"),
+                "duration": summary.get("duration", 0),
+                "total_trials": summary.get("total_trials", 0),
+                "successful_trials": summary.get("successful_trials", 0),
+                "algorithm": summary.get("algorithm", "unknown"),
             }
 
             # Add best metrics
-            best_metrics = data.get("metrics_summary", {}).get("best_metrics", {})
+            best_metrics = _as_dict(summary.get("best_metrics"))
             for metric, value in best_metrics.items():
                 comparison[f"best_{metric}"] = value
 
             # Add weighted results if available
             if "weighted_results" in data:
-                weighted_config = data["weighted_results"].get(
-                    "best_weighted_config", {}
-                )
-                weighted_score = data["weighted_results"].get(
-                    "best_weighted_score", None
-                )
+                weighted = _as_dict(data["weighted_results"])
+                weighted_config = _as_dict(weighted.get("best_weighted_config"))
+                weighted_score = weighted.get("best_weighted_score", None)
                 comparison["weighted_score"] = weighted_score
                 comparison["weighted_best_model"] = weighted_config.get(
                     "model", "unknown"
@@ -525,7 +572,7 @@ class OptimizationAnalyzer:
         values = []
         best_values: list[float] = []
         for trial in trials:
-            metrics = trial.get("metrics", {})
+            metrics = _as_dict(trial.get("metrics"))
             if objective in metrics:
                 value = metrics[objective]
                 values.append(value)
@@ -710,11 +757,11 @@ class OptimizationAnalyzer:
                 }
 
                 # Add config parameters
-                for key, value in trial.get("config", {}).items():
+                for key, value in _as_dict(trial.get("config")).items():
                     trial_data[f"config_{key}"] = value
 
                 # Add metrics
-                for key, value in trial.get("metrics", {}).items():
+                for key, value in _as_dict(trial.get("metrics")).items():
                     trial_data[f"metric_{key}"] = value
 
                 all_trials.append(trial_data)
@@ -861,7 +908,7 @@ def _get_pareto_metric_values(
     obj1_values = []
     obj2_values = []
     for trial in trials:
-        metrics = trial.get("metrics", {})
+        metrics = _as_dict(trial.get("metrics"))
         if objectives[0] in metrics and objectives[1] in metrics:
             obj1_values.append(metrics[objectives[0]])
             obj2_values.append(metrics[objectives[1]])
