@@ -74,10 +74,8 @@ class DeploymentManager:
             }
         elif self.mode == DeploymentMode.VPC:
             return {
-                "vpc_id": "vpc-12345",
                 "private_subnets": True,
                 "nat_gateway": True,
-                "security_groups": ["sg-security"],
             }
         elif self.mode == DeploymentMode.ON_PREMISE:
             return {"data_residency": "local", "air_gapped": True, "custom_ca": True}
@@ -91,18 +89,30 @@ class DeploymentManager:
     def deploy_service(
         self, service_name: str, config: dict[str, Any]
     ) -> dict[str, Any]:
-        """Deploy a service."""
-        deployment_info = {
+        """Deploy a service.
+
+        No deployment executor is wired into the SDK, so nothing is
+        deployed. This returns ``status="unsupported"`` with a reason and
+        records nothing in ``self.services``. Override in a subclass to
+        provide a real implementation.
+        """
+        logger.error(
+            "DeploymentManager.deploy_service(%r) called but no deployment "
+            "executor is configured. Returning status='unsupported'; "
+            "nothing was deployed.",
+            service_name,
+        )
+        return {
             "service_name": service_name,
             "mode": self.mode.value,
-            "config": config,
-            "deployed_at": datetime.now(UTC).isoformat(),
-            "status": "deployed",
+            "status": "unsupported",
+            "reason": (
+                "No real deployment implementation is wired. Override "
+                "DeploymentManager.deploy_service in a subclass to provide "
+                "one. NOTHING WAS DEPLOYED."
+            ),
+            "requested_at": datetime.now(UTC).isoformat(),
         }
-
-        self.services[service_name] = deployment_info
-        logger.info(f"Deployed service {service_name} in {self.mode.value} mode")
-        return deployment_info
 
 
 class SLAMonitor:
