@@ -129,6 +129,16 @@ EXECUTE_BAD = {
     "id_dotdot": _execute(examples=[{"example_id": ".."}]),
     "id_empty": _execute(examples=[{"example_id": ""}]),
     "id_control_char": _execute(examples=[{"example_id": "a\x00b"}]),
+    "id_space": _execute(examples=[{"example_id": "q 1"}]),
+    "id_colon": _execute(examples=[{"example_id": "a:b"}]),
+    "id_leading_dot": _execute(examples=[{"example_id": ".hidden"}]),
+    "id_leading_dash": _execute(examples=[{"example_id": "-x"}]),
+    "id_leading_underscore": _execute(examples=[{"example_id": "_x"}]),
+    "inputs_input_id_space": _execute(examples=_MISSING, inputs=[{"input_id": "q 1"}]),
+    "inputs_input_id_colon": _execute(examples=_MISSING, inputs=[{"input_id": "a:b"}]),
+    "inputs_input_id_leading_dot": _execute(
+        examples=_MISSING, inputs=[{"input_id": ".x"}]
+    ),
     "id_inner_newline": _execute(examples=[{"example_id": "a\nb"}]),
     "inputs_input_id_traversal": _execute(
         examples=_MISSING, inputs=[{"input_id": "../etc"}]
@@ -157,6 +167,9 @@ EVALUATE_BAD = {
     "id_too_long": _evaluate(evaluations=[{"example_id": LONG_ID}]),
     "id_integer": _evaluate(evaluations=[{"example_id": 1}]),
     "input_id_traversal": _evaluate(evaluations=[{"input_id": "../etc"}]),
+    "id_space": _evaluate(evaluations=[{"example_id": "q 1"}]),
+    "id_colon": _evaluate(evaluations=[{"input_id": "a:b"}]),
+    "id_leading_dot": _evaluate(evaluations=[{"input_id": ".x"}]),
     "input_id_integer": _evaluate(evaluations=[{"input_id": 1}]),
 }
 
@@ -206,8 +219,6 @@ async def test_execute_boundary_values_are_accepted(app) -> None:
         examples=[
             {"example_id": "a" + "b" * 255},
             {"example_id": "A.b_c-9"},
-            {"example_id": "q 1"},
-            {"example_id": "a:b"},
             {"example_id": "a..b"},
         ],
     )
