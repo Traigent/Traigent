@@ -329,3 +329,28 @@ def test_build_payload_strict_reraises_instead_of_silent_fallback(
             configuration_space={"temperature": [0.1]},
             strict=True,
         )
+
+
+def test_set_valued_inputs_fingerprint_independent_of_iteration_order_3097() -> None:
+    first = {"input": {"tags": {"alpha", "beta", "gamma", "delta"}}, "expected": "x"}
+    second = {"input": {"tags": {"delta", "gamma", "beta", "alpha"}}, "expected": "x"}
+    assert af._canonical_json_bytes(first) == af._canonical_json_bytes(second)
+    assert af._canonical_json_bytes({"s": frozenset({3, 1, 2})}) == (
+        af._canonical_json_bytes({"s": frozenset({2, 3, 1})})
+    )
+
+
+def test_address_bearing_values_leave_fingerprint_none_3097() -> None:
+    examples = [{"input": {"obj": object()}, "expected_output": "x"}]
+    assert af.compute_dataset_fingerprint(examples) is None
+    assert af.compute_config_space_fingerprint({"k": object()}) is None
+
+
+def test_stable_inputs_keep_their_fingerprint_3097() -> None:
+    value = {"b": [1, 2.5, "s", None, True], "a": {"z": 1}}
+    expected = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    assert af._canonical_json_bytes(value) == expected
+
+
+def test_sets_serialise_as_sorted_lists_3097() -> None:
+    assert af._canonical_json_bytes({"s": {"b", "a"}}) == b'{"s":["a","b"]}'

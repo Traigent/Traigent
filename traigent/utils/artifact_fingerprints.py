@@ -29,12 +29,29 @@ _EXPECTED_OUTPUT_FIELDS = (
 )
 
 
+_MEMORY_ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]{4,}")
+
+
+def _canonical_default(value: Any) -> Any:
+    """Stable JSON form for values ``json`` cannot encode, else ``TypeError``.
+
+    Sets become sorted lists; other values use ``str`` only when it carries no
+    memory address (so it is the same in every process).
+    """
+    if isinstance(value, (set, frozenset)):
+        return sorted(value, key=_canonical_json_bytes)
+    text = str(value)
+    if _MEMORY_ADDRESS_RE.search(text):
+        raise TypeError("value has no process-stable canonical form")
+    return text
+
+
 def _canonical_json_bytes(value: Any) -> bytes:
     return json.dumps(
         value,
         sort_keys=True,
         separators=(",", ":"),
-        default=str,
+        default=_canonical_default,
     ).encode("utf-8")
 
 
