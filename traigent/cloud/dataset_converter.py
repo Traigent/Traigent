@@ -604,7 +604,10 @@ class DatasetConverter:
             # The previous version hardcoded errors=[] and took error_count from
             # the backend alone, so a response of {"added": 40, "invalid": 60}
             # still read as a clean success.
-            backend_invalid = int(result.get("invalid", 0) or 0)
+            # The service nests the counts under "stats" and lists rejected rows
+            # under "row_errors"; read them at that level (#2990).
+            stats = self._upload_stats(result)
+            backend_invalid = stats["invalid"]
             errors = [
                 f"example {failure['example_index']}: {failure['error_type']}: "
                 f"{failure['error_message']}"
@@ -614,6 +617,7 @@ class DatasetConverter:
                 errors.append(
                     f"backend rejected {backend_invalid} example(s) as invalid"
                 )
+                errors.extend(self._upload_row_errors(result))
             if errors:
                 logger.error(
                     "Dataset upload completed with loss: %d local conversion "
@@ -626,8 +630,8 @@ class DatasetConverter:
                 # Not "the request returned 2xx": success means the dataset the
                 # backend now holds is the dataset that was handed over.
                 success=not errors,
-                converted_count=result.get("added", 0),
-                skipped_count=result.get("skipped", 0),
+                converted_count=stats["added"],
+                skipped_count=stats["skipped"],
                 error_count=len(conversion_errors) + backend_invalid,
                 errors=errors,
                 metadata={
@@ -647,6 +651,51 @@ class DatasetConverter:
                 errors=[str(e)],
                 metadata={},
             )
+
+    @staticmethod
+    def _upload_stats(result: dict[str, Any]) -> dict[str, int]:
+        """added/skipped/invalid from the upload reply's ``stats`` object.
+
+        A reply that carries no readable counts raises: a rejected row must never
+        read as success because the counts were looked up at the wrong level.
+        """
+        if not isinstance(result, dict):
+            raise ValueError("example upload reply is not an object")
+        stats = result.get("stats")
+        if not isinstance(stats, dict):
+            # Older/mock replies put the counts at the top level; still read
+            # them, but a reply with no counts anywhere is unreadable.
+            if not any(k in result for k in ("added", "skipped", "invalid")):
+                raise ValueError("example upload reply has no 'stats' object")
+            stats = result
+        counts: dict[str, int] = {}
+        for key in ("added", "skipped", "invalid"):
+            value = stats.get(key, 0)
+            if value is None:
+                value = 0
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"example upload reply has an invalid '{key}' count")
+            counts[key] = value
+        return counts
+
+    @staticmethod
+    def _upload_row_errors(result: dict[str, Any]) -> list[str]:
+        """Per-row rejection reasons from ``row_errors`` (row number + reason only)."""
+        rows = result.get("row_errors")
+        if not isinstance(rows, list):
+            return []
+        out: list[str] = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            row, reason = item.get("row"), item.get("reason")
+            if (
+                isinstance(row, int)
+                and not isinstance(row, bool)
+                and isinstance(reason, str)
+            ):
+                out.append(f"backend row {row}: {reason[:100]}")
+        return out
 
     # Backend Example Set to SDK Dataset Conversion
 
