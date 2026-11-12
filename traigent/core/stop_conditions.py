@@ -387,6 +387,32 @@ def validate_plateau_window(window: object) -> int:
     return value
 
 
+def _validate_finite_number(name: str, value: object) -> float:
+    """Return ``value`` as a float after rejecting bools, non-numbers and NaN/inf."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{name} must be a finite number, got {type(value).__name__}")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be a finite number")
+    return number
+
+
+def validate_plateau_epsilon(epsilon: object) -> float:
+    """Validate a configured ``plateau_epsilon`` (finite and >= 0; 0 stays 0)."""
+    number = _validate_finite_number("plateau_epsilon", epsilon)
+    if number < 0:
+        raise ValueError("plateau_epsilon must be >= 0")
+    return number
+
+
+def validate_metric_limit(limit: object) -> float:
+    """Validate a configured ``metric_limit`` (finite and > 0)."""
+    number = _validate_finite_number("metric_limit", limit)
+    if number <= 0:
+        raise ValueError("metric_limit must be a positive number")
+    return number
+
+
 @dataclass(frozen=True)
 class _MetricsOnly:
     """Minimal trial view so ``observed_metric_ranges`` can read cleaned metrics."""

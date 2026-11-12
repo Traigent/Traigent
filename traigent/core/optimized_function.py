@@ -1402,7 +1402,11 @@ class OptimizedFunction[**P, R]:
             and evaluator_definition_id.strip()
             else None
         )
-        self.effectuation = bool(effectuation)
+        if not isinstance(effectuation, bool):
+            raise TypeError(
+                f"effectuation must be a bool, got {type(effectuation).__name__}"
+            )
+        self.effectuation = effectuation
         # Coarse task hint for the service's anchor policy (see EvaluationOptions).
         self.task_type = (
             task_type.strip()
@@ -2670,6 +2674,17 @@ class OptimizedFunction[**P, R]:
         objectives, legacy_objectives = self._validate_objectives_input(
             objectives, algorithm_kwargs
         )
+
+        # An explicit empty list is an error; reject it before any TVL state is
+        # applied so a failed call leaves the function untouched.
+        _explicit_objectives = (
+            objectives if objectives is not None else legacy_objectives
+        )
+        if isinstance(_explicit_objectives, (list, tuple)) and not _explicit_objectives:
+            raise ValueError(
+                "objectives must contain at least one objective; "
+                "omit it (or pass None) to keep the configured objectives"
+            )
 
         # Process TVL options
         algorithm, max_trials, timeout, configuration_space, objectives, tvl_state = (
