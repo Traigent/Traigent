@@ -265,3 +265,51 @@ def test_block_content_is_joined_not_stringified_3151() -> None:
     )
     assert gem[0]["parts"] == [{"text": "q"}]
     assert coerce_to_gemini_format([{"role": "user", "content": blocks}]) == "Be terse"
+
+
+def test_gemini_request_splits_system_into_instruction() -> None:
+    from traigent.integrations.utils.message_coercion import coerce_to_gemini_request
+
+    system, contents = coerce_to_gemini_request(
+        [
+            {"role": "system", "content": "Be terse"},
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "yo"},
+        ]
+    )
+    assert system == "Be terse"
+    assert [c["role"] for c in contents] == ["user", "model"]
+
+
+def test_gemini_request_without_system_message() -> None:
+    from traigent.integrations.utils.message_coercion import coerce_to_gemini_request
+
+    system, contents = coerce_to_gemini_request("hello")
+    assert system is None
+    assert contents == [{"role": "user", "parts": [{"text": "hello"}]}]
+
+
+def test_gemini_request_joins_multiple_system_messages() -> None:
+    from traigent.integrations.utils.message_coercion import coerce_to_gemini_request
+
+    system, contents = coerce_to_gemini_request(
+        [
+            {"role": "system", "content": "Rule 1"},
+            {"role": "system", "content": "Rule 2"},
+            {"role": "user", "content": "hi"},
+        ]
+    )
+    assert system == "Rule 1\n\nRule 2"
+    assert all(c["role"] != "system" for c in contents)
+
+
+def test_gemini_request_handles_list_block_system_content() -> None:
+    from traigent.integrations.utils.message_coercion import coerce_to_gemini_request
+
+    system, _ = coerce_to_gemini_request(
+        [
+            {"role": "system", "content": [{"type": "text", "text": "Be terse"}]},
+            {"role": "user", "content": "hi"},
+        ]
+    )
+    assert system == "Be terse"

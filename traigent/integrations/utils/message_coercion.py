@@ -208,6 +208,9 @@ def coerce_to_gemini_format(
     For simple single-turn, returns string.
     For multi-turn, returns content list.
 
+    System messages are not valid Gemini contents; use
+    ``coerce_to_gemini_request`` to split them into ``system_instruction``.
+
     Args:
         messages: Input messages in any format.
 
@@ -238,3 +241,35 @@ def coerce_to_gemini_format(
         )
 
     return gemini_contents
+
+
+def coerce_to_gemini_request(
+    messages: str | list[str] | list[dict[str, Any]] | Any,
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Coerce messages to a Gemini request: ``(system_instruction, contents)``.
+
+    System-role messages are joined with blank lines into ``system_instruction``
+    (None when there are none); ``contents`` never contains role "system".
+
+    Args:
+        messages: Input messages in any format.
+
+    Returns:
+        Tuple of (system_instruction, contents).
+    """
+    normalized = coerce_messages(messages)
+
+    system_parts: list[str] = []
+    contents: list[dict[str, Any]] = []
+    for msg in normalized:
+        role = msg.get("role", "user")
+        text = _content_to_text(msg.get("content", ""))
+        if role == "system":
+            system_parts.append(text)
+            continue
+        if role == "assistant":
+            role = "model"
+        contents.append({"role": role, "parts": [{"text": text}]})
+
+    system_instruction = "\n\n".join(system_parts) if system_parts else None
+    return system_instruction, contents
