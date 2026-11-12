@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import sys
+import threading
 import time
 import weakref
 from collections.abc import Callable, Mapping
@@ -3755,6 +3756,7 @@ class BackendIntegratedClient:
 
 
 _backend_client: BackendIntegratedClient | None = None
+_backend_client_lock = threading.RLock()
 
 
 def get_backend_client(**kwargs) -> BackendIntegratedClient:
@@ -3766,5 +3768,7 @@ def get_backend_client(**kwargs) -> BackendIntegratedClient:
 
     global _backend_client
     if _backend_client is None:
-        _backend_client = BackendIntegratedClient(**kwargs)
+        with _backend_client_lock:
+            if _backend_client is None:
+                _backend_client = BackendIntegratedClient(**kwargs)
     return _backend_client

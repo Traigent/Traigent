@@ -866,6 +866,7 @@ class IntegrationManager:
 
 # Global integration manager instance
 _integration_manager: IntegrationManager | None = None
+_integration_manager_lock = threading.Lock()
 
 
 def get_integration_manager(
@@ -881,7 +882,9 @@ def get_integration_manager(
     """
     global _integration_manager
     if _integration_manager is None:
-        _integration_manager = IntegrationManager(config)
+        with _integration_manager_lock:
+            if _integration_manager is None:
+                _integration_manager = IntegrationManager(config)
     return _integration_manager
 
 
@@ -892,4 +895,5 @@ def set_integration_manager(manager: IntegrationManager) -> None:
         manager: IntegrationManager instance
     """
     global _integration_manager
-    _integration_manager = manager
+    with _integration_manager_lock:
+        _integration_manager = manager

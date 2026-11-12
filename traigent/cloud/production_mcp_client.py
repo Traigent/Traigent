@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, replace
@@ -1141,6 +1142,7 @@ class ProductionMCPClient:
 
 # Global production client instance
 _production_client: ProductionMCPClient | None = None
+_production_client_lock = threading.RLock()
 
 
 def get_production_mcp_client(
@@ -1161,6 +1163,14 @@ def get_production_mcp_client(
             arguments differ from its configuration (they would otherwise be
             silently ignored).
     """
+    global _production_client
+    with _production_client_lock:
+        return _get_production_mcp_client_locked(server_path, server_args, **kwargs)
+
+
+def _get_production_mcp_client_locked(
+    server_path: str | None, server_args: list[str] | None, **kwargs
+) -> ProductionMCPClient:
     global _production_client
 
     if _production_client is not None:
@@ -1206,4 +1216,5 @@ def set_production_mcp_client(client: ProductionMCPClient) -> None:
         client: ProductionMCPClient instance
     """
     global _production_client
-    _production_client = client
+    with _production_client_lock:
+        _production_client = client

@@ -1482,6 +1482,7 @@ class CostTracker:
 
 # Global cost tracker instance
 _cost_tracker: CostTracker | None = None
+_cost_tracker_lock = threading.Lock()
 
 
 def get_cost_tracker(config: CostTrackingConfig | None = None) -> CostTracker:
@@ -1495,7 +1496,9 @@ def get_cost_tracker(config: CostTrackingConfig | None = None) -> CostTracker:
     """
     global _cost_tracker
     if _cost_tracker is None:
-        _cost_tracker = CostTracker(config)
+        with _cost_tracker_lock:
+            if _cost_tracker is None:
+                _cost_tracker = CostTracker(config)
     return _cost_tracker
 
 
@@ -1506,4 +1509,5 @@ def set_cost_tracker(tracker: CostTracker) -> None:
         tracker: CostTracker instance
     """
     global _cost_tracker
-    _cost_tracker = tracker
+    with _cost_tracker_lock:
+        _cost_tracker = tracker

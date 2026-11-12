@@ -10,7 +10,7 @@ import importlib.util
 import threading
 import time
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -409,6 +409,9 @@ def capture_owner(owner: int) -> Iterator[None]:
 
 # Cap on the per-thread "last response" stack (see set_last_response).
 _MAX_THREAD_LOCAL_RESPONSES = 64
+# Cap on the process-global fallback list/dict used outside any capture scope.
+# Oldest entries are dropped so a long-lived process cannot grow without bound.
+_MAX_GLOBAL_RESPONSES = 10_000
 
 
 def _capture_response_in_bucket(
@@ -449,6 +452,9 @@ class LangChainMetadataCapture:
         self._lock = threading.Lock()
         # Keep all responses in order
         self._all_responses: list[Any] = []
+        # True once the global list dropped responses; spend read from it is
+        # then only a floor. Reset whenever the list is cleared/drained.
+        self._overflowed = False
         self._response_lock = threading.Lock()
         # Map correlation keys (e.g., example_id) to responses
         self._by_key: dict[str, Any] = {}
@@ -484,10 +490,17 @@ class LangChainMetadataCapture:
 
         with self._response_lock:
             self._all_responses.append(response)
+            overflow = len(self._all_responses) - _MAX_GLOBAL_RESPONSES
+            if overflow > 0:
+                del self._all_responses[:overflow]
+                self._overflowed = True
 
         if key is not None:
             with self._by_key_lock:
+                self._by_key.pop(key, None)
                 self._by_key[key] = response
+                while len(self._by_key) > _MAX_GLOBAL_RESPONSES:
+                    del self._by_key[next(iter(self._by_key))]
 
     def get_last_response(self) -> Any | None:
         """Get and clear the last LangChain response."""
@@ -552,6 +565,7 @@ class LangChainMetadataCapture:
         with self._response_lock:
             responses = self._all_responses.copy()
             self._all_responses.clear()
+            self._overflowed = False
         return responses, None, None
 
     def snapshot(
@@ -589,6 +603,7 @@ class LangChainMetadataCapture:
         else:
             with self._response_lock:
                 self._all_responses.clear()
+                self._overflowed = False
             with self._by_key_lock:
                 self._by_key.clear()
 
@@ -600,6 +615,19 @@ class LangChainMetadataCapture:
 
     def clear_current_key(self) -> None:
         _current_key.set(None)
+
+    def _snapshot_with_status(self) -> tuple[list[Any], bool]:
+        """Responses and the "global list dropped some" flag, under ONE lock.
+
+        Inside a capture scope the scoped bucket is never capped, so the flag
+        is False there.
+        """
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                return bucket.responses.copy(), False
+        with self._response_lock:
+            return self._all_responses.copy(), self._overflowed
 
     def get_by_key(self, key: Any) -> Any:
         # Example ids are not unique ACROSS trials -- every trial evaluates the
@@ -675,6 +703,21 @@ def get_captured_response() -> Any | None:
 def get_all_captured_responses() -> list[Any]:
     """Get all captured responses for batch processing."""
     return _metadata_capture.get_all_responses()
+
+
+def _read_captured_responses(
+    getter: Callable[[], list[Any]],
+) -> tuple[list[Any], bool]:
+    """Internal: ``(responses, incomplete)`` read atomically for the cost readers.
+
+    ``incomplete`` is True when the capped global fallback dropped responses,
+    so spend computed from them is only a floor. The stock getter is read
+    together with the flag under the capture lock; an injected getter (a test
+    or custom seam) is called as-is and cannot report a drop.
+    """
+    if getter is get_all_captured_responses:
+        return _metadata_capture._snapshot_with_status()
+    return getter(), False
 
 
 def get_captured_response_by_key(key: Any) -> Any | None:

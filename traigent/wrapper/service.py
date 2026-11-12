@@ -151,6 +151,12 @@ class ServiceConfig:
     estimated_tokens_per_example: EstimatedTokensPerExample | None = None
 
 
+# Bounds on the keep-alive session table (#3128).
+MAX_SESSION_ID_LENGTH = 256
+MAX_SESSIONS = 10_000
+SESSION_TTL_SECONDS = 3600.0
+
+
 @dataclass
 class Session:
     """Active session state.
@@ -1219,7 +1225,7 @@ class TraigentService:
         tunable_id = request.get("tunable_id", self.config.tunable_id)
         config = request.get("config", {})
         input_field, examples = self._select_execute_inputs(request)
-        session_id = request.get("session_id")
+        session_id = self._valid_session_id_or_none(request.get("session_id"))
 
         TraigentService._validate_execute_batch(self, examples, tunable_id, input_field)
 
@@ -1408,7 +1414,7 @@ class TraigentService:
         evaluations = request.get("evaluations", [])
         raw_kwargs = request.get("kwargs")
         raw_config_alias = request.get("config")
-        session_id = request.get("session_id")
+        session_id = self._valid_session_id_or_none(request.get("session_id"))
 
         TraigentService._validate_evaluation_batch(self, evaluations, tunable_id)
 
@@ -1547,21 +1553,49 @@ class TraigentService:
 
         return self._touch_or_create_session(session_id)
 
+    @staticmethod
+    def _is_valid_session_id(session_id: Any) -> bool:
+        """A non-empty string within the contract's length limit."""
+        return (
+            isinstance(session_id, str) and 0 < len(session_id) <= MAX_SESSION_ID_LENGTH
+        )
+
+    @staticmethod
+    def _valid_session_id_or_none(session_id: Any) -> str | None:
+        """An invalid session id is treated as absent: never echoed or cached."""
+        return session_id if TraigentService._is_valid_session_id(session_id) else None
+
     def _touch_or_create_session(self, session_id: str) -> bool:
         """Touch an existing session or create it when keep-alive is enabled."""
-        if not session_id:
+        if not self._is_valid_session_id(session_id):
             return False
 
         session = self._sessions.get(session_id)
         if session is not None:
-            session.touch()
-            return True
+            if time.time() - session.last_activity > SESSION_TTL_SECONDS:
+                # Expired: evict, then treat as absent rather than reviving it.
+                self._sessions.pop(session_id, None)
+            else:
+                session.touch()
+                return True
 
         if not self.config.supports_keep_alive:
             return False
 
-        self._sessions[session_id] = Session(session_id=session_id)
+        self._add_session(session_id)
         return True
+
+    def _add_session(self, session_id: str) -> None:
+        """Insert a session, evicting expired then least-recently-active ones."""
+        sessions = self._sessions
+        if len(sessions) >= MAX_SESSIONS:
+            cutoff = time.time() - SESSION_TTL_SECONDS
+            for sid in [k for k, v in sessions.items() if v.last_activity < cutoff]:
+                sessions.pop(sid, None)
+        while len(sessions) >= MAX_SESSIONS:
+            oldest = min(sessions, key=lambda k: sessions[k].last_activity)
+            sessions.pop(oldest, None)
+        sessions[session_id] = Session(session_id=session_id)
 
     def create_session(self, session_id: str | None = None) -> str:
         """Create a new session.
@@ -1570,7 +1604,11 @@ class TraigentService:
             New session ID.
         """
         session_id = session_id or str(uuid.uuid4())
-        self._sessions[session_id] = Session(session_id=session_id)
+        if not self._is_valid_session_id(session_id):
+            raise ValueError(
+                f"session_id must be a string of 1-{MAX_SESSION_ID_LENGTH} characters"
+            )
+        self._add_session(session_id)
         return session_id
 
     def run(

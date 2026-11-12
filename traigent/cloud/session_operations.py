@@ -9,6 +9,7 @@ operations for both privacy-preserving and cloud-based optimization.
 import asyncio
 import concurrent.futures
 import inspect
+import threading
 import time
 import uuid
 from collections.abc import Coroutine
@@ -68,13 +69,16 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 _SESSION_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+_SESSION_EXECUTOR_LOCK = threading.Lock()
 
 
 def _get_session_executor() -> concurrent.futures.ThreadPoolExecutor:
     """Return a shared executor for running async work from sync contexts."""
     global _SESSION_EXECUTOR
     if _SESSION_EXECUTOR is None:
-        _SESSION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        with _SESSION_EXECUTOR_LOCK:
+            if _SESSION_EXECUTOR is None:
+                _SESSION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     return _SESSION_EXECUTOR
 
 

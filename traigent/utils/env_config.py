@@ -275,6 +275,7 @@ logger = get_logger(__name__)
 
 # Cache generated development secrets so repeated calls stay consistent per process.
 _GENERATED_DEV_JWT_SECRET: str | None = None
+_GENERATED_DEV_JWT_SECRET_LOCK = threading.Lock()
 
 if TYPE_CHECKING:
     from traigent.config.types import TraigentConfig
@@ -564,8 +565,12 @@ def get_jwt_secret() -> str:
         if override:
             return override
         global _GENERATED_DEV_JWT_SECRET
-        if _GENERATED_DEV_JWT_SECRET is None:
-            _GENERATED_DEV_JWT_SECRET = secrets.token_urlsafe(48)
+        with _GENERATED_DEV_JWT_SECRET_LOCK:
+            first_use = _GENERATED_DEV_JWT_SECRET is None
+            if first_use:
+                _GENERATED_DEV_JWT_SECRET = secrets.token_urlsafe(48)
+            generated_secret: str = _GENERATED_DEV_JWT_SECRET  # type: ignore[assignment]
+        if first_use:
             warnings.warn(
                 "JWT_SECRET_KEY not set. Generated a temporary development secret. "
                 "Set TRAIGENT_DEV_JWT_SECRET or JWT_SECRET_KEY for stable behavior.",
@@ -576,7 +581,7 @@ def get_jwt_secret() -> str:
                 "Generated ephemeral JWT secret for development use; configure "
                 "TRAIGENT_DEV_JWT_SECRET for stability."
             )
-        return _GENERATED_DEV_JWT_SECRET
+        return generated_secret
 
     raise ValueError(
         "JWT_SECRET_KEY must be set when ENVIRONMENT is production. "
