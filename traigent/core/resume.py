@@ -83,6 +83,10 @@ def load_resume_source(
 ) -> OptimizationResult:
     """Return the prior result named by ``resume_from``.
 
+    A bare name is looked up under the default results folder; a path that is
+    absolute, has several parts, starts with ``./`` or ``../``, or starts with
+    ``~`` is resolved against the current directory (``~`` is expanded).
+
     Accepts an ``OptimizationResult`` or a saved-result handle: a name (under
     ``.traigent``) or a directory path returned by
     ``PersistenceManager.save_result``. Raises ``TypeError`` for any other type
@@ -99,11 +103,25 @@ def load_resume_source(
         )
     from traigent.utils.persistence import PersistenceManager
 
-    raw = Path(os.fspath(resume_from))
+    raw_text = os.fspath(resume_from)
+    if isinstance(raw_text, bytes):
+        raw_text = os.fsdecode(raw_text)
+    explicit_relative = raw_text.startswith(("./", "../", "~"))
+    raw = Path(raw_text)
+    if raw_text.startswith("~"):
+        try:
+            raw = raw.expanduser()
+        except RuntimeError:
+            raise ValueError("resume_from does not name a saved result") from None
+        if not raw.is_absolute():
+            raise ValueError("resume_from does not name a saved result")
     if raw.name in ("", ".", "..") or "\x00" in str(raw):
         raise ValueError("resume_from does not name a saved result")
-    if raw.is_absolute() or len(raw.parts) > 1:
-        manager = PersistenceManager(base_dir=raw.parent)
+    if raw.is_absolute() or len(raw.parts) > 1 or explicit_relative:
+        # Explicit paths (absolute, multi-part, ``./``/``../``-prefixed or
+        # ``~``-expanded) resolve against the cwd; bare names are looked up
+        # under the default results folder.
+        manager = PersistenceManager(base_dir=Path(os.path.abspath(raw.parent)))
     else:
         manager = PersistenceManager()
     try:
@@ -118,7 +136,11 @@ def load_resume_source(
             "allow_unverified_resume=True (unsafe)."
         ) from None
     except FileNotFoundError:
-        raise ValueError("resume_from: saved result not found") from None
+        raise ValueError(
+            "resume_from: saved result not found (bare names are looked up "
+            "under the default results folder; use ./name for the current "
+            "directory)"
+        ) from None
     except ValueError:
         raise ValueError(
             "resume_from: saved result is corrupted or failed integrity "
