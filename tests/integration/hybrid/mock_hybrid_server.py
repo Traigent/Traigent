@@ -173,7 +173,7 @@ class MockHybridServer:
         ):
             return {
                 "request_id": request_id,
-                "execution_id": "",
+                "execution_id": f"exec_failed_{self.execute_call_count}",
                 "status": "failed",
                 "outputs": [],
                 "operational_metrics": {},

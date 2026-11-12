@@ -118,11 +118,10 @@ class HybridExecuteResponse:
     def from_dict(cls, data: dict[str, Any]) -> HybridExecuteResponse:
         """Create from dictionary (API response)."""
         execution_id = data.get("execution_id")
-        if execution_id is None:
-            execution_id = str(uuid.uuid4())
-            logger.warning(
-                "ExecuteResponse missing required execution_id; generated fallback %s",
-                execution_id,
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError(
+                "ExecuteResponse is missing a valid execution_id (required "
+                "by the Hybrid Mode API contract); refusing to fabricate one"
             )
         return cls(
             request_id=data["request_id"],

@@ -1,5 +1,7 @@
 """Unit tests for hybrid mode protocol DTOs."""
 
+import pytest
+
 from traigent.hybrid.protocol import (
     BatchOptions,
     ConfigSpaceResponse,
@@ -546,23 +548,34 @@ class TestHealthCheckResponse:
 
 
 class TestExecuteResponseMissingExecutionId:
-    """Test HybridExecuteResponse fallback when execution_id is missing."""
+    """A missing or invalid execution_id fails closed; no id is fabricated."""
 
-    def test_missing_execution_id_generates_fallback(self) -> None:
-        """Missing execution_id should generate a UUID fallback."""
+    @staticmethod
+    def _data(**extra: object) -> dict:
         data = {
             "request_id": "req_abc",
             "status": "completed",
             "outputs": [],
             "operational_metrics": {},
         }
+        data.update(extra)
+        return data
 
-        response = HybridExecuteResponse.from_dict(data)
+    @pytest.mark.parametrize("bad", [None, "", "   ", 123, {}])
+    def test_missing_or_invalid_execution_id_raises(self, bad: object) -> None:
+        data = self._data()
+        if bad is not None:
+            data["execution_id"] = bad
+        with pytest.raises(ValueError, match="execution_id"):
+            HybridExecuteResponse.from_dict(data)
 
-        assert response.request_id == "req_abc"
-        # execution_id should be a generated UUID string
-        assert response.execution_id is not None
-        assert len(response.execution_id) == 36  # UUID format
+    def test_absent_key_raises(self) -> None:
+        with pytest.raises(ValueError, match="execution_id"):
+            HybridExecuteResponse.from_dict(self._data())
+
+    def test_valid_execution_id_preserved(self) -> None:
+        response = HybridExecuteResponse.from_dict(self._data(execution_id="exec_1"))
+        assert response.execution_id == "exec_1"
 
 
 class TestEvaluateResponseExecutionId:
