@@ -618,6 +618,13 @@ class DatasetConverter:
                     f"backend rejected {backend_invalid} example(s) as invalid"
                 )
                 errors.extend(self._upload_row_errors(result))
+            if stats["skipped"]:
+                # Skipped duplicates can be legitimate, so this stays a success,
+                # but the count must be visible (count only, no row content).
+                logger.warning(
+                    "Dataset upload skipped %d example(s) as duplicates",
+                    stats["skipped"],
+                )
             if errors:
                 logger.error(
                     "Dataset upload completed with loss: %d local conversion "
@@ -638,6 +645,7 @@ class DatasetConverter:
                     "example_set_id": example_set_id,
                     "backend_response": result,
                     "local_conversion_errors": conversion_errors,
+                    "skipped_duplicates": stats["skipped"],
                 },
             )
 

@@ -81,3 +81,17 @@ async def test_unreadable_reply_is_never_success(monkeypatch, reply):
 
     assert result.success is False
     assert result.errors
+
+
+@pytest.mark.asyncio
+async def test_skipped_duplicates_stay_success_but_are_visible(monkeypatch, caplog):
+    caplog.set_level("WARNING", logger="traigent.cloud.dataset_converter")
+    result = await _run(
+        monkeypatch, {"stats": {"added": 5, "invalid": 0, "skipped": 1}}
+    )
+
+    assert result.success is True
+    assert result.skipped_count == 1
+    assert result.metadata["skipped_duplicates"] == 1
+    warnings = [r for r in caplog.records if "skipped 1 example" in r.getMessage()]
+    assert len(warnings) == 1

@@ -17,7 +17,7 @@ import pytest
 from traigent.cloud import resilient_client as rc
 from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.cloud.client import CloudServiceError
-from traigent.utils.exceptions import RateLimitError
+from traigent.utils.exceptions import RateLimitError, RetryableError
 from traigent.utils.retry_after import MAX_RETRY_AFTER_SECONDS
 
 # Opt into the connected code paths (see pyproject markers).
@@ -230,3 +230,21 @@ def test_finalize_403_stops_the_loop_through_manager():
     assert posts == 1
     assert sleeps == []
     assert isinstance(outcome, CloudServiceError)
+
+
+def test_finalize_503_retry_after_is_honoured_through_manager():
+    outcome, posts, sleeps = _finalize(503, {"Retry-After": "9"})
+
+    assert posts == 3
+    assert sleeps == [9.0, 9.0]
+    assert isinstance(outcome, RetryableError)
+
+
+def test_finalize_503_above_ceiling_stops_without_retry():
+    outcome, posts, sleeps = _finalize(
+        503, {"Retry-After": str(int(MAX_RETRY_AFTER_SECONDS) + 5)}
+    )
+
+    assert posts == 1
+    assert sleeps == []
+    assert isinstance(outcome, RetryableError)

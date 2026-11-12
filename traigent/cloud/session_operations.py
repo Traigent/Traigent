@@ -50,7 +50,7 @@ from traigent.core.session_types import safe_http_error_summary
 from traigent.labels.transport_gate import client_origins, gate_session, mark_explicit
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
-from traigent.utils.exceptions import RateLimitError
+from traigent.utils.exceptions import RateLimitError, RetryableError
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.retry_after import retry_after_from_headers
@@ -1553,7 +1553,7 @@ class SessionOperations:
                     optimization_outcome=optimization_outcome,
                     stop_reason=stop_reason,
                 )
-            except (CloudServiceError, EndpointNotConfiguredError, RateLimitError):
+            except (CloudServiceError, EndpointNotConfiguredError, RetryableError):
                 raise
             except Exception as e:
                 logger.debug(f"Backend finalization API not available: {e}")
@@ -2010,13 +2010,23 @@ class SessionOperations:
                             "Backend finalize rate limited (HTTP 429)",
                             retry_after=retry_after_from_headers(response.headers),
                         )
+                    elif (
+                        response.status >= 500
+                        and retry_after_from_headers(response.headers) is not None
+                    ):
+                        await response.text()
+                        # A 5xx that names its wait is transient: carry it (#3011).
+                        raise RetryableError(
+                            f"Backend finalize unavailable (HTTP {response.status})",
+                            retry_after=retry_after_from_headers(response.headers),
+                        )
                     else:
                         error_text = await response.text()
                         logger.debug(
                             f"Backend finalization endpoint returned {safe_http_error_summary(response.status, error_text)}"
                         )
                         return None
-        except (CloudServiceError, RateLimitError):
+        except (CloudServiceError, RetryableError):
             # Ownership (403) / auth (401) failures must reach the caller's
             # explicit rethrow; they are not "endpoint unavailable" (#2510).
             # A 429 carries its Retry-After to the caller (#3011).
@@ -2227,7 +2237,7 @@ class SessionOperations:
             else:
                 # No async context, run directly
                 return _run_in_new_loop()
-        except (CloudServiceError, RateLimitError):
+        except (CloudServiceError, RetryableError):
             # 401/403 and 429 are definitive answers, not "no response": let the
             # caller stop (auth/ownership) or honour Retry-After (#3011).
             raise
