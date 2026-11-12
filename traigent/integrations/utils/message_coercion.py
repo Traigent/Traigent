@@ -6,6 +6,7 @@ into the standard role/content dict format used by most LLM APIs.
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
 
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -208,6 +209,9 @@ def coerce_to_gemini_format(
     For simple single-turn, returns string.
     For multi-turn, returns content list.
 
+    System messages are not valid Gemini contents; use
+    ``coerce_to_gemini_request`` to split them into ``system_instruction``.
+
     Args:
         messages: Input messages in any format.
 
@@ -215,6 +219,15 @@ def coerce_to_gemini_format(
         String for single message, or content list for multi-turn.
     """
     normalized = coerce_messages(messages)
+
+    if any(msg.get("role") in ("system", "developer") for msg in normalized):
+        warnings.warn(
+            "coerce_to_gemini_format keeps the system role in contents, which "
+            "Gemini rejects; use coerce_to_gemini_request to get a "
+            "system_instruction.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     if len(normalized) == 1 and normalized[0].get("role") == "user":
         # Single user message -> return just the content string
@@ -238,3 +251,51 @@ def coerce_to_gemini_format(
         )
 
     return gemini_contents
+
+
+def coerce_to_gemini_request(
+    messages: str | list[str] | list[dict[str, Any]] | Any,
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Coerce messages to a Gemini request: ``(system_instruction, contents)``.
+
+    System-role messages are joined with blank lines into ``system_instruction``
+    (None when there are none); ``contents`` never contains role "system".
+    The "developer" role is treated like "system".
+
+    Raises:
+        ValueError: for any other role than user, assistant/model, system or
+            developer (the message names the role only, never the content),
+            or when there is no user or model message (Gemini rejects empty
+            contents).
+
+    Args:
+        messages: Input messages in any format.
+
+    Returns:
+        Tuple of (system_instruction, contents).
+    """
+    normalized = coerce_messages(messages)
+
+    system_parts: list[str] = []
+    contents: list[dict[str, Any]] = []
+    for msg in normalized:
+        role = msg.get("role", "user")
+        text = _content_to_text(msg.get("content", ""))
+        if role in ("system", "developer"):
+            system_parts.append(text)
+            continue
+        if role == "assistant":
+            role = "model"
+        if role not in ("user", "model"):
+            raise ValueError(
+                f"coerce_to_gemini_request: unsupported message role {role!r}"
+            )
+        contents.append({"role": role, "parts": [{"text": text}]})
+
+    if not contents:
+        raise ValueError(
+            "coerce_to_gemini_request: at least one user or model message is required"
+        )
+
+    system_instruction = "\n\n".join(system_parts) if system_parts else None
+    return system_instruction, contents

@@ -8,6 +8,7 @@ from traigent.integrations.utils.message_coercion import (
     coerce_messages,
     coerce_to_anthropic_format,
     coerce_to_gemini_format,
+    coerce_to_gemini_request,
     coerce_to_openai_format,
 )
 from traigent.integrations.utils.mock_adapter import MockAdapter, MockResponse
@@ -35,6 +36,7 @@ __all__ = [
     "coerce_to_openai_format",
     "coerce_to_anthropic_format",
     "coerce_to_gemini_format",
+    "coerce_to_gemini_request",
     # Response wrapper
     "LLMResponse",
     "extract_response_metadata",
