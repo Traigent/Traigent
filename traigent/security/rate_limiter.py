@@ -9,6 +9,7 @@ generation and distributed coordination support.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import logging
 import os
 import secrets
@@ -241,6 +242,13 @@ class SecureRateLimiter:
         self.config = config
         self.attempts: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=1000))
         self.lockouts: dict[str, float] = {}
+        # Bounded idle eviction: at most one sweep per interval, each
+        # examining at most ``_evict_batch`` entries, plus a hard cap.
+        self._evict_interval = 60.0
+        self._evict_batch = 256
+        self._max_identifiers = 10_000
+        self._last_evict = 0.0
+        self._evict_scanned = 0  # entries examined so far (observability/tests)
         self.token_buckets: dict[str, SecureTokenBucket] = {}
         self._lock = Lock()
 
@@ -566,19 +574,49 @@ class SecureRateLimiter:
                     self.attempts[ident].append(now)
 
     def _evict_idle(self, now: float) -> None:
-        """Drop identifiers whose windows expired and that hold no lockout.
+        """Bounded eviction of idle identifiers; never drops an active lockout.
 
-        Caller must hold ``self._lock``. Active lockouts are always kept.
+        Caller must hold ``self._lock``. Work per call is at most
+        ``_evict_batch`` examined entries per table, and the sweep runs at
+        most once per ``_evict_interval`` unless the table exceeds
+        ``_max_identifiers``. Examined survivors are moved to the end of the
+        (insertion-ordered) dict so successive sweeps rotate through all
+        entries.
         """
-        for ident, until in list(self.lockouts.items()):
-            if until <= now:
-                del self.lockouts[ident]
+        over_cap = (
+            len(self.attempts) > self._max_identifiers
+            or len(self.lockouts) > self._max_identifiers
+        )
+        if not over_cap and now - self._last_evict < self._evict_interval:
+            return
+        self._last_evict = now
+        batch = self._evict_batch
+
+        for ident in list(itertools.islice(self.lockouts, batch)):
+            self._evict_scanned += 1
+            until = self.lockouts.pop(ident)
+            if until > now:
+                self.lockouts[ident] = until  # active: keep, rotate to end
+
         window_start = now - self.config.window_seconds
-        for ident, attempts in list(self.attempts.items()):
-            if ident in self.lockouts:
-                continue
-            if not attempts or attempts[-1] < window_start:
+        for ident in list(itertools.islice(self.attempts, batch)):
+            self._evict_scanned += 1
+            attempts = self.attempts.pop(ident)
+            if ident in self.lockouts or (attempts and attempts[-1] >= window_start):
+                self.attempts[ident] = attempts  # still relevant: rotate
+
+        # Hard cap: if still over, drop the oldest non-locked entries (bounded).
+        excess = len(self.attempts) - self._max_identifiers
+        if excess > 0:
+            for ident in list(itertools.islice(self.attempts, batch + excess)):
+                if excess <= 0 or batch <= 0:
+                    break
+                self._evict_scanned += 1
+                if ident in self.lockouts:
+                    continue
                 del self.attempts[ident]
+                excess -= 1
+                batch -= 1
 
     def get_progressive_delay(self, identifier: str) -> float:
         """Get progressive delay with security limits."""

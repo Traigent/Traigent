@@ -1703,8 +1703,11 @@ class TestAuthLimiterRecordsUnderCheckedIdentifiers:
                 limiter.record_auth_result(
                     success=False, ip_address="198.51.100.5", username=f"rot{i}"
                 )
-            fake_time.return_value = 2000.0
-            inner.check_rate_limit(ip_address="198.51.100.5", username="fresh")
+            # Sweeps are rate limited and batch-bounded, so idle state drains
+            # over several intervals rather than in one pass.
+            for step in range(1, 6):
+                fake_time.return_value = 2000.0 + step * inner._evict_interval
+                inner.check_rate_limit(ip_address="198.51.100.5", username="fresh")
             limiter.record_auth_result(
                 success=False, ip_address="198.51.100.5", username="fresh"
             )
@@ -1726,3 +1729,50 @@ class TestAuthLimiterRecordsUnderCheckedIdentifiers:
                 ip_address="198.51.100.6", username="locked"
             )
         assert second.allowed is False
+
+    def test_eviction_work_per_check_is_bounded(self) -> None:
+        """10k identifiers must not make each check scan them all."""
+        limiter = SecureAuthenticationRateLimiter()
+        inner = limiter.limiter
+        with patch("traigent.security.rate_limiter.time.time") as fake_time:
+            fake_time.return_value = 1000.0
+            for i in range(10_000):
+                inner.attempts[f"id{i}"].append(1000.0)
+            worst = 0
+            for k in range(50):
+                before = inner._evict_scanned
+                inner.check_rate_limit(ip_address="198.51.100.7", username=f"n{k}")
+                worst = max(worst, inner._evict_scanned - before)
+        # Per-check work is capped by the batch size, not by the 10k entries.
+        assert worst <= 3 * inner._evict_batch
+        assert worst < 10_000 // 4
+
+    def test_hard_cap_bounds_state_under_rotation(self) -> None:
+        limiter = SecureAuthenticationRateLimiter()
+        inner = limiter.limiter
+        inner._max_identifiers = 500
+        with patch("traigent.security.rate_limiter.time.time") as fake_time:
+            fake_time.return_value = 1000.0
+            for i in range(3000):
+                fake_time.return_value = 1000.0 + i * 0.001
+                limiter.record_auth_result(
+                    success=False, ip_address="198.51.100.8", username=f"r{i}"
+                )
+            # Everything is still inside the window, so only the cap bounds it
+            assert len(inner.attempts) <= 500 + 4 + 2 * inner._evict_batch
+
+    def test_active_lockout_survives_bounded_sweeps(self) -> None:
+        limiter = SecureAuthenticationRateLimiter()
+        inner = limiter.limiter
+        inner._evict_batch = 4
+        with patch("traigent.security.rate_limiter.time.time") as fake_time:
+            fake_time.return_value = 1000.0
+            inner.lockouts["locked"] = 1000.0 + 100_000
+            inner.attempts["locked"].append(1000.0)
+            for i in range(50):
+                inner.attempts[f"idle{i}"]  # empty bucket
+            for step in range(1, 40):
+                fake_time.return_value = 1000.0 + step * 100
+                inner.check_rate_limit(ip_address="198.51.100.9")
+        assert "locked" in inner.lockouts
+        assert "locked" in inner.attempts
