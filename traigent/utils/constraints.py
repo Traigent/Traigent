@@ -656,8 +656,10 @@ def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstr
             or max_tokens <= 0
             or int(max_tokens) != max_tokens
         ):
+            # Type only: the value is caller-supplied and may carry content.
             logger.warning(
-                "Invalid max_tokens %r - failing cost constraint", max_tokens
+                "Invalid max_tokens (%s) - failing cost constraint",
+                type(max_tokens).__name__,
             )
             return float("inf")
         max_tokens = int(max_tokens)

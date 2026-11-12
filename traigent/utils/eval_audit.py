@@ -105,7 +105,12 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from traigent.utils.outcome_matrix import _FAIL, _PASS, _classify_cell
+from traigent.utils.outcome_matrix import (
+    _FAIL,
+    _PASS,
+    _classify_cell,
+    _validate_threshold,
+)
 
 if TYPE_CHECKING:
     from traigent.api.types import (
@@ -309,7 +314,11 @@ def cell_is_correct(cell: dict[str, Any], threshold: float) -> bool | None:
     ``threshold``. A non-finite score, or ``success=True`` with no usable score,
     is indeterminable (``None``). Shares its classifier with the failing-example
     selection (:func:`traigent.utils.outcome_matrix._classify_cell`).
+
+    Raises:
+        ValueError: If ``threshold`` is not a finite number.
     """
+    threshold = _validate_threshold(threshold)
     verdict = _classify_cell(cell, threshold)
     if verdict == _PASS:
         return True

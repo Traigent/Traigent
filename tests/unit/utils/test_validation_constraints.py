@@ -984,6 +984,18 @@ class TestConvenienceConstraints:
         assert small == pytest.approx(large, rel=1e-9)
         assert constraint.validate({"model": "gpt-4o-mini", "max_tokens": 100000})
 
+    def test_invalid_max_tokens_value_is_not_logged(self, caplog):
+        """The caller-supplied value must not reach the log."""
+        marker = "customer-content-marker-xyz"
+        constraint = model_cost_constraint()
+        with caplog.at_level("DEBUG"):
+            cost = constraint.resource_calculator(
+                {"model": "gpt-4o-mini", "max_tokens": marker}
+            )
+        assert cost == float("inf")
+        assert marker not in caplog.text
+        assert "Invalid max_tokens" in caplog.text
+
     @pytest.mark.parametrize(
         "bad", [0, -5, 12.5, float("nan"), float("inf"), True, None, "1000"]
     )

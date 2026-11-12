@@ -605,3 +605,14 @@ class TestCellClassifierAgreement:
         from traigent.utils.eval_audit import cell_is_correct
 
         assert cell_is_correct({"success": True}, 0.5) is None
+
+
+class TestCellThresholdValidation:
+    @pytest.mark.parametrize(
+        "bad", [float("nan"), float("inf"), float("-inf"), "0.5", None, True]
+    )
+    def test_non_finite_or_non_numeric_threshold_raises(self, bad):
+        from traigent.utils.eval_audit import cell_is_correct
+
+        with pytest.raises(ValueError, match="threshold"):
+            cell_is_correct({"score": 0.9}, bad)
