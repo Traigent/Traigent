@@ -356,9 +356,7 @@ def test_stable_inputs_keep_their_fingerprint_3097() -> None:
 
 
 def test_sets_are_tagged_and_distinct_from_lists_3097() -> None:
-    assert (
-        af._canonical_json_bytes({"s": {"b", "a"}}) == b'{"s":{"__set__":["a","b"]}}'
-    )
+    assert af._canonical_json_bytes({"s": {"b", "a"}}) == b'{"s":{"__set__":["a","b"]}}'
     assert af._canonical_json_bytes({"s": {"a", "b"}}) != af._canonical_json_bytes(
         {"s": ["a", "b"]}
     )
