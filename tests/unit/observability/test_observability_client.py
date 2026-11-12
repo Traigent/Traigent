@@ -6807,3 +6807,68 @@ class TestLegacyPrivacyModeEnvParity:
         assert resolve_client_content_mode("record") == ("metadata", True)
         monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", "true")
         assert resolve_client_content_mode("record") == ("record", True)
+
+
+def _rejection_transport(sender):
+    return _SyncBatchTransport(
+        sender=sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=50,
+        max_batch_bytes=1_000_000,
+    )
+
+
+def test_permanently_rejected_trace_is_dropped_and_later_traces_flow_2991(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr(retry_module.time, "sleep", lambda _s: None)
+    delivered: list[str] = []
+    marker = "CONTENT-MARKER-2991"
+    requests: list[int] = []
+
+    def sender(traces):
+        requests.append(len(traces))
+        if any(marker in json.dumps(t) for t in traces):
+            raise ClientError("too large", status_code=413)
+        delivered.extend(t["id"] for t in traces)
+
+    transport = _rejection_transport(sender)
+    for i in range(5):
+        payload = {"id": f"t{i}", "name": "n"}
+        if i == 2:
+            payload["metadata"] = {"blob": marker}
+        transport.submit(f"t{i}", payload)
+    with caplog.at_level(logging.WARNING):
+        result = transport.flush()
+    transport.submit("later", {"id": "later", "name": "n"})
+    later = transport.flush()
+    stats = transport.get_stats()
+    transport.close()
+
+    assert sorted(delivered) == ["later", "t0", "t1", "t3", "t4"]
+    assert result.failed_batches == 0
+    assert later.items_pending == 0
+    assert stats["queue_depth"] == 0
+    assert stats["dropped_items"] == 1
+    assert stats["dropped_by_reason"] == {"permanent_rejection": 1}
+    assert marker not in caplog.text
+    assert marker not in " ".join(stats["errors"] + stats["warnings"])
+    assert len(requests) <= 2 * 5  # bounded isolation cost
+
+
+def test_transient_failure_is_still_retained_2991(monkeypatch):
+    monkeypatch.setattr(retry_module.time, "sleep", lambda _s: None)
+
+    def sender(traces):
+        raise ClientError("busy", status_code=503)
+
+    transport = _rejection_transport(sender)
+    transport.submit("t", {"id": "t", "name": "n"})
+    result = transport.flush()
+    stats = transport.get_stats()
+    transport.close()
+
+    assert result.failed_batches >= 1
+    assert stats["queue_depth"] == 1
+    assert "permanent_rejection" not in stats["dropped_by_reason"]

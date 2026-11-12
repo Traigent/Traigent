@@ -66,6 +66,7 @@ from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
     ContentDisabledError,
+    NonRetryableError,
     TraigentConnectionError,
 )
 from traigent.utils.logging import get_logger
@@ -85,6 +86,21 @@ class _HealthDispatchStop:
 
 
 _HEALTH_DISPATCH_STOP = _HealthDispatchStop()
+
+
+# Statuses the service uses to say "this request body will never be accepted".
+# 429 and 5xx are transient and stay on the retain-and-retry path.
+_PERMANENT_REJECTION_STATUSES = frozenset({400, 413, 422})
+# Upper bound on requests spent isolating rejected traces in one outbox batch.
+_MAX_ISOLATION_SENDS = 32
+
+
+class _PermanentRejection(NonRetryableError):
+    """A batch the service rejected with a permanent 4xx (never retried)."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"Observability ingest permanently rejected: {status_code}")
+        self.status_code = status_code
 
 
 class _ClientErrorWithRetryAfter(ClientError):
@@ -124,6 +140,11 @@ class _NoRedirectHandler(request.HTTPRedirectHandler):
         newurl: str,
     ) -> None:
         return None
+
+
+def _is_client_timeout_or_rejection(exc: BaseException) -> bool:
+    """Failures that are not evidence the service itself is down."""
+    return isinstance(exc, _PermanentRejection) or _is_client_timeout(exc)
 
 
 def _is_client_timeout(exc: BaseException) -> bool:
@@ -1068,7 +1089,7 @@ class _SyncBatchTransport:
             replace(
                 CLOUD_API_RETRY_CONFIG,
                 callback_on_retry=self._record_retry,
-                circuit_breaker_ignore_failure=_is_client_timeout,
+                circuit_breaker_ignore_failure=_is_client_timeout_or_rejection,
             )
         )
         self._buffer: OrderedDict[str, _BufferedPayload] = OrderedDict()
@@ -1835,18 +1856,76 @@ class _SyncBatchTransport:
 
         return events
 
+    def _send_with_classification(self, payloads: list[dict[str, Any]]) -> Any:
+        try:
+            return self._sender(payloads)
+        except ClientError as exc:
+            status = getattr(exc, "status_code", None)
+            if type(status) is int and status in _PERMANENT_REJECTION_STATUSES:
+                raise _PermanentRejection(status) from exc
+            raise
+
     def _send_batch(
-        self, batch_items: list[tuple[str, dict[str, Any]]]
+        self,
+        batch_items: list[tuple[str, dict[str, Any]]],
+        _budget: list[int] | None = None,
     ) -> tuple[bool, list[tuple[str, dict[str, Any]]]]:
         events: list[tuple[str, dict[str, Any]]] = []
         payloads = [payload for _, payload in batch_items]
-        result = self._retry_handler.execute_with_result(self._sender, payloads)
+        if _budget is None:
+            _budget = [_MAX_ISOLATION_SENDS]
+        _budget[0] -= 1
+        result = self._retry_handler.execute_with_result(
+            self._send_with_classification, payloads
+        )
 
         if result.success:
             return True, self._record_batch_success(
                 batch_items, payloads, result, events
             )
+        if isinstance(result.error, _PermanentRejection):
+            if len(batch_items) == 1:
+                return True, self._quarantine_rejected_item(
+                    batch_items[0], result.error.status_code, events
+                )
+            if _budget[0] > 0:
+                # Bisect: only the part the service still rejects is dropped.
+                # Cost is bounded by _MAX_ISOLATION_SENDS requests per batch;
+                # a part left over when the budget runs out is retained.
+                mid = len(batch_items) // 2
+                all_ok = True
+                for half in (batch_items[:mid], batch_items[mid:]):
+                    ok, half_events = self._send_batch(half, _budget)
+                    events.extend(half_events)
+                    all_ok = all_ok and ok
+                return all_ok, events
         return False, self._record_batch_failure(batch_items, payloads, result, events)
+
+    def _quarantine_rejected_item(
+        self,
+        item: tuple[str, dict[str, Any]],
+        status_code: int,
+        events: list[tuple[str, dict[str, Any]]],
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Drop one permanently rejected trace; never log or store its content."""
+        item_id, _ = item
+        message = (
+            f"observability service permanently rejected trace '{item_id}' "
+            f"(status {status_code}); dropped so later traces are not blocked"
+        )
+        with self._lock:
+            self._inflight_digests.pop(item_id, None)
+            events.append(
+                self._record_drop_locked(
+                    "permanent_rejection",
+                    message,
+                    item_id=item_id,
+                    status_code=status_code,
+                )
+            )
+        events.append(self._append_warning(message))
+        logger.warning(message)
+        return events
 
     def _build_result(
         self,
