@@ -24,6 +24,11 @@ try:  # POSIX advisory file locks; absent on Windows
 except ImportError:  # pragma: no cover
     fcntl = None  # type: ignore[assignment]
 
+try:  # Windows byte-range file locks
+    import msvcrt
+except ImportError:
+    msvcrt = None  # type: ignore[assignment]
+
 try:
     from cryptography.fernet import Fernet as _Fernet
     from cryptography.fernet import InvalidToken
@@ -1383,6 +1388,9 @@ class KeyManager:
         self._lock = threading.RLock()
         self._flock_depth = 0
         self._flock_handle: Any = None
+        self._fernet_cache: dict[bytes, Any] = {}
+        self._write_salt: bytes | None = None
+        self._last_stat: tuple[int, int, int] | None = None
         self.keys: dict[str, Any] = {}  # key_id -> key_bytes
         self.key_metadata: dict[str, Any] = {}  # key_id -> KeyMetadata
         configured_path = storage_path or os.getenv("TRAIGENT_KEY_MANAGER_STORE")
@@ -1392,6 +1400,11 @@ class KeyManager:
         self._store_master_password = self._resolve_store_master_password(
             master_password
         )
+        if self.storage_path and self._lock_backend() is None:
+            raise RuntimeError(
+                "A persistent KeyManager store needs a cross-process file lock "
+                "(fcntl or msvcrt), but neither is available on this platform."
+            )
         if self.storage_path:
             if self._store_master_password is None:
                 raise ValueError(
@@ -1411,6 +1424,9 @@ class KeyManager:
     def _store_fernet(self, salt: bytes) -> Any:
         if self._store_master_password is None:
             raise ValueError("Key store wrapping secret is not configured")
+        cached = self._fernet_cache.get(salt)
+        if cached is not None:
+            return cached
         key_material = hashlib.pbkdf2_hmac(
             "sha256",
             self._store_master_password.encode("utf-8"),
@@ -1418,22 +1434,72 @@ class KeyManager:
             self.KEY_STORE_KDF_ITERATIONS,
             dklen=32,
         )
-        return Fernet(base64.urlsafe_b64encode(key_material))
+        fernet = Fernet(base64.urlsafe_b64encode(key_material))
+        self._fernet_cache[salt] = fernet
+        return fernet
+
+    @staticmethod
+    def _lock_backend() -> str | None:
+        """Name of the cross-process lock primitive available on this platform."""
+        if fcntl is not None:
+            return "fcntl"
+        if msvcrt is not None:
+            return "msvcrt"
+        return None
+
+    def _os_lock(self, fd: int, backend: str) -> None:
+        if backend == "fcntl":
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            return
+        os.lseek(fd, 0, os.SEEK_SET)
+        while True:  # LK_LOCK gives up after ~10 s; keep waiting
+            try:
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]
+                return
+            except OSError:
+                continue
+
+    def _os_unlock(self, fd: int, backend: str) -> None:
+        if backend == "fcntl":
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+
+    def _stat_signature(self) -> tuple[int, int, int] | None:
+        if self.storage_path is None:
+            return None
+        try:
+            st = self.storage_path.stat()
+        except FileNotFoundError:
+            return None
+        return (st.st_mtime_ns, st.st_size, st.st_ino)
 
     @contextmanager
     def _store_lock(self) -> Iterator[None]:
         """Hold the in-process lock and, if persistent, an OS lock on the store."""
         with self._lock:
-            use_flock = self.storage_path is not None and fcntl is not None
+            backend = self._lock_backend() if self.storage_path is not None else None
+            if self.storage_path is not None and backend is None:
+                raise RuntimeError(
+                    "A persistent KeyManager store needs a cross-process file "
+                    "lock (fcntl or msvcrt), but neither is available on this "
+                    "platform; refusing to share the store without one."
+                )
+            use_flock = backend is not None
             if use_flock and self._flock_depth == 0:
-                assert self.storage_path is not None
+                assert self.storage_path is not None and backend is not None
                 self.storage_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 lock_path = self.storage_path.with_name(
                     f".{self.storage_path.name}.lock"
                 )
                 fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-                self._flock_handle = fd
-                fcntl.flock(fd, fcntl.LOCK_EX)
+                try:
+                    self._os_lock(fd, backend)
+                except BaseException:
+                    os.close(fd)
+                    raise
+                self._flock_handle = (fd, backend)
             if use_flock:
                 self._flock_depth += 1
             try:
@@ -1442,28 +1508,33 @@ class KeyManager:
                 if use_flock:
                     self._flock_depth -= 1
                     if self._flock_depth == 0:
-                        fd = self._flock_handle
+                        fd, used_backend = self._flock_handle
                         self._flock_handle = None
                         try:
-                            fcntl.flock(fd, fcntl.LOCK_UN)
+                            self._os_unlock(fd, used_backend)
                         finally:
                             os.close(fd)
 
     def _refresh_from_store(self) -> None:
         """Re-read the store (caller holds the store lock) so no write is stale."""
-        if self.storage_path is None or not self.storage_path.exists():
+        if self.storage_path is None:
             return
+        signature = self._stat_signature()
+        if signature is None or signature == self._last_stat:
+            return  # nothing changed on disk since the last load or write
         self._load_keys()
 
     def _load_keys(self) -> None:
         if self.storage_path is None or not self.storage_path.exists():
             return
+        signature = self._stat_signature()
         stored_payload = json.loads(self.storage_path.read_text(encoding="utf-8"))
         if (
             stored_payload.get("version") == self.KEY_STORE_VERSION
             and "payload" in stored_payload
         ):
             salt = base64.b64decode(stored_payload["salt"])
+            self._write_salt = salt
             try:
                 decrypted = self._store_fernet(salt).decrypt(
                     stored_payload["payload"].encode("ascii")
@@ -1520,6 +1591,7 @@ class KeyManager:
                 self.key_metadata.pop(key_id, None)
         self.keys.update(loaded_keys)
         self.key_metadata.update(loaded_meta)
+        self._last_stat = signature
 
     def _persist_keys(self) -> None:
         if self.storage_path is None:
@@ -1541,7 +1613,9 @@ class KeyManager:
                     "is_active": metadata.is_active,
                 },
             }
-        salt = secrets.token_bytes(16)
+        if self._write_salt is None:
+            self._write_salt = secrets.token_bytes(16)
+        salt = self._write_salt
         encrypted_payload = self._store_fernet(salt).encrypt(
             json.dumps(payload, sort_keys=True).encode("utf-8")
         )
@@ -1568,6 +1642,7 @@ class KeyManager:
         except BaseException:
             tmp_path.unlink(missing_ok=True)
             raise
+        self._last_stat = self._stat_signature()
 
     def generate_key(
         self,
@@ -1644,14 +1719,15 @@ class KeyManager:
         returned by :meth:`get_key` for new encryption but stay available
         here until explicitly deleted.
         """
-        with self._lock:
-            key = self.keys.get(key_id)
-        if key is None and self.storage_path is not None:
-            # Another manager sharing this store may have created the key.
-            with self._store_lock():
-                self._refresh_from_store()
-                key = self.keys.get(key_id)
-        return key
+        if self.storage_path is None:
+            with self._lock:
+                return cast("bytes | None", self.keys.get(key_id))
+        # Another manager sharing this store may have created or deleted the
+        # key: a cheap stat check under the lock reloads only if it changed,
+        # and a key deleted elsewhere is never served from the cache.
+        with self._store_lock():
+            self._refresh_from_store()
+            return cast("bytes | None", self.keys.get(key_id))
 
     def get_key(self, key_id: str) -> bytes | None:
         """Get an encryption key by ID for new encryption.

@@ -388,7 +388,7 @@ class AuditLogger:
             return ["t", [cls._canon(v) for v in value]]
         if isinstance(value, (set, frozenset)):
             return [
-                "set",
+                "fset" if isinstance(value, frozenset) else "set",
                 sorted(
                     (cls._canon(v) for v in value),
                     key=lambda c: json.dumps(c, sort_keys=True),

@@ -130,6 +130,7 @@ COLLISION_PAIRS = [
     (True, 1),
     (1, 1.0),
     (None, "None"),
+    ({1, 2}, frozenset({1, 2})),
     ({"a": 1}, {"a": "1"}),
 ]
 
@@ -142,3 +143,26 @@ def test_canonicalisation_distinguishes_types(left: object, right: object) -> No
     event.details = {"v": right}
     b = logger._calculate_checksum_for_verification(event, None)
     assert a != b
+
+
+def test_every_value_type_has_its_own_tag() -> None:
+    from datetime import UTC, datetime
+
+    samples = {
+        "none": None,
+        "bool": True,
+        "int": 1,
+        "float": 1.5,
+        "str": "x",
+        "bytes": b"x",
+        "datetime": datetime(2026, 1, 1, tzinfo=UTC),
+        "enum": AuditSeverity.LOW,
+        "dict": {"a": 1},
+        "list": [1],
+        "tuple": (1,),
+        "set": {1},
+        "frozenset": frozenset({1}),
+        "other": object,
+    }
+    tags = {name: AuditLogger._canon(v)[0] for name, v in samples.items()}
+    assert len(set(tags.values())) == len(tags), tags
