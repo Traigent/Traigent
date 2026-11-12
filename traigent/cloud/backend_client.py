@@ -1019,6 +1019,19 @@ def _validate_backend_api_path(api_path: str | None) -> None:
         raise ValueError("backend client API base URL must not contain path traversal")
 
 
+def _example_feature_chunks(
+    features: list[dict[str, Any]] | dict[str, Any],
+) -> list[list[dict[str, Any]] | dict[str, Any]]:
+    # The service rejects more than _MAX_EXAMPLE_FEATURES_PER_REQUEST
+    # features per request with a 400; send larger sets in chunks (#2992).
+    if isinstance(features, list):
+        return [
+            features[i : i + _MAX_EXAMPLE_FEATURES_PER_REQUEST]
+            for i in range(0, len(features), _MAX_EXAMPLE_FEATURES_PER_REQUEST)
+        ]
+    return [features]
+
+
 class BackendIntegratedClient:
     """Enhanced backend client with Traigent Backend integration (Refactored).
 
@@ -3343,18 +3356,8 @@ class BackendIntegratedClient:
         oo_egress.refuse_if_active(
             "example_feature_upload", explicit=oo_egress.policy_of(self, headers, url)
         )
-        # The service rejects more than _MAX_EXAMPLE_FEATURES_PER_REQUEST
-        # features per request with a 400; send larger sets in chunks (#2992).
-        if isinstance(features, list):
-            chunks: list[list[dict[str, Any]] | dict[str, Any]] = [
-                features[i : i + _MAX_EXAMPLE_FEATURES_PER_REQUEST]
-                for i in range(0, len(features), _MAX_EXAMPLE_FEATURES_PER_REQUEST)
-            ]
-        else:
-            chunks = [features]
-
         accepted = 0
-        for chunk in chunks:
+        for chunk in _example_feature_chunks(features):
             try:
                 chunk_accepted = self._post_example_feature_chunk(
                     requests, experiment_run_id, feature_kind, chunk, url, headers
