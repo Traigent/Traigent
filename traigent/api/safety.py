@@ -461,7 +461,9 @@ class SafetyConstraint:
         """Combine constraints with OR logic.
 
         Example:
-            >>> combined = accuracy.above(0.9) | accuracy.above(0.85)  # doctest: +SKIP
+            >>> combined = faithfulness.above(0.9) | faithfulness.above(0.85)
+            >>> combined.combinator
+            'or'
         """
         return CompoundSafetyConstraint(constraints=[self, other], combinator="or")
 

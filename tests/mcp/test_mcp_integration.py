@@ -268,15 +268,20 @@ class TestErrorRecoveryScenarios:
         assert successful_trials >= 6  # Most trials should succeed
 
     @pytest.mark.asyncio
-    async def test_resource_cleanup_on_error(
+    async def test_execution_error_propagates_without_side_effects(
         self,
         mock_cloud_client,
         mock_mcp_service,
         sample_agent_spec,
         mcp_test_context,
     ):
-        """An execution error propagates (is not swallowed) and leaves the
-        service-side agent registered and tracked for cleanup."""
+        """An execution error propagates (is not swallowed) and does not
+        disturb the previously created agent.
+
+        No product cleanup code exists on this path (the client has no
+        agent-cleanup-on-error behaviour), so this test deliberately checks only
+        error propagation and the absence of side effects, not cleanup.
+        """
         agent_result = await mock_cloud_client.create_agent(sample_agent_spec)
         agent_id = agent_result["agent_id"]
         mcp_test_context.created_agents.append(agent_id)
@@ -291,7 +296,7 @@ class TestErrorRecoveryScenarios:
         with pytest.raises(RuntimeError, match="backend down"):
             await mock_cloud_client.execute_agent(request)
 
-        # The service (not the test's own list) still holds the created agent.
+        # The mock service still holds the created agent, unchanged.
         assert agent_id in mock_mcp_service.agents
         assert mock_mcp_service.agents[agent_id] is sample_agent_spec
         assert [name for name, _ in mock_mcp_service.call_history] == ["create_agent"]
