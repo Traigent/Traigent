@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-import sys
+import itertools
 import threading
 import time
+import types
+import warnings
 
 import pytest
 
-from traigent.cloud import billing, integration_manager, session_operations
+from traigent.cloud import (
+    backend_client,
+    billing,
+    integration_manager,
+    production_mcp_client,
+    session_operations,
+)
 from traigent.labels import transport_gate
 from traigent.utils import env_config, langchain_interceptor
 from traigent.wrapper import service as service_mod
@@ -75,61 +83,127 @@ def test_global_capture_outside_scope_is_bounded(monkeypatch):
     assert cap.get_by_key("k99") is not None and cap.get_by_key("k0") is None
 
 
-def _race(getter, reset, rounds=40, n=12):
-    old = sys.getswitchinterval()
-    sys.setswitchinterval(1e-6)
-    try:
-        for _ in range(rounds):
-            reset()
-            barrier = threading.Barrier(n)
-            out = []
+class _BlockingCtor:
+    """Constructor stand-in that blocks until released and counts calls."""
 
-            def work(barrier=barrier, out=out):
-                barrier.wait()
-                out.append(getter())
+    def __init__(self, n_threads: int, make=object):
+        self.make = make
+        self.n = n_threads
+        self.calls = 0
+        self._lock = threading.Lock()
+        self.release = threading.Event()
 
-            ts = [threading.Thread(target=work) for _ in range(n)]
-            [t.start() for t in ts]
-            [t.join() for t in ts]
-            assert len({id(o) if not isinstance(o, str) else o for o in out}) == 1
-    finally:
-        sys.setswitchinterval(old)
+    def __call__(self, *args, **kwargs):
+        with self._lock:
+            self.calls += 1
+        self.release.wait(10)
+        return self.make()
+
+    def run(self, getter):
+        results: list = []
+        threads = [
+            threading.Thread(target=lambda: results.append(getter()))
+            for _ in range(self.n)
+        ]
+        for t in threads:
+            t.start()
+        # Without a lock every thread reaches the constructor and blocks there;
+        # with one, only the first does. Wait for the unlocked case, then let go.
+        deadline = time.time() + 2.0
+        while self.calls < self.n and time.time() < deadline:
+            time.sleep(0.005)
+        self.release.set()
+        for t in threads:
+            t.join(10)
+        assert len(results) == self.n
+        return results
 
 
-def test_cost_tracker_singleton_race(monkeypatch):
-    monkeypatch.setattr(billing, "_cost_tracker", None)
-    _race(billing.get_cost_tracker, lambda: setattr(billing, "_cost_tracker", None))
+def _assert_single_construction(monkeypatch, patch_target, getter, reset, make=object):
+    ctor = _BlockingCtor(4, make)
+    patch_target(monkeypatch, ctor)
+    reset()
+    results = ctor.run(getter)
+    assert ctor.calls == 1
+    assert len({id(r) for r in results}) == 1
 
 
-def test_integration_manager_singleton_race(monkeypatch):
-    monkeypatch.setattr(integration_manager, "_integration_manager", None)
-    _race(
+def test_cost_tracker_constructed_once(monkeypatch):
+    _assert_single_construction(
+        monkeypatch,
+        lambda mp, c: mp.setattr(billing, "CostTracker", c),
+        billing.get_cost_tracker,
+        lambda: monkeypatch.setattr(billing, "_cost_tracker", None),
+    )
+
+
+def test_integration_manager_constructed_once(monkeypatch):
+    _assert_single_construction(
+        monkeypatch,
+        lambda mp, c: mp.setattr(integration_manager, "IntegrationManager", c),
         integration_manager.get_integration_manager,
-        lambda: setattr(integration_manager, "_integration_manager", None),
+        lambda: monkeypatch.setattr(integration_manager, "_integration_manager", None),
     )
 
 
-def test_session_executor_singleton_race(monkeypatch):
-    monkeypatch.setattr(session_operations, "_SESSION_EXECUTOR", None)
-    _race(
+def test_session_executor_constructed_once(monkeypatch):
+    def patch(mp, c):
+        fake = types.SimpleNamespace(
+            futures=types.SimpleNamespace(ThreadPoolExecutor=c)
+        )
+        mp.setattr(session_operations, "concurrent", fake)
+
+    _assert_single_construction(
+        monkeypatch,
+        patch,
         session_operations._get_session_executor,
-        lambda: setattr(session_operations, "_SESSION_EXECUTOR", None),
+        lambda: monkeypatch.setattr(session_operations, "_SESSION_EXECUTOR", None),
     )
 
 
-def test_dev_jwt_secret_race(monkeypatch):
+def test_backend_client_constructed_once(monkeypatch):
+    _assert_single_construction(
+        monkeypatch,
+        lambda mp, c: mp.setattr(backend_client, "BackendIntegratedClient", c),
+        backend_client.get_backend_client,
+        lambda: monkeypatch.setattr(backend_client, "_backend_client", None),
+    )
+
+
+def test_production_mcp_client_constructed_once(monkeypatch):
+    _assert_single_construction(
+        monkeypatch,
+        lambda mp, c: mp.setattr(production_mcp_client, "ProductionMCPClient", c),
+        production_mcp_client.get_production_mcp_client,
+        lambda: monkeypatch.setattr(production_mcp_client, "_production_client", None),
+        make=lambda: types.SimpleNamespace(server_config=types.SimpleNamespace()),
+    )
+
+
+def test_dev_jwt_secret_generated_once(monkeypatch):
     monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
     monkeypatch.delenv("TRAIGENT_DEV_JWT_SECRET", raising=False)
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    ctor = _BlockingCtor(4)
+    counter = itertools.count()
+
+    def fake_token(*_a, **_k):
+        ctor()
+        return f"secret-{next(counter)}"
+
+    monkeypatch.setattr(
+        env_config, "secrets", types.SimpleNamespace(token_urlsafe=fake_token)
+    )
     monkeypatch.setattr(env_config, "_GENERATED_DEV_JWT_SECRET", None)
-    import warnings
 
     def getter():
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             return env_config.get_jwt_secret()
 
-    _race(getter, lambda: setattr(env_config, "_GENERATED_DEV_JWT_SECRET", None))
+    results = ctor.run(getter)
+    assert ctor.calls == 1
+    assert len(set(results)) == 1
 
 
 # --- session id validation (#3128 review) ---------------------------------
