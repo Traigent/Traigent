@@ -34,7 +34,10 @@ def test_persistent_store_does_not_grow_per_encrypt(tmp_path) -> None:
     em.encrypt("c")
     assert store.stat().st_size == size
     assert len(KeyManager(storage_path=store, master_password=PASSWORD).keys) == 1
-    assert [p.name for p in tmp_path.iterdir()] == ["keys.json"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        ".keys.json.lock",
+        "keys.json",
+    ]
 
 
 def test_round_trip_across_rotation() -> None:
@@ -68,3 +71,48 @@ def test_deleted_key_still_fails_closed() -> None:
     km.delete_key(enc["key_id"])
     with pytest.raises(EncryptionKeyNotFoundError):
         em.decrypt(enc)
+
+
+def test_two_managers_rotating_concurrently_lose_no_keys(tmp_path) -> None:
+    import threading
+
+    store = tmp_path / "shared.json"
+    managers = [
+        KeyManager(storage_path=store, master_password=PASSWORD) for _ in range(2)
+    ]
+    ems = [EncryptionManager(m) for m in managers]
+    results: list[dict] = []
+    errors: list[BaseException] = []
+    results_lock = threading.Lock()
+
+    def worker(idx: int) -> None:
+        try:
+            for i in range(6):
+                enc = ems[idx].encrypt(f"w{idx}-{i}".encode())
+                with results_lock:
+                    results.append(enc)
+                managers[idx].rotate_key(enc["key_id"])
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert len(results) == 12
+
+    fresh = EncryptionManager(KeyManager(storage_path=store, master_password=PASSWORD))
+    for enc in results:
+        assert fresh.decrypt(enc).startswith(b"w")
+
+
+def test_stale_manager_does_not_overwrite_newer_store(tmp_path) -> None:
+    store = tmp_path / "shared.json"
+    a = KeyManager(storage_path=store, master_password=PASSWORD)
+    b = KeyManager(storage_path=store, master_password=PASSWORD)
+    key_a = a.generate_key("AES-256")
+    key_b = b.generate_key("AES-256")  # b never saw key_a in memory
+    reloaded = KeyManager(storage_path=store, master_password=PASSWORD)
+    assert {key_a, key_b} <= set(reloaded.keys)

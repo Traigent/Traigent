@@ -11,11 +11,18 @@ import os
 import re
 import secrets
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, cast
+
+try:  # POSIX advisory file locks; absent on Windows
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 try:
     from cryptography.fernet import Fernet as _Fernet
@@ -1374,6 +1381,8 @@ class KeyManager:
     ) -> None:
         """Initialize key manager."""
         self._lock = threading.RLock()
+        self._flock_depth = 0
+        self._flock_handle: Any = None
         self.keys: dict[str, Any] = {}  # key_id -> key_bytes
         self.key_metadata: dict[str, Any] = {}  # key_id -> KeyMetadata
         configured_path = storage_path or os.getenv("TRAIGENT_KEY_MANAGER_STORE")
@@ -1411,6 +1420,41 @@ class KeyManager:
         )
         return Fernet(base64.urlsafe_b64encode(key_material))
 
+    @contextmanager
+    def _store_lock(self) -> Iterator[None]:
+        """Hold the in-process lock and, if persistent, an OS lock on the store."""
+        with self._lock:
+            use_flock = self.storage_path is not None and fcntl is not None
+            if use_flock and self._flock_depth == 0:
+                assert self.storage_path is not None
+                self.storage_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                lock_path = self.storage_path.with_name(
+                    f".{self.storage_path.name}.lock"
+                )
+                fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+                self._flock_handle = fd
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            if use_flock:
+                self._flock_depth += 1
+            try:
+                yield
+            finally:
+                if use_flock:
+                    self._flock_depth -= 1
+                    if self._flock_depth == 0:
+                        fd = self._flock_handle
+                        self._flock_handle = None
+                        try:
+                            fcntl.flock(fd, fcntl.LOCK_UN)
+                        finally:
+                            os.close(fd)
+
+    def _refresh_from_store(self) -> None:
+        """Re-read the store (caller holds the store lock) so no write is stale."""
+        if self.storage_path is None or not self.storage_path.exists():
+            return
+        self._load_keys()
+
     def _load_keys(self) -> None:
         if self.storage_path is None or not self.storage_path.exists():
             return
@@ -1447,10 +1491,12 @@ class KeyManager:
             )
         else:
             raise ValueError("Unsupported KeyManager store format")
+        loaded_keys: dict[str, Any] = {}
+        loaded_meta: dict[str, Any] = {}
         for key_id, key_entry in payload.get("keys", {}).items():
-            self.keys[key_id] = base64.b64decode(key_entry["key"])
+            loaded_keys[key_id] = base64.b64decode(key_entry["key"])
             metadata = key_entry["metadata"]
-            self.key_metadata[key_id] = KeyMetadata(
+            loaded_meta[key_id] = KeyMetadata(
                 algorithm=metadata["algorithm"],
                 key_length=int(metadata["key_length"]),
                 created_at=datetime.fromisoformat(metadata["created_at"]),
@@ -1462,6 +1508,18 @@ class KeyManager:
                 rotation_count=int(metadata.get("rotation_count", 0)),
                 is_active=bool(metadata.get("is_active", True)),
             )
+        # The store is authoritative for which keys exist. A key that was ever
+        # deactivated stays deactivated; keys only held in memory are kept.
+        for key_id, meta in loaded_meta.items():
+            local = self.key_metadata.get(key_id)
+            if local is not None and not local.is_active:
+                meta.is_active = False
+        for key_id in list(self.keys):
+            if key_id not in loaded_keys:
+                del self.keys[key_id]
+                self.key_metadata.pop(key_id, None)
+        self.keys.update(loaded_keys)
+        self.key_metadata.update(loaded_meta)
 
     def _persist_keys(self) -> None:
         if self.storage_path is None:
@@ -1511,7 +1569,13 @@ class KeyManager:
             tmp_path.unlink(missing_ok=True)
             raise
 
-    def generate_key(self, algorithm: str, expires_in_days: int | None = None) -> str:
+    def generate_key(
+        self,
+        algorithm: str,
+        expires_in_days: int | None = None,
+        *,
+        persist: bool = True,
+    ) -> str:
         """Generate a new encryption key.
 
         Args:
@@ -1539,11 +1603,14 @@ class KeyManager:
             expires_at = datetime.now(UTC) + timedelta(days=expires_in_days)
 
         # Store key and metadata
-        self.keys[key_id] = key_data
-        self.key_metadata[key_id] = KeyMetadata(
-            algorithm=algorithm, key_length=key_length, expires_at=expires_at
-        )
-        self._persist_keys()
+        with self._store_lock():
+            self._refresh_from_store()
+            self.keys[key_id] = key_data
+            self.key_metadata[key_id] = KeyMetadata(
+                algorithm=algorithm, key_length=key_length, expires_at=expires_at
+            )
+            if persist:
+                self._persist_keys()
 
         return key_id
 
@@ -1563,7 +1630,8 @@ class KeyManager:
 
     def get_or_create_active_key(self, algorithm: str = "AES-256") -> str:
         """Return the active key id, generating a key only if none exists."""
-        with self._lock:
+        with self._store_lock():
+            self._refresh_from_store()
             key_id = self.get_active_key_id(algorithm)
             if key_id is None:
                 key_id = self.generate_key(algorithm)
@@ -1576,7 +1644,14 @@ class KeyManager:
         returned by :meth:`get_key` for new encryption but stay available
         here until explicitly deleted.
         """
-        return self.keys.get(key_id)
+        with self._lock:
+            key = self.keys.get(key_id)
+        if key is None and self.storage_path is not None:
+            # Another manager sharing this store may have created the key.
+            with self._store_lock():
+                self._refresh_from_store()
+                key = self.keys.get(key_id)
+        return key
 
     def get_key(self, key_id: str) -> bytes | None:
         """Get an encryption key by ID for new encryption.
@@ -1602,19 +1677,20 @@ class KeyManager:
         Returns:
             New key ID
         """
-        if old_key_id not in self.keys:
-            raise KeyError(f"Key {old_key_id} not found")
+        with self._store_lock():
+            self._refresh_from_store()
+            if old_key_id not in self.keys:
+                raise KeyError(f"Key {old_key_id} not found")
 
-        old_metadata = self.key_metadata[old_key_id]
+            algorithm = self.key_metadata[old_key_id].algorithm
 
-        # Generate new key with same algorithm
-        new_key_id = self.generate_key(old_metadata.algorithm)
-
-        # Update metadata
-        old_metadata.is_active = False
-        new_metadata = self.key_metadata[new_key_id]
-        new_metadata.rotation_count = old_metadata.rotation_count + 1
-        self._persist_keys()
+            # Create the new key and retire the old one in a single write.
+            new_key_id = self.generate_key(algorithm, persist=False)
+            old_metadata = self.key_metadata[old_key_id]
+            old_metadata.is_active = False
+            new_metadata = self.key_metadata[new_key_id]
+            new_metadata.rotation_count = old_metadata.rotation_count + 1
+            self._persist_keys()
 
         return new_key_id
 
@@ -1627,19 +1703,21 @@ class KeyManager:
         Returns:
             True if deleted, False if not found
         """
-        if key_id not in self.keys:
-            return False
+        with self._store_lock():
+            self._refresh_from_store()
+            if key_id not in self.keys:
+                return False
 
-        # Securely overwrite key data
-        key_data = self.keys[key_id]
-        if isinstance(key_data, bytes):
-            # Overwrite with random data multiple times
-            for _ in range(3):
-                self.keys[key_id] = secrets.token_bytes(len(key_data))
+            # Securely overwrite key data
+            key_data = self.keys[key_id]
+            if isinstance(key_data, bytes):
+                # Overwrite with random data multiple times
+                for _ in range(3):
+                    self.keys[key_id] = secrets.token_bytes(len(key_data))
 
-        # Remove from storage
-        del self.keys[key_id]
-        del self.key_metadata[key_id]
-        self._persist_keys()
+            # Remove from storage
+            del self.keys[key_id]
+            del self.key_metadata[key_id]
+            self._persist_keys()
 
         return True
