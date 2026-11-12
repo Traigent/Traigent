@@ -250,6 +250,13 @@ def coerce_to_gemini_request(
 
     System-role messages are joined with blank lines into ``system_instruction``
     (None when there are none); ``contents`` never contains role "system".
+    The "developer" role is treated like "system".
+
+    Raises:
+        ValueError: for any other role than user, assistant/model, system or
+            developer (the message names the role only, never the content),
+            or when there is no user or model message (Gemini rejects empty
+            contents).
 
     Args:
         messages: Input messages in any format.
@@ -264,12 +271,21 @@ def coerce_to_gemini_request(
     for msg in normalized:
         role = msg.get("role", "user")
         text = _content_to_text(msg.get("content", ""))
-        if role == "system":
+        if role in ("system", "developer"):
             system_parts.append(text)
             continue
         if role == "assistant":
             role = "model"
+        if role not in ("user", "model"):
+            raise ValueError(
+                f"coerce_to_gemini_request: unsupported message role {role!r}"
+            )
         contents.append({"role": role, "parts": [{"text": text}]})
+
+    if not contents:
+        raise ValueError(
+            "coerce_to_gemini_request: at least one user or model message is required"
+        )
 
     system_instruction = "\n\n".join(system_parts) if system_parts else None
     return system_instruction, contents

@@ -313,3 +313,42 @@ def test_gemini_request_handles_list_block_system_content() -> None:
         ]
     )
     assert system == "Be terse"
+
+
+def test_gemini_request_maps_developer_role_to_system_instruction() -> None:
+    from traigent.integrations.utils.message_coercion import coerce_to_gemini_request
+
+    system, contents = coerce_to_gemini_request(
+        [
+            {"role": "developer", "content": "Dev rule"},
+            {"role": "system", "content": "Sys rule"},
+            {"role": "user", "content": "hi"},
+        ]
+    )
+    assert system == "Dev rule\n\nSys rule"
+    assert [c["role"] for c in contents] == ["user"]
+
+
+def test_gemini_request_rejects_unknown_role_without_leaking_content() -> None:
+    import pytest
+
+    from traigent.integrations.utils.message_coercion import coerce_to_gemini_request
+
+    with pytest.raises(ValueError, match="tool") as exc:
+        coerce_to_gemini_request(
+            [
+                {"role": "user", "content": "hi"},
+                {"role": "tool", "content": "SECRET-PAYLOAD"},
+            ]
+        )
+    assert "SECRET-PAYLOAD" not in str(exc.value)
+
+
+def test_gemini_request_requires_a_user_or_model_message() -> None:
+    import pytest
+
+    from traigent.integrations.utils.message_coercion import coerce_to_gemini_request
+
+    for bad in ([], [{"role": "system", "content": "only system"}]):
+        with pytest.raises(ValueError, match="at least one user or model message"):
+            coerce_to_gemini_request(bad)
