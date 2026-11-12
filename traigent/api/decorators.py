@@ -1805,6 +1805,14 @@ def _validate_runtime_overrides(remaining_overrides: dict[str, Any]) -> None:
         from traigent.core.stop_conditions import validate_plateau_window
 
         validate_plateau_window(remaining_overrides["plateau_window"])
+    if remaining_overrides.get("plateau_epsilon") is not None:
+        from traigent.core.stop_conditions import validate_plateau_epsilon
+
+        validate_plateau_epsilon(remaining_overrides["plateau_epsilon"])
+    if remaining_overrides.get("metric_limit") is not None:
+        from traigent.core.stop_conditions import validate_metric_limit
+
+        validate_metric_limit(remaining_overrides["metric_limit"])
     unknown_keys = (
         set(remaining_overrides.keys())
         - _DIRECT_OPTION_KEYS
@@ -2318,12 +2326,22 @@ _OBJECTIVES_TYPE_ERROR = (
 )
 
 
+def _reject_empty_objectives(objectives: Any) -> None:
+    """An explicit empty objectives list is an error; None means unset."""
+    if isinstance(objectives, (list, tuple)) and len(objectives) == 0:
+        raise ValueError(
+            "objectives must contain at least one objective; "
+            "omit it (or pass None) to use the default"
+        )
+
+
 def _validate_objectives(
     objectives: list[str] | ObjectiveSchema | None,
 ) -> None:
     """Validate objectives format."""
     if objectives is None or isinstance(objectives, ObjectiveSchema):
         return
+    _reject_empty_objectives(objectives)
 
     if isinstance(objectives, (str, bytes)):
         raise ValidationError(_OBJECTIVES_TYPE_ERROR)
@@ -2341,6 +2359,8 @@ def _resolve_objective_schema(
     objectives: list[str] | ObjectiveSchema | None,
 ) -> ObjectiveSchema:
     """Resolve objective schema from objectives or global config."""
+    if objectives is not None and not isinstance(objectives, ObjectiveSchema):
+        _reject_empty_objectives(objectives)
     resolved_schema = normalize_objectives(objectives)
     if resolved_schema is not None:
         return resolved_schema
@@ -3095,6 +3115,13 @@ def _validate_max_trials(max_trials_value: Any) -> None:
         raise ValueError("max_trials must be a positive integer")
 
 
+def _require_bool_flag(name: str, value: Any) -> bool:
+    """Return ``value`` if it is a real bool, else raise TypeError (fail closed)."""
+    if not isinstance(value, bool):
+        raise TypeError(f"{name} must be a bool, got {type(value).__name__}")
+    return value
+
+
 def _content_less_from_settings(combined_settings: dict[str, Any]) -> Any:
     """Content-less session options: None unless the caller set one."""
     if any(
@@ -3103,8 +3130,11 @@ def _content_less_from_settings(combined_settings: dict[str, Any]) -> Any:
     ):
         from traigent.cloud.content_less import ContentLessOptions
 
+        content_less_flag = combined_settings.get("content_less")
+        if content_less_flag is not None:
+            _require_bool_flag("content_less", content_less_flag)
         return ContentLessOptions(
-            enabled=combined_settings.get("content_less"),
+            enabled=content_less_flag,
             agent_ref=combined_settings.get("agent_ref"),
             environment=combined_settings.get("environment"),
         )

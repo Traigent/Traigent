@@ -130,7 +130,12 @@ from traigent.core.selection_receipt import build_selection_receipt
 from traigent.core.sigterm_cancellation import sigterm_as_cancellation
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
-from traigent.core.stop_conditions import StopCondition, validate_plateau_window
+from traigent.core.stop_conditions import (
+    StopCondition,
+    validate_metric_limit,
+    validate_plateau_epsilon,
+    validate_plateau_window,
+)
 from traigent.core.trial_lifecycle import (
     CONSTRAINT_REJECTION_CAP_FACTOR,
     TrialLifecycle,
@@ -1148,10 +1153,8 @@ class OptimizationOrchestrator:
 
     @staticmethod
     def _coerce_positive_limit(value: Any, *, name: str) -> float:
-        limit = float(value)
-        if limit <= 0:
-            raise ValueError(f"{name} must be a positive number")
-        return limit
+        del name  # the shared validator names the option itself
+        return validate_metric_limit(value)
 
     def _resolve_metric_limit_config(self) -> tuple[float | None, str | None, bool]:
         """Resolve metric_limit config."""
@@ -1248,11 +1251,14 @@ class OptimizationOrchestrator:
             if raw_plateau_window is not None
             else 0
         )
-        plateau_epsilon = (
-            float(self.config.get("plateau_epsilon", 1e-6) or 1e-6)
-            if plateau_window > 0
-            else None
-        )
+        raw_plateau_epsilon = self.config.get("plateau_epsilon")
+        plateau_epsilon: float | None = None
+        if plateau_window > 0:
+            plateau_epsilon = (
+                1e-6
+                if raw_plateau_epsilon is None
+                else validate_plateau_epsilon(raw_plateau_epsilon)
+            )
         samples_include_pruned = bool(self.config.get("samples_include_pruned", True))
         metric_limit, metric_name, metric_include_pruned = (
             self._resolve_metric_limit_config()

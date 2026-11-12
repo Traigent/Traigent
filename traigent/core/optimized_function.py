@@ -1402,7 +1402,11 @@ class OptimizedFunction[**P, R]:
             and evaluator_definition_id.strip()
             else None
         )
-        self.effectuation = bool(effectuation)
+        if not isinstance(effectuation, bool):
+            raise TypeError(
+                f"effectuation must be a bool, got {type(effectuation).__name__}"
+            )
+        self.effectuation = effectuation
         # Coarse task hint for the service's anchor policy (see EvaluationOptions).
         self.task_type = (
             task_type.strip()
@@ -2712,6 +2716,13 @@ class OptimizedFunction[**P, R]:
         runtime_objective_input = (
             objectives if objectives is not None else legacy_objectives
         )
+        if isinstance(runtime_objective_input, (list, tuple)) and not (
+            runtime_objective_input
+        ):
+            raise ValueError(
+                "objectives must contain at least one objective; "
+                "omit it (or pass None) to keep the configured objectives"
+            )
         try:
             runtime_schema = normalize_objectives(runtime_objective_input)
         except TypeError as exc:
