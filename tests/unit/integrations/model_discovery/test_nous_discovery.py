@@ -309,8 +309,8 @@ def test_list_models_falls_back_when_mint_fails(monkeypatch, caplog):
     # The broken credential is surfaced at WARNING (not swallowed at debug).
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert any(
-        "credentials present" in r.getMessage().lower()
-        and "fail" in r.getMessage().lower()
+        "live model listing failed" in r.getMessage().lower()
+        and "NousAuthError" in r.getMessage()
         for r in warnings
     ), "a broken Nous credential must be logged at WARNING, not silently swallowed"
 
@@ -336,10 +336,33 @@ def test_prepared_models_list_failure_warns_and_falls_back(monkeypatch, caplog):
         record
         for record in caplog.records
         if record.levelno == logging.WARNING
-        and "credentials present but token mint/discovery failed" in record.getMessage()
+        and "live model listing failed" in record.getMessage().lower()
     ]
     assert len(warnings) == 1
     assert "RuntimeError" in warnings[0].getMessage()
+    assert "models endpoint failed" not in warnings[0].getMessage()
+
+
+def test_two_consecutive_failures_warn_once_without_exception_text(monkeypatch, caplog):
+    monkeypatch.setenv("NOUS_API_KEY", "static-discovery-token")
+
+    class _FailingOpenAI:
+        def __init__(self, **_kwargs):
+            self.models = types.SimpleNamespace(
+                list=lambda: (_ for _ in ()).throw(RuntimeError("secret-detail-xyz"))
+            )
+
+    monkeypatch.setattr(openai, "OpenAI", _FailingOpenAI)
+    discovery = _fresh_discovery()
+
+    with caplog.at_level(logging.WARNING):
+        discovery.list_models(force_refresh=True)
+        discovery.list_models(force_refresh=True)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "RuntimeError" in warnings[0].getMessage()
+    assert "secret-detail-xyz" not in warnings[0].getMessage()
 
 
 def test_prepared_fetch_keeps_rotated_auth_file_on_original_cache_partition(

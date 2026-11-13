@@ -101,13 +101,8 @@ class NousDiscovery(ModelDiscovery):
         except ImportError:
             logger.debug("OpenAI SDK not installed")
             raise
-        except Exception as exc:
-            logger.warning(
-                "Nous credentials present but token mint/discovery failed "
-                "(%s: %s); falling back to the static model catalog",
-                type(exc).__name__,
-                exc,
-            )
+        except Exception:
+            # Logged once per failure streak (type only) by the base list_models.
             raise
 
     def _fetch_models_with_bearer(

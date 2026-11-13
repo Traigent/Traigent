@@ -116,22 +116,46 @@ class ModelDiscovery(ABC):
                 return cached
 
         # Try SDK-based discovery
+        live_failed = False
         try:
             models = fetch_models()
             if models:
                 self._cache.set(cache_key, models, self._get_cache_ttl())
+                self._live_failure_logged = False
                 return models
         except Exception as e:
-            logger.debug(f"SDK model discovery failed for {self.PROVIDER}: {e}")
+            # A failed force_refresh leaves any still-valid cached live entry in
+            # place: it is a successful live result within its TTL.
+            live_failed = True
+            self._warn_live_listing_failed(e)
 
         # Fall back to config file
         models = self._get_models_from_config()
         if models:
-            # Cache config models with longer TTL (they're static)
-            self._cache.set(cache_key, models, 604800)  # 7 days
+            # A bundled snapshot is cached (static, long TTL) only when the live
+            # listing did not fail: after a transient error the next call must
+            # retry the live listing instead of serving the snapshot as if it
+            # were the live result (#2901).
+            if not live_failed:
+                self._cache.set(cache_key, models, 604800)  # 7 days
             return models
 
         return []
+
+    _live_failure_logged = False
+
+    def _warn_live_listing_failed(self, exc: BaseException) -> None:
+        """Warn once per failure streak that discovery fell back to the snapshot."""
+        if self._live_failure_logged:
+            return
+        self._live_failure_logged = True
+        # Type only: the exception text can echo request details.
+        logger.warning(
+            "Live model listing failed for %s (%s); using the bundled model "
+            "list for this call and retrying the live listing on the next one.",
+            self.PROVIDER,
+            type(exc).__name__,
+        )
 
     def is_valid_model(self, model_id: str) -> bool:
         """Check if a model ID is valid for this provider.
