@@ -27,6 +27,7 @@ Custom Evaluator Interface:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
 import inspect
 import math
@@ -2922,7 +2923,10 @@ class OptimizedFunction[**P, R]:
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, coro)
+                # Carry the caller's run scope (offline mode etc.) into the worker.
+                future = executor.submit(
+                    contextvars.copy_context().run, asyncio.run, coro
+                )
                 return future.result()
         else:
             # No event loop running - safe to use asyncio.run
@@ -2995,7 +2999,9 @@ class OptimizedFunction[**P, R]:
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                return executor.submit(asyncio.run, coro).result()
+                return executor.submit(
+                    contextvars.copy_context().run, asyncio.run, coro
+                ).result()
         return asyncio.run(coro)
 
     async def compare_async(

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import os
 import re
@@ -2800,8 +2801,10 @@ class BackendSessionManager:
             except BaseException as exc:  # pragma: no cover - defensive bridge
                 result_box["error"] = exc
 
+        caller_context = contextvars.copy_context()
         thread = threading.Thread(
-            target=_runner,
+            target=caller_context.run,
+            args=(_runner,),
             name="traigent-smart-pruning-report",
             daemon=True,
         )

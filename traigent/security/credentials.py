@@ -19,6 +19,7 @@ import os
 import secrets
 import stat
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -363,6 +364,51 @@ class EnhancedCredentialStore:
         # Start background security tasks
         self._init_security_monitoring()
 
+    def _read_salt(self, salt_path: Path) -> bytes:
+        """Read the salt file; a short or empty salt is rejected (fail closed)."""
+        with open(salt_path, "rb") as f:
+            salt = f.read()
+        if len(salt) < self.SALT_LENGTH:
+            raise SecurityError(
+                f"Credential store salt at {salt_path} is invalid; "
+                "refusing to derive a key from it."
+            )
+        return salt
+
+    def _load_or_create_salt(self, salt_path: Path) -> bytes:
+        """Return the store salt, creating it atomically if absent.
+
+        The salt is written to a private temp file and then hard-linked into
+        place, so concurrent first runs agree on one complete salt: the loser
+        of the link race reads the winner's file instead of overwriting it.
+        """
+        try:
+            return self._read_salt(salt_path)
+        except FileNotFoundError:
+            pass
+
+        salt_path.parent.mkdir(parents=True, exist_ok=True)
+        candidate = secrets.token_bytes(self.SALT_LENGTH)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=salt_path.parent, prefix=".salt.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(candidate)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp_name, 0o600)
+            try:
+                os.link(tmp_name, salt_path)
+            except FileExistsError:
+                return self._read_salt(salt_path)
+            return candidate
+        finally:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+
     def _init_secure_encryption(self, master_password: str | None = None) -> None:
         """Initialize encryption with secure key derivation."""
         master_key_path = self._master_password_path()
@@ -412,15 +458,7 @@ class EnhancedCredentialStore:
 
         # Generate or load salt
         salt_path = self.storage_path.parent / ".salt"
-        if salt_path.exists():
-            with open(salt_path, "rb") as f:
-                self._salt = f.read()
-        else:
-            self._salt = secrets.token_bytes(self.SALT_LENGTH)
-            salt_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(salt_path, "wb") as f:
-                f.write(self._salt)
-            os.chmod(salt_path, 0o600)
+        self._salt = self._load_or_create_salt(salt_path)
 
         # Derive encryption key using PBKDF2
         kdf = PBKDF2HMAC(

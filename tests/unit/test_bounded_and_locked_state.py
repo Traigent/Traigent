@@ -166,7 +166,7 @@ def test_backend_client_constructed_once(monkeypatch):
         monkeypatch,
         lambda mp, c: mp.setattr(backend_client, "BackendIntegratedClient", c),
         backend_client.get_backend_client,
-        lambda: monkeypatch.setattr(backend_client, "_backend_client", None),
+        lambda: monkeypatch.setattr(backend_client, "_backend_clients", {}),
     )
 
 

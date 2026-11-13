@@ -768,34 +768,55 @@ def should_show_cloud_notice(traigent_config: "TraigentConfig") -> bool:
     return not BackendConfig.get_api_key()
 
 
-# Process-wide count of in-flight optimization runs that asked for
-# ``offline=True``. A counter (not a ContextVar) on purpose: trial work runs in
-# worker threads that do not inherit the caller's context, and an egress lane
-# that misses the flag would leak. Fail closed: while any offline run is in
-# flight, every backend/telemetry lane in the process treats itself as offline.
+# Offline state of the current run. A ContextVar so that one run's
+# ``offline=True`` does not switch off egress for an unrelated online run in the
+# same process: the run that entered the scope sees its own value, and it
+# follows the run into asyncio tasks and into worker threads that re-enter the
+# caller's context. ``None`` means "not inside any run scope".
+_OFFLINE_RUN_CONTEXT: ContextVar[bool | None] = ContextVar(
+    "traigent_offline_run", default=None
+)
+# Count of in-flight offline runs, consulted only by code that runs outside any
+# run scope (for example a background thread that did not copy its caller's
+# context). Fail closed: such a thread cannot tell which run it serves, so it
+# treats itself as offline while any offline run is in flight. Code inside an
+# explicit online run scope is not affected.
 _OFFLINE_RUN_LOCK = threading.Lock()
 _OFFLINE_RUN_COUNT = 0
 
 
 @contextmanager
 def offline_run_scope(enabled: bool) -> Iterator[None]:
-    """Make ``offline=True`` on the decorator disable every egress lane.
+    """Scope the ``offline=True`` decorator setting to the current run.
 
-    While the block runs, :func:`is_backend_offline` returns True, so the
-    standalone API clients, OTLP trace export and the langfuse client refuse to
-    send without the user having to set ``TRAIGENT_OFFLINE_MODE`` as well.
+    While the block runs, :func:`is_backend_offline` returns True in this run's
+    context (``enabled=True``), so the standalone API clients, OTLP trace
+    export and the langfuse client refuse to send without the user having to
+    set ``TRAIGENT_OFFLINE_MODE`` as well. ``enabled=False`` marks the run as
+    online and shields it from another run's offline scope.
     """
     global _OFFLINE_RUN_COUNT
-    if not enabled:
-        yield
-        return
-    with _OFFLINE_RUN_LOCK:
-        _OFFLINE_RUN_COUNT += 1
+    # A nested online scope never lifts an enclosing offline scope.
+    effective = bool(enabled) or _OFFLINE_RUN_CONTEXT.get() is True
+    token = _OFFLINE_RUN_CONTEXT.set(effective)
+    enabled = bool(enabled)
+    if enabled:
+        with _OFFLINE_RUN_LOCK:
+            _OFFLINE_RUN_COUNT += 1
     try:
         yield
     finally:
-        with _OFFLINE_RUN_LOCK:
-            _OFFLINE_RUN_COUNT -= 1
+        if enabled:
+            with _OFFLINE_RUN_LOCK:
+                _OFFLINE_RUN_COUNT -= 1
+        _OFFLINE_RUN_CONTEXT.reset(token)
+
+
+def _offline_run_active() -> bool:
+    scoped = _OFFLINE_RUN_CONTEXT.get()
+    if scoped is not None:
+        return scoped
+    return _OFFLINE_RUN_COUNT > 0
 
 
 _PRIVATE_MODE_ENV_NAMES = ("TRAIGENT_PRIVATE_DATA", "TRAIGENT_COMPLIANCE_MODE")
@@ -842,7 +863,7 @@ def is_backend_offline() -> bool:
         - is_mock_llm(): Check if LLM API calls should be mocked
     """
     return (
-        _OFFLINE_RUN_COUNT > 0
+        _offline_run_active()
         or is_traigent_private_mode_requested()
         or _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE_MODE", "false"))
         or _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE", "false"))

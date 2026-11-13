@@ -85,11 +85,14 @@ class SessionManager:
             self.redis_client = None
             self.use_redis = False
 
+        # In-memory rate-limit state is always present: the Redis rate limiter
+        # falls back to it when the pipeline fails.
+        self._rate_limits: dict[str, list[float]] = {}
+
         # In-memory fallback storage
         if not self.use_redis:
             self._sessions: dict[str, dict[str, Any]] = {}
             self._user_sessions: dict[str, set[str]] = {}
-            self._rate_limits: dict[str, list[float]] = {}
             logger.info("Session manager initialized with in-memory backend")
 
         # Tokens are already high-entropy random values. Use a stable hash so
@@ -122,14 +125,17 @@ class SessionManager:
             raise ValueError("Rate limit exceeded for session creation")
 
         # Check max sessions per user
-        existing_sessions = self._get_user_sessions(user_id)
+        existing_sessions = self._get_user_sessions(user_id, strict=True)
         if len(existing_sessions) >= self.max_sessions_per_user:
             # Remove oldest session
             oldest = min(
                 existing_sessions,
-                key=lambda sid: self._get_session_created_time(sid),
+                key=lambda sid: self._get_session_created_time(sid, strict=True),
             )
             self.revoke_session(oldest)
+            if self._get_session_strict(oldest) is not None:
+                # Eviction could not be confirmed: refuse rather than exceed the cap.
+                raise ValueError("Session store unavailable")
 
         # Generate secure session ID and token
         session_id = session_id or f"session_{secrets.token_urlsafe(32)}"
@@ -292,6 +298,7 @@ class SessionManager:
         """
         session_data = self._get_session(session_id)
         if not session_data:
+            self._forget_missing_session(session_id)
             return False
 
         user_id = session_data["user_id"]
@@ -306,6 +313,13 @@ class SessionManager:
 
         logger.info(f"Revoked session {session_id}")
         return True
+
+    def _forget_missing_session(self, session_id: str) -> None:
+        """Drop an id whose session record is gone from every user index."""
+        if self.use_redis and self.redis_client:
+            return  # Redis: the owner is unknown here; pruned per user on read.
+        for ids in self._user_sessions.values():
+            ids.discard(session_id)
 
     def revoke_user_sessions(self, user_id: str) -> int:
         """Revoke all sessions for a user.
@@ -412,21 +426,70 @@ class SessionManager:
             return self._sessions.get(session_id)
         return None
 
-    def _get_user_sessions(self, user_id: str) -> set[str]:
-        """Get all session IDs for a user."""
+    # Remove an id from the user index only if its session record is still
+    # absent, in one atomic step (a recreated session must stay indexed).
+    _SREM_IF_SESSION_ABSENT = (
+        "if redis.call('EXISTS', KEYS[1]) == 0 then "
+        "return redis.call('SREM', KEYS[2], ARGV[1]) "
+        "else return 0 end"
+    )
+
+    def _get_user_sessions(self, user_id: str, *, strict: bool = False) -> set[str]:
+        """Get all live session IDs for a user.
+
+        With ``strict=True`` (cap enforcement) a store read failure raises
+        instead of reporting an empty set, so the cap cannot be bypassed.
+        """
         if self.use_redis and self.redis_client:
             try:
-                members = self.redis_client.smembers(f"user_sessions:{user_id}")
-                return members or set()
+                key = f"user_sessions:{user_id}"
+                members = set(self.redis_client.smembers(key) or ())
+                # Session keys expire by TTL while their ids stay in the set;
+                # drop those ghosts so they do not count against the cap.
+                live = {
+                    sid for sid in members if self.redis_client.get(f"session:{sid}")
+                }
+                for ghost in members - live:
+                    removed = self.redis_client.eval(
+                        self._SREM_IF_SESSION_ABSENT,
+                        2,
+                        f"session:{ghost}",
+                        key,
+                        ghost,
+                    )
+                    if not removed:
+                        # Recreated after the read: it is live, so the cap
+                        # must count it.
+                        live.add(ghost)
+                return live
             except Exception as e:
                 logger.warning(f"Failed to get user sessions for {user_id}: {e}")
+                if strict:
+                    raise ValueError("Session store unavailable") from None
                 return set()
         else:
             return self._user_sessions.get(user_id, set()).copy()
 
-    def _get_session_created_time(self, session_id: str) -> datetime:
+    def _get_session_strict(self, session_id: str) -> dict[str, Any] | None:
+        """Like ``_get_session`` but a store failure raises (cap enforcement)."""
+        if self.use_redis and self.redis_client:
+            try:
+                data = self.redis_client.get(f"session:{session_id}")
+                return cast(dict[str, Any], json.loads(data)) if data else None
+            except Exception as e:
+                logger.warning(f"Failed to get session {session_id} from Redis: {e}")
+                raise ValueError("Session store unavailable") from None
+        return self._sessions.get(session_id)
+
+    def _get_session_created_time(
+        self, session_id: str, *, strict: bool = False
+    ) -> datetime:
         """Get session creation time."""
-        session_data = self._get_session(session_id)
+        session_data = (
+            self._get_session_strict(session_id)
+            if strict
+            else self._get_session(session_id)
+        )
         if session_data:
             created_at_str = session_data.get("created_at")
             if created_at_str and isinstance(created_at_str, str):

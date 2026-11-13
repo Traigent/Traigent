@@ -380,11 +380,7 @@ class LocalAnalytics:
                 except Exception:
                     pass  # Best effort cleanup
                 finally:
-                    if (
-                        getattr(backend_client_module, "_backend_client", None)
-                        is backend_client
-                    ):
-                        backend_client_module._backend_client = None
+                    backend_client_module.discard_backend_client(backend_client)
 
         except TimeoutError:
             return {"success": False, "reason": "Request timeout"}

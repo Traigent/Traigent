@@ -1415,20 +1415,22 @@ class TestGlobalClientInstance:
         """Test that get_backend_client creates a new instance."""
         # Clear any existing global instance
 
-        traigent.cloud.backend_client._backend_client = None
+        traigent.cloud.backend_client._backend_clients.clear()
 
-        client = get_backend_client(api_key="test_key")
+        key_a = "test_key"  # pragma: allowlist secret
+        key_b = "different_key"  # pragma: allowlist secret
+        client = get_backend_client(api_key=key_a)
         assert isinstance(client, BackendIntegratedClient)
 
-        # Second call should return same instance
-        client2 = get_backend_client(api_key="different_key")  # Should be ignored
-        assert client is client2
+        # Same settings share one instance; different settings do not (#3015)
+        assert get_backend_client(api_key=key_a) is client
+        assert get_backend_client(api_key=key_b) is not client
 
     def test_get_backend_client_with_kwargs(self):
         """Explicit base_url should override default backend routing."""
         # Clear global instance
 
-        traigent.cloud.backend_client._backend_client = None
+        traigent.cloud.backend_client._backend_clients.clear()
 
         backend_config = BackendClientConfig(
             backend_base_url="https://custom.backend.com"

@@ -3736,20 +3736,95 @@ class BackendIntegratedClient:
         return await self._api_ops.execute_cloud_agent(request)
 
 
-_backend_client: BackendIntegratedClient | None = None
+_BACKEND_CLIENT_CACHE_MAX = 16
+_backend_clients: dict[str, BackendIntegratedClient] = {}
 _backend_client_lock = threading.RLock()
 
 
-def get_backend_client(**kwargs) -> BackendIntegratedClient:
-    """Return a shared ``BackendIntegratedClient`` instance.
+# Environment inputs the client constructor resolves on its own; a change in
+# any of them must not be served by a client built under the old values.
+_BACKEND_CLIENT_ENV_INPUTS = (
+    "TRAIGENT_BACKEND_URL",
+    "TRAIGENT_API_URL",
+    "TRAIGENT_API_KEY",
+    "TRAIGENT_JWT_TOKEN",
+    "TRAIGENT_OPTIMIZATION_ONLY",
+    "TRAIGENT_SESSION_REDIS_URL",
+    "TRAIGENT_SESSION_TTL",
+    "TRAIGENT_MAX_SESSIONS_PER_USER",
+    "TRAIGENT_RESULTS_FOLDER",
+    "TRAIGENT_ENV",
+    "ENVIRONMENT",
+)
 
-    The first invocation creates a client; subsequent calls reuse it unless
-    tests reset the module-level `_backend_client`.
+
+def _resolved_backend_settings() -> list[tuple[str, str]]:
+    resolved = [(name, os.getenv(name) or "") for name in _BACKEND_CLIENT_ENV_INPUTS]
+    try:
+        resolved.append(("backend_url", BackendConfig.get_backend_url() or ""))
+        resolved.append(("api_key", BackendConfig.get_api_key() or ""))
+    except Exception as exc:  # unresolved settings still key the cache
+        resolved.append(("unresolved", type(exc).__name__))
+    return resolved
+
+
+def _cache_key_value(value: Any) -> Any:
+    """Canonical form of one kwarg: dataclasses by every field, else repr.
+
+    ``repr`` of ``BackendClientConfig`` omits fields declared ``repr=False``
+    (``backend_explicitly_set`` / ``api_explicitly_set``), which change URL
+    selection, so dataclass values are keyed on all of their fields.
+    """
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return (
+            type(value).__qualname__,
+            tuple(
+                (f.name, repr(getattr(value, f.name, None)))
+                for f in dataclasses.fields(value)
+            ),
+        )
+    return repr(value)
+
+
+def _backend_client_cache_key(kwargs: dict[str, Any]) -> str:
+    """Digest of the effective settings (kwargs plus resolved environment).
+
+    Only the digest is kept, never a raw credential.
+    """
+    import hashlib
+
+    material = repr(
+        (
+            sorted((str(k), _cache_key_value(v)) for k, v in kwargs.items()),
+            _resolved_backend_settings(),
+        )
+    )
+    return hashlib.sha256(material.encode("utf-8", "replace")).hexdigest()
+
+
+def get_backend_client(**kwargs) -> BackendIntegratedClient:
+    """Return a shared ``BackendIntegratedClient`` for the given settings.
+
+    Calls with identical keyword arguments share one client; calls with
+    different arguments (key, URL, timeout, fallback flag, ...) get their own
+    client instead of silently reusing the first one built in the process.
+    Tests may clear ``_backend_clients``.
     """
 
-    global _backend_client
-    if _backend_client is None:
-        with _backend_client_lock:
-            if _backend_client is None:
-                _backend_client = BackendIntegratedClient(**kwargs)
-    return _backend_client
+    key = _backend_client_cache_key(kwargs)
+    with _backend_client_lock:
+        client = _backend_clients.get(key)
+        if client is None:
+            client = BackendIntegratedClient(**kwargs)
+            while len(_backend_clients) >= _BACKEND_CLIENT_CACHE_MAX:
+                _backend_clients.pop(next(iter(_backend_clients)))
+            _backend_clients[key] = client
+        return client
+
+
+def discard_backend_client(client: BackendIntegratedClient) -> None:
+    """Drop ``client`` from the shared cache so the next call builds a new one."""
+    with _backend_client_lock:
+        for key, cached in list(_backend_clients.items()):
+            if cached is client:
+                del _backend_clients[key]
