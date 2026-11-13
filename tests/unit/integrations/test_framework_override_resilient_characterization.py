@@ -204,3 +204,22 @@ def test_empty_mapping_with_no_accepted_keys_raises(manager):
 def test_empty_mapping_ok_when_signature_names_the_keys(manager):
     out = _run(manager, _sync_named, {"model": "m"}, mapping={})
     assert out[2] == {"model": "m", "top_p": None}
+
+
+def test_nonempty_mapping_with_keys_absent_from_config_raises(manager):
+    # New (#3150): the check is on what is actually forwarded, not on whether
+    # the mapping is empty.
+    from traigent.utils.exceptions import ConfigurationError
+
+    wrapper = manager._create_resilient_override(_sync, "Cls", MAPPING)
+    token = _with_config({"top_p": 0.9})
+    try:
+        with pytest.raises(ConfigurationError, match="untuned"):
+            wrapper()
+    finally:
+        config_context.reset(token)
+
+
+def test_control_keys_only_config_passes_through_untouched(manager):
+    out = _run(manager, _sync, {"offline": True}, a=1)
+    assert out[2] == {"a": 1}

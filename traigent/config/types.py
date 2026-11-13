@@ -7,7 +7,6 @@ from __future__ import annotations
 import dataclasses
 import functools
 import os
-import sys
 from dataclasses import dataclass, field
 from enum import EnumType, StrEnum
 from inspect import Parameter, Signature
@@ -1516,17 +1515,42 @@ def _track_explicit_init_fields(cls: type[TraigentConfig]) -> None:
 
     ``merge`` uses this so a TraigentConfig override that explicitly sets a
     value equal to its default (``offline=False``) still overrides the base.
+
+    Replace rule (one deterministic rule on every Python version):
+    ``cfg.__replace__(**changes)`` (what ``copy.replace`` calls) marks as newly
+    explicit only the fields whose value differs from the source, plus the
+    source's own ``_explicit_fields``. ``dataclasses.replace`` cannot be hooked
+    and re-passes every field to ``__init__``; when every init field is passed
+    this way, only the fields that differ from the dataclass default are marked
+    explicit, so a replaced config never resets a base to its defaults.
+
+    Limit: to override a base with a value equal to its default, set it
+    explicitly via attribute assignment or the dict override form.
     """
     original_init = cls.__init__
-    init_names = [f.name for f in dataclasses.fields(cls) if f.init]
+    init_fields = [f for f in dataclasses.fields(cls) if f.init]
+    init_names = [f.name for f in init_fields]
+
+    # Legacy selectors default to a sentinel that __post_init__ resolves.
+    resolved_defaults = {"execution_mode": "local", "privacy_enabled": False}
+
+    def _default_of(f: dataclasses.Field[Any]) -> Any:
+        if f.name in resolved_defaults:
+            return resolved_defaults[f.name]
+        if f.default is not dataclasses.MISSING:
+            return f.default
+        if f.default_factory is not dataclasses.MISSING:
+            return f.default_factory()
+        return None
 
     @functools.wraps(original_init)
     def __init__(self: TraigentConfig, *args: Any, **kwargs: Any) -> None:
-        explicit = set(kwargs) | set(init_names[: len(args)])
-        source_explicit = _replace_source_explicit(kwargs)
-        if source_explicit is not None:
-            explicit = source_explicit
-        object.__setattr__(self, "_explicit_fields", set(explicit))
+        passed = set(kwargs) | set(init_names[: len(args)])
+        if not args and passed >= set(init_names):
+            # Every field passed (the dataclasses.replace shape): mark only
+            # those that differ from the dataclass default.
+            passed = {f.name for f in init_fields if kwargs[f.name] != _default_of(f)}
+        object.__setattr__(self, "_explicit_fields", passed)
         original_init(self, *args, **kwargs)
 
     def __copy__(self: TraigentConfig) -> TraigentConfig:
@@ -1538,39 +1562,25 @@ def _track_explicit_init_fields(cls: type[TraigentConfig]) -> None:
         )
         return new
 
+    def __replace__(self: TraigentConfig, **changes: Any) -> TraigentConfig:
+        values = {name: getattr(self, name) for name in init_names}
+        values.update(changes)
+        new = cls(**values)
+        changed = {
+            k
+            for k, v in changes.items()
+            if k not in values or k not in init_names or v != getattr(self, k)
+        }
+        object.__setattr__(
+            new,
+            "_explicit_fields",
+            set(getattr(self, "_explicit_fields", ())) | changed,
+        )
+        return new
+
     cls.__init__ = __init__  # type: ignore[method-assign]
     cls.__copy__ = __copy__  # type: ignore[attr-defined]
-
-
-def _replace_source_explicit(kwargs: dict[str, Any]) -> set[str] | None:
-    """Explicit fields for a ``dataclasses.replace()``/``copy.replace()`` call.
-
-    ``replace`` re-invokes ``__init__`` with every field, so the init kwargs
-    cannot tell which fields the caller changed. When called from replace,
-    return the source's explicit fields plus only the fields actually passed
-    to replace (None when not called from replace).
-    """
-    try:
-        caller = sys._getframe(2)  # [0]=here, [1]=__init__ wrapper, [2]=caller
-    except ValueError:  # pragma: no cover
-        return None
-    name = caller.f_code.co_name
-    if caller.f_globals.get("__name__") not in ("dataclasses", "copy"):
-        return None
-    source = caller.f_locals.get("obj", caller.f_locals.get("self"))
-    if not isinstance(source, TraigentConfig):
-        return None
-    passed: set[str] | None = None
-    outer = caller.f_back
-    if name == "_replace" and outer is not None:
-        passed_changes = outer.f_locals.get("changes")
-        if isinstance(passed_changes, dict):
-            passed = set(passed_changes)
-    if passed is None:
-        # Older Pythons mutate ``changes`` in place: fall back to the fields
-        # whose value actually differs from the source.
-        passed = {k for k, v in kwargs.items() if v is not getattr(source, k, v)}
-    return set(getattr(source, "_explicit_fields", ())) | passed
+    cls.__replace__ = __replace__  # type: ignore[attr-defined]
 
 
 _track_explicit_init_fields(TraigentConfig)

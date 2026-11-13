@@ -232,23 +232,37 @@ def test_config_override_post_init_assignment_is_explicit() -> None:
     assert base.merge(other).offline is False
 
 
-def test_replace_carries_source_explicit_fields_and_only_passed_ones() -> None:
-
+def test_replace_marks_only_changed_fields_plus_source_explicit() -> None:
     src = TraigentConfig(offline=False, temperature=0.5)
-    new = dataclasses.replace(src, model="m")
+    new = src.__replace__(model="m", temperature=0.5)
+    # temperature is unchanged in value; offline carried from the source.
     assert new._explicit_fields == {"offline", "temperature", "model"}
+    new2 = src.__replace__(model="m")
+    assert new2._explicit_fields == {"offline", "temperature", "model"}
     # An untouched default in the replaced config must not override the base.
-    base = TraigentConfig(algorithm="grid")
-    assert base.merge(new).algorithm == "grid"
+    assert TraigentConfig(algorithm="grid").merge(new2).algorithm == "grid"
     # The explicit default carried from the source still overrides.
-    assert TraigentConfig(offline=True).merge(new).offline is False
+    assert TraigentConfig(offline=True).merge(new2).offline is False
 
 
-def test_replace_explicit_default_passed_to_replace_overrides() -> None:
+def test_dataclasses_replace_never_resets_base_to_defaults() -> None:
+    new = dataclasses.replace(TraigentConfig(model="m"), temperature=0.3)
+    assert new._explicit_fields == {"model", "temperature"}
+    base = TraigentConfig(offline=True, algorithm="grid")
+    merged = base.merge(new)
+    assert merged.offline is True and merged.algorithm == "grid"
 
+
+def test_replace_documented_limit_default_valued_change_needs_explicit_set() -> None:
+    # Documented limit: replacing a field with a value equal to its default
+    # does not by itself mark it explicit.
     new = dataclasses.replace(TraigentConfig(model="m"), offline=False)
-    assert "offline" in new._explicit_fields
+    assert "offline" not in new._explicit_fields
+    assert TraigentConfig(offline=True).merge(new).offline is True
+    # The documented ways to override with a default-equal value work.
+    new.offline = False
     assert TraigentConfig(offline=True).merge(new).offline is False
+    assert TraigentConfig(offline=True).merge({"offline": False}).offline is False
 
 
 def test_copy_and_deepcopy_own_their_explicit_set() -> None:

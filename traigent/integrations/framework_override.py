@@ -1260,15 +1260,20 @@ class FrameworkOverrideManager(BaseOverrideManager):
         if not config_dict:
             return None
 
-        if not parameter_mapping and not (
-            accepted_params and accepted_params & set(config_dict)
-        ):
+        tuning_keys = {k for k in config_dict if k not in _TRAIGENT_CONTROL_KEYS}
+        forwarded = {
+            k
+            for k in tuning_keys
+            if k in parameter_mapping or (accepted_params and k in accepted_params)
+        }
+        if tuning_keys and not forwarded:
             raise ConfigurationError(
-                "No Traigent parameter mapping was found for "
-                f"{method_name or 'the target method'}, so every tuning key "
-                f"({sorted(config_dict)}) would be dropped and the call would "
-                "run untuned. Register a parameter mapping for this vendor "
-                "or call it with explicit keyword arguments."
+                f"None of the tuning keys ({sorted(tuning_keys)}) can be "
+                f"forwarded to {method_name or 'the target method'}: no "
+                "parameter mapping covers them and the vendor signature does "
+                "not name them, so the call would run untuned. Register a "
+                "parameter mapping for this vendor or call it with explicit "
+                "keyword arguments."
             )
 
         # Apply overrides with fallback strategies
