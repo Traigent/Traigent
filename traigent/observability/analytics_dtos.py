@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 
 class ObservabilityIssueDTO(TypedDict):
@@ -122,6 +122,9 @@ class ObservabilityCohortComparisonDTO(TypedDict):
     matched_pair_count: int
     deltas: list[dict[str, Any]]
     generated_at: str
+    # Optional (schema 7.2.0): absent means unknown, not false.
+    truncated: NotRequired[bool]
+    scanned: NotRequired[int]
 
 
 class ObservabilityLineageDTO(TypedDict):
