@@ -17,6 +17,7 @@ from typing import Any, cast
 
 from traigent.config.backend_config import BackendConfig
 from traigent.security.credentials import SecurityError, get_secure_credential_store
+from traigent.utils.env_config import is_truthy
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -278,9 +279,8 @@ class CredentialManager:
         # Only explicit development toggles may enable the fallback credential.
         return any(
             [
-                os.environ.get("TRAIGENT_DEV_MODE", "").lower() in ("true", "1", "yes"),
-                os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower()
-                in ("true", "1", "yes"),
+                is_truthy(os.environ.get("TRAIGENT_DEV_MODE")),
+                is_truthy(os.environ.get("TRAIGENT_GENERATE_MOCKS")),
             ]
         )
 

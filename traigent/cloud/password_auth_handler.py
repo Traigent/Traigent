@@ -199,6 +199,7 @@ class PasswordAuthHandler:
         """
         try:
             from traigent.utils.env_config import (
+                is_truthy,
                 resolve_environment_name,
                 treat_as_production_policy,
             )
@@ -215,12 +216,7 @@ class PasswordAuthHandler:
         if env in {"dev", "development", "local"}:
             return True
 
-        if os.getenv("TRAIGENT_DEV_MODE", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
+        if is_truthy(os.getenv("TRAIGENT_DEV_MODE")):
             return True
 
         try:

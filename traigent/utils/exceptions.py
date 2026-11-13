@@ -21,7 +21,11 @@ def _traigent_excepthook(exc_type, exc_value, exc_tb):
     Shows just the error message without full traceback for ConfigurationError,
     unless TRAIGENT_DEBUG is set.
     """
-    if issubclass(exc_type, ConfigurationError) and not os.getenv("TRAIGENT_DEBUG"):
+    from traigent.utils.env_config import is_truthy
+
+    if issubclass(exc_type, ConfigurationError) and not is_truthy(
+        os.getenv("TRAIGENT_DEBUG")
+    ):
         # Clean output: just the exception type and message
         print(
             f"{exc_type.__module__}.{exc_type.__name__}: {exc_value}", file=sys.stderr
