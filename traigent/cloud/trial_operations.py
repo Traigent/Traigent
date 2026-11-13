@@ -35,6 +35,7 @@ from traigent.core.session_types import (
     safe_http_error_summary,
 )
 from traigent.labels.transport_gate import client_origins, gate_session
+from traigent.security.redaction import is_non_credential_key_name
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
@@ -432,6 +433,8 @@ class TrialOperations:
     def _is_sensitive_config_key(key: str) -> bool:
         """Whether a key matches the existing sensitive-key denylist."""
 
+        if is_non_credential_key_name(key):
+            return False
         key_lower = key.lower().replace("_", "").replace("-", "")
         return any(
             sensitive_key.replace("_", "") in key_lower

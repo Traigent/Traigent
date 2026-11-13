@@ -7,7 +7,12 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, overload
 
-_EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+# The lookbehind makes each run of local-part characters start exactly one
+# scan; a bare \b allowed a retry from every boundary inside the run, which is
+# quadratic on long dashed/dotted runs.
+_EMAIL_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+)
 _SSN_PATTERN = re.compile(r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b")
 _CREDIT_CARD_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
 _API_KEY_PATTERN = re.compile(
@@ -226,6 +231,29 @@ def _is_exempt_numeric_counter(value: Any, *, parent_key: str | None, key: str) 
     return _is_approved_numeric_counter_key(parent_key=parent_key, key=key)
 
 
+# Exact normalized key names that merely look credential-like: numeric
+# token limits and plain words containing "token"/"auth". Matched by exact
+# equality, so real secret keys such as `access_token` or `auth_token` and
+# string values under them are still redacted.
+_NON_CREDENTIAL_KEY_NAMES: frozenset[str] = frozenset(
+    {
+        "maxtokens",
+        "maxoutputtokens",
+        "maxcompletiontokens",
+        "tokenbudget",
+        "tokenizer",
+        "author",
+        "authors",
+    }
+)
+
+
+def is_non_credential_key_name(key: str) -> bool:
+    """True for exact tuned-config names (max_tokens, token_budget, ...) that
+    are not secrets even though they contain a credential root."""
+    return _normalize_key_name(key) in _NON_CREDENTIAL_KEY_NAMES
+
+
 def is_credential_key_name(key: str) -> bool:
     """Return True when a key name looks credential/secret-like.
 
@@ -241,6 +269,8 @@ def is_credential_key_name(key: str) -> bool:
     field is.
     """
     normalized = _normalize_key_name(key)
+    if normalized in _NON_CREDENTIAL_KEY_NAMES:
+        return False
     if normalized in _EXACT_CREDENTIAL_KEY_NAMES:
         return True
     if normalized.startswith(_AUTH_PREFIX_ROOT):

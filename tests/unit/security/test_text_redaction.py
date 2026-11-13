@@ -161,7 +161,7 @@ class TestNestedRedaction:
                     "completion_tokens": 7,
                 },
                 "credentials": {
-                    "api_key": "mylowentropykey"
+                    "api_key": "mylowentropykey"  # pragma: allowlist secret
                 },  # pragma: allowlist secret
             },
             redact_credential_keys=True,
@@ -207,7 +207,7 @@ class TestNestedRedaction:
         value-regex redaction would leak the adjacent unmatched portion."""
         out = redact_sensitive_data(
             {
-                "api_key": "mylowentropykey sk-abcd1234abcd1234"
+                "api_key": "mylowentropykey sk-abcd1234abcd1234"  # pragma: allowlist secret
             },  # pragma: allowlist secret
             redact_credential_keys=True,
         )
@@ -242,7 +242,7 @@ class TestNestedRedaction:
         out = redact_sensitive_data(
             {
                 "password": 123456,
-                "api_key": "sk-secretstring",
+                "api_key": "sk-secretstring",  # pragma: allowlist secret
             },  # pragma: allowlist secret
             redact_credential_keys=True,
         )
@@ -437,3 +437,113 @@ class TestApprovedNumericCounterExemption:
             redact_credential_keys=True,
         )
         assert out["usage"]["total_tokens"] == "[REDACTED]"
+
+
+class TestEmailPatternLinear:
+    """Email scan must stay linear on long separator-heavy runs (#3029)."""
+
+    @pytest.mark.parametrize("unit", ["a-", "a.", "a%", "a+"])
+    def test_long_separator_run_is_fast(self, unit: str) -> None:
+        import time
+
+        text = unit * 40000
+        start = time.perf_counter()
+        out = redact_sensitive_text(text)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 0.5
+        assert out == text
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "contact alice@example.com now",
+            "first.last+tag@sub.example.co.uk",
+            "x-y_z@host-name.org.",
+            "-" * 5 + "bob@example.com",
+            ("a-" * 2000) + "@example.com",
+        ],
+    )
+    def test_real_emails_still_redacted(self, text: str) -> None:
+        out = redact_sensitive_text(text)
+        assert "@example.com" not in out and "@host-name.org" not in out
+        assert "@sub.example.co.uk" not in out
+
+
+class TestTokenCountKeysNotRedacted:
+    """Tuned token-limit keys are not credentials (#3005)."""
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "max_tokens",
+            "max_output_tokens",
+            "token_budget",
+            "tokenizer",
+            "author",
+            "maxTokens",
+            "TOKEN_BUDGET",
+        ],
+    )
+    def test_not_credential_key(self, key: str) -> None:
+        assert not is_credential_key_name(key)
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "token",
+            "access_token",
+            "api_key",
+            "auth_token",
+            "authorization",
+            "refresh_token",
+            "tokenizer_api_key",
+            "author_token",
+            "token_budget_secret",
+            "secret",
+        ],
+    )
+    def test_real_secret_keys_still_credential(self, key: str) -> None:
+        assert is_credential_key_name(key)
+
+    def test_config_log_sink_keeps_limits(self) -> None:
+        from traigent.core.evaluator_wrapper import _redact_config_for_log
+
+        out = _redact_config_for_log(
+            {
+                "max_tokens": 512,
+                "max_output_tokens": 256,
+                "token_budget": 1000,
+                "tokenizer": "cl100k",
+                "api_key": "x",
+                "access_token": "y",
+            }
+        )
+        assert out["max_tokens"] == 512
+        assert out["max_output_tokens"] == 256
+        assert out["token_budget"] == 1000
+        assert out["tokenizer"] == "cl100k"
+        assert out["api_key"] == "***REDACTED***"
+        assert out["access_token"] == "***REDACTED***"
+
+    def test_trial_payload_sink_keeps_limits(self) -> None:
+        from traigent.cloud.trial_operations import TrialOperations
+
+        out = TrialOperations._redact_sensitive_fields(
+            {"max_tokens": 512, "token_budget": 9, "api_key": "x", "token": "t"}
+        )
+        assert out["max_tokens"] == 512
+        assert out["token_budget"] == 9
+        assert out["api_key"] != "x"
+        assert out["token"] != "t"
+
+    def test_trace_and_backend_sinks_keep_limits(self) -> None:
+        from traigent.cloud.dataset_converter import sanitize_backend_metadata
+        from traigent.observability.decorators import _sanitize_metadata_value
+
+        cfg = {"max_tokens": 512, "token_budget": 1000, "tokenizer": "c", "author": "a"}
+        assert _sanitize_metadata_value(dict(cfg, api_key="k")) == dict(
+            cfg, api_key="[REDACTED]"
+        )
+        tags = sanitize_backend_metadata(dict(cfg, access_token="z"))
+        assert tags["max_tokens"] == "512"
+        assert "access_token" not in tags
