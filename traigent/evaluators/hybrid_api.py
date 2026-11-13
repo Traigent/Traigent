@@ -1472,10 +1472,14 @@ class HybridAPIEvaluator(BaseEvaluator):
                 evaluation["output"] = output_item.get("output")
             elif "output_id" in output_item:
                 evaluation["output_id"] = output_item.get("output_id")
-            else:
-                evaluation["output"] = None
+            # No output key at all: omit it (the contract types output as an
+            # object and does not allow null).
 
             target_key, target_value = self._extract_target_fields(expected)
+            if target_key == "target" and not isinstance(target_value, dict):
+                # EvaluationItem.target is typed as an object; wrap scalars and
+                # lists as {"value": x}.
+                target_value = {"value": target_value}
             evaluation[target_key] = target_value
             evaluations.append(evaluation)
         return evaluations

@@ -5,13 +5,17 @@
     "example_id": "a",
     "input_id": "a",
     "output": "o1",
-    "target": "ea"
+    "target": {
+     "value": "ea"
+    }
    },
    {
     "example_id": "b",
     "input_id": "b",
     "output": "o2",
-    "target": "eb"
+    "target": {
+     "value": "eb"
+    }
    }
   ],
   "results": [
@@ -58,13 +62,17 @@
     "example_id": "a",
     "input_id": "a",
     "output": "o",
-    "target": null
+    "target": {
+     "value": null
+    }
    },
    {
     "example_id": "b",
     "input_id": "b",
     "output": "o",
-    "target": "given"
+    "target": {
+     "value": "given"
+    }
    }
   ],
   "results": [
@@ -110,7 +118,9 @@
     "example_id": "a",
     "input_id": "a",
     "output": null,
-    "target": "ea"
+    "target": {
+     "value": "ea"
+    }
    }
   ],
   "results": [
@@ -137,7 +147,9 @@
     "example_id": "a",
     "input_id": "a",
     "output": "o",
-    "target": "ea"
+    "target": {
+     "value": "ea"
+    }
    }
   ],
   "results": [
@@ -164,13 +176,17 @@
     "example_id": "a",
     "input_id": "a",
     "output": "o",
-    "target": "ea"
+    "target": {
+     "value": "ea"
+    }
    },
    {
     "example_id": "b",
     "input_id": "b",
     "output": "o",
-    "target": "eb"
+    "target": {
+     "value": "eb"
+    }
    }
   ],
   "results": [
@@ -212,7 +228,9 @@
     "example_id": "a",
     "input_id": "a",
     "output": "o",
-    "target": "ea"
+    "target": {
+     "value": "ea"
+    }
    }
   ],
   "results": [
@@ -261,7 +279,9 @@
     "example_id": "a",
     "input_id": "a",
     "output_id": "oid1",
-    "target": "ea"
+    "target": {
+     "value": "ea"
+    }
    }
   ],
   "results": [
@@ -307,7 +327,9 @@
     "example_id": "a",
     "input_id": "a",
     "output": "o",
-    "target": "ea"
+    "target": {
+     "value": "ea"
+    }
    }
   ],
   "results": [
