@@ -1,5 +1,6 @@
 """TraigentConfig.merge / merge_with_context must not drop any field."""
 
+import copy
 import dataclasses
 from typing import Any
 
@@ -7,6 +8,7 @@ import pytest
 
 from traigent.config.context import merge_with_context, set_config
 from traigent.config.types import TraigentConfig
+from traigent.utils.exceptions import ValidationError
 
 # Non-default value for every dataclass field except the legacy selectors,
 # which have dedicated characterization tests.
@@ -205,3 +207,76 @@ def test_dict_context_single_sided_string_is_normalised() -> None:
     finally:
         set_config(None)
     assert merged["no_egress"] is True
+
+
+def test_config_override_explicit_defaults_reset_base() -> None:
+    base = TraigentConfig(offline=True, algorithm="grid", temperature=0.5)
+    merged = base.merge(TraigentConfig(offline=False, algorithm="auto"))
+    assert merged.offline is False
+    assert merged.algorithm == "auto"
+    assert merged.temperature == 0.5
+
+
+def test_config_override_untouched_defaults_keep_base() -> None:
+    base = TraigentConfig(offline=True, algorithm="grid")
+    merged = base.merge(TraigentConfig(model="m"))
+    assert merged.offline is True
+    assert merged.algorithm == "grid"
+    assert merged.model == "m"
+
+
+def test_config_override_post_init_assignment_is_explicit() -> None:
+    base = TraigentConfig(offline=True)
+    other = TraigentConfig()
+    other.offline = False
+    assert base.merge(other).offline is False
+
+
+def test_replace_marks_only_changed_fields_plus_source_explicit() -> None:
+    src = TraigentConfig(offline=False, temperature=0.5)
+    new = src.__replace__(model="m", temperature=0.5)
+    # temperature is unchanged in value; offline carried from the source.
+    assert new._explicit_fields == {"offline", "temperature", "model"}
+    new2 = src.__replace__(model="m")
+    assert new2._explicit_fields == {"offline", "temperature", "model"}
+    # An untouched default in the replaced config must not override the base.
+    assert TraigentConfig(algorithm="grid").merge(new2).algorithm == "grid"
+    # The explicit default carried from the source still overrides.
+    assert TraigentConfig(offline=True).merge(new2).offline is False
+
+
+def test_dataclasses_replace_never_resets_base_to_defaults() -> None:
+    new = dataclasses.replace(TraigentConfig(model="m"), temperature=0.3)
+    assert new._explicit_fields == {"model", "temperature"}
+    base = TraigentConfig(offline=True, algorithm="grid")
+    merged = base.merge(new)
+    assert merged.offline is True and merged.algorithm == "grid"
+
+
+def test_replace_documented_limit_default_valued_change_needs_explicit_set() -> None:
+    # Documented limit: replacing a field with a value equal to its default
+    # does not by itself mark it explicit.
+    new = dataclasses.replace(TraigentConfig(model="m"), offline=False)
+    assert "offline" not in new._explicit_fields
+    assert TraigentConfig(offline=True).merge(new).offline is True
+    # The documented ways to override with a default-equal value work.
+    new.offline = False
+    assert TraigentConfig(offline=True).merge(new).offline is False
+    assert TraigentConfig(offline=True).merge({"offline": False}).offline is False
+
+
+def test_copy_and_deepcopy_own_their_explicit_set() -> None:
+
+    src = TraigentConfig(offline=False)
+    for dup in (copy.copy(src), copy.deepcopy(src)):
+        assert dup._explicit_fields == {"offline"}
+        assert dup._explicit_fields is not src._explicit_fields
+        dup.temperature = 0.1
+        assert "temperature" not in src._explicit_fields
+
+
+def test_failed_assignment_is_not_marked_explicit() -> None:
+    cfg = TraigentConfig()
+    with pytest.raises(ValidationError):
+        cfg.temperature = 99.0
+    assert "temperature" not in cfg._explicit_fields

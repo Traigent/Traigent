@@ -40,7 +40,9 @@ Run these quickstart examples to get started:
 
 ```bash
 pip install -e ".[examples]"          # Ensure example deps
-export TRAIGENT_MOCK_LLM=true        # No API keys needed
+# No API keys needed: with no OPENAI_API_KEY set, the quickstart scripts switch to
+# mock mode on their own. For your own scripts call
+# traigent.testing.enable_mock_mode_for_quickstart() in code.
 python examples/quickstart/01_simple_qa.py           # Basic Q&A optimization
 python examples/quickstart/02_customer_support_rag.py # RAG with customer support
 python examples/quickstart/03_custom_objectives.py    # Custom weighted objectives
@@ -289,7 +291,7 @@ from inside the repo tree requires no extra setup.
 | Variable | Purpose |
 | -------- | ------- |
 | `TRAIGENT_SDK_PATH` | Absolute path to the SDK repo root (overrides auto-detection) |
-| `TRAIGENT_MOCK_LLM` | Set to `true` to run without real API keys |
+| `TRAIGENT_MOCK_LLM` | Legacy (deprecated): prefer `traigent.testing.enable_mock_mode_for_quickstart()` in code |
 | `TRAIGENT_DATASET_ROOT` | Root directory for resolving dataset paths |
 | `TRAIGENT_RESULTS_FOLDER` | Custom directory for optimization results |
 | `TRAIGENT_COST_APPROVED` | Set to `true` to skip cost confirmation prompts |
@@ -329,11 +331,16 @@ Follow these best practices when contributing new examples:
 4. **Test thoroughly:**
 
    ```bash
-   # Test in mock mode
-   TRAIGENT_MOCK_LLM=true python examples/core/<YOUR_EXAMPLE>/run.py
-
-   # Test with real APIs
+   # Test in mock mode: guard the activation at the top of run.py so real
+   # runs are unaffected:
+   #   import os
+   #   if os.environ.get("MY_EXAMPLE_REAL") != "1":
+   #       from traigent.testing import enable_mock_mode_for_quickstart
+   #       enable_mock_mode_for_quickstart()
    python examples/core/<YOUR_EXAMPLE>/run.py
+
+   # Test with real APIs (the guard above skips mock mode)
+   MY_EXAMPLE_REAL=1 python examples/core/<YOUR_EXAMPLE>/run.py
    ```
 
 5. **Update documentation:**
@@ -353,7 +360,7 @@ Follow these best practices when contributing new examples:
 **For Beginners:**
 
 - Start with `core/simple-prompt/` to verify your setup
-- Use `TRAIGENT_MOCK_LLM=true` to learn without API costs
+- Use `enable_mock_mode_for_quickstart()` to learn without API costs
 - Read inline comments in examples - they explain key concepts
 - Follow the recommended learning path above
 
@@ -378,7 +385,7 @@ Follow these best practices when contributing new examples:
 | Problem | Solution |
 | ------- | -------- |
 | `ModuleNotFoundError: No module named 'traigent'` | Run `pip install -e .` from repository root, or set `TRAIGENT_SDK_PATH` |
-| `API key not found` | Export your API key or use `TRAIGENT_MOCK_LLM=true` |
+| `API key not found` | Export your API key or call `enable_mock_mode_for_quickstart()` |
 | `Example doesn't run` | Check example's inline comments for prerequisites |
 | `0.0% accuracy` | Use mock mode or provide valid API keys |
 

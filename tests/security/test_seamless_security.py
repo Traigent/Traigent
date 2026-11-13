@@ -451,3 +451,31 @@ class TestComplianceAndAudit:
         for value in unsafe_values:
             node = transformer._create_value_node(value)
             assert node is None
+
+
+class TestDenylistErrorMessage:
+    """The body denylist stays; its error names the rule and the remedy."""
+
+    def test_error_names_rule_and_remedy_without_echoing_source(self):
+        provider = SeamlessParameterProvider()
+
+        def func():
+            model = "gpt-4o-mini"
+            secret_marker_xyz = isinstance(model, str)
+            return model, secret_marker_xyz
+
+        with pytest.raises(ConfigurationError) as exc:
+            provider._transform_function(func, {"model": "x"})
+        msg = str(exc.value)
+        assert "call to 'isinstance'" in msg
+        assert "helper function" in msg
+        assert "secret_marker_xyz" not in msg
+        assert "gpt-4o-mini" not in msg
+
+    def test_denylist_still_rejects(self):
+        tree = ast.parse("def f():\n    import os\n    return open('x')")
+        assert not SafeASTCompiler.validate_ast(tree)
+        assert SafeASTCompiler.find_violations(tree) == [
+            "Import statement",
+            "call to 'open'",
+        ]

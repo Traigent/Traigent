@@ -433,18 +433,49 @@ class SafeASTCompiler:
         Returns:
             True if the tree is safe, False otherwise
         """
+        return not cls.find_violations(tree)
+
+    @classmethod
+    def find_violations(cls, tree: ast.AST) -> list[str]:
+        """Return fixed-vocabulary rule labels for every denylist hit in *tree*.
+
+        Labels come only from the built-in denylists (node type names, denylisted
+        call names, denylisted attribute names), never from user source text, so
+        they are safe to put in error messages.
+        """
+        found: list[str] = []
         for node in ast.walk(tree):
-            # Check for dangerous node types
+            label: str | None = None
             if type(node) in cls.DANGEROUS_NODES:
-                return False
+                label = f"{type(node).__name__} statement"
+            elif isinstance(node, ast.Call) and cls._is_dangerous_call(node):
+                func = node.func
+                name = (
+                    func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+                )
+                label = f"call to '{name}'"
+            elif isinstance(node, ast.Attribute) and cls._is_dangerous_attribute(node):
+                label = (
+                    f"attribute '{node.attr}'"
+                    if node.attr in cls.DANGEROUS_ATTRIBUTES
+                    else "non-allowlisted dunder attribute access"
+                )
+            if label is not None and label not in found:
+                found.append(label)
+        return found
 
-            if isinstance(node, ast.Call) and cls._is_dangerous_call(node):
-                return False
-
-            if isinstance(node, ast.Attribute) and cls._is_dangerous_attribute(node):
-                return False
-
-        return True
+    @classmethod
+    def describe_violations(cls, tree: ast.AST) -> str:
+        """Human-readable rule + remediation text for a rejected tree."""
+        labels = cls.find_violations(tree)
+        return (
+            "rule: seamless AST injection forbids "
+            + ", ".join(labels or ["denylisted constructs"])
+            + " inside the decorated function body (security denylist). "
+            "To fix: move that logic into a helper function defined outside the "
+            "decorated function and call the helper from it (its body is not "
+            "rewritten), or use the context/parameter injection mode instead."
+        )
 
     @classmethod
     def _is_dangerous_call(cls, node: ast.Call) -> bool:
