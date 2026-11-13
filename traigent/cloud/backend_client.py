@@ -3736,20 +3736,42 @@ class BackendIntegratedClient:
         return await self._api_ops.execute_cloud_agent(request)
 
 
-_backend_client: BackendIntegratedClient | None = None
+_BACKEND_CLIENT_CACHE_MAX = 16
+_backend_clients: dict[str, BackendIntegratedClient] = {}
 _backend_client_lock = threading.RLock()
 
 
-def get_backend_client(**kwargs) -> BackendIntegratedClient:
-    """Return a shared ``BackendIntegratedClient`` instance.
+def _backend_client_cache_key(kwargs: dict[str, Any]) -> str:
+    """Digest of the effective constructor kwargs (no raw credential kept)."""
+    import hashlib
 
-    The first invocation creates a client; subsequent calls reuse it unless
-    tests reset the module-level `_backend_client`.
+    material = repr(sorted((str(k), repr(v)) for k, v in kwargs.items()))
+    return hashlib.sha256(material.encode("utf-8", "replace")).hexdigest()
+
+
+def get_backend_client(**kwargs) -> BackendIntegratedClient:
+    """Return a shared ``BackendIntegratedClient`` for the given settings.
+
+    Calls with identical keyword arguments share one client; calls with
+    different arguments (key, URL, timeout, fallback flag, ...) get their own
+    client instead of silently reusing the first one built in the process.
+    Tests may clear ``_backend_clients``.
     """
 
-    global _backend_client
-    if _backend_client is None:
-        with _backend_client_lock:
-            if _backend_client is None:
-                _backend_client = BackendIntegratedClient(**kwargs)
-    return _backend_client
+    key = _backend_client_cache_key(kwargs)
+    with _backend_client_lock:
+        client = _backend_clients.get(key)
+        if client is None:
+            client = BackendIntegratedClient(**kwargs)
+            while len(_backend_clients) >= _BACKEND_CLIENT_CACHE_MAX:
+                _backend_clients.pop(next(iter(_backend_clients)))
+            _backend_clients[key] = client
+        return client
+
+
+def discard_backend_client(client: BackendIntegratedClient) -> None:
+    """Drop ``client`` from the shared cache so the next call builds a new one."""
+    with _backend_client_lock:
+        for key, cached in list(_backend_clients.items()):
+            if cached is client:
+                del _backend_clients[key]
