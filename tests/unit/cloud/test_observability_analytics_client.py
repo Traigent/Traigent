@@ -691,3 +691,100 @@ def test_cohort_trace_statuses_accepts_unknown_and_keeps_cap() -> None:
     }
     with pytest.raises(ValueError, match="trace_statuses"):
         _validate_observability_cohort(over_cap, field="reference")
+
+
+def _cohort_comparison_data(**extra: object) -> dict[str, object]:
+    return {
+        "project_id": "project-1",
+        "reference": {"trace_count": 10, "metrics": []},
+        "comparison": {"trace_count": 9, "metrics": []},
+        "matched_pair_count": 8,
+        "deltas": [],
+        "generated_at": "2026-07-02T00:00:00Z",
+        **extra,
+    }
+
+
+def test_cohort_comparison_accepts_optional_truncated_and_scanned() -> None:
+    from traigent.cloud.analytics_client import (
+        _project_observability_cohort_comparison,
+    )
+
+    absent = _project_observability_cohort_comparison(_cohort_comparison_data())
+    assert "truncated" not in absent and "scanned" not in absent
+
+    present = _project_observability_cohort_comparison(
+        _cohort_comparison_data(truncated=True, scanned=0)
+    )
+    assert present["truncated"] is True
+    assert present["scanned"] == 0
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"truncated": "yes"},
+        {"truncated": 1},
+        {"scanned": -1},
+        {"scanned": True},
+        {"scanned": 1.5},
+    ],
+)
+def test_cohort_comparison_rejects_malformed_truncated_and_scanned(extra) -> None:
+    from traigent.cloud.analytics_client import (
+        AnalyticsClientError,
+        _project_observability_cohort_comparison,
+    )
+
+    with pytest.raises(AnalyticsClientError):
+        _project_observability_cohort_comparison(_cohort_comparison_data(**extra))
+
+
+def test_cohort_comparison_still_rejects_unrelated_unknown_key() -> None:
+    from traigent.cloud.analytics_client import (
+        AnalyticsClientError,
+        _project_observability_cohort_comparison,
+    )
+
+    with pytest.raises(AnalyticsClientError) as exc_info:
+        _project_observability_cohort_comparison(
+            _cohort_comparison_data(truncated=False, scanned=3, other="PRIVACY_CANARY")
+        )
+    assert "PRIVACY_CANARY" not in str(exc_info.value)
+
+
+def _trace_analysis_data(failure_code: object) -> dict[str, object]:
+    return {
+        "project_id": "project-1",
+        "trace_id": "trace-1",
+        "analysis_status": "failed",
+        "failure_code": failure_code,
+        "fingerprint": None,
+        "variant_id": None,
+        "critical_path": {
+            "observation_ids": [],
+            "duration_ms": 0,
+            "observation_count": 0,
+        },
+        "repeat_groups": [],
+        "tool_summaries": [],
+        "issue_ids": [],
+        "derivation": None,
+    }
+
+
+def test_trace_analysis_accepts_analysis_dead_lettered_and_rejects_other_codes() -> (
+    None
+):
+    from traigent.cloud.analytics_client import (
+        AnalyticsClientError,
+        _project_observability_trace_analysis,
+    )
+
+    result = _project_observability_trace_analysis(
+        _trace_analysis_data("analysis_dead_lettered")
+    )
+    assert result["failure_code"] == "analysis_dead_lettered"
+
+    with pytest.raises(AnalyticsClientError):
+        _project_observability_trace_analysis(_trace_analysis_data("made_up_code"))

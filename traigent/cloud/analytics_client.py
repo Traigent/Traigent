@@ -379,6 +379,8 @@ _OBSERVABILITY_COHORT_COMPARISON_REQUIRED_KEYS = frozenset(
         "generated_at",
     }
 )
+# Optional additions (schema 7.2.0); omitted by servers that predate them.
+_OBSERVABILITY_COHORT_COMPARISON_OPTIONAL_KEYS = frozenset({"truncated", "scanned"})
 _OBSERVABILITY_LINEAGE_REQUIRED_KEYS = frozenset(
     {"project_id", "trace_id", "execution_context", "links", "generated_at"}
 )
@@ -1530,6 +1532,7 @@ def _project_observability_trace_analysis(payload: Any) -> dict[str, Any]:
                     "invalid_structure",
                     "derivation_timeout",
                     "internal_error",
+                    "analysis_dead_lettered",
                 }
             ),
             what="trace_analysis.failure_code",
@@ -1983,9 +1986,23 @@ def _project_observability_cohort_summary(payload: Any, *, what: str) -> dict[st
 def _project_observability_cohort_comparison(payload: Any) -> dict[str, Any]:
     source = _exact_observability_object(
         payload,
-        keys=_OBSERVABILITY_COHORT_COMPARISON_REQUIRED_KEYS,
+        keys=_OBSERVABILITY_COHORT_COMPARISON_REQUIRED_KEYS
+        | _OBSERVABILITY_COHORT_COMPARISON_OPTIONAL_KEYS,
+        required=_OBSERVABILITY_COHORT_COMPARISON_REQUIRED_KEYS,
         what="observability cohort comparison",
     )
+    optional_cohort_fields: dict[str, Any] = {}
+    if "truncated" in source:
+        if not isinstance(source["truncated"], bool):
+            raise AnalyticsClientError(
+                "Malformed observability cohort comparison response: "
+                "truncated must be a boolean."
+            )
+        optional_cohort_fields["truncated"] = source["truncated"]
+    if "scanned" in source:
+        optional_cohort_fields["scanned"] = _require_observability_integer(
+            source["scanned"], what="cohort_comparison.scanned"
+        )
     _require_safe_observability_identifier(
         source["project_id"], what="cohort_comparison.project_id"
     )
@@ -2034,6 +2051,7 @@ def _project_observability_cohort_comparison(payload: Any) -> dict[str, Any]:
         "matched_pair_count": matched_pair_count,
         "deltas": projected_deltas,
         "generated_at": source["generated_at"],
+        **optional_cohort_fields,
     }
 
 
