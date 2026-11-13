@@ -41,7 +41,7 @@ validate(response_data, execute_response_schema)
 
 ### Publishing and Versioning (Swagger)
 
-`docs/hybrid-mode-openapi.yaml` is a generated copy of the canonical contract in the `traigent-api` repository (`openapi/openapi.yaml`); never hand-edit it. Regenerate it with `npx redocly bundle openapi/openapi.yaml -o dist/openapi.yaml` in a `traigent-api` checkout, and publish via Swagger UI (or Redoc) instead of ad-hoc zip bundles.
+Use `docs/hybrid-mode-openapi.yaml` as the single source of truth and publish it via Swagger UI (or Redoc) instead of ad-hoc zip bundles.
 
 - Keep `info.version` in the OpenAPI file under semantic versioning (`MAJOR.MINOR.PATCH`).
 - Publish each released spec from git tags (for example `v1.0.0`, `v1.0.1`).
