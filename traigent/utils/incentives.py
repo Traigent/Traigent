@@ -169,7 +169,7 @@ class IncentiveManager:
                 "   • Advanced Bayesian optimization (vs. random search)",
                 "   • Web dashboard with beautiful visualizations",
                 "   • Team collaboration and sharing features",
-                "   • Higher trial allowances (see the plans page for limits)",
+                "   • Trial limits set by your plan",
                 f"   \n   Your {completed_count} sessions can be synced instantly!",
                 "   Run 'traigent auth login' to get started",
             ],

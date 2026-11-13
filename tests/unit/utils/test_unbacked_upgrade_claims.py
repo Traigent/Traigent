@@ -19,6 +19,7 @@ _UNBACKED = re.compile(
     r"|\d+\s*-\s*\d+\s*%"  # unsourced percentage ranges such as 60-80%
     r"|unlimited"
     r"|20 trial"
+    r"|higher trial allowances"
     r"|\bup to \d+\s*%",
     re.IGNORECASE,
 )
