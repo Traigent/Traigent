@@ -700,6 +700,30 @@ _STRICT_COST_RUN_DEFAULT: ContextVar[bool] = ContextVar(
 )
 
 
+def is_exact_flag(
+    name: str,
+    accepted: frozenset[str],
+    *,
+    strip: bool = False,
+    lower: bool = False,
+) -> bool:
+    """Strict flag reader for flags that RELAX safety or approve money.
+
+    Unlike :func:`is_truthy` it accepts only the listed spellings, with the
+    normalisation each call site historically applied (``strip`` / ``lower``),
+    so no extra spelling can switch such a flag on. Unset or unrecognised
+    values are False.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return False
+    if strip:
+        raw = raw.strip()
+    if lower:
+        raw = raw.lower()
+    return raw in accepted
+
+
 _EDGE_ANALYTICS_LOCAL_MODES = frozenset({"local", "edge_analytics"})
 
 

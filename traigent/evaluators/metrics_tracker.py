@@ -22,7 +22,7 @@ from traigent._version import get_version
 # pre-merge path; this aggregation path mirrors the SAME semantics — user keys
 # are truncated, evaluator keys are never dropped.
 from traigent.knobs.telemetry import TOTAL_MEASURES_CEILING
-from traigent.utils.env_config import is_truthy
+from traigent.utils.env_config import is_exact_flag, is_truthy
 from traigent.utils.logging import get_logger
 from traigent.utils.numeric_validation import validate_token_count
 
@@ -2509,7 +2509,7 @@ def _calculate_cost_for_metrics(
     # a stale env var leaks into a deployed environment. ``TRAIGENT_GENERATE_MOCKS``
     # is preserved because it is an internal fixture-recording knob, not a
     # user-facing mock-LLM toggle.
-    if is_truthy(os.environ.get("TRAIGENT_GENERATE_MOCKS")):
+    if is_exact_flag("TRAIGENT_GENERATE_MOCKS", frozenset({"true"}), lower=True):
         _handle_mock_mode(metrics, prompt_length, response_length)
         return
 

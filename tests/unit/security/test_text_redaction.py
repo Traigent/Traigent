@@ -8,6 +8,7 @@ from traigent.security.redaction import (
     CONTENT_KEY_FRAGMENTS,
     CREDENTIAL_KEY_FRAGMENTS,
     _normalize_key_name,
+    is_benign_config_value,
     is_content_key_name,
     is_credential_key_name,
     redact_sensitive_data,
@@ -470,80 +471,106 @@ class TestEmailPatternLinear:
 
 
 class TestTokenCountKeysNotRedacted:
-    """Tuned token-limit keys are not credentials (#3005)."""
+    """Tuned token-limit keys are kept only with a validated benign value (#3005)."""
 
     @pytest.mark.parametrize(
-        "key",
+        ("key", "value"),
         [
-            "max_tokens",
-            "max_output_tokens",
-            "token_budget",
-            "tokenizer",
-            "author",
-            "maxTokens",
-            "TOKEN_BUDGET",
+            ("max_tokens", 512),
+            ("maxTokens", 512.0),
+            ("max_output_tokens", "256"),
+            ("TOKEN_BUDGET", 1000),
+            ("tokenizer", "cl100k_base"),
+            ("author", "Jane Doe"),
         ],
     )
-    def test_not_credential_key(self, key: str) -> None:
-        assert not is_credential_key_name(key)
+    def test_benign_values_kept(self, key, value) -> None:
+        assert is_benign_config_value(key, value)
 
     @pytest.mark.parametrize(
-        "key",
+        ("key", "value"),
         [
-            "token",
-            "access_token",
-            "api_key",
-            "auth_token",
-            "authorization",
-            "refresh_token",
-            "tokenizer_api_key",
-            "author_token",
-            "token_budget_secret",
-            "secret",
+            ("max_tokens", "lowentropysecret"),
+            ("max_tokens", True),
+            ("max_tokens", "12a"),
+            ("token_budget", {"a": 1}),
+            ("tokenizer", "sk-abcdef1234567890abcdef"),
+            ("tokenizer", "x" * 65),
+            ("author", "a b\nc"),
+            ("author", 5),
+            ("access_token", 512),
+            ("api_key", "12345"),
+            ("token", "12345"),
         ],
+    )
+    def test_other_values_and_keys_not_exempt(self, key, value) -> None:
+        assert not is_benign_config_value(key, value)
+
+    @pytest.mark.parametrize(
+        "key", ["token", "access_token", "api_key", "auth_token", "authorization"]
     )
     def test_real_secret_keys_still_credential(self, key: str) -> None:
         assert is_credential_key_name(key)
 
-    def test_config_log_sink_keeps_limits(self) -> None:
+    def test_config_log_sink(self) -> None:
         from traigent.core.evaluator_wrapper import _redact_config_for_log
 
         out = _redact_config_for_log(
             {
                 "max_tokens": 512,
-                "max_output_tokens": 256,
                 "token_budget": 1000,
                 "tokenizer": "cl100k",
-                "api_key": "x",
+                "api_key": "x",  # pragma: allowlist secret
                 "access_token": "y",
             }
         )
         assert out["max_tokens"] == 512
-        assert out["max_output_tokens"] == 256
         assert out["token_budget"] == 1000
         assert out["tokenizer"] == "cl100k"
         assert out["api_key"] == "***REDACTED***"
         assert out["access_token"] == "***REDACTED***"
+        assert (
+            _redact_config_for_log({"max_tokens": "lowentropysecret"})["max_tokens"]
+            == "***REDACTED***"
+        )
 
-    def test_trial_payload_sink_keeps_limits(self) -> None:
+    def test_trial_payload_sink(self) -> None:
         from traigent.cloud.trial_operations import TrialOperations
 
         out = TrialOperations._redact_sensitive_fields(
-            {"max_tokens": 512, "token_budget": 9, "api_key": "x", "token": "t"}
+            {
+                "max_tokens": 512,
+                "token_budget": 9,
+                "api_key": "x",
+                "token": "t",
+            }  # pragma: allowlist secret
         )
         assert out["max_tokens"] == 512
         assert out["token_budget"] == 9
-        assert out["api_key"] != "x"
+        assert out["api_key"] != "x"  # pragma: allowlist secret
         assert out["token"] != "t"
+        leaked = TrialOperations._redact_sensitive_fields(
+            {"max_tokens": "lowentropysecret"}
+        )
+        assert leaked["max_tokens"] != "lowentropysecret"
 
-    def test_trace_and_backend_sinks_keep_limits(self) -> None:
+    def test_trace_and_backend_sinks(self) -> None:
         from traigent.cloud.dataset_converter import sanitize_backend_metadata
         from traigent.observability.decorators import _sanitize_metadata_value
 
         cfg = {"max_tokens": 512, "token_budget": 1000, "tokenizer": "c", "author": "a"}
-        assert _sanitize_metadata_value(dict(cfg, api_key="k")) == dict(
-            cfg, api_key="[REDACTED]"
+        assert _sanitize_metadata_value(
+            dict(cfg, api_key="k")
+        ) == dict(  # pragma: allowlist secret
+            cfg,
+            api_key="[REDACTED]",  # pragma: allowlist secret
         )
+        assert _sanitize_metadata_value({"max_tokens": "lowentropysecret"}) == {
+            "max_tokens": "[REDACTED]"
+        }
         tags = sanitize_backend_metadata(dict(cfg, access_token="z"))
         assert tags["max_tokens"] == "512"
         assert "access_token" not in tags
+        assert "max_tokens" not in sanitize_backend_metadata(
+            {"max_tokens": "lowentropysecret"}
+        )

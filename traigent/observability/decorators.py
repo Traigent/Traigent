@@ -29,7 +29,7 @@ from traigent.observability.dtos import (
     to_jsonable,
     utc_now,
 )
-from traigent.security.redaction import is_credential_key_name
+from traigent.security.redaction import is_benign_config_value, is_credential_key_name
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -82,7 +82,11 @@ def _coerce_mapping_payload(value: Any) -> dict[str, Any] | None:
 
 
 def _sanitize_metadata_value(value: Any, *, key: str | None = None) -> Any:
-    if key is not None and _is_sensitive_key(key):
+    if (
+        key is not None
+        and _is_sensitive_key(key)
+        and not is_benign_config_value(key, value)
+    ):
         return "[REDACTED]"
 
     mapping = _coerce_mapping_payload(value)

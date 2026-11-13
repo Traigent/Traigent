@@ -43,7 +43,7 @@ except ImportError:
 
 from traigent.core.session_types import safe_http_error_summary
 from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.security.redaction import is_credential_key_name
+from traigent.security.redaction import is_benign_config_value, is_credential_key_name
 from traigent.utils.exceptions import DatasetValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_write_text, sanitize_filename, validate_path
@@ -97,7 +97,9 @@ def sanitize_backend_metadata(
     for key, value in metadata.items():
         if not isinstance(value, _METADATA_TAG_VALUE_TYPES):
             continue
-        if is_sensitive_metadata_key(str(key)):
+        if is_sensitive_metadata_key(str(key)) and not is_benign_config_value(
+            str(key), value
+        ):
             continue
         safe_key = sanitize_metadata_key(str(key))
         safe_value = sanitize_metadata_value(value)

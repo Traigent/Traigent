@@ -35,7 +35,7 @@ from traigent.evaluators.metrics_tracker import (
     enforce_user_metric_ceiling,
 )
 from traigent.identity.examples import result_identity_fields
-from traigent.security.redaction import is_non_credential_key_name
+from traigent.security.redaction import is_benign_config_value
 from traigent.utils.example_id import stamp_row_index
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.function_identity import is_coroutine_callable
@@ -180,7 +180,7 @@ def _redact_config_for_log(config: dict[str, Any]) -> dict[str, Any]:
     redacted: dict[str, Any] = {}
     for key, value in config.items():
         key_str = str(key).lower()
-        if not is_non_credential_key_name(str(key)) and any(
+        if not is_benign_config_value(str(key), value) and any(
             needle in key_str for needle in _SECRET_KEY_SUBSTRINGS
         ):
             redacted[key] = "***REDACTED***"

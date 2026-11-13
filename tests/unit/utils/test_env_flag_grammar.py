@@ -13,16 +13,17 @@ TRUE_SPELLINGS = ["true", " true", "True", "1", "yes", "on", "yes\n", "ON "]
 FALSE_SPELLINGS = ["", "0", "False", "off", "no", "maybe", "treu"]
 
 
-@pytest.mark.parametrize("value", TRUE_SPELLINGS)
-def test_run_approved_accepts_canonical_spellings(monkeypatch, value):
+def test_run_approved_exactly_one(monkeypatch):
     from traigent.core.ci_approval import _check_env_var_approval
 
-    monkeypatch.setenv("TRAIGENT_RUN_APPROVED", value)
+    monkeypatch.setenv("TRAIGENT_RUN_APPROVED", "1")
     assert _check_env_var_approval() is True
 
 
-@pytest.mark.parametrize("value", FALSE_SPELLINGS)
-def test_run_approved_unrecognised_is_not_approved(monkeypatch, value):
+@pytest.mark.parametrize(
+    "value", ["true", " true", "True", "yes", "on", "1 ", " 1", "1\n", "", "0"]
+)
+def test_run_approved_extra_spellings_do_not_approve(monkeypatch, value):
     from traigent.core.ci_approval import _check_env_var_approval
 
     monkeypatch.setenv("TRAIGENT_RUN_APPROVED", value)
@@ -46,8 +47,8 @@ def test_cost_approved_only_true_approves(monkeypatch, tmp_path, value):
 
 
 @pytest.mark.parametrize("name", ["TRAIGENT_DEV_MODE", "TRAIGENT_GENERATE_MOCKS"])
-@pytest.mark.parametrize("value", TRUE_SPELLINGS)
-def test_dev_toggles_share_grammar(monkeypatch, name, value):
+@pytest.mark.parametrize("value", ["true", "True", "1", "yes", "YES"])
+def test_dev_toggles_prior_spellings_still_work(monkeypatch, name, value):
     from traigent.cloud.credential_manager import CredentialManager
 
     monkeypatch.delenv("TRAIGENT_DEV_MODE", raising=False)
@@ -57,14 +58,33 @@ def test_dev_toggles_share_grammar(monkeypatch, name, value):
 
 
 @pytest.mark.parametrize("name", ["TRAIGENT_DEV_MODE", "TRAIGENT_GENERATE_MOCKS"])
-@pytest.mark.parametrize("value", FALSE_SPELLINGS)
-def test_dev_toggles_unrecognised_stay_off(monkeypatch, name, value):
+@pytest.mark.parametrize("value", ["on", " true", "true\n", "", "0", "off", "maybe"])
+def test_dev_toggles_extra_spellings_stay_off(monkeypatch, name, value):
     from traigent.cloud.credential_manager import CredentialManager
 
     monkeypatch.delenv("TRAIGENT_DEV_MODE", raising=False)
     monkeypatch.delenv("TRAIGENT_GENERATE_MOCKS", raising=False)
     monkeypatch.setenv(name, value)
     assert CredentialManager._is_development_environment() is False
+
+
+@pytest.mark.parametrize("value", ["1", "yes", "on", " true", "TRUE", "yes\n"])
+def test_metrics_generate_mocks_only_true(monkeypatch, value):
+    from traigent.utils.env_config import is_exact_flag
+
+    monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", value)
+    expected = value.lower() == "true"
+    assert (
+        is_exact_flag("TRAIGENT_GENERATE_MOCKS", frozenset({"true"}), lower=True)
+        is expected
+    )
+
+
+def test_exact_flag_unset_is_false(monkeypatch):
+    from traigent.utils.env_config import is_exact_flag
+
+    monkeypatch.delenv("TRAIGENT_X_FLAG", raising=False)
+    assert is_exact_flag("TRAIGENT_X_FLAG", frozenset({"1"})) is False
 
 
 @pytest.mark.parametrize(
