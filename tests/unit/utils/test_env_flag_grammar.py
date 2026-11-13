@@ -30,7 +30,7 @@ def test_run_approved_extra_spellings_do_not_approve(monkeypatch, value):
     assert _check_env_var_approval() is False
 
 
-@pytest.mark.parametrize("value", ["true", " true", "True", "TRUE\n"])
+@pytest.mark.parametrize("value", ["true", "True", "TRUE"])
 def test_cost_approved_true_spellings(monkeypatch, tmp_path, value):
     from traigent.core.cost_enforcement import is_cost_preapproved
 
@@ -38,7 +38,10 @@ def test_cost_approved_true_spellings(monkeypatch, tmp_path, value):
     assert is_cost_preapproved(token_path=tmp_path / "none") is True
 
 
-@pytest.mark.parametrize("value", ["1", "yes", "on", "", "0", "off", "maybe", "treu"])
+@pytest.mark.parametrize(
+    "value",
+    ["1", "yes", "on", " true", "true\n", "", "0", "off", "maybe", "treu"],
+)
 def test_cost_approved_only_true_approves(monkeypatch, tmp_path, value):
     from traigent.core.cost_enforcement import is_cost_preapproved
 

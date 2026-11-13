@@ -231,25 +231,22 @@ def _is_exempt_numeric_counter(value: Any, *, parent_key: str | None, key: str) 
     return _is_approved_numeric_counter_key(parent_key=parent_key, key=key)
 
 
-# Exact normalized key names that merely look credential-like (token limits,
-# plain words containing "token"/"auth"). Exemption is by exact name AND a
+# Exact normalized key names that merely look credential-like (token limits).
+# Exemption is by exact name AND a
 # validated benign value (see `is_benign_config_value`); real secret keys such
 # as `access_token` or `auth_token` are never exempt.
 _TOKEN_LIMIT_KEY_NAMES: frozenset[str] = frozenset(
     {"maxtokens", "maxoutputtokens", "maxcompletiontokens", "tokenbudget"}
 )
-_PLAIN_LABEL_KEY_NAMES: frozenset[str] = frozenset({"tokenizer", "author", "authors"})
-_PLAIN_LABEL_VALUE = re.compile(r"[A-Za-z0-9 ._/@-]{1,64}")
 
 
 def is_benign_config_value(key: str, value: Any) -> bool:
     """True when a credential-looking key holds a validated benign value.
 
     Value-aware exemption for tuned-config names such as ``max_tokens``: a
-    token limit must be a real number (not bool) or a pure-digit string; a
-    tokenizer/author label must be a short plain string that no existing
-    secret-value detector alters. Anything else stays redacted, so a secret
-    stored under one of these names is still masked.
+    token limit must be a real number (not bool) or a pure-digit string.
+    Anything else stays redacted, so a secret stored under one of these names
+    is still masked. Other credential-looking names are never exempt.
     """
     normalized = _normalize_key_name(key)
     if normalized in _TOKEN_LIMIT_KEY_NAMES:
@@ -258,13 +255,6 @@ def is_benign_config_value(key: str, value: Any) -> bool:
         if isinstance(value, (int, float)):
             return True
         return isinstance(value, str) and value.isascii() and value.isdigit()
-    if normalized in _PLAIN_LABEL_KEY_NAMES:
-        return (
-            isinstance(value, str)
-            and _PLAIN_LABEL_VALUE.fullmatch(value) is not None
-            and redact_sensitive_text(value) == value
-            and redact_embedded_credentials(value) == value
-        )
     return False
 
 

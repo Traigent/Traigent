@@ -311,11 +311,11 @@ def _check_approval_token_path(
 def _cost_approved_env() -> bool:
     """``TRAIGENT_COST_APPROVED``: money approval, so only ``true`` counts.
 
-    Surrounding whitespace and case are ignored; ``1``/``yes``/``on`` are
+    Case is ignored; whitespace is not stripped and ``1``/``yes``/``on`` are
     deliberately not approvals (existing contract), and anything
     unrecognised is not approved.
     """
-    return os.getenv("TRAIGENT_COST_APPROVED", "").strip().lower() == "true"
+    return os.getenv("TRAIGENT_COST_APPROVED", "false").lower() == "true"
 
 
 def is_cost_preapproved(

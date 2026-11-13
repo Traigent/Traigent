@@ -480,8 +480,6 @@ class TestTokenCountKeysNotRedacted:
             ("maxTokens", 512.0),
             ("max_output_tokens", "256"),
             ("TOKEN_BUDGET", 1000),
-            ("tokenizer", "cl100k_base"),
-            ("author", "Jane Doe"),
         ],
     )
     def test_benign_values_kept(self, key, value) -> None:
@@ -494,10 +492,10 @@ class TestTokenCountKeysNotRedacted:
             ("max_tokens", True),
             ("max_tokens", "12a"),
             ("token_budget", {"a": 1}),
-            ("tokenizer", "sk-abcdef1234567890abcdef"),
-            ("tokenizer", "x" * 65),
-            ("author", "a b\nc"),
-            ("author", 5),
+            ("tokenizer", "cl100k_base"),
+            ("tokenizer", 5),
+            ("author", "Jane Doe"),
+            ("authors", "Jane Doe"),
             ("access_token", 512),
             ("api_key", "12345"),
             ("token", "12345"),
@@ -519,14 +517,12 @@ class TestTokenCountKeysNotRedacted:
             {
                 "max_tokens": 512,
                 "token_budget": 1000,
-                "tokenizer": "cl100k",
                 "api_key": "x",  # pragma: allowlist secret
                 "access_token": "y",
             }
         )
         assert out["max_tokens"] == 512
         assert out["token_budget"] == 1000
-        assert out["tokenizer"] == "cl100k"
         assert out["api_key"] == "***REDACTED***"
         assert out["access_token"] == "***REDACTED***"
         assert (
@@ -558,7 +554,7 @@ class TestTokenCountKeysNotRedacted:
         from traigent.cloud.dataset_converter import sanitize_backend_metadata
         from traigent.observability.decorators import _sanitize_metadata_value
 
-        cfg = {"max_tokens": 512, "token_budget": 1000, "tokenizer": "c", "author": "a"}
+        cfg = {"max_tokens": 512, "token_budget": 1000}
         assert _sanitize_metadata_value(
             dict(cfg, api_key="k")
         ) == dict(  # pragma: allowlist secret
@@ -574,3 +570,20 @@ class TestTokenCountKeysNotRedacted:
         assert "max_tokens" not in sanitize_backend_metadata(
             {"max_tokens": "lowentropysecret"}
         )
+
+    def test_tokenizer_and_author_stay_redacted_in_every_sink(self) -> None:
+        from traigent.cloud.dataset_converter import sanitize_backend_metadata
+        from traigent.cloud.trial_operations import TrialOperations
+        from traigent.core.evaluator_wrapper import _redact_config_for_log
+        from traigent.observability.decorators import _sanitize_metadata_value
+
+        cfg = {"tokenizer": "cl100k", "author": "jane"}
+        # Log sink matches by substring list (no "auth" root): unchanged from base.
+        assert _redact_config_for_log(cfg)["tokenizer"] == "***REDACTED***"
+        assert _sanitize_metadata_value(cfg) == {
+            "tokenizer": "[REDACTED]",
+            "author": "[REDACTED]",
+        }
+        assert sanitize_backend_metadata(cfg) == {}
+        out = TrialOperations._redact_sensitive_fields({"tokenizer": "cl100k"})
+        assert out["tokenizer"] != "cl100k"
