@@ -18,6 +18,14 @@ the SDKs and the backend through the TraigentSchema identity vectors
   carry arbitrary text, so unknown values are never sent). Production is never
   inferred.
 
+  This telemetry label is deliberately FIRST-MATCH: the first rung holding a
+  known label wins and later rungs are not consulted. It is a label only. The
+  security gates use ``traigent.utils.env_config.select_environment``, where the
+  stricter value wins on disagreement (#3267), so with
+  ``TRAIGENT_ENVIRONMENT=development`` and ``ENVIRONMENT=production`` the label
+  reads ``development`` while the gates treat the process as production. The
+  JS SDK and the cross-SDK identity vectors follow this first-match ladder.
+
 Warnings emitted from here name an environment variable, never its value, and
 never an agent name.
 """
