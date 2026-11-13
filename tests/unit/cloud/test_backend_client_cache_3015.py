@@ -71,3 +71,23 @@ def test_env_change_between_identical_calls_builds_a_new_client(
     assert backend_client.get_backend_client(enable_fallback=False) is a
     monkeypatch.setenv(name, "second-value")
     assert backend_client.get_backend_client(enable_fallback=False) is not a
+
+
+def test_same_urls_with_different_explicitness_get_different_clients() -> None:
+    from traigent.cloud.backend_components import BackendClientConfig
+
+    implicit = BackendClientConfig(backend_base_url="https://example.invalid")
+    explicit = BackendClientConfig(
+        backend_base_url="https://example.invalid",
+        api_base_url=implicit.api_base_url,
+    )
+    explicit.api_base_url = implicit.api_base_url
+    assert (explicit.api_base_url, explicit.backend_base_url) == (
+        implicit.api_base_url,
+        implicit.backend_base_url,
+    )
+    explicit.api_explicitly_set = True
+    implicit.api_explicitly_set = False
+    a = backend_client.get_backend_client(backend_config=implicit)
+    b = backend_client.get_backend_client(backend_config=explicit)
+    assert a is not b

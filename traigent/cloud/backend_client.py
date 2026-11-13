@@ -3768,6 +3768,24 @@ def _resolved_backend_settings() -> list[tuple[str, str]]:
     return resolved
 
 
+def _cache_key_value(value: Any) -> Any:
+    """Canonical form of one kwarg: dataclasses by every field, else repr.
+
+    ``repr`` of ``BackendClientConfig`` omits fields declared ``repr=False``
+    (``backend_explicitly_set`` / ``api_explicitly_set``), which change URL
+    selection, so dataclass values are keyed on all of their fields.
+    """
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return (
+            type(value).__qualname__,
+            tuple(
+                (f.name, repr(getattr(value, f.name, None)))
+                for f in dataclasses.fields(value)
+            ),
+        )
+    return repr(value)
+
+
 def _backend_client_cache_key(kwargs: dict[str, Any]) -> str:
     """Digest of the effective settings (kwargs plus resolved environment).
 
@@ -3777,7 +3795,7 @@ def _backend_client_cache_key(kwargs: dict[str, Any]) -> str:
 
     material = repr(
         (
-            sorted((str(k), repr(v)) for k, v in kwargs.items()),
+            sorted((str(k), _cache_key_value(v)) for k, v in kwargs.items()),
             _resolved_backend_settings(),
         )
     )
