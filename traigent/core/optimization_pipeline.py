@@ -28,6 +28,7 @@ from traigent.config.types import (
 )
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.core.execution_policy_runtime import backend_egress_disabled
+from traigent.core.objective_directions import CANONICAL_OBJECTIVE_ORIENTATIONS
 from traigent.core.objective_preflight import warn_unproducible_objectives
 from traigent.core.trace_env import is_trace_enabled
 from traigent.evaluators.base import BaseEvaluator, Dataset
@@ -527,6 +528,17 @@ def _is_derived_name(key: str, objective: str) -> bool:
     return False
 
 
+def _is_abbreviation(key: str, objective: str) -> bool:
+    """True when ``key`` is a short plain prefix of ``objective`` (``acc``)."""
+    key, objective = key.lower(), objective.lower()
+    return (
+        len(key) >= 3
+        and len(key) < len(objective)
+        and objective.startswith(key)
+        and not _is_derived_name(key, objective)
+    )
+
+
 def validate_metric_function_keys(
     metric_functions: dict[str, Callable[..., Any]] | None,
     objectives: Sequence[str],
@@ -541,8 +553,7 @@ def validate_metric_function_keys(
     distinct auxiliary metric). Objectives covered by ``scoring_function`` count
     as covered (Traigent#2659).
 
-    This is a name heuristic, so it only logs a warning (key and suggested
-    objective, never values) and never rejects a configuration: a mapping-returning
+    This is a name heuristic, so it only logs a warning (never the key or values) and never rejects a configuration: a mapping-returning
     scorer such as ``{"scores": fn}`` is valid.
     """
     if not metric_functions:
@@ -551,7 +562,8 @@ def validate_metric_function_keys(
     objective_names = [str(o) for o in objectives]
     covered = build_metric_functions(metric_functions, scoring_function, objectives)
     uncovered = [o for o in objective_names if o not in covered]
-    for key in metric_functions:
+    total = len(metric_functions)
+    for ordinal, key in enumerate(metric_functions, start=1):
         key_s = str(key)
         if key_s in objective_names:
             continue
@@ -563,15 +575,24 @@ def validate_metric_function_keys(
                 _edit_distance(key_s.lower(), o.lower()) <= 2
                 and not _is_derived_name(key_s.lower(), o.lower())
             )
+            or _is_abbreviation(key_s, o)
         ]
         if close:
+            # Keys and objective names are customer-chosen text and are never
+            # echoed: refer to the key by ordinal, and name the objective only
+            # when it is an SDK-owned built-in (#2791).
+            hint = (
+                f" Did you mean '{close[0]}'?"
+                if close[0] in CANONICAL_OBJECTIVE_ORIENTATIONS
+                else ""
+            )
             logger.warning(
-                "metric_functions key '%s' matches no objective; if it is a typo "
-                "your scorer is ignored and the built-in scorer is used for "
-                "'%s'. Did you mean '%s'?",
-                key,
-                close[0],
-                close[0],
+                "metric_functions key #%d of %d matches no objective; if it is a "
+                "typo or an abbreviation of an objective, your scorer is ignored "
+                "and the built-in scorer (or none) is used for it.%s",
+                ordinal,
+                total,
+                hint,
             )
 
 

@@ -25,7 +25,31 @@ def test_near_miss_key_warns_with_did_you_mean(
     with caplog.at_level("WARNING"):
         validate_metric_function_keys({"acuracy": _mine}, ["accuracy"])
     msgs = _warnings(caplog)
-    assert any("acuracy" in m and "Did you mean 'accuracy'" in m for m in msgs)
+    assert any("Did you mean 'accuracy'" in m for m in msgs)
+    assert not any("acuracy" in m for m in msgs)  # the key is never echoed
+
+
+def test_abbreviated_key_warns_without_echoing_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``acc`` for ``accuracy`` with an unannotated scorer is not silent (#2791)."""
+    with caplog.at_level("WARNING"):
+        validate_metric_function_keys({"acc": _mine}, ["accuracy"])
+    msgs = _warnings(caplog)
+    assert len(msgs) == 1
+    assert "key #1 of 1" in msgs[0]
+    assert "'acc'" not in msgs[0]
+    assert "Did you mean 'accuracy'" in msgs[0]
+
+
+def test_custom_objective_name_is_not_echoed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        validate_metric_function_keys({"Secret_Obj": _mine}, ["secret_obj"])
+    msgs = _warnings(caplog)
+    assert msgs
+    assert not any("ecret" in m for m in msgs)
 
 
 def test_wrong_case_key_warns(caplog: pytest.LogCaptureFixture) -> None:
@@ -104,4 +128,4 @@ def test_end_to_end_typo_warns_and_correct_key_uses_user_scorer(
     assert _run(tmp_path, monkeypatch, "accuracy") == pytest.approx(0.123)
     with caplog.at_level("WARNING"):
         _run(tmp_path, monkeypatch, "acuracy")
-    assert any("acuracy" in m for m in _warnings(caplog))
+    assert any("matches no objective" in m for m in _warnings(caplog))
