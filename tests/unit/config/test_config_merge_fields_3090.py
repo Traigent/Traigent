@@ -205,3 +205,26 @@ def test_dict_context_single_sided_string_is_normalised() -> None:
     finally:
         set_config(None)
     assert merged["no_egress"] is True
+
+
+def test_config_override_explicit_defaults_reset_base() -> None:
+    base = TraigentConfig(offline=True, algorithm="grid", temperature=0.5)
+    merged = base.merge(TraigentConfig(offline=False, algorithm="auto"))
+    assert merged.offline is False
+    assert merged.algorithm == "auto"
+    assert merged.temperature == 0.5
+
+
+def test_config_override_untouched_defaults_keep_base() -> None:
+    base = TraigentConfig(offline=True, algorithm="grid")
+    merged = base.merge(TraigentConfig(model="m"))
+    assert merged.offline is True
+    assert merged.algorithm == "grid"
+    assert merged.model == "m"
+
+
+def test_config_override_post_init_assignment_is_explicit() -> None:
+    base = TraigentConfig(offline=True)
+    other = TraigentConfig()
+    other.offline = False
+    assert base.merge(other).offline is False

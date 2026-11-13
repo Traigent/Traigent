@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import os
 from dataclasses import dataclass, field
 from enum import EnumType, StrEnum
@@ -1009,6 +1010,10 @@ class TraigentConfig:
             New TraigentConfig with merged values (other takes precedence)
         """
         explicit_override_keys: set[str] = set()
+        if isinstance(other, TraigentConfig):
+            # Fields the caller set explicitly (even to a default value) still
+            # override the base; untouched defaults do not.
+            explicit_override_keys = set(getattr(other, "_explicit_fields", ()))
         if isinstance(other, dict):
             explicit_override_keys = set(other)
             other = {
@@ -1040,6 +1045,13 @@ class TraigentConfig:
         merged = self.from_dict(merged_dict)
         merged._merge_extra_fields(
             self, other, explicit=frozenset(explicit_override_keys)
+        )
+        object.__setattr__(
+            merged,
+            "_explicit_fields",
+            set(getattr(self, "_explicit_fields", ()))
+            | set(getattr(other, "_explicit_fields", ()))
+            | explicit_override_keys,
         )
         return merged
 
@@ -1299,6 +1311,13 @@ class TraigentConfig:
         """Apply per-field validation when assigning configuration values."""
         warn_legacy_assignment = getattr(self, "_warn_legacy_config_assignments", False)
         self._track_supplied_assignment(key, value, warn_legacy_assignment)
+        if warn_legacy_assignment:
+            # Assignment after construction is an explicit set (see merge()).
+            explicit_fields = getattr(self, "_explicit_fields", None)
+            if explicit_fields is None:
+                explicit_fields = set()
+                object.__setattr__(self, "_explicit_fields", explicit_fields)
+            explicit_fields.add(key)
 
         if key in _SAMPLING_VALIDATED_KEYS:
             _validate_sampling_assignment(key, value)
@@ -1488,6 +1507,27 @@ class TraigentConfig:
             config.content_identity = True
 
         return config
+
+
+def _track_explicit_init_fields(cls: type[TraigentConfig]) -> None:
+    """Record which fields the caller passed to ``__init__`` (even if default).
+
+    ``merge`` uses this so a TraigentConfig override that explicitly sets a
+    value equal to its default (``offline=False``) still overrides the base.
+    """
+    original_init = cls.__init__
+    init_names = [f.name for f in dataclasses.fields(cls) if f.init]
+
+    @functools.wraps(original_init)
+    def __init__(self: TraigentConfig, *args: Any, **kwargs: Any) -> None:
+        explicit = set(kwargs) | set(init_names[: len(args)])
+        object.__setattr__(self, "_explicit_fields", set(explicit))
+        original_init(self, *args, **kwargs)
+
+    cls.__init__ = __init__  # type: ignore[method-assign]
+
+
+_track_explicit_init_fields(TraigentConfig)
 
 
 def _public_config_param(name: str, default: Any, annotation: Any) -> Parameter:
