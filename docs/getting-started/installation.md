@@ -67,7 +67,7 @@ License: Traigent SDK is dual-licensed under AGPL-3.0-only OR LicenseRef-Traigen
 
   ```bash
   pip install -e ".[recommended,dev]"
-  TRAIGENT_MOCK_LLM=true pytest tests/ -q
+  pytest tests/ -q  # tests/conftest.py enables mock mode
   ```
 
 - **Interactive UI & advanced examples:**

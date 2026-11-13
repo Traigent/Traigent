@@ -17,18 +17,17 @@ pip install -e ".[dev]"
 ### Run Tests
 
 ```bash
-# Run all tests through the legacy shell fixture path
-# (may emit DeprecationWarning; prefer enable_mock_mode_for_quickstart() in code)
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest
+# Run all tests (the repo's tests/conftest.py enables mock mode for every test)
+TRAIGENT_OFFLINE=1 pytest
 
-# Run with coverage through the same legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest --cov=traigent --cov-report=html
+# Run with coverage
+TRAIGENT_OFFLINE=1 pytest --cov=traigent --cov-report=html
 
 # Run all unit tests with repo-default ignores
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest tests/unit -q --tb=short
+TRAIGENT_OFFLINE=1 pytest tests/unit -q --tb=short
 
 # Run tests matching a pattern
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest -k "test_optimization" -v
+TRAIGENT_OFFLINE=1 pytest -k "test_optimization" -v
 ```
 
 ## Failing a Provider Call on Purpose
@@ -156,12 +155,18 @@ from traigent.testing import enable_mock_mode_for_quickstart
 enable_mock_mode_for_quickstart()
 ```
 
-For shell-only fixtures and older scripts, the legacy env var still works outside production, but direct user-set activation emits `DeprecationWarning`:
+For pytest runs in your own project, activate it once in `conftest.py`:
 
-```bash
-TRAIGENT_MOCK_LLM=true pytest tests/
-TRAIGENT_MOCK_LLM=true python examples/core/rag-optimization/run.py
+```python
+# conftest.py
+from traigent.testing import enable_mock_mode_for_quickstart
+
+enable_mock_mode_for_quickstart()
 ```
+
+For a single script, call `enable_mock_mode_for_quickstart()` at the top of the script, or run a bundled demo with `traigent quickstart`.
+
+> Legacy: the `TRAIGENT_MOCK_LLM=true` env var still works outside production for older shell fixtures, but it emits a `DeprecationWarning` when you set it directly and will be removed in a future release. Prefer the in-code helper above.
 
 If the pre-run cost preflight refuses a simulated run (estimated cost over the
 limit or an unpriced model), add `ENVIRONMENT=development
@@ -217,11 +222,11 @@ pip install -e ".[dev]"
 ### 2. Run Tests Before Committing
 
 ```bash
-# Run all tests through the legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest
+# Run all tests (tests/conftest.py enables mock mode)
+TRAIGENT_OFFLINE=1 pytest
 
-# Run with coverage through the same legacy shell fixture path
-TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest --cov=traigent --cov-report=term-missing
+# Run with coverage
+TRAIGENT_OFFLINE=1 pytest --cov=traigent --cov-report=term-missing
 
 # Run linters
 ruff check traigent/
@@ -312,8 +317,8 @@ grep -A 5 'tool.pytest' pyproject.toml
 ### Mock Mode Not Working
 
 ```bash
-# Legacy shell fixture path only
-echo $TRAIGENT_MOCK_LLM
+# Confirm in-code activation took effect
+python -c "from traigent.testing import enable_mock_mode_for_quickstart, is_mock_mode_enabled; enable_mock_mode_for_quickstart(); print(is_mock_mode_enabled())"
 ```
 
 Preferred explicit activation in local tutorial or test code:
