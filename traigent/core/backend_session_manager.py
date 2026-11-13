@@ -665,7 +665,10 @@ _UNTRACKED_REMEDIES: dict[SessionCreationFailureClassification, str] = {
     ),
     SessionCreationFailureClassification.INSUFFICIENT_SCOPE: (
         "Remedy: grant the required API key scope or permission in the "
-        "Traigent portal, then retry with that updated key."
+        "Traigent portal, then retry with that updated key. If this key was "
+        "created by an older `traigent auth device-login`, it may predate "
+        "newer scopes and existing keys are not updated: re-run "
+        "`traigent auth device-login` to get a key with the current scopes."
     ),
     SessionCreationFailureClassification.EXPIRED_KEY: (
         "Remedy: create a new Traigent API key and set TRAIGENT_API_KEY to "
