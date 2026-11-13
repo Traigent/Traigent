@@ -122,3 +122,10 @@ def test_disagreement_warns_once_naming_variables_not_values(monkeypatch, caplog
     text = records[0].getMessage()
     assert "TRAIGENT_ENVIRONMENT" in text and "ENVIRONMENT" in text
     assert "development" not in text.replace("Deployment", "")
+
+
+def test_telemetry_label_is_first_match_while_gates_are_strict(monkeypatch):
+    """Documented split (#3267): the label is first-match, the gates strictest."""
+    _set(monkeypatch, TRAIGENT_ENVIRONMENT="development", ENVIRONMENT="production")
+    assert resolve_environment().environment == "development"
+    assert treat_as_production_policy() is True

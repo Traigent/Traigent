@@ -798,11 +798,31 @@ def offline_run_scope(enabled: bool) -> Iterator[None]:
             _OFFLINE_RUN_COUNT -= 1
 
 
+_PRIVATE_MODE_ENV_NAMES = ("TRAIGENT_PRIVATE_DATA", "TRAIGENT_COMPLIANCE_MODE")
+_PRIVATE_MODE_OFF_VALUES = frozenset({"", "0", "false", "no", "off"})
+
+
+def is_traigent_private_mode_requested() -> bool:
+    """Return whether ``TRAIGENT_PRIVATE_DATA`` or ``TRAIGENT_COMPLIANCE_MODE``
+    forces local-only execution (#2997).
+
+    Fails closed: unset, empty or an explicit false word (``0``/``false``/
+    ``no``/``off``) leaves the switch off; ANY other value, including one that
+    cannot be parsed as a boolean, counts as set.
+    """
+
+    for name in _PRIVATE_MODE_ENV_NAMES:
+        if os.getenv(name, "").strip().lower() not in _PRIVATE_MODE_OFF_VALUES:
+            return True
+    return False
+
+
 def is_backend_offline() -> bool:
     """Check if Traigent backend calls should be skipped.
 
     Also true while a run decorated with ``offline=True`` is in flight (see
-    :func:`offline_run_scope`).
+    :func:`offline_run_scope`), and while ``TRAIGENT_PRIVATE_DATA`` or
+    ``TRAIGENT_COMPLIANCE_MODE`` is set (fail closed, #2997).
 
     When TRAIGENT_OFFLINE_MODE=true or TRAIGENT_OFFLINE=true, all communication
     with the Traigent backend is skipped. This is useful for:
@@ -823,6 +843,7 @@ def is_backend_offline() -> bool:
     """
     return (
         _OFFLINE_RUN_COUNT > 0
+        or is_traigent_private_mode_requested()
         or _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE_MODE", "false"))
         or _is_truthy_env_value(get_env_var("TRAIGENT_OFFLINE", "false"))
     )

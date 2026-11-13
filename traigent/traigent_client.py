@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -884,19 +883,6 @@ class TraigentClient:
             # beats quietly picking one side of it.
             return validated
         return execution_policy.legacy_execution_mode
-
-    def _check_privacy_requirements(self) -> bool:
-        """Check if privacy requirements mandate standard mode.
-
-        Returns:
-            True if privacy mode is required
-        """
-        # Check for sensitive data indicators
-        return bool(
-            os.environ.get("TRAIGENT_PRIVATE_DATA")
-            or os.environ.get("TRAIGENT_COMPLIANCE_MODE")
-            or os.path.exists(".traigent-private")
-        )
 
     def _normalise_configuration_space(
         self,

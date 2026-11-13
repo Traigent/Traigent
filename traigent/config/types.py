@@ -13,7 +13,7 @@ from inspect import Parameter, Signature
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
-from traigent.utils.env_config import is_truthy
+from traigent.utils.env_config import is_traigent_private_mode_requested, is_truthy
 from traigent.utils.validation import Validators, validate_or_raise
 
 _EMITTED_DEPRECATION_WARNINGS: set[str] = set()
@@ -599,6 +599,33 @@ def resolve_execution_policy(
     offline_requested = _resolve_legacy_mode(
         execution_mode, offline_requested, hint_parts
     )
+
+    if is_traigent_private_mode_requested():
+        explicit_mode = (
+            ""
+            if execution_mode is None
+            else (
+                execution_mode.value
+                if isinstance(execution_mode, ExecutionMode)
+                else str(execution_mode)
+            )
+            .strip()
+            .lower()
+        )
+        if (
+            is_smart_algorithm(normalized_algorithm)
+            or require_cloud_requested
+            or explicit_mode in {"hybrid", "standard"}
+        ):
+            raise ConfigurationError(
+                "TRAIGENT_PRIVATE_DATA or TRAIGENT_COMPLIANCE_MODE is set, which "
+                "forces local-only execution, but a cloud/managed run was "
+                "requested (smart algorithm, hybrid/standard execution_mode or "
+                "require_cloud). Use algorithm='grid' or 'random', or unset the "
+                "variable to allow managed optimization."
+            )
+        offline_requested = True
+        hint_parts.append("private_mode_env")
 
     if privacy_enabled is not None:
         _warn_deprecated_once(

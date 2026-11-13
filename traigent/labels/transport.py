@@ -333,7 +333,12 @@ class LabelTransport:
         """
         import aiohttp
 
+        from traigent.utils.env_config import raise_if_backend_offline
+
         from .transport_gate import gate_session
+
+        # Fail closed before any credential lookup or socket (#2997 private mode).
+        raise_if_backend_offline("label service request")
 
         if bounded_auth:
             # A stalled or slow headers provider cannot outlive the budget; the HTTP timeout

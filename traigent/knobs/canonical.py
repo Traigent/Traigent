@@ -1,16 +1,24 @@
 """Canonical hashing for certificate freshness contexts (RFC 0001 §3.5).
 
-``canonical_hash`` implements the TVL canonicalization profile: sorted-key
+``canonical_hash`` implements the TVL canonicalization *profile*: sorted-key
 compact JSON over NFC-normalized strings with the RFC's value restrictions
 (finite numbers only, ``-0.0`` folded to ``0.0``, duplicate keys rejected at
-parse time by the loaders). The profile is versioned via
-``CTX_SCHEMA_VERSION``, which is itself part of every hashed context, so any
-future change to this module is automatically staleness-inducing for
-previously issued certificates.
+parse time by the loaders). It is NOT a full RFC 8785 (JCS) implementation. It
+serializes with ``json.dumps(sort_keys=True)``, so it differs from JCS in three
+known ways: object keys sort by Unicode code point (JCS sorts by UTF-16 code
+unit, which differs for astral vs. U+E000-U+FFFF keys); floats use Python's
+``repr`` (``1e-07`` where JCS has ``1e-7``); and every integral float is folded
+to an ``int`` (``1e21`` becomes ``1000000000000000000000`` where JCS has
+``1e+21``). For ASCII keys and ordinary numbers the output is identical.
+Stored hashes are defined by this exact serializer and must not change.
 
-Two conformant implementations hashing the same context MUST produce the
-same digest — the cross-implementation known-answer fixtures live in the tvl
-repo's conformance suite.
+The profile is versioned via ``CTX_SCHEMA_VERSION``, which is itself part of
+every hashed context, so any future change to this module is automatically
+staleness-inducing for previously issued certificates.
+
+Digests are only guaranteed to match another implementation that reproduces
+this profile, including the differences above; the known-answer fixtures live
+in the tvl repo's conformance suite.
 """
 
 from __future__ import annotations
@@ -84,7 +92,7 @@ def _normalize_mapping(value: Mapping[Any, Any]) -> dict[str, Any]:
 
 
 def canonical_hash(value: Any) -> str:
-    """SHA-256 over the canonical serialization of ``value``."""
+    """SHA-256 over the profile serialization of ``value`` (not strict RFC 8785)."""
     payload = json.dumps(
         _normalize(value),
         sort_keys=True,

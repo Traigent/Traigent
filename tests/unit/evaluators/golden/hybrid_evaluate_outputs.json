@@ -4,14 +4,22 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o1",
-    "target": "ea"
+    "output": {
+     "value": "o1"
+    },
+    "target": {
+     "value": "ea"
+    }
    },
    {
     "example_id": "b",
     "input_id": "b",
-    "output": "o2",
-    "target": "eb"
+    "output": {
+     "value": "o2"
+    },
+    "target": {
+     "value": "eb"
+    }
    }
   ],
   "results": [
@@ -57,14 +65,22 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o",
-    "target": null
+    "output": {
+     "value": "o"
+    },
+    "target": {
+     "value": null
+    }
    },
    {
     "example_id": "b",
     "input_id": "b",
-    "output": "o",
-    "target": "given"
+    "output": {
+     "value": "o"
+    },
+    "target": {
+     "value": "given"
+    }
    }
   ],
   "results": [
@@ -109,8 +125,9 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": null,
-    "target": "ea"
+    "target": {
+     "value": "ea"
+    }
    }
   ],
   "results": [
@@ -136,8 +153,12 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o",
-    "target": "ea"
+    "output": {
+     "value": "o"
+    },
+    "target": {
+     "value": "ea"
+    }
    }
   ],
   "results": [
@@ -163,14 +184,22 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o",
-    "target": "ea"
+    "output": {
+     "value": "o"
+    },
+    "target": {
+     "value": "ea"
+    }
    },
    {
     "example_id": "b",
     "input_id": "b",
-    "output": "o",
-    "target": "eb"
+    "output": {
+     "value": "o"
+    },
+    "target": {
+     "value": "eb"
+    }
    }
   ],
   "results": [
@@ -211,8 +240,12 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o",
-    "target": "ea"
+    "output": {
+     "value": "o"
+    },
+    "target": {
+     "value": "ea"
+    }
    }
   ],
   "results": [
@@ -261,7 +294,9 @@
     "example_id": "a",
     "input_id": "a",
     "output_id": "oid1",
-    "target": "ea"
+    "target": {
+     "value": "ea"
+    }
    }
   ],
   "results": [
@@ -306,8 +341,12 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o",
-    "target": "ea"
+    "output": {
+     "value": "o"
+    },
+    "target": {
+     "value": "ea"
+    }
    }
   ],
   "results": [

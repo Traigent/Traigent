@@ -62,6 +62,7 @@ from traigent.observability.dtos import (
 )
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils import optimization_only_egress as oo_egress
+from traigent.utils.env_config import is_traigent_private_mode_requested
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -3850,6 +3851,7 @@ class ObservabilityClient:
         """
         return (
             self.config.offline_mode
+            or is_traigent_private_mode_requested()
             or self._credential_egress_disabled
             or oo_egress.is_active(self._optimization_only_policy())
         ) and not self._has_custom_trace_sender
@@ -3858,7 +3860,11 @@ class ObservabilityClient:
         if oo_egress.is_active(self._optimization_only_policy()):
             # optimization_only: the server refuses trace ingest; nothing is sent.
             return None
-        if self.config.offline_mode or self._credential_egress_disabled:
+        if (
+            self.config.offline_mode
+            or is_traigent_private_mode_requested()
+            or self._credential_egress_disabled
+        ):
             self._log_offline_mode_once()
             return None
 
@@ -3942,7 +3948,7 @@ class ObservabilityClient:
         with self._lock:
             if self._closed or self._close_pending:
                 raise ClientError("Observability client is closed")
-        if self.config.offline_mode:
+        if self.config.offline_mode or is_traigent_private_mode_requested():
             self._log_offline_mode_once()
             raise ClientError(
                 "Observability backend request skipped because offline mode is "

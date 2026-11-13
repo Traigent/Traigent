@@ -1307,8 +1307,26 @@ class TraigentService:
         return response
 
     @staticmethod
+    def _unwrap_value_envelope(value: Any) -> Any:
+        """Unwrap exactly ``{"value": x}`` (one key) back to ``x``.
+
+        The hybrid client wraps scalar targets and outputs as ``{"value": x}``
+        so the evaluate payload matches the object-typed wire contract (#2904).
+        Handlers keep receiving the original scalar. Any other object, including
+        one with ``value`` plus further keys, passes through unchanged.
+        """
+        if isinstance(value, dict) and len(value) == 1 and "value" in value:
+            return value["value"]
+        return value
+
+    @staticmethod
     def _resolve_evaluation_fields(evaluation: dict[str, Any]) -> tuple[str, Any, Any]:
-        """Extract (example_id, output, target) from an evaluation item."""
+        """Extract (example_id, output, target) from an evaluation item.
+
+        Contract: a ``target`` or ``output`` that is exactly ``{"value": x}``
+        is unwrapped to ``x`` before it reaches the evaluation handler, so
+        customer handlers see the original scalar (#2904).
+        """
         raw_id = evaluation.get("input_id") or evaluation.get("example_id")
         example_id = str(raw_id) if raw_id else str(uuid.uuid4())
 
@@ -1319,7 +1337,11 @@ class TraigentService:
         if target is None and "target_id" in evaluation:
             target = {"target_id": evaluation["target_id"]}
 
-        return example_id, output, target
+        return (
+            example_id,
+            TraigentService._unwrap_value_envelope(output),
+            TraigentService._unwrap_value_envelope(target),
+        )
 
     def _prepare_evaluation_kwargs(
         self, raw_kwargs: Any, raw_config_alias: Any
