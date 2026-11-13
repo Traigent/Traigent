@@ -108,6 +108,31 @@ def usage_analytics_allowed(config: TraigentConfig) -> bool:
     return not backend_egress_disabled(config)
 
 
+async def _close_analytics_backend_client(
+    backend_client_module: Any, backend_client: Any
+) -> None:
+    try:
+        await backend_client.__aexit__(None, None, None)
+    except Exception:
+        pass  # Best effort cleanup
+    finally:
+        if getattr(backend_client_module, "_backend_client", None) is backend_client:
+            backend_client_module._backend_client = None
+
+
+def _analytics_trial_metrics(stats: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "total_sessions": float(stats.get("total_sessions", 0)),
+        "completed_sessions": float(stats.get("completed_sessions", 0)),
+        "total_trials": float(stats.get("total_trials", 0)),
+        "avg_trials_per_session": stats.get("avg_trials_per_session", 0.0),
+        "avg_config_space_size": stats.get("avg_config_space_size", 0.0),
+        "avg_improvement_percent": stats.get("avg_improvement_percent", 0.0) or 0.0,
+        "sessions_last_30_days": float(stats.get("sessions_last_30_days", 0)),
+        "days_since_first_use": float(stats.get("days_since_first_use", 0)),
+    }
+
+
 class LocalAnalytics:
     """Handles privacy-safe analytics collection for Edge Analytics mode."""
 
@@ -259,6 +284,16 @@ class LocalAnalytics:
             logger.debug(f"Could not calculate days active (defaulting to 0): {e}")
             return 0
 
+    def _submission_skip_result(self, force: bool) -> dict[str, Any] | None:
+        # Re-evaluate the gate at send time: the environment can change after init.
+        if not self.enabled or not usage_analytics_allowed(self.config):
+            return {"success": False, "reason": "Analytics disabled"}
+
+        # Check if submission is due (daily by default)
+        if not force and not self._is_submission_due():
+            return {"success": False, "reason": "Submission not due yet"}
+        return None
+
     async def submit_usage_stats(self, force: bool = False) -> dict[str, Any]:
         """Submit usage statistics using existing backend session infrastructure.
 
@@ -270,13 +305,9 @@ class LocalAnalytics:
         Returns:
             Result dictionary with success status and details
         """
-        # Re-evaluate the gate at send time: the environment can change after init.
-        if not self.enabled or not usage_analytics_allowed(self.config):
-            return {"success": False, "reason": "Analytics disabled"}
-
-        # Check if submission is due (daily by default)
-        if not force and not self._is_submission_due():
-            return {"success": False, "reason": "Submission not due yet"}
+        skipped = self._submission_skip_result(force)
+        if skipped is not None:
+            return skipped
 
         stats = self.collect_usage_stats()
         if not stats:
@@ -336,27 +367,7 @@ class LocalAnalytics:
                     session_id=session_id,
                     trial_id=f"analytics_{datetime.now(UTC).isoformat()}",
                     config={},
-                    metrics={
-                        "total_sessions": float(stats.get("total_sessions", 0)),
-                        "completed_sessions": float(stats.get("completed_sessions", 0)),
-                        "total_trials": float(stats.get("total_trials", 0)),
-                        "avg_trials_per_session": stats.get(
-                            "avg_trials_per_session", 0.0
-                        ),
-                        "avg_config_space_size": stats.get(
-                            "avg_config_space_size", 0.0
-                        ),
-                        "avg_improvement_percent": stats.get(
-                            "avg_improvement_percent", 0.0
-                        )
-                        or 0.0,
-                        "sessions_last_30_days": float(
-                            stats.get("sessions_last_30_days", 0)
-                        ),
-                        "days_since_first_use": float(
-                            stats.get("days_since_first_use", 0)
-                        ),
-                    },
+                    metrics=_analytics_trial_metrics(stats),
                     duration=1.0,  # Analytics collection time
                 )
 
@@ -375,16 +386,9 @@ class LocalAnalytics:
                     }
             finally:
                 # Ensure session is closed even on cancellation
-                try:
-                    await backend_client.__aexit__(None, None, None)
-                except Exception:
-                    pass  # Best effort cleanup
-                finally:
-                    if (
-                        getattr(backend_client_module, "_backend_client", None)
-                        is backend_client
-                    ):
-                        backend_client_module._backend_client = None
+                await _close_analytics_backend_client(
+                    backend_client_module, backend_client
+                )
 
         except TimeoutError:
             return {"success": False, "reason": "Request timeout"}

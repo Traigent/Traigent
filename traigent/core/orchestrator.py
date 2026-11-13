@@ -609,6 +609,36 @@ def _deterministic_fill(definition: Any) -> tuple[bool, Any]:
     return False, None
 
 
+async def _release_permit_after_parallel_error(orchestrator: Any, permit: Any) -> None:
+    # Release permit on any exception to prevent stranding
+    # (only if permit is still active - wasn't already released)
+    if permit.active and orchestrator.cost_enforcer is not None:
+        await orchestrator.cost_enforcer.release_permit_async(permit)
+        logger.debug(
+            "Released permit %d after exception in _process_parallel_results",
+            permit.id,
+        )
+
+
+def _record_interrupted_parallel_batch(
+    orchestrator: Any,
+    scheduled_configs: list[dict[str, Any]],
+    results: list[PermittedTrialResult],
+    batch_start: int,
+) -> None:
+    # #3234: pair every started trial of the batch, real result first.
+    for offset, (cfg, permitted) in enumerate(
+        zip(scheduled_configs, results, strict=False)
+    ):
+        orchestrator._remember_trial_result(
+            batch_start + offset,
+            orchestrator._trial_result_from_parallel_item(
+                permitted.result, cfg, f"trial_{batch_start + offset}"
+            ),
+        )
+        orchestrator._notify_interrupted_trial(batch_start + offset, cfg)
+
+
 class OptimizationOrchestrator:
     """Orchestrates the optimization process.
 
@@ -3723,27 +3753,12 @@ class OptimizationOrchestrator:
                     submit_to_backend = False
                     trial_count = len(self._trials)
                 except Exception:
-                    # Release permit on any exception to prevent stranding
-                    # (only if permit is still active - wasn't already released)
-                    if permit.active and self.cost_enforcer is not None:
-                        await self.cost_enforcer.release_permit_async(permit)
-                        logger.debug(
-                            "Released permit %d after exception in _process_parallel_results",
-                            permit.id,
-                        )
+                    await _release_permit_after_parallel_error(self, permit)
                     raise
         except (KeyboardInterrupt, asyncio.CancelledError):
-            # #3234: pair every started trial of the batch, real result first.
-            for offset, (cfg, permitted) in enumerate(
-                zip(scheduled_configs, results, strict=False)
-            ):
-                self._remember_trial_result(
-                    batch_start + offset,
-                    self._trial_result_from_parallel_item(
-                        permitted.result, cfg, f"trial_{batch_start + offset}"
-                    ),
-                )
-                self._notify_interrupted_trial(batch_start + offset, cfg)
+            _record_interrupted_parallel_batch(
+                self, scheduled_configs, results, batch_start
+            )
             raise
         # The batch is settled: free the denied indexes so a later batch that
         # reuses them (denied items do not advance the count) dispatches its

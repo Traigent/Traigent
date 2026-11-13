@@ -133,6 +133,28 @@ logger = get_logger(__name__)
 _DEFAULT_RUN_LABEL = "traigent"
 
 
+def _extract_best_metrics(
+    run_metrics: dict[str, Any], metrics: list[str] | None
+) -> dict[str, Any]:
+    best_metrics = {}
+    for key, value in run_metrics.items():
+        if key.startswith("best_"):
+            metric_name = key.replace("best_", "", 1)
+            if metrics is not None and metric_name not in metrics:
+                continue
+            best_metrics[metric_name] = value
+    return best_metrics
+
+
+def _extract_best_config(run_params: dict[str, Any]) -> dict[str, Any]:
+    best_config = {}
+    for key, value in run_params.items():
+        if key.startswith("best_"):
+            param_name = key.replace("best_", "")
+            best_config[param_name] = value
+    return best_config
+
+
 class TraigentMLflowTracker:
     """MLflow experiment tracker for Traigent optimizations."""
 
@@ -474,21 +496,8 @@ class TraigentMLflowTracker:
             try:
                 run = client.get_run(run_id)
 
-                # Extract best metrics
-                best_metrics = {}
-                for key, value in run.data.metrics.items():
-                    if key.startswith("best_"):
-                        metric_name = key.replace("best_", "", 1)
-                        if metrics is not None and metric_name not in metrics:
-                            continue
-                        best_metrics[metric_name] = value
-
-                # Extract best config
-                best_config = {}
-                for key, value in run.data.params.items():
-                    if key.startswith("best_"):
-                        param_name = key.replace("best_", "")
-                        best_config[param_name] = value
+                best_metrics = _extract_best_metrics(run.data.metrics, metrics)
+                best_config = _extract_best_config(run.data.params)
 
                 comparison_data[run_id] = {
                     "run_name": run.info.run_name,

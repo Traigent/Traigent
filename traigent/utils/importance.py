@@ -11,6 +11,8 @@ from dataclasses import dataclass
 
 from ..api.types import OptimizationResult, TrialResult, TrialStatus
 
+_OBJECTIVE_CONSTANT_REASON = "objective is constant"
+
 
 @dataclass
 class ImportanceResult:
@@ -171,7 +173,7 @@ class ParameterImportanceAnalyzer:
         mean = statistics.fmean(kept_y)
         total_ss = sum((v - mean) ** 2 for v in kept_y)
         if total_ss <= 0.0:
-            return None, len(kept), "objective is constant"
+            return None, len(kept), _OBJECTIVE_CONSTANT_REASON
         groups: dict[object, list[float]] = defaultdict(list)
         for i in kept:
             groups[keys[i]].append(ys[i])
@@ -354,7 +356,7 @@ class ParameterImportanceAnalyzer:
             return self._not_measurable(
                 parameter,
                 "correlation_based",
-                "objective is constant",
+                _OBJECTIVE_CONSTANT_REASON,
                 len(param_values),
                 len(param_values),
             )
@@ -442,24 +444,9 @@ class ParameterImportanceAnalyzer:
             )
         return results
 
-    def _permutation_importance_for_parameter(
-        self, trials: list[TrialResult], parameter: str, n_permutations: int
-    ) -> ImportanceResult:
-        import random
-
-        def not_measurable(reason: str, n: int) -> ImportanceResult:
-            return ImportanceResult(
-                parameter_name=parameter,
-                importance_score=None,
-                confidence_interval=None,
-                method="permutation_based",
-                sample_size=n,
-                not_measurable_reason=reason,
-                trials_with_parameter=total,
-            )
-
-        total = 0
-
+    def _parameter_samples(
+        self, trials: list[TrialResult], parameter: str
+    ) -> tuple[list[object], list[float]]:
         # Only runs that set the parameter carry information about it.
         keys: list[object] = []
         ys: list[float] = []
@@ -467,32 +454,16 @@ class ParameterImportanceAnalyzer:
             if parameter in trial.config:
                 keys.append(self._hashable_key(trial.config[parameter]))
                 ys.append(float(trial.metrics[self.objective]))
-        total = len(ys)
-        if len(ys) < 2:
-            return not_measurable("parameter set in fewer than 2 trials", len(ys))
+        return keys, ys
 
-        # Keep only replicated values: a value seen once cannot be predicted
-        # from other trials, and keeping it would reward unique values.
-        counts: dict[object, int] = defaultdict(int)
-        for key in keys:
-            counts[key] += 1
-        kept = [i for i, key in enumerate(keys) if counts[key] >= 2]
-        kept_groups = {keys[i] for i in kept}
-        if len(kept_groups) < 2:
-            return not_measurable(
-                "fewer than 2 parameter values with replication", len(kept)
-            )
-        if len(kept) * 2 < len(ys):
-            return not_measurable("insufficient_replication_coverage", len(kept))
+    @staticmethod
+    def _permuted_importance_scores(
+        ks: list[object], y: list[float], total_var: float, n_permutations: int
+    ) -> list[float]:
+        """Normalised leave-one-out error increase under shuffled group labels."""
+        import random
 
-        ks = [keys[i] for i in kept]
-        y = [ys[i] for i in kept]
         n = len(y)
-        y_mean = statistics.fmean(y)
-        total_var = sum((v - y_mean) ** 2 for v in y) / n
-        if total_var <= 0.0:
-            return not_measurable("objective is constant", n)
-
         sums: dict[object, float] = defaultdict(float)
         sizes: dict[object, int] = defaultdict(int)
         for key, val in zip(ks, y, strict=True):
@@ -518,6 +489,52 @@ class ParameterImportanceAnalyzer:
             shuffled = ks.copy()
             rng.shuffle(shuffled)
             scores.append((loo_error(shuffled) - baseline_error) / total_var)
+        return scores
+
+    def _permutation_importance_for_parameter(
+        self, trials: list[TrialResult], parameter: str, n_permutations: int
+    ) -> ImportanceResult:
+        def not_measurable(reason: str, n: int) -> ImportanceResult:
+            return ImportanceResult(
+                parameter_name=parameter,
+                importance_score=None,
+                confidence_interval=None,
+                method="permutation_based",
+                sample_size=n,
+                not_measurable_reason=reason,
+                trials_with_parameter=total,
+            )
+
+        total = 0
+
+        keys, ys = self._parameter_samples(trials, parameter)
+        total = len(ys)
+        if len(ys) < 2:
+            return not_measurable("parameter set in fewer than 2 trials", len(ys))
+
+        # Keep only replicated values: a value seen once cannot be predicted
+        # from other trials, and keeping it would reward unique values.
+        counts: dict[object, int] = defaultdict(int)
+        for key in keys:
+            counts[key] += 1
+        kept = [i for i, key in enumerate(keys) if counts[key] >= 2]
+        kept_groups = {keys[i] for i in kept}
+        if len(kept_groups) < 2:
+            return not_measurable(
+                "fewer than 2 parameter values with replication", len(kept)
+            )
+        if len(kept) * 2 < len(ys):
+            return not_measurable("insufficient_replication_coverage", len(kept))
+
+        ks = [keys[i] for i in kept]
+        y = [ys[i] for i in kept]
+        n = len(y)
+        y_mean = statistics.fmean(y)
+        total_var = sum((v - y_mean) ** 2 for v in y) / n
+        if total_var <= 0.0:
+            return not_measurable(_OBJECTIVE_CONSTANT_REASON, n)
+
+        scores = self._permuted_importance_scores(ks, y, total_var, n_permutations)
 
         mean_importance = min(1.0, max(0.0, statistics.fmean(scores)))
         std_importance = statistics.stdev(scores) if len(scores) > 1 else 0.0

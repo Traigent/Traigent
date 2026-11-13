@@ -323,6 +323,29 @@ def _generate_parallel_warnings(
     return warnings
 
 
+def _validate_default_thread_workers(
+    config: ParallelConfig,
+    default_thread_workers: int,
+    validation: ValidationResult,
+) -> None:
+    if config.thread_workers is None:
+        problem = _concurrency_value_problem("parallel_workers", default_thread_workers)
+        if problem:
+            validation.add_error("parallel_workers", problem)
+
+
+def _resolve_sequential_concurrency(config: ParallelConfig) -> tuple[int, int | None]:
+    """Return ``(trial_concurrency, example_concurrency)`` for sequential mode."""
+    # mode unset/auto with explicit trial_concurrency=1 keeps concurrent
+    # examples; an explicit mode="sequential" forces fully serial runs.
+    keep_examples = (
+        config.mode in (None, "auto")
+        and config.trial_concurrency == 1
+        and config.example_concurrency is not None
+    )
+    return 1, (config.example_concurrency if keep_examples else 1)
+
+
 def resolve_parallel_config(
     config: ParallelConfig,
     *,
@@ -337,10 +360,7 @@ def resolve_parallel_config(
 
     # Validate inputs (including the inherited worker default)
     _validate_parallel_config_inputs(config, validation)
-    if config.thread_workers is None:
-        problem = _concurrency_value_problem("parallel_workers", default_thread_workers)
-        if problem:
-            validation.add_error("parallel_workers", problem)
+    _validate_default_thread_workers(config, default_thread_workers, validation)
     # Malformed values must not reach the arithmetic below.
     validation.raise_if_invalid()
 
@@ -357,15 +377,7 @@ def resolve_parallel_config(
 
     # Resolve concurrency values based on mode
     if resolved_mode == "sequential":
-        trial_concurrency = 1
-        # mode unset/auto with explicit trial_concurrency=1 keeps concurrent
-        # examples; an explicit mode="sequential" forces fully serial runs.
-        keep_examples = (
-            config.mode in (None, "auto")
-            and config.trial_concurrency == 1
-            and config.example_concurrency is not None
-        )
-        example_concurrency = config.example_concurrency if keep_examples else 1
+        trial_concurrency, example_concurrency = _resolve_sequential_concurrency(config)
     else:
         trial_concurrency, example_concurrency, thread_workers = (
             _resolve_parallel_concurrency(

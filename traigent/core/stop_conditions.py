@@ -465,6 +465,18 @@ class PlateauAfterNStopCondition(StopCondition):
         arithmetic operations per objective); that is fine for the usual
         hundreds of trials and is the price of never using stale scores.
         """
+        widened = self._absorb_new_ranged_trials(trial_seq)
+        self._last_index = len(trial_seq)
+
+        self._rescore_ranged(widened)
+
+        window = self._ranged_scores[-self._window_size :]
+        if len(window) < self._window_size:
+            return False
+        return abs(window[-1] - window[0]) <= self._epsilon
+
+    def _absorb_new_ranged_trials(self, trial_seq: Sequence[TrialResult]) -> bool:
+        """Record new trials' metrics and widen ranges; True if any range widened."""
         from traigent.core.result_selection import (
             _ranking_metrics,
             observed_metric_ranges,
@@ -491,17 +503,19 @@ class PlateauAfterNStopCondition(StopCondition):
             for name, (low, high) in observed_metric_ranges(
                 [cast("TrialResult", _MetricsOnly(clean))], names
             ).items():
-                cur = self._ranged_ranges.get(name)
-                merged = (
-                    (low, high)
-                    if cur is None
-                    else (min(cur[0], low), max(cur[1], high))
-                )
-                if merged != cur:
-                    self._ranged_ranges[name] = merged
+                if self._widen_range(name, low, high):
                     widened = True
-        self._last_index = len(trial_seq)
+        return widened
 
+    def _widen_range(self, name: str, low: float, high: float) -> bool:
+        cur = self._ranged_ranges.get(name)
+        merged = (low, high) if cur is None else (min(cur[0], low), max(cur[1], high))
+        if merged == cur:
+            return False
+        self._ranged_ranges[name] = merged
+        return True
+
+    def _rescore_ranged(self, widened: bool) -> None:
         if widened:
             self._ranged_scored = 0
             self._ranged_scores = []
@@ -514,11 +528,6 @@ class PlateauAfterNStopCondition(StopCondition):
             best = self._ranged_scores[-1] if self._ranged_scores else None
             self._ranged_scores.append(score if best is None or score > best else best)
         self._ranged_scored = len(self._ranged_metrics)
-
-        window = self._ranged_scores[-self._window_size :]
-        if len(window) < self._window_size:
-            return False
-        return abs(window[-1] - window[0]) <= self._epsilon
 
     def should_stop(self, trials: Iterable[TrialResult]) -> bool:
         if isinstance(trials, Sequence):

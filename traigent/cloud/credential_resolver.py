@@ -23,6 +23,43 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _resolve_cache_clear_target(raw: Path) -> tuple[Path, bool]:
+    """Return ``(target, link_only)`` for clearing the cached credentials file.
+
+    ``link_only`` is True when the target must never be opened: it is only
+    reached through a symlink we refused to follow (not an owned regular file).
+    """
+    link_path = raw.parent.resolve() / raw.name
+    target = link_path
+    link_only = False
+    try:
+        if raw.is_symlink():
+            resolved = raw.resolve()
+            st = resolved.stat() if resolved.exists() else None
+            getuid = getattr(os, "getuid", None)  # absent on Windows
+            owned = (
+                st is not None
+                and getuid is not None
+                and stat.S_ISREG(st.st_mode)
+                and st.st_uid == getuid()
+            )
+            if owned:
+                target = resolved
+            else:
+                link_only = True
+                logger.warning(
+                    "Cached credentials path is a symlink to a target that "
+                    "is not a verifiably owned regular file; removing only "
+                    "the link."
+                )
+        else:
+            target = raw.resolve()
+    except OSError as exc:
+        logger.warning("Failed to inspect cached credentials: %s", type(exc).__name__)
+        target, link_only = link_path, True
+    return target, link_only
+
+
 class CredentialResolver:
     """Resolves credentials from multiple sources with caching.
 
@@ -481,38 +518,7 @@ class CredentialResolver:
         if not (self.config.cache_credentials and self.config.credentials_file):
             return
         raw = Path(self.config.credentials_file).expanduser()
-        link_path = raw.parent.resolve() / raw.name
-        target = link_path
-        # True when the target must never be opened: it is only reached through
-        # a symlink we refused to follow (not an owned regular file).
-        link_only = False
-        try:
-            if raw.is_symlink():
-                resolved = raw.resolve()
-                st = resolved.stat() if resolved.exists() else None
-                getuid = getattr(os, "getuid", None)  # absent on Windows
-                owned = (
-                    st is not None
-                    and getuid is not None
-                    and stat.S_ISREG(st.st_mode)
-                    and st.st_uid == getuid()
-                )
-                if owned:
-                    target = resolved
-                else:
-                    link_only = True
-                    logger.warning(
-                        "Cached credentials path is a symlink to a target that "
-                        "is not a verifiably owned regular file; removing only "
-                        "the link."
-                    )
-            else:
-                target = raw.resolve()
-        except OSError as exc:
-            logger.warning(
-                "Failed to inspect cached credentials: %s", type(exc).__name__
-            )
-            target, link_only = link_path, True
+        target, link_only = _resolve_cache_clear_target(raw)
         try:
             target.unlink()
             return

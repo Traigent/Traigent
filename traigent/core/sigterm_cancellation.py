@@ -48,6 +48,40 @@ def _restore_saved_handlers() -> None:
     _saved_handlers.clear()
 
 
+def _install_cancel_handlers(signals: list[int]) -> None:
+    """Install the cancel handler for each signal still at its default disposition."""
+    for sig in signals:
+        try:
+            previous = signal.getsignal(sig)
+            if previous == signal.SIG_DFL:
+                # Record first: an interrupt right after the install
+                # must still find this signal when rolling back.
+                _saved_handlers[sig] = previous
+                signal.signal(sig, _raise_cancel)
+        except (ValueError, OSError):
+            continue
+
+
+def _undo_interrupted_enter(*, joined: bool, counted: bool) -> None:
+    """Undo a partial enter after an interrupt (caller holds _LOCK)."""
+    global _active_scopes
+    if joined:
+        # Handlers belong to the still-active outer scope: keep them,
+        # only undo our own count.
+        if counted:
+            _active_scopes -= 1
+    else:
+        _restore_saved_handlers()
+
+
+def _leave_scope() -> None:
+    global _active_scopes
+    with _LOCK:
+        _active_scopes -= 1
+        if _active_scopes == 0:
+            _restore_saved_handlers()
+
+
 @contextmanager
 def sigterm_as_cancellation() -> Iterator[None]:
     """Context manager translating SIGTERM and SIGHUP into ``KeyboardInterrupt``.
@@ -69,16 +103,7 @@ def sigterm_as_cancellation() -> Iterator[None]:
                 _active_scopes += 1
                 counted = True
             else:
-                for sig in signals:
-                    try:
-                        previous = signal.getsignal(sig)
-                        if previous == signal.SIG_DFL:
-                            # Record first: an interrupt right after the install
-                            # must still find this signal when rolling back.
-                            _saved_handlers[sig] = previous
-                            signal.signal(sig, _raise_cancel)
-                    except (ValueError, OSError):
-                        continue
+                _install_cancel_handlers(signals)
                 if _saved_handlers:
                     _active_scopes = 1
                     counted = True
@@ -87,19 +112,10 @@ def sigterm_as_cancellation() -> Iterator[None]:
         except BaseException:
             # E.g. KeyboardInterrupt from an already-installed handler firing
             # mid-install: undo this call's installs so none leaks, then re-raise.
-            if joined:
-                # Handlers belong to the still-active outer scope: keep them,
-                # only undo our own count.
-                if counted:
-                    _active_scopes -= 1
-            else:
-                _restore_saved_handlers()
+            _undo_interrupted_enter(joined=joined, counted=counted)
             raise
     try:
         yield
     finally:
         if counted:
-            with _LOCK:
-                _active_scopes -= 1
-                if _active_scopes == 0:
-                    _restore_saved_handlers()
+            _leave_scope()

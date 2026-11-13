@@ -15,6 +15,39 @@ from typing import Any
 from traigent.core.comparison import _value_in_domain
 
 
+def _check_seed(
+    index: int,
+    seed: Any,
+    configuration_space: Mapping[str, Any],
+    declared: list[str],
+) -> None:
+    """Raise ``ValueError`` unless ``seed`` is a full, in-space config dict."""
+    if not isinstance(seed, Mapping):
+        raise ValueError(f"Seed config #{index} must be a dict.")
+    extra = [key for key in seed if key not in configuration_space]
+    if extra:
+        raise ValueError(
+            f"Seed config #{index} has {len(extra)} parameter(s) outside "
+            f"the declared configuration space (declared: {declared})."
+        )
+    missing = [name for name in declared if name not in seed]
+    if missing:
+        raise ValueError(
+            f"Seed config #{index} is not fully specified; missing "
+            f"declared parameter(s): {missing}."
+        )
+    bad = [
+        name
+        for name in declared
+        if not _value_in_domain(configuration_space[name], seed[name])
+    ]
+    if bad:
+        raise ValueError(
+            f"Seed config #{index} has value(s) outside the declared "
+            f"configuration space for parameter(s): {bad}."
+        )
+
+
 def validate_seed_configs(
     seed_configs: Sequence[Mapping[str, Any]] | None,
     configuration_space: Mapping[str, Any] | None,
@@ -43,30 +76,7 @@ def validate_seed_configs(
     cleaned: list[dict[str, Any]] = []
     seen: set[str] = set()
     for index, seed in enumerate(seed_configs):
-        if not isinstance(seed, Mapping):
-            raise ValueError(f"Seed config #{index} must be a dict.")
-        extra = [key for key in seed if key not in configuration_space]
-        if extra:
-            raise ValueError(
-                f"Seed config #{index} has {len(extra)} parameter(s) outside "
-                f"the declared configuration space (declared: {declared})."
-            )
-        missing = [name for name in declared if name not in seed]
-        if missing:
-            raise ValueError(
-                f"Seed config #{index} is not fully specified; missing "
-                f"declared parameter(s): {missing}."
-            )
-        bad = [
-            name
-            for name in declared
-            if not _value_in_domain(configuration_space[name], seed[name])
-        ]
-        if bad:
-            raise ValueError(
-                f"Seed config #{index} has value(s) outside the declared "
-                f"configuration space for parameter(s): {bad}."
-            )
+        _check_seed(index, seed, configuration_space, declared)
         key = json.dumps({n: seed[n] for n in declared}, sort_keys=True, default=repr)
         if key in seen:
             raise ValueError(f"Seed config #{index} duplicates an earlier seed.")

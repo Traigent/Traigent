@@ -930,6 +930,96 @@ class HybridAPIEvaluator(BaseEvaluator):
         batch_cost = sum(r.cost_usd for r in batch_results if not r.cost_unmeasured)
         return batch_cost
 
+    def _require_kwargs_support_or_cleanup(
+        self,
+        caps: Any,
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: Any,
+    ) -> None:
+        try:
+            self._require_evaluation_kwargs_support(caps)
+        except ConfigurationError:
+            self._cleanup_sample_lease_on_cancel(sample_lease, execution_budget_lease)
+            raise
+
+    def _finalize_empty_evaluation(
+        self,
+        config: dict[str, Any],
+        sample_lease: SampleBudgetLease | None,
+        budget: ExecutionBudget | None,
+        execution_budget_lease: Any,
+    ) -> EvaluationResult:
+        result = EvaluationResult(
+            config=config,
+            example_results=[],
+            aggregated_metrics={},
+            total_examples=0,
+            successful_examples=0,
+            duration=0.0,
+            sample_budget_exhausted=sample_lease is not None and sample_lease.exhausted,
+        )
+        return self._finalize_execution_budget_evaluation(
+            budget, result, execution_budget_lease
+        )
+
+    def _account_batch_before_refusal(
+        self,
+        exc: _EvaluationKwargsAfterExecutionError,
+        example_results: list[HybridExampleResult],
+        total_cost: float,
+        *,
+        config: dict[str, Any],
+        start_time: float,
+        sample_lease: SampleBudgetLease | None,
+        budget: ExecutionBudget | None,
+        execution_budget_lease: Any,
+    ) -> None:
+        # The batch already ran: account its examples and reported cost
+        # (unmeasured when the response carries none) before refusing.
+        executed = [*example_results, *exc.batch_results]
+        batch_cost = HybridAPIEvaluator._record_batch_completion(
+            sample_lease, exc.batch_results
+        )
+        aggregated, _ = self._compute_aggregated_metrics_with_comparability(
+            executed, total_cost + batch_cost
+        )
+        self._finalize_execution_budget_evaluation(
+            budget,
+            EvaluationResult(
+                config=config,
+                example_results=executed,
+                aggregated_metrics=aggregated,
+                total_examples=len(executed),
+                successful_examples=sum(1 for r in executed if r.success),
+                duration=time.time() - start_time,
+                examples_consumed=len(executed),
+            ),
+            execution_budget_lease,
+        )
+
+    def _report_batch_progress(
+        self,
+        progress_callback: Callable[[int, dict[str, Any]], Any],
+        batch: list[Any],
+        example_results: list[HybridExampleResult],
+        total_cost: float,
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: Any,
+    ) -> None:
+        try:
+            progress_info = HybridAPIEvaluator._progress_info(
+                self, batch, example_results, total_cost
+            )
+            progress_callback(len(example_results), progress_info)
+        except asyncio.CancelledError:
+            # The callback runs after batch admissions are marked, but
+            # keep the evaluator's cancellation boundary explicit for
+            # any uncompleted admission from a partial batch.
+            self._cleanup_sample_lease_on_cancel(sample_lease, execution_budget_lease)
+            raise
+        except Exception as e:
+            logger.warning(f"Progress callback error: {e}")
+
     async def evaluate(
         self,
         func: Callable[..., Any],
@@ -980,11 +1070,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         caps = await self._await_with_sample_lease_cleanup(
             self._get_capabilities(), sample_lease, execution_budget_lease
         )
-        try:
-            self._require_evaluation_kwargs_support(caps)
-        except ConfigurationError:
-            self._cleanup_sample_lease_on_cancel(sample_lease, execution_budget_lease)
-            raise
+        self._require_kwargs_support_or_cleanup(
+            caps, sample_lease, execution_budget_lease
+        )
 
         # Initialize lifecycle manager if needed
         await self._await_with_sample_lease_cleanup(
@@ -994,18 +1082,8 @@ class HybridAPIEvaluator(BaseEvaluator):
         examples = HybridAPIEvaluator._limit_examples(examples, sample_lease)
 
         if not examples:
-            result = EvaluationResult(
-                config=config,
-                example_results=[],
-                aggregated_metrics={},
-                total_examples=0,
-                successful_examples=0,
-                duration=0.0,
-                sample_budget_exhausted=sample_lease is not None
-                and sample_lease.exhausted,
-            )
-            return self._finalize_execution_budget_evaluation(
-                budget, result, execution_budget_lease
+            return self._finalize_empty_evaluation(
+                config, sample_lease, budget, execution_budget_lease
             )
 
         # Process in batches
@@ -1031,27 +1109,15 @@ class HybridAPIEvaluator(BaseEvaluator):
                     execution_budget_lease,
                 )
             except _EvaluationKwargsAfterExecutionError as exc:
-                # The batch already ran: account its examples and reported cost
-                # (unmeasured when the response carries none) before refusing.
-                executed = [*example_results, *exc.batch_results]
-                batch_cost = HybridAPIEvaluator._record_batch_completion(
-                    sample_lease, exc.batch_results
-                )
-                aggregated, _ = self._compute_aggregated_metrics_with_comparability(
-                    executed, total_cost + batch_cost
-                )
-                self._finalize_execution_budget_evaluation(
-                    budget,
-                    EvaluationResult(
-                        config=config,
-                        example_results=executed,
-                        aggregated_metrics=aggregated,
-                        total_examples=len(executed),
-                        successful_examples=sum(1 for r in executed if r.success),
-                        duration=time.time() - start_time,
-                        examples_consumed=len(executed),
-                    ),
-                    execution_budget_lease,
+                self._account_batch_before_refusal(
+                    exc,
+                    example_results,
+                    total_cost,
+                    config=config,
+                    start_time=start_time,
+                    sample_lease=sample_lease,
+                    budget=budget,
+                    execution_budget_lease=execution_budget_lease,
                 )
                 raise ConfigurationError(str(exc)) from None
             except ConfigurationError:
@@ -1068,21 +1134,14 @@ class HybridAPIEvaluator(BaseEvaluator):
             # Progress callback
             if progress_callback is None:
                 continue
-            try:
-                progress_info = HybridAPIEvaluator._progress_info(
-                    self, batch, example_results, total_cost
-                )
-                progress_callback(len(example_results), progress_info)
-            except asyncio.CancelledError:
-                # The callback runs after batch admissions are marked, but
-                # keep the evaluator's cancellation boundary explicit for
-                # any uncompleted admission from a partial batch.
-                self._cleanup_sample_lease_on_cancel(
-                    sample_lease, execution_budget_lease
-                )
-                raise
-            except Exception as e:
-                logger.warning(f"Progress callback error: {e}")
+            self._report_batch_progress(
+                progress_callback,
+                batch,
+                example_results,
+                total_cost,
+                sample_lease,
+                execution_budget_lease,
+            )
 
         # Compute aggregated metrics
         duration = time.time() - start_time

@@ -351,28 +351,8 @@ class TrialLifecycle:
         if TrialLifecycle._sequential_trial_limit_reached(orchestrator, trial_count):
             return trial_count, "break"
 
-        config = TrialLifecycle._sequential_default_config(orchestrator)
-        if config is None:
-            try:
-                config = await TrialLifecycle._suggest_sequential_config(
-                    orchestrator, dataset
-                )
-            except OptimizationError as e:
-                stop_reason = self._terminal_optimizer_stop_reason(e)
-                if stop_reason is None:
-                    logger.exception(
-                        "Optimizer failed to suggest the next trial: %s", e
-                    )
-                    raise
-                logger.info("Optimizer could not suggest another trial: %s", e)
-                orchestrator._stop_reason = cast(Any, stop_reason)
-                return trial_count, "break"
-            except (ValueError, TypeError, KeyError, AttributeError) as e:
-                logger.exception("Optimizer failed to suggest the next trial: %s", e)
-                return trial_count, "break"
-
-        if config is None:
-            logger.info("Optimizer did not suggest a trial configuration")
+        config, stop = await self._obtain_sequential_config(dataset)
+        if stop:
             return trial_count, "break"
 
         config, optuna_trial_id, skip = TrialLifecycle._apply_sequential_cache_policy(
@@ -393,48 +373,16 @@ class TrialLifecycle:
                 stage="pre",
             )
         except TVLConstraintError as e:
-            # Constraint failed - skip this config without consuming a trial slot
-            # (Fix for the tracked fix: constraint-rejected configs should not reduce actual evaluations)
-            logger.info(
-                "Pre-constraint failed for config %s: %s (not counting toward max_trials)",
-                config_for_run,
+            return trial_count, self._handle_pre_constraint_rejection(
                 e,
+                config_for_run=config_for_run,
+                config_for_trial=config_for_trial,
+                dataset=dataset,
+                trial_count=trial_count,
+                session_id=session_id,
+                optuna_trial_id=optuna_trial_id,
+                optimizer_state_before_suggest=optimizer_state_before_suggest,
             )
-            # Keep the hashes the optimizer itself registered for this sample
-            # (pre-knob-resolution identity) so a rejected sample is never
-            # redrawn; restoring the snapshot below would drop them.
-            sampled_hashes = self._sampled_hashes_since(optimizer_state_before_suggest)
-            try:
-                self._record_pre_constraint_pruned_result(
-                    config=config_for_trial,
-                    evaluation_config=config_for_run,
-                    dataset=dataset,
-                    trial_number=trial_count,
-                    session_id=session_id,
-                    optuna_trial_id=optuna_trial_id,
-                    error=e,
-                )
-            finally:
-                self._restore_optimizer_state(optimizer_state_before_suggest)
-                tried = getattr(orchestrator.optimizer, "_tried_config_hashes", None)
-                if isinstance(tried, set):
-                    tried.update(sampled_hashes)
-            # The slot is given back but the rejected config stays marked as
-            # tried, so a random optimizer never re-draws it and a fully
-            # rejected finite space is detected as exhausted (#3210).
-            self._consecutive_constraint_rejections += 1
-            if self._constraint_rejection_cap_reached():
-                logger.warning(
-                    "Stopping: %d consecutive configs were rejected by a "
-                    "pre-evaluation constraint without any evaluation "
-                    "(cap %d). The constraint may be unsatisfiable for this "
-                    "configuration space.",
-                    self._consecutive_constraint_rejections,
-                    self._constraint_rejection_cap(),
-                )
-                orchestrator._stop_reason = "optimizer"
-                return trial_count, "break"
-            return trial_count, "continue"
 
         self._consecutive_constraint_rejections = 0
 
@@ -483,6 +431,91 @@ class TrialLifecycle:
             orchestrator._stop_reason = "execution_budget"
             return trial_count, "break"
         return trial_count, "continue"
+
+    async def _obtain_sequential_config(self, dataset: Dataset) -> tuple[Any, bool]:
+        """Return ``(config, stop)``; ``stop`` means the loop should break."""
+        orchestrator = self._orchestrator
+        config = TrialLifecycle._sequential_default_config(orchestrator)
+        if config is None:
+            try:
+                config = await TrialLifecycle._suggest_sequential_config(
+                    orchestrator, dataset
+                )
+            except OptimizationError as e:
+                stop_reason = self._terminal_optimizer_stop_reason(e)
+                if stop_reason is None:
+                    logger.exception(
+                        "Optimizer failed to suggest the next trial: %s", e
+                    )
+                    raise
+                logger.info("Optimizer could not suggest another trial: %s", e)
+                orchestrator._stop_reason = cast(Any, stop_reason)
+                return None, True
+            except (ValueError, TypeError, KeyError, AttributeError) as e:
+                logger.exception("Optimizer failed to suggest the next trial: %s", e)
+                return None, True
+
+        if config is None:
+            logger.info("Optimizer did not suggest a trial configuration")
+            return None, True
+        return config, False
+
+    def _handle_pre_constraint_rejection(
+        self,
+        e: TVLConstraintError,
+        *,
+        config_for_run: dict[str, Any],
+        config_for_trial: dict[str, Any],
+        dataset: Dataset,
+        trial_count: int,
+        session_id: str | None,
+        optuna_trial_id: int | None,
+        optimizer_state_before_suggest: Any,
+    ) -> str:
+        """Record a pre-constraint rejection; return the loop action."""
+        orchestrator = self._orchestrator
+        # Constraint failed - skip this config without consuming a trial slot
+        # (Fix for the tracked fix: constraint-rejected configs should not reduce actual evaluations)
+        logger.info(
+            "Pre-constraint failed for config %s: %s (not counting toward max_trials)",
+            config_for_run,
+            e,
+        )
+        # Keep the hashes the optimizer itself registered for this sample
+        # (pre-knob-resolution identity) so a rejected sample is never
+        # redrawn; restoring the snapshot below would drop them.
+        sampled_hashes = self._sampled_hashes_since(optimizer_state_before_suggest)
+        try:
+            self._record_pre_constraint_pruned_result(
+                config=config_for_trial,
+                evaluation_config=config_for_run,
+                dataset=dataset,
+                trial_number=trial_count,
+                session_id=session_id,
+                optuna_trial_id=optuna_trial_id,
+                error=e,
+            )
+        finally:
+            self._restore_optimizer_state(optimizer_state_before_suggest)
+            tried = getattr(orchestrator.optimizer, "_tried_config_hashes", None)
+            if isinstance(tried, set):
+                tried.update(sampled_hashes)
+        # The slot is given back but the rejected config stays marked as
+        # tried, so a random optimizer never re-draws it and a fully
+        # rejected finite space is detected as exhausted (#3210).
+        self._consecutive_constraint_rejections += 1
+        if self._constraint_rejection_cap_reached():
+            logger.warning(
+                "Stopping: %d consecutive configs were rejected by a "
+                "pre-evaluation constraint without any evaluation "
+                "(cap %d). The constraint may be unsatisfiable for this "
+                "configuration space.",
+                self._consecutive_constraint_rejections,
+                self._constraint_rejection_cap(),
+            )
+            orchestrator._stop_reason = "optimizer"
+            return "break"
+        return "continue"
 
     @staticmethod
     def _sequential_default_config(orchestrator: Any) -> Any:

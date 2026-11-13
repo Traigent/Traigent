@@ -2520,6 +2520,36 @@ class LocalEvaluator(BaseEvaluator):
 
         return meta
 
+    @staticmethod
+    def _apply_stored_cost(metric: ExampleMetrics, stored: dict[str, Any]) -> None:
+        known = stored.get("total_cost")
+        if stored.get("cost_unmeasured") or not isinstance(known, (int, float)):
+            metric.cost.unmeasured = True
+            metric.cost.known_cost = float(stored.get("cost_lower_bound") or 0.0)
+        else:
+            metric.cost = CostMetrics(
+                input_cost=float(stored.get("input_cost") or 0.0),
+                output_cost=float(stored.get("output_cost") or 0.0),
+            )
+            metric.cost.total_cost = float(known)
+            metric.cost.cost_explicit = True
+
+    @staticmethod
+    def _apply_stored_accuracy_provenance(
+        metric: ExampleMetrics, stored: dict[str, Any]
+    ) -> None:
+        # Accuracy provenance comes only from the stored row: a stored
+        # measurement is reused as-is; a successful row with gold but no stored
+        # accuracy stays unmeasured (no builtin provenance, so never 1.0).
+        stored_accuracy = stored.get("accuracy")
+        if isinstance(stored_accuracy, bool) or not (
+            isinstance(stored_accuracy, (int, float)) and math.isfinite(stored_accuracy)
+        ):
+            metric.custom_metrics.pop("accuracy", None)
+            # Explicit provenance: this row was never scored for accuracy, so
+            # every accuracy aggregate leaves it out (it is not a miss).
+            metric.accuracy_unavailable = True
+
     def _example_metric_from_resumed(
         self,
         example_result: Any,
@@ -2542,17 +2572,7 @@ class LocalEvaluator(BaseEvaluator):
         metric.response.response_time_ms = max(
             0.0, float(example_result.execution_time or 0.0) * 1000
         )
-        known = stored.get("total_cost")
-        if stored.get("cost_unmeasured") or not isinstance(known, (int, float)):
-            metric.cost.unmeasured = True
-            metric.cost.known_cost = float(stored.get("cost_lower_bound") or 0.0)
-        else:
-            metric.cost = CostMetrics(
-                input_cost=float(stored.get("input_cost") or 0.0),
-                output_cost=float(stored.get("output_cost") or 0.0),
-            )
-            metric.cost.total_cost = float(known)
-            metric.cost.cost_explicit = True
+        LocalEvaluator._apply_stored_cost(metric, stored)
         metric.success = True
         expected = (
             dataset.examples[index].expected_output
@@ -2565,17 +2585,7 @@ class LocalEvaluator(BaseEvaluator):
         if isinstance(marker, (list, tuple, set)):
             # Optional: checkpoints written before #2950 carry no marker.
             metric.unmeasured_custom_keys = {k for k in marker if isinstance(k, str)}
-        # Accuracy provenance comes only from the stored row: a stored
-        # measurement is reused as-is; a successful row with gold but no stored
-        # accuracy stays unmeasured (no builtin provenance, so never 1.0).
-        stored_accuracy = stored.get("accuracy")
-        if isinstance(stored_accuracy, bool) or not (
-            isinstance(stored_accuracy, (int, float)) and math.isfinite(stored_accuracy)
-        ):
-            metric.custom_metrics.pop("accuracy", None)
-            # Explicit provenance: this row was never scored for accuracy, so
-            # every accuracy aggregate leaves it out (it is not a miss).
-            metric.accuracy_unavailable = True
+        LocalEvaluator._apply_stored_accuracy_provenance(metric, stored)
         if progress_callback:
             progress_callback(
                 index,

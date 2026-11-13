@@ -32,6 +32,7 @@ from types import ModuleType
 from typing import Any
 
 DEFAULT_MODULE_NAME = "user_module"
+_INIT_FILE = "__init__.py"
 
 
 class ModuleSpecError(ImportError):
@@ -71,7 +72,7 @@ def _walk_package(path: Path) -> tuple[Path, list[str], Path | None]:
     parts: list[str] = []
     directory = path.parent
     untrusted: Path | None = None
-    while (directory / "__init__.py").is_file() and directory.parent != directory:
+    while (directory / _INIT_FILE).is_file() and directory.parent != directory:
         if not _is_trusted_package_dir(directory):
             untrusted = directory
             break
@@ -80,7 +81,7 @@ def _walk_package(path: Path) -> tuple[Path, list[str], Path | None]:
     if not parts:
         return path.parent, [], untrusted
     parts.reverse()
-    if path.name != "__init__.py":
+    if path.name != _INIT_FILE:
         parts.append(path.stem)
     if any("." in part for part in parts):
         # ``agent.v2.py`` has no importable qualified name; load it from its path.
@@ -139,16 +140,7 @@ def _explain_relative_import(
     )
 
 
-def resolve_dotted_module(name: str, search_dir: Path | None = None) -> Path:
-    """Resolve ``pkg.mod`` to its source file under ``search_dir`` (default cwd).
-
-    Looks for ``pkg/mod.py`` and ``pkg/mod/__init__.py`` on disk. It never
-    imports anything: ``importlib.util.find_spec`` would execute every parent
-    package's ``__init__.py`` (and any installed package of that name) just to
-    locate a file, which the trust check in ``package_parts`` is there to avoid.
-    """
-    base = (search_dir or Path.cwd()).resolve()
-    parts = name.split(".")
+def _module_search_roots(base: Path) -> list[Path]:
     # The directory itself, then any ``sys.path`` entry inside it (a ``src/``
     # layout); entries outside the directory are never searched.
     roots = [base]
@@ -162,10 +154,24 @@ def resolve_dotted_module(name: str, search_dir: Path | None = None) -> Path:
         if {"site-packages", "dist-packages"} & set(resolved.parts):
             continue
         roots.append(resolved)
+    return roots
+
+
+def resolve_dotted_module(name: str, search_dir: Path | None = None) -> Path:
+    """Resolve ``pkg.mod`` to its source file under ``search_dir`` (default cwd).
+
+    Looks for ``pkg/mod.py`` and ``pkg/mod/__init__.py`` on disk. It never
+    imports anything: ``importlib.util.find_spec`` would execute every parent
+    package's ``__init__.py`` (and any installed package of that name) just to
+    locate a file, which the trust check in ``package_parts`` is there to avoid.
+    """
+    base = (search_dir or Path.cwd()).resolve()
+    parts = name.split(".")
+    roots = _module_search_roots(base)
     for root in roots:
         leaf = root.joinpath(*parts[:-1])
         # A package directory wins over a same-named module, as in ``import``.
-        for candidate in (leaf / parts[-1] / "__init__.py", leaf / f"{parts[-1]}.py"):
+        for candidate in (leaf / parts[-1] / _INIT_FILE, leaf / f"{parts[-1]}.py"):
             if candidate.is_file():
                 return candidate
     raise FileNotFoundError(
@@ -213,7 +219,7 @@ def _evict_stale_user_package(top_level: str, root: Path) -> None:
 def _import_packaged(path: Path, qualified_name: str, root: Path) -> ModuleType:
     # Drop a stale copy of the leaf so the file is executed afresh (a package
     # ``__init__`` is left alone: its submodules are registered under it).
-    if path.name != "__init__.py":
+    if path.name != _INIT_FILE:
         existing = getattr(sys.modules.get(qualified_name), "__file__", None)
         # Only forget a copy of this very file; a different module registered
         # under the name (stdlib, installed) is left for the shadow check below.

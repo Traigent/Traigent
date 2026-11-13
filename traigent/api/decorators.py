@@ -1130,11 +1130,7 @@ def _canonical_span(name: Any) -> float | None:
     return None
 
 
-def _knob_variation_problems(name: Any, values: Any) -> list[str]:
-    """Closed-form descriptions of why a list knob cannot vary usefully."""
-    if not isinstance(values, (list, tuple)) or len(values) < 2:
-        return []
-    problems: list[str] = []
+def _distinct_knob_values(values: Any) -> list[Any]:
     distinct: list[Any] = []
     for value in values:
         if not any(
@@ -1142,26 +1138,42 @@ def _knob_variation_problems(name: Any, values: Any) -> list[str]:
             for seen in distinct
         ):
             distinct.append(value)
+    return distinct
+
+
+def _near_identical_gap_problem(name: Any, distinct: list[Any]) -> str | None:
+    """Describe the first pair of numeric values too close to separate trials."""
+    floats = sorted(float(v) for v in distinct)
+    canonical = _canonical_span(name)
+    for low, high in zip(floats, floats[1:], strict=False):
+        if canonical is not None:
+            floor = canonical * _NEAR_IDENTICAL_SPAN_FRACTION
+        else:
+            floor = max(abs(low), abs(high)) * _NEAR_IDENTICAL_RELATIVE_FALLBACK
+        # Tolerance absorbs float error (0.71 - 0.70 is 0.010000000000000009).
+        if high - low <= floor * (1 + _NEAR_IDENTICAL_FLOAT_TOLERANCE):
+            return (
+                f"'{name}' has values only {high - low:g} apart, a very "
+                f"narrow gap that may not separate the trials"
+            )
+    return None
+
+
+def _knob_variation_problems(name: Any, values: Any) -> list[str]:
+    """Closed-form descriptions of why a list knob cannot vary usefully."""
+    if not isinstance(values, (list, tuple)) or len(values) < 2:
+        return []
+    problems: list[str] = []
+    distinct = _distinct_knob_values(values)
     if len(distinct) < len(values):
         problems.append(
             f"'{name}' lists {len(values)} values but only {len(distinct)} are "
             f"distinct, so the space claims more configurations than it has"
         )
     if len(distinct) >= 2 and all(_plain_number(v) for v in distinct):
-        floats = sorted(float(v) for v in distinct)
-        canonical = _canonical_span(name)
-        for low, high in zip(floats, floats[1:], strict=False):
-            if canonical is not None:
-                floor = canonical * _NEAR_IDENTICAL_SPAN_FRACTION
-            else:
-                floor = max(abs(low), abs(high)) * _NEAR_IDENTICAL_RELATIVE_FALLBACK
-            # Tolerance absorbs float error (0.71 - 0.70 is 0.010000000000000009).
-            if high - low <= floor * (1 + _NEAR_IDENTICAL_FLOAT_TOLERANCE):
-                problems.append(
-                    f"'{name}' has values only {high - low:g} apart, a very "
-                    f"narrow gap that may not separate the trials"
-                )
-                break
+        gap_problem = _near_identical_gap_problem(name, distinct)
+        if gap_problem is not None:
+            problems.append(gap_problem)
     return problems
 
 
@@ -2902,6 +2914,74 @@ def _strip_none_removed_aliases(
     return runtime_overrides, legacy
 
 
+def _validate_custom_evaluator_if_present(custom_evaluator: Any) -> None:
+    if custom_evaluator is not None:
+        _validate_custom_evaluator_signature(custom_evaluator)
+
+
+def _validate_surrogate_evaluator_if_present(surrogate_evaluator: Any) -> None:
+    if surrogate_evaluator is not None:
+        _validate_surrogate_evaluator_signature(surrogate_evaluator)
+
+
+def _algorithm_is_explicit(algorithm: Any, legacy_args: Any) -> bool:
+    return algorithm is not _AUTO_ALGORITHM_DEFAULT or (
+        legacy_args is not None and legacy_args.algorithm is not None
+    )
+
+
+def _execution_bundle_sets_algorithm(execution_bundle: Any) -> bool:
+    return (
+        execution_bundle is not None
+        and "algorithm" in execution_bundle.model_fields_set
+    )
+
+
+def _validated_max_total_examples(max_total_examples: Any) -> Any:
+    if max_total_examples is not None:
+        return validate_positive_int("max_total_examples", max_total_examples)
+    return max_total_examples
+
+
+def _prefer_flat_validated(
+    resolved: Any, flat_value: Any, flat_validated: dict[str, Any], key: str
+) -> Any:
+    """Keep a flat-validated value when bundle resolution left it untouched."""
+    if resolved is flat_value:
+        return flat_validated.get(key, resolved)
+    return resolved
+
+
+def _apply_tvl_budget_overrides(
+    combined_runtime_overrides: dict[str, Any],
+    *,
+    algorithm_value: str,
+    algorithm_explicit: bool,
+    max_trials_value: Any,
+    max_trials_explicit: bool,
+) -> tuple[str, Any, bool]:
+    """Apply a TVL spec's algorithm / trial budget unless the decorator set them."""
+    tvl_algorithm = combined_runtime_overrides.pop("algorithm", None)
+    tvl_max_trials = combined_runtime_overrides.pop("max_trials", None)
+    if tvl_algorithm is not None and not algorithm_explicit:
+        algorithm_value = validate_algorithm_name(tvl_algorithm)
+    if tvl_max_trials is not None and not max_trials_explicit:
+        _validate_max_trials(tvl_max_trials)
+        max_trials_value = tvl_max_trials
+        max_trials_explicit = True
+    return algorithm_value, max_trials_value, max_trials_explicit
+
+
+def _explicit_runtime_override_kwargs(
+    combined_runtime_overrides: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in combined_runtime_overrides.items()
+        if key != "parallel_config"
+    }
+
+
 def _passthrough_decorator(func: Any) -> Any:
     """No-op decorator that returns the function unchanged when Traigent is disabled.
 
@@ -3631,9 +3711,7 @@ def optimize(  # NOSONAR(S107)
 
     legacy_args = _parse_legacy_args(legacy)
     max_trials_explicit = _is_max_trials_explicit(runtime_overrides, legacy_args)
-    algorithm_explicit = algorithm is not _AUTO_ALGORITHM_DEFAULT or (
-        legacy_args is not None and legacy_args.algorithm is not None
-    )
+    algorithm_explicit = _algorithm_is_explicit(algorithm, legacy_args)
 
     direct_inputs = {
         "objectives": objectives,
@@ -3735,11 +3813,9 @@ def optimize(  # NOSONAR(S107)
     local_storage_path = combined_settings["local_storage_path"]
     minimal_logging = combined_settings["minimal_logging"]
     parallel_config = combined_settings["parallel_config"]
-    max_total_examples = combined_settings["max_total_examples"]
-    if max_total_examples is not None:
-        max_total_examples = validate_positive_int(
-            "max_total_examples", max_total_examples
-        )
+    max_total_examples = _validated_max_total_examples(
+        combined_settings["max_total_examples"]
+    )
     samples_include_pruned = combined_settings["samples_include_pruned"]
     winner_stability_reps = _coerce_winner_stability_reps(
         combined_settings["winner_stability_reps"]
@@ -3839,10 +3915,7 @@ def optimize(  # NOSONAR(S107)
         combined_settings["execution"], ExecutionOptions, "execution"
     )
     tvl_bundle = _coerce_bundle(combined_settings["tvl"], TVLOptions, "tvl")
-    if (
-        execution_bundle is not None
-        and "algorithm" in execution_bundle.model_fields_set
-    ):
+    if _execution_bundle_sets_algorithm(execution_bundle):
         algorithm_explicit = True
 
     # Resolve options from bundles
@@ -3858,8 +3931,7 @@ def optimize(  # NOSONAR(S107)
     )
 
     # Validate custom_evaluator signature early to catch interface mismatches
-    if custom_evaluator is not None:
-        _validate_custom_evaluator_signature(custom_evaluator)
+    _validate_custom_evaluator_if_present(custom_evaluator)
 
     # Optional surrogate (pre-screen) scorer from the evaluation bundle. Resolved
     # here (decorator source only) and validated early; stashed on the
@@ -3871,8 +3943,7 @@ def optimize(  # NOSONAR(S107)
         task_type,
         dataset_id,
     ) = _evaluation_bundle_extras(evaluation_bundle)
-    if surrogate_evaluator is not None:
-        _validate_surrogate_evaluator_signature(surrogate_evaluator)
+    _validate_surrogate_evaluator_if_present(surrogate_evaluator)
 
     (
         injection_mode,
@@ -3889,12 +3960,15 @@ def optimize(  # NOSONAR(S107)
         effectuation,
         defaults,
     )
-    if auto_override_frameworks is flat_auto_override:
-        auto_override_frameworks = flat_validated.get(
-            "auto_override_frameworks", auto_override_frameworks
-        )
-    if effectuation is flat_effectuation:
-        effectuation = flat_validated.get("effectuation", effectuation)
+    auto_override_frameworks = _prefer_flat_validated(
+        auto_override_frameworks,
+        flat_auto_override,
+        flat_validated,
+        "auto_override_frameworks",
+    )
+    effectuation = _prefer_flat_validated(
+        effectuation, flat_effectuation, flat_validated, "effectuation"
+    )
     # Validate the effective targets (flat or bundled) once, at decoration.
     _validate_framework_targets(framework_targets)
 
@@ -3926,11 +4000,9 @@ def optimize(  # NOSONAR(S107)
         runtime_overrides, legacy_args, execution_bundle
     )
     parallel_config = resolved_execution.parallel_config
-    max_total_examples = resolved_execution.max_total_examples
-    if max_total_examples is not None:
-        max_total_examples = validate_positive_int(
-            "max_total_examples", max_total_examples
-        )
+    max_total_examples = _validated_max_total_examples(
+        resolved_execution.max_total_examples
+    )
     samples_include_pruned = resolved_execution.samples_include_pruned
     smart_pruning_value = resolved_execution.smart_pruning
     winner_stability_reps_value = resolved_execution.winner_stability_reps
@@ -3984,14 +4056,15 @@ def optimize(  # NOSONAR(S107)
 
     # A TVL spec's exploration budget/strategy applies unless the decorator
     # supplied an explicit value (explicit arguments win).
-    tvl_algorithm = combined_runtime_overrides.pop("algorithm", None)
-    tvl_max_trials = combined_runtime_overrides.pop("max_trials", None)
-    if tvl_algorithm is not None and not algorithm_explicit:
-        algorithm_value = validate_algorithm_name(tvl_algorithm)
-    if tvl_max_trials is not None and not max_trials_explicit:
-        _validate_max_trials(tvl_max_trials)
-        max_trials_value = tvl_max_trials
-        max_trials_explicit = True
+    algorithm_value, max_trials_value, max_trials_explicit = (
+        _apply_tvl_budget_overrides(
+            combined_runtime_overrides,
+            algorithm_value=algorithm_value,
+            algorithm_explicit=algorithm_explicit,
+            max_trials_value=max_trials_value,
+            max_trials_explicit=max_trials_explicit,
+        )
+    )
 
     if samples_include_pruned is None:
         samples_include_pruned = True
@@ -4203,11 +4276,7 @@ def optimize(  # NOSONAR(S107)
             experiment_name=experiment_name_value,
             _default_experiment_name=default_experiment_name,
             **optimized_function_kwargs,
-            **{
-                key: value
-                for key, value in combined_runtime_overrides.items()
-                if key != "parallel_config"
-            },
+            **_explicit_runtime_override_kwargs(combined_runtime_overrides),
         )
         _attach_optimized_function_extras(
             optimized_func,

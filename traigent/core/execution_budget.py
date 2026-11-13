@@ -217,6 +217,27 @@ class _ExecutionBudgetSampleManager(SampleBudgetManager):
         )
 
 
+def _coerce_trial_cost(cost: float | None) -> tuple[float | None, bool]:
+    """Return ``(cost_value, ok)``; a malformed cost yields ``(None, False)``."""
+    try:
+        if cost is None:
+            return None, True
+        cost_value = float(cost)
+        if not math.isfinite(cost_value):
+            raise ValueError("non-finite trial cost")
+        return cost_value, True
+    except Exception:
+        return None, False
+
+
+def _coerce_trial_examples(examples: int) -> tuple[int, bool]:
+    """Return ``(examples_value, ok)``; a malformed count yields ``(0, False)``."""
+    try:
+        return (int(examples) if examples else 0), True
+    except Exception:
+        return 0, False
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionBudgetSnapshot:
     """Immutable point-in-time view of an :class:`ExecutionBudget`.
@@ -516,22 +537,8 @@ class ExecutionBudget:
         """
         # A valid observed cost is booked independently of a bad ``examples``
         # value (and vice versa), so one malformed field never hides the other.
-        cost_value: float | None = None
-        cost_ok = True
-        try:
-            if cost is not None:
-                cost_value = float(cost)
-                if not math.isfinite(cost_value):
-                    raise ValueError("non-finite trial cost")
-        except Exception:
-            cost_ok = False
-            cost_value = None
-        examples_value = 0
-        examples_ok = True
-        try:
-            examples_value = int(examples) if examples else 0
-        except Exception:
-            examples_ok = False
+        cost_value, cost_ok = _coerce_trial_cost(cost)
+        examples_value, examples_ok = _coerce_trial_examples(examples)
         try:
             with self._lock:
                 self._start_clock_locked()

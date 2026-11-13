@@ -1216,6 +1216,37 @@ def _row_object_problem(data: Any) -> tuple[str, str] | None:
     return None
 
 
+def _json_row_example_problem(
+    item: Any, index: Any, seen_ids: dict[Any, int]
+) -> tuple[str, str] | None:
+    """Same coercion and id-uniqueness rules as Dataset construction."""
+    from traigent.evaluators.base import (
+        EvaluationExample,
+        _coerce_dataset_example_mapping,
+        _example_correlation_key,
+    )
+
+    try:
+        input_data, expected, meta = _coerce_dataset_example_mapping(
+            item, source="dataset", location=f"example {index}"
+        )
+        key = _example_correlation_key(
+            EvaluationExample(input_data, expected, meta), index
+        )
+        previous = seen_ids.get(key)
+        if previous is not None:
+            return (
+                f"Duplicate example_id (also at example {previous})",
+                "INVALID_FORMAT",
+            )
+        seen_ids[key] = index
+    except TypeError:
+        return ("example_id must be hashable", "INVALID_FORMAT")
+    except Exception as exc:
+        return (str(exc), "INVALID_FORMAT")
+    return None
+
+
 def _scan_json_dataset(result: ValidationResult, handle: Any) -> tuple[int, int]:
     """Validate a ``.json`` dataset with the loader's layout rules (#3232).
 
@@ -1225,12 +1256,7 @@ def _scan_json_dataset(result: ValidationResult, handle: Any) -> tuple[int, int]
     no per-line re-parse.
     """
     # Imported lazily: evaluators.base imports from this package.
-    from traigent.evaluators.base import (
-        EvaluationExample,
-        _coerce_dataset_example_mapping,
-        _example_correlation_key,
-        _json_dataset_layout,
-    )
+    from traigent.evaluators.base import _json_dataset_layout
 
     try:
         data = json.load(handle)
@@ -1250,26 +1276,7 @@ def _scan_json_dataset(result: ValidationResult, handle: Any) -> tuple[int, int]
         row_count += 1
         problem = _row_object_problem(item)
         if problem is None:
-            # Same coercion and id-uniqueness rules as Dataset construction.
-            try:
-                input_data, expected, meta = _coerce_dataset_example_mapping(
-                    item, source="dataset", location=f"example {index}"
-                )
-                key = _example_correlation_key(
-                    EvaluationExample(input_data, expected, meta), index
-                )
-                previous = seen_ids.get(key)
-                if previous is not None:
-                    problem = (
-                        f"Duplicate example_id (also at example {previous})",
-                        "INVALID_FORMAT",
-                    )
-                else:
-                    seen_ids[key] = index
-            except TypeError:
-                problem = ("example_id must be hashable", "INVALID_FORMAT")
-            except Exception as exc:
-                problem = (str(exc), "INVALID_FORMAT")
+            problem = _json_row_example_problem(item, index, seen_ids)
         if problem is None:
             continue
         invalid_rows += 1

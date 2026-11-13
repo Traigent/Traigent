@@ -43,6 +43,8 @@ from .mappings import METHOD_MAPPINGS, METHOD_PARAMETER_TRANSLATIONS, PARAMETER_
 _OPENAI_ASYNC_CLIENT_PATH = "openai.AsyncOpenAI"
 
 _OPENAI_CLIENT_PATH = "openai.OpenAI"
+_ANTHROPIC_CLIENT_PATH = "anthropic.Anthropic"
+_ANTHROPIC_ASYNC_CLIENT_PATH = "anthropic.AsyncAnthropic"
 
 logger = get_logger(__name__)
 
@@ -118,7 +120,7 @@ _OPENAI_USAGE_TARGETS = frozenset({_OPENAI_CLIENT_PATH, _OPENAI_ASYNC_CLIENT_PAT
 #: Raw Anthropic clients: ``messages.create`` returns a ``Message`` carrying
 #: ``usage`` (Traigent#3250).
 _ANTHROPIC_USAGE_TARGETS = frozenset(
-    {"anthropic.Anthropic", "anthropic.AsyncAnthropic"}
+    {_ANTHROPIC_CLIENT_PATH, _ANTHROPIC_ASYNC_CLIENT_PATH}
 )
 
 #: Provider name handed to the capture hook, per usage-bearing framework target.
@@ -308,6 +310,28 @@ async def _capture_openai_usage_when_awaited(
     """Await an async provider call, then record its usage like the sync path."""
     response = await pending
     _record_usage(response, call_kwargs, provider)
+    return response
+
+
+def _finish_with_usage_capture(
+    response: Any,
+    call_kwargs: dict[str, Any],
+    usage_provider: str | None,
+    stream_manager_method: bool,
+) -> Any:
+    """Wrap or record a method response so its provider usage is captured."""
+    if usage_provider is None:
+        return response
+    if stream_manager_method:
+        # ``messages.stream`` returns a context manager; usage is read
+        # from its final message when the ``with`` block exits.
+        return _AnthropicStreamManagerCapture(response, call_kwargs)
+    if inspect.isawaitable(response):
+        # ``AsyncCompletions.create`` is a plain function (wrapped by
+        # the SDK's ``required_args``) that returns a coroutine, so
+        # the sync wrapper sees the coroutine, not the completion.
+        return _capture_openai_usage_when_awaited(response, call_kwargs, usage_provider)
+    _record_usage(response, call_kwargs, usage_provider)
     return response
 
 
@@ -512,15 +536,9 @@ class FrameworkOverrideManager(BaseOverrideManager):
         #   2. Class-level PARAMETER_MAPPINGS (constructor-valid params, e.g. model).
         #   3. Identity: for any supported param not covered above, the framework param
         #      name equals the Traigent canonical name (e.g. temperature → temperature).
-        method_translations = self._method_parameter_translations.get(
-            class_name, {}
-        ).get(method_name, {})
-        class_mapping = self._parameter_mappings.get(class_name, {})
-        effective_mapping: dict[str, str] = dict(class_mapping)
-        effective_mapping.update(method_translations)  # method translations win
-        for sp in supported_params:
-            if sp not in effective_mapping:
-                effective_mapping[sp] = sp  # identity fallback
+        effective_mapping = self._effective_method_mapping(
+            class_name, method_name, supported_params
+        )
 
         override_active = self._override_active  # Capture in closure
         # Raw OpenAI SDK responses carry ``usage``; record it for the trial's
@@ -532,21 +550,9 @@ class FrameworkOverrideManager(BaseOverrideManager):
         )
 
         def finish(response: Any, call_kwargs: dict[str, Any]) -> Any:
-            if usage_provider is None:
-                return response
-            if stream_manager_method:
-                # ``messages.stream`` returns a context manager; usage is read
-                # from its final message when the ``with`` block exits.
-                return _AnthropicStreamManagerCapture(response, call_kwargs)
-            if inspect.isawaitable(response):
-                # ``AsyncCompletions.create`` is a plain function (wrapped by
-                # the SDK's ``required_args``) that returns a coroutine, so
-                # the sync wrapper sees the coroutine, not the completion.
-                return _capture_openai_usage_when_awaited(
-                    response, call_kwargs, usage_provider
-                )
-            _record_usage(response, call_kwargs, usage_provider)
-            return response
+            return _finish_with_usage_capture(
+                response, call_kwargs, usage_provider, stream_manager_method
+            )
 
         def call_kwargs_for(kwargs: dict[str, Any]) -> dict[str, Any]:
             return self._method_call_kwargs(kwargs, supported_params, effective_mapping)
@@ -576,6 +582,20 @@ class FrameworkOverrideManager(BaseOverrideManager):
             return async_override_method
         else:
             return override_method
+
+    def _effective_method_mapping(
+        self, class_name: str, method_name: str, supported_params: list[str]
+    ) -> dict[str, str]:
+        method_translations = self._method_parameter_translations.get(
+            class_name, {}
+        ).get(method_name, {})
+        class_mapping = self._parameter_mappings.get(class_name, {})
+        effective_mapping: dict[str, str] = dict(class_mapping)
+        effective_mapping.update(method_translations)  # method translations win
+        for sp in supported_params:
+            if sp not in effective_mapping:
+                effective_mapping[sp] = sp  # identity fallback
+        return effective_mapping
 
     @staticmethod
     def _method_call_kwargs(
@@ -737,25 +757,35 @@ class FrameworkOverrideManager(BaseOverrideManager):
             annotation_name, func, candidate_modules
         )
         for module_name in candidate_modules:
-            try:
-                module = importlib.import_module(module_name)
-            except (ImportError, ValueError):
-                continue
-            module_globals = vars(module)
-            if module_globals is globalns:
-                continue
-            # openai>=3 lazily exposes ``openai.resources.Chat`` (etc.) through a
-            # module ``__getattr__``, so the name is absent from ``vars(module)``.
-            lazy = (
-                getattr(module, annotation_name, None)
-                if annotation_name.isidentifier()
-                else None
+            found = self._annotation_class_from_module(
+                annotation_name, module_name, globalns
             )
-            if isinstance(lazy, type):
-                return cast(type, lazy)
-            resolved = self._resolve_annotation_name(annotation_name, module_globals)
-            if isinstance(resolved, type):
-                return cast(type, resolved)
+            if found is not None:
+                return found
+        return None
+
+    def _annotation_class_from_module(
+        self, annotation_name: str, module_name: str, globalns: dict[str, Any]
+    ) -> type | None:
+        try:
+            module = importlib.import_module(module_name)
+        except (ImportError, ValueError):
+            return None
+        module_globals = vars(module)
+        if module_globals is globalns:
+            return None
+        # openai>=3 lazily exposes ``openai.resources.Chat`` (etc.) through a
+        # module ``__getattr__``, so the name is absent from ``vars(module)``.
+        lazy = (
+            getattr(module, annotation_name, None)
+            if annotation_name.isidentifier()
+            else None
+        )
+        if isinstance(lazy, type):
+            return cast(type, lazy)
+        resolved = self._resolve_annotation_name(annotation_name, module_globals)
+        if isinstance(resolved, type):
+            return cast(type, resolved)
         return None
 
     def _annotation_candidate_modules(self, func: Callable[..., Any]) -> list[str]:
@@ -1350,8 +1380,8 @@ def override_anthropic() -> None:
     """Enable overrides for Anthropic classes."""
     enable_framework_overrides(
         [
-            "anthropic.Anthropic",
-            "anthropic.AsyncAnthropic",
+            _ANTHROPIC_CLIENT_PATH,
+            _ANTHROPIC_ASYNC_CLIENT_PATH,
             "langchain_anthropic.ChatAnthropic",
         ]
     )
@@ -1384,8 +1414,8 @@ def override_all_platforms() -> None:
             "langchain_openai.OpenAI",
             "langchain_openai.ChatOpenAI",
             # Anthropic
-            "anthropic.Anthropic",
-            "anthropic.AsyncAnthropic",
+            _ANTHROPIC_CLIENT_PATH,
+            _ANTHROPIC_ASYNC_CLIENT_PATH,
             "langchain_anthropic.ChatAnthropic",
             # Cohere
             "cohere.Client",

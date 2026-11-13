@@ -450,6 +450,15 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
     agent: str | None = None
 
     def __post_init__(self) -> None:
+        self._validate_bounds()
+        self._validate_step()
+        self._validate_default_type()
+        if self.step is not None:
+            # numpy scalars pass the checks above but fail config validation.
+            object.__setattr__(self, "step", int(self.step))
+        self._validate_log_and_default_range()
+
+    def _validate_bounds(self) -> None:
         if (
             not isinstance(self.low, int)
             or not isinstance(self.high, int)
@@ -464,13 +473,15 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             raise ValueError(
                 f"IntRange low ({self.low}) must be less than high ({self.high})"
             )
-        if self.step is not None and not isinstance(
-            self.step, (bool, str, numbers.Real)
-        ):
+
+    def _validate_step(self) -> None:
+        if self.step is None:
+            return
+        if not isinstance(self.step, (bool, str, numbers.Real)):
             raise TypeError(
                 f"IntRange step must be an integer, got {type(self.step).__name__}"
             )
-        if self.step is not None and (
+        if (
             isinstance(self.step, bool)
             or not isinstance(self.step, numbers.Real)
             or not math.isfinite(self.step)
@@ -479,13 +490,15 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             raise ValueError(
                 f"IntRange step must be a positive integer, got {self.step!r}"
             )
-        if self.step is not None and self.step <= 0:
+        if self.step <= 0:
             raise ValueError(f"IntRange step must be positive, got {self.step}")
-        if self.step is not None and self.step > (self.high - self.low) * (1 + 1e-9):
+        if self.step > (self.high - self.low) * (1 + 1e-9):
             raise ValueError(
                 f"IntRange step ({self.step}) is larger than the span "
                 f"[{self.low}, {self.high}]"
             )
+
+    def _validate_default_type(self) -> None:
         if self.default is not None and (
             isinstance(self.default, bool)
             or not isinstance(self.default, numbers.Integral)
@@ -494,9 +507,8 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
                 f"IntRange default must be an integer, got "
                 f"{type(self.default).__name__}"
             )
-        if self.step is not None:
-            # numpy scalars pass the checks above but fail config validation.
-            object.__setattr__(self, "step", int(self.step))
+
+    def _validate_log_and_default_range(self) -> None:
         if self.log and self.low <= 0:
             raise ValueError(f"log=True requires positive bounds, got low={self.low}")
         if self.log and self.step is not None:

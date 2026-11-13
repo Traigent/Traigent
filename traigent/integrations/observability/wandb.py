@@ -620,6 +620,72 @@ def _is_unit_or_no_step(param_range: Mapping[str, Any]) -> bool:
     return is_int and step == 1
 
 
+def _wandb_int_or_float_bounds(param_range: dict[str, Any]) -> dict[str, Any]:
+    """Plain min/max domain for a typed numeric range dict without a step."""
+    bounds: dict[str, Any] = {
+        "min": param_range["low"],
+        "max": param_range["high"],
+    }
+    range_type = str(param_range.get("type", "")).lower()
+    if range_type in {"int", "integer"}:
+        bounds["distribution"] = "int_uniform"
+    elif range_type == "float":
+        # Explicit float domain: integer-valued bounds must not be
+        # inferred as int_uniform by W&B (#3211).
+        bounds = {
+            "min": float(param_range["low"]),
+            "max": float(param_range["high"]),
+            "distribution": "uniform",
+        }
+    return bounds
+
+
+def _wandb_stepped_values(
+    param_name: str, param_range: dict[str, Any]
+) -> dict[str, Any]:
+    # Stepped range: export the exact grid so the sweep never leaves it.
+    # Bound the size arithmetically before materializing the grid.
+    count = discrete_cardinality_for_config_param(param_range) or 0
+    if count < 1 or count > _WANDB_MAX_GRID_VALUES:
+        raise ValueError(
+            f"Parameter '{param_name}' has a stepped range with "
+            f"{count} values; W&B export supports "
+            f"1..{_WANDB_MAX_GRID_VALUES}"
+        )
+    grid = discrete_values_for_config_param(param_range) or ()
+    return {"values": list(grid)}
+
+
+def _wandb_parameter_spec(param_name: str, param_range: Any) -> dict[str, Any]:
+    if isinstance(param_range, list):
+        # Categorical parameter
+        return {"values": param_range}
+    if isinstance(param_range, tuple) and len(param_range) == 2:
+        # Continuous parameter
+        min_val, max_val = param_range
+        return {"min": min_val, "max": max_val}
+    if (
+        isinstance(param_range, dict)
+        and "low" in param_range
+        and "high" in param_range
+        and not param_range.get("log")
+        and _is_unit_or_no_step(param_range)
+    ):
+        # Typed numeric range dict without a step, or an integer range
+        # with step 1 (e.g. IntRange): a plain min/max domain
+        return _wandb_int_or_float_bounds(param_range)
+    if (
+        isinstance(param_range, dict)
+        and "low" in param_range
+        and "high" in param_range
+        and param_range.get("step") is not None
+        and not param_range.get("log")
+    ):
+        return _wandb_stepped_values(param_name, param_range)
+    # Single value - treat as constant
+    return {"value": param_range}
+
+
 def create_wandb_sweep_config(
     function_name: str,
     configuration_space: dict[str, Any],
@@ -655,59 +721,7 @@ def create_wandb_sweep_config(
     wandb_parameters: dict[str, dict[str, Any]] = {}
 
     for param_name, param_range in configuration_space.items():
-        if isinstance(param_range, list):
-            # Categorical parameter
-            wandb_parameters[param_name] = {"values": param_range}
-        elif isinstance(param_range, tuple) and len(param_range) == 2:
-            # Continuous parameter
-            min_val, max_val = param_range
-            wandb_parameters[param_name] = {"min": min_val, "max": max_val}
-        elif (
-            isinstance(param_range, dict)
-            and "low" in param_range
-            and "high" in param_range
-            and not param_range.get("log")
-            and _is_unit_or_no_step(param_range)
-        ):
-            # Typed numeric range dict without a step, or an integer range
-            # with step 1 (e.g. IntRange): a plain min/max domain
-            bounds: dict[str, Any] = {
-                "min": param_range["low"],
-                "max": param_range["high"],
-            }
-            range_type = str(param_range.get("type", "")).lower()
-            if range_type in {"int", "integer"}:
-                bounds["distribution"] = "int_uniform"
-            elif range_type == "float":
-                # Explicit float domain: integer-valued bounds must not be
-                # inferred as int_uniform by W&B (#3211).
-                bounds = {
-                    "min": float(param_range["low"]),
-                    "max": float(param_range["high"]),
-                    "distribution": "uniform",
-                }
-            wandb_parameters[param_name] = bounds
-        elif (
-            isinstance(param_range, dict)
-            and "low" in param_range
-            and "high" in param_range
-            and param_range.get("step") is not None
-            and not param_range.get("log")
-        ):
-            # Stepped range: export the exact grid so the sweep never leaves it.
-            # Bound the size arithmetically before materializing the grid.
-            count = discrete_cardinality_for_config_param(param_range) or 0
-            if count < 1 or count > _WANDB_MAX_GRID_VALUES:
-                raise ValueError(
-                    f"Parameter '{param_name}' has a stepped range with "
-                    f"{count} values; W&B export supports "
-                    f"1..{_WANDB_MAX_GRID_VALUES}"
-                )
-            grid = discrete_values_for_config_param(param_range) or ()
-            wandb_parameters[param_name] = {"values": list(grid)}
-        else:
-            # Single value - treat as constant
-            wandb_parameters[param_name] = {"value": param_range}
+        wandb_parameters[param_name] = _wandb_parameter_spec(param_name, param_range)
 
     # Create sweep config
     sweep_config = {
