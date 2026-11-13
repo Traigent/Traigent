@@ -4,7 +4,9 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o1",
+    "output": {
+     "value": "o1"
+    },
     "target": {
      "value": "ea"
     }
@@ -12,7 +14,9 @@
    {
     "example_id": "b",
     "input_id": "b",
-    "output": "o2",
+    "output": {
+     "value": "o2"
+    },
     "target": {
      "value": "eb"
     }
@@ -61,7 +65,9 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o",
+    "output": {
+     "value": "o"
+    },
     "target": {
      "value": null
     }
@@ -69,7 +75,9 @@
    {
     "example_id": "b",
     "input_id": "b",
-    "output": "o",
+    "output": {
+     "value": "o"
+    },
     "target": {
      "value": "given"
     }
@@ -145,7 +153,9 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o",
+    "output": {
+     "value": "o"
+    },
     "target": {
      "value": "ea"
     }
@@ -174,7 +184,9 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o",
+    "output": {
+     "value": "o"
+    },
     "target": {
      "value": "ea"
     }
@@ -182,7 +194,9 @@
    {
     "example_id": "b",
     "input_id": "b",
-    "output": "o",
+    "output": {
+     "value": "o"
+    },
     "target": {
      "value": "eb"
     }
@@ -226,7 +240,9 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o",
+    "output": {
+     "value": "o"
+    },
     "target": {
      "value": "ea"
     }
@@ -325,7 +341,9 @@
    {
     "example_id": "a",
     "input_id": "a",
-    "output": "o",
+    "output": {
+     "value": "o"
+    },
     "target": {
      "value": "ea"
     }

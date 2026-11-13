@@ -52,3 +52,14 @@ def test_null_output_with_output_id_uses_output_id():
     (item,) = _build("p", [{"example_id": "a", "output": None, "output_id": "o1"}])
     assert "output" not in item
     assert item["output_id"] == "o1"
+
+
+@pytest.mark.parametrize("out", ["text", 42, 1.5, True, [1, 2]])
+def test_non_null_scalar_outputs_are_wrapped(out):
+    (item,) = _build("p", [{"example_id": "a", "output": out}])
+    assert item["output"] == {"value": out}
+
+
+def test_object_output_is_unchanged():
+    (item,) = _build("p", [{"example_id": "a", "output": {"x": 1}}])
+    assert item["output"] == {"x": 1}

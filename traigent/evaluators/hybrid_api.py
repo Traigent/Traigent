@@ -1468,8 +1468,15 @@ class HybridAPIEvaluator(BaseEvaluator):
                 # Legacy compatibility: some services expect input_id.
                 "input_id": example_id,
             }
-            if output_item.get("output") is not None:
-                evaluation["output"] = output_item["output"]
+            raw_output = output_item.get("output")
+            if raw_output is not None:
+                # EvaluationItem.output is object-typed: wrap non-objects as
+                # {"value": x}; the wrapper service unwraps it for handlers.
+                evaluation["output"] = (
+                    raw_output
+                    if isinstance(raw_output, dict)
+                    else {"value": raw_output}
+                )
             elif "output_id" in output_item:
                 evaluation["output_id"] = output_item.get("output_id")
             # Absent or null output: omit it (the contract types output as an
