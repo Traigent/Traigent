@@ -217,6 +217,25 @@ def is_traigent_offline_requested() -> bool:
     return _read_bool_env("TRAIGENT_OFFLINE") or _read_bool_env("TRAIGENT_OFFLINE_MODE")
 
 
+_PRIVATE_MODE_ENV_NAMES = ("TRAIGENT_PRIVATE_DATA", "TRAIGENT_COMPLIANCE_MODE")
+_PRIVATE_MODE_OFF_VALUES = frozenset({"", "0", "false", "no", "off"})
+
+
+def is_traigent_private_mode_requested() -> bool:
+    """Return whether ``TRAIGENT_PRIVATE_DATA`` or ``TRAIGENT_COMPLIANCE_MODE``
+    forces local-only execution (#2997).
+
+    Fails closed: unset, empty or an explicit false word (``0``/``false``/
+    ``no``/``off``) leaves the switch off; ANY other value, including one that
+    cannot be parsed as a boolean, counts as set.
+    """
+
+    for name in _PRIVATE_MODE_ENV_NAMES:
+        if os.getenv(name, "").strip().lower() not in _PRIVATE_MODE_OFF_VALUES:
+            return True
+    return False
+
+
 def is_content_identity_requested() -> bool:
     """Return whether ``TRAIGENT_CONTENT_IDENTITY`` opts in to content identity.
 
@@ -598,6 +617,33 @@ def resolve_execution_policy(
     offline_requested = _resolve_legacy_mode(
         execution_mode, offline_requested, hint_parts
     )
+
+    if is_traigent_private_mode_requested():
+        explicit_mode = (
+            ""
+            if execution_mode is None
+            else (
+                execution_mode.value
+                if isinstance(execution_mode, ExecutionMode)
+                else str(execution_mode)
+            )
+            .strip()
+            .lower()
+        )
+        if (
+            is_smart_algorithm(normalized_algorithm)
+            or require_cloud_requested
+            or explicit_mode in {"hybrid", "standard"}
+        ):
+            raise ConfigurationError(
+                "TRAIGENT_PRIVATE_DATA or TRAIGENT_COMPLIANCE_MODE is set, which "
+                "forces local-only execution, but a cloud/managed run was "
+                "requested (smart algorithm, hybrid/standard execution_mode or "
+                "require_cloud). Use algorithm='grid' or 'random', or unset the "
+                "variable to allow managed optimization."
+            )
+        offline_requested = True
+        hint_parts.append("private_mode_env")
 
     if privacy_enabled is not None:
         _warn_deprecated_once(
