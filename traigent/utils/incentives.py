@@ -169,7 +169,7 @@ class IncentiveManager:
                 "   • Advanced Bayesian optimization (vs. random search)",
                 "   • Web dashboard with beautiful visualizations",
                 "   • Team collaboration and sharing features",
-                "   • Unlimited optimization trials",
+                "   • Higher trial allowances (see the plans page for limits)",
                 f"   \n   Your {completed_count} sessions can be synced instantly!",
                 "   Run 'traigent auth login' to get started",
             ],
@@ -227,7 +227,7 @@ class IncentiveManager:
             "optimization_explorer": {
                 "title": "🔍 Optimization Explorer",
                 "description": "5 optimizations completed! You're getting the hang of this.",
-                "hint": "Traigent Cloud offers 10x faster optimization with advanced algorithms.",
+                "hint": "Traigent Cloud adds advanced optimization algorithms.",
             },
             "efficiency_expert": {
                 "title": "⚡ Efficiency Expert",
@@ -309,18 +309,16 @@ class IncentiveManager:
         )  # Assume 30min saved per optimization
 
         # Estimate cloud benefits
-        cloud_trial_speedup = 3  # Cloud is 3x faster on average
-        cloud_accuracy_improvement = 0.15  # 15% better accuracy
 
         value_props = {
             "time_savings": {
                 "current_time_investment": f"{estimated_time_saved_hours:.1f} hours",
-                "potential_cloud_savings": f"{estimated_time_saved_hours * cloud_trial_speedup:.1f} hours saved",
-                "roi_message": f"Cloud could save you {estimated_time_saved_hours * 2:.1f} additional hours",
+                "potential_cloud_savings": "Cloud algorithms may reduce trials needed",
+                "roi_message": "Cloud features may save additional time",
             },
             "performance_gains": {
                 "current_avg_trials": f"{avg_trials_per_session:.1f} trials per optimization",
-                "cloud_improvement": f"Up to {cloud_accuracy_improvement * 100:.0f}% better results",
+                "cloud_improvement": "Advanced algorithms may find better configurations",
                 "advanced_algorithms": "Bayesian optimization vs. random search",
             },
             "scale_benefits": {
@@ -340,7 +338,7 @@ class IncentiveManager:
                 "💡 Large configuration space detected!",
                 "   Edge Analytics mode uses random search, but Traigent Cloud offers:",
                 "   • Intelligent Bayesian optimization",
-                "   • 3-5x faster convergence",
+                "   • Faster convergence on many problems",
                 "   • Better handling of high-dimensional spaces",
             ],
             "multiple_objectives": [
@@ -388,13 +386,13 @@ class IncentiveManager:
 │ Feature                         │ Local Mode   │ Traigent Cloud  │
 ├─────────────────────────────────┼──────────────┼─────────────────┤
 │ Optimization Algorithm          │ Random/Grid  │ Bayesian/Multi  │
-│ Max Trials per Session          │ 20           │ Unlimited       │
+│ Max Trials per Session          │ You choose   │ Per plan        │
 │ Web Dashboard                   │ ❌           │ ✅              │
 │ Team Collaboration              │ ❌           │ ✅              │
 │ Results Persistence             │ Local Files  │ Cloud Storage   │
 │ Performance Analytics           │ Basic        │ Advanced        │
 │ Multi-objective Optimization    │ Basic        │ Pareto-optimal  │
-│ Parallel Execution              │ ❌           │ ✅              │
+│ Parallel Execution              │ ✅           │ ✅              │
 │ Integration APIs                │ Limited      │ Full REST API   │
 │ Support                         │ Community    │ Priority        │
 └─────────────────────────────────┴──────────────┴─────────────────┘
