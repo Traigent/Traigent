@@ -1049,7 +1049,8 @@ class SeamlessParameterProvider(ConfigurationProvider):
         # Validate the transformed AST
         if not SafeASTCompiler.validate_ast(modified_tree):
             raise ConfigurationError(
-                f"Transformed AST for {func.__name__} contains unsafe operations"
+                f"Cannot inject configuration into {func.__name__}: "
+                f"{SafeASTCompiler.describe_violations(modified_tree)}"
             )
 
         # Compile the transformed AST
