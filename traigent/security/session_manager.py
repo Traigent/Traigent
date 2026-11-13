@@ -125,7 +125,7 @@ class SessionManager:
             raise ValueError("Rate limit exceeded for session creation")
 
         # Check max sessions per user
-        existing_sessions = self._get_user_sessions(user_id)
+        existing_sessions = self._get_user_sessions(user_id, strict=True)
         if len(existing_sessions) >= self.max_sessions_per_user:
             # Remove oldest session
             oldest = min(
@@ -423,8 +423,20 @@ class SessionManager:
             return self._sessions.get(session_id)
         return None
 
-    def _get_user_sessions(self, user_id: str) -> set[str]:
-        """Get all session IDs for a user."""
+    # Remove an id from the user index only if its session record is still
+    # absent, in one atomic step (a recreated session must stay indexed).
+    _SREM_IF_SESSION_ABSENT = (
+        "if redis.call('EXISTS', KEYS[1]) == 0 then "
+        "return redis.call('SREM', KEYS[2], ARGV[1]) "
+        "else return 0 end"
+    )
+
+    def _get_user_sessions(self, user_id: str, *, strict: bool = False) -> set[str]:
+        """Get all live session IDs for a user.
+
+        With ``strict=True`` (cap enforcement) a store read failure raises
+        instead of reporting an empty set, so the cap cannot be bypassed.
+        """
         if self.use_redis and self.redis_client:
             try:
                 key = f"user_sessions:{user_id}"
@@ -435,10 +447,18 @@ class SessionManager:
                     sid for sid in members if self.redis_client.get(f"session:{sid}")
                 }
                 for ghost in members - live:
-                    self.redis_client.srem(key, ghost)
+                    self.redis_client.eval(
+                        self._SREM_IF_SESSION_ABSENT,
+                        2,
+                        f"session:{ghost}",
+                        key,
+                        ghost,
+                    )
                 return live
             except Exception as e:
                 logger.warning(f"Failed to get user sessions for {user_id}: {e}")
+                if strict:
+                    raise ValueError("Session store unavailable") from None
                 return set()
         else:
             return self._user_sessions.get(user_id, set()).copy()

@@ -47,6 +47,14 @@ class _FakeRedis:
     def smembers(self, key: str) -> set[str]:
         return set(self.sets.get(key, set()))
 
+    def eval(self, script: str, numkeys: int, *args: Any) -> int:
+        # Emulates the atomic "SREM if the session key is absent" script.
+        session_key, set_key, member = args
+        if session_key in self.kv:
+            return 0
+        self.sets.get(set_key, set()).discard(member)
+        return 1
+
     def expire(self, key: str, ttl: int) -> None:
         return None
 
@@ -84,3 +92,38 @@ def test_expired_session_ids_do_not_count_against_the_cap() -> None:
     assert len(live) <= 3
     assert len(fake.sets["user_sessions:user-1"]) <= 3
     assert all(json.loads(fake.kv[k])["user_id"] == "user-1" for k in live)
+
+
+def test_session_recreated_during_ghost_check_stays_indexed() -> None:
+    fake = _FakeRedis()
+    mgr = _manager(fake, enable_rate_limiting=False)
+    sid, _ = mgr.create_session("user-1", session_id="s-ghost")
+    record = fake.kv.pop(f"session:{sid}")  # expires
+
+    real_get = fake.get
+
+    def get_then_recreate(key: str) -> str | None:
+        value = real_get(key)
+        if key == f"session:{sid}" and value is None:
+            fake.kv[key] = record  # recreated between the read and the removal
+        return value
+
+    fake.get = get_then_recreate  # type: ignore[method-assign]
+    mgr._get_user_sessions("user-1")
+    assert sid in fake.sets["user_sessions:user-1"]
+
+
+def test_cap_enforcement_fails_closed_when_the_store_read_fails() -> None:
+    import pytest
+
+    fake = _FakeRedis()
+    mgr = _manager(fake, enable_rate_limiting=False)
+
+    def boom(key: str) -> str:
+        raise RuntimeError("redis down")
+
+    fake.get = boom  # type: ignore[method-assign]
+    fake.sadd("user_sessions:user-1", "s-1")
+    with pytest.raises(ValueError, match="Session store unavailable"):
+        mgr.create_session("user-1")
+    assert fake.sets["user_sessions:user-1"] == {"s-1"}
