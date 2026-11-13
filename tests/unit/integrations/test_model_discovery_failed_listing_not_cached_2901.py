@@ -87,3 +87,34 @@ def test_azure_failed_listing_is_not_cached(
     assert "my-deployment" not in first
     state["fail"] = False
     assert "my-deployment" in discovery.list_models()
+
+
+def test_azure_missing_httpx_is_a_failure_not_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import builtins
+
+    discovery = AzureOpenAIDiscovery(cache=_cache(tmp_path))
+    real_import = builtins.__import__
+
+    def no_httpx(name: str, *args: object, **kwargs: object):  # noqa: ANN202
+        if name == "httpx":
+            raise ImportError("no httpx")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_httpx)
+    first = discovery.list_models()
+    monkeypatch.setattr(builtins, "__import__", real_import)
+    assert "my-deployment" not in first
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"data": [{"id": "my-deployment"}]}
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", lambda *_a, **_k: _Resp())
+    assert "my-deployment" in discovery.list_models()

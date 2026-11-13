@@ -109,7 +109,8 @@ class AzureOpenAIDiscovery(ModelDiscovery):
 
         except ImportError:
             logger.debug("httpx not installed for Azure deployment listing")
-            return []
+            # A missing client is a failed listing, not an empty live result.
+            raise
         except Exception as e:
             logger.debug(f"Azure deployment listing failed: {e}")
             # Raise so list_models falls back WITHOUT caching the fallback as

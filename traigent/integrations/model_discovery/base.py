@@ -124,6 +124,8 @@ class ModelDiscovery(ABC):
                 self._live_failure_logged = False
                 return models
         except Exception as e:
+            # A failed force_refresh leaves any still-valid cached live entry in
+            # place: it is a successful live result within its TTL.
             live_failed = True
             self._warn_live_listing_failed(e)
 
