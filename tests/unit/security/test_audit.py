@@ -886,3 +886,38 @@ class TestEventProcessorEnrichment:
             processor.enrich_with_geolocation(event)
         with pytest.raises(EnrichmentProviderUnavailableError):
             processor.enrich_with_threat_intelligence(event)
+
+
+class TestWrapperKwargCollisions:
+    """Convenience wrappers accept caller-supplied overrides (#3062)."""
+
+    def test_data_access_caller_tags_kept_and_not_mutated(self):
+        logger_ = AuditLogger(STRONG_AUDIT_SECRET)
+        tags = [ComplianceFramework.SOC2]
+        event = logger_.log_data_access("u", "res", "read", compliance_tags=tags)
+        assert ComplianceFramework.SOC2 in event.compliance_tags
+        assert ComplianceFramework.GDPR in event.compliance_tags
+        assert tags == [ComplianceFramework.SOC2]
+
+    def test_security_event_caller_tags_kept(self):
+        logger_ = AuditLogger(STRONG_AUDIT_SECRET)
+        event = logger_.log_security_event(
+            AuditEventType.DATA_READ,
+            user_id="u",
+            compliance_tags=[ComplianceFramework.GDPR],
+        )
+        assert ComplianceFramework.GDPR in event.compliance_tags
+        assert ComplianceFramework.SOC2 in event.compliance_tags
+
+    def test_authentication_caller_severity_wins(self):
+        logger_ = AuditLogger(STRONG_AUDIT_SECRET)
+        event = logger_.log_authentication("u", True, severity=AuditSeverity.HIGH)
+        assert event.severity == AuditSeverity.HIGH
+
+    def test_non_json_details_still_recorded(self):
+        logger_ = AuditLogger(STRONG_AUDIT_SECRET)
+        event = logger_.log_event(
+            AuditEventType.DATA_READ, user_id="u", details={"when": datetime.now(UTC)}
+        )
+        assert event in logger_.events
+        assert logger_.verify_integrity()["integrity_status"] == "verified"

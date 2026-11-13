@@ -546,9 +546,13 @@ class AuditLogger:
         event_type = (
             AuditEventType.LOGIN_SUCCESS if success else AuditEventType.LOGIN_FAILURE
         )
-        severity = AuditSeverity.LOW if success else AuditSeverity.MEDIUM
-        result = "success" if success else "failure"
-        message = f"User authentication {'successful' if success else 'failed'}"
+        severity = kwargs.pop(
+            "severity", AuditSeverity.LOW if success else AuditSeverity.MEDIUM
+        )
+        result = kwargs.pop("result", "success" if success else "failure")
+        message = kwargs.pop(
+            "message", f"User authentication {'successful' if success else 'failed'}"
+        )
 
         return self.log_event(
             event_type=event_type,
@@ -577,10 +581,11 @@ class AuditLogger:
         }
 
         event_type = event_type_map.get(action.lower(), AuditEventType.DATA_READ)
-        message = f"Data {action} on resource {resource}"
+        message = kwargs.pop("message", f"Data {action} on resource {resource}")
 
-        # Add GDPR compliance tag for data operations
-        compliance_tags = kwargs.get("compliance_tags", [])
+        # Add GDPR compliance tag for data operations (copy: never mutate the
+        # caller's list)
+        compliance_tags = list(kwargs.pop("compliance_tags", None) or [])
         if ComplianceFramework.GDPR not in compliance_tags:
             compliance_tags.append(ComplianceFramework.GDPR)
 
@@ -604,7 +609,7 @@ class AuditLogger:
     ) -> AuditEvent:
         """Log security events."""
         # Add SOC2 compliance tag for security events
-        compliance_tags = kwargs.get("compliance_tags", [])
+        compliance_tags = list(kwargs.pop("compliance_tags", None) or [])
         if ComplianceFramework.SOC2 not in compliance_tags:
             compliance_tags.append(ComplianceFramework.SOC2)
 
