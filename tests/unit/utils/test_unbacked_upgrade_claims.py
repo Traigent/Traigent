@@ -112,10 +112,9 @@ def test_value_proposition_has_no_unbacked_numbers(config: TraigentConfig) -> No
     manager._state["total_trials"] = 100
     manager.analytics = None
     props = manager.get_upgrade_value_proposition()
-    for key in ("potential_cloud_savings", "roi_message", "cloud_improvement"):
-        for section in props.values():
-            if key in section:
-                _assert_clean(str(section[key]))
+    for text in _flatten(props):
+        _assert_clean(text)
+    assert "hours" not in props["time_savings"]["current_time_investment"]
 
 
 def test_analytics_cloud_benefits_have_no_unbacked_claims(
@@ -149,3 +148,18 @@ def test_interactive_doc_has_no_unsourced_savings_figure() -> None:
     )
     text = doc.read_text(encoding="utf-8")
     assert "60-80%" not in text
+
+
+@pytest.mark.parametrize(
+    "stats",
+    [
+        {"total_sessions": 1, "total_trials": 3, "avg_improvement_percent": None},
+        {"total_sessions": 6, "total_trials": 50, "avg_improvement_percent": None},
+        {"total_sessions": 25, "total_trials": 300, "avg_improvement_percent": 5},
+        {"total_sessions": 6, "total_trials": 50, "avg_improvement_percent": 30.0},
+    ],
+)
+def test_every_personalized_message_branch_is_clean(
+    config: TraigentConfig, stats: dict
+) -> None:
+    _assert_clean(LocalAnalytics(config)._generate_personalized_message(stats))

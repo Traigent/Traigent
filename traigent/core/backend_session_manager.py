@@ -657,18 +657,25 @@ def _untracked_detail_lines(
     return lines
 
 
+_DEVICE_LOGIN_RERUN_HINT = (
+    "If this key was created by an older `traigent auth device-login`, it "
+    "may predate newer scopes and existing keys are not updated: re-run "
+    "`traigent auth device-login` to get a key with the current scopes. If "
+    "TRAIGENT_API_KEY is set, unset it or replace it with the new key after "
+    "re-running device-login, because the environment variable takes "
+    "precedence over stored credentials."
+)
+
 _UNTRACKED_REMEDIES: dict[SessionCreationFailureClassification, str] = {
     SessionCreationFailureClassification.MISSING_PERMISSION: (
         "Remedy: grant the missing permission(s) to the API key, or if the "
         "key should already have them, verify the backend deployment and "
-        "permission middleware that returned this structured response."
+        "permission middleware that returned this structured response. "
+        + _DEVICE_LOGIN_RERUN_HINT
     ),
     SessionCreationFailureClassification.INSUFFICIENT_SCOPE: (
         "Remedy: grant the required API key scope or permission in the "
-        "Traigent portal, then retry with that updated key. If this key was "
-        "created by an older `traigent auth device-login`, it may predate "
-        "newer scopes and existing keys are not updated: re-run "
-        "`traigent auth device-login` to get a key with the current scopes."
+        "Traigent portal, then retry with that updated key. " + _DEVICE_LOGIN_RERUN_HINT
     ),
     SessionCreationFailureClassification.EXPIRED_KEY: (
         "Remedy: create a new Traigent API key and set TRAIGENT_API_KEY to "

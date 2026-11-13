@@ -632,7 +632,8 @@ class TestIncentiveManagerIntegration:
 
         else:
             # Fallback format
-            assert value_props["time_savings"]["current_time_investment"] == "0.5 hours"
+            assert value_props["time_savings"]["current_time_investment"]
+                == "Not measured locally"
             assert (
                 value_props["performance_gains"]["current_avg_trials"]
                 == "3.0 trials per optimization"

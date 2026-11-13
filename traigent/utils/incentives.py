@@ -304,15 +304,12 @@ class IncentiveManager:
 
         # Fallback to basic value proposition calculation
         avg_trials_per_session = total_trials / max(completed_count, 1)
-        estimated_time_saved_hours = (
-            completed_count * 0.5
-        )  # Assume 30min saved per optimization
 
         # Estimate cloud benefits
 
         value_props = {
             "time_savings": {
-                "current_time_investment": f"{estimated_time_saved_hours:.1f} hours",
+                "current_time_investment": "Not measured locally",
                 "potential_cloud_savings": "Cloud algorithms may reduce trials needed",
                 "roi_message": "Cloud features may save additional time",
             },

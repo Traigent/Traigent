@@ -499,7 +499,7 @@ class LocalAnalytics:
         elif total_sessions >= 5:
             return f"✨ You're getting good results with {total_sessions} optimizations. Ready for advanced algorithms?"
         else:
-            return "🚀 Great start! Cloud features unlock advanced optimization algorithms and unlimited trials."
+            return "🚀 Great start! Cloud features unlock advanced optimization algorithms."
 
     def _calculate_upgrade_urgency(self, stats: dict[str, Any]) -> str:
         """Calculate upgrade urgency based on usage patterns."""
