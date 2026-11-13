@@ -17,6 +17,7 @@ from typing import Any, cast
 
 from traigent.config.backend_config import BackendConfig
 from traigent.security.credentials import SecurityError, get_secure_credential_store
+from traigent.utils.env_config import is_exact_flag
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -34,6 +35,9 @@ def _log_secure_deletion_unconfirmed(error_type: str) -> None:
     carry values from the decrypted store.
     """
     logger.error("Could not confirm secure CLI credential deletion: %s", error_type)
+
+
+_DEV_FLAG_VALUES = frozenset({"true", "1", "yes"})
 
 
 class CredentialManager:
@@ -278,9 +282,8 @@ class CredentialManager:
         # Only explicit development toggles may enable the fallback credential.
         return any(
             [
-                os.environ.get("TRAIGENT_DEV_MODE", "").lower() in ("true", "1", "yes"),
-                os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower()
-                in ("true", "1", "yes"),
+                is_exact_flag("TRAIGENT_DEV_MODE", _DEV_FLAG_VALUES, lower=True),
+                is_exact_flag("TRAIGENT_GENERATE_MOCKS", _DEV_FLAG_VALUES, lower=True),
             ]
         )
 

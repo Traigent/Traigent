@@ -308,6 +308,16 @@ def _check_approval_token_path(
     return False
 
 
+def _cost_approved_env() -> bool:
+    """``TRAIGENT_COST_APPROVED``: money approval, so only ``true`` counts.
+
+    Case is ignored; whitespace is not stripped and ``1``/``yes``/``on`` are
+    deliberately not approvals (existing contract), and anything
+    unrecognised is not approved.
+    """
+    return os.getenv("TRAIGENT_COST_APPROVED", "false").lower() == "true"
+
+
 def is_cost_preapproved(
     config_approved: bool = False,
     *,
@@ -318,7 +328,7 @@ def is_cost_preapproved(
     if config_approved:
         return True
 
-    if os.getenv("TRAIGENT_COST_APPROVED", "false").lower() == "true":
+    if _cost_approved_env():
         return True
 
     return _check_approval_token_path(
@@ -805,7 +815,7 @@ class CostEnforcer:
             # A limit named in the environment is explicit; only the inherited
             # default cap keeps the unknown-cost fallback.
             limit_explicit=run_cost_limit_env_is_set(),
-            approved=os.getenv("TRAIGENT_COST_APPROVED", "false").lower() == "true",
+            approved=_cost_approved_env(),
             warning_threshold=safe_float("TRAIGENT_COST_WARNING_THRESHOLD", 0.5),
             fallback_trial_limit=resolve_fallback_trial_limit(),
         )

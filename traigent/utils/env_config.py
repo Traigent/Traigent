@@ -700,6 +700,50 @@ _STRICT_COST_RUN_DEFAULT: ContextVar[bool] = ContextVar(
 )
 
 
+def is_exact_flag(
+    name: str,
+    accepted: frozenset[str],
+    *,
+    strip: bool = False,
+    lower: bool = False,
+) -> bool:
+    """Strict flag reader for flags that RELAX safety or approve money.
+
+    Unlike :func:`is_truthy` it accepts only the listed spellings, with the
+    normalisation each call site historically applied (``strip`` / ``lower``),
+    so no extra spelling can switch such a flag on. Unset or unrecognised
+    values are False.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return False
+    if strip:
+        raw = raw.strip()
+    if lower:
+        raw = raw.lower()
+    return raw in accepted
+
+
+_EDGE_ANALYTICS_LOCAL_MODES = frozenset({"local", "edge_analytics"})
+
+
+def is_edge_analytics_env_enabled() -> bool:
+    """True when the environment asks for local-only (edge analytics) execution.
+
+    Single reader for ``TRAIGENT_EDGE_ANALYTICS_MODE`` / ``TRAIGENT_EXECUTION_MODE``.
+    This is a privacy flag: values are stripped and case-folded, any
+    :func:`is_truthy` spelling counts, and the named local modes count too.
+    """
+    for name in ("TRAIGENT_EDGE_ANALYTICS_MODE", "TRAIGENT_EXECUTION_MODE"):
+        raw = os.environ.get(name)
+        if raw is None:
+            continue
+        value = raw.strip().lower()
+        if is_truthy(value) or value in _EDGE_ANALYTICS_LOCAL_MODES:
+            return True
+    return False
+
+
 def _explicit_strict_cost_env() -> str | None:
     """Return the user's explicit strict-cost setting, or None when unset."""
     raw = os.environ.get(_STRICT_COST_ENV)

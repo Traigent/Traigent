@@ -7,7 +7,6 @@ based on agent type and what TVARs are already detected.
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
@@ -608,11 +607,9 @@ def _should_fetch_backend_recommendations() -> bool:
 
 
 def _edge_analytics_env_enabled() -> bool:
-    values = {
-        os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE", "").strip().lower(),
-        os.getenv("TRAIGENT_EXECUTION_MODE", "").strip().lower(),
-    }
-    return bool(values & {"true", "1", "yes", "local", "edge_analytics"})
+    from traigent.utils.env_config import is_edge_analytics_env_enabled
+
+    return is_edge_analytics_env_enabled()
 
 
 _VALID_RANGE_TYPES = frozenset({"Range", "IntRange", "LogRange", "Choices"})

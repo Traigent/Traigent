@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from traigent.config.types import TraigentConfig
+from traigent.utils.env_config import is_exact_flag
 from traigent.utils.exceptions import ConfigurationError, OptimizationError
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_open, validate_path
@@ -69,7 +70,7 @@ def _is_ci_environment() -> bool:
 
 def _check_env_var_approval() -> bool:
     """Check if CI run is approved via environment variable."""
-    if os.getenv("TRAIGENT_RUN_APPROVED") == "1":
+    if is_exact_flag("TRAIGENT_RUN_APPROVED", frozenset({"1"})):
         approved_by = os.getenv("TRAIGENT_APPROVED_BY", "environment_variable")
         # #2270: log a stable hash of the approver, never the raw principal —
         # matching the token-approval paths (9129247f).

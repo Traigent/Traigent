@@ -7,7 +7,12 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, overload
 
-_EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+# The lookbehind makes each run of local-part characters start exactly one
+# scan; a bare \b allowed a retry from every boundary inside the run, which is
+# quadratic on long dashed/dotted runs.
+_EMAIL_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+)
 _SSN_PATTERN = re.compile(r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b")
 _CREDIT_CARD_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
 _API_KEY_PATTERN = re.compile(
@@ -224,6 +229,33 @@ def _is_exempt_numeric_counter(value: Any, *, parent_key: str | None, key: str) 
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
     return _is_approved_numeric_counter_key(parent_key=parent_key, key=key)
+
+
+# Exact normalized key names that merely look credential-like (token limits).
+# Exemption is by exact name AND a
+# validated benign value (see `is_benign_config_value`); real secret keys such
+# as `access_token` or `auth_token` are never exempt.
+_TOKEN_LIMIT_KEY_NAMES: frozenset[str] = frozenset(
+    {"maxtokens", "maxoutputtokens", "maxcompletiontokens", "tokenbudget"}
+)
+
+
+def is_benign_config_value(key: str, value: Any) -> bool:
+    """True when a credential-looking key holds a validated benign value.
+
+    Value-aware exemption for tuned-config names such as ``max_tokens``: a
+    token limit must be a real number (not bool) or a pure-digit string.
+    Anything else stays redacted, so a secret stored under one of these names
+    is still masked. Other credential-looking names are never exempt.
+    """
+    normalized = _normalize_key_name(key)
+    if normalized in _TOKEN_LIMIT_KEY_NAMES:
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, (int, float)):
+            return True
+        return isinstance(value, str) and value.isascii() and value.isdigit()
+    return False
 
 
 def is_credential_key_name(key: str) -> bool:

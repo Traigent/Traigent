@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import os
 import time
 import uuid
 import weakref
@@ -49,7 +48,10 @@ from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
 )
-from traigent.utils.env_config import is_backend_offline
+from traigent.utils.env_config import (
+    is_backend_offline,
+    is_edge_analytics_env_enabled,
+)
 from traigent.utils.error_handler import OfflineModeError
 from traigent.utils.error_handler import TraigentError as HelpfulTraigentError
 from traigent.utils.exceptions import ValidationError as ValidationException
@@ -1545,11 +1547,7 @@ class TraigentCloudClient(BaseTraigentClient):
         if cloud_backend_egress_disabled(self.no_egress):
             return True
 
-        edge_env_values = {
-            os.getenv("TRAIGENT_EDGE_ANALYTICS_MODE", "").strip().lower(),
-            os.getenv("TRAIGENT_EXECUTION_MODE", "").strip().lower(),
-        }
-        if edge_env_values & {"true", "1", "yes", "local", "edge_analytics"}:
+        if is_edge_analytics_env_enabled():
             return True
 
         try:
