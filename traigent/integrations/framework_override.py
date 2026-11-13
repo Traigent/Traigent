@@ -1188,11 +1188,12 @@ class FrameworkOverrideManager(BaseOverrideManager):
             Resilient override wrapper
         """
         override_active = self._override_active  # Capture in closure
+        accepted_params = self._accepted_parameter_names(original_method)
 
         @functools.wraps(original_method)
         def resilient_wrapper(*args, **kwargs):
             overridden_kwargs = self._resilient_kwargs(
-                override_active, kwargs, parameter_mapping
+                override_active, kwargs, parameter_mapping, accepted_params
             )
             if overridden_kwargs is None:
                 return original_method(*args, **kwargs)
@@ -1202,7 +1203,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
         async def async_resilient_wrapper(*args, **kwargs):
             # Async version of the resilient wrapper
             overridden_kwargs = self._resilient_kwargs(
-                override_active, kwargs, parameter_mapping
+                override_active, kwargs, parameter_mapping, accepted_params
             )
             if overridden_kwargs is None:
                 return await original_method(*args, **kwargs)
@@ -1219,8 +1220,14 @@ class FrameworkOverrideManager(BaseOverrideManager):
         override_active: Any,
         kwargs: dict[str, Any],
         parameter_mapping: dict[str, str],
+        accepted_params: frozenset[str] | None = None,
     ) -> dict[str, Any] | None:
-        """Merged kwargs for a resilient override, or None to pass through."""
+        """Merged kwargs for a resilient override, or None to pass through.
+
+        Config keys are forwarded only when the vendor accepts them: mapped
+        keys always (the mapping is explicit), unmapped keys only when they are
+        named parameters of the target signature.
+        """
         # Check if we're in an optimization context
         if not getattr(override_active, "enabled", False):
             return None
@@ -1243,12 +1250,33 @@ class FrameworkOverrideManager(BaseOverrideManager):
             if traigent_param in config_dict:
                 overridden_kwargs[framework_param] = config_dict[traigent_param]
 
-        # Strategy 2: Try exact parameter names if not already mapped
-        for param_name, param_value in config_dict.items():
-            if param_name not in overridden_kwargs:
-                overridden_kwargs[param_name] = param_value
+        # Strategy 2: exact parameter names, only if the vendor signature names them
+        if accepted_params:
+            for param_name, param_value in config_dict.items():
+                if (
+                    param_name in accepted_params
+                    and param_name not in overridden_kwargs
+                ):
+                    overridden_kwargs[param_name] = param_value
 
         return overridden_kwargs
+
+    @staticmethod
+    def _accepted_parameter_names(
+        method: Callable[..., Any],
+    ) -> frozenset[str]:
+        """Named keyword-capable parameters of ``method`` (empty if unknown)."""
+        try:
+            sig = inspect.signature(method)
+        except (TypeError, ValueError):
+            return frozenset()
+        return frozenset(
+            name
+            for name, p in sig.parameters.items()
+            if p.kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+            and name not in ("self", "cls")
+        )
 
     def _extract_config_dict(
         self, config: TraigentConfig | dict[str, Any]

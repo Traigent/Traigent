@@ -93,17 +93,30 @@ def test_non_dict_non_config_value_passes_through(manager, method):
 
 
 def test_mapping_then_exact_names(manager, method):
+    # Changed (#3150): config keys the vendor does not name (temperature,
+    # top_p on a **kwargs-only stub) are no longer blanket-copied.
     out = _run(manager, method, {"model": "m", "temperature": 0.1, "top_p": 0.9})
-    assert out[2] == {
-        "model_name": "m",
-        "temp": 0.1,
-        "model": "m",
-        "temperature": 0.1,
-        "top_p": 0.9,
-    }
+    assert out[2] == {"model_name": "m", "temp": 0.1}
+
+
+def _sync_named(*, model=None, top_p=None, **kwargs):
+    return ("sync", (), {"model": model, "top_p": top_p, **kwargs})
+
+
+def test_exact_names_forwarded_only_when_vendor_names_them(manager):
+    # New (#3150): unmapped keys are forwarded only if the signature names them.
+    out = _run(
+        manager,
+        _sync_named,
+        {"model": "m", "top_p": 0.9, "unknown": 1},
+        mapping={},
+    )
+    assert out[2] == {"model": "m", "top_p": 0.9}
 
 
 def test_mapping_overrides_explicit_kwarg_but_exact_name_does_not(manager, method):
+    # Changed (#3150): top_p is not named by the stub, so it is not copied and
+    # the explicit kwarg stays; mapped model_name still wins; no raw "model".
     out = _run(
         manager,
         method,
@@ -115,12 +128,19 @@ def test_mapping_overrides_explicit_kwarg_but_exact_name_does_not(manager, metho
     assert out[1] == (1,)
     assert out[2]["model_name"] == "cfg"
     assert out[2]["top_p"] == "explicit"
-    assert out[2]["model"] == "cfg"
+    assert "model" not in out[2]
+
+
+def test_named_exact_name_does_not_override_explicit_kwarg(manager):
+    # New (#3150): an exactly-named parameter never clobbers an explicit kwarg.
+    out = _run(manager, _sync_named, {"top_p": 0.9}, mapping={}, top_p="explicit")
+    assert out[2]["top_p"] == "explicit"
 
 
 def test_mapping_skips_params_absent_from_config(manager, method):
+    # Changed (#3150): only the mapped name is sent, not the raw "model" key.
     out = _run(manager, method, {"model": "m"})
-    assert out[2] == {"model_name": "m", "model": "m"}
+    assert out[2] == {"model_name": "m"}
 
 
 def test_original_kwargs_not_mutated(manager):
@@ -134,11 +154,12 @@ def test_original_kwargs_not_mutated(manager):
     assert kwargs == {"a": 1}
 
 
-def test_traigent_config_includes_custom_params(manager, method):
+def test_traigent_config_custom_params_not_blanket_copied(manager, method):
     cfg = TraigentConfig(model="gpt", custom_params={"special": 7})
     out = _run(manager, method, cfg)
     assert out[2]["model_name"] == "gpt"
-    assert out[2]["special"] == 7
+    # Changed (#3150): custom params are not forwarded unless the vendor names them.
+    assert "special" not in out[2]
 
 
 def test_get_config_called_once_per_call(manager):
