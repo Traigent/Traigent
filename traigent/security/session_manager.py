@@ -85,11 +85,14 @@ class SessionManager:
             self.redis_client = None
             self.use_redis = False
 
+        # In-memory rate-limit state is always present: the Redis rate limiter
+        # falls back to it when the pipeline fails.
+        self._rate_limits: dict[str, list[float]] = {}
+
         # In-memory fallback storage
         if not self.use_redis:
             self._sessions: dict[str, dict[str, Any]] = {}
             self._user_sessions: dict[str, set[str]] = {}
-            self._rate_limits: dict[str, list[float]] = {}
             logger.info("Session manager initialized with in-memory backend")
 
         # Tokens are already high-entropy random values. Use a stable hash so
@@ -292,6 +295,7 @@ class SessionManager:
         """
         session_data = self._get_session(session_id)
         if not session_data:
+            self._forget_missing_session(session_id)
             return False
 
         user_id = session_data["user_id"]
@@ -306,6 +310,13 @@ class SessionManager:
 
         logger.info(f"Revoked session {session_id}")
         return True
+
+    def _forget_missing_session(self, session_id: str) -> None:
+        """Drop an id whose session record is gone from every user index."""
+        if self.use_redis and self.redis_client:
+            return  # Redis: the owner is unknown here; pruned per user on read.
+        for ids in self._user_sessions.values():
+            ids.discard(session_id)
 
     def revoke_user_sessions(self, user_id: str) -> int:
         """Revoke all sessions for a user.
@@ -416,8 +427,16 @@ class SessionManager:
         """Get all session IDs for a user."""
         if self.use_redis and self.redis_client:
             try:
-                members = self.redis_client.smembers(f"user_sessions:{user_id}")
-                return members or set()
+                key = f"user_sessions:{user_id}"
+                members = set(self.redis_client.smembers(key) or ())
+                # Session keys expire by TTL while their ids stay in the set;
+                # drop those ghosts so they do not count against the cap.
+                live = {
+                    sid for sid in members if self.redis_client.get(f"session:{sid}")
+                }
+                for ghost in members - live:
+                    self.redis_client.srem(key, ghost)
+                return live
             except Exception as e:
                 logger.warning(f"Failed to get user sessions for {user_id}: {e}")
                 return set()
