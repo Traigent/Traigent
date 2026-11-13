@@ -109,8 +109,9 @@ def test_session_recreated_during_ghost_check_stays_indexed() -> None:
         return value
 
     fake.get = get_then_recreate  # type: ignore[method-assign]
-    mgr._get_user_sessions("user-1")
+    live = mgr._get_user_sessions("user-1")
     assert sid in fake.sets["user_sessions:user-1"]
+    assert live == {sid}  # the recreated session counts against the cap
 
 
 def test_cap_enforcement_fails_closed_when_the_store_read_fails() -> None:
@@ -127,3 +128,26 @@ def test_cap_enforcement_fails_closed_when_the_store_read_fails() -> None:
     with pytest.raises(ValueError, match="Session store unavailable"):
         mgr.create_session("user-1")
     assert fake.sets["user_sessions:user-1"] == {"s-1"}
+
+
+def test_eviction_read_failure_refuses_creation_and_writes_nothing() -> None:
+    import pytest
+
+    fake = _FakeRedis()
+    mgr = _manager(fake, max_sessions_per_user=1, enable_rate_limiting=False)
+    mgr.create_session("user-1")
+    keys_before = set(fake.kv)
+
+    real_get = fake.get
+    calls = {"n": 0}
+
+    def get_fail_on_second_pass(key: str) -> str | None:
+        calls["n"] += 1
+        if calls["n"] > 1:  # first read lists the live set; later reads fail
+            raise RuntimeError("redis down")
+        return real_get(key)
+
+    fake.get = get_fail_on_second_pass  # type: ignore[method-assign]
+    with pytest.raises(ValueError, match="Session store unavailable"):
+        mgr.create_session("user-1")
+    assert set(fake.kv) == keys_before

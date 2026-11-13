@@ -130,9 +130,12 @@ class SessionManager:
             # Remove oldest session
             oldest = min(
                 existing_sessions,
-                key=lambda sid: self._get_session_created_time(sid),
+                key=lambda sid: self._get_session_created_time(sid, strict=True),
             )
             self.revoke_session(oldest)
+            if self._get_session_strict(oldest) is not None:
+                # Eviction could not be confirmed: refuse rather than exceed the cap.
+                raise ValueError("Session store unavailable")
 
         # Generate secure session ID and token
         session_id = session_id or f"session_{secrets.token_urlsafe(32)}"
@@ -447,13 +450,17 @@ class SessionManager:
                     sid for sid in members if self.redis_client.get(f"session:{sid}")
                 }
                 for ghost in members - live:
-                    self.redis_client.eval(
+                    removed = self.redis_client.eval(
                         self._SREM_IF_SESSION_ABSENT,
                         2,
                         f"session:{ghost}",
                         key,
                         ghost,
                     )
+                    if not removed:
+                        # Recreated after the read: it is live, so the cap
+                        # must count it.
+                        live.add(ghost)
                 return live
             except Exception as e:
                 logger.warning(f"Failed to get user sessions for {user_id}: {e}")
@@ -463,9 +470,26 @@ class SessionManager:
         else:
             return self._user_sessions.get(user_id, set()).copy()
 
-    def _get_session_created_time(self, session_id: str) -> datetime:
+    def _get_session_strict(self, session_id: str) -> dict[str, Any] | None:
+        """Like ``_get_session`` but a store failure raises (cap enforcement)."""
+        if self.use_redis and self.redis_client:
+            try:
+                data = self.redis_client.get(f"session:{session_id}")
+                return cast(dict[str, Any], json.loads(data)) if data else None
+            except Exception as e:
+                logger.warning(f"Failed to get session {session_id} from Redis: {e}")
+                raise ValueError("Session store unavailable") from None
+        return self._sessions.get(session_id)
+
+    def _get_session_created_time(
+        self, session_id: str, *, strict: bool = False
+    ) -> datetime:
         """Get session creation time."""
-        session_data = self._get_session(session_id)
+        session_data = (
+            self._get_session_strict(session_id)
+            if strict
+            else self._get_session(session_id)
+        )
         if session_data:
             created_at_str = session_data.get("created_at")
             if created_at_str and isinstance(created_at_str, str):
