@@ -58,3 +58,16 @@ def test_cache_is_bounded() -> None:
     assert (
         len(backend_client._backend_clients) <= backend_client._BACKEND_CLIENT_CACHE_MAX
     )
+
+
+@pytest.mark.parametrize(
+    "name", ["TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL", "TRAIGENT_API_KEY"]
+)
+def test_env_change_between_identical_calls_builds_a_new_client(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    monkeypatch.setenv(name, "first-value")
+    a = backend_client.get_backend_client(enable_fallback=False)
+    assert backend_client.get_backend_client(enable_fallback=False) is a
+    monkeypatch.setenv(name, "second-value")
+    assert backend_client.get_backend_client(enable_fallback=False) is not a

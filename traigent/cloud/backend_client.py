@@ -3741,11 +3741,46 @@ _backend_clients: dict[str, BackendIntegratedClient] = {}
 _backend_client_lock = threading.RLock()
 
 
+# Environment inputs the client constructor resolves on its own; a change in
+# any of them must not be served by a client built under the old values.
+_BACKEND_CLIENT_ENV_INPUTS = (
+    "TRAIGENT_BACKEND_URL",
+    "TRAIGENT_API_URL",
+    "TRAIGENT_API_KEY",
+    "TRAIGENT_JWT_TOKEN",
+    "TRAIGENT_OPTIMIZATION_ONLY",
+    "TRAIGENT_SESSION_REDIS_URL",
+    "TRAIGENT_SESSION_TTL",
+    "TRAIGENT_MAX_SESSIONS_PER_USER",
+    "TRAIGENT_RESULTS_FOLDER",
+    "TRAIGENT_ENV",
+    "ENVIRONMENT",
+)
+
+
+def _resolved_backend_settings() -> list[tuple[str, str]]:
+    resolved = [(name, os.getenv(name) or "") for name in _BACKEND_CLIENT_ENV_INPUTS]
+    try:
+        resolved.append(("backend_url", BackendConfig.get_backend_url() or ""))
+        resolved.append(("api_key", BackendConfig.get_api_key() or ""))
+    except Exception as exc:  # unresolved settings still key the cache
+        resolved.append(("unresolved", type(exc).__name__))
+    return resolved
+
+
 def _backend_client_cache_key(kwargs: dict[str, Any]) -> str:
-    """Digest of the effective constructor kwargs (no raw credential kept)."""
+    """Digest of the effective settings (kwargs plus resolved environment).
+
+    Only the digest is kept, never a raw credential.
+    """
     import hashlib
 
-    material = repr(sorted((str(k), repr(v)) for k, v in kwargs.items()))
+    material = repr(
+        (
+            sorted((str(k), repr(v)) for k, v in kwargs.items()),
+            _resolved_backend_settings(),
+        )
+    )
     return hashlib.sha256(material.encode("utf-8", "replace")).hexdigest()
 
 
