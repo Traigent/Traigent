@@ -12,7 +12,7 @@ from inspect import Parameter, Signature
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
-from traigent.utils.env_config import is_truthy
+from traigent.utils.env_config import is_traigent_private_mode_requested, is_truthy
 from traigent.utils.validation import Validators, validate_or_raise
 
 _EMITTED_DEPRECATION_WARNINGS: set[str] = set()
@@ -215,25 +215,6 @@ def is_traigent_offline_requested() -> bool:
     """
 
     return _read_bool_env("TRAIGENT_OFFLINE") or _read_bool_env("TRAIGENT_OFFLINE_MODE")
-
-
-_PRIVATE_MODE_ENV_NAMES = ("TRAIGENT_PRIVATE_DATA", "TRAIGENT_COMPLIANCE_MODE")
-_PRIVATE_MODE_OFF_VALUES = frozenset({"", "0", "false", "no", "off"})
-
-
-def is_traigent_private_mode_requested() -> bool:
-    """Return whether ``TRAIGENT_PRIVATE_DATA`` or ``TRAIGENT_COMPLIANCE_MODE``
-    forces local-only execution (#2997).
-
-    Fails closed: unset, empty or an explicit false word (``0``/``false``/
-    ``no``/``off``) leaves the switch off; ANY other value, including one that
-    cannot be parsed as a boolean, counts as set.
-    """
-
-    for name in _PRIVATE_MODE_ENV_NAMES:
-        if os.getenv(name, "").strip().lower() not in _PRIVATE_MODE_OFF_VALUES:
-            return True
-    return False
 
 
 def is_content_identity_requested() -> bool:

@@ -14,7 +14,9 @@ def _build(expected, outputs):
     ev = HybridAPIEvaluator(transport=MagicMock(), tunable_id="cap", keep_alive=False)
     batch = [{"input": {"q": 1}, "expected_output": expected}]
     inputs = [{"example_id": "a", "data": {"q": 1}}]
-    return ev._build_evaluation_payloads(batch, inputs, SimpleNamespace(outputs=outputs))
+    return ev._build_evaluation_payloads(
+        batch, inputs, SimpleNamespace(outputs=outputs)
+    )
 
 
 @pytest.mark.parametrize("expected", ["positive", 42, 1.5, True, None, [1, 2]])
@@ -38,3 +40,15 @@ def test_output_is_omitted_when_execute_carried_none():
     (item,) = _build("positive", [{"example_id": "a"}])
     assert "output" not in item
     assert "output_id" not in item
+
+
+def test_explicit_null_output_is_omitted_like_absent():
+    (item,) = _build("positive", [{"example_id": "a", "output": None}])
+    assert "output" not in item
+    assert "output_id" not in item
+
+
+def test_null_output_with_output_id_uses_output_id():
+    (item,) = _build("p", [{"example_id": "a", "output": None, "output_id": "o1"}])
+    assert "output" not in item
+    assert item["output_id"] == "o1"

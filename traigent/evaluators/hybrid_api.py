@@ -1468,11 +1468,11 @@ class HybridAPIEvaluator(BaseEvaluator):
                 # Legacy compatibility: some services expect input_id.
                 "input_id": example_id,
             }
-            if "output" in output_item:
-                evaluation["output"] = output_item.get("output")
+            if output_item.get("output") is not None:
+                evaluation["output"] = output_item["output"]
             elif "output_id" in output_item:
                 evaluation["output_id"] = output_item.get("output_id")
-            # No output key at all: omit it (the contract types output as an
+            # Absent or null output: omit it (the contract types output as an
             # object and does not allow null).
 
             target_key, target_value = self._extract_target_fields(expected)
