@@ -112,8 +112,9 @@ class AzureOpenAIDiscovery(ModelDiscovery):
             return []
         except Exception as e:
             logger.debug(f"Azure deployment listing failed: {e}")
-            # Don't raise - fall back to config/pattern
-            return []
+            # Raise so list_models falls back WITHOUT caching the fallback as
+            # if it were a live result (#2901).
+            raise
 
     def list_models(self, force_refresh: bool = False) -> list[str]:
         """List available Azure OpenAI models/deployments.
@@ -140,11 +141,14 @@ class AzureOpenAIDiscovery(ModelDiscovery):
         all_models = set()
 
         # Try SDK discovery
+        live_failed = False
         try:
             sdk_models = self._fetch_models_from_sdk()
             all_models.update(sdk_models)
-        except Exception:
-            pass
+            self._live_failure_logged = False
+        except Exception as exc:
+            live_failed = True
+            self._warn_live_listing_failed(exc)
 
         # Add config models
         config_models = self._get_models_from_config()
@@ -154,7 +158,8 @@ class AzureOpenAIDiscovery(ModelDiscovery):
         all_models.update(KNOWN_AZURE_BASE_MODELS)
 
         models = sorted(all_models)
-        self._cache.set(cache_key, models, 604800)  # 7 days
+        if not live_failed:
+            self._cache.set(cache_key, models, 604800)  # 7 days
         return models
 
     def is_valid_model(self, model_id: str) -> bool:
