@@ -311,7 +311,7 @@ else:
 | Data Privacy         | ✅ High (data stays local) | ❌ Low               | ✅ High          |
 | Optimization Quality | ✅ High (cloud algorithms) | ✅ High              | ⚠️ Limited       |
 | Execution Speed      | ✅ Fast (local execution)  | ⚠️ Network dependent | ✅ Fast          |
-| Cost Efficiency      | ✅ 60-80% savings          | ❌ Full cost         | ✅ No cloud cost |
+| Cost Efficiency      | ✅ Fewer wasted trials     | ❌ Full cost         | ✅ No cloud cost |
 | Scalability          | ✅ High                    | ✅ High              | ❌ Limited       |
 
 ## Common Use Cases

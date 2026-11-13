@@ -4732,3 +4732,69 @@ class TestEvaluatorCodeDigestForwarding:
         )
         kwargs = mock_backend_client.create_session.call_args[1]
         assert kwargs["evaluator_code_digest"] == self.DIGEST
+
+
+def test_resource_access_denied_403_remedy_suggests_device_login_rerun():
+    """A 403 RESOURCE_ACCESS_DENIED must tell the user to re-run device-login."""
+    from traigent.cloud.session_types import (
+        SessionCreationFailureDetail,
+        SessionCreationFailureReason,
+        SessionCreationResult,
+    )
+
+    result = SessionCreationResult.fallback(
+        session_id="local_test",
+        reason=SessionCreationFailureReason.AUTH,
+        detail="session create failed (HTTP 403)",
+        failure_response=SessionCreationFailureDetail(
+            status_code=403,
+            error_code="RESOURCE_ACCESS_DENIED",
+            message="Access denied",
+            backend_url="https://backend.example.test/api/v1/sessions",
+        ),
+    )
+    classification = _classify_session_creation_failure(
+        result.failure_reason,
+        result.failure_response,
+        failure_detail=result.failure_detail,
+    )
+    warning = _format_untracked_warning_block(result, classification, aborting=True)
+
+    assert "Classification: insufficient-scope" in warning
+    assert "traigent auth device-login" in warning
+    assert "TRAIGENT_API_KEY" in warning
+    assert "unset it or replace it" in warning
+
+
+def test_missing_permissions_403_remedy_suggests_device_login_rerun():
+    """A 403 carrying missing_permissions gets the same guidance, count only."""
+    from traigent.cloud.session_types import (
+        SessionCreationFailureDetail,
+        SessionCreationFailureReason,
+        SessionCreationResult,
+    )
+
+    result = SessionCreationResult.fallback(
+        session_id="local_test",
+        reason=SessionCreationFailureReason.AUTH,
+        detail="session create failed (HTTP 403)",
+        failure_response=SessionCreationFailureDetail(
+            status_code=403,
+            error_code="RESOURCE_ACCESS_DENIED",
+            message="Access denied",
+            missing_permissions=["agents:write_secret_name"],
+            backend_url="https://backend.example.test/api/v1/sessions",
+        ),
+    )
+    classification = _classify_session_creation_failure(
+        result.failure_reason,
+        result.failure_response,
+        failure_detail=result.failure_detail,
+    )
+    warning = _format_untracked_warning_block(result, classification, aborting=True)
+
+    assert "Classification: missing-permission" in warning
+    assert "traigent auth device-login" in warning
+    assert "TRAIGENT_API_KEY" in warning
+    assert "Missing permissions: 1" in warning
+    assert "agents:write_secret_name" not in warning

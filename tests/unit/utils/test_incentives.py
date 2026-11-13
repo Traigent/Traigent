@@ -959,7 +959,7 @@ class TestGetUpgradeValueProposition:
 
         time_savings = result["time_savings"]
         assert "current_time_investment" in time_savings
-        assert "5.0 hours" in time_savings["current_time_investment"]
+        assert time_savings["current_time_investment"] == "Not measured locally"
 
     def test_get_upgrade_value_proposition_performance_gains(
         self, manager: IncentiveManager

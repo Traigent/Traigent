@@ -443,20 +443,16 @@ class LocalAnalytics:
         avg_trials = stats.get("avg_trials_per_session", 0)
         avg_config_space = stats.get("avg_config_space_size", 0)
 
-        # Estimate time investment
-        estimated_time_per_trial = 2  # minutes (conservative estimate)
-        total_time_invested = stats.get("total_trials", 0) * estimated_time_per_trial
-
         # Cloud benefits messaging based on usage patterns
         benefits = {
             "algorithm_upgrade": {
                 "current": "Random/Grid search only",
-                "cloud": "Bayesian optimization (3-5x faster)",
-                "value": f"Could save ~{int(total_time_invested * 0.6)} minutes",
+                "cloud": "Bayesian optimization",
+                "value": "May reduce the number of trials needed",
             },
             "trial_limit": {
-                "current": f"20 trial limit (avg: {avg_trials:.1f} trials)",
-                "cloud": "Unlimited trials",
+                "current": f"You set max_trials (avg: {avg_trials:.1f} trials)",
+                "cloud": "Trial allowance depends on your plan",
                 "value": "Explore full optimization potential",
             },
             "analytics": {
@@ -497,13 +493,13 @@ class LocalAnalytics:
         if total_sessions >= 20:
             return f"🏆 Power user detected! You've completed {total_sessions} optimizations. Cloud features would supercharge your workflow."
         elif total_trials >= 100:
-            return f"📈 You've run {total_trials} trials - cloud Bayesian optimization could reduce this by 60-80%."
+            return f"📈 You've run {total_trials} trials - cloud Bayesian optimization could help reach good configurations in fewer trials."
         elif avg_improvement and avg_improvement > 20:
             return f"🎯 Great results! {avg_improvement:.1f}% average improvement. Cloud features can help you achieve even more."
         elif total_sessions >= 5:
             return f"✨ You're getting good results with {total_sessions} optimizations. Ready for advanced algorithms?"
         else:
-            return "🚀 Great start! Cloud features unlock advanced optimization algorithms and unlimited trials."
+            return "🚀 Great start! Cloud features unlock advanced optimization algorithms."
 
     def _calculate_upgrade_urgency(self, stats: dict[str, Any]) -> str:
         """Calculate upgrade urgency based on usage patterns."""
