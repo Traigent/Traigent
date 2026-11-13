@@ -1,3 +1,5 @@
+# Generated copy of the canonical Hybrid Mode contract (traigent-api openapi/openapi.yaml @ 6c9362f).
+# Do not hand-edit. Regenerate: in a traigent-api checkout run: npm ci && npx redocly bundle openapi/openapi.yaml -o dist/openapi.yaml
 openapi: 3.0.3
 info:
   title: Traigent Hybrid Mode API
@@ -6,15 +8,13 @@ info:
 
     Implement these endpoints to enable Traigent to optimize your service's configuration.
     Production integrations should use HTTPS with HTTP/2.
-    Open-source releases of the Traigent SDK are licensed under AGPLv3.
-    Commercial licenses are available separately from Traigent.
   version: 1.0.0
   contact:
     name: Traigent Support
-    url: https://github.com/Traigent/Traigent
+    url: https://github.com/traigent/traigent-sdk
   license:
-    name: AGPL-3.0-only
-    url: https://www.gnu.org/licenses/agpl-3.0.en.html
+    name: Proprietary
+    url: https://traigent.ai/license
 servers:
   - url: http://127.0.0.1:8080
     description: Local development server
@@ -24,6 +24,7 @@ servers:
     description: Staging server
 security:
   - bearerAuth: []
+    apiKeyAuth: []
 tags:
   - name: Discovery
     description: Service discovery and capability endpoints
@@ -72,6 +73,12 @@ paths:
                 error:
                   code: UNAUTHORIZED
                   message: Bearer token is missing or invalid
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
           content:
@@ -85,6 +92,11 @@ paths:
       description: |
         Returns tunable variable definitions. Traigent uses these to understand
         what parameters it can optimize for your service.
+
+        Services may also optionally advertise supported `evaluation_kwargs` here
+        when `POST /evaluate` accepts request-specific `kwargs` such as model
+        selection or other evaluator parameters. These definitions are scoped to the
+        requested `tunable_id`.
       tags:
         - Discovery
       parameters:
@@ -92,12 +104,11 @@ paths:
           in: query
           required: false
           description: |
-            Select which tunable's config space to return.
-            If omitted, the server returns the first (or only) tunable.
-            Required when the service exposes multiple tunable_ids.
+            Filter by tunable ID. When a service exposes multiple tunables (as declared in tunable_ids from /capabilities), use this parameter to request the config space for a specific tunable. If omitted, returns the default config space.
           schema:
             type: string
             maxLength: 256
+          example: my_agent
         - $ref: '#/components/parameters/TraceParentHeader'
         - $ref: '#/components/parameters/TraceStateHeader'
       responses:
@@ -110,6 +121,9 @@ paths:
               example:
                 schema_version: '0.9'
                 tunable_id: my_agent
+                estimated_tokens_per_example:
+                  input_tokens: 100
+                  output_tokens: 50
                 tunables:
                   - name: model
                     type: enum
@@ -128,10 +142,31 @@ paths:
                       resolution: 0.1
                     default: 0.7
                 evaluation_kwargs:
-                  - name: strict_mode
-                    type: bool
-                    description: Use the stricter grading rubric
-                    default: false
+                  - name: model
+                    type: enum
+                    description: Evaluation model to use for this request
+                    domain:
+                      values:
+                        - gpt-4.1-mini
+                        - gemini-2.5-flash
+                    default: gpt-4.1-mini
+                  - name: temperature
+                    type: float
+                    description: Temperature for the evaluator call
+                    domain:
+                      range:
+                        - 0
+                        - 1
+                      resolution: 0.1
+                    default: 0
+                  - name: rubric_version
+                    type: enum
+                    description: Rubric preset to apply during evaluation
+                    domain:
+                      values:
+                        - concise-v1
+                        - concise-v2
+                    default: concise-v2
         '401':
           description: Unauthorized (missing or invalid bearer token)
           content:
@@ -142,6 +177,183 @@ paths:
                 error:
                   code: UNAUTHORIZED
                   message: Bearer token is missing or invalid
+        '404':
+          description: Unknown `tunable_id`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: UNKNOWN_TUNABLE_ID
+                  message: tunable_id "bogus_agent" not found. Use GET /traigent/v1/capabilities to list valid tunable_ids.
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /traigent/v1/benchmarks:
+    get:
+      operationId: getBenchmarks
+      summary: Discover available benchmarks and their example IDs
+      description: |
+        Returns the benchmarks available on this service, each containing the
+        example identifiers and linked tunable IDs.  Only IDs are returned;
+        input content is never transmitted.
+
+        **Filtering:** Use `tunable_id` to restrict the response to benchmarks
+        linked to a specific tunable.
+
+        **Ordering:** Benchmarks are sorted by `benchmark_id` (ASCII);
+        `example_ids` within each benchmark are also sorted (ASCII).
+      tags:
+        - Discovery
+      parameters:
+        - name: tunable_id
+          in: query
+          required: false
+          description: |
+            Filter benchmarks to only those linked to this tunable. Must be a value from `tunable_ids` returned by `GET /traigent/v1/capabilities`.
+          schema:
+            type: string
+            maxLength: 256
+          example: my_agent
+        - $ref: '#/components/parameters/TraceParentHeader'
+        - $ref: '#/components/parameters/TraceStateHeader'
+      responses:
+        '200':
+          description: Available benchmarks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BenchmarksResponse'
+              example:
+                benchmarks:
+                  - benchmark_id: child-age-benchmark
+                    tunable_ids:
+                      - my_agent
+                    example_ids:
+                      - case_001
+                      - case_002
+                      - case_003
+                benchmarks_revision: null
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: UNAUTHORIZED
+                  message: Bearer token is missing or invalid
+        '404':
+          description: Unknown `tunable_id`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: UNKNOWN_TUNABLE_ID
+                  message: tunable_id "bogus_agent" not found. Use GET /traigent/v1/capabilities to list valid tunable_ids.
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /traigent/v1/datasets:
+    get:
+      operationId: getDatasets
+      deprecated: true
+      summary: '[Deprecated] Discover benchmarks (alias of /benchmarks)'
+      description: |
+        **Deprecated alias of `GET /traigent/v1/benchmarks`.** Older SDK builds probe
+        `/traigent/v1/datasets` for example discovery and fall back to
+        `/traigent/v1/benchmarks` only on a 404. Servers MAY implement this path as an
+        alias that returns the identical `BenchmarksResponse` payload; new integrations
+        MUST use `/traigent/v1/benchmarks` and gate the call on the
+        `supports_benchmarks` capability flag. Targeted for removal in the next major
+        version.
+
+        Only IDs are returned; input content is never transmitted.
+
+        **Filtering:** Use `tunable_id` to restrict the response to benchmarks
+        linked to a specific tunable.
+
+        **Ordering:** Benchmarks are sorted by `benchmark_id` (ASCII);
+        `example_ids` within each benchmark are also sorted (ASCII).
+      tags:
+        - Discovery
+      parameters:
+        - name: tunable_id
+          in: query
+          required: false
+          description: |
+            Filter benchmarks to only those linked to this tunable. Must be a value from `tunable_ids` returned by `GET /traigent/v1/capabilities`.
+          schema:
+            type: string
+            maxLength: 256
+          example: my_agent
+        - $ref: '#/components/parameters/TraceParentHeader'
+        - $ref: '#/components/parameters/TraceStateHeader'
+      responses:
+        '200':
+          description: Available benchmarks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BenchmarksResponse'
+              example:
+                benchmarks:
+                  - benchmark_id: child-age-benchmark
+                    tunable_ids:
+                      - my_agent
+                    example_ids:
+                      - case_001
+                      - case_002
+                      - case_003
+                benchmarks_revision: null
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: UNAUTHORIZED
+                  message: Bearer token is missing or invalid
+        '404':
+          description: Unknown `tunable_id`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: UNKNOWN_TUNABLE_ID
+                  message: tunable_id "bogus_agent" not found. Use GET /traigent/v1/capabilities to list valid tunable_ids.
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
           content:
@@ -153,18 +365,33 @@ paths:
       operationId: execute
       summary: Execute agent with configuration
       description: |
-        Execute the agent with a specific configuration on a batch of inputs.
-        This is the main endpoint where your agent processes inputs using the provided configuration.
+        Execute the agent with a specific configuration on a batch of input items.
 
-        **Server implementation (privacy-preserving mode):**
-        1. For each input, use `example_id` to look up the actual query from your local dataset (e.g., an observability platform like Langfuse, an evaluation dataset, or any local data store)
+        This endpoint processes the provided `inputs[]` items using the provided `config`.
+
+        **Input semantics (required):**
+
+        - `input_id` is required for every item in `inputs[]`
+        - `data` is optional for every item in `inputs[]`
+
+        **Two valid request patterns:**
+
+        - **Privacy-preserving:** send `input_id` only; your service resolves input content locally.
+        - **Full-content:** send `input_id` + `data` when the input payload is included in the request.
+
+        In both patterns, `input_id` identifies the same test case across `/execute` outputs, `/evaluate` requests, and evaluation results. `execution_id` (returned by `/execute`) links the two calls.
+
+        **Server implementation flow:**
+
+        1. For each input item, resolve the payload (`data` if present, otherwise local lookup by `input_id`)
         2. Run your agent with the provided `config` parameters
         3. Store the response locally, keyed by a generated `output_id`
-        4. Return `output_id` + cost/latency per input (do NOT return response text)
+        4. Return `output_id` plus operational metrics (cost/latency); do not return raw output text
 
-        **Two-phase vs Combined mode:**
-        - Return `quality_metrics: null` → Traigent calls `/traigent/v1/evaluate` separately (recommended)
-        - Return `quality_metrics` with data → Traigent uses those metrics directly, skips `/traigent/v1/evaluate`
+        **Two-Phase vs Combined mode:**
+
+        - Return `quality_metrics: null` -> Traigent calls `/traigent/v1/evaluate` separately (recommended)
+        - Return non-null `quality_metrics` -> Traigent uses those metrics directly and skips `/traigent/v1/evaluate`
       tags:
         - Execution
       parameters:
@@ -182,8 +409,8 @@ paths:
               config:
                 model: gpt-4o
                 temperature: 0.5
-              examples:
-                - example_id: case_001
+              inputs:
+                - input_id: input_001
               timeout_ms: 30000
       responses:
         '200':
@@ -197,7 +424,7 @@ paths:
                 execution_id: exec_20240115_001
                 status: completed
                 outputs:
-                  - example_id: case_001
+                  - input_id: input_001
                     output_id: out_001_run_abc
                     cost_usd: 0.0012
                     latency_ms: 245.5
@@ -209,18 +436,24 @@ paths:
                   tokens_output: 450
                 quality_metrics: null
         '400':
-          description: Invalid request (e.g., empty examples, malformed payload, tunable mismatch)
+          description: Invalid request (e.g., missing required fields, invalid config values, or an unusable input array). When the request omits a usable `inputs` array (or its deprecated `examples` alias) or sends the wrong item shape, servers MUST return the machine-readable code `INVALID_INPUTS` so clients can recover without substring-matching the human-readable `message`.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               examples:
-                invalid-request:
-                  summary: Wrapper-level request validation failure
+                invalidConfig:
+                  summary: Invalid configuration value
                   value:
                     error:
-                      code: INVALID_REQUEST
-                      message: examples must be a non-empty list
+                      code: INVALID_CONFIG
+                      message: 'Invalid configuration: temperature must be between 0 and 2'
+                invalidInputs:
+                  summary: Missing or wrong-shaped inputs/examples array
+                  value:
+                    error:
+                      code: INVALID_INPUTS
+                      message: inputs array is required.
         '401':
           description: Unauthorized
           content:
@@ -235,7 +468,7 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: |
-            Idempotency conflict — request_id was already used with a different payload. Retrying with the same request_id and identical payload returns the cached 200 response.
+            Idempotency conflict - request_id was already used with a different payload. Retrying with the same request_id and identical payload returns the cached 200 response.
           content:
             application/json:
               schema:
@@ -246,6 +479,9 @@ paths:
                   message: request_id 550e8400-... already used with different payload
         '429':
           description: Rate limited
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
           content:
             application/json:
               schema:
@@ -258,6 +494,9 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: Service unavailable (temporary upstream/dependency outage)
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
           content:
             application/json:
               schema:
@@ -268,17 +507,22 @@ paths:
       summary: Evaluate outputs against targets
       description: |
         Evaluate outputs against expected targets to measure quality.
-        This endpoint is optional - only implement if supports_evaluate is true in capabilities.
-        Request-level `kwargs` are evaluator-time controls only; they do not replace
-        or override the tunable configuration sent in `/traigent/v1/execute.config`.
-        `execution_id` is the correlation hook for implementations that want
-        execute-time context during evaluation without re-sending execute config.
 
-        **Server implementation (privacy-preserving mode):**
-        1. For each evaluation item, use `output_id` to look up stored output locally
-        2. Use `example_id` (and optional `target_id`) to resolve expected behavior from local data
-        3. Compare output vs expected and compute per-example quality metrics
-        4. Return per-example metrics and aggregate statistics (`mean`, `std`, `n`)
+        This endpoint is optional - only implement if `supports_evaluate` is true in
+        capabilities.
+
+        Services may optionally accept `kwargs` to choose an evaluation model or
+        pass other evaluator-specific parameters for a single request. The legacy
+        `config` field remains accepted as a deprecated alias for backward
+        compatibility. If both fields are present, services MUST use `kwargs` and
+        ignore `config` entirely. When supported, allowed keys and values MUST be
+        discoverable from `evaluation_kwargs` in `GET /config-space`. If a service
+        does not advertise `evaluation_kwargs`, it MUST reject any non-empty
+        `kwargs` with `400 INVALID_EVALUATION_KWARGS`. These `kwargs` are
+        evaluator-time controls only; they do not replace or override the tunable
+        configuration originally sent in `/execute.config`. Implementations that
+        need execute-time context during evaluation should use `execution_id` for
+        correlation, because execute config is not re-sent in `/evaluate`.
       tags:
         - Evaluation
       parameters:
@@ -295,11 +539,15 @@ paths:
               tunable_id: my_agent
               execution_id: exec_123456
               kwargs:
-                strict_mode: true
+                model: gpt-4.1-mini
+                temperature: 0
+                rubric_version: concise-v2
               evaluations:
-                - example_id: case_001
-                  output_id: out_001_run_abc
-                  target_id: target_001
+                - input_id: input_001
+                  output:
+                    response: Machine learning is...
+                  target:
+                    expected: Machine learning is a type of AI...
               timeout_ms: 30000
       responses:
         '200':
@@ -316,7 +564,7 @@ paths:
                     execution_id: exec_20240115_001
                     status: completed
                     results:
-                      - example_id: case_001
+                      - input_id: input_001
                         metrics:
                           accuracy: 0.92
                           relevance: 0.88
@@ -337,7 +585,7 @@ paths:
                     execution_id: null
                     status: completed
                     results:
-                      - example_id: case_002
+                      - input_id: input_002
                         metrics:
                           accuracy: 0.89
                           relevance: 0.91
@@ -351,24 +599,41 @@ paths:
                         std: 0.04
                         'n': 5
         '400':
-          description: Invalid request (e.g., malformed evaluations payload or invalid evaluation kwargs)
+          description: |
+            Invalid request (e.g., missing required fields, unknown execution_id, or invalid evaluation kwargs). For `INVALID_EVALUATION_KWARGS`, `error.details` MUST follow the `InvalidEvaluationKwargsDetails` schema, and clients MUST treat `error.message` as informational only.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               examples:
-                invalid-request:
-                  summary: Wrapper-level request validation failure
+                unknown-execution-id:
+                  summary: Unknown execution_id
                   value:
                     error:
                       code: INVALID_REQUEST
-                      message: evaluations must be a list
+                      message: execution_id exec_unknown not found
                 invalid-evaluation-kwargs:
-                  summary: Unsupported evaluator parameter
+                  summary: Unsupported kwargs or invalid kwarg values
                   value:
                     error:
                       code: INVALID_EVALUATION_KWARGS
-                      message: Invalid evaluation kwargs provided for this service
+                      message: Invalid evaluation kwargs provided for this tunable
+                      details:
+                        invalid_keys:
+                          - model_name
+                        invalid_values:
+                          model: bad-model
+                        allowed_keys:
+                          - model
+                          - temperature
+                          - rubric_version
+                        allowed_values:
+                          model:
+                            - gpt-4.1-mini
+                            - gemini-2.5-flash
+                          rubric_version:
+                            - concise-v1
+                            - concise-v2
         '401':
           description: Unauthorized
           content:
@@ -383,7 +648,7 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: |
-            Idempotency conflict — request_id was already used with a different payload. Retrying with the same request_id and identical payload returns the cached 200 response.
+            Idempotency conflict - request_id was already used with a different payload. Retrying with the same request_id and identical payload returns the cached 200 response.
           content:
             application/json:
               schema:
@@ -394,6 +659,9 @@ paths:
                   message: request_id 660e8400-... already used with different payload
         '429':
           description: Rate limited
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
           content:
             application/json:
               schema:
@@ -406,57 +674,9 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: Service unavailable (temporary upstream/dependency outage)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /traigent/v1/benchmarks:
-    get:
-      operationId: getBenchmarks
-      summary: List available benchmarks
-      description: |
-        Returns the benchmarks available for optimization. Each benchmark contains
-        a set of example IDs and is linked to one or more tunable IDs.
-        Traigent calls this to discover which benchmarks are available for a tunable.
-      tags:
-        - Discovery
-      parameters:
-        - name: tunable_id
-          in: query
-          required: false
-          description: |
-            Filter benchmarks by tunable ID. If omitted, returns all benchmarks.
-          schema:
-            type: string
-            maxLength: 256
-        - $ref: '#/components/parameters/TraceParentHeader'
-        - $ref: '#/components/parameters/TraceStateHeader'
-      responses:
-        '200':
-          description: List of benchmarks
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BenchmarksResponse'
-              example:
-                benchmarks:
-                  - benchmark_id: spider_dev_v1
-                    tunable_ids:
-                      - my_agent
-                    example_ids:
-                      - case_001
-                      - case_002
-                      - case_003
-                    name: Spider Dev Set v1
-                benchmarks_revision: rev_20240115_001
-        '401':
-          description: Unauthorized (missing or invalid bearer token)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: Internal server error
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
           content:
             application/json:
               schema:
@@ -492,6 +712,12 @@ paths:
                 error:
                   code: UNAUTHORIZED
                   message: Bearer token is missing or invalid
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: Service unavailable (dependency outage)
           content:
@@ -503,8 +729,10 @@ paths:
       operationId: keepAlive
       summary: Session heartbeat
       description: |
-        Session heartbeat for stateful agents.
+        Application-level session heartbeat for stateful agents.
         Only implement if supports_keep_alive is true in capabilities.
+        This endpoint extends or checks Traigent session state; it does not manage
+        HTTP/2 or TCP connection persistence.
       tags:
         - Health
       parameters:
@@ -550,6 +778,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
           content:
@@ -561,6 +795,10 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
   parameters:
     TraceParentHeader:
       in: header
@@ -574,7 +812,7 @@ components:
       in: header
       name: tracestate
       required: false
-      description: W3C Trace Context tracestate header for vendor-specific trace state. Used for opaque routing keys only — not for high-cardinality customer or session identifiers (use span attributes instead).
+      description: W3C Trace Context tracestate header for vendor-specific trace state. Used for opaque routing keys only - not for high-cardinality customer or session identifiers (use span attributes instead).
       schema:
         type: string
       example: traigent=us-east-1
@@ -585,6 +823,7 @@ components:
       additionalProperties: false
       required:
         - version
+        - tunable_ids
       properties:
         version:
           type: string
@@ -594,19 +833,23 @@ components:
         supports_evaluate:
           type: boolean
           description: Whether separate evaluate endpoint is available
-          default: false
+          default: true
           example: true
         supports_evaluation_kwargs:
           type: boolean
           description: |
-            Whether `/traigent/v1/evaluate` accepts request-specific `kwargs`.
-            If true, `/traigent/v1/config-space` must include a non-empty
-            `evaluation_kwargs` array describing the accepted keys.
+            Whether `POST /evaluate` accepts request-specific `kwargs`. When `false` or omitted, clients should not send `kwargs`. When `true`, `GET /config-space` MUST include a non-empty `evaluation_kwargs` array.
           default: false
-          example: false
+          example: true
         supports_keep_alive:
           type: boolean
-          description: Whether keep-alive heartbeat is supported
+          description: Whether the application-level session heartbeat endpoint is supported
+          default: false
+          example: false
+        supports_benchmarks:
+          type: boolean
+          description: |
+            Whether the optional `GET /traigent/v1/benchmarks` discovery endpoint is supported. When `false` or omitted, clients MUST NOT probe `/benchmarks` (or its deprecated `/datasets` alias) and should treat benchmark discovery as unavailable rather than inferring support from a 404.
           default: false
           example: false
         supports_streaming:
@@ -619,7 +862,7 @@ components:
           description: Maximum inputs per execute request
           default: 100
           minimum: 1
-          maximum: 100000
+          maximum: 10000
           example: 100
         max_payload_bytes:
           type: integer
@@ -628,11 +871,14 @@ components:
           example: 10485760
         tunable_ids:
           type: array
-          description: Optional list of tunable IDs supported by this service
+          description: List of tunable IDs supported by this service
+          minItems: 1
           maxItems: 100
           items:
             type: string
             maxLength: 256
+          example:
+            - my_agent
     ErrorDetails:
       type: object
       description: Error details
@@ -654,9 +900,7 @@ components:
           type: object
           description: Additional error details (must not contain sensitive data such as API keys or stack traces)
           maxProperties: 20
-          additionalProperties:
-            type: string
-            maxLength: 1024
+          additionalProperties: true
     ErrorResponse:
       type: object
       description: Error response format
@@ -675,11 +919,14 @@ components:
           description: Allowed values (for enum and str types)
           maxItems: 1000
           items:
-            nullable: true
             oneOf:
               - type: string
               - type: number
               - type: boolean
+              - type: string
+                nullable: true
+                enum:
+                  - null
           example:
             - gpt-4o
             - claude-3-sonnet
@@ -728,6 +975,15 @@ components:
           $ref: '#/components/schemas/TunableDomain'
         default:
           description: Default value (type depends on tunable type)
+        scale:
+          type: string
+          description: |
+            Sampling scale for numeric types. Use 'log' for parameters like learning_rate where logarithmic exploration is appropriate.
+          enum:
+            - linear
+            - log
+          default: linear
+          example: linear
         agent:
           type: string
           description: Agent name for multi-agent grouping
@@ -746,12 +1002,10 @@ components:
             type: string
             maxLength: 512
           example:
-            - requires model == gpt-4.1
+            - requires model == gpt-4
     EvaluationKwargDefinition:
       type: object
-      description: |
-        Definition of an optional request-specific evaluator parameter accepted by
-        `/traigent/v1/evaluate.kwargs`.
+      description: Definition of one supported `kwargs` entry for `POST /evaluate`
       additionalProperties: false
       required:
         - name
@@ -759,33 +1013,30 @@ components:
       properties:
         name:
           type: string
-          description: Evaluation kwarg name
+          description: Kwarg name accepted by `POST /evaluate`
           pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
           maxLength: 128
-          example: strict_mode
+          example: model
         type:
           type: string
-          description: Evaluation kwarg type
+          description: Scalar type accepted for this kwarg
           enum:
             - bool
             - int
             - float
             - str
             - enum
-          example: bool
+          example: enum
         description:
           type: string
-          description: Optional human-readable description
+          description: Human-readable explanation of what this kwarg controls
           maxLength: 512
-          nullable: true
-          example: Use the stricter grading rubric
+          example: Evaluation model to use for this request
         domain:
-          description: Optional allowed-values or numeric-range definition
-          nullable: true
+          description: Allowed values or range for this kwarg
           $ref: '#/components/schemas/TunableDomain'
         default:
-          description: Optional default value when the kwarg is omitted
-          nullable: true
+          description: Default value when the client omits this kwarg
     TypedConstraints:
       type: object
       description: Typed TVL 0.9 constraints section
@@ -869,6 +1120,28 @@ components:
         band:
           description: Target band for banded objectives (required when direction is 'band')
           $ref: '#/components/schemas/BandTarget'
+    StrategyName:
+      type: string
+      description: |
+        Name of an exploration/optimization strategy (algorithm). Source of truth is the Traigent SDK's `accepted_algorithm_values()` (`traigent/config/types.py`) — the closed set of algorithm names the SDK and backend validate against — plus TVL's `custom` literal (`tvl.ebnf:202`, `tvl.schema.json`) as the extension hatch for strategies outside that closed set; the SDK does not currently resolve `custom` itself. A new algorithm name must ship in the released SDK before it can enter this contract.
+      enum:
+        - auto
+        - grid
+        - random
+        - bayesian
+        - optuna
+        - tpe
+        - optuna_tpe
+        - optuna_random
+        - optuna_grid
+        - optuna_cmaes
+        - optuna_nsga2
+        - nsga2
+        - cmaes
+        - nsgaii
+        - nsga_ii
+        - cma_es
+        - custom
     ExplorationBudgets:
       type: object
       description: Exploration budget limits
@@ -921,14 +1194,18 @@ components:
       description: Exploration strategy and budget controls (TVL 0.9 exploration section)
       properties:
         strategy:
-          description: Exploration strategy (string name or object with type and parameters)
+          description: |
+            Exploration strategy: either the algorithm name as a string, or an object naming the algorithm plus its parameters. Accepts the closed set of algorithm names the SDK and backend validate against (the public layer of the algorithm-enum chain; see `auto`/local/smart algorithms in the Traigent SDK's `accepted_algorithm_values()`), plus TVL's `custom` literal (`tvl.ebnf:202`, `tvl.schema.json`) for strategies outside that closed set — the SDK does not currently resolve `custom` itself. The object form accepts additional properties alongside `type` (for example `parameters`), matching the TVL grammar's `additionalProperties: true` for this shape.
           oneOf:
-            - type: string
+            - allOf:
+                - $ref: '#/components/schemas/StrategyName'
               example: bayesian
             - type: object
               properties:
                 type:
-                  type: string
+                  $ref: '#/components/schemas/StrategyName'
+              required:
+                - type
               additionalProperties: true
         budgets:
           description: Budget limits for the exploration run
@@ -1015,6 +1292,24 @@ components:
             enum:
               - min_abs_deviation
               - custom
+    EstimatedTokensPerExample:
+      type: object
+      description: Optional per-example token estimate for pre-run cost approval checks
+      additionalProperties: false
+      required:
+        - input_tokens
+        - output_tokens
+      properties:
+        input_tokens:
+          type: integer
+          description: Estimated input tokens consumed per example
+          minimum: 0
+          example: 100
+        output_tokens:
+          type: integer
+          description: Estimated output tokens generated per example
+          minimum: 0
+          example: 50
     ConfigSpaceResponse:
       type: object
       description: Response from config-space discovery endpoint
@@ -1031,7 +1326,7 @@ components:
           example: '0.9'
         tunable_id:
           type: string
-          description: Identifier for the tunable
+          description: Identifier for the tunable being optimized
           maxLength: 256
           example: my_agent
         tunables:
@@ -1040,6 +1335,13 @@ components:
           maxItems: 200
           items:
             $ref: '#/components/schemas/TunableDefinition'
+        evaluation_kwargs:
+          type: array
+          description: |
+            Optional supported `kwargs` accepted by `POST /evaluate` for request-specific evaluator overrides. Each entry describes an allowed key and its valid values for this tunable.
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/EvaluationKwargDefinition'
         tvars:
           type: array
           description: |
@@ -1086,40 +1388,95 @@ components:
           items:
             type: string
             maxLength: 128
-        evaluation_kwargs:
+        estimated_tokens_per_example:
+          description: |
+            Optional per-example token estimate used by Traigent for tighter pre-run cost approval checks in hybrid mode.
+          $ref: '#/components/schemas/EstimatedTokensPerExample'
+    BenchmarksResponse:
+      type: object
+      description: |
+        Response from benchmark discovery endpoint.  Contains a list of benchmark entries, each with its linked tunables and example IDs.
+      additionalProperties: false
+      required:
+        - benchmarks
+      properties:
+        benchmarks:
           type: array
           description: |
-            Optional request-specific evaluator parameters accepted by
-            `/traigent/v1/evaluate.kwargs`. This field must be omitted when the
-            service does not support evaluation kwargs.
-          minItems: 1
-          maxItems: 50
+            List of benchmark entries sorted by `benchmark_id` (ASCII).
           items:
-            $ref: '#/components/schemas/EvaluationKwargDefinition'
-    ExampleItem:
+            type: object
+            additionalProperties: false
+            required:
+              - benchmark_id
+              - tunable_ids
+              - example_ids
+            properties:
+              benchmark_id:
+                type: string
+                description: Unique identifier for this benchmark.
+                maxLength: 256
+                example: child-age-benchmark
+              tunable_ids:
+                type: array
+                description: |
+                  Agents linked to this benchmark (sorted ASCII).
+                items:
+                  type: string
+                  maxLength: 256
+                example:
+                  - my_agent
+              example_ids:
+                type: array
+                description: |
+                  Datapoint identifiers within this benchmark (sorted ASCII). Only IDs are returned; input content is never transmitted.
+                maxItems: 10000
+                items:
+                  type: string
+                  maxLength: 256
+                  pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$
+                example:
+                  - case_001
+                  - case_002
+                  - case_003
+              name:
+                type: string
+                description: Optional display name for the benchmark.
+                maxLength: 256
+                example: Child Age Benchmark
+        benchmarks_revision:
+          type: string
+          nullable: true
+          description: |
+            Optional opaque revision token for stale-detection. Clients may pass this back on subsequent requests to detect whether the benchmark set has changed.
+          example: rev_20260315_001
+    InputItem:
       type: object
       description: |
         Single input item for execution.
 
-        **Privacy-preserving mode**: Only `example_id` is required. Your service uses
+        **Privacy-preserving mode**: Only `input_id` is required. Your service uses
         the ID to look up the actual input data locally. The input data is never
         transmitted to Traigent.
 
         **Full-content datasets**: Include `data` with the actual input content.
       required:
-        - example_id
+        - input_id
       properties:
-        example_id:
+        input_id:
           type: string
           description: |
             Unique identifier for this input. In privacy-preserving mode, your
             service uses this ID to look up the actual input data locally.
+            ASCII letters, digits, dots, hyphens, and underscores only; must start
+            with a letter or digit.
           maxLength: 256
-          example: ex_001
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$
+          example: input_001
         data:
           type: object
           description: |
-            Input data (structure defined by your agent). Optional in privacy-preserving mode where the service looks up data by example_id.
+            Input data (structure defined by your agent). Optional in privacy-preserving mode where the service looks up data by input_id.
           additionalProperties: true
           example:
             query: What is machine learning?
@@ -1148,12 +1505,12 @@ components:
           example: 5000
     ExecuteRequest:
       type: object
-      description: Request to execute agent with configuration on examples
+      description: Request to execute agent with configuration on input items
       required:
         - request_id
         - tunable_id
         - config
-        - examples
+        - inputs
       properties:
         request_id:
           type: string
@@ -1162,19 +1519,48 @@ components:
           example: 550e8400-e29b-41d4-a716-446655440000
         tunable_id:
           type: string
-          description: Identifier for the agent tunable to invoke
+          description: Identifier for the tunable to invoke
           maxLength: 256
           example: my_agent
         config:
           type: object
           description: Configuration parameters (tunable values matching config-space definitions)
           additionalProperties: true
+          maxProperties: 200
+        inputs:
+          type: array
+          description: List of input items; each item requires `input_id` and may include `data`
+          items:
+            $ref: '#/components/schemas/InputItem'
+          minItems: 1
+          maxItems: 10000
         examples:
           type: array
-          description: List of examples to process. Actual limit is enforced by max_batch_size from capabilities (default 100), not by a static schema cap.
+          description: |
+            Deprecated alias for `inputs`. Older SDK builds send `examples[]` (each item keyed by `example_id`) as their primary payload instead of `inputs[]`. Servers SHOULD accept `examples` as an alias of `inputs` when `inputs` is absent, mapping each `example_id` to `input_id`. New integrations MUST use `inputs`; when both are present, `inputs` takes precedence. Targeted for removal in the next major version. Rejecting a request whose input array is missing or wrong-shaped MUST use the `INVALID_INPUTS` error code (see `/execute` 400) so clients can recover without matching the message string.
+          deprecated: true
+          nullable: true
           items:
-            $ref: '#/components/schemas/ExampleItem'
+            type: object
+            description: Deprecated alias of `InputItem`, keyed by `example_id`.
+            required:
+              - example_id
+            properties:
+              example_id:
+                type: string
+                description: Deprecated alias for `input_id`. ASCII letters, digits, dots, hyphens, and underscores only; must start with a letter or digit.
+                maxLength: 256
+                pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$
+                example: input_001
+              data:
+                type: object
+                description: |
+                  Input data (structure defined by your agent). Optional in privacy-preserving mode where the service looks up data by example_id.
+                additionalProperties: true
+                example:
+                  query: What is machine learning?
           minItems: 1
+          maxItems: 10000
         session_id:
           type: string
           description: Session ID for stateful agents
@@ -1200,13 +1586,15 @@ components:
 
         **Full-content datasets**: Include `output` with the actual output content.
       required:
-        - example_id
+        - input_id
       properties:
-        example_id:
+        input_id:
           type: string
-          description: Matching input identifier
+          description: |
+            Matching input identifier. Servers MUST echo the exact `input_id` string from the corresponding `InputItem` in the request — no trimming, case-folding, numeric coercion, or any other normalization is permitted. ASCII letters, digits, dots, hyphens, and underscores only; must start with a letter or digit.
           maxLength: 256
-          example: case_001
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$
+          example: input_001
         output:
           type: object
           description: |
@@ -1255,7 +1643,7 @@ components:
           example: 0.005
         cost_usd:
           type: number
-          description: Alias for total_cost_usd (deprecated — use total_cost_usd)
+          description: Alias for total_cost_usd (deprecated - use total_cost_usd)
           format: double
           minimum: 0
           deprecated: true
@@ -1313,15 +1701,18 @@ components:
           description: Error message
           maxLength: 2048
           example: 2 of 5 inputs failed due to upstream timeout
-        failed_examples:
+        failed_inputs:
           type: array
-          description: List of failed example IDs. Length matches the failed subset of the request batch.
+          description: |
+            List of failed input IDs. Values MUST be the exact `input_id` strings from the original request `InputItem` entries — no trimming, case-folding, numeric coercion, or any other normalization is permitted.
+          maxItems: 10000
           items:
             type: string
             maxLength: 256
+            pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$
           example:
-            - case_003
-            - case_005
+            - input_003
+            - input_005
     ExecuteResponse:
       type: object
       description: Response from agent execution
@@ -1334,6 +1725,7 @@ components:
       properties:
         request_id:
           type: string
+          format: uuid
           description: Echoed request ID for correlation
           example: 550e8400-e29b-41d4-a716-446655440000
         execution_id:
@@ -1350,21 +1742,19 @@ components:
             - failed
         outputs:
           type: array
-          description: Per-input results. Length matches the request batch size after wrapper validation.
+          description: Per-input results
           items:
             $ref: '#/components/schemas/OutputItem'
+          maxItems: 10000
         operational_metrics:
           description: Aggregate operational metrics from the execution batch
           $ref: '#/components/schemas/OperationalMetrics'
         quality_metrics:
           type: object
-          description: |
-            Quality metrics from combined mode (execute + evaluate in one call).
-            Controls whether the SDK calls `/traigent/v1/evaluate`:
-            - null, omitted, or empty (`{}`) => SDK calls `/traigent/v1/evaluate` (two-phase, recommended)
-            - non-empty object => SDK uses these metrics directly and skips `/traigent/v1/evaluate`
+          description: Quality metrics if using combined mode (execute + evaluate in one call). Null or absent when using two-phase mode.
           additionalProperties:
             type: number
+          minProperties: 1
           nullable: true
         session_id:
           type: string
@@ -1388,13 +1778,15 @@ components:
 
         Note: You can mix modes - e.g., provide `output` content but use `target_id` for expected.
       required:
-        - example_id
+        - input_id
       properties:
-        example_id:
+        input_id:
           type: string
-          description: Matching input identifier
+          description: |
+            Matching input identifier. This value MUST preserve the exact `input_id` string for the item being evaluated — no trimming, case-folding, numeric coercion, or any other normalization is permitted. ASCII letters, digits, dots, hyphens, and underscores only; must start with a letter or digit.
           maxLength: 256
-          example: case_001
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$
+          example: input_001
         output:
           type: object
           description: |
@@ -1432,36 +1824,51 @@ components:
           example: 660e8400-e29b-41d4-a716-446655440001
         tunable_id:
           type: string
-          description: Identifier for the evaluation tunable
+          description: Identifier for the tunable to evaluate
           maxLength: 256
           example: my_agent
         execution_id:
           type: string
-          description: |
-            Reference to a previous execute call for correlation. Implementations
-            may use this to recover execute-time context during evaluation.
+          description: Reference to previous execute (for caching/correlation)
           maxLength: 256
           nullable: true
           example: exec_20240115_001
         evaluations:
           type: array
-          description: List of output+target pairs to evaluate. Implementations should reject oversize batches at runtime instead of relying on a static schema cap.
+          description: List of output+target pairs to evaluate
           minItems: 1
+          maxItems: 10000
           items:
             $ref: '#/components/schemas/EvaluationItem'
         kwargs:
           type: object
           description: |
-            Optional evaluator-specific request parameters. These are evaluate-time
-            controls only and do not replace or override `/execute.config`.
-          additionalProperties: true
+            Preferred optional evaluator keyword arguments, such as model selection or other scoring parameters. The field is named `kwargs` for generic keyword-style overrides; non-Python services may treat it as evaluator options. These controls apply only at evaluation time; they do not replace or override the tunable configuration originally sent in `/execute.config`. Implementations that need execute-time context during evaluation should use `execution_id` for correlation, because execute config is not re-sent in `/evaluate`. If both `kwargs` and `config` are provided, services MUST use `kwargs` and ignore `config` entirely. When `/config-space` returns `evaluation_kwargs`, keys and values MUST come from that discovery list. If a service does not advertise `evaluation_kwargs`, it MUST reject any non-empty `kwargs` with `400 INVALID_EVALUATION_KWARGS`.
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
           nullable: true
+          maxProperties: 50
+          example:
+            model: gpt-4.1-mini
+            temperature: 0
+            rubric_version: concise-v2
         config:
           type: object
-          description: Deprecated alias for `kwargs`
-          additionalProperties: true
+          description: |
+            Deprecated alias for `kwargs`. Existing integrations may continue sending `config`, but new integrations should use `kwargs`. Targeted for removal in the next major version.
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
           nullable: true
           deprecated: true
+          maxProperties: 50
+          example:
+            model: gpt-4.1-mini
         session_id:
           type: string
           description: Session ID for stateful agents
@@ -1478,14 +1885,16 @@ components:
       type: object
       description: Evaluation result for a single example
       required:
-        - example_id
+        - input_id
         - metrics
       properties:
-        example_id:
+        input_id:
           type: string
-          description: Matching input identifier
+          description: |
+            Matching input identifier. Servers MUST echo the exact `input_id` string from the corresponding `EvaluationItem` in the request — no trimming, case-folding, numeric coercion, or any other normalization is permitted. ASCII letters, digits, dots, hyphens, and underscores only; must start with a letter or digit.
           maxLength: 256
-          example: case_001
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$
+          example: input_001
         metrics:
           type: object
           description: Quality metrics for this example
@@ -1499,7 +1908,7 @@ components:
           type: string
           description: Optional error message for this example when evaluation partially fails
           maxLength: 2048
-          example: Target not found for input case_003
+          example: Target not found for input input_003
     AggregateMetricStats:
       type: object
       description: Aggregated statistics for a metric
@@ -1528,10 +1937,12 @@ components:
           type: number
           description: Minimum value across all examples
           format: double
+          example: 0.81
         max:
           type: number
           description: Maximum value across all examples
           format: double
+          example: 0.99
     EvaluateResponse:
       type: object
       description: Response from evaluation
@@ -1543,6 +1954,7 @@ components:
       properties:
         request_id:
           type: string
+          format: uuid
           description: Echoed request ID
           example: 660e8400-e29b-41d4-a716-446655440001
         execution_id:
@@ -1560,9 +1972,10 @@ components:
             - failed
         results:
           type: array
-          description: Per-example evaluation results. Length matches the evaluated request batch after wrapper validation.
+          description: Per-example evaluation results
           items:
             $ref: '#/components/schemas/EvaluationResult'
+          maxItems: 10000
         aggregate_metrics:
           type: object
           description: Aggregated statistics per metric
@@ -1571,65 +1984,6 @@ components:
         error:
           description: Error details when status is partial or failed
           $ref: '#/components/schemas/ExecutionError'
-    BenchmarkEntry:
-      type: object
-      description: A single benchmark with its associated example IDs
-      required:
-        - benchmark_id
-        - tunable_ids
-        - example_ids
-      properties:
-        benchmark_id:
-          type: string
-          description: Unique identifier for this benchmark
-          maxLength: 256
-          example: spider_dev_v1
-        tunable_ids:
-          type: array
-          description: Agents linked to this benchmark (sorted ASCII)
-          items:
-            type: string
-            maxLength: 256
-          minItems: 1
-          maxItems: 100
-          example:
-            - my_agent
-        example_ids:
-          type: array
-          description: Datapoint identifiers within this benchmark (sorted ASCII)
-          items:
-            type: string
-            maxLength: 256
-          minItems: 1
-          maxItems: 100000
-          example:
-            - case_001
-            - case_002
-            - case_003
-        name:
-          type: string
-          description: Optional display name for the benchmark
-          maxLength: 512
-          nullable: true
-          example: Spider Dev Set v1
-    BenchmarksResponse:
-      type: object
-      description: Response from benchmarks discovery endpoint
-      required:
-        - benchmarks
-      properties:
-        benchmarks:
-          type: array
-          description: List of benchmark entries (sorted by benchmark_id, ASCII)
-          items:
-            $ref: '#/components/schemas/BenchmarkEntry'
-          maxItems: 1000
-        benchmarks_revision:
-          type: string
-          description: Opaque revision token for stale-detection. Pass this value in execute/evaluate requests to detect benchmark changes.
-          maxLength: 256
-          nullable: true
-          example: rev_20240115_001
     HealthCheckResponse:
       type: object
       description: Response from health check endpoint
@@ -1641,8 +1995,6 @@ components:
           description: Health status
           enum:
             - healthy
-            - degraded
-            - unhealthy
         version:
           type: string
           description: Service version
@@ -1681,13 +2033,20 @@ components:
           type: string
           enum:
             - alive
-            - expired
           description: Session heartbeat status
         session_id:
           type: string
           description: Session identifier
           maxLength: 256
           example: sess_abc123
+  headers:
+    RetryAfter:
+      description: |
+        Recommended wait before retrying, per RFC 9110 §10.2.3. Either a non-negative integer number of seconds, or an HTTP-date.
+      required: false
+      schema:
+        type: string
+      example: '30'
 x-transport-requirements:
   production_scheme: https
   production_http_version: '2'
