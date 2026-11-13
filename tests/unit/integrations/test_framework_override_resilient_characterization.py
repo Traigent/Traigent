@@ -171,3 +171,36 @@ def test_get_config_called_once_per_call(manager):
     with patch.object(fo, "get_config", return_value={"model": "m"}) as gc:
         wrapper()
     assert gc.call_count == 0
+
+
+def test_dropped_unmapped_key_warns_once_per_key_and_vendor(manager, caplog):
+    # New (#3150): a silently dropped setting is logged once per key per vendor.
+    wrapper = manager._create_resilient_override(_sync, "Cls", MAPPING)
+    token = _with_config({"model": "m", "top_p": 0.9})
+    try:
+        with caplog.at_level("WARNING", logger=fo.__name__):
+            wrapper()
+            wrapper()
+    finally:
+        config_context.reset(token)
+    warnings = [r for r in caplog.records if "top_p" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "_sync" in warnings[0].getMessage()
+
+
+def test_empty_mapping_with_no_accepted_keys_raises(manager):
+    # New (#3150): refuse to run untuned when every tuning key would be dropped.
+    from traigent.utils.exceptions import ConfigurationError
+
+    wrapper = manager._create_resilient_override(_sync, "Cls", {})
+    token = _with_config({"model": "m"})
+    try:
+        with pytest.raises(ConfigurationError, match="untuned"):
+            wrapper()
+    finally:
+        config_context.reset(token)
+
+
+def test_empty_mapping_ok_when_signature_names_the_keys(manager):
+    out = _run(manager, _sync_named, {"model": "m"}, mapping={})
+    assert out[2] == {"model": "m", "top_p": None}

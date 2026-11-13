@@ -46,6 +46,22 @@ _OPENAI_CLIENT_PATH = "openai.OpenAI"
 
 logger = get_logger(__name__)
 
+# Traigent-only control fields that are never vendor parameters; dropping them
+# is expected and not worth a warning.
+_TRAIGENT_CONTROL_KEYS = frozenset(
+    {
+        "algorithm",
+        "offline",
+        "execution_mode",
+        "local_storage_path",
+        "minimal_logging",
+        "auto_sync",
+        "privacy_enabled",
+        "strict_metrics_nulls",
+        "comparability_mode",
+    }
+)
+
 # Backwards compatibility alias
 LegacyBaseOverrideManager = BaseOverrideManager
 
@@ -1189,11 +1205,12 @@ class FrameworkOverrideManager(BaseOverrideManager):
         """
         override_active = self._override_active  # Capture in closure
         accepted_params = self._accepted_parameter_names(original_method)
+        method_name = getattr(original_method, "__qualname__", class_name)
 
         @functools.wraps(original_method)
         def resilient_wrapper(*args, **kwargs):
             overridden_kwargs = self._resilient_kwargs(
-                override_active, kwargs, parameter_mapping, accepted_params
+                override_active, kwargs, parameter_mapping, accepted_params, method_name
             )
             if overridden_kwargs is None:
                 return original_method(*args, **kwargs)
@@ -1203,7 +1220,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
         async def async_resilient_wrapper(*args, **kwargs):
             # Async version of the resilient wrapper
             overridden_kwargs = self._resilient_kwargs(
-                override_active, kwargs, parameter_mapping, accepted_params
+                override_active, kwargs, parameter_mapping, accepted_params, method_name
             )
             if overridden_kwargs is None:
                 return await original_method(*args, **kwargs)
@@ -1221,6 +1238,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
         kwargs: dict[str, Any],
         parameter_mapping: dict[str, str],
         accepted_params: frozenset[str] | None = None,
+        method_name: str = "",
     ) -> dict[str, Any] | None:
         """Merged kwargs for a resilient override, or None to pass through.
 
@@ -1242,6 +1260,17 @@ class FrameworkOverrideManager(BaseOverrideManager):
         if not config_dict:
             return None
 
+        if not parameter_mapping and not (
+            accepted_params and accepted_params & set(config_dict)
+        ):
+            raise ConfigurationError(
+                "No Traigent parameter mapping was found for "
+                f"{method_name or 'the target method'}, so every tuning key "
+                f"({sorted(config_dict)}) would be dropped and the call would "
+                "run untuned. Register a parameter mapping for this vendor "
+                "or call it with explicit keyword arguments."
+            )
+
         # Apply overrides with fallback strategies
         overridden_kwargs = kwargs.copy()
 
@@ -1251,15 +1280,29 @@ class FrameworkOverrideManager(BaseOverrideManager):
                 overridden_kwargs[framework_param] = config_dict[traigent_param]
 
         # Strategy 2: exact parameter names, only if the vendor signature names them
-        if accepted_params:
-            for param_name, param_value in config_dict.items():
-                if (
-                    param_name in accepted_params
-                    and param_name not in overridden_kwargs
-                ):
+        for param_name, param_value in config_dict.items():
+            if param_name in parameter_mapping:
+                continue
+            if accepted_params and param_name in accepted_params:
+                if param_name not in overridden_kwargs:
                     overridden_kwargs[param_name] = param_value
+            elif param_name not in _TRAIGENT_CONTROL_KEYS:
+                self._warn_dropped_key(method_name, param_name)
 
         return overridden_kwargs
+
+    def _warn_dropped_key(self, method_name: str, key: str) -> None:
+        """Log once per (vendor method, key) that a config key was not forwarded."""
+        warned = self.__dict__.setdefault("_warned_dropped_keys", set())
+        if (method_name, key) in warned:
+            return
+        warned.add((method_name, key))
+        logger.warning(
+            "Config key '%s' was not forwarded to %s: the vendor signature does "
+            "not name it and no parameter mapping covers it.",
+            key,
+            method_name or "the target method",
+        )
 
     @staticmethod
     def _accepted_parameter_names(

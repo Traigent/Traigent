@@ -1,5 +1,6 @@
 """TraigentConfig.merge / merge_with_context must not drop any field."""
 
+import copy
 import dataclasses
 from typing import Any
 
@@ -7,6 +8,7 @@ import pytest
 
 from traigent.config.context import merge_with_context, set_config
 from traigent.config.types import TraigentConfig
+from traigent.utils.exceptions import ValidationError
 
 # Non-default value for every dataclass field except the legacy selectors,
 # which have dedicated characterization tests.
@@ -228,3 +230,39 @@ def test_config_override_post_init_assignment_is_explicit() -> None:
     other = TraigentConfig()
     other.offline = False
     assert base.merge(other).offline is False
+
+
+def test_replace_carries_source_explicit_fields_and_only_passed_ones() -> None:
+
+    src = TraigentConfig(offline=False, temperature=0.5)
+    new = dataclasses.replace(src, model="m")
+    assert new._explicit_fields == {"offline", "temperature", "model"}
+    # An untouched default in the replaced config must not override the base.
+    base = TraigentConfig(algorithm="grid")
+    assert base.merge(new).algorithm == "grid"
+    # The explicit default carried from the source still overrides.
+    assert TraigentConfig(offline=True).merge(new).offline is False
+
+
+def test_replace_explicit_default_passed_to_replace_overrides() -> None:
+
+    new = dataclasses.replace(TraigentConfig(model="m"), offline=False)
+    assert "offline" in new._explicit_fields
+    assert TraigentConfig(offline=True).merge(new).offline is False
+
+
+def test_copy_and_deepcopy_own_their_explicit_set() -> None:
+
+    src = TraigentConfig(offline=False)
+    for dup in (copy.copy(src), copy.deepcopy(src)):
+        assert dup._explicit_fields == {"offline"}
+        assert dup._explicit_fields is not src._explicit_fields
+        dup.temperature = 0.1
+        assert "temperature" not in src._explicit_fields
+
+
+def test_failed_assignment_is_not_marked_explicit() -> None:
+    cfg = TraigentConfig()
+    with pytest.raises(ValidationError):
+        cfg.temperature = 99.0
+    assert "temperature" not in cfg._explicit_fields

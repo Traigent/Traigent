@@ -331,12 +331,16 @@ Follow these best practices when contributing new examples:
 4. **Test thoroughly:**
 
    ```bash
-   # Test in mock mode: call `traigent.testing.enable_mock_mode_for_quickstart()`
-   # at the top of run.py (or use ./run_all_examples.sh)
+   # Test in mock mode: guard the activation at the top of run.py so real
+   # runs are unaffected:
+   #   import os
+   #   if os.environ.get("MY_EXAMPLE_REAL") != "1":
+   #       from traigent.testing import enable_mock_mode_for_quickstart
+   #       enable_mock_mode_for_quickstart()
    python examples/core/<YOUR_EXAMPLE>/run.py
 
-   # Test with real APIs
-   python examples/core/<YOUR_EXAMPLE>/run.py
+   # Test with real APIs (the guard above skips mock mode)
+   MY_EXAMPLE_REAL=1 python examples/core/<YOUR_EXAMPLE>/run.py
    ```
 
 5. **Update documentation:**

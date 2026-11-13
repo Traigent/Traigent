@@ -7,6 +7,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import os
+import sys
 from dataclasses import dataclass, field
 from enum import EnumType, StrEnum
 from inspect import Parameter, Signature
@@ -1311,14 +1312,6 @@ class TraigentConfig:
         """Apply per-field validation when assigning configuration values."""
         warn_legacy_assignment = getattr(self, "_warn_legacy_config_assignments", False)
         self._track_supplied_assignment(key, value, warn_legacy_assignment)
-        if warn_legacy_assignment:
-            # Assignment after construction is an explicit set (see merge()).
-            explicit_fields = getattr(self, "_explicit_fields", None)
-            if explicit_fields is None:
-                explicit_fields = set()
-                object.__setattr__(self, "_explicit_fields", explicit_fields)
-            explicit_fields.add(key)
-
         if key in _SAMPLING_VALIDATED_KEYS:
             _validate_sampling_assignment(key, value)
         elif key == "algorithm":
@@ -1345,6 +1338,15 @@ class TraigentConfig:
             value = _coerce_comparability_mode(value)
         elif key == "enable_usage_analytics":
             value = bool(value)
+
+        if warn_legacy_assignment:
+            # Assignment after construction is an explicit set (see merge()).
+            # Marked only after validation succeeded above.
+            explicit_fields = getattr(self, "_explicit_fields", None)
+            if explicit_fields is None:
+                explicit_fields = set()
+                object.__setattr__(self, "_explicit_fields", explicit_fields)
+            explicit_fields.add(key)
 
         return value
 
@@ -1521,10 +1523,54 @@ def _track_explicit_init_fields(cls: type[TraigentConfig]) -> None:
     @functools.wraps(original_init)
     def __init__(self: TraigentConfig, *args: Any, **kwargs: Any) -> None:
         explicit = set(kwargs) | set(init_names[: len(args)])
+        source_explicit = _replace_source_explicit(kwargs)
+        if source_explicit is not None:
+            explicit = source_explicit
         object.__setattr__(self, "_explicit_fields", set(explicit))
         original_init(self, *args, **kwargs)
 
+    def __copy__(self: TraigentConfig) -> TraigentConfig:
+        new = cls.__new__(cls)
+        new.__dict__.update(self.__dict__)
+        # The copy owns its explicit-field set; it must not alias the source's.
+        object.__setattr__(
+            new, "_explicit_fields", set(getattr(self, "_explicit_fields", ()))
+        )
+        return new
+
     cls.__init__ = __init__  # type: ignore[method-assign]
+    cls.__copy__ = __copy__  # type: ignore[attr-defined]
+
+
+def _replace_source_explicit(kwargs: dict[str, Any]) -> set[str] | None:
+    """Explicit fields for a ``dataclasses.replace()``/``copy.replace()`` call.
+
+    ``replace`` re-invokes ``__init__`` with every field, so the init kwargs
+    cannot tell which fields the caller changed. When called from replace,
+    return the source's explicit fields plus only the fields actually passed
+    to replace (None when not called from replace).
+    """
+    try:
+        caller = sys._getframe(2)  # [0]=here, [1]=__init__ wrapper, [2]=caller
+    except ValueError:  # pragma: no cover
+        return None
+    name = caller.f_code.co_name
+    if caller.f_globals.get("__name__") not in ("dataclasses", "copy"):
+        return None
+    source = caller.f_locals.get("obj", caller.f_locals.get("self"))
+    if not isinstance(source, TraigentConfig):
+        return None
+    passed: set[str] | None = None
+    outer = caller.f_back
+    if name == "_replace" and outer is not None:
+        passed_changes = outer.f_locals.get("changes")
+        if isinstance(passed_changes, dict):
+            passed = set(passed_changes)
+    if passed is None:
+        # Older Pythons mutate ``changes`` in place: fall back to the fields
+        # whose value actually differs from the source.
+        passed = {k for k, v in kwargs.items() if v is not getattr(source, k, v)}
+    return set(getattr(source, "_explicit_fields", ())) | passed
 
 
 _track_explicit_init_fields(TraigentConfig)
