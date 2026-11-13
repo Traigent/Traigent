@@ -9,6 +9,7 @@ secure token management, and resilient HTTP client integration.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import hmac
 import inspect
@@ -1807,6 +1808,7 @@ class AuthManager:
                 # the worker and hold a cancellation (#3142).
                 return await loop.run_in_executor(
                     None,
+                    contextvars.copy_context().run,
                     self._validate_api_key_with_backend_sync,
                     url,
                     headers,

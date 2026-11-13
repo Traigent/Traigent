@@ -8,6 +8,7 @@ operations for both privacy-preserving and cloud-based optimization.
 
 import asyncio
 import concurrent.futures
+import contextvars
 import inspect
 import threading
 import time
@@ -1234,7 +1235,9 @@ class SessionOperations:
                         new_loop.close()
 
                 executor = _get_session_executor()
-                future = executor.submit(_run_in_new_loop)
+                future = executor.submit(
+                    contextvars.copy_context().run, _run_in_new_loop
+                )
                 return future.result(timeout=60)
             return asyncio.run(
                 _with_loop_local_session(

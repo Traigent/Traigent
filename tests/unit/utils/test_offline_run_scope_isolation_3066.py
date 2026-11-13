@@ -79,3 +79,50 @@ def test_env_offline_still_wins_inside_an_online_scope(
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     with offline_run_scope(False):
         assert is_backend_offline() is True
+
+
+def test_optimize_sync_worker_inherits_the_callers_offline_scope() -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from traigent.core.optimized_function import OptimizedFunction
+
+    seen: list[bool] = []
+
+    async def fake_optimize(**_: object) -> str:
+        # What the real run does first: enter its own scope, then egress checks.
+        with offline_run_scope(False):
+            seen.append(is_backend_offline())
+        return "done"
+
+    stub = SimpleNamespace(optimize=lambda **kw: fake_optimize(**kw))
+
+    async def caller() -> str:
+        with offline_run_scope(True):
+            return OptimizedFunction.optimize_sync(stub)
+
+    assert asyncio.run(caller()) == "done"
+    assert seen == [True]
+
+
+def test_compare_sync_worker_inherits_the_callers_offline_scope() -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from traigent.core.optimized_function import OptimizedFunction
+
+    seen: list[bool] = []
+
+    async def fake_compare(*_: object, **__: object) -> str:
+        with offline_run_scope(False):
+            seen.append(is_backend_offline())
+        return "done"
+
+    stub = SimpleNamespace(compare_async=fake_compare)
+
+    async def caller() -> str:
+        with offline_run_scope(True):
+            return OptimizedFunction.compare(stub, [{"a": 1}])
+
+    assert asyncio.run(caller()) == "done"
+    assert seen == [True]
