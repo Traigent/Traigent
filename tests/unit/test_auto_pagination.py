@@ -543,16 +543,14 @@ def _prompt_item(idx: int) -> dict[str, Any]:
 
 def _prompt_page_response(page: int, total_pages: int) -> dict[str, Any]:
     idx = (page - 1) * 2 + 1
+    more = page < total_pages
     return {
         "data": {
             "items": [_prompt_item(idx), _prompt_item(idx + 1)],
             "pagination": {
-                "page": page,
-                "per_page": 2,
-                "total": total_pages * 2,
-                "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_prev": page > 1,
+                "limit": 2,
+                "next_cursor": f"cursor_{page + 1}" if more else None,
+                "has_more": more,
             },
         }
     }
@@ -560,21 +558,20 @@ def _prompt_page_response(page: int, total_pages: int) -> dict[str, Any]:
 
 class TestPromptClientIter:
     def test_iter_prompts_two_pages(self, monkeypatch):
-        """iter_prompts yields all items across 2 pages."""
+        """iter_prompts yields all items across 2 pages by following cursors."""
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
         from traigent.prompts.client import PromptManagementClient
 
-        pages_seen: list[int] = []
+        paths: list[str] = []
 
         def sender(method: str, path: str, payload=None):
-            p = _page_from_path(path)
-            pages_seen.append(p)
-            return _prompt_page_response(p, 2)
+            paths.append(path)
+            return _prompt_page_response(1 if "cursor=" not in path else 2, 2)
 
         client = PromptManagementClient(request_sender=sender)
-        result = list(client.iter_prompts(per_page=2))
+        result = list(client.iter_prompts(limit=2))
         assert len(result) == 4
-        assert pages_seen == [1, 2]
+        assert paths == ["?limit=2", "?limit=2&cursor=cursor_2"]
 
     def test_list_prompts_unchanged(self, monkeypatch):
         """list_prompts still returns a single-page response object."""
@@ -587,7 +584,8 @@ class TestPromptClientIter:
         client = PromptManagementClient(request_sender=sender)
         resp = client.list_prompts()
         assert hasattr(resp, "pagination")
-        assert resp.pagination.has_next is True
+        assert resp.pagination.has_more is True
+        assert resp.pagination.next_cursor == "cursor_2"
 
 
 # ---------------------------------------------------------------------------

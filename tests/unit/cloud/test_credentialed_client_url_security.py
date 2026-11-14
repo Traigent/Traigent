@@ -34,23 +34,25 @@ pytestmark = pytest.mark.backend_online
 ClientFactory = Callable[[str], Any]
 
 
+_API_KEY = "test-key"  # pragma: allowlist secret
+
 CLIENT_FACTORY_PARAMS = [
     pytest.param(
-        lambda url: ExampleInsightsClient(backend_url=url, api_key="test-key"),
+        lambda url: ExampleInsightsClient(backend_url=url, api_key=_API_KEY),
         id="ExampleInsightsClient",
     ),
     pytest.param(
-        lambda url: OptimizationPlanClient(backend_url=url, api_key="test-key"),
+        lambda url: OptimizationPlanClient(backend_url=url, api_key=_API_KEY),
         id="OptimizationPlanClient",
     ),
     pytest.param(
-        lambda url: BackendAnalyticsClient(backend_url=url, api_key="test-key"),
+        lambda url: BackendAnalyticsClient(backend_url=url, api_key=_API_KEY),
         id="BackendAnalyticsClient",
     ),
     pytest.param(
         lambda url: BenchmarkClientConfig(
             backend_origin=url,
-            api_key="test-key",
+            api_key=_API_KEY,
             tenant_id=None,
             project_id=None,
         ),
@@ -59,7 +61,7 @@ CLIENT_FACTORY_PARAMS = [
     pytest.param(
         lambda url: ProjectManagementConfig(
             backend_origin=url,
-            api_key="test-key",
+            api_key=_API_KEY,
             tenant_id=None,
         ),
         id="ProjectManagementConfig",
@@ -67,7 +69,7 @@ CLIENT_FACTORY_PARAMS = [
     pytest.param(
         lambda url: PromptManagementConfig(
             backend_origin=url,
-            api_key="test-key",
+            api_key=_API_KEY,
             tenant_id=None,
             project_id=None,
         ),
@@ -76,7 +78,7 @@ CLIENT_FACTORY_PARAMS = [
     pytest.param(
         lambda url: EvaluationConfig(
             backend_origin=url,
-            api_key="test-key",
+            api_key=_API_KEY,
             tenant_id=None,
             project_id=None,
         ),
@@ -85,28 +87,28 @@ CLIENT_FACTORY_PARAMS = [
     pytest.param(
         lambda url: CoreMetricsConfig(
             backend_origin=url,
-            api_key="test-key",
+            api_key=_API_KEY,
             tenant_id=None,
             project_id=None,
         ),
         id="CoreMetricsConfig",
     ),
     pytest.param(
-        lambda url: WorkflowTracesClient(backend_url=url, auth_token="test-key"),
+        lambda url: WorkflowTracesClient(backend_url=url, auth_token=_API_KEY),
         id="WorkflowTracesClient",
     ),
     pytest.param(
-        lambda url: TraigentCloudClient(api_key="test-key", base_url=url),
+        lambda url: TraigentCloudClient(api_key=_API_KEY, base_url=url),
         id="TraigentCloudClient",
     ),
     pytest.param(
-        lambda url: BackendIntegratedClient(api_key="test-key", base_url=url),
+        lambda url: BackendIntegratedClient(api_key=_API_KEY, base_url=url),
         id="BackendIntegratedClient",
     ),
     pytest.param(
         lambda url: EnterpriseAdminConfig(
             backend_origin=url,
-            api_key="test-key",
+            api_key=_API_KEY,
         ),
         id="EnterpriseAdminConfig",
     ),
@@ -123,7 +125,7 @@ def _sync_manager_factory(
     config = MagicMock(spec=TraigentConfig)
     config.get_local_storage_path.return_value = str(tmp_path / "storage")
     config.custom_params = {}
-    return SyncManager(config=config, api_key="test-key")
+    return SyncManager(config=config, api_key=_API_KEY)
 
 
 @pytest.mark.parametrize(
@@ -207,7 +209,7 @@ async def test_check_api_key_rejects_unsafe_origin_before_aiohttp_session(
     with pytest.raises(ValueError):
         await auth_commands._check_api_key(
             "http://127.0.0.1:5000/api/v1",
-            "test-key",
+            _API_KEY,
         )
 
     assert opened is False
@@ -218,25 +220,27 @@ async def test_check_api_key_rejects_unsafe_origin_before_aiohttp_session(
     [
         pytest.param(
             lambda url: ProjectManagementClient(
-                ProjectManagementConfig(backend_origin=url, api_key="test-key")
+                ProjectManagementConfig(backend_origin=url, api_key=_API_KEY)
             ).list_projects(),
             id="ProjectManagementClient",
         ),
         pytest.param(
             lambda url: PromptManagementClient(
-                PromptManagementConfig(backend_origin=url, api_key="test-key")
+                PromptManagementConfig(
+                    backend_origin=url, api_key=_API_KEY, project_id="proj_1"
+                )
             ).list_prompts(),
             id="PromptManagementClient",
         ),
         pytest.param(
             lambda url: EvaluationClient(
-                EvaluationConfig(backend_origin=url, api_key="test-key")
+                EvaluationConfig(backend_origin=url, api_key=_API_KEY)
             ).list_evaluators(),
             id="EvaluationClient",
         ),
         pytest.param(
             lambda url: CoreMetricsClient(
-                CoreMetricsConfig(backend_origin=url, api_key="test-key")
+                CoreMetricsConfig(backend_origin=url, api_key=_API_KEY)
             ).get_core_metrics_overview(),
             id="CoreMetricsClient",
         ),

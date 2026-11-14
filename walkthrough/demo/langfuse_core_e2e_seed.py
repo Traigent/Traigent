@@ -118,6 +118,11 @@ def parse_args() -> argparse.Namespace:
         help="Backend base URL used for canonical verification.",
     )
     parser.add_argument(
+        "--project-id",
+        default=os.getenv("TRAIGENT_PROJECT_ID"),
+        help="Project that owns the prompt fixtures (default: TRAIGENT_PROJECT_ID).",
+    )
+    parser.add_argument(
         "--baseline-runs",
         type=int,
         default=1,
@@ -140,6 +145,35 @@ def parse_args() -> argparse.Namespace:
         help="Optional artifact root for phase summaries and backend snapshots.",
     )
     return parser.parse_args()
+
+
+PROMPT_SCENARIOS = frozenset(
+    {
+        "prompt-version-lineage",
+        "playground-run-and-compare",
+        "trace-to-prompt-lineage",
+    }
+)
+
+
+def phase_env(args: argparse.Namespace) -> dict[str, str]:
+    """Environment for guided phases: every phase targets the resolved project."""
+    env = os.environ.copy()
+    project_id = (getattr(args, "project_id", None) or "").strip()
+    if project_id:
+        env["TRAIGENT_PROJECT_ID"] = project_id
+    return env
+
+
+def prompts_api_path(args: argparse.Namespace) -> str:
+    """Project-scoped prompts route; the project id travels in the path only."""
+    project_id = (getattr(args, "project_id", None) or "").strip()
+    if project_id in {"", ".", ".."}:
+        raise RuntimeError(
+            "A project id is required for prompt fixtures: pass --project-id "
+            "or set TRAIGENT_PROJECT_ID"
+        )
+    return f"/api/v1/projects/{quote(project_id, safe='')}/prompts"
 
 
 def ensure_api_key() -> str:
@@ -272,7 +306,7 @@ def run_phase(
         check=False,
         capture_output=True,
         text=True,
-        env=os.environ.copy(),
+        env=phase_env(args),
     )
 
     phase_log = _resolve_allowed_path(artifacts_dir / args.run_id / f"{phase}.log")
@@ -984,11 +1018,12 @@ def seed_prompt_fixture(
         f"langfuse.e2e.{run_id.replace(':', '-').replace('_', '-').replace('/', '-')}"
     )
     encoded_prompt_name = quote(prompt_name, safe="")
+    prompts_path = prompts_api_path(args)
 
     create_payload = api_post_json(
         args.backend_url,
         api_key,
-        "/api/v1beta/prompts",
+        prompts_path,
         {
             "name": prompt_name,
             "prompt_type": "text",
@@ -1003,7 +1038,7 @@ def seed_prompt_fixture(
     version_payload = api_post_json(
         args.backend_url,
         api_key,
-        f"/api/v1beta/prompts/{encoded_prompt_name}/versions",
+        f"{prompts_path}/{encoded_prompt_name}/versions",
         {
             "prompt_text": "Hi {{name}} from version two",
             "config": {"model": "mock-model", "provider": "mock"},
@@ -1014,17 +1049,17 @@ def seed_prompt_fixture(
     labels_payload = api_patch_json(
         args.backend_url,
         api_key,
-        f"/api/v1beta/prompts/{encoded_prompt_name}/labels",
+        f"{prompts_path}/{encoded_prompt_name}/labels",
         {"labels": {"latest": 2, "production": 2}},
     )
     prompt_detail = api_get_json(
-        args.backend_url, api_key, f"/api/v1beta/prompts/{encoded_prompt_name}"
+        args.backend_url, api_key, f"{prompts_path}/{encoded_prompt_name}"
     )
 
     analytics_payload = api_get_json(
         args.backend_url,
         api_key,
-        f"/api/v1beta/prompts/{encoded_prompt_name}/analytics",
+        f"{prompts_path}/{encoded_prompt_name}/analytics",
     )
 
     compare_trace_ids: list[str] = []
@@ -1034,7 +1069,7 @@ def seed_prompt_fixture(
             run_payload = api_post_json(
                 args.backend_url,
                 api_key,
-                f"/api/v1beta/prompts/{encoded_prompt_name}/playground/run",
+                f"{prompts_path}/{encoded_prompt_name}/playground/run",
                 {
                     "version": version,
                     "variables": {"name": "Langfuse"},
@@ -1051,7 +1086,7 @@ def seed_prompt_fixture(
         analytics_payload = api_get_json(
             args.backend_url,
             api_key,
-            f"/api/v1beta/prompts/{encoded_prompt_name}/analytics",
+            f"{prompts_path}/{encoded_prompt_name}/analytics",
         )
 
     write_json(output_dir / "prompt-create.json", create_payload)
@@ -1196,6 +1231,8 @@ def seed_access_control_fixture(
 
 def main() -> int:
     args = parse_args()
+    if args.scenario in PROMPT_SCENARIOS:
+        prompts_api_path(args)  # fail before any phase runs
     args.backend_url = _validate_backend_url(args.backend_url)
     output_path = _resolve_allowed_path(args.output)
     artifacts_dir = (
@@ -1556,6 +1593,7 @@ def main() -> int:
     if prompt_fixture:
         prompt_name = prompt_fixture["prompt_name"]
         encoded_prompt_name = quote(prompt_name, safe="")
+        prompts_path = prompts_api_path(args)
         compare_trace_ids = [
             value for value in prompt_fixture.get("compare_trace_ids", []) if value
         ]
@@ -1572,8 +1610,8 @@ def main() -> int:
         )
         backend_urls.update(
             {
-                "prompt": f"{args.backend_url.rstrip('/')}/api/v1beta/prompts/{encoded_prompt_name}",
-                "prompt_analytics": f"{args.backend_url.rstrip('/')}/api/v1beta/prompts/{encoded_prompt_name}/analytics",
+                "prompt": f"{args.backend_url.rstrip('/')}{prompts_path}/{encoded_prompt_name}",
+                "prompt_analytics": f"{args.backend_url.rstrip('/')}{prompts_path}/{encoded_prompt_name}/analytics",
             }
         )
         if compare_trace_ids:

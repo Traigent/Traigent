@@ -55,7 +55,9 @@ def test_alternate_backend_origin_is_judged_for_prompts_and_evaluators(
     with capture_egress() as cap:
         prompts = PromptManagementClient(
             PromptManagementConfig(
-                backend_origin="https://203.0.113.9", api_key=FAKE_API_KEY
+                backend_origin="https://203.0.113.9",
+                api_key=FAKE_API_KEY,
+                project_id="proj_1",
             )
         )
         evaluator = EvaluationClient(
