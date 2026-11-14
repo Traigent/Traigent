@@ -375,19 +375,17 @@ class TestLocalStorageManager:
 
     def test_file_io_error_handling(self):
         """Test handling of file I/O errors."""
-        # Test with read-only directory
-        readonly_dir = Path(self.temp_dir) / "readonly"
-        readonly_dir.mkdir()
-        readonly_dir.chmod(0o444)  # Read-only
+        # A storage root nested under a regular file can never be created, for
+        # any uid. (A chmod-read-only directory is not a failure for root, which
+        # bypasses permission bits and made this test fail on root CI runners.)
+        blocker = Path(self.temp_dir) / "not_a_directory"
+        blocker.write_text("regular file", encoding="utf-8")
 
-        try:
-            # Should raise when trying to create directories
-            with pytest.raises(
-                TraigentStorageError, match="Failed to create storage directories"
-            ):
-                LocalStorageManager(str(readonly_dir))
-        finally:
-            readonly_dir.chmod(0o755)  # Restore permissions for cleanup
+        # Should raise when trying to create directories
+        with pytest.raises(
+            TraigentStorageError, match="Failed to create storage directories"
+        ):
+            LocalStorageManager(str(blocker / "storage"))
 
     def test_concurrent_access_simulation(self):
         """Test handling of simulated concurrent access."""
