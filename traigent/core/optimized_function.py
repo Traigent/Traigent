@@ -1177,6 +1177,11 @@ class OptimizedFunction[**P, R]:
     #: Declarations from ``@traigent.requirement`` below ``@optimize``; set by the
     #: decorator only when present, so absence stays absence (read via getattr).
     requirements: Any
+    #: ``CrewDeclaration`` from ``optimize(crew=..., role=...)`` (content: never logged).
+    crew_declaration: Any = None
+    #: Closed ``CrewBinding`` (status and ids, no names) from the last run's session
+    #: create; None until a run with a declared crew has created its session.
+    crew_binding: Any = None
 
     def __init__(
         self,
@@ -3861,6 +3866,7 @@ class OptimizedFunction[**P, R]:
         orchestrator.task_type = self.task_type
         orchestrator.dataset_id = self.dataset_id
         orchestrator.head_environment = self._csm.best_config_environment
+        orchestrator.crew_declaration = self.crew_declaration
         # The identity the SDK's own development log is stamped with, so that
         # auto-discovery can later load only an artifact that is ours.
         orchestrator.head_function_ref = function_ref_for(self._csm.func)
@@ -3938,6 +3944,8 @@ class OptimizedFunction[**P, R]:
                             function_name=self.experiment_name,
                         )
 
+                self._adopt_crew_binding(orchestrator)
+
                 # Store results
                 self._optimization_results = result
                 self._csm.append_optimization_result(result)
@@ -3950,6 +3958,7 @@ class OptimizedFunction[**P, R]:
                 self._state = OptimizationState.OPTIMIZED
 
             except BaseException:
+                self._adopt_crew_binding(orchestrator)
                 # Set state to ERROR on failure -- including CancelledError and
                 # KeyboardInterrupt (BaseException), which used to leave the
                 # wrapper stuck in OPTIMIZING, where current_config raises.
@@ -6090,6 +6099,16 @@ Remediation:
     def agent_name(self) -> str:
         """Preferred alias of :pyattr:`experiment_name` — the agent's stable identity."""
         return self.experiment_name
+
+    def _adopt_crew_binding(self, orchestrator: Any) -> None:
+        """Expose the session's closed crew binding as ``crew_binding`` (``unknown``
+        when the run was offline or the backend sent none)."""
+        if self.crew_declaration is None:
+            return
+        from traigent.utils.crew_declaration import UNKNOWN_BINDING
+
+        binding = getattr(orchestrator, "crew_binding", None)
+        self.crew_binding = binding if binding is not None else UNKNOWN_BINDING
 
     @property
     def declared_agent_name(self) -> str | None:

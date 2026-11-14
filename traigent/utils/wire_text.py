@@ -25,6 +25,7 @@ from traigent.core.exception_handler import (
     VendorErrorCategory,
     classify_vendor_error,
 )
+from traigent.utils.crew_declaration import DECLARATION_METADATA_KEY
 
 ERROR_TRIAL_FAILED = "trial_failed"
 ERROR_TRIAL_CANCELLED = "trial_cancelled"
@@ -221,6 +222,9 @@ def filter_wire_metadata(metadata: Any) -> dict[str, Any]:
     if not isinstance(metadata, Mapping):
         return {}
     out: dict[str, Any] = copy.deepcopy(dict(metadata))
+    # A caller-supplied raw declaration never crosses; only crew_declaration_to_wire's
+    # validated output, added after this filter, may carry one.
+    out.pop(DECLARATION_METADATA_KEY, None)
     for key, keep in _WIRE_METADATA_FILTERS:
         if key in out:
             out[key] = keep(out[key])

@@ -485,6 +485,9 @@ class SessionCreationResult:
     # promotions are protected by the ref-addressed head precondition.
     agent_ref: str | None = None
     content_less: bool = False
+    # Closed crew binding the backend answered with (``CrewBinding``); None when no
+    # crew was declared or the backend sent none.
+    crew_binding: Any = None
     # Execution-path transparency (so a caller never mistakes a local run for a
     # managed/cloud one). ``execution_path`` is "connected" for a real backend
     # session and "local_fallback" for any local result. ``backend_fallback`` is
@@ -521,6 +524,7 @@ class SessionCreationResult:
         agent_id: str | None = None,
         agent_ref: str | None = None,
         content_less: bool = False,
+        crew_binding: Any = None,
     ) -> SessionCreationResult:
         """Factory for a successful backend session."""
         return cls(
@@ -531,6 +535,7 @@ class SessionCreationResult:
             agent_id=agent_id,
             agent_ref=agent_ref,
             content_less=content_less,
+            crew_binding=crew_binding,
             execution_path="connected",
             backend_fallback=False,
             degraded=False,

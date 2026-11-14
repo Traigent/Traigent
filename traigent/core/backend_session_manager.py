@@ -25,6 +25,7 @@ from traigent.api.types import (
     TrialStatus,
 )
 from traigent.config.types import ExecutionIntent, TraigentConfig, _read_bool_env
+from traigent.utils.crew_declaration import CONFLICT_WARNING, NOT_SENT_MESSAGE
 from traigent.utils.wire_text import filter_agent_configuration
 
 if TYPE_CHECKING:
@@ -1782,6 +1783,7 @@ class BackendSessionManager:
         dataset_id: str | None = None,
         content_identity: dict[str, Any] | None = None,
         evaluator_code_digest: str | None = None,
+        crew_declaration: Any = None,
         head_environment: str | None = None,
         head_environment_explicit: bool | None = None,
         content_less: Any = None,
@@ -1836,6 +1838,7 @@ class BackendSessionManager:
             )
 
         head = _SessionHeadBinding()
+        crew_binding: Any = None
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
             self._warn_if_dataset_unlinked(dataset, dataset_id)
@@ -1909,6 +1912,19 @@ class BackendSessionManager:
                 content_identity, content_less, evaluator_code_digest
             )
             g1_kwargs = self._build_g1_create_kwargs()
+            if crew_declaration is not None and bool(
+                getattr(self._traigent_config, "privacy_enabled", False)
+            ):
+                # Privacy mode withholds the declaration like content-less and
+                # optimization_only: dropped before any body is built, one keyless line.
+                logger.info(NOT_SENT_MESSAGE)
+                crew_declaration = None
+            # Only when declared: a client without the kwarg is never handed it.
+            crew_kwargs = (
+                {"crew_declaration": crew_declaration}
+                if crew_declaration is not None
+                else {}
+            )
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 agent_key=declared_agent_key,
@@ -1933,9 +1949,15 @@ class BackendSessionManager:
                 dataset_id=dataset_id,
                 **identity_kwargs,
                 **g1_kwargs,
+                **crew_kwargs,
             )
             result = self.normalize_session_creation_result(raw_result)
             self._refuse_disconnected_create(result)
+            if crew_declaration is not None and result.backend_connected:
+                crew_binding = result.crew_binding
+                if crew_binding is not None and crew_binding.status == "conflict":
+                    # Once per session; a fixed text that never repeats the keys.
+                    logger.warning(CONFLICT_WARNING)
             session_id = self.handle_session_creation_result(
                 result,
                 governed_session=bool(promotion_policy or tvl_governance),
@@ -1968,6 +1990,7 @@ class BackendSessionManager:
             agent_ref=head.agent_ref,
             content_less=head.content_less,
             head_capture_refusal=head.head_capture_refusal,
+            crew_binding=crew_binding,
         )
 
     @staticmethod
