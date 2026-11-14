@@ -28,6 +28,7 @@ from traigent.cloud.dtos import MeasuresDict
 from traigent.cloud.session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
 )
+from traigent.cloud.url_security import same_host_redirect_trace_configs
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import (
@@ -63,6 +64,7 @@ except ImportError:
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
+
 
 logger = get_logger(__name__)
 
@@ -529,7 +531,9 @@ class TrialOperations:
             yield await self.client._ensure_session()
             return
         async with gate_session(
-            aiohttp.ClientSession(trust_env=True),
+            aiohttp.ClientSession(
+                trace_configs=same_host_redirect_trace_configs(), trust_env=True
+            ),
             origins=client_origins(self.client),
             optimization_only=oo_egress.explicit_of(self.client),
         ) as session:

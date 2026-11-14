@@ -98,7 +98,7 @@ from .session_budgets import (
 from .session_objectives import normalize_typed_objectives, session_objective_to_wire
 from .smart_pruning import normalize_smart_pruning_options
 from .subset_selection import SmartSubsetSelector
-from .url_security import validate_cloud_base_url
+from .url_security import same_host_redirect_trace_configs, validate_cloud_base_url
 
 logger = get_logger(__name__)
 
@@ -993,6 +993,7 @@ class TraigentCloudClient(BaseTraigentClient):
         await self.auth.get_headers()
         self._aio_session = gate_session(
             aiohttp.ClientSession(
+                trace_configs=same_host_redirect_trace_configs(),
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 trust_env=True,
             ),
@@ -1048,6 +1049,7 @@ class TraigentCloudClient(BaseTraigentClient):
             # The check above only proves credentials exist; they are sent per request.
             self._aio_session = gate_session(
                 aiohttp.ClientSession(
+                    trace_configs=same_host_redirect_trace_configs(),
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
                     trust_env=True,
                 ),

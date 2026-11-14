@@ -13,7 +13,10 @@ import backoff
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud._detached_raise import raise_detached
 from traigent.cloud.client import raise_if_cloud_egress_disabled
-from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.cloud.url_security import (
+    same_host_redirect_trace_configs,
+    validate_cloud_base_url,
+)
 from traigent.core.session_types import safe_http_error_summary
 from traigent.labels.transport_gate import gate_session
 from traigent.utils import optimization_only_egress as oo_egress
@@ -187,6 +190,7 @@ class OptimizerDirectClient:
         """Async context manager entry."""
         self.session = gate_session(
             aiohttp.ClientSession(
+                trace_configs=same_host_redirect_trace_configs(),
                 headers={
                     "Authorization": f"Bearer {self.token}",
                     "Content-Type": "application/json",

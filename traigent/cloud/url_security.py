@@ -426,6 +426,52 @@ def open_no_redirect(req: urllib.request.Request, *, timeout: float) -> Any:
     return build_no_redirect_opener().open(req, timeout=timeout)
 
 
+class CrossHostRedirectError(ValueError):
+    """An HTTP redirect would send a credential-bearing request to another host."""
+
+
+def check_redirect_stays_on_host(current_url: str, location: str) -> str:
+    """Return the absolute redirect target, refusing a host change or a downgrade.
+
+    A redirect that keeps the host (a path change, an http->https upgrade) is
+    fine; one that moves to another host, or from https to http, would replay
+    credential headers somewhere ``validate_cloud_base_url`` never inspected.
+    """
+    from urllib.parse import urljoin
+
+    target = urljoin(current_url, location)
+    cur, new = urlparse(current_url), urlparse(target)
+    if (new.hostname or "").lower() != (cur.hostname or "").lower() or (
+        cur.scheme == "https" and new.scheme != "https"
+    ):
+        raise CrossHostRedirectError(
+            "refusing redirect to a different host or insecure scheme"
+        ) from None
+    return target
+
+
+def same_host_redirect_trace_configs() -> list[Any]:
+    """aiohttp ``trace_configs`` that refuse cross-host or https->http redirects.
+
+    Pass as ``aiohttp.ClientSession(trace_configs=...)`` for sessions that send
+    credentials to the configured backend. Returns ``[]`` when aiohttp is not
+    importable so callers never need their own guard.
+    """
+    try:
+        import aiohttp
+    except ImportError:  # pragma: no cover - minimal environments
+        return []
+
+    async def _on_redirect(_session: Any, _ctx: Any, params: Any) -> None:
+        location = params.response.headers.get("Location")
+        if location:
+            check_redirect_stays_on_host(str(params.url), location)
+
+    trace_config = aiohttp.TraceConfig()
+    trace_config.on_request_redirect.append(_on_redirect)
+    return [trace_config]
+
+
 def private_backend_opt_in_covers(url: str) -> bool:
     """Public form of the opt-in check, used by the transport gate.
 

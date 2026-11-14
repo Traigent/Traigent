@@ -22,7 +22,10 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 from traigent.cloud.client import raise_if_cloud_egress_disabled
-from traigent.cloud.url_security import validate_always_blocked_cloud_url
+from traigent.cloud.url_security import (
+    same_host_redirect_trace_configs,
+    validate_always_blocked_cloud_url,
+)
 from traigent.config.backend_config import BackendConfig, is_strict_endpoint_mode
 from traigent.labels.transport_gate import gate_session
 from traigent.utils import optimization_only_egress as oo_egress
@@ -218,6 +221,7 @@ class DatasetConverter:
         if AIOHTTP_AVAILABLE:
             self._session = gate_session(
                 aiohttp.ClientSession(
+                    trace_configs=same_host_redirect_trace_configs(),
                     timeout=aiohttp.ClientTimeout(total=60),
                     trust_env=True,
                 ),
