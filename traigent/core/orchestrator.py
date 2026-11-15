@@ -4604,12 +4604,12 @@ class OptimizationOrchestrator:
                     )
                 else:
                     manager.on_optimization_complete(result)
-        except BaseException:  # noqa: B036 - must not mask the original exit
+        except BaseException:  # noqa: B036 - must not mask the original exit NOSONAR(python:S5754)
             logger.debug("Completion callback failed on abnormal exit", exc_info=True)
         finally:
             try:
                 manager.close()
-            except BaseException:  # noqa: B036 - must not mask the original exit
+            except BaseException:  # noqa: B036 - must not mask the original exit NOSONAR(python:S5754)
                 logger.debug("Callback manager close failed", exc_info=True)
 
     def _remember_trial_result(self, trial_number: int, result: Any) -> None:
@@ -4662,7 +4662,7 @@ class OptimizationOrchestrator:
                 )
                 progress = self._get_progress_info(trial_number)
             self.callback_manager.on_trial_complete(trial, progress)
-        except BaseException:  # noqa: B036 - must not mask the interrupt
+        except BaseException:  # noqa: B036 - must not mask the interrupt NOSONAR(python:S5754)
             logger.debug("Interrupted-trial callback failed", exc_info=True)
 
     def _check_cost_approval(self, dataset: Dataset) -> None:
