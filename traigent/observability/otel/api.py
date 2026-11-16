@@ -366,7 +366,10 @@ def init(
         if not offline:
             # send exactly what the gate validated: never re-read key/destination
             key = snap_key
-            assert key is not None  # noqa: S101 - narrowed by the guard above
+            if key is None:  # unreachable: the guard above switches to offline
+                raise RuntimeError(
+                    "observability exporter built without a validated key"
+                )
             base = snap_base or (
                 endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}"
             ).rstrip("/")
