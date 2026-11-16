@@ -75,14 +75,21 @@ def _quiet_otel_header_logs() -> Iterator[None]:
             return False
 
     drop = _DropAll()
-    loggers = [
-        _logging.getLogger(n)
-        for n in (
-            "opentelemetry.util.re",
-            "opentelemetry.exporter.otlp.proto.http.trace_exporter",
-            "opentelemetry.exporter.otlp.proto.http",
-        )
-    ]
+    names = {
+        "opentelemetry",
+        "opentelemetry.util.re",
+        "opentelemetry.exporter.otlp.proto.http.trace_exporter",
+        "opentelemetry.exporter.otlp.proto.http",
+        "requests",
+        "urllib3",
+    }
+    # Filters on a logger only see records logged ON it, so also cover every
+    # already-created child logger of the HTTP stack (exception text raised during
+    # export can embed header content).
+    for existing in list(_logging.root.manager.loggerDict):
+        if existing.split(".", 1)[0] in {"opentelemetry", "requests", "urllib3"}:
+            names.add(existing)
+    loggers = [_logging.getLogger(n) for n in sorted(names)]
     for lg in loggers:
         lg.addFilter(drop)
     try:
@@ -90,6 +97,30 @@ def _quiet_otel_header_logs() -> Iterator[None]:
     finally:
         for lg in loggers:
             lg.removeFilter(drop)
+
+
+class UnsafeTraceHeadersError(ValueError):
+    """The decoded OTLP headers contain control characters: fail closed.
+
+    The message is fixed on purpose: it never names a header value or key.
+    """
+
+
+def _reject_control_chars(headers: dict[str, str]) -> dict[str, str]:
+    for name, value in headers.items():
+        for text in (str(name), str(value)):
+            if any(ord(c) < 0x20 or ord(c) == 0x7F for c in text):
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "OTLP trace headers rejected: %d header(s) contain control "
+                    "characters; tracing disabled for this configuration.",
+                    len(headers),
+                )
+                raise UnsafeTraceHeadersError(
+                    "OTLP trace headers contain control characters"
+                )
+    return headers
 
 
 def _resolve_trace_headers() -> dict[str, str]:
@@ -110,16 +141,17 @@ def _resolve_trace_headers() -> dict[str, str]:
 
         with _quiet_otel_header_logs():
             try:
-                return dict(_parse(raw, liberal=True))
+                parsed = dict(_parse(raw, liberal=True))
             except TypeError:  # older OpenTelemetry without ``liberal``
-                return dict(_parse(raw))
+                parsed = dict(_parse(raw))
+        return _reject_control_chars(parsed)
     except ImportError:
         out: dict[str, str] = {}
         for pair in raw.split(","):
             name, sep, value = pair.partition("=")
             if sep:
                 out[name.strip().lower()] = value.strip()
-        return out
+        return _reject_control_chars(out)
 
 
 def _api_key_from_headers(headers: dict[str, str]) -> str | None:
@@ -472,7 +504,10 @@ except ImportError:
         # will actually send; a non-Traigent collector is untouched).
         # Resolve the exporter headers ONCE, with OpenTelemetry's own semantics, and
         # pass them explicitly: the gate then checks the very key that is sent.
-        headers = _resolve_trace_headers()
+        try:
+            headers = _resolve_trace_headers()
+        except UnsafeTraceHeadersError:
+            return None  # fail closed: no exporter, tracing off (already logged)
         frozen_key = _effective_trace_api_key(headers)
         if not oo_egress.ensure_trace_egress_allowed(frozen_key, otlp_endpoint):
             # A denial may be transient (validation failure has a 60 s TTL in the

@@ -106,7 +106,16 @@ class _GatedSpanExporter:
 
         if _tracing()._optimization_only_blocks_export(self._endpoint, self._api_key):
             return SpanExportResult.SUCCESS
-        return self._inner.export(spans)
+        try:
+            with _tracing()._quiet_otel_header_logs():
+                return self._inner.export(spans)
+        except Exception as exc:  # noqa: BLE001 - closed message, never str(exc)
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "trace export failed (%s); batch dropped", type(exc).__name__
+            )
+            return SpanExportResult.FAILURE
 
     def shutdown(self) -> None:
         self._inner.shutdown()
@@ -130,7 +139,10 @@ def build_gated_otlp_exporter(otlp_endpoint: str) -> tuple[Any, str | None] | No
     from traigent.utils import optimization_only_egress as oo_egress
 
     t = _tracing()
-    headers = t._resolve_trace_headers()
+    try:
+        headers = t._resolve_trace_headers()
+    except t.UnsafeTraceHeadersError:
+        return None  # fail closed: malformed credentials never reach an exporter
     frozen_key = t._effective_trace_api_key(headers)
     if not oo_egress.ensure_trace_egress_allowed(frozen_key, otlp_endpoint):
         return None

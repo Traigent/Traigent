@@ -1428,3 +1428,79 @@ def test_cache_digest_is_a_slow_kdf_not_a_bare_or_keyed_fast_hash() -> None:
     assert _SYNTH_CRED not in digest
     src = inspect.getsource(oo._cache_digest)
     assert "pbkdf2_hmac" in src and "hmac.new" not in src
+
+
+# ---- round-4 review: control-char headers and export-time exception text ------------------
+
+_CRLF_HEADERS = f"authorization=Bearer%20{_SYNTH_CRED}%0Amalformed"
+
+
+def test_control_char_header_is_rejected_without_exporter(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from traigent.core import trace_export_gate, tracing
+    from traigent.utils import optimization_only_egress as oo_egress
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", _CRLF_HEADERS)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", raising=False)
+    monkeypatch.setattr(oo_egress, "ensure_trace_egress_allowed", lambda *a, **k: True)
+    with caplog.at_level(logging.DEBUG):
+        caplog.set_level(logging.DEBUG, logger="")
+        with pytest.raises(tracing.UnsafeTraceHeadersError):
+            tracing._resolve_trace_headers()
+        # gate/plugin path: no exporter built
+        assert (
+            trace_export_gate.build_gated_otlp_exporter("http://collector.test") is None
+        )
+    _assert_no_cred_logged(caplog)
+
+
+def test_embedded_tracer_not_built_for_control_char_header(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    tracing = _real_core_tracer(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", _CRLF_HEADERS)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", raising=False)
+    with capture_egress() as cap, caplog.at_level(logging.DEBUG):
+        caplog.set_level(logging.DEBUG, logger="")
+        cap.backend.validate_response = {"valid": True, "optimization_only": False}
+        assert tracing.get_tracer() is None
+    _assert_no_cred_logged(caplog)
+
+
+def test_export_exception_text_is_never_logged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from opentelemetry.sdk.trace.export import SpanExportResult
+
+    from traigent.core import trace_export_gate
+    from traigent.utils import optimization_only_egress as oo_egress
+
+    monkeypatch.setattr(oo_egress, "ensure_trace_egress_allowed", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "traigent.core.tracing._optimization_only_blocks_export", lambda *a, **k: False
+    )
+
+    class _Boom:
+        def export(self, spans: object) -> object:
+            logging.getLogger(
+                "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+            ).error("Failed to export: %s", _SYNTH_CRED)
+            logging.getLogger("urllib3.connectionpool").warning(_SYNTH_CRED)
+            raise RuntimeError(f"Invalid header value Bearer {_SYNTH_CRED}")
+
+    exporter = trace_export_gate._GatedSpanExporter(
+        _Boom(), "http://collector.test", "k"
+    )
+    with caplog.at_level(logging.DEBUG):
+        caplog.set_level(logging.DEBUG, logger="")
+        result = exporter.export([])
+    assert result == SpanExportResult.FAILURE
+    assert "RuntimeError" in caplog.text
+    _assert_no_cred_logged(caplog)
