@@ -66,15 +66,26 @@ def _quiet_otel_header_logs() -> Iterator[None]:
     OpenTelemetry logs a malformed ``name=value`` header verbatim
     ("x-api-key=<credential>;") and re-parses the env headers whenever an exporter
     is built with falsy headers. Wrap every header parse AND exporter construction
-    in this so no credential text can reach any log handler.
+    in this so no credential text can reach any log handler. The suppression is
+    scoped to the calling thread: records from other threads are untouched.
     """
     import logging as _logging
+    import threading as _threading
 
-    class _DropAll(_logging.Filter):
+    owner_thread = _threading.get_ident()
+
+    class _DropOwnThread(_logging.Filter):
+        """Reject records only when logged on the thread that entered the context.
+
+        Other threads (the host application's own requests/urllib3 logging) keep
+        their records. Each context manager instance owns its own filter object,
+        so nested or concurrent use removes only its own filter.
+        """
+
         def filter(self, record: _logging.LogRecord) -> bool:  # noqa: A003
-            return False
+            return _threading.get_ident() != owner_thread
 
-    drop = _DropAll()
+    drop = _DropOwnThread()
     names = {
         "opentelemetry",
         "opentelemetry.util.re",
