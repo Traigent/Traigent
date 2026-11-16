@@ -48,6 +48,7 @@ from traigent.config.backend_config import (
 from traigent.config.project import apply_project_header
 from traigent.core.session_types import (
     PROJECT_CONTEXT_REQUIRED_MESSAGE,
+    is_project_context_required_response,
     safe_http_error_summary,
 )
 from traigent.labels.transport_gate import client_origins, gate_session, mark_explicit
@@ -1494,6 +1495,8 @@ class SessionOperations:
                 await self._reset_client_session(
                     "finalize_hybrid_session unexpected response"
                 )
+                if is_project_context_required_response(response.status, error_text):
+                    raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                 raise CloudServiceError(
                     "Failed to finalize session: "
                     f"{safe_http_error_summary(response.status, error_text)}"

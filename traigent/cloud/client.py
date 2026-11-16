@@ -42,6 +42,7 @@ from traigent.core.session_types import (
     PROJECT_CONTEXT_REQUIRED_MESSAGE,
     QuotaRefusalFacts,
     SessionCreationFailureDetail,
+    is_project_context_required_response,
     normalize_next_trial_payload,
     safe_http_error_summary,
 )
@@ -2007,6 +2008,10 @@ class TraigentCloudClient(BaseTraigentClient):
                     )
                 else:
                     error_text = await response.text()
+                    if is_project_context_required_response(
+                        response.status, error_text
+                    ):
+                        raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     raise CloudServiceError(
                         f"Failed to get next trial: {safe_http_error_summary(response.status, error_text)}"
                     )
@@ -2096,6 +2101,10 @@ class TraigentCloudClient(BaseTraigentClient):
                     )
                 elif response.status not in [200, 201, 204]:
                     error_text = await response.text()
+                    if is_project_context_required_response(
+                        response.status, error_text
+                    ):
+                        raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     raise CloudServiceError(
                         f"Failed to submit result: {safe_http_error_summary(response.status, error_text)}"
                     )
@@ -2156,6 +2165,10 @@ class TraigentCloudClient(BaseTraigentClient):
                     )
                 else:
                     error_text = await response.text()
+                    if is_project_context_required_response(
+                        response.status, error_text
+                    ):
+                        raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     raise CloudServiceError(
                         f"Failed to finalize session: {safe_http_error_summary(response.status, error_text)}"
                     )

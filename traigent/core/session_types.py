@@ -216,6 +216,18 @@ SAFE_HTTP_ERROR_CODES = (
 )
 
 
+def is_project_context_required_response(
+    status_code: int | None, raw_body: str | None
+) -> bool:
+    """True for a 422 carrying the closed PROJECT_CONTEXT_REQUIRED(_FOR_WRITE) code."""
+
+    if status_code != 422:
+        return False
+    return SessionCreationFailureDetail.from_http_response(
+        status_code, raw_body
+    ).is_project_context_required
+
+
 def safe_http_error_summary(status_code: int | None, raw_body: str | None) -> str:
     """Content-free summary of a backend HTTP error: status and closed code only.
 
