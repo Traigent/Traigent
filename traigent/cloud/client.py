@@ -37,6 +37,7 @@ else:  # pragma: no cover - minimal environments without aiohttp
     _REAL_AIOHTTP_CLIENT_SESSION = None
 
 from traigent.config.backend_config import PRICING_URL, BackendConfig
+from traigent.config.project import apply_project_header
 from traigent.core.session_types import (
     QuotaRefusalFacts,
     SessionCreationFailureDetail,
@@ -1083,6 +1084,8 @@ class TraigentCloudClient(BaseTraigentClient):
         headers = await self.auth.get_headers()
         if "Authorization" not in headers and "X-API-Key" not in headers:
             raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
+        headers = dict(headers)
+        apply_project_header(headers)
         return cast(dict[str, str], headers)
 
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:

@@ -45,7 +45,10 @@ from traigent.config.backend_config import (
     BackendConfig,
     EndpointNotConfiguredError,
 )
-from traigent.core.session_types import safe_http_error_summary
+from traigent.core.session_types import (
+    PROJECT_CONTEXT_REQUIRED_MESSAGE,
+    safe_http_error_summary,
+)
 from traigent.labels.transport_gate import client_origins, gate_session, mark_explicit
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
@@ -1338,6 +1341,12 @@ class SessionOperations:
                     detail = SessionCreationFailureDetail.from_http_response(
                         response.status, error_text
                     )
+                    if detail.is_project_context_required:
+                        project_exc = CloudServiceError(
+                            PROJECT_CONTEXT_REQUIRED_MESSAGE
+                        )
+                        project_exc.session_creation_failure = detail  # type: ignore[attr-defined]
+                        raise project_exc from None
                     if detail.is_quota_refusal:
                         raise SessionQuotaRefusedError.from_detail(detail)
                     if detail.is_closed_refusal:

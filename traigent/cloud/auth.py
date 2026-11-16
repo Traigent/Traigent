@@ -32,6 +32,7 @@ from traigent.cloud.session_types import SessionCreationFailureDetail
 from traigent.cloud.token_manager import TokenManager
 from traigent.cloud.url_security import validate_cloud_base_url_async
 from traigent.cloud.user_agent import get_sdk_user_agent
+from traigent.config.project import apply_project_header
 from traigent.labels.transport_gate import (
     freeze_json_body,
     gate_session,
@@ -1225,6 +1226,9 @@ class AuthManager:
         # Propagate the active trace context so SDK->backend calls join one
         # distributed trace. No-op when tracing is unavailable / no span active.
         _inject_trace_context(headers)
+
+        # Writes require an explicit project; send the configured one (if any).
+        apply_project_header(headers)
 
     async def get_auth_headers(
         self,

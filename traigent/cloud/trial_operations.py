@@ -31,6 +31,8 @@ from traigent.cloud.session_budgets import (
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import (
+    PROJECT_CONTEXT_REQUIRED_MESSAGE,
+    SessionCreationFailureDetail,
     normalize_next_trial_payload,
     safe_http_error_summary,
 )
@@ -815,6 +817,12 @@ class TrialOperations:
                             error_msg,
                         )
                         return TrialSlotResult.unavailable()
+                    if response.status == 422:
+                        error_msg = await response.text()
+                        if SessionCreationFailureDetail.from_http_response(
+                            422, error_msg
+                        ).is_project_context_required:
+                            logger.warning(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     logger.warning(
                         "Failed to acquire trial slot for session %s: HTTP %s",
                         session_id,
