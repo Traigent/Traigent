@@ -37,9 +37,12 @@ else:  # pragma: no cover - minimal environments without aiohttp
     _REAL_AIOHTTP_CLIENT_SESSION = None
 
 from traigent.config.backend_config import PRICING_URL, BackendConfig
+from traigent.config.project import apply_project_header
 from traigent.core.session_types import (
+    PROJECT_CONTEXT_REQUIRED_MESSAGE,
     QuotaRefusalFacts,
     SessionCreationFailureDetail,
+    is_project_context_required_response,
     normalize_next_trial_payload,
     safe_http_error_summary,
 )
@@ -902,6 +905,7 @@ class TraigentCloudClient(BaseTraigentClient):
         timeout: float = 30.0,
         no_egress: bool = False,
         optimization_only: bool | None = None,
+        project_id: str | None = None,
     ) -> None:
         """Initialize cloud client.
 
@@ -914,7 +918,10 @@ class TraigentCloudClient(BaseTraigentClient):
             no_egress: Runtime policy flag that forbids backend transport
             optimization_only: Opt in (True) or out (False) of optimization-only egress;
                 None defers to ``TRAIGENT_OPTIMIZATION_ONLY`` (unset = legacy behaviour).
+            project_id: Project sent as ``X-Project-Id`` on backend writes; wins over
+                ``TRAIGENT_PROJECT_ID``. None defers to the environment.
         """
+        self._project_id = project_id
         self.optimization_only = oo_egress.parse_flag(
             optimization_only, source="optimization_only"
         )
@@ -1083,6 +1090,8 @@ class TraigentCloudClient(BaseTraigentClient):
         headers = await self.auth.get_headers()
         if "Authorization" not in headers and "X-API-Key" not in headers:
             raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
+        headers = dict(headers)
+        apply_project_header(headers, getattr(self, "_project_id", None))
         return cast(dict[str, str], headers)
 
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
@@ -1927,6 +1936,10 @@ class TraigentCloudClient(BaseTraigentClient):
         detail = SessionCreationFailureDetail.from_http_response(
             response.status, error_text
         )
+        if detail.is_project_context_required:
+            project_exc = CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
+            project_exc.session_creation_failure = detail  # type: ignore[attr-defined]
+            raise project_exc from None
         if detail.is_quota_refusal:
             raise SessionQuotaRefusedError.from_detail(detail) from None
         if detail.is_closed_refusal:
@@ -1995,6 +2008,10 @@ class TraigentCloudClient(BaseTraigentClient):
                     )
                 else:
                     error_text = await response.text()
+                    if is_project_context_required_response(
+                        response.status, error_text
+                    ):
+                        raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     raise CloudServiceError(
                         f"Failed to get next trial: {safe_http_error_summary(response.status, error_text)}"
                     )
@@ -2084,6 +2101,10 @@ class TraigentCloudClient(BaseTraigentClient):
                     )
                 elif response.status not in [200, 201, 204]:
                     error_text = await response.text()
+                    if is_project_context_required_response(
+                        response.status, error_text
+                    ):
+                        raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     raise CloudServiceError(
                         f"Failed to submit result: {safe_http_error_summary(response.status, error_text)}"
                     )
@@ -2144,6 +2165,10 @@ class TraigentCloudClient(BaseTraigentClient):
                     )
                 else:
                     error_text = await response.text()
+                    if is_project_context_required_response(
+                        response.status, error_text
+                    ):
+                        raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     raise CloudServiceError(
                         f"Failed to finalize session: {safe_http_error_summary(response.status, error_text)}"
                     )

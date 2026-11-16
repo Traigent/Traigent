@@ -53,6 +53,7 @@ from traigent.config.backend_config import (
 )
 from traigent.config.types import _warn_deprecated_once
 from traigent.core.session_types import (
+    PROJECT_CONTEXT_REQUIRED_MESSAGE,
     SessionCreationFailureDetail,
     SessionCreationHTTPError,
     safe_http_error_summary,
@@ -1301,6 +1302,11 @@ class ApiOperations:
             )
             cast(Any, auth_exc).session_creation_failure = detail
             raise auth_exc from structured_cause
+
+        if detail.is_project_context_required:
+            project_exc = CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
+            cast(Any, project_exc).session_creation_failure = detail
+            raise project_exc from structured_cause
 
         if status_code in (500, 502, 503, 504):
             logger.debug("Backend HTTP error: %s", status_code)

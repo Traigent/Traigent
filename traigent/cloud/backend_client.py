@@ -1062,6 +1062,7 @@ class BackendIntegratedClient:
         local_storage_path: str | None = None,
         no_egress: bool = False,
         optimization_only: bool | None = None,
+        project_id: str | None = None,
     ) -> None:
         """Initialize backend integrated client.
 
@@ -1078,7 +1079,10 @@ class BackendIntegratedClient:
             no_egress: Runtime policy flag that forbids backend transport
             optimization_only: Opt in (True) or out (False) of optimization-only egress;
                 None defers to ``TRAIGENT_OPTIMIZATION_ONLY`` (unset = legacy behaviour).
+            project_id: Project sent as ``X-Project-Id`` on backend writes; wins over
+                ``TRAIGENT_PROJECT_ID``. None defers to the environment.
         """
+        self.project_id = project_id
         self.optimization_only = parse_flag(
             optimization_only, source="optimization_only"
         )
@@ -1111,6 +1115,7 @@ class BackendIntegratedClient:
             effective_rate_limit,
             rate_limit_period,
             no_egress=self.no_egress,
+            project_id=project_id,
         )
         self.auth = self.auth_manager.auth
         self.session_manager = BackendSessionManager(

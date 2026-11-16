@@ -45,7 +45,12 @@ from traigent.config.backend_config import (
     BackendConfig,
     EndpointNotConfiguredError,
 )
-from traigent.core.session_types import safe_http_error_summary
+from traigent.config.project import apply_project_header
+from traigent.core.session_types import (
+    PROJECT_CONTEXT_REQUIRED_MESSAGE,
+    is_project_context_required_response,
+    safe_http_error_summary,
+)
 from traigent.labels.transport_gate import client_origins, gate_session, mark_explicit
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
@@ -1328,7 +1333,9 @@ class SessionOperations:
                         filter_wire_metadata(metadata) if metadata is not None else None
                     ),
                 },
-                headers=await self.client.auth_manager.auth.get_headers(),
+                headers=self._with_project(
+                    await self.client.auth_manager.auth.get_headers()
+                ),
             ) as response:
                 if response.status != 201:
                     error_text = await response.text()
@@ -1338,6 +1345,12 @@ class SessionOperations:
                     detail = SessionCreationFailureDetail.from_http_response(
                         response.status, error_text
                     )
+                    if detail.is_project_context_required:
+                        project_exc = CloudServiceError(
+                            PROJECT_CONTEXT_REQUIRED_MESSAGE
+                        )
+                        project_exc.session_creation_failure = detail  # type: ignore[attr-defined]
+                        raise project_exc from None
                     if detail.is_quota_refusal:
                         raise SessionQuotaRefusedError.from_detail(detail)
                     if detail.is_closed_refusal:
@@ -1406,7 +1419,9 @@ class SessionOperations:
             )
             async with session.get(
                 f"{api_base}/hybrid/sessions/{session_id}/status",
-                headers=await self.client.auth_manager.auth.get_headers(),
+                headers=self._with_project(
+                    await self.client.auth_manager.auth.get_headers()
+                ),
             ) as response:
                 if response.status == 200:
                     return cast(dict[str, Any], await response.json())
@@ -1456,7 +1471,9 @@ class SessionOperations:
             )
             async with session.post(
                 f"{api_base}/hybrid/sessions/{session_id}/finalize",
-                headers=await self.client.auth_manager.auth.get_headers(),
+                headers=self._with_project(
+                    await self.client.auth_manager.auth.get_headers()
+                ),
             ) as response:
                 if response.status == 200:
                     # Remove from active sessions
@@ -1478,6 +1495,8 @@ class SessionOperations:
                 await self._reset_client_session(
                     "finalize_hybrid_session unexpected response"
                 )
+                if is_project_context_required_response(response.status, error_text):
+                    raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                 raise CloudServiceError(
                     "Failed to finalize session: "
                     f"{safe_http_error_summary(response.status, error_text)}"
@@ -1989,6 +2008,13 @@ class SessionOperations:
                         raise AssertionError(
                             "unreachable"
                         )  # _raise_ownership_error never returns
+                    elif response.status == 422 and (
+                        SessionCreationFailureDetail.from_http_response(
+                            422, await response.text()
+                        ).is_project_context_required
+                    ):
+                        # Closed refusal: surface it, never degrade to None.
+                        raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     elif response.status == 401:
                         # Auth failure is never "endpoint unavailable": fail closed.
                         raise CloudServiceError(
@@ -2012,6 +2038,15 @@ class SessionOperations:
             # Class name only: the exception text can echo server/client content.
             logger.debug("Error calling backend finalization API: %s", type(e).__name__)
             return None
+
+    def _with_project(self, headers: dict[str, str]) -> dict[str, str]:
+        """Copy backend request headers and add ``X-Project-Id`` (backend only)."""
+        merged = dict(headers)
+        project_id = getattr(self.client, "project_id", None)
+        apply_project_header(
+            merged, project_id if isinstance(project_id, str) else None
+        )
+        return merged
 
     @staticmethod
     def _finalization_body(
@@ -2126,7 +2161,9 @@ class SessionOperations:
             async with session.delete(
                 url,
                 params={"cascade": "true"},
-                headers=await self.client.auth_manager.auth.get_headers(),
+                headers=self._with_project(
+                    await self.client.auth_manager.auth.get_headers()
+                ),
             ) as response:
                 if response.status in {200, 202, 204}:
                     return True
