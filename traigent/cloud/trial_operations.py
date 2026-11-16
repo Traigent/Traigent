@@ -822,7 +822,7 @@ class TrialOperations:
                         if SessionCreationFailureDetail.from_http_response(
                             422, error_msg
                         ).is_project_context_required:
-                            logger.warning(PROJECT_CONTEXT_REQUIRED_MESSAGE)
+                            logger.error(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     logger.warning(
                         "Failed to acquire trial slot for session %s: HTTP %s",
                         session_id,
@@ -1204,6 +1204,13 @@ class TrialOperations:
             )
             return False
         error_text = await response.text()
+        if (
+            response.status == 422
+            and SessionCreationFailureDetail.from_http_response(
+                422, error_text
+            ).is_project_context_required
+        ):
+            logger.error(PROJECT_CONTEXT_REQUIRED_MESSAGE)
         error_result = self._handle_trial_error_response(
             response.status, trial_id, session_id, url, error_text
         )
