@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import aiohttp
 import pytest
 from aiohttp import web
+from multidict import CIMultiDict
 
 from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
@@ -18,11 +19,6 @@ BODY_422 = (
     '{"success":false,"error_code":"PROJECT_CONTEXT_REQUIRED_FOR_WRITE",'
     '"message":"customer text must not appear"}'
 )
-SENSITIVE = {
-    "X-Project-Id": "proj_1",
-    "X-API-Key": "k",  # pragma: allowlist secret
-    "Authorization": "Bearer t",
-}
 
 
 async def _start(routes: list[web.RouteDef]):
@@ -38,18 +34,15 @@ async def _start(routes: list[web.RouteDef]):
 
 @pytest.fixture
 async def servers():
-    seen: dict[str, dict[str, str]] = {}
+    """Origin A redirects (302) to origin B and to itself; B records every request."""
+    hits: list[dict[str, str]] = []
 
-    async def target(request: web.Request) -> web.Response:
-        seen["target"] = dict(request.headers)
-        return web.json_response({"ok": True})
-
-    async def same_final(request: web.Request) -> web.Response:
-        seen["same"] = dict(request.headers)
+    async def record(request: web.Request) -> web.Response:
+        hits.append(dict(request.headers))
         return web.json_response({"ok": True})
 
     runner_b, base_b = await _start(
-        [web.post("/final", target), web.get("/final", target)]
+        [web.post("/final", record), web.get("/final", record)]
     )
 
     async def cross(request: web.Request) -> web.Response:
@@ -61,41 +54,74 @@ async def servers():
     runner_a, base_a = await _start(
         [
             web.post("/cross", cross),
+            web.get("/cross", cross),
             web.post("/same", same),
-            web.get("/same-final", same_final),
+            web.get("/same-final", record),
+            web.post("/same-final", record),
         ]
     )
-    yield base_a, seen
+    yield base_a, hits
     await runner_a.cleanup()
     await runner_b.cleanup()
 
 
-@pytest.mark.asyncio
-async def test_cross_origin_redirect_drops_project_and_credentials(servers):
-    base_a, seen = servers
-    session = gate_session(aiohttp.ClientSession(), origins=[base_a])
-    async with session:
-        async with session.post(
-            f"{base_a}/cross", json={"a": 1}, headers=dict(SENSITIVE)
-        ) as response:
-            assert response.status == 200
-    lowered = {k.lower() for k in seen["target"]}
-    assert "x-project-id" not in lowered
-    assert "x-api-key" not in lowered
-    assert "authorization" not in lowered
+CREDENTIAL_HEADER_FORMS = {
+    "dict": lambda: {"X-Project-Id": "proj_1"},
+    "api_key_dict": lambda: {"X-API-Key": "k"},  # pragma: allowlist secret
+    "authorization": lambda: {"Authorization": "Bearer t"},
+    "multidict": lambda: CIMultiDict({"x-project-id": "proj_1"}),
+    "tuples": lambda: [("X-Project-Id", "proj_1"), ("Accept", "*/*")],
+}
 
 
 @pytest.mark.asyncio
-async def test_same_origin_redirect_keeps_project_header(servers):
-    base_a, seen = servers
+@pytest.mark.parametrize("form", list(CREDENTIAL_HEADER_FORMS))
+@pytest.mark.parametrize("path", ["/cross", "/same"])
+async def test_credentialed_request_never_follows_a_redirect(servers, form, path):
+    # Refusal is origin-independent: the backend never redirects writes, so any
+    # 3xx on a credentialed request is returned to the caller, never followed.
+    base_a, hits = servers
     session = gate_session(aiohttp.ClientSession(), origins=[base_a])
     async with session:
         async with session.post(
-            f"{base_a}/same", json={"a": 1}, headers=dict(SENSITIVE)
+            f"{base_a}{path}", json={"a": 1}, headers=CREDENTIAL_HEADER_FORMS[form]()
         ) as response:
+            assert response.status == 302
+    assert hits == []  # neither the other origin nor the same-origin target was hit
+
+
+@pytest.mark.asyncio
+async def test_session_default_headers_also_refuse_redirects(servers):
+    base_a, hits = servers
+    session = gate_session(
+        aiohttp.ClientSession(headers={"X-Project-Id": "proj_1"}), origins=[base_a]
+    )
+    async with session:
+        async with session.post(f"{base_a}/cross", json={"a": 1}) as response:
+            assert response.status == 302
+    assert hits == []
+
+
+@pytest.mark.asyncio
+async def test_auth_argument_refuses_redirects(servers):
+    base_a, hits = servers
+    session = gate_session(aiohttp.ClientSession(), origins=[base_a])
+    async with session:
+        async with session.post(
+            f"{base_a}/cross", json={"a": 1}, auth=aiohttp.BasicAuth("u", "p")
+        ) as response:
+            assert response.status == 302
+    assert hits == []
+
+
+@pytest.mark.asyncio
+async def test_request_without_credentials_still_follows_redirects(servers):
+    base_a, hits = servers
+    session = gate_session(aiohttp.ClientSession(), origins=[base_a])
+    async with session:
+        async with session.get(f"{base_a}/cross") as response:
             assert response.status == 200
-    assert seen["same"]["X-Project-Id"] == "proj_1"
-    assert seen["same"]["X-API-Key"] == "k"  # pragma: allowlist secret
+    assert len(hits) == 1
 
 
 def _fake_http(status: int, body: str):

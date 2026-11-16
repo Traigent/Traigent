@@ -33,7 +33,7 @@ import urllib.request
 from collections import Counter
 from collections.abc import Iterable
 from typing import Any
-from urllib.parse import urlencode, urljoin, urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.exception_pickling import PicklableExceptionMixin
@@ -288,27 +288,37 @@ def _is_redirect_status(status: int) -> bool:
     return 300 <= int(status) < 400
 
 
-# Headers that must not follow a redirect to another origin. aiohttp drops only
-# ``Authorization``; the SDK's own credential and project headers would otherwise
-# be replayed to the redirect target.
-_CROSS_ORIGIN_STRIP_HEADERS = frozenset({"authorization", "x-api-key", "x-project-id"})
-_MAX_MANUAL_REDIRECTS = 10
+# Headers (or ``auth=``) that must never ride a redirect. aiohttp would replay
+# X-API-Key / X-Project-Id to the redirect target and re-add session-default
+# credentials, so a gated request carrying any of them does not follow redirects
+# at all: the 3xx comes back to the caller as a non-2xx response. Refusal is
+# origin-independent on purpose (the backend never redirects writes).
+_NO_REDIRECT_HEADERS = frozenset({"authorization", "x-api-key", "x-project-id"})
 
 
-def _origin_of(url: str) -> tuple[str, str, int | None]:
-    parts = urlsplit(str(url))
-    return (parts.scheme.lower(), (parts.hostname or "").lower(), parts.port)
-
-
-def _carries_strip_headers(kwargs: dict[str, Any]) -> bool:
-    headers = kwargs.get("headers")
-    if not headers:
-        return False
+def _header_names(source: Any) -> set[str]:
+    """Lower-cased header names from a dict, CIMultiDict or list of tuples."""
+    names: set[str] = set()
+    if not source:
+        return names
     try:
-        names = {str(k).lower() for k in headers}
-    except TypeError:
-        return False
-    return bool(names & _CROSS_ORIGIN_STRIP_HEADERS)
+        items = source.items() if hasattr(source, "items") else source
+        for item in items:
+            key = item[0] if isinstance(item, (tuple, list)) else item
+            names.add(str(key).lower())
+    except (TypeError, ValueError, IndexError):
+        # Unreadable header container: treat as carrying credentials (fail closed).
+        names.add("authorization")
+    return names
+
+
+def _carries_no_redirect_credentials(session: Any, kwargs: dict[str, Any]) -> bool:
+    if kwargs.get("auth") is not None or getattr(session, "_default_auth", None):
+        return True
+    names = _header_names(getattr(session, "headers", None)) | _header_names(
+        kwargs.get("headers")
+    )
+    return bool(names & _NO_REDIRECT_HEADERS)
 
 
 def _is_strict(client: Any) -> bool:
@@ -706,12 +716,8 @@ def _build_aiohttp(base: type) -> type:
                     extra_origins=extra,
                 )
             if not _refuses_redirects(self, url):
-                if kwargs.get("allow_redirects", True) and _carries_strip_headers(
-                    kwargs
-                ):
-                    return await self._follow_redirects_dropping_credentials(
-                        method, url, kwargs
-                    )
+                if _carries_no_redirect_credentials(self, kwargs):
+                    kwargs["allow_redirects"] = False
                 response = await super()._request(method, str_or_url, **kwargs)
                 await _latch_aiohttp(response, url, _effective_headers(self, kwargs))
                 return response
@@ -722,50 +728,6 @@ def _build_aiohttp(base: type) -> type:
                 raise _refuse_redirect(self)
             await _latch_aiohttp(response, url, _effective_headers(self, kwargs))
             return response
-
-        async def _follow_redirects_dropping_credentials(
-            self, method: Any, url: str, kwargs: dict[str, Any]
-        ) -> Any:
-            """Follow redirects hop by hop, dropping credential/project headers cross-origin.
-
-            Each hop goes back through the gate (policy, latch) with redirects off.
-            """
-            current_method = str(method)
-            current_url = url
-            hop_kwargs = dict(kwargs)
-            hop_kwargs["allow_redirects"] = False
-            max_redirects = int(kwargs.get("max_redirects", _MAX_MANUAL_REDIRECTS))
-            for _ in range(max_redirects + 1):
-                response = await self._request(
-                    current_method, current_url, **hop_kwargs
-                )
-                location = response.headers.get("Location") or response.headers.get(
-                    "URI"
-                )
-                if not _is_redirect_status(response.status) or not location:
-                    return response
-                response.release()
-                next_url = urljoin(current_url, location)
-                if _origin_of(next_url) != _origin_of(current_url):
-                    headers = hop_kwargs.get("headers")
-                    if headers:
-                        hop_kwargs["headers"] = {
-                            k: v
-                            for k, v in dict(headers).items()
-                            if str(k).lower() not in _CROSS_ORIGIN_STRIP_HEADERS
-                        }
-                if (
-                    response.status in (301, 302, 303)
-                    and current_method.upper() != "HEAD"
-                ):
-                    if response.status == 303 or current_method.upper() == "POST":
-                        current_method = "GET"
-                        for body_key in ("data", "json"):
-                            hop_kwargs.pop(body_key, None)
-                current_url = next_url
-            from aiohttp import ClientError
-
-            raise ClientError("Too many redirects")
 
     GatedClientSession.__name__ = f"Gated{base.__name__}"
     return GatedClientSession
