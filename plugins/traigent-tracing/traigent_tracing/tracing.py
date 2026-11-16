@@ -341,17 +341,43 @@ def _initialize_tracer() -> Tracer | None:
             id_generator=SecureIdGenerator(),
         )
 
-        # Add OTLP exporter
-        otlp_exporter = OTLPHttpSpanExporter(
-            endpoint=f"{otlp_endpoint}/v1/traces",
-        )
-        provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+        # Add OTLP exporter. optimization_only: the exporter must be the SDK's gated
+        # one (explicit frozen headers, send-time prepared-request check). If it is
+        # unavailable the add-on fails closed rather than building an ungated one.
+        try:
+            from traigent.core.trace_export_gate import build_gated_otlp_exporter
+        except ImportError:
+            # Fail CLOSED and loudly: an SDK without the gate must never get an
+            # ungated exporter from this add-on. Tracing stays off.
+            import logging
 
-        # Set as global provider
+            logging.getLogger(__name__).warning(
+                "traigent-tracing: tracing is DISABLED because the installed "
+                "traigent SDK lacks traigent.core.trace_export_gate (the "
+                "optimization_only export gate). Upgrade traigent to a release "
+                "that ships it (>=0.33.0.dev0)."
+            )
+            return None
+        built = build_gated_otlp_exporter(otlp_endpoint)
+        if built is None:
+            # A denial may be transient: re-consult later, but release the provider
+            # built above so repeated denials do not accumulate live providers.
+            try:
+                provider.shutdown()
+            except Exception:  # noqa: BLE001 - best-effort cleanup
+                pass
+            del provider
+            _initialized = False
+            return None
+        provider.add_span_processor(BatchSpanProcessor(built[0]))
+
+        # Best effort: make it the global provider. OpenTelemetry refuses to replace
+        # an existing one, so the tracer is taken from OUR provider (never the global
+        # ``trace.get_tracer``): a retained tracer must export only through the gated
+        # exporter above, not through whichever provider happened to be global first.
         trace.set_tracer_provider(provider)
 
-        # Get tracer
-        _tracer = trace.get_tracer("traigent.tracing", "1.0.0")
+        _tracer = provider.get_tracer("traigent.tracing", "1.0.0")
         return _tracer
 
     except Exception as e:
