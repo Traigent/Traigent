@@ -30,6 +30,7 @@ from __future__ import annotations
 import ast
 import copy
 import hashlib
+import hmac
 import io
 import ipaddress
 import json
@@ -2353,7 +2354,18 @@ _trace_clock: Callable[[], float] = time.monotonic
 # Guards only the dicts below. It is NEVER held while waiting on the network, so no
 # caller can block another behind it and it cannot deadlock with a caller's own lock.
 _trace_gate_lock = threading.Lock()
-#: (sha256(key), validation origin) -> (allowed, definitive, decided_at)
+
+#: Per-process random key for the in-memory cache digest below. The digest is only a
+#: lookup handle so the raw credential is never a dict key; a keyed MAC (not a bare
+#: password-style hash) makes it unusable outside this process.
+_CACHE_DIGEST_KEY = os.urandom(32)
+
+
+def _cache_digest(key_text: str) -> str:
+    return hmac.new(_CACHE_DIGEST_KEY, key_text.encode("utf-8"), "sha256").hexdigest()
+
+
+#: (keyed digest of key, validation origin) -> (allowed, definitive, decided_at)
 _trace_decisions: dict[tuple[str, str], tuple[bool, bool, float]] = {}
 
 
@@ -2366,7 +2378,7 @@ class _TraceValidator:
     box: dict[str, Any] = dc_field(default_factory=dict)
 
 
-#: (sha256(key), validation origin) -> the single in-flight validator for that key.
+#: (keyed digest of key, validation origin) -> the single in-flight validator for that key.
 _trace_validators: dict[tuple[str, str], _TraceValidator] = {}
 _warned_bearer_only = False
 
@@ -2576,7 +2588,7 @@ def ensure_trace_egress_allowed(
     base = _validation_base(endpoint)
     if base is None:
         return False
-    key = (hashlib.sha256(key_text.encode()).hexdigest(), base)
+    key = (_cache_digest(key_text), base)
     origins = {base, normalised_origin(endpoint) if endpoint else base}
     try:
         from traigent.config.backend_config import BackendConfig
