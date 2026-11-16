@@ -347,6 +347,16 @@ def _initialize_tracer() -> Tracer | None:
         try:
             from traigent.core.trace_export_gate import build_gated_otlp_exporter
         except ImportError:
+            # Fail CLOSED and loudly: an SDK without the gate must never get an
+            # ungated exporter from this add-on. Tracing stays off.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "traigent-tracing: tracing is DISABLED because the installed "
+                "traigent SDK lacks traigent.core.trace_export_gate (the "
+                "optimization_only export gate). Upgrade traigent to a release "
+                "that ships it (>=0.33.0.dev0)."
+            )
             return None
         built = build_gated_otlp_exporter(otlp_endpoint)
         if built is None:
@@ -354,11 +364,13 @@ def _initialize_tracer() -> Tracer | None:
             return None
         provider.add_span_processor(BatchSpanProcessor(built[0]))
 
-        # Set as global provider
+        # Best effort: make it the global provider. OpenTelemetry refuses to replace
+        # an existing one, so the tracer is taken from OUR provider (never the global
+        # ``trace.get_tracer``): a retained tracer must export only through the gated
+        # exporter above, not through whichever provider happened to be global first.
         trace.set_tracer_provider(provider)
 
-        # Get tracer
-        _tracer = trace.get_tracer("traigent.tracing", "1.0.0")
+        _tracer = provider.get_tracer("traigent.tracing", "1.0.0")
         return _tracer
 
     except Exception as e:

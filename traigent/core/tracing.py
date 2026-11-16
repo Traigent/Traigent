@@ -71,12 +71,27 @@ def _resolve_trace_headers() -> dict[str, str]:
     if not raw:
         return {}
     try:
+        import logging as _logging
+
         from opentelemetry.util.re import parse_env_headers as _parse
 
+        # OpenTelemetry logs the offending ``name=value`` pair verbatim when a header
+        # is malformed ("x-api-key=<credential>;"). Drop its records while parsing so
+        # no credential text can reach any log handler.
+        class _DropAll(_logging.Filter):
+            def filter(self, record: _logging.LogRecord) -> bool:  # noqa: A003
+                return False
+
+        _otel_log = _logging.getLogger("opentelemetry.util.re")
+        _drop = _DropAll()
+        _otel_log.addFilter(_drop)
         try:
-            return dict(_parse(raw, liberal=True))
-        except TypeError:  # older OpenTelemetry without ``liberal``
-            return dict(_parse(raw))
+            try:
+                return dict(_parse(raw, liberal=True))
+            except TypeError:  # older OpenTelemetry without ``liberal``
+                return dict(_parse(raw))
+        finally:
+            _otel_log.removeFilter(_drop)
     except ImportError:
         out: dict[str, str] = {}
         for pair in raw.split(","):
@@ -480,7 +495,7 @@ except ImportError:
         including truncated example output. Checked per call, so a tracer
         initialized by an earlier online run is not used by an offline one.
         """
-        global _tracer, _provider
+        global _tracer, _provider, _initialized
         if is_backend_offline():
             return None
         if _tracer is not None and _optimization_only_blocks_export(
@@ -489,6 +504,10 @@ except ImportError:
             # the credential latched (or the env flipped) after the tracer was cached:
             # tear the exporter down so queued spans are not sent either.
             provider, _tracer, _provider = _provider, None, None
+            # Re-arm initialisation: once the restriction is lifted a later call must
+            # be able to build a fresh gated tracer (the gate itself is re-consulted
+            # in ``_initialize_tracer``, so this never builds one while restricted).
+            _initialized = False
             if provider is not None:
                 try:
                     provider.shutdown()

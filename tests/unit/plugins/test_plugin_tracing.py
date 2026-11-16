@@ -361,3 +361,60 @@ class TestPluginErrorScrubbing:
         assert "trial.error" not in attribute_keys
         assert "example.error" not in attribute_keys
         span.set_status.assert_not_called()
+
+
+class TestPluginGateRound2:
+    """Review round 2: the plugin must not export through a pre-existing provider."""
+
+    @staticmethod
+    def _arm(plugin_tracing, monkeypatch) -> None:
+        monkeypatch.setattr(plugin_tracing, "_initialized", False)
+        monkeypatch.setattr(plugin_tracing, "_tracer", None)
+        monkeypatch.setattr(plugin_tracing, "TRACING_ENABLED", True)
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.test")
+
+    def test_tracer_comes_from_the_plugin_provider_not_the_global_one(
+        self, plugin_tracing, monkeypatch
+    ) -> None:
+        if not plugin_tracing.OTEL_AVAILABLE:
+            pytest.skip("OpenTelemetry not installed")
+        self._arm(plugin_tracing, monkeypatch)
+        fake_trace = MagicMock()
+        fake_trace.get_tracer.return_value = "GLOBAL-TRACER-FROM-EARLIER-PROVIDER"
+        monkeypatch.setattr(plugin_tracing, "trace", fake_trace)
+        exporter = MagicMock()
+        monkeypatch.setattr(
+            "traigent.core.trace_export_gate.build_gated_otlp_exporter",
+            lambda endpoint: (exporter, "k"),
+        )
+        monkeypatch.setattr(plugin_tracing, "BatchSpanProcessor", MagicMock())
+        tracer = plugin_tracing._initialize_tracer()
+        assert tracer is not None
+        assert tracer != "GLOBAL-TRACER-FROM-EARLIER-PROVIDER"
+        fake_trace.get_tracer.assert_not_called()
+
+    def test_missing_gate_module_fails_closed_with_a_warning(
+        self, plugin_tracing, monkeypatch, caplog
+    ) -> None:
+        import logging
+
+        if not plugin_tracing.OTEL_AVAILABLE:
+            pytest.skip("OpenTelemetry not installed")
+        self._arm(plugin_tracing, monkeypatch)
+        monkeypatch.setitem(sys.modules, "traigent.core.trace_export_gate", None)
+        with caplog.at_level(logging.WARNING):
+            assert plugin_tracing._initialize_tracer() is None
+        assert "trace_export_gate" in caplog.text
+        assert "DISABLED" in caplog.text
+
+    def test_pyproject_floor_is_not_older_than_the_gate_release(self) -> None:
+        import tomllib
+
+        repo_root = Path(__file__).resolve().parents[3]
+        data = tomllib.loads(
+            (repo_root / "plugins" / "traigent-tracing" / "pyproject.toml").read_text()
+        )
+        dep = next(
+            d for d in data["project"]["dependencies"] if d.startswith("traigent")
+        )
+        assert dep.replace(" ", "").startswith("traigent>=0.33")

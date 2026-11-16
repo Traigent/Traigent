@@ -30,7 +30,6 @@ from __future__ import annotations
 import ast
 import copy
 import hashlib
-import hmac
 import io
 import ipaddress
 import json
@@ -2355,14 +2354,21 @@ _trace_clock: Callable[[], float] = time.monotonic
 # caller can block another behind it and it cannot deadlock with a caller's own lock.
 _trace_gate_lock = threading.Lock()
 
-#: Per-process random key for the in-memory cache digest below. The digest is only a
-#: lookup handle so the raw credential is never a dict key; a keyed MAC (not a bare
-#: password-style hash) makes it unusable outside this process.
-_CACHE_DIGEST_KEY = os.urandom(32)
+#: Per-process random salt for the in-memory cache handle below. The handle only stops
+#: the raw credential being a dict key; it never leaves the process. It is derived with
+#: a computationally expensive KDF (PBKDF2), not a bare fast hash, so it is not a usable
+#: credential fingerprint even if a cache dump leaked.
+_CACHE_DIGEST_SALT = os.urandom(32)
+_CACHE_DIGEST_ITERATIONS = 2000
 
 
 def _cache_digest(key_text: str) -> str:
-    return hmac.new(_CACHE_DIGEST_KEY, key_text.encode("utf-8"), "sha256").hexdigest()
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        key_text.encode("utf-8"),
+        _CACHE_DIGEST_SALT,
+        _CACHE_DIGEST_ITERATIONS,
+    ).hex()
 
 
 #: (keyed digest of key, validation origin) -> (allowed, definitive, decided_at)

@@ -1311,3 +1311,82 @@ def test_async_workflow_ingest_never_follows_a_redirect(
     assert len(sent) == 1
     assert result.success is False
     assert "Redirect refused" in (result.error or "")
+
+
+# ---- round-2 review: workflow send-time backstop must see the snapshot headers -------------
+
+
+def test_workflow_key_latched_during_graph_serialization_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.integrations.observability.workflow_traces import (
+        WorkflowGraphPayload,
+        WorkflowTracesClient,
+    )
+
+    graph = WorkflowGraphPayload(experiment_id="e", nodes=[], edges=[])
+    real_to_dict = WorkflowGraphPayload.to_dict
+
+    with capture_egress() as cap:
+        client = WorkflowTracesClient(BACKEND_URL, R_KEY)
+
+        def latch_while_serializing(self: Any) -> Any:
+            # the key becomes restricted AFTER the entry gate allowed it
+            oo.latch_on(oo.credential_scope(BACKEND_URL, client._get_headers()))
+            return real_to_dict(self)
+
+        monkeypatch.setattr(WorkflowGraphPayload, "to_dict", latch_while_serializing)
+        with pytest.raises(oo.OptimizationOnlyRefusal):
+            client.ingest_traces(graph=graph)
+    assert _carries_key(cap, R_KEY) == []
+    assert [r for r in cap.requests if "/ingest" in r.path] == []
+
+
+# ---- round-2 review: credential-safe header parsing, re-arm after restriction -------------
+
+_SYNTH_CRED = "tk_synthetic_credential_do_not_log_0123456789"
+
+
+def test_malformed_otlp_header_never_logs_the_credential(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from traigent.core import tracing
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", f"x-api-key={_SYNTH_CRED};")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", raising=False)
+    with caplog.at_level(logging.DEBUG):
+        tracing._resolve_trace_headers()
+    assert _SYNTH_CRED not in caplog.text
+    assert _SYNTH_CRED not in "".join(r.getMessage() for r in caplog.records)
+
+
+def test_core_tracer_reinitializes_after_restriction_is_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracing = _real_core_tracer(monkeypatch)
+    with capture_egress() as cap:
+        cap.backend.validate_response = {"valid": True, "optimization_only": False}
+        assert tracing.get_tracer() is not None
+        monkeypatch.setenv(oo.ENV_VAR, "true")
+        assert tracing.get_tracer() is None  # restricted: torn down, nothing built
+        assert tracing.get_tracer() is None  # and still none while restricted
+        monkeypatch.delenv(oo.ENV_VAR)
+        oo.reset_latch()
+        oo.reset_trace_gate()
+        assert tracing.get_tracer() is not None  # unrestricted again: re-initializes
+        _teardown_provider(tracing)
+    assert cap.guard_violations == []
+
+
+def test_cache_digest_is_a_slow_kdf_not_a_bare_or_keyed_fast_hash() -> None:
+    import hashlib
+    import inspect
+
+    digest = oo._cache_digest(_SYNTH_CRED)
+    assert digest == oo._cache_digest(_SYNTH_CRED)
+    assert digest != hashlib.sha256(_SYNTH_CRED.encode()).hexdigest()
+    assert _SYNTH_CRED not in digest
+    src = inspect.getsource(oo._cache_digest)
+    assert "pbkdf2_hmac" in src and "hmac.new" not in src

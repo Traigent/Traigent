@@ -914,7 +914,9 @@ class WorkflowTracesClient:
             # Under the self-hosted opt-in the credential-bearing origin never
             # follows a redirect; a 3xx is reported as a refusal below.
             request_payload = freeze_json_body(request_payload)
-            preflight_requests("POST", ingest_url, json=request_payload)
+            preflight_requests(
+                "POST", ingest_url, json=request_payload, headers=snap_headers
+            )
             response = requests.post(
                 ingest_url,
                 json=request_payload,
