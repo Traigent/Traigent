@@ -393,6 +393,33 @@ class TestPluginGateRound2:
         assert tracer != "GLOBAL-TRACER-FROM-EARLIER-PROVIDER"
         fake_trace.get_tracer.assert_not_called()
 
+    def test_denied_calls_shut_down_the_provider_they_created(
+        self, plugin_tracing, monkeypatch
+    ) -> None:
+        if not plugin_tracing.OTEL_AVAILABLE:
+            pytest.skip("OpenTelemetry not installed")
+        self._arm(plugin_tracing, monkeypatch)
+        monkeypatch.setattr(
+            "traigent.core.trace_export_gate.build_gated_otlp_exporter",
+            lambda endpoint: None,
+        )
+        real_provider = plugin_tracing.TracerProvider
+        created: list = []
+
+        def _spy(*a, **k):
+            p = real_provider(*a, **k)
+            p.shutdown = MagicMock(wraps=p.shutdown)  # type: ignore[method-assign]
+            created.append(p)
+            return p
+
+        monkeypatch.setattr(plugin_tracing, "TracerProvider", _spy)
+        for _ in range(5):
+            assert plugin_tracing._initialize_tracer() is None
+            monkeypatch.setattr(plugin_tracing, "_initialized", False)
+        assert len(created) == 5
+        for p in created:
+            p.shutdown.assert_called_once()
+
     def test_missing_gate_module_fails_closed_with_a_warning(
         self, plugin_tracing, monkeypatch, caplog
     ) -> None:

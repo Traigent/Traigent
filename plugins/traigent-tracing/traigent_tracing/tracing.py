@@ -360,7 +360,14 @@ def _initialize_tracer() -> Tracer | None:
             return None
         built = build_gated_otlp_exporter(otlp_endpoint)
         if built is None:
-            _initialized = False  # a denial may be transient: re-consult later
+            # A denial may be transient: re-consult later, but release the provider
+            # built above so repeated denials do not accumulate live providers.
+            try:
+                provider.shutdown()
+            except Exception:  # noqa: BLE001 - best-effort cleanup
+                pass
+            del provider
+            _initialized = False
             return None
         provider.add_span_processor(BatchSpanProcessor(built[0]))
 

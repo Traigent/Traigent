@@ -21,6 +21,8 @@ For best tracing support, install the plugin:
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterator
 from typing import Any
 
 _MIN_PLUGIN_VERSION = (0, 1, 2)
@@ -57,6 +59,39 @@ def _plugin_version_ok() -> bool:
         return False
 
 
+@contextlib.contextmanager
+def _quiet_otel_header_logs() -> Iterator[None]:
+    """Drop OpenTelemetry's header-parser log records for the duration.
+
+    OpenTelemetry logs a malformed ``name=value`` header verbatim
+    ("x-api-key=<credential>;") and re-parses the env headers whenever an exporter
+    is built with falsy headers. Wrap every header parse AND exporter construction
+    in this so no credential text can reach any log handler.
+    """
+    import logging as _logging
+
+    class _DropAll(_logging.Filter):
+        def filter(self, record: _logging.LogRecord) -> bool:  # noqa: A003
+            return False
+
+    drop = _DropAll()
+    loggers = [
+        _logging.getLogger(n)
+        for n in (
+            "opentelemetry.util.re",
+            "opentelemetry.exporter.otlp.proto.http.trace_exporter",
+            "opentelemetry.exporter.otlp.proto.http",
+        )
+    ]
+    for lg in loggers:
+        lg.addFilter(drop)
+    try:
+        yield
+    finally:
+        for lg in loggers:
+            lg.removeFilter(drop)
+
+
 def _resolve_trace_headers() -> dict[str, str]:
     """OTLP headers exactly as OpenTelemetry resolves them from the environment.
 
@@ -71,27 +106,13 @@ def _resolve_trace_headers() -> dict[str, str]:
     if not raw:
         return {}
     try:
-        import logging as _logging
-
         from opentelemetry.util.re import parse_env_headers as _parse
 
-        # OpenTelemetry logs the offending ``name=value`` pair verbatim when a header
-        # is malformed ("x-api-key=<credential>;"). Drop its records while parsing so
-        # no credential text can reach any log handler.
-        class _DropAll(_logging.Filter):
-            def filter(self, record: _logging.LogRecord) -> bool:  # noqa: A003
-                return False
-
-        _otel_log = _logging.getLogger("opentelemetry.util.re")
-        _drop = _DropAll()
-        _otel_log.addFilter(_drop)
-        try:
+        with _quiet_otel_header_logs():
             try:
                 return dict(_parse(raw, liberal=True))
             except TypeError:  # older OpenTelemetry without ``liberal``
                 return dict(_parse(raw))
-        finally:
-            _otel_log.removeFilter(_drop)
     except ImportError:
         out: dict[str, str] = {}
         for pair in raw.split(","):
@@ -466,12 +487,14 @@ except ImportError:
             provider = TracerProvider(
                 resource=resource, id_generator=SecureIdGenerator()
             )
-            otlp_exporter = _GatedSpanExporter(
-                OTLPHttpSpanExporter(
+            with _quiet_otel_header_logs():
+                inner_exporter = OTLPHttpSpanExporter(
                     endpoint=f"{otlp_endpoint}/v1/traces",
                     headers=headers,
                     session=_GatedSession(otlp_endpoint, frozen_key),
-                ),
+                )
+            otlp_exporter = _GatedSpanExporter(
+                inner_exporter,
                 otlp_endpoint,
                 frozen_key,
             )

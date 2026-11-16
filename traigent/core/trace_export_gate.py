@@ -134,12 +134,14 @@ def build_gated_otlp_exporter(otlp_endpoint: str) -> tuple[Any, str | None] | No
     frozen_key = t._effective_trace_api_key(headers)
     if not oo_egress.ensure_trace_egress_allowed(frozen_key, otlp_endpoint):
         return None
-    exporter = _GatedSpanExporter(
-        OTLPSpanExporter(
+    with t._quiet_otel_header_logs():
+        inner = OTLPSpanExporter(
             endpoint=f"{otlp_endpoint}/v1/traces",
             headers=headers,
             session=_GatedSession(otlp_endpoint, frozen_key),
-        ),
+        )
+    exporter = _GatedSpanExporter(
+        inner,
         otlp_endpoint,
         frozen_key,
     )

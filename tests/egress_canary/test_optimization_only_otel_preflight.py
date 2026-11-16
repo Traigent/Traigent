@@ -1362,6 +1362,44 @@ def test_malformed_otlp_header_never_logs_the_credential(
     assert _SYNTH_CRED not in "".join(r.getMessage() for r in caplog.records)
 
 
+def _assert_no_cred_logged(caplog: pytest.LogCaptureFixture) -> None:
+    assert _SYNTH_CRED not in caplog.text
+    assert _SYNTH_CRED not in "".join(r.getMessage() for r in caplog.records)
+
+
+def test_gate_exporter_construction_never_logs_the_credential(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from traigent.core import trace_export_gate
+    from traigent.utils import optimization_only_egress as oo_egress
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", f"x-api-key={_SYNTH_CRED};")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", raising=False)
+    monkeypatch.setattr(oo_egress, "ensure_trace_egress_allowed", lambda *a, **k: True)
+    with caplog.at_level(logging.DEBUG):
+        caplog.set_level(logging.DEBUG, logger="")
+        built = trace_export_gate.build_gated_otlp_exporter("http://collector.test")
+    assert built is not None
+    _assert_no_cred_logged(caplog)
+
+
+def test_embedded_tracer_construction_never_logs_the_credential(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    tracing = _real_core_tracer(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", f"x-api-key={_SYNTH_CRED};")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", raising=False)
+    with capture_egress() as cap, caplog.at_level(logging.DEBUG):
+        caplog.set_level(logging.DEBUG, logger="")
+        cap.backend.validate_response = {"valid": True, "optimization_only": False}
+        assert tracing.get_tracer() is not None
+    _assert_no_cred_logged(caplog)
+
+
 def test_core_tracer_reinitializes_after_restriction_is_removed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
