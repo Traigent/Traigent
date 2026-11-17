@@ -2715,7 +2715,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.103.10"
+version = "1.108.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2723,26 +2723,31 @@ dependencies = [
     { name = "certifi" },
     { name = "click" },
     { name = "fastuuid" },
+    { name = "filelock" },
     { name = "httpx", extra = ["http2"] },
+    { name = "huggingface-hub" },
     { name = "importlib-metadata" },
     { name = "jinja2" },
     { name = "jsonschema" },
     { name = "openai" },
+    { name = "packaging" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "tiktoken" },
     { name = "tokenizers" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/0d/4d210a75f88820903421d36d8160ed07e844e53941730433c294145d5b98/litellm-1.103.10.tar.gz", hash = "sha256:b1bf12810b6565156c6b23bda2ccaf115c6edafbbf92e98220ecbc73f89d6972", size = 18763166, upload-time = "2026-10-27T19:41:29.156Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/e1/09671e69b846564eed126e3a2574faedd8fe3de82526fc4095167ff8e92c/litellm-1.108.6.tar.gz", hash = "sha256:d3a3de43a3bbe3a47a5a14d3df25a835a5f0ddf2b79c734db5685a5deb50edd6", size = 21486042, upload-time = "2026-11-12T01:07:37.569Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/c3/6ba11f169a9acc9a9f1079b4ae998339a16c42d8806a23613be8cd4ed87c/litellm-1.103.10-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:0085bb61fdb321ce17014eac697d8d7513f36e6681d490af845e8d8b9af8e613", size = 27617034, upload-time = "2026-10-27T19:41:09.209Z" },
-    { url = "https://files.pythonhosted.org/packages/65/f2/dde77f2f18303bf9aa869a9c4b24e2d58d50977a1a4bd97e22734f9929fb/litellm-1.103.10-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:7451792391b9e268e812b17a4a5cc0d34dba9bac8d51615798ebcc58f10e1b09", size = 27075436, upload-time = "2026-10-27T19:41:12.677Z" },
-    { url = "https://files.pythonhosted.org/packages/34/6f/54181ae5987dec3442d902e3199498f855e14644092d44dc2b7704e6a2d9/litellm-1.103.10-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:ca4cbf0492f65c383de264da0ff98f48d4eb56e4edf4a55713d2562a554b986f", size = 27388878, upload-time = "2026-10-27T19:41:15.568Z" },
-    { url = "https://files.pythonhosted.org/packages/e9/a1/6b49bbaa6bd180f981e51f03d56f86c3e3f47dc41d7994b54b0a893f57f6/litellm-1.103.10-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:f639bd02ac34869080b7792732336345bc066ffb04be301093090425f6caa2bc", size = 27934228, upload-time = "2026-10-27T19:41:18.366Z" },
-    { url = "https://files.pythonhosted.org/packages/b3/4c/7eedabeabf932658f31db95179607e31842e7e04e30be615d2233aa883df/litellm-1.103.10-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:5774a19560e93b1da1838b160d0ac4fec5238c11bde2cd2411422a06fb4f5e7f", size = 27463638, upload-time = "2026-10-27T19:41:21.225Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/5e/d044b5092079b76b509e29faf0bd2f7a66f4d0ecdd1ffe53d0a8dc9e694e/litellm-1.103.10-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:a7d2b6a0de7c0abfc97fe89184cb2b719a5f76170a4cac9ffd4d14e85fbb3b73", size = 28047479, upload-time = "2026-10-27T19:41:23.808Z" },
-    { url = "https://files.pythonhosted.org/packages/0a/5b/8e011f2fed0a445b71b24a79cc426e30433e7435b684167c1953202a3a8a/litellm-1.103.10-cp310-abi3-win_amd64.whl", hash = "sha256:adbcbb663a9cc96331de0f6ddd60e81d883288b901b7a4f6fbbfeb66edb669cd", size = 27992824, upload-time = "2026-10-27T19:41:26.523Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/14/d931f761b16caab572d165582b48057149a783fc610cf8c5a9aae3572890/litellm-1.108.6-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:8f3b194c12b07a908c56d7810a2fe0fc397e7b5195a9b05ea5dd985a31df4d69", size = 36517793, upload-time = "2026-11-12T01:07:12.615Z" },
+    { url = "https://files.pythonhosted.org/packages/65/a1/8afeb5391313991a2c8fdcb834d6c5068613d33b7f1efdef484dfd6dc444/litellm-1.108.6-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:8965bd880821f29fcdd8bac3d3ce75d6a87dcebb2838f470ce6071a9d2eb2167", size = 35828879, upload-time = "2026-11-12T01:07:16.216Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/35/5ac9a10a59211c1098beb5322b6d04e4b4e0a874e446e93773ab8f5afb5a/litellm-1.108.6-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:55d6ccad225633b351a45cf5f94aab53b1057975b32724cac89351673b530d7b", size = 36325273, upload-time = "2026-11-12T01:07:19.158Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/70/961e7f372e3750783f7a81eb56c3e42db6dd8507e6f888f641e9bfa06b86/litellm-1.108.6-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:e1203ca46466e48d78c210389c0d2a1f8ca42d636063a78707e0bf6991f072b3", size = 37016163, upload-time = "2026-11-12T01:07:22.529Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/8b/c33df2f2057cf5a45ab4a36c05b5dc88ab79a9167f9065e0adb401307358/litellm-1.108.6-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:e06653e4755b43a98c0de7652fa0e6534d338fdf30220d06c2f3ccfb47f78005", size = 36462233, upload-time = "2026-11-12T01:07:25.964Z" },
+    { url = "https://files.pythonhosted.org/packages/22/de/0d00eef4a2924093fbc382015eacda9a8127a386226871cf1d17cd03c547/litellm-1.108.6-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b3f9d7790be23a9b56d0d77b5a0a4faed66454745621bf81ccf359c82193c37e", size = 37093859, upload-time = "2026-11-12T01:07:28.719Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/0b/24bf234ebfe7dc46088b04e47a2d7dff30a7773d1e03f79bbca679e9f4d5/litellm-1.108.6-cp310-abi3-win_amd64.whl", hash = "sha256:a3890b759b18cf97743efb5509c4c44c58628ee70ebb3e3ebe211bb6ccf958ed", size = 37966531, upload-time = "2026-11-12T01:07:33.125Z" },
 ]
 
 [[package]]
@@ -6024,7 +6029,7 @@ requires-dist = [
     { name = "langchain-openai", marker = "extra == 'integrations'", specifier = ">=1.1.14" },
     { name = "langchain-text-splitters", marker = "extra == 'integrations'", specifier = ">=1.1.2" },
     { name = "langgraph-sdk", marker = "extra == 'integrations'", specifier = ">=0.4.4,<0.5" },
-    { name = "litellm", specifier = ">=1.103.10,<2" },
+    { name = "litellm", specifier = ">=1.108.6,<2" },
     { name = "matplotlib", marker = "extra == 'analytics'", specifier = ">=3.5.0" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.5.0" },
     { name = "mcp", marker = "extra == 'hybrid'", specifier = ">=1.30.0,<3.0.0" },
