@@ -376,7 +376,7 @@ def test_strict_unnamed_model_reads_input_then_output_then_message_fields(
 
 
 @pytest.mark.parametrize("name", [None, ""])
-def test_strict_unnamed_model_without_tokens_only_warns(
+def test_strict_unnamed_model_without_tokens_only_debug_logs(
     monkeypatch: pytest.MonkeyPatch, name: Any
 ) -> None:
     harness = _Harness(monkeypatch, strict=True)
@@ -394,7 +394,7 @@ def test_strict_unnamed_model_without_tokens_only_warns(
         ("tokens",),
         ("output_tokens",),
         (
-            "log_warning",
+            "log_debug",
             "Cost calculation skipped: model_name is None/empty. "
             "Ensure the optimization config includes a 'model' key or "
             "the LLM response exposes the model name. "
@@ -406,19 +406,19 @@ def test_strict_unnamed_model_without_tokens_only_warns(
     assert "compute" not in _names(harness.trace)
 
 
-def test_strict_unnamed_model_with_negative_tokens_only_warns(
+def test_strict_unnamed_model_with_negative_tokens_only_debug_logs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     harness = _Harness(monkeypatch, strict=True)
     harness.run(
         _Metrics(harness.trace, input_tokens=-1, output_tokens=-1), model_name=None
     )
-    assert harness.trace[-1][0] == "log_warning"
+    assert harness.trace[-1][0] == "log_debug"
     assert harness.trace[-1][2:] == (-1, -1)
 
 
 @pytest.mark.parametrize("name", [None, ""])
-def test_lenient_unnamed_model_warns_and_reads_tokens_only_for_the_message(
+def test_lenient_unnamed_model_debug_logs_and_reads_tokens_only_for_the_message(
     monkeypatch: pytest.MonkeyPatch, name: Any
 ) -> None:
     harness = _Harness(monkeypatch, strict=False)
@@ -432,7 +432,7 @@ def test_lenient_unnamed_model_warns_and_reads_tokens_only_for_the_message(
         ("tokens",),
         ("output_tokens",),
         (
-            "log_warning",
+            "log_debug",
             "Cost calculation skipped: model_name is None/empty. "
             "Ensure the optimization config includes a 'model' key or "
             "the LLM response exposes the model name. "

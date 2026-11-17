@@ -471,8 +471,7 @@ class TestExtractLLMMetrics:
     def test_extract_llm_metrics_skips_cost_when_no_model_anywhere(
         self, monkeypatch, caplog
     ):
-        """Cost stays $0 and the skip warning still fires when neither the
-        config nor the response yields a model name (unchanged behavior)."""
+        """Per-example missing-model detail is debug-level, not warning noise."""
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
         monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
 
@@ -484,14 +483,20 @@ class TestExtractLLMMetrics:
         class MockResponse:
             usage = MockUsage()
 
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("DEBUG"):
             metrics = extract_llm_metrics(MockResponse(), model_name=None)
 
         assert metrics.tokens.input_tokens == 100
         assert metrics.tokens.output_tokens == 50
         assert metrics.cost.total_cost == 0.0
         assert any(
-            "Cost calculation skipped: model_name is None/empty" in record.message
+            record.levelname == "DEBUG"
+            and "Cost calculation skipped: model_name is None/empty" in record.message
+            for record in caplog.records
+        )
+        assert not any(
+            record.levelname == "WARNING"
+            and "Cost calculation skipped: model_name is None/empty" in record.message
             for record in caplog.records
         )
 
@@ -524,16 +529,35 @@ class TestExtractLLMMetrics:
             def llm_output(self):
                 raise RuntimeError("boom")
 
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("DEBUG"):
             metrics = extract_llm_metrics(MockResponse(), model_name=None)
 
         assert metrics.tokens.input_tokens == 100
         assert metrics.tokens.output_tokens == 50
         assert metrics.cost.total_cost == 0.0
         assert any(
-            "Cost calculation skipped: model_name is None/empty" in record.message
+            record.levelname == "DEBUG"
+            and "Cost calculation skipped: model_name is None/empty" in record.message
             for record in caplog.records
         )
+
+    def test_missing_model_with_tokens_still_fails_in_strict_mode(self):
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        response = {
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        }
+        with patch.dict(
+            "os.environ",
+            {
+                "TRAIGENT_STRICT_COST_ACCOUNTING": "true",
+                "TRAIGENT_MOCK_LLM": "false",
+                "TRAIGENT_GENERATE_MOCKS": "false",
+            },
+            clear=False,
+        ):
+            with pytest.raises(UnknownModelError, match="tokens were captured"):
+                extract_llm_metrics(response=response, model_name=None)
 
 
 class TestOpenRouterCostExtraction:

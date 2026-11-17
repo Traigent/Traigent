@@ -2546,7 +2546,7 @@ def _skip_cost_for_unnamed_model(
             "TRAIGENT_STRICT_COST_ACCOUNTING=false to accept $0 for "
             "calls that cannot be priced."
         )
-    logger.warning(
+    logger.debug(
         "Cost calculation skipped: model_name is None/empty. "
         "Ensure the optimization config includes a 'model' key or "
         "the LLM response exposes the model name. "
