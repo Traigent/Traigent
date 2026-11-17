@@ -6,10 +6,27 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from traigent.prompts.errors import PromptPaginationError
+
 
 class PromptType(StrEnum):
     TEXT = "text"
     CHAT = "chat"
+
+
+class PromptSortBy(StrEnum):
+    """Sort keys accepted by ``POST .../prompts/search``."""
+
+    UPDATED_AT = "updated_at"
+    NAME = "name"
+    VERSION_COUNT = "version_count"
+
+
+class PromptSortOrder(StrEnum):
+    """Sort directions accepted by ``POST .../prompts/search``."""
+
+    ASC = "asc"
+    DESC = "desc"
 
 
 @dataclass(frozen=True)
@@ -30,6 +47,30 @@ class PaginationInfo:
             total_pages=int(payload.get("total_pages", 1)),
             has_next=bool(payload.get("has_next", False)),
             has_prev=bool(payload.get("has_prev", False)),
+        )
+
+
+@dataclass(frozen=True)
+class CursorPagination:
+    """Cursor pagination state of a list response.
+
+    There is no total count. ``has_more`` says whether another page exists and
+    ``next_cursor`` is the opaque token to request it with.
+    """
+
+    limit: int
+    next_cursor: str | None
+    has_more: bool
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> CursorPagination:
+        if "has_more" not in payload:
+            raise PromptPaginationError("Prompt list pagination is missing has_more")
+        cursor = payload.get("next_cursor")
+        return cls(
+            limit=int(payload.get("limit", 20)),
+            next_cursor=cursor if isinstance(cursor, str) and cursor else None,
+            has_more=bool(payload["has_more"]),
         )
 
 
@@ -153,15 +194,18 @@ class PromptDetail(PromptSummary):
 @dataclass(frozen=True)
 class PromptListResponse:
     items: list[PromptSummary]
-    pagination: PaginationInfo
+    pagination: CursorPagination
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> PromptListResponse:
+        pagination = payload.get("pagination")
+        if not isinstance(pagination, dict):
+            raise PromptPaginationError("Prompt list response has no pagination")
         return cls(
             items=[
                 PromptSummary.from_dict(item) for item in payload.get("items") or []
             ],
-            pagination=PaginationInfo.from_dict(payload.get("pagination") or {}),
+            pagination=CursorPagination.from_dict(pagination),
         )
 
 
@@ -342,7 +386,7 @@ class PromptAnalytics:
     totals: PromptAnalyticsTotals
     versions: list[PromptVersionAnalytics]
     recent_links: list[PromptUsageLinkRecord]
-    recent_links_pagination: PaginationInfo
+    recent_links_pagination: CursorPagination
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> PromptAnalytics:
@@ -359,7 +403,7 @@ class PromptAnalytics:
                 PromptUsageLinkRecord.from_dict(item)
                 for item in payload.get("recent_links") or []
             ],
-            recent_links_pagination=PaginationInfo.from_dict(
+            recent_links_pagination=CursorPagination.from_dict(
                 payload.get("recent_links_pagination") or {}
             ),
         )
