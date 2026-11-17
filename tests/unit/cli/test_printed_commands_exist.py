@@ -51,9 +51,8 @@ def extract_commands(text: str) -> list[list[str]]:
 ALLOWED_TEXT: dict[str, tuple[str, str]] = {
     "mcp register": (
         "traigent/cli/onboard_commands.py",
-        "offered only after probing `traigent mcp register --help` "
-        "(_mcp_help_succeeds), so never shown while the command does not "
-        "exist (#2628)",
+        "offered only after probing `traigent mcp register --help`; the "
+        "current CLI ships `mcp serve` only (#2628, #3139)",
     ),
     "api decorators": (
         "traigent/config_generator/apply.py",

@@ -23,7 +23,9 @@ In a terminal, onboarding can offer to:
 - install Traigent agent skills — `--profile beginner` (default) via
   `npx skills add Traigent/traigent-first-run`, or `--profile advanced` via
   `npx skills add Traigent/traigent-skills`
-- register MCP for detected agents when `traigent mcp --help` succeeds
+- offer MCP registration only when `traigent mcp register --help` succeeds;
+  this SDK currently ships `traigent mcp serve` only, so onboarding skips
+  registration
 - run the packaged mock quickstart
 - print the first prompt for the detected coding agent
 

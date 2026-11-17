@@ -19,6 +19,7 @@ from traigent.cli.onboard_commands import (
     PLAN_JSON_END,
     SKILLS_COMMAND,
     AgentName,
+    _build_non_tty_plan,
     _detect_coding_agents,
     _skills_command_for_profile,
     build_first_prompt,
@@ -376,6 +377,22 @@ def test_mcp_offer_is_gated_on_the_register_subcommand(
     assert seen == [["/bin/traigent", "mcp", "register", "--help"]]
     offered = onboard_commands._mcp_registration_command("claude")
     assert offered[:3] == ["traigent", "mcp", "register"]
+
+
+def test_non_tty_plan_describes_unshipped_mcp_register_command() -> None:
+    plan = _build_non_tty_plan(
+        cwd=Path("/project"),
+        project_markers=[],
+        detected_agents=["codex"],
+        auth_status="authenticated",
+        mcp_available=False,
+        login_command=["traigent", "auth", "device-login"],
+    )
+
+    step = next(step for step in plan["steps"] if step["id"] == "mcp_registration")
+    assert step["status"] == "skipped"
+    assert "traigent mcp register" in step["description"]
+    assert "not available in this SDK build" in step["description"]
 
 
 @pytest.mark.parametrize(

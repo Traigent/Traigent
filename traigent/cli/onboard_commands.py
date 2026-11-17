@@ -319,7 +319,7 @@ def _build_non_tty_plan(
             {
                 "id": "mcp_registration",
                 "status": "planned",
-                "description": "Offer MCP registration because `traigent mcp --help` succeeded.",
+                "description": "Offer MCP registration because `traigent mcp register --help` succeeded.",
                 "commands": [_command_text(command) for command in mcp_commands],
             }
         )
@@ -328,7 +328,7 @@ def _build_non_tty_plan(
             {
                 "id": "mcp_registration",
                 "status": "skipped",
-                "description": "`traigent mcp` is not available yet; MCP registration skipped.",
+                "description": "`traigent mcp register` is not available in this SDK build; MCP registration skipped.",
             }
         )
 
@@ -499,7 +499,7 @@ def _offer_skills_install(
 def _offer_mcp_registration(detected_agents: list[AgentName]) -> None:
     if not _mcp_help_succeeds():
         console.print(
-            "`traigent mcp` is not available in this SDK build yet; "
+            "`traigent mcp register` is not available in this SDK build; "
             "MCP registration skipped."
         )
         return
