@@ -7,8 +7,10 @@ from pathlib import Path
 
 import jsonschema
 import pytest
+from click.testing import CliRunner
 
 import traigent.reporting.example_map as example_map_module
+from traigent.cli.main import cli
 from traigent.reporting.example_map import (
     build_example_content_map,
     compute_dataset_fingerprint,
@@ -139,22 +141,95 @@ def test_validate_example_content_map_handles_schema_errors(tmp_path, monkeypatc
     assert errors == ["Schema definition error: broken schema"]
 
 
-def test_build_example_content_map_rejects_conflicting_output_fields(tmp_path):
+def test_report_example_map_uses_canonical_dataset_row_coercion(tmp_path):
+    """The customer-facing report command uses runtime row semantics (#3056)."""
+    dataset = tmp_path / "dataset.jsonl"
+    output = tmp_path / "report.json"
+    rows = [
+        {"input": {"q": "output"}, "output": "o"},
+        {"input_data": {"q": "expected"}, "expected": "e"},
+        {"input": {"q": "expected_output"}, "expected_output": "eo"},
+        {"input": {"q": "answer"}, "answer": "a"},
+        {"input": {"q": "target"}, "target": "t"},
+        {"input": {"q": "label"}, "label": "l"},
+        {"input_data": {"q": "optional"}},
+        {
+            "input": {"q": "conflict"},
+            "output": "winner",
+            "expected": "loser",
+            "label": "also-loser",
+            "metadata": {"example_id": "customer-row-7", "topic": "nested"},
+            "topic": "incidental",
+        },
+    ]
+    dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+    result = CliRunner().invoke(
+        cli,
+        ["report-example-map", "--dataset", str(dataset), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    entries = payload["example_map"]
+    assert list(entries) == [f"example_{index}" for index in range(8)]
+    assert [entries[f"example_{index}"]["expected_output"] for index in range(7)] == [
+        "o",
+        "e",
+        "eo",
+        "a",
+        "t",
+        "l",
+        None,
+    ]
+    assert entries["example_7"]["input"] == {"q": "conflict"}
+    assert entries["example_7"]["expected_output"] == "winner"
+    assert entries["example_7"]["metadata"] == {
+        "example_id": "customer-row-7",
+        "topic": "nested",
+    }
+    assert payload["dataset_fingerprint"] == compute_dataset_fingerprint(
+        [
+            {
+                "input": row.get("input", row.get("input_data")),
+                "expected_output": expected,
+                "metadata": metadata,
+            }
+            for row, expected, metadata in zip(
+                rows,
+                ["o", "e", "eo", "a", "t", "l", None, "winner"],
+                [
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {"example_id": "customer-row-7", "topic": "nested"},
+                ],
+                strict=True,
+            )
+        ]
+    )
+
+
+def test_standard_report_fingerprint_and_id_vector_is_unchanged(tmp_path):
     dataset = tmp_path / "dataset.jsonl"
     dataset.write_text(
-        json.dumps(
-            {
-                "input": {"q": "test"},
-                "output": "answer_a",
-                "expected_output": "answer_b",
-            }
-        )
-        + "\n",
+        json.dumps({"input": {"q": "hello"}, "output": "world", "topic": "geo"}) + "\n",
         encoding="utf-8",
     )
 
-    with pytest.raises(
-        ValidationError,
-        match="conflicting 'output' and 'expected_output' values",
-    ):
-        build_example_content_map(dataset)
+    payload = build_example_content_map(dataset)
+
+    assert list(payload["example_map"]) == ["example_0"]
+    assert payload["example_map"]["example_0"] == {
+        "example_num": 1,
+        "input": {"q": "hello"},
+        "expected_output": "world",
+        "metadata": {"topic": "geo"},
+    }
+    assert payload["dataset_fingerprint"] == (
+        "sha256:084619368f591e4778935d134e6deb888f2e58b22b9812c66924770c53f70449"
+    )
