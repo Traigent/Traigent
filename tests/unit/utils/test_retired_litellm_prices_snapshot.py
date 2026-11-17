@@ -24,8 +24,9 @@ from traigent.utils import cost_calculator as cc  # noqa: E402
 # off_peak_pricing applies inside its window (hy3: 16:00-00:00 UTC every day;
 # deepseek-v4.1-flash: weekday windows), and moonshot/kimi-latest stops pricing
 # after its deprecation_date (2026-01-28). The fixture was generated at a
-# fixed moment, so the autouse _pin_peak_billing_time fixture pins the clock
-# to Monday 2026-01-05 12:00Z (hy3 peak; deepseek off-peak; kimi pre-deprecation).
+# fixed moment, so the autouse _pin_billing_time fixture pins the clock to
+# Monday 2026-01-05 12:00Z, a fixed moment matching how the fixture was
+# generated (hy3 peak; deepseek-v4.1-flash off-peak; kimi pre-deprecation).
 _PEAK_TIME = datetime(2026, 1, 14, 12, 0, tzinfo=UTC)  # Wed: hy3 peak
 _OFF_PEAK_TIME = datetime(2026, 1, 14, 20, 0, tzinfo=UTC)  # Wed: hy3 off-peak
 _DEEPSEEK = "openrouter/deepseek/deepseek-v4.1-flash"
@@ -40,13 +41,13 @@ _FIXTURE = json.loads(
 
 
 @pytest.fixture(autouse=True)
-def _pin_peak_billing_time():
-    """Price at a fixed peak-hour moment.
+def _pin_billing_time():
+    """Price at a fixed moment matching how the fixture was generated.
 
     Some restored OpenRouter entries (openrouter/tencent/hy3) carry an
     ``off_peak_pricing`` block that litellm applies by wall-clock UTC
-    (16:00-00:00). The fixture holds the standard (peak) rates, so without a
-    pinned clock these tests fail every day inside that window.
+    (16:00-00:00). The fixture holds the rates as of the pinned moment, so
+    without a pinned clock these tests drift with the wall clock.
     """
     with pinned_billing_time(datetime(2026, 1, 5, 12, 0, tzinfo=UTC)):
         yield
@@ -98,6 +99,7 @@ def test_off_peak_pricing_is_kept_for_restored_openrouter_entry():
     assert peak == pytest.approx(
         (100 * entry["input_cost_per_token"], 10 * entry["output_cost_per_token"])
     )
+    assert got != peak
 
 
 def test_off_peak_weekday_windows_are_kept_for_restored_deepseek_entry():
@@ -114,6 +116,7 @@ def test_off_peak_weekday_windows_are_kept_for_restored_deepseek_entry():
     assert base == pytest.approx(
         (100 * entry["input_cost_per_token"], 10 * entry["output_cost_per_token"])
     )
+    assert got != base
 
 
 def test_every_restored_id_routes_as_under_litellm_1_103_4():
