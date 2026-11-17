@@ -454,13 +454,11 @@ def same_host_redirect_trace_configs() -> list[Any]:
     """aiohttp ``trace_configs`` that refuse cross-host or https->http redirects.
 
     Pass as ``aiohttp.ClientSession(trace_configs=...)`` for sessions that send
-    credentials to the configured backend. Returns ``[]`` when aiohttp is not
-    importable so callers never need their own guard.
+    credentials to the configured backend. aiohttp is a core dependency and every
+    caller builds an aiohttp session, so a missing aiohttp raises ``ImportError``
+    rather than silently dropping the redirect guard.
     """
-    try:
-        import aiohttp
-    except ImportError:  # pragma: no cover - minimal environments
-        return []
+    import aiohttp
 
     async def _on_redirect(_session: Any, _ctx: Any, params: Any) -> None:
         location = params.response.headers.get("Location")
