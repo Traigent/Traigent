@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -235,6 +236,98 @@ class TestParallelBatchOptimizer:
             assert "early_stopped" in result.convergence_info
 
         asyncio.run(run_test())
+
+    def test_early_stop_collects_every_result_in_submitted_batch(self, monkeypatch):
+        """An early-stop decision must not discard futures already submitted."""
+        import traigent.optimizers.batch_optimizers as batch_module
+
+        optimizer = ParallelBatchOptimizer(
+            base_optimizer=GridSearchOptimizer(
+                {"param1": list(range(1, 10))}, ["accuracy"]
+            ),
+            batch_config=BatchOptimizationConfig(
+                max_parallel_trials=4, early_stopping_patience=1
+            ),
+        )
+        completed_configs = []
+
+        def run_trial(self, config, func, dataset, invoker, evaluator):
+            value = config["param1"]
+            if value == 1:
+                score, delay = 10.0, 0.0
+            elif value == 2:
+                score, delay = 0.0, 0.02
+            elif value == 3:
+                score, delay = 100.0, 0.06
+            else:
+                score, delay = 0.0, 0.08
+            time.sleep(delay)
+            completed_configs.append(value)
+            return BatchTrial(configuration=config, score=score, duration=delay)
+
+        monkeypatch.setattr(
+            batch_module.ParallelBatchOptimizer,
+            "_run_single_trial_sync",
+            run_trial,
+        )
+
+        async def run_test():
+            return await optimizer.optimize(
+                func=lambda *_: None,
+                dataset=self.dataset,
+                invoker=MockInvoker(),
+                evaluator=MockEvaluator(),
+                max_trials=9,
+            )
+
+        result = asyncio.run(run_test())
+        assert len(result.trials) == 4
+        assert set(completed_configs) == {1, 2, 3, 4}
+        assert result.best_score == 100.0
+        assert result.best_config["param1"] == 3
+        assert result.convergence_info["early_stopped"] is True
+
+    def test_zero_patience_does_not_report_early_stop(self):
+        optimizer = ParallelBatchOptimizer(
+            base_optimizer=GridSearchOptimizer({"param1": [1, 2, 3]}, ["accuracy"]),
+            batch_config=BatchOptimizationConfig(
+                max_parallel_trials=2, early_stopping_patience=0
+            ),
+        )
+
+        async def run_test():
+            return await optimizer.optimize(
+                func=lambda *_: None,
+                dataset=self.dataset,
+                invoker=MockInvoker(),
+                evaluator=MockEvaluator(),
+                max_trials=3,
+            )
+
+        result = asyncio.run(run_test())
+        assert len(result.trials) == 3
+        assert result.convergence_info["early_stopped"] is False
+
+    def test_patience_at_final_batch_does_not_report_early_stop(self):
+        optimizer = ParallelBatchOptimizer(
+            base_optimizer=GridSearchOptimizer({"param1": [1, 2]}, ["accuracy"]),
+            batch_config=BatchOptimizationConfig(
+                max_parallel_trials=2, early_stopping_patience=1
+            ),
+        )
+
+        async def run_test():
+            return await optimizer.optimize(
+                func=lambda *_: None,
+                dataset=self.dataset,
+                invoker=MockInvoker(),
+                evaluator=MockEvaluator(),
+                max_trials=2,
+            )
+
+        result = asyncio.run(run_test())
+        assert len(result.trials) == 2
+        assert result.convergence_info["early_stopped"] is False
 
     def test_early_stopping_min_delta_ignores_sub_delta_creep(self):
         """``early_stopping_min_delta`` must gate the patience counter: score

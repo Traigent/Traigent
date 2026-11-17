@@ -197,6 +197,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
         # Early stopping tracking
         trials_without_improvement = 0
+        early_stopped = False
 
         # Create configuration candidates
         remaining_configs = list(self.base_optimizer.generate_candidates(max_trials))
@@ -249,17 +250,6 @@ class ParallelBatchOptimizer(BaseOptimizer):
                             )
                         )
 
-                        # Early stopping check
-                        if (
-                            self.batch_config.early_stopping_patience > 0
-                            and trials_without_improvement
-                            >= self.batch_config.early_stopping_patience
-                        ):
-                            logger.info(
-                                f"Early stopping after {trials_without_improvement} trials without improvement"
-                            )
-                            break
-
                     except Exception as e:
                         logger.exception(f"Trial failed for config {config}: {e}")
                         # Create failed trial
@@ -271,12 +261,22 @@ class ParallelBatchOptimizer(BaseOptimizer):
                         )
                         completed_trials.append(failed_trial)
 
-                # Break if early stopping triggered
+                # Every result in a submitted batch must be accounted for before
+                # honoring patience. Submitted work may already have incurred cost,
+                # and a later completion can still become the winning config.
                 if (
                     self.batch_config.early_stopping_patience > 0
                     and trials_without_improvement
                     >= self.batch_config.early_stopping_patience
+                    and remaining_configs
+                    and len(completed_trials) < max_trials
                 ):
+                    early_stopped = True
+                    logger.info(
+                        "Early stopping after collecting a submitted batch with "
+                        "%d trials without improvement",
+                        trials_without_improvement,
+                    )
                     break
 
         total_duration = time.time() - start_time
@@ -288,8 +288,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
             duration=total_duration,
             convergence_info={
                 "parallel_workers": self.batch_config.max_parallel_trials,
-                "early_stopped": trials_without_improvement
-                >= self.batch_config.early_stopping_patience,
+                "early_stopped": early_stopped,
                 "total_trials": len(completed_trials),
             },
         )
