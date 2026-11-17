@@ -473,6 +473,14 @@ class PromptManagementClient:
                 f"Failed to connect to prompt backend at {self.config.backend_origin}"
             ) from exc
 
+    @staticmethod
+    def _parse_retry_after(headers: Any) -> float | None:
+        raw = headers.get("Retry-After") if headers else None
+        try:
+            return float(raw) if raw is not None else None
+        except ValueError:
+            return None
+
     def _raise_for_response(self, exc: error.HTTPError, body: str) -> NoReturn:
         """Raise the SDK exception that matches a failed response."""
         headers = exc.headers
@@ -491,14 +499,9 @@ class PromptManagementClient:
                 f"Prompt request rejected with status {exc.code}"
             ) from exc
         if exc.code == 429:
-            retry_after = None
-            raw = headers.get("Retry-After") if headers else None
-            try:
-                retry_after = float(raw) if raw is not None else None
-            except ValueError:
-                retry_after = None
             raise RateLimitError(
-                "Prompt request was rate limited", retry_after=retry_after
+                "Prompt request was rate limited",
+                retry_after=self._parse_retry_after(headers),
             ) from exc
         if exc.code == 503:
             raise ServiceUnavailableError(
