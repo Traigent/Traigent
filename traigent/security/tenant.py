@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import contextvars
+import math
 import secrets
 import threading
 from collections.abc import Generator
@@ -363,8 +364,10 @@ class Tenant:
     def _validate_inputs(self, resource_type: str, amount: int | float) -> None:
         if resource_type not in self._RESOURCE_MAP:
             raise ValueError(f"Unknown resource type: {resource_type}")
-        if amount <= 0:
-            raise ValueError("amount must be positive")
+        if isinstance(amount, bool) or not isinstance(amount, int | float):
+            raise ValueError("amount must be a number")
+        if not math.isfinite(amount) or amount <= 0:
+            raise ValueError("amount must be a finite positive number")
 
     def _has_quota_unlocked(self, resource_type: str, amount: int | float) -> bool:
         quotas = self._ensure_quotas()
@@ -410,27 +413,29 @@ class Tenant:
         if not self.quotas:
             return {}
 
+        def pct(used: float, quota: float) -> float:
+            # A zero quota is legal (deny-all): any use is fully utilised.
+            if quota <= 0:
+                return 100.0 if used > 0 else 0.0
+            return (used / quota) * 100
+
         return {
-            "optimizations_per_month": (
-                self.usage.optimizations_this_month
-                / self.quotas.max_optimizations_per_month
-            )
-            * 100,
-            "concurrent_optimizations": (
-                self.usage.concurrent_optimizations
-                / self.quotas.max_concurrent_optimizations
-            )
-            * 100,
-            "users": (self.usage.active_users / self.quotas.max_users) * 100,
-            "storage": (self.usage.storage_used_gb / self.quotas.max_storage_gb) * 100,
-            "api_calls_per_hour": (
-                self.usage.api_calls_this_hour / self.quotas.max_api_calls_per_hour
-            )
-            * 100,
-            "api_calls_per_minute": (
-                self.usage.api_calls_this_minute / self.quotas.max_api_calls_per_minute
-            )
-            * 100,
+            "optimizations_per_month": pct(
+                self.usage.optimizations_this_month,
+                self.quotas.max_optimizations_per_month,
+            ),
+            "concurrent_optimizations": pct(
+                self.usage.concurrent_optimizations,
+                self.quotas.max_concurrent_optimizations,
+            ),
+            "users": pct(self.usage.active_users, self.quotas.max_users),
+            "storage": pct(self.usage.storage_used_gb, self.quotas.max_storage_gb),
+            "api_calls_per_hour": pct(
+                self.usage.api_calls_this_hour, self.quotas.max_api_calls_per_hour
+            ),
+            "api_calls_per_minute": pct(
+                self.usage.api_calls_this_minute, self.quotas.max_api_calls_per_minute
+            ),
         }
 
     def to_dict(self) -> dict[str, Any]:

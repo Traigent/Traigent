@@ -658,11 +658,18 @@ def approval_matches(record: Mapping[str, Any], **expected: Any) -> bool:
 
 
 def approval_expired(record: Mapping[str, Any], now: datetime | None = None) -> bool:
+    # Fail closed (Traigent#3164): only a string ISO-8601 timestamp with an
+    # explicit offset can be unexpired; anything else counts as expired.
     try:
-        expires = datetime.fromisoformat(str(record["expires_at"]))
-    except (KeyError, ValueError):
+        raw = record["expires_at"]
+        if not isinstance(raw, str):
+            return True
+        expires = datetime.fromisoformat(raw)
+        if expires.tzinfo is None or expires.utcoffset() is None:
+            return True
+        return (now or utcnow()) >= expires
+    except (KeyError, ValueError, TypeError, OverflowError):
         return True
-    return (now or utcnow()) >= expires
 
 
 # --- watch state --------------------------------------------------------------------------

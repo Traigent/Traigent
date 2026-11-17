@@ -722,3 +722,38 @@ def test_first_use_logs_one_value_free_unverified_warning(monkeypatch, caplog):
     assert "secret-static-key-value" not in message
     assert "auth.json" in message  # names the schema, never a path or token
     assert "/" not in message
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_blank_nous_urls_fall_back_to_defaults_3270(monkeypatch, blank):
+    """A set-but-blank override is treated as unset, not used as a real URL."""
+    monkeypatch.setenv("TRAIGENT_NOUS_TOKEN_URL", blank)
+    assert nous_auth._token_url() == nous_auth._DEFAULT_NOUS_TOKEN_URL
+    monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", blank)
+    # NOUS_BASE_URL is resolved at access time, so no module reload is needed
+    # (a reload would redefine the exception classes for later tests).
+    assert nous_auth.NOUS_BASE_URL == nous_auth._DEFAULT_NOUS_BASE_URL
+
+
+def test_base_url_is_read_at_call_time_3270(monkeypatch):
+    """Changing the env after import takes effect (no reload needed)."""
+    monkeypatch.delenv("TRAIGENT_NOUS_BASE_URL", raising=False)
+    assert nous_auth.get_nous_base_url() == nous_auth._DEFAULT_NOUS_BASE_URL
+    monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", " https://example.test/v1 ")
+    assert nous_auth.get_nous_base_url() == "https://example.test/v1"
+    assert nous_auth.NOUS_BASE_URL == "https://example.test/v1"
+    monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", "  ")
+    assert nous_auth.get_nous_base_url() == nous_auth._DEFAULT_NOUS_BASE_URL
+
+
+def test_real_nous_url_overrides_are_stripped_3270(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_NOUS_TOKEN_URL", "  https://example.test/refresh ")
+    assert nous_auth._token_url() == "https://example.test/refresh"
+
+
+def test_llms_package_nous_base_url_is_lazy_and_importable_3270(monkeypatch):
+    import traigent.integrations.llms as llms
+
+    monkeypatch.setenv("TRAIGENT_NOUS_BASE_URL", "https://lazy.test/v1")
+    assert llms.NOUS_BASE_URL == "https://lazy.test/v1"
+    assert llms.get_nous_base_url() == "https://lazy.test/v1"

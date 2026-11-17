@@ -240,7 +240,8 @@ def test_format_as_summary_stats_all_unmeasured_still_emits_builtin_keys():
             assert metrics[key] is None, key
             continue
         assert metrics[key]["count"] == 0, key
-        assert metrics[key]["mean"] == 0.0, key
+        # Zero samples: statistics are undefined -> None, not 0.0 (#3226)
+        assert metrics[key]["mean"] is None, key
 
     # Accuracy still reflects both (unsuccessful) attempts.
     assert metrics["accuracy"]["count"] == 2

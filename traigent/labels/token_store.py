@@ -207,7 +207,7 @@ _AGENT_REF = re.compile(r"^agentref_[0-9a-f]{32}$")
 _KNOB_REF = re.compile(r"^knobref_[0-9a-f]{32}$")
 _SPEC_REF = re.compile(r"^searchspecref_[0-9a-f]{32}$")
 _OP_KEY = re.compile(r"^[0-9a-f]{32}$")
-_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_HEX64 = re.compile(r"^[0-9a-f]{64}\Z")
 _REF = {kind: re.compile(rf"^{kind}ref_[0-9a-f]{{32}}$") for kind in KINDS}
 _DEFAULT_PORT = {"http": 80, "https": 443}
 

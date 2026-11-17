@@ -1081,7 +1081,7 @@ class TestMetricNormalizationHelpers:
         assert stats == {
             "count": 1.0,
             "mean": 0.8,
-            "std": 0.0,
+            "std": None,  # undefined for one value (#3226)
             "min": 0.8,
             "25%": 0.8,
             "50%": 0.8,
@@ -2281,3 +2281,10 @@ class TestCloseAndContextManager:
         mock_transport.close.assert_awaited_once()
         assert ev._lifecycle_manager is None
         assert ev._transport is None
+
+
+def test_compute_describe_stats_empty_is_undefined_not_zero() -> None:
+    """#3226: zero values -> count 0 and every other statistic None."""
+    stats = HybridAPIEvaluator._compute_describe_stats([])
+    assert stats["count"] == 0.0
+    assert all(v is None for k, v in stats.items() if k != "count")

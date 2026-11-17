@@ -53,6 +53,41 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
     return getattr(obj, attr, default) if hasattr(obj, attr) else default
 
 
+def _token_count(value: Any) -> int | None:
+    """Return a vendor token field as an int, or None when it is not measured.
+
+    A missing or null count must stay unknown: 0 would make an unmeasured
+    call look free to a cost objective.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value != value or value in (float("inf"), float("-inf")) or value < 0:
+        return None
+    return int(value)
+
+
+def _build_usage(
+    first_key: str,
+    second_key: str,
+    first: Any,
+    second: Any,
+    total: Any = None,
+) -> dict[str, Any]:
+    """Build a usage dict that keeps unknown counts as None.
+
+    When any count is unknown the dict carries ``cost_unmeasured: True`` (the
+    flag ``traigent.utils.trial_costs.is_cost_unmeasured`` understands), so
+    cost paths omit the cost instead of treating it as $0.
+    """
+    n1, n2, nt = _token_count(first), _token_count(second), _token_count(total)
+    if nt is None and n1 is not None and n2 is not None:
+        nt = n1 + n2
+    usage: dict[str, Any] = {first_key: n1, second_key: n2, "total_tokens": nt}
+    if n1 is None or n2 is None or nt is None:
+        usage["cost_unmeasured"] = True
+    return usage
+
+
 def _extract_openai_text(response: Any) -> str:
     """Extract text content from OpenAI response choices."""
     if not hasattr(response, "choices") or not response.choices:
@@ -153,11 +188,13 @@ def _extract_openai_metadata(
         # Extract usage
         usage = None
         if hasattr(response, "usage") and response.usage:
-            usage = {
-                "prompt_tokens": getattr(response.usage, "prompt_tokens", 0),
-                "completion_tokens": getattr(response.usage, "completion_tokens", 0),
-                "total_tokens": getattr(response.usage, "total_tokens", 0),
-            }
+            usage = _build_usage(
+                "prompt_tokens",
+                "completion_tokens",
+                getattr(response.usage, "prompt_tokens", None),
+                getattr(response.usage, "completion_tokens", None),
+                getattr(response.usage, "total_tokens", None),
+            )
 
         model = _safe_getattr(response, "model")
         response_id = _safe_getattr(response, "id")
@@ -184,23 +221,33 @@ def _extract_anthropic_metadata(
     response: Any,
     provider: str,
 ) -> LLMResponse:
-    """Extract metadata from Anthropic Message response."""
+    """Extract metadata from Anthropic Message response.
+
+    Text, usage and model are extracted independently so that a failure (or a
+    null token count) in one never wipes the others.
+    """
     metadata: dict[str, Any] = {}
+    text = ""
+    usage = None
+    model = None
 
     try:
         text = _extract_anthropic_text(response)
+    except Exception as e:
+        logger.debug(f"Error extracting Anthropic text: {e}")
 
-        # Extract usage
-        usage = None
+    try:
         if hasattr(response, "usage") and response.usage:
-            input_tokens = getattr(response.usage, "input_tokens", 0)
-            output_tokens = getattr(response.usage, "output_tokens", 0)
-            usage = {
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "total_tokens": input_tokens + output_tokens,
-            }
+            usage = _build_usage(
+                "input_tokens",
+                "output_tokens",
+                getattr(response.usage, "input_tokens", None),
+                getattr(response.usage, "output_tokens", None),
+            )
+    except Exception as e:
+        logger.debug(f"Error extracting Anthropic usage: {e}")
 
+    try:
         model = _safe_getattr(response, "model")
         stop_reason = _safe_getattr(response, "stop_reason")
         if stop_reason:
@@ -208,12 +255,8 @@ def _extract_anthropic_metadata(
         response_id = _safe_getattr(response, "id")
         if response_id:
             metadata["response_id"] = response_id
-
     except Exception as e:
         logger.debug(f"Error extracting Anthropic metadata: {e}")
-        text = ""
-        usage = None
-        model = None
 
     return LLMResponse(
         text=text,
@@ -241,6 +284,7 @@ def _extract_gemini_metadata(
 ) -> LLMResponse:
     """Extract metadata from Gemini GenerateContentResponse."""
     metadata: dict[str, Any] = {}
+    model: str | None = None
 
     try:
         text = _extract_gemini_text(response)
@@ -252,11 +296,17 @@ def _extract_gemini_metadata(
         usage = None
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             um = response.usage_metadata
-            usage = {
-                "prompt_tokens": getattr(um, "prompt_token_count", 0),
-                "completion_tokens": getattr(um, "candidates_token_count", 0),
-                "total_tokens": getattr(um, "total_token_count", 0),
-            }
+            usage = _build_usage(
+                "prompt_tokens",
+                "completion_tokens",
+                getattr(um, "prompt_token_count", None),
+                getattr(um, "candidates_token_count", None),
+                getattr(um, "total_token_count", None),
+            )
+
+        model_version = _safe_getattr(response, "model_version")
+        if isinstance(model_version, str) and model_version:
+            model = model_version
 
     except Exception as e:
         logger.debug(f"Error extracting Gemini metadata: {e}")
@@ -267,10 +317,24 @@ def _extract_gemini_metadata(
         text=text,
         raw=response,
         usage=usage,
-        model=None,
+        model=model,
         provider=provider,
         metadata=metadata if metadata else None,
     )
+
+
+def _extract_cohere_v2_text(response: Any) -> str:
+    """Extract text from a Cohere v2 chat response (message.content[].text)."""
+    message = getattr(response, "message", None)
+    content = getattr(message, "content", None)
+    if not isinstance(content, (list, tuple)):
+        return ""
+    texts = []
+    for block in content:
+        block_text = getattr(block, "text", None)
+        if isinstance(block_text, str):
+            texts.append(block_text)
+    return "".join(texts)
 
 
 def _extract_cohere_metadata(
@@ -284,22 +348,28 @@ def _extract_cohere_metadata(
     metadata = {}
 
     try:
-        # Extract text
-        if hasattr(response, "text"):
+        # Extract text: v1 (text / generations), then v2 (message.content[].text)
+        if isinstance(getattr(response, "text", None), str):
             text = response.text
         elif hasattr(response, "generations") and response.generations:
             text = response.generations[0].text
+        else:
+            text = _extract_cohere_v2_text(response)
 
-        # Extract usage from meta
-        if hasattr(response, "meta") and response.meta:
-            meta = response.meta
-            if hasattr(meta, "billed_units"):
-                billed = meta.billed_units
-                usage = {
-                    "input_tokens": getattr(billed, "input_tokens", 0),
-                    "output_tokens": getattr(billed, "output_tokens", 0),
-                }
-                usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
+        # Extract usage: v1 meta.billed_units, v2 usage.billed_units
+        billed = None
+        for holder in ("meta", "usage"):
+            container = getattr(response, holder, None)
+            if container and hasattr(container, "billed_units"):
+                billed = container.billed_units
+                break
+        if billed is not None:
+            usage = _build_usage(
+                "input_tokens",
+                "output_tokens",
+                getattr(billed, "input_tokens", None),
+                getattr(billed, "output_tokens", None),
+            )
 
         # Extract response ID
         if hasattr(response, "id"):

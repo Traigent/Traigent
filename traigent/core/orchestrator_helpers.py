@@ -29,6 +29,7 @@ from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import TVLConstraintError
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import validate_positive_int
 from traigent.utils.trial_costs import is_cost_unmeasured, trial_cost_unknown
 
 logger = get_logger(__name__)
@@ -52,7 +53,7 @@ def validate_constructor_arguments(
 
     Raises:
         TypeError: If optimizer or evaluator are not instances of their base classes
-        ValueError: If max_trials is non-positive, or max_total_examples/timeout are negative
+        ValueError: If max_trials is non-positive, or max_total_examples is not a positive integer, or timeout is negative
     """
     if not isinstance(optimizer, BaseOptimizer):
         raise TypeError("optimizer must be an instance of BaseOptimizer")
@@ -60,8 +61,8 @@ def validate_constructor_arguments(
         raise TypeError("evaluator must be an instance of BaseEvaluator")
     if max_trials is not None and max_trials <= 0:
         raise ValueError("max_trials must be a positive integer")
-    if max_total_examples is not None and max_total_examples < 0:
-        raise ValueError("max_total_examples must be non-negative")
+    if max_total_examples is not None:
+        validate_positive_int("max_total_examples", max_total_examples)
     if timeout is not None and timeout < 0:
         raise ValueError("timeout must be non-negative")
 

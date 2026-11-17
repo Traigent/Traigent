@@ -32,7 +32,7 @@ Thank you for your interest in contributing to Traigent SDK! We welcome contribu
    ```
 
 2. **Make your changes** and ensure:
-   - Code follows our style guidelines (Black + isort for formatting, Ruff for linting)
+   - Code follows our style guidelines (ruff format + isort for formatting, Ruff for linting)
    - All tests pass
    - New features include tests
    - Documentation is updated
@@ -76,8 +76,8 @@ Thank you for your interest in contributing to Traigent SDK! We welcome contribu
 
 ## Code Style
 
-- Formatting: Black (line length 88) + isort (profile "black")
-- Linting: Ruff (lint only)
+- Formatting: `ruff format` (line length 88) + isort (profile "black")
+- Linting: Ruff
 - Use type hints for all public APIs
 - Add docstrings to all public functions and classes
 
@@ -90,9 +90,9 @@ make lint
 Or manually:
 ```bash
 isort traigent/ tests/ examples/
-black traigent/ tests/ examples/
+ruff format traigent/ tests/ examples/
 ruff check traigent/ --fix
-black --check traigent/
+ruff format --check traigent/
 isort --check-only traigent/
 ```
 

@@ -150,7 +150,7 @@ def test_plugin_path_is_gated_at_sdk_boundary(
 
     calls: list[str] = []
     fake = types.ModuleType("traigent_tracing")
-    fake.__version__ = "0.1.1"  # accepted by the #1894 version guard
+    fake.__version__ = "0.1.2"  # accepted by the #1894 version guard (>= 0.1.2)
 
     @contextmanager
     def _span(*args: Any, **kwargs: Any):

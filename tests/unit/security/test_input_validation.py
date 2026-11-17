@@ -523,3 +523,57 @@ class TestEdgeCases:
         # Should sanitize in HTML context
         result = InputValidator.sanitize_html(malicious_input)
         assert "script" not in result.lower()
+
+
+class TestSanitizeHtmlDeterministic:
+    """#3169: output must not depend on whether bleach is importable."""
+
+    SAMPLES = (
+        "<b>x</b>",
+        '<div onclick="alert(1)">hi</div> & more',
+        "plain <i>text</i> with 'quotes'",
+    )
+
+    @staticmethod
+    def _fresh_copy(monkeypatch, bleach_mode):
+        """Load a fresh copy of the module with bleach importable or blocked.
+
+        The old implementation picked its branch at import time, so the module
+        must be loaded afresh under each condition.
+        """
+        import builtins
+        import importlib.util
+        import sys
+        import types
+
+        import traigent.security.input_validation as real
+
+        if bleach_mode == "stub":
+            stub = types.ModuleType("bleach")
+            stub.clean = lambda text, **kw: "BLEACH-STUB"
+            monkeypatch.setitem(sys.modules, "bleach", stub)
+        elif bleach_mode == "blocked":
+            real_import = builtins.__import__
+
+            def blocked(name, *a, **kw):
+                if name == "bleach":
+                    raise ImportError("bleach blocked")
+                return real_import(name, *a, **kw)
+
+            monkeypatch.setattr(builtins, "__import__", blocked)
+        spec = importlib.util.spec_from_file_location(
+            f"_fresh_input_validation_{bleach_mode}", real.__file__
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.InputValidator
+
+    @pytest.mark.parametrize("mode", ["stub", "blocked"])
+    def test_same_output_with_and_without_bleach(self, monkeypatch, mode):
+        expected = [InputValidator.sanitize_html(s) for s in self.SAMPLES]
+        fresh = self._fresh_copy(monkeypatch, mode)
+        assert [fresh.sanitize_html(s) for s in self.SAMPLES] == expected
+        assert "BLEACH-STUB" not in expected
+
+    def test_tags_are_escaped_not_stripped(self):
+        assert InputValidator.sanitize_html("<b>x</b>") == "&lt;b&gt;x&lt;/b&gt;"

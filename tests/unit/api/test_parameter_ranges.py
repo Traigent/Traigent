@@ -44,7 +44,7 @@ class TestRange:
     def test_range_to_config_value_simple(self):
         """Test simple range converts to tuple."""
         r = Range(0.0, 1.0)
-        assert r.to_config_value() == (0.0, 1.0)
+        assert r.to_config_value() == {"type": "float", "low": 0.0, "high": 1.0}
 
     def test_range_to_tuple(self):
         """Test to_tuple() method."""
@@ -140,8 +140,9 @@ class TestRange:
         simple = Range(0.0, 1.0).to_config_value()
         advanced = Range(0.0, 1.0, step=0.1).to_config_value()
 
-        assert not is_float_range_config_dict(simple)
+        assert is_float_range_config_dict(simple)
         assert is_float_range_config_dict(advanced)
+        assert not is_float_range_config_dict((0.0, 1.0))
 
     def test_range_non_dividing_step_warns_unreachable_high(self):
         """Range(0, 1.0, step=0.4): step 0.4 does not divide span 1.0 — warns.
@@ -191,9 +192,14 @@ class TestIntRange:
         assert r.log is False
 
     def test_int_range_to_config_value_simple(self):
-        """Test simple int range converts to tuple."""
+        """A step-less int range is discrete with step 1 (#3212)."""
         r = IntRange(1, 10)
-        assert r.to_config_value() == (1, 10)
+        assert r.to_config_value() == {
+            "type": "int",
+            "low": 1,
+            "high": 10,
+            "step": 1,
+        }
 
     def test_int_range_to_tuple(self):
         """Test to_tuple() method."""
@@ -220,8 +226,11 @@ class TestIntRange:
         simple = IntRange(1, 10).to_config_value()
         advanced = IntRange(1, 10, step=1).to_config_value()
 
-        assert not is_int_range_config_dict(simple)
+        bare_tuple = (1, 10)  # user-supplied bare tuple stays a tuple
+
+        assert is_int_range_config_dict(simple)
         assert is_int_range_config_dict(advanced)
+        assert not is_int_range_config_dict(bare_tuple)
 
     def test_int_range_type_validation_float_low(self):
         """Test validation: bounds must be integers."""
@@ -582,7 +591,7 @@ class TestNormalizeConfigValue:
 
     def test_normalize_range(self):
         result = normalize_config_value(Range(0.0, 1.0))
-        assert result == (0.0, 1.0)
+        assert result == {"type": "float", "low": 0.0, "high": 1.0}
 
     def test_normalize_range_with_log(self):
         result = normalize_config_value(Range(0.01, 1.0, log=True))
@@ -591,7 +600,7 @@ class TestNormalizeConfigValue:
 
     def test_normalize_int_range(self):
         result = normalize_config_value(IntRange(1, 10))
-        assert result == (1, 10)
+        assert result == {"type": "int", "low": 1, "high": 10, "step": 1}
 
     def test_normalize_log_range(self):
         result = normalize_config_value(LogRange(0.01, 1.0))
@@ -612,7 +621,7 @@ class TestNormalizeConfigValue:
 
     def test_normalize_parameter_value_alias(self):
         result = normalize_parameter_value(Range(0.0, 1.0))
-        assert result == (0.0, 1.0)
+        assert result == {"type": "float", "low": 0.0, "high": 1.0}
 
 
 class TestNormalizeConfigurationSpace:
@@ -629,7 +638,7 @@ class TestNormalizeConfigurationSpace:
                 "temperature": Range(0.0, 2.0),
             }
         )
-        assert result["temperature"] == (0.0, 2.0)
+        assert result["temperature"] == {"type": "float", "low": 0.0, "high": 2.0}
         assert defaults == {}
 
     def test_normalize_with_choices(self):
@@ -669,7 +678,7 @@ class TestNormalizeConfigurationSpace:
             config_space={"temp": (0.0, 1.0)},
             inline_params={"temp": Range(0.0, 2.0)},
         )
-        assert result["temp"] == (0.0, 2.0)
+        assert result["temp"] == {"type": "float", "low": 0.0, "high": 2.0}
 
     def test_inline_merges_with_config_space(self):
         """Test inline params merge with config_space."""
@@ -686,7 +695,7 @@ class TestNormalizeConfigurationSpace:
             config_space=None,
             inline_params={"temperature": Range(0.0, 1.0)},
         )
-        assert result["temperature"] == (0.0, 1.0)
+        assert result["temperature"] == {"type": "float", "low": 0.0, "high": 1.0}
 
     def test_inline_defaults_override(self):
         """Test inline param defaults override config_space defaults."""
@@ -739,7 +748,7 @@ class TestAutoNamingFromKwargs:
         # The returned param should have the name auto-assigned
         assert returned_param is not None
         assert returned_param.name == "temperature"
-        assert result["temperature"] == (0.0, 1.0)
+        assert result["temperature"] == {"type": "float", "low": 0.0, "high": 1.0}
 
     def test_int_range_name_auto_assigned(self):
         """Test IntRange without name gets name from kwarg key."""

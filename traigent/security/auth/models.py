@@ -44,7 +44,7 @@ class User:
         if not self.user_id or not isinstance(self.user_id, str):
             raise ValueError("Invalid user_id") from None
 
-        if not self.username or not re.match(r"^[a-zA-Z0-9_-]{3,32}$", self.username):
+        if not self.username or not re.match(r"^[a-zA-Z0-9_-]{3,32}\Z", self.username):
             raise ValueError("Invalid username format")
 
         if not self.email or not EMAIL_PATTERN.match(self.email):

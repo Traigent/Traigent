@@ -42,7 +42,10 @@ def _portal_sync_status(config: TraigentConfig) -> str:
     if _offline_requested(config):
         return "disabled (offline)"
     if config.auto_sync:
-        return "automatic for eligible results"
+        return (
+            "auto_sync requested but automatic upload is not implemented; "
+            "run `traigent sync`"
+        )
     return "available with `traigent sync`"
 
 

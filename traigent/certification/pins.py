@@ -27,6 +27,8 @@ from typing import Any, Final
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 __all__ = [
     "PIN_FIELDS",
     "PinError",
@@ -52,7 +54,7 @@ _REF_RE = re.compile(r"[a-z][a-z0-9_.-]{1,63}:[A-Za-z0-9_-]{8,128}")
 _SUPPORTED_ISSUER_ALGORITHMS: Final = frozenset({"ed25519", "ecdsa_p256_sha256"})
 
 
-class PinError(Exception):
+class PinError(PicklableExceptionMixin, Exception):
     """Closed failure; ``code`` is a fixed token."""
 
     CODES: Final = frozenset(

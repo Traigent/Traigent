@@ -145,7 +145,10 @@ class AdaptiveBatchSizer:
 
         # Increase batch size if throughput improved and errors didn't increase significantly
         if throughput_change > 0 and error_rate_change <= 0.05:
-            new_size = min(self.max_batch_size, int(self.current_batch_size * 1.2))
+            new_size = min(
+                self.max_batch_size,
+                max(self.current_batch_size + 1, int(self.current_batch_size * 1.2)),
+            )
             logger.debug(
                 f"Increasing batch size due to good performance: {self.current_batch_size} -> {new_size}"
             )

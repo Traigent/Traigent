@@ -59,10 +59,11 @@ from typing import Any
 
 from traigent.evaluators.base import Dataset
 from traigent.security.redaction import redact_sensitive_data
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 from traigent.utils.persistence import _safe_json_value
 
 
-class UnresolvedExampleIdError(ValueError):
+class UnresolvedExampleIdError(PicklableExceptionMixin, ValueError):
     """Some example ids did not resolve to exactly one dataset row.
 
     Attributes:
@@ -104,6 +105,16 @@ class UnresolvedExampleIdError(ValueError):
             "; ".join(parts)
             + ". Pass the original dataset the run evaluated, unmodified; "
             "nothing was selected."
+        )
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # The constructor normalises inputs to plain lists; rebuild from those, not
+        # from the caller's original sequence objects (which may carry more).
+        rebuild, (cls, _args, _kwargs), state = super().__reduce__()
+        return (
+            rebuild,
+            (cls, (self.unresolved, self.ambiguous, self.unverifiable), {}),
+            state,
         )
 
 

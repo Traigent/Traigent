@@ -582,7 +582,9 @@ class RunVersionInfo:
         validated_version_file = validate_path(
             self.version_file, self.version_file.parent, must_exist=False
         )
-        with safe_open(validated_version_file, self.version_file.parent, mode="w") as f:
+        with safe_open(
+            validated_version_file, self.version_file.parent, mode="w", encoding="utf-8"
+        ) as f:
             json.dump(version_info, f, indent=2)
 
         return version_info
@@ -599,7 +601,9 @@ class RunVersionInfo:
         validated_version_file = validate_path(
             self.version_file, self.version_file.parent, must_exist=True
         )
-        with safe_open(validated_version_file, self.version_file.parent, mode="r") as f:
+        with safe_open(
+            validated_version_file, self.version_file.parent, mode="r", encoding="utf-8"
+        ) as f:
             return cast(dict[str, Any] | None, json.load(f))
 
     def check_compatibility(self, current_version: str) -> dict[str, Any]:

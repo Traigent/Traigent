@@ -36,9 +36,9 @@ def _get_api_key():
 # Import Traigent modules and utilities
 try:
     # Import availability checks only
-    import optimization_callbacks  # noqa: F401 - Import check only
-    import optimization_storage  # noqa: F401 - Import check only
-    from langchain_problems import get_problem_class
+    from traigent_ui import optimization_callbacks  # noqa: F401 - Import check only
+    from traigent_ui import optimization_storage  # noqa: F401 - Import check only
+    from traigent_ui.langchain_problems import get_problem_class
 
     import traigent  # noqa: F401 - Import check only
 except ImportError as e:
@@ -123,7 +123,10 @@ async def run_optimization(
         # Get the problem class and create instance
         try:
             # Load all problems first to populate registry
-            from langchain_problems import get_available_problems, load_all_problems
+            from traigent_ui.langchain_problems import (
+                get_available_problems,
+                load_all_problems,
+            )
 
             load_all_problems()
 

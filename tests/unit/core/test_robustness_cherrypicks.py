@@ -203,6 +203,7 @@ class TestSessionMappingRecovery:
             certified_selection=None,
             session_aggregation=None,
             optimization_outcome=None,
+            stop_reason=None,
         )
 
     @pytest.mark.asyncio

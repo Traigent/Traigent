@@ -225,7 +225,7 @@ TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE=1 pytest --cov=traigent --cov-report=ter
 
 # Run linters
 ruff check traigent/
-black traigent/ --check
+ruff format traigent/ --check
 mypy traigent/
 ```
 

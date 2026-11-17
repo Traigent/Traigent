@@ -754,10 +754,24 @@ def _normalize_model_for_fallback(model: str) -> str:
     return normalized.lower() if normalized else model.lower()
 
 
+#: A dated snapshot suffix: ``-YYYY-MM-DD`` or ``-YYYYMMDD``, optionally ``-vN``.
+#: Same shape as the one ``_strip_date_suffix`` removes.
+_SNAPSHOT_SUFFIX_RE = re.compile(r"-\d{4}(?:-\d{2}-\d{2}|\d{4})(?:-v\d+)?")
+
+
+def _is_dated_snapshot_of(name: str, key: str) -> bool:
+    """True iff ``name`` is exactly ``key`` plus a dated-snapshot suffix.
+
+    A bare ``startswith`` would price typos and different models sharing a
+    stem (``gpt-4oo``, ``gemini-1.5-flash-8b``) as the sibling (Traigent#3218).
+    """
+    return name.startswith(key) and bool(_SNAPSHOT_SUFFIX_RE.fullmatch(name, len(key)))
+
+
 def _find_fallback_pricing(
     base_model: str,
 ) -> tuple[dict[str, float] | None, str | None]:
-    """Find pricing entry for a normalized model name via exact then prefix match.
+    """Find pricing entry for a normalized model name via exact or dated-snapshot match.
 
     Args:
         base_model: Lower-cased, normalized model name
@@ -776,12 +790,12 @@ def _find_fallback_pricing(
     matched_key = None
     for model_key, model_pricing in ESTIMATION_MODEL_PRICING.items():
         key_lower = model_key.lower()
-        # Forward longest-prefix match only: base_model starts with a known key.
-        # A reverse (key startswith base_model) branch mis-priced partial names
-        # like 'gpt-4' to the first dict-order family member (e.g. gpt-4o). See
-        # issue #1957. Legitimate short aliases resolve via MODEL_NAME_ALIASES
-        # before this lookup, so dropping the reverse branch loses no real match.
-        if base_model.startswith(key_lower):
+        # Only ``<key>`` + a dated-snapshot suffix matches. A reverse (key
+        # startswith base_model) branch mis-priced partial names like 'gpt-4'
+        # (#1957) and a bare forward startswith priced typos and different
+        # models as a sibling (#3218). Legitimate short aliases resolve via
+        # MODEL_NAME_ALIASES before this lookup.
+        if _is_dated_snapshot_of(base_model, key_lower):
             if len(key_lower) > best_match_len:
                 best_match_len = len(key_lower)
                 pricing = model_pricing
@@ -796,8 +810,9 @@ def _try_builtin_per_token_rates(
     """Try Traigent's curated pricing table for candidate matches.
 
     First attempts exact normalized matches (fast path). If no exact match
-    is found, falls back to longest-prefix matching so that dated model
-    versions like ``gpt-4o-2024-11-20`` resolve to ``gpt-4o`` pricing.
+    is found, falls back to matching ``<key>`` plus a dated-snapshot suffix so
+    that versions like ``gpt-4o-2024-11-20`` resolve to ``gpt-4o`` pricing.
+    Any other name (typos, different models sharing a stem) does not match.
     """
     pricing_index = {
         model.lower(): (model, pricing)
@@ -816,13 +831,16 @@ def _try_builtin_per_token_rates(
                 matched_key,
             )
 
-    # Pass 2: longest-prefix match (handles dated model versions)
+    # Pass 2: exact key + dated-snapshot suffix (Traigent#3218)
     best: tuple[float, float, str] | None = None
     best_prefix_len = 0
     for candidate in candidates:
         normalized = _normalize_model_for_fallback(candidate)
         for key_lower, (matched_key, pricing) in pricing_index.items():
-            if normalized.startswith(key_lower) and len(key_lower) > best_prefix_len:
+            if (
+                _is_dated_snapshot_of(normalized, key_lower)
+                and len(key_lower) > best_prefix_len
+            ):
                 best_prefix_len = len(key_lower)
                 best = (
                     float(pricing["input_cost_per_token"]),
@@ -832,7 +850,7 @@ def _try_builtin_per_token_rates(
 
     if best is not None:
         logger.debug(
-            "Builtin pricing: prefix-matched candidates %r to %r",
+            "Builtin pricing: dated-snapshot-matched candidates %r to %r",
             candidates,
             best[2],
         )
@@ -1388,6 +1406,39 @@ def cost_from_tokens(
         _CUSTOM_PRICING_JSON_ENV,
     )
     return 0.0, 0.0
+
+
+def get_cached_input_rate(model: str) -> float | None:
+    """Per-token USD rate for cache-read (cached) input, from the price table.
+
+    Reads ``cache_read_input_token_cost`` from the litellm cost map (which
+    includes the SDK's bundled provider snapshot). Returns ``None`` when the
+    table has no usable cached rate for ``model``; callers must then keep the
+    full input rate rather than guess a discount (Traigent#3253).
+    """
+    if not LITELLM_AVAILABLE:
+        return None
+    try:
+        candidates = _build_model_candidates(model)
+        model_cost_lower = {k.lower(): k for k in litellm.model_cost}
+        for candidate in candidates:
+            actual_key = model_cost_lower.get(candidate.lower())
+            if not actual_key:
+                continue
+            entry = litellm.model_cost[actual_key]
+            if any("_above_" in str(key) for key in entry):
+                # Context-tiered entry (rates change above a token threshold):
+                # a single cached rate may undercount a long request, and a
+                # reduced fresh count could select a lower tier. Unknown.
+                return None
+            raw = entry.get("cache_read_input_token_cost")
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                return None
+            rate = float(raw)
+            return rate if math.isfinite(rate) and rate >= 0 else None
+    except Exception:  # noqa: BLE001 - an unreadable table is an unknown rate
+        logger.debug("cached-input rate lookup failed for %r", model, exc_info=True)
+    return None
 
 
 def model_pricing_resolves(model: str) -> bool:

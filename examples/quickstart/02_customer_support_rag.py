@@ -2,7 +2,12 @@
 """
 Traigent Quickstart Example 2: Customer Support with RAG
 
-This example demonstrates RAG (Retrieval Augmented Generation) optimization.
+This example demonstrates the retrieval half of RAG: it tunes the retrieval
+depth (k) of a keyword retriever. The answer is the retrieved passages, so
+no language model is called and no model or temperature knob is declared (a
+tuned knob that no code reads would score identically for every value).
+To tune a model too, enable the commented LangChain call in the agent and add
+"model"/"temperature" to the configuration space (see 01_simple_qa.py).
 Based on the README.md customer support example.
 
 Run with (from repo root):
@@ -83,24 +88,27 @@ def simple_retriever(query: str, k: int = 3) -> list[str]:
     return [doc for _, doc in scores[:k]]
 
 
-# Valid model names: https://models.litellm.ai/
+RULE_BASED_NOTICE = (
+    "RULE-BASED RETRIEVAL DEMO: no language model is called, so only the "
+    "retrieval depth (k) is tuned. Model and temperature are not part of this "
+    "example's search space. Scores use exact match against short reference "
+    "answers, so they will not separate retrieval depths; read this as a "
+    "wiring demo, not a quality ranking."
+)
+
+
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4.1"],
-        "temperature": [0.1, 0.5, 0.9],
-        "k": [2, 3, 5],  # RAG retrieval depth
+        "k": [2, 3, 5],  # RAG retrieval depth (the only knob this code reads)
     },
     evaluation=EvaluationOptions(eval_dataset=str(RAG_DATASET_PATH)),
     execution=ExecutionOptions(offline=True),
-    max_trials=6,
+    max_trials=3,
 )
 def customer_support_agent(query: str) -> str:
-    """Answer customer questions using RAG.
+    """Answer customer questions with the top-k retrieved documents.
 
-    This demonstrates how Traigent can optimize RAG parameters like:
-    - Which model to use
-    - Temperature setting
-    - Number of retrieved documents (k)
+    Tunes the number of retrieved documents (k). No model is called.
     """
     # Read the tuned config injected by Traigent
     cfg = traigent.get_config()
@@ -116,9 +124,9 @@ def customer_support_agent(query: str) -> str:
     # response = llm.invoke(f"Context: {context}\nQuestion: {query}\nAnswer:")
     # return response.content
 
-    # For demo, return the most relevant document
+    # For demo, return the retrieved passages (more depth, more context)
     if docs:
-        return docs[0]
+        return " ".join(docs)
     return "I'm sorry, I couldn't find information about that."
 
 
@@ -135,7 +143,7 @@ async def main():
     print()
 
     print(f"Dataset: {RAG_DATASET_PATH}")
-    print(f"Mock mode: {os.environ.get('TRAIGENT_MOCK_LLM', 'false')}")
+    print(RULE_BASED_NOTICE)
     print()
 
     # Test the retriever
@@ -148,7 +156,7 @@ async def main():
 
     # Run optimization
     print("Starting RAG optimization...")
-    print("(Optimizing model, temperature, and retrieval depth)")
+    print("(Optimizing retrieval depth k only)")
     print()
 
     results = await customer_support_agent.optimize()

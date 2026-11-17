@@ -219,6 +219,7 @@ async def _cloud(opt: OptimizedFunction, monkeypatch, **optimize_kwargs):
     return seen
 
 
+@pytest.mark.usefixtures("connected_policy_env")
 @pytest.mark.asyncio
 async def test_cloud_runtime_override_runs_and_identifies_b(monkeypatch) -> None:
     opt = _function(custom_evaluator=evaluator_a, cloud=True)
@@ -230,6 +231,7 @@ async def test_cloud_runtime_override_runs_and_identifies_b(monkeypatch) -> None
     assert sent != _digest_of(custom_evaluator=evaluator_a, objectives=["accuracy"])
 
 
+@pytest.mark.usefixtures("connected_policy_env")
 @pytest.mark.asyncio
 async def test_cloud_no_override_runs_and_identifies_a(monkeypatch) -> None:
     opt = _function(custom_evaluator=evaluator_a, cloud=True)
@@ -241,6 +243,7 @@ async def test_cloud_no_override_runs_and_identifies_a(monkeypatch) -> None:
     )
 
 
+@pytest.mark.usefixtures("connected_policy_env")
 @pytest.mark.asyncio
 async def test_cloud_scoring_function_only(monkeypatch) -> None:
     opt = _function(scoring_function=plain_scoring, cloud=True)
@@ -250,6 +253,7 @@ async def test_cloud_scoring_function_only(monkeypatch) -> None:
     )
 
 
+@pytest.mark.usefixtures("connected_policy_env")
 @pytest.mark.asyncio
 async def test_cloud_privacy_mode_withholds_the_digest(monkeypatch) -> None:
     opt = _function(custom_evaluator=evaluator_a, cloud=True)

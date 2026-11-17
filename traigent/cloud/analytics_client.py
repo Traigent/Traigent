@@ -183,7 +183,7 @@ _RUN_EXAMPLE_INSIGHTS_REQUIRED_KEYS = frozenset(
         "redactions",
     }
 )
-_EXAMPLE_INSIGHT_REF_PATTERN = re.compile(r"^exref_[0-9a-f]{16}$")
+_EXAMPLE_INSIGHT_REF_PATTERN = re.compile(r"^exref_[0-9a-f]{16}\Z")
 _EXAMPLE_INSIGHT_MAX_SAFE_EXAMPLE_REFS = 50
 _EXAMPLE_INSIGHTS_DATASET_QUALITIES = frozenset({"low", "medium", "high"})
 _EXAMPLE_INSIGHT_REVIEW_PRIORITIES = frozenset({"critical", "high", "medium", "low"})

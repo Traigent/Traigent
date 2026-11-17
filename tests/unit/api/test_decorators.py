@@ -7,8 +7,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from traigent.api.decorators import optimize
-from traigent.core.optimized_function import OptimizedFunction
 from traigent.core.objectives import create_default_objectives
+from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import ConfigurationError
 
@@ -143,6 +143,7 @@ class TestOptimizeDecorator:
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.hybrid_api_transport is transport
 
+    @pytest.mark.usefixtures("connected_policy_env")
     def test_decorator_execution_mode_registry_matches_runtime(self):
         """Decorator validation accepts the same modes advertised by runtime."""
         import warnings
@@ -407,8 +408,10 @@ class TestOptimizeDecorator:
 
         assert isinstance(constrained_function, OptimizedFunction)
 
-    def test_decorator_loads_tvl_spec(self):
+    def test_decorator_loads_tvl_spec(self, connected_policy_env):
         """Supplying tvl_spec hydrates the configuration automatically."""
+        # The fixture spec names a managed algorithm; the spec's algorithm now
+        # applies, and a managed algorithm is refused while offline.
 
         spec_path = Path("tests/fixtures/tvl/hello_tvl.yml")
 

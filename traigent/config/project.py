@@ -41,3 +41,24 @@ def scope_api_path(api_path: str, project_id: str | None) -> str:
 def read_optional_project_env() -> str | None:
     """Return the active project env value or ``None`` when blank."""
     return read_optional_env(PROJECT_ENV_VAR)
+
+
+PROJECT_HEADER = "X-Project-Id"
+
+
+def apply_project_header(
+    headers: dict[str, str], project_id: str | None = None
+) -> None:
+    """Add ``X-Project-Id`` in place when a project is configured.
+
+    ``project_id`` (an explicit client option) wins over ``TRAIGENT_PROJECT_ID``.
+    A header the caller already set (any case) is never overridden, and nothing
+    is added when no project is configured. Call this only for requests to the
+    Traigent backend, never for provider or other third-party clients.
+    """
+    if any(name.lower() == PROJECT_HEADER.lower() for name in headers):
+        return
+    explicit = project_id.strip() if isinstance(project_id, str) else ""
+    resolved = explicit or read_optional_project_env()
+    if resolved:
+        headers[PROJECT_HEADER] = resolved

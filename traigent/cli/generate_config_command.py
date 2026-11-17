@@ -7,11 +7,21 @@ Python source file using preset heuristics and optional LLM enrichment.
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
 
 import click
+
+
+def _require_finite_budget(
+    _ctx: click.Context, _param: click.Parameter, value: float
+) -> float:
+    """Reject NaN/inf, which ``FloatRange`` lets through."""
+    if not math.isfinite(value):
+        raise click.BadParameter(f"{value!r} is not a finite number")
+    return value
 
 
 @click.command("generate-config")
@@ -37,7 +47,8 @@ import click
 )
 @click.option(
     "--budget",
-    type=float,
+    type=click.FloatRange(min=0.0, min_open=True),
+    callback=_require_finite_budget,
     default=0.10,
     show_default=True,
     help="Maximum LLM spend in USD for enrichment.",

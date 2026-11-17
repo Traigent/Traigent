@@ -497,8 +497,17 @@ class PlotGenerator:
             return "No importance data to plot"
 
         # Extract parameter names and importance scores
-        params = list(importance_results.keys())
-        scores = [result.importance_score for result in importance_results.values()]
+        # Parameters whose importance is not measurable (score None) are left
+        # out of the chart rather than plotted as zero.
+        measurable = {
+            name: result.importance_score
+            for name, result in importance_results.items()
+            if result.importance_score is not None
+        }
+        if not measurable:
+            return "No measurable importance data to plot"
+        params = list(measurable.keys())
+        scores = list(measurable.values())
 
         if self._matplotlib_available:
             return self._plot_importance_matplotlib(params, scores)

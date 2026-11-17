@@ -38,7 +38,7 @@ import numbers
 import os
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import (
     TYPE_CHECKING,
@@ -106,6 +106,40 @@ def _require_finite(owner: str, field_name: str, value: Any) -> None:
         and not math.isfinite(value)
     ):
         raise ValueError(f"{owner} {field_name} must be finite, got {value!r}")
+
+
+def _is_real(value: Any) -> bool:
+    return isinstance(value, numbers.Real) and not isinstance(value, bool)
+
+
+def _require_real(owner: str, field_name: str, value: Any) -> None:
+    """Reject non-numbers (None/str/bool/list/...) naming the field (#3196).
+
+    Only the type name is reported, never the value.
+    """
+    if not _is_real(value):
+        raise TypeError(
+            f"{owner} {field_name} must be a real number, got {type(value).__name__}"
+        )
+
+
+def _require_real_bounds(owner: str, low: Any, high: Any) -> None:
+    if not (_is_real(low) and _is_real(high)):
+        raise TypeError(
+            f"{owner} bounds must be real numbers, got "
+            f"low={type(low).__name__}, high={type(high).__name__}"
+        )
+
+
+def _validate_float_range_args(owner: str, range_def: Any) -> None:
+    """Type-check then finite-check the numeric fields of a float range."""
+    _require_real_bounds(owner, range_def.low, range_def.high)
+    for field_name in ("step", "default"):
+        value = getattr(range_def, field_name, None)
+        if value is not None:
+            _require_real(owner, field_name, value)
+    for field_name in ("low", "high", "step", "default"):
+        _require_finite(owner, field_name, getattr(range_def, field_name, None))
 
 
 class ParameterRange(ABC):
@@ -197,14 +231,18 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
     agent: str | None = None
 
     def __post_init__(self) -> None:
-        for field_name in ("low", "high", "step", "default"):
-            _require_finite("Range", field_name, getattr(self, field_name))
+        _validate_float_range_args("Range", self)
         if self.low >= self.high:
             raise ValueError(
                 f"Range low ({self.low}) must be less than high ({self.high})"
             )
         if self.step is not None and self.step <= 0:
             raise ValueError(f"Range step must be positive, got {self.step}")
+        if self.step is not None and self.step > (self.high - self.low) * (1 + 1e-9):
+            raise ValueError(
+                f"Range step ({self.step}) is larger than the span "
+                f"[{self.low}, {self.high}]"
+            )
         if self.step is not None and not float_step_divides_span(
             float(self.low), float(self.high), float(self.step)
         ):
@@ -230,11 +268,10 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
     def to_config_value(self) -> FloatRangeConfigValue:
         """Convert to internal format.
 
-        Returns tuple for simple ranges, dict when log/step is set.
+        Always returns the typed dict form. A bare ``(low, high)`` tuple with
+        integer-valued bounds (``Range(0, 1)``) is indistinguishable from an
+        integer range and would be sampled as integers (#3211).
         """
-        if self.step is None and not self.log:
-            return (self.low, self.high)
-        # Use dict format for advanced options
         result: FloatRangeConfigDict = {
             "type": "float",
             "low": self.low,
@@ -251,7 +288,12 @@ class Range(NumericConstraintBuilderMixin, ParameterRange):
         return self.default
 
     def to_tuple(self) -> tuple[float, float]:
-        """Return as simple (low, high) tuple for backward compatibility."""
+        """Return as simple (low, high) tuple for backward compatibility.
+
+        Lossy: a bare tuple is not typed. Do not use it as a configuration
+        space entry; ``to_config_value()`` keeps the float type. A bare
+        user-supplied ``(int, int)`` tuple is still sampled as integers.
+        """
         return (self.low, self.high)
 
     # Constraint builder methods (equals, not_equals, gt, gte, lt, lte,
@@ -408,7 +450,21 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
     agent: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.low, int) or not isinstance(self.high, int):
+        self._validate_bounds()
+        self._validate_step()
+        self._validate_default_type()
+        if self.step is not None:
+            # numpy scalars pass the checks above but fail config validation.
+            object.__setattr__(self, "step", int(self.step))
+        self._validate_log_and_default_range()
+
+    def _validate_bounds(self) -> None:
+        if (
+            not isinstance(self.low, int)
+            or not isinstance(self.high, int)
+            or isinstance(self.low, bool)
+            or isinstance(self.high, bool)
+        ):
             raise TypeError(
                 f"IntRange bounds must be integers, got low={type(self.low).__name__}, "
                 f"high={type(self.high).__name__}"
@@ -417,7 +473,15 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             raise ValueError(
                 f"IntRange low ({self.low}) must be less than high ({self.high})"
             )
-        if self.step is not None and (
+
+    def _validate_step(self) -> None:
+        if self.step is None:
+            return
+        if not isinstance(self.step, (bool, str, numbers.Real)):
+            raise TypeError(
+                f"IntRange step must be an integer, got {type(self.step).__name__}"
+            )
+        if (
             isinstance(self.step, bool)
             or not isinstance(self.step, numbers.Real)
             or not math.isfinite(self.step)
@@ -426,11 +490,25 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
             raise ValueError(
                 f"IntRange step must be a positive integer, got {self.step!r}"
             )
-        if self.step is not None and self.step <= 0:
+        if self.step <= 0:
             raise ValueError(f"IntRange step must be positive, got {self.step}")
-        if self.step is not None:
-            # numpy scalars pass the checks above but fail config validation.
-            object.__setattr__(self, "step", int(self.step))
+        if self.step > (self.high - self.low) * (1 + 1e-9):
+            raise ValueError(
+                f"IntRange step ({self.step}) is larger than the span "
+                f"[{self.low}, {self.high}]"
+            )
+
+    def _validate_default_type(self) -> None:
+        if self.default is not None and (
+            isinstance(self.default, bool)
+            or not isinstance(self.default, numbers.Integral)
+        ):
+            raise TypeError(
+                f"IntRange default must be an integer, got "
+                f"{type(self.default).__name__}"
+            )
+
+    def _validate_log_and_default_range(self) -> None:
         if self.log and self.low <= 0:
             raise ValueError(f"log=True requires positive bounds, got low={self.low}")
         if self.log and self.step is not None:
@@ -446,17 +524,18 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
     def to_config_value(self) -> IntRangeConfigValue:
         """Convert to internal format.
 
-        Returns tuple for simple ranges, dict when log/step is set.
+        Always returns the dict form. An integer range without an explicit
+        step is discrete with step 1: the bare ``(low, high)`` tuple is
+        indistinguishable from a float ``Range`` with integer bounds and would
+        be treated as continuous (no dedup, no exhaustion).
         """
-        if self.step is None and not self.log:
-            return (self.low, self.high)
         result: IntRangeConfigDict = {
             "type": "int",
             "low": self.low,
             "high": self.high,
         }
-        if self.step is not None:
-            result["step"] = self.step
+        if not self.log:
+            result["step"] = self.step if self.step is not None else 1
         if self.log:
             result["log"] = True
         return result
@@ -624,8 +703,7 @@ class LogRange(NumericConstraintBuilderMixin, ParameterRange):
     agent: str | None = None
 
     def __post_init__(self) -> None:
-        for field_name in ("low", "high", "default"):
-            _require_finite("LogRange", field_name, getattr(self, field_name))
+        _validate_float_range_args("LogRange", self)
         if self.low <= 0 or self.high <= 0:
             raise ValueError(
                 f"LogRange requires positive bounds, got ({self.low}, {self.high})"
@@ -713,6 +791,11 @@ class Choices[T](CategoricalConstraintBuilderMixin, ParameterRange):
             raise TypeError(
                 "Choices values must be a list or tuple, not str/bytes. "
                 f"Did you mean Choices([{self.values!r}])?"
+            )
+        if isinstance(self.values, Mapping) or not isinstance(self.values, Iterable):
+            raise TypeError(
+                "Choices values must be a list or tuple, got "
+                f"{type(self.values).__name__}"
             )
         # Convert to tuple for immutability (frozen dataclass)
         object.__setattr__(self, "values", tuple(self.values))

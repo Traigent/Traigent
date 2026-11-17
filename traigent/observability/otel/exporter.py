@@ -271,6 +271,13 @@ class TraigentOTLPExporter(SpanExporter):
         ):  # recheck every POST
             outcome.dropped_offline += count
             return True, None
+        credential = getattr(self, "egress_credential", None)
+        if (
+            credential is not None
+            and not oo_egress.ensure_trace_egress_allowed(credential[0], credential[1])
+        ):  # cached per (key digest, origin); fail closed on a missing/failed validation
+            outcome.dropped_offline += count
+            return True, None
         remaining = self._remaining(deadline)
         if remaining is not None and remaining <= 0:
             outcome.dropped_deadline += count

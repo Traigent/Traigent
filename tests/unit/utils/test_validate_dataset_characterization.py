@@ -285,7 +285,9 @@ class TestSinglePathContent:
         f = _write_lines(tmp_path / "d.jsonl", [_good()[0], "{bad", _good()[0]])
         result = Validators.validate_dataset(f)
         assert _errs(result) == [("dataset:line2", "JSON_ERROR")]
-        assert result.errors[0].message == "Invalid JSON"
+        assert result.errors[0].message == (
+            "Invalid JSON: Expecting property name enclosed in double quotes (column 2)"
+        )
         assert result.metadata == {
             "dataset_rows_inspected": 3,
             "dataset_invalid_rows": 1,
@@ -365,11 +367,12 @@ class TestSinglePathContent:
         f.write_text("\n\n  \n", encoding="utf-8")
         assert _errs(Validators.validate_dataset(f)) == [("dataset", "EMPTY_FILE")]
 
-    def test_json_extension_is_line_oriented(self, tmp_path: Path) -> None:
+    def test_json_extension_is_document_oriented(self, tmp_path: Path) -> None:
+        # Traigent#3232: .json is one document (array/envelope), as in the loader.
         f = tmp_path / "d.json"
-        f.write_text('[{"input": 1}]', encoding="utf-8")
+        f.write_text('[{"input": 1}, {"x": 2}]', encoding="utf-8")
         result = Validators.validate_dataset(f)
-        assert _errs(result) == [("dataset:line1", "INVALID_FORMAT")]
+        assert _errs(result) == [("dataset:example1", "INVALID_FORMAT")]
 
     def test_undecodable_bytes_read_error(self, tmp_path: Path) -> None:
         f = tmp_path / "d.jsonl"
@@ -393,7 +396,7 @@ class TestSinglePathContent:
         ]
         args, kwargs = opener.call_args
         assert args == (f.resolve(), f.resolve().parent)
-        assert kwargs == {"mode": "r", "encoding": "utf-8"}
+        assert kwargs == {"mode": "r", "encoding": "utf-8-sig"}
 
 
 class _LatePath(str):
@@ -448,3 +451,57 @@ def test_path_list_call_sequence_on_path_object(tmp_path: Path) -> None:
     assert probe.calls == 4
     with pytest.raises(RuntimeError, match="nth startswith"):
         Validators.validate_dataset([_CountingPath(missing, fail_on=4)])
+
+
+class TestJsonDatasetLayouts:
+    """Traigent#3232: .json is one document, not JSONL; match Dataset.from_jsonl."""
+
+    ROWS = [{"input": "a", "output": "A"}, {"input": "b", "output": "B"}]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            json.dumps(ROWS),
+            json.dumps(ROWS, indent=2),
+            json.dumps({"examples": ROWS, "name": "nm"}),
+            json.dumps({"examples": ROWS, "name": "nm"}, indent=2),
+            json.dumps({"input": "a", "output": "A"}),
+        ],
+    )
+    def test_loader_accepted_layouts_validate(
+        self, tmp_path: Path, text: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+        f = tmp_path / "d.json"
+        f.write_text(text, encoding="utf-8")
+        Dataset.from_jsonl(str(f))  # the loader accepts it
+        result = Validators.validate_dataset(str(f))
+        assert result.is_valid, _errs(result)
+        assert result.errors == []
+
+    def test_array_with_bad_row_names_the_example(self, tmp_path: Path) -> None:
+        f = tmp_path / "d.json"
+        f.write_text(json.dumps([self.ROWS[0], {"output": "x"}]), encoding="utf-8")
+        result = Validators.validate_dataset(str(f))
+        assert _errs(result) == [("dataset:example1", "INVALID_FORMAT")]
+
+    def test_malformed_json_reported(self, tmp_path: Path) -> None:
+        f = tmp_path / "d.json"
+        f.write_text('[{"input": ', encoding="utf-8")
+        result = Validators.validate_dataset(str(f))
+        assert ("dataset", "JSON_ERROR") in _errs(result)
+
+    def test_bad_envelope_reported(self, tmp_path: Path) -> None:
+        f = tmp_path / "d.json"
+        f.write_text(json.dumps({"examples": "nope"}), encoding="utf-8")
+        result = Validators.validate_dataset(str(f))
+        assert ("dataset", "INVALID_FORMAT") in _errs(result)
+
+    def test_duplicate_example_id_rejected_like_the_loader(
+        self, tmp_path: Path
+    ) -> None:
+        f = tmp_path / "d.json"
+        rows = [{"input": "a", "example_id": "x"}, {"input": "b", "example_id": "x"}]
+        f.write_text(json.dumps(rows), encoding="utf-8")
+        result = Validators.validate_dataset(str(f))
+        assert _errs(result) == [("dataset:example1", "INVALID_FORMAT")]

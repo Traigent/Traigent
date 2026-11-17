@@ -31,7 +31,12 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, cast
 
-from traigent.core.exception_handler import VendorErrorCategory, classify_vendor_error
+from traigent.core.exception_handler import (
+    VendorErrorCategory,
+    classify_vendor_error,
+    is_temporary_in_flight_budget_402,
+    temporary_402_chain,
+)
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.langchain_interceptor import (
     VendorAttemptHandle,
@@ -147,6 +152,10 @@ def classify_retryable(exc: BaseException) -> VendorErrorCategory | None:
     if not isinstance(exc, Exception):
         return None
     try:
+        # Structured metadata outranks wording: the temporary 402's message
+        # reads like an exhausted account but clears on its own.
+        if is_temporary_in_flight_budget_402(exc):
+            return VendorErrorCategory.RATE_LIMIT
         message = str(exc).lower()
         if any(marker in message for marker in _TERMINAL_MARKERS):
             return None
@@ -261,7 +270,14 @@ def compute_delay(
     requested = vendor_wait_seconds(exc)
     if requested is not None:
         return None if requested > MAX_RETRY_DELAY_SECONDS else requested
-    return float(min(base_backoff * (2**retry_index), MAX_RETRY_DELAY_SECONDS))
+    own = float(min(base_backoff * (2**retry_index), MAX_RETRY_DELAY_SECONDS))
+    # A temporary 402 found on an inner response of the validated chain: honour
+    # that response's Retry-After, never waiting less than the provider asked.
+    for node in temporary_402_chain(exc) or ():
+        inner = vendor_wait_seconds(node)
+        if inner is not None:
+            return None if inner > MAX_RETRY_DELAY_SECONDS else max(inner, own)
+    return own
 
 
 def _usage_of(response: Any) -> dict[str, int] | None:
@@ -304,6 +320,7 @@ def _finish(
     error: BaseException | None = None,
     backoff_seconds: float | None = None,
     usage: dict[str, int] | None = None,
+    no_response: bool = False,
 ) -> None:
     finish_vendor_attempt(
         handle,
@@ -314,6 +331,7 @@ def _finish(
         usage=usage,
         # Unknown, not zero: a failed attempt reports no usage.
         usage_known=usage is not None,
+        no_response=no_response,
     )
 
 
@@ -427,10 +445,11 @@ def _on_failure(
         if category is not None and attempt <= settings.max_retries
         else None
     )
+    # The call raised before any response came back: no response, no usage.
     if delay is None or category is None:
-        _finish(handle, "error", error=exc)
+        _finish(handle, "error", error=exc, no_response=True)
         return None
-    _finish(handle, "error", error=exc, backoff_seconds=delay)
+    _finish(handle, "error", error=exc, backoff_seconds=delay, no_response=True)
     logger.warning(
         "traigent.vendor_call_retry category=%s retry=%s/%s backoff=%.2fs",
         category.value,
@@ -531,6 +550,8 @@ def summarize_bucket(bucket: Any) -> dict[str, Any]:
             "vendor_call_attempts": total,
             "vendor_call_retries": root.vendor_retry_total,
             "vendor_call_unknown_usage_attempts": unknown,
+            "vendor_call_no_response_attempts": root.vendor_no_response_total,
+            "vendor_call_responses_captured": root.responses_captured_total,
             "vendor_call_cost_reported_attempts": covered,
             "vendor_call_unmeasured_attempts": unknown - covered,
             "vendor_call_incomplete_attempts": total - root.vendor_done_total,

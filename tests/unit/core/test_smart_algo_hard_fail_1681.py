@@ -162,8 +162,21 @@ class AllFailEvaluator(BaseEvaluator):
         )
 
 
+def _without_offline_env() -> Any:
+    """Resolve a connected *policy* while leaving the rest of the test offline.
+
+    Since #1773 both offline spellings force a local-only policy, so building a
+    cloud-required policy needs them cleared. Only construction is wrapped: the
+    run itself stays under the suite's offline transport default.
+    """
+    return patch.dict(
+        "os.environ", {"TRAIGENT_OFFLINE": "", "TRAIGENT_OFFLINE_MODE": ""}
+    )
+
+
 def _cloud_required_policy(algorithm: str = "bayesian") -> ResolvedExecutionPolicy:
-    policy = resolve_execution_policy(algorithm=algorithm, source_hint="test_1681")
+    with _without_offline_env():
+        policy = resolve_execution_policy(algorithm=algorithm, source_hint="test_1681")
     assert policy.intent is ExecutionIntent.CLOUD_REQUIRED
     return policy
 
@@ -443,14 +456,16 @@ class TestDecoratorSmartAlgorithmSurface:
 
     @staticmethod
     def _wrapper():
-        @traigent.optimize(
-            eval_dataset=_dataset(),
-            objectives=["accuracy"],
-            configuration_space=_SPACE,
-            injection_mode="parameter",
-        )
-        def answer(text: str, config) -> str:
-            return "ok"
+        with _without_offline_env():
+
+            @traigent.optimize(
+                eval_dataset=_dataset(),
+                objectives=["accuracy"],
+                configuration_space=_SPACE,
+                injection_mode="parameter",
+            )
+            def answer(text: str, config) -> str:
+                return "ok"
 
         return answer
 

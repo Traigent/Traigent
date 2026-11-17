@@ -158,19 +158,40 @@ class TestWithUsage:
         finally:
             trial_context.reset(token)
 
-    def test_with_usage_token_conversion(self):
-        """Should convert tokens to int."""
+    def test_with_usage_invalid_tokens_are_unknown_not_coerced(self, caplog):
+        """Floats/bools/negatives/strings make usage unknown (Traigent#3252).
+
+        Previously ``int()`` coerced 100.5 -> 100 and accepted True as 1; a
+        count that is not a non-negative int is now dropped, flagged, and
+        warned about by field name without echoing the value.
+        """
+        token = trial_context.set({"trial_id": 1})
+        try:
+            for bad in (100.5, True, -5, "12", 10**400):
+                caplog.clear()
+                result = traigent.with_usage(
+                    text="hello",
+                    total_cost=0.001,
+                    input_tokens=bad,
+                    output_tokens=50,
+                )
+                usage = result["__traigent_meta__"]["usage"]
+                assert "input_tokens" not in usage
+                assert usage["output_tokens"] == 50
+                assert usage["tokens_invalid"] is True
+                assert any("input_tokens" in r.getMessage() for r in caplog.records)
+                assert not any("100.5" in r.getMessage() for r in caplog.records)
+        finally:
+            trial_context.reset(token)
+
+    def test_with_usage_valid_tokens_unchanged(self):
         token = trial_context.set({"trial_id": 1})
         try:
             result = traigent.with_usage(
-                text="hello",
-                total_cost=0.001,
-                input_tokens=100.5,  # float should be converted to int
-                output_tokens=50.8,
+                text="hello", total_cost=0.001, input_tokens=100, output_tokens=50
             )
-            assert result["__traigent_meta__"]["usage"]["input_tokens"] == 100
-            assert result["__traigent_meta__"]["usage"]["output_tokens"] == 50
-            assert isinstance(result["__traigent_meta__"]["usage"]["input_tokens"], int)
+            usage = result["__traigent_meta__"]["usage"]
+            assert usage == {"input_tokens": 100, "output_tokens": 50}
         finally:
             trial_context.reset(token)
 

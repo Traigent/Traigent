@@ -879,3 +879,256 @@ class TestTrialResultFactoryIntegration:
         assert not hasattr(success, "error_message") or success.error_message is None
         assert not hasattr(pruned, "error_message") or pruned.error_message is None
         assert hasattr(failed, "error_message") and failed.error_message is not None
+
+
+# --- Traigent#3217: cost/latency as the primary objective -------------------
+
+
+def _eval_with_example_metrics(rows: list[dict[str, float]]):
+    from types import SimpleNamespace
+
+    examples = [SimpleNamespace(metrics=row) for row in rows]
+    return SimpleNamespace(
+        total_examples=len(examples), example_results=examples, metrics={}
+    )
+
+
+@pytest.mark.parametrize(
+    ("objective", "row"),
+    [
+        ("cost", {"total_cost": 0.01, "input_cost": 0.004, "output_cost": 0.006}),
+        ("accuracy", {"accuracy": 1.0}),
+    ],
+)
+def test_primary_objective_coverage_resolves_measured_source_metric(objective, row):
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    comp = _build_fallback_comparability(
+        _eval_with_example_metrics([row, dict(row)]), objective
+    )
+
+    assert comp["primary_objective"] == objective
+    assert comp["examples_with_primary_metric"] == 2
+    assert comp["ranking_eligible"] is True
+    assert "MCI-004" not in comp["warning_codes"]
+
+
+def test_primary_objective_without_any_source_metric_stays_ineligible():
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    comp = _build_fallback_comparability(
+        _eval_with_example_metrics([{"accuracy": 1.0}, {"accuracy": 0.0}]), "cost"
+    )
+
+    assert comp["examples_with_primary_metric"] == 0
+    assert comp["ranking_eligible"] is False
+    assert "MCI-004" in comp["warning_codes"]
+
+
+def test_cost_primary_objective_selects_cheapest_trial():
+    from traigent.api.types import TrialResult
+    from traigent.core.result_selection import select_best_configuration
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    trials = []
+    for idx, cost in enumerate((0.002, 0.001)):
+        comp = _build_fallback_comparability(
+            _eval_with_example_metrics([{"total_cost": cost}]), "cost"
+        )
+        trials.append(
+            TrialResult(
+                trial_id=f"t{idx}",
+                config={"x": idx},
+                metrics={"cost": cost, "total_cost": cost},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=__import__("datetime").datetime.now(UTC),
+                metadata={"comparability": comp},
+            )
+        )
+
+    result = select_best_configuration(
+        trials=trials,
+        primary_objective="cost",
+        config_space_keys={"x"},
+        aggregate_configs=False,
+    )
+
+    assert result.best_config == {"x": 1}
+    assert result.best_score == pytest.approx(0.001)
+
+
+def test_primary_objective_counts_rows_once_across_mixed_cost_names():
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    comp = _build_fallback_comparability(
+        _eval_with_example_metrics(
+            [{"cost": 0.01}, {"total_cost": 0.02}, {"cost": 0.1, "total_cost": 0.1}]
+        ),
+        "cost",
+    )
+
+    assert comp["total_examples"] == 3
+    assert comp["examples_with_primary_metric"] == 3
+    assert comp["ranking_eligible"] is True
+
+
+def test_selection_partial_source_metric_coverage_is_not_promoted_to_full():
+    from traigent.core.result_selection import _resolve_primary_coverage
+
+    class _Trial:
+        metrics = {"cost": 0.01}
+
+        def get_metric(self, name, default=None):
+            return self.metrics.get(name, default)
+
+    comparability = {
+        "primary_objective": "accuracy",
+        "total_examples": 2,
+        "per_metric_coverage": {
+            "total_cost": {"present": 1, "total": 2, "ratio": 0.5},
+        },
+    }
+
+    assert _resolve_primary_coverage(_Trial(), comparability, "cost") == (1, 2, 0.5)
+
+
+def test_latency_primary_objective_counts_timed_example_results():
+    from types import SimpleNamespace
+
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    examples = [
+        SimpleNamespace(metrics={"accuracy": 1.0}, execution_time=0.12),
+        SimpleNamespace(metrics={"accuracy": 1.0}, execution_time=0.3),
+    ]
+    eval_result = SimpleNamespace(
+        total_examples=2, example_results=examples, metrics={}
+    )
+
+    comp = _build_fallback_comparability(eval_result, "latency")
+
+    assert comp["examples_with_primary_metric"] == 2
+    assert comp["ranking_eligible"] is True
+
+
+def test_latency_primary_objective_without_timing_stays_ineligible():
+    from types import SimpleNamespace
+
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    examples = [SimpleNamespace(metrics={"accuracy": 1.0}, execution_time=0.0)]
+    eval_result = SimpleNamespace(
+        total_examples=1, example_results=examples, metrics={}
+    )
+
+    comp = _build_fallback_comparability(eval_result, "latency")
+
+    assert comp["examples_with_primary_metric"] == 0
+    assert "MCI-004" in comp["warning_codes"]
+
+
+def test_latency_primary_objective_ignores_zero_filled_untimed_row():
+    from types import SimpleNamespace
+
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    examples = [
+        SimpleNamespace(metrics={"latency": 0.0}, execution_time=0.0),
+        SimpleNamespace(metrics={"latency": 120.0}, execution_time=0.12),
+    ]
+    eval_result = SimpleNamespace(
+        total_examples=2, example_results=examples, metrics={}
+    )
+
+    comp = _build_fallback_comparability(eval_result, "latency")
+
+    assert comp["examples_with_primary_metric"] == 1
+    assert comp["ranking_eligible"] is False
+
+
+def test_selection_aggregate_latency_is_not_full_coverage_with_untimed_row():
+    from types import SimpleNamespace
+
+    from traigent.core.result_selection import _resolve_primary_coverage
+
+    class _Trial:
+        metrics = {"latency": 60.0}
+        metadata = {
+            "example_results": [
+                SimpleNamespace(execution_time=0.12),
+                SimpleNamespace(execution_time=0.0),
+            ]
+        }
+
+        def get_metric(self, name, default=None):
+            return self.metrics.get(name, default)
+
+    comparability = {"primary_objective": "accuracy", "total_examples": 2}
+
+    assert _resolve_primary_coverage(_Trial(), comparability, "latency") == (1, 2, 0.5)
+
+
+def test_selection_aggregate_latency_without_rows_is_not_full_coverage():
+    from traigent.core.result_selection import _resolve_primary_coverage
+
+    class _Trial:
+        metrics = {"latency": 60.0}
+        metadata: dict = {}
+
+        def get_metric(self, name, default=None):
+            return self.metrics.get(name, default)
+
+    comparability = {"primary_objective": "accuracy", "total_examples": 2}
+
+    present, total, ratio = _resolve_primary_coverage(
+        _Trial(), comparability, "latency"
+    )
+    assert (present, ratio) == (0, 0.0)
+
+
+def test_no_ranking_eligible_trial_logs_warning_with_reason(caplog):
+    import logging
+
+    from traigent.api.types import TrialResult
+    from traigent.core.result_selection import select_best_configuration
+    from traigent.core.trial_result_factory import _build_fallback_comparability
+
+    comp = _build_fallback_comparability(
+        _eval_with_example_metrics([{"accuracy": 1.0}]), "cost"
+    )
+    trial = TrialResult(
+        trial_id="t0",
+        config={"x": 0},
+        metrics={"cost": 0.01},
+        status=TrialStatus.COMPLETED,
+        duration=0.1,
+        timestamp=__import__("datetime").datetime.now(UTC),
+        metadata={"comparability": comp},
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = select_best_configuration(
+            trials=[trial],
+            primary_objective="cost",
+            config_space_keys={"x"},
+            aggregate_configs=False,
+        )
+
+    assert not result.best_config
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("'cost'" in m and "MCI-004" in m for m in messages)
+
+
+def test_non_finite_cost_rows_are_not_counted_as_measured() -> None:
+    from types import SimpleNamespace
+
+    from traigent.core.trial_result_factory import _count_primary_objective_rows
+
+    rows = [
+        SimpleNamespace(metrics={"total_cost": 0.5}),
+        SimpleNamespace(metrics={"total_cost": float("nan")}),
+        SimpleNamespace(metrics={"total_cost": float("inf")}),
+        SimpleNamespace(metrics={"total_cost": True}),
+    ]
+    assert _count_primary_objective_rows("cost", {}, rows) == 1

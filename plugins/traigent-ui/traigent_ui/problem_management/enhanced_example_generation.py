@@ -6,8 +6,9 @@ using various LLM providers with progress tracking and validation.
 """
 
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 from traigent_ui.security_utils import UnsafeValueError, safe_python_value_literal
 
@@ -22,8 +23,8 @@ async def generate_examples_for_problem(
     count: int,
     llm_provider: str,
     custom_instructions: str = "",
-    progress_callback: Optional[Callable[[str, float], None]] = None,
-) -> Tuple[bool, List[Dict[str, Any]], str]:
+    progress_callback: Callable[[str, float], None] | None = None,
+) -> tuple[bool, list[dict[str, Any]], str]:
     """
     Generate additional examples for an existing problem.
 
@@ -114,13 +115,7 @@ async def load_problem_instance(problem_name: str):
     """Load a problem instance by name."""
     try:
         # Try different import paths
-        try:
-            from ..langchain_problems import get_problem_class
-        except ImportError:
-            try:
-                from langchain_problems import get_problem_class
-            except ImportError:
-                from examples.langchain_problems import get_problem_class
+        from ..langchain_problems import get_problem_class
 
         problem_class = get_problem_class(problem_name)
         return problem_class()
@@ -131,8 +126,8 @@ async def load_problem_instance(problem_name: str):
 
 
 def validate_generated_examples(
-    examples: List[Dict[str, Any]], problem_instance
-) -> List[Dict[str, Any]]:
+    examples: list[dict[str, Any]], problem_instance
+) -> list[dict[str, Any]]:
     """
     Validate that generated examples match the expected format.
 
@@ -152,7 +147,7 @@ def validate_generated_examples(
     return validated
 
 
-def validate_single_example(example: Dict[str, Any], problem_instance) -> bool:
+def validate_single_example(example: dict[str, Any], problem_instance) -> bool:
     """
     Validate a single example.
 
@@ -209,8 +204,8 @@ def validate_single_example(example: Dict[str, Any], problem_instance) -> bool:
 
 
 async def save_examples_to_problem(
-    problem_name: str, new_examples: List[Dict[str, Any]]
-) -> Tuple[bool, str]:
+    problem_name: str, new_examples: list[dict[str, Any]]
+) -> tuple[bool, str]:
     """
     Save new examples to the problem file.
 
@@ -254,7 +249,7 @@ async def save_examples_to_problem(
         return False, f"Error saving examples: {str(e)}"
 
 
-def find_problem_file(problem_name: str) -> Optional[Path]:
+def find_problem_file(problem_name: str) -> Path | None:
     """Find the Python file for a given problem."""
     # Look in the langchain_problems directory
     base_dir = Path(__file__).parent.parent
@@ -276,7 +271,7 @@ def find_problem_file(problem_name: str) -> Optional[Path]:
     return None
 
 
-def add_examples_to_content(content: str, new_examples: List[Dict[str, Any]]) -> str:
+def add_examples_to_content(content: str, new_examples: list[dict[str, Any]]) -> str:
     """
     Add new examples to the problem file content.
 
@@ -344,7 +339,7 @@ def add_examples_to_content(content: str, new_examples: List[Dict[str, Any]]) ->
 _ALLOWED_INPUT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 
 
-def convert_examples_to_code(examples: List[Dict[str, Any]]) -> str:
+def convert_examples_to_code(examples: list[dict[str, Any]]) -> str:
     """Convert examples to Python code format.
 
     Every LLM-supplied value that lands in the emitted source is first
@@ -375,7 +370,7 @@ def convert_examples_to_code(examples: List[Dict[str, Any]]) -> str:
         return ""
 
 
-def _format_single_example_code(example: Dict[str, Any], index: int) -> str:
+def _format_single_example_code(example: dict[str, Any], index: int) -> str:
     example_code = "            {\n"
 
     # Add input_data (typically query). Keys must match a strict
@@ -428,7 +423,7 @@ def _format_single_example_code(example: Dict[str, Any], index: int) -> str:
     return example_code
 
 
-def get_available_providers() -> List[str]:
+def get_available_providers() -> list[str]:
     """Get list of available LLM providers."""
     manager = LLMProviderManager()
     return manager.get_available_providers()

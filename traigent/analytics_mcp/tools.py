@@ -230,7 +230,7 @@ class _ToolInputError(ValueError):
 #
 # The Director tools accept no client-composed free text. Every field
 # validated below is an enum, an integer, or an identifier pattern.
-_DIRECTOR_INSTRUCTION_ID_PATTERN = re.compile(r"^di_[0-9a-f]{32}$")
+_DIRECTOR_INSTRUCTION_ID_PATTERN = re.compile(r"^di_[0-9a-f]{32}\Z")
 
 
 def _validate_workflow_kind(value: str) -> str:

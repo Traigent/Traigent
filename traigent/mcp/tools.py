@@ -21,10 +21,14 @@ from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, read_optional_env
 from traigent.evaluators.base import DATASET_ROOT_ENV, _resolve_dataset_source
-from traigent.hooks.validator import DEFAULT_TOKENS_PER_QUERY, MODEL_COST_PER_1K
+from traigent.hooks.validator import (
+    _SNAPSHOT_BASES,
+    DEFAULT_TOKENS_PER_QUERY,
+    MODEL_COST_PER_1K,
+)
 from traigent.tuned_variables.detection_types import DetectionResult
 from traigent.tuned_variables.detector import TunedVariableDetector
-from traigent.utils.cost_calculator import UnknownModelError
+from traigent.utils.cost_calculator import UnknownModelError, _is_dated_snapshot_of
 from traigent.utils.env_config import mock_cost_preflight_guidance
 from traigent.utils.exceptions import CostLimitExceeded
 from traigent.utils.exceptions import ValidationError as TraigentValidationError
@@ -590,10 +594,10 @@ def scaffold_eval_tool(
 
 def _count_dataset_examples(path: Path) -> int:
     if path.suffix == ".jsonl":
-        with path.open(encoding="utf-8") as handle:
+        with path.open(encoding="utf-8-sig") as handle:
             return sum(1 for line in handle if line.strip())
 
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
     if isinstance(payload, list):
         return len(payload)
     if isinstance(payload, dict) and isinstance(payload.get("examples"), list):
@@ -605,13 +609,18 @@ def _estimate_model_cost_per_call(model: str | None) -> tuple[float | None, str 
     if not model:
         return None, None
 
-    normalized = model.lower()
+    # Strip an optional provider prefix (``openai/gpt-4o`` -> ``gpt-4o``).
+    normalized = model.lower().split("/", 1)[-1]
     cost_per_1k = MODEL_COST_PER_1K.get(normalized)
     if cost_per_1k is None:
-        for known_model, known_cost in MODEL_COST_PER_1K.items():
-            if known_model in normalized or normalized in known_model:
-                cost_per_1k = known_cost
-                break
+        # Only <known model> + a strict dated-snapshot suffix matches. No
+        # substring match in either direction: typos and different models
+        # sharing a stem must stay unpriced (Traigent#3218).
+        for known_model in _SNAPSHOT_BASES:
+            if _is_dated_snapshot_of(normalized, known_model.lower()):
+                cost_per_1k = MODEL_COST_PER_1K.get(known_model.lower())
+                if cost_per_1k is not None:
+                    break
 
     if cost_per_1k is None:
         return None, None

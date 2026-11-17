@@ -31,6 +31,11 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (EXEMPT, "TRAIGENT_COST_APPROVED", "TRAIGENT_MOCK_LLM"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ENVIRONMENT", "development")
+    # The in-code mock flag is process-global and can leak from an earlier test
+    # in a shared worker; the non-mock cases need it off. monkeypatch restores it.
+    import traigent.testing as traigent_testing
+
+    monkeypatch.setattr(traigent_testing, "_enabled", False)
 
 
 def _declined_estimator() -> CostEstimator:

@@ -357,14 +357,14 @@ def jwt_development_mode(monkeypatch, request):
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
         monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
     else:
-        # Setting TRAIGENT_OFFLINE_MODE=true is enough for is_backend_offline(),
-        # which ORs the two spellings. It is NOT a blanket offline default:
-        # consumers that read only TRAIGENT_OFFLINE (e.g.
-        # TraigentConfig.from_environment, resolve_execution_policy) still see
-        # whatever the ambient shell has, so they stay online-capable unless the
-        # operator exported TRAIGENT_OFFLINE themselves. The zero-egress
-        # guarantee for unit tests rests on mocked transports plus the cloud
-        # canaries, not on this line alone.
+        # Default lane: TRAIGENT_OFFLINE_MODE=true. Since #1773 the two
+        # spellings are equivalent everywhere, so BOTH is_backend_offline() and
+        # the execution-policy readers (resolve_execution_policy,
+        # TraigentConfig.from_environment) see offline by default. Tests that
+        # assert a connected policy (cloud_brain, managed/smart algorithms,
+        # allows_cloud_fallback) opt in with the ``connected_policy_env``
+        # fixture below. The zero-egress guarantee for unit tests also rests on
+        # mocked transports plus the cloud canaries, not on this line alone.
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.setenv("MOCK_MODE", "true")
     if not _test_exercises_policy(request.node, _CI_APPROVAL_POLICY_TEST_PATHS):
@@ -387,6 +387,20 @@ def jwt_development_mode(monkeypatch, request):
 
 
 # Global State Reset Fixture - Critical for test isolation
+@pytest.fixture
+def connected_policy_env(monkeypatch):
+    """Clear both offline spellings so execution-policy readers see connected.
+
+    The default unit-test lane exports TRAIGENT_OFFLINE_MODE=true, which since
+    #1773 also forces a local-only execution policy. Tests asserting a
+    connected policy request this fixture (``pytestmark =
+    pytest.mark.usefixtures("connected_policy_env")``). It runs after the
+    autouse env fixture, so the deletion wins.
+    """
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+
+
 @pytest.fixture(autouse=True)
 def reset_global_state():
     """Reset all global state before and after each test to prevent state pollution.

@@ -76,6 +76,7 @@ class TestDeprecatedCloudMode:
 class TestSupportedExecutionModes:
     """Supported decorated execution modes still behave normally."""
 
+    @pytest.mark.usefixtures("connected_policy_env")
     def test_decorator_with_edge_execution(self):
         """Default auto execution creates a cloud-brain OptimizedFunction."""
 
@@ -91,6 +92,7 @@ class TestSupportedExecutionModes:
         assert test_function.execution_policy.intent.value == "cloud_brain"
         assert test_function.execution_mode == "hybrid"
 
+    @pytest.mark.usefixtures("connected_policy_env")
     def test_decorator_with_hybrid_execution(self):
         """Legacy hybrid resolves to cloud-brain policy with hybrid runtime."""
 

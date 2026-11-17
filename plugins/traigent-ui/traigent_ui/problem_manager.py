@@ -46,16 +46,13 @@ from pathlib import Path
 
 from traigent.utils.secure_path import validate_path
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 # Import problem management modules
 try:
-    from langchain_problems import (
+    from traigent_ui.langchain_problems import (
         get_available_problems,
         load_all_problems,
     )
-    from problem_management import (
+    from traigent_ui.problem_management import (
         CodeGenerator,
         ExampleGenerator,
         ProblemAnalyzer,

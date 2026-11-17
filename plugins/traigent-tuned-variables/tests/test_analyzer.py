@@ -56,6 +56,108 @@ class TestVariableAnalyzer:
 
         assert importance == {}
 
+    @staticmethod
+    def _permutation_analyzer(constant: bool = False):
+        from datetime import datetime
+
+        from traigent_tuned_variables import VariableAnalyzer
+
+        from traigent.api.types import TrialResult, TrialStatus
+
+        accuracy = {"small": 0.60, "large": 0.90, "medium": 0.60}
+        models = ["small", "large", "medium"]
+        trials = [
+            TrialResult(
+                trial_id=f"t{i}",
+                config={"model": models[i % 3], "temperature": 0.1 + 0.001 * i},
+                metrics={
+                    "accuracy": 0.5
+                    if constant
+                    else accuracy[models[i % 3]] + 0.01 * (i % 5)
+                },
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime.now(),
+            )
+            for i in range(30)
+        ]
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"model": models, "temperature": (0.0, 1.0)},
+        )
+        return VariableAnalyzer(result, importance_method="permutation")
+
+    def test_permutation_unknown_variable_is_never_eliminated(self):
+        """An all-unique (unmeasurable) variable stays unknown, not 0.0 or 1.0."""
+        analyzer = self._permutation_analyzer()
+        importance = analyzer.get_variable_importance("accuracy")
+        assert importance["model"] > 0.3
+        assert "temperature" not in importance
+        assert (
+            "replication" in analyzer.get_unknown_importance("accuracy")["temperature"]
+        )
+
+        analysis = analyzer.analyze("accuracy")
+        temp = analysis.variables["temperature"]
+        assert temp.importance_unknown_reason
+        assert temp.suggestion.action.value != "eliminate"
+        assert all(
+            s.variable != "temperature" or s.action.value != "eliminate"
+            for s in analysis.elimination_suggestions
+        )
+        assert "temperature" in analysis.refined_space
+
+        multi = analyzer.analyze_multi_objective(["accuracy"])
+        assert multi.variables["temperature"].importance_unknown_reason
+        assert all(s.variable != "temperature" for s in multi.elimination_suggestions)
+        assert "temperature" in multi.refined_space
+
+    def test_unknown_importance_is_none_not_zero(self):
+        analyzer = self._permutation_analyzer()
+        analysis = analyzer.analyze("accuracy")
+        assert analysis.variables["temperature"].importance is None
+        assert analysis.variables["model"].importance > 0.3
+
+        multi = analyzer.analyze_multi_objective(["accuracy"])
+        temp = multi.variables["temperature"]
+        assert temp.aggregate_importance is None
+        assert temp.suggestion.importance_score is None
+        assert temp.suggestion.action.value == "keep"
+        assert "unknown" in temp.suggestion.reason
+        assert multi.variables["model"].aggregate_importance > 0.3
+
+    def test_unknown_on_any_objective_is_never_eliminated(self):
+        """Unknown on one objective + low importance on another: keep it."""
+        analyzer = self._permutation_analyzer()
+        analyzer._unknown_importance["accuracy"] = {"model": "forced unknown"}
+        analyzer._importance_cache["accuracy"] = {"temperature": 0.9}
+        analyzer._importance_cache["cost"] = {"model": 0.0, "temperature": 0.9}
+        analyzer._unknown_importance["cost"] = {}
+
+        multi = analyzer.analyze_multi_objective(["accuracy", "cost"])
+        model = multi.variables["model"]
+        assert model.importance_unknown_reason == "forced unknown"
+        # PRUNE_VALUES/NARROW_RANGE are not importance-based and are accepted.
+        assert model.suggestion.action.value != "eliminate"
+        assert all(
+            s.variable != "model" or s.action.value != "eliminate"
+            for s in multi.elimination_suggestions
+        )
+        assert "model" in multi.refined_space
+
+        refined = analyzer.get_refined_space(["cost", "accuracy"])
+        assert "model" in refined
+
+    def test_permutation_constant_objective_yields_no_elimination(self):
+        analyzer = self._permutation_analyzer(constant=True)
+        analysis = analyzer.analyze("accuracy")
+        assert all(
+            s.action.value != "eliminate" for s in analysis.elimination_suggestions
+        )
+        for name in ("model", "temperature"):
+            assert analysis.variables[name].importance_unknown_reason
+        assert set(analysis.refined_space) == {"model", "temperature"}
+
     def test_get_variable_importance_single_variable(self):
         """Test importance calculation with trials."""
         from traigent_tuned_variables import VariableAnalyzer
@@ -629,15 +731,21 @@ class TestMultiObjectiveAnalysis:
         analyzer = VariableAnalyzer(result)
 
         # Mean aggregation
-        analysis_mean = analyzer.analyze_multi_objective(["obj1", "obj2"], aggregation="mean")
+        analysis_mean = analyzer.analyze_multi_objective(
+            ["obj1", "obj2"], aggregation="mean"
+        )
         mean_imp = analysis_mean.variables["model"].aggregate_importance
 
         # Max aggregation (keep if important for any)
-        analysis_max = analyzer.analyze_multi_objective(["obj1", "obj2"], aggregation="max")
+        analysis_max = analyzer.analyze_multi_objective(
+            ["obj1", "obj2"], aggregation="max"
+        )
         max_imp = analysis_max.variables["model"].aggregate_importance
 
         # Min aggregation (eliminate only if unimportant for all)
-        analysis_min = analyzer.analyze_multi_objective(["obj1", "obj2"], aggregation="min")
+        analysis_min = analyzer.analyze_multi_objective(
+            ["obj1", "obj2"], aggregation="min"
+        )
         min_imp = analysis_min.variables["model"].aggregate_importance
 
         # Max should be >= mean >= min
@@ -650,11 +758,21 @@ class TestMultiObjectiveAnalysis:
         # "dominated" is worse on BOTH objectives
         trials = [
             MockTrial(config={"strategy": "good"}, metrics={"acc": 0.9, "speed": 0.8}),
-            MockTrial(config={"strategy": "good"}, metrics={"acc": 0.88, "speed": 0.85}),
-            MockTrial(config={"strategy": "good"}, metrics={"acc": 0.92, "speed": 0.82}),
-            MockTrial(config={"strategy": "dominated"}, metrics={"acc": 0.3, "speed": 0.2}),
-            MockTrial(config={"strategy": "dominated"}, metrics={"acc": 0.32, "speed": 0.22}),
-            MockTrial(config={"strategy": "dominated"}, metrics={"acc": 0.28, "speed": 0.18}),
+            MockTrial(
+                config={"strategy": "good"}, metrics={"acc": 0.88, "speed": 0.85}
+            ),
+            MockTrial(
+                config={"strategy": "good"}, metrics={"acc": 0.92, "speed": 0.82}
+            ),
+            MockTrial(
+                config={"strategy": "dominated"}, metrics={"acc": 0.3, "speed": 0.2}
+            ),
+            MockTrial(
+                config={"strategy": "dominated"}, metrics={"acc": 0.32, "speed": 0.22}
+            ),
+            MockTrial(
+                config={"strategy": "dominated"}, metrics={"acc": 0.28, "speed": 0.18}
+            ),
         ]
 
         result = MockOptimizationResult(
@@ -681,11 +799,21 @@ class TestMultiObjectiveAnalysis:
         # Trade-off: "fast" is good at speed, "accurate" is good at accuracy
         trials = [
             MockTrial(config={"strategy": "fast"}, metrics={"acc": 0.6, "speed": 0.9}),
-            MockTrial(config={"strategy": "fast"}, metrics={"acc": 0.58, "speed": 0.92}),
-            MockTrial(config={"strategy": "fast"}, metrics={"acc": 0.62, "speed": 0.88}),
-            MockTrial(config={"strategy": "accurate"}, metrics={"acc": 0.95, "speed": 0.4}),
-            MockTrial(config={"strategy": "accurate"}, metrics={"acc": 0.93, "speed": 0.42}),
-            MockTrial(config={"strategy": "accurate"}, metrics={"acc": 0.97, "speed": 0.38}),
+            MockTrial(
+                config={"strategy": "fast"}, metrics={"acc": 0.58, "speed": 0.92}
+            ),
+            MockTrial(
+                config={"strategy": "fast"}, metrics={"acc": 0.62, "speed": 0.88}
+            ),
+            MockTrial(
+                config={"strategy": "accurate"}, metrics={"acc": 0.95, "speed": 0.4}
+            ),
+            MockTrial(
+                config={"strategy": "accurate"}, metrics={"acc": 0.93, "speed": 0.42}
+            ),
+            MockTrial(
+                config={"strategy": "accurate"}, metrics={"acc": 0.97, "speed": 0.38}
+            ),
         ]
 
         result = MockOptimizationResult(
@@ -707,12 +835,27 @@ class TestMultiObjectiveAnalysis:
         from traigent_tuned_variables import VariableAnalyzer
 
         trials = [
-            MockTrial(config={"model": "good", "temp": 0.7}, metrics={"acc": 0.9, "cost": 1.0}),
-            MockTrial(config={"model": "good", "temp": 0.8}, metrics={"acc": 0.88, "cost": 1.1}),
-            MockTrial(config={"model": "good", "temp": 0.75}, metrics={"acc": 0.92, "cost": 0.9}),
-            MockTrial(config={"model": "bad", "temp": 0.1}, metrics={"acc": 0.3, "cost": 5.0}),
-            MockTrial(config={"model": "bad", "temp": 0.2}, metrics={"acc": 0.32, "cost": 4.8}),
-            MockTrial(config={"model": "bad", "temp": 0.15}, metrics={"acc": 0.28, "cost": 5.2}),
+            MockTrial(
+                config={"model": "good", "temp": 0.7}, metrics={"acc": 0.9, "cost": 1.0}
+            ),
+            MockTrial(
+                config={"model": "good", "temp": 0.8},
+                metrics={"acc": 0.88, "cost": 1.1},
+            ),
+            MockTrial(
+                config={"model": "good", "temp": 0.75},
+                metrics={"acc": 0.92, "cost": 0.9},
+            ),
+            MockTrial(
+                config={"model": "bad", "temp": 0.1}, metrics={"acc": 0.3, "cost": 5.0}
+            ),
+            MockTrial(
+                config={"model": "bad", "temp": 0.2}, metrics={"acc": 0.32, "cost": 4.8}
+            ),
+            MockTrial(
+                config={"model": "bad", "temp": 0.15},
+                metrics={"acc": 0.28, "cost": 5.2},
+            ),
         ]
 
         result = MockOptimizationResult(
@@ -736,10 +879,22 @@ class TestMultiObjectiveAnalysis:
         from traigent_tuned_variables.analysis import EliminationAction
 
         trials = [
-            MockTrial(config={"model": "good", "unused": "x"}, metrics={"acc": 0.9, "speed": 0.8}),
-            MockTrial(config={"model": "good", "unused": "y"}, metrics={"acc": 0.9, "speed": 0.8}),
-            MockTrial(config={"model": "bad", "unused": "x"}, metrics={"acc": 0.3, "speed": 0.2}),
-            MockTrial(config={"model": "bad", "unused": "y"}, metrics={"acc": 0.3, "speed": 0.2}),
+            MockTrial(
+                config={"model": "good", "unused": "x"},
+                metrics={"acc": 0.9, "speed": 0.8},
+            ),
+            MockTrial(
+                config={"model": "good", "unused": "y"},
+                metrics={"acc": 0.9, "speed": 0.8},
+            ),
+            MockTrial(
+                config={"model": "bad", "unused": "x"},
+                metrics={"acc": 0.3, "speed": 0.2},
+            ),
+            MockTrial(
+                config={"model": "bad", "unused": "y"},
+                metrics={"acc": 0.3, "speed": 0.2},
+            ),
         ]
 
         result = MockOptimizationResult(
@@ -790,3 +945,46 @@ class TestMultiObjectiveAnalysis:
         assert var_analysis.aggregate_importance == pytest.approx(0.4)
         assert var_analysis.pareto_dominated_values is None
         assert var_analysis.suggestion is None
+
+
+class TestUnknownImportanceKeepsDomain:
+    """Variables whose importance is unknown are never pruned or narrowed."""
+
+    @staticmethod
+    def _analyzer(n_trials: int):
+        from datetime import datetime
+
+        from traigent_tuned_variables import VariableAnalyzer
+
+        from traigent.api.types import TrialResult, TrialStatus
+
+        trials = [
+            TrialResult(
+                trial_id=f"t{i}",
+                config={"model": "ab"[i % 2], "temp": 0.1 * (i + 1)},
+                metrics={"acc": 0.9 if i % 2 == 0 else 0.5},
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime(2026, 1, 1),
+            )
+            for i in range(n_trials)
+        ]
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"model": ["a", "b"], "temp": (0.0, 1.0)},
+        )
+        return VariableAnalyzer(result, elimination_threshold=0.5)
+
+    def test_too_few_trials_marks_variables_unknown_not_zero(self):
+        analyzer = self._analyzer(4)
+        assert set(analyzer.get_unknown_importance("acc")) == {"model", "temp"}
+        assert analyzer.get_variable_importance("acc") == {}
+
+    def test_too_few_trials_does_not_eliminate_variables(self):
+        refined = self._analyzer(4).get_refined_space(["acc"], return_typed=False)
+        assert set(refined) == {"model", "temp"}
+
+    def test_unknown_numeric_variable_keeps_original_range(self):
+        refined = self._analyzer(4).get_refined_space(["acc"], return_typed=False)
+        assert tuple(refined["temp"]) == (0.0, 1.0)
+        assert list(refined["model"]) == ["a", "b"]

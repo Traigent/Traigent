@@ -12,6 +12,7 @@ from traigent.config_generator.llm_backend import (
     ConfigGenLLM,
     LiteLLMBackend,
     NoOpLLMBackend,
+    UnmeasurableCostError,
 )
 
 
@@ -36,7 +37,8 @@ class TestNoOpLLMBackend:
 
 class TestLiteLLMBackend:
     def test_budget_enforcement(self) -> None:
-        backend = LiteLLMBackend(budget_usd=0.0)
+        backend = LiteLLMBackend(budget_usd=0.01)
+        backend._spent_usd = 0.01
         with pytest.raises(BudgetExhausted, match="Budget"):
             backend.complete("test")
 
@@ -96,7 +98,7 @@ class TestLiteLLMBackend:
         mock_choice.message.content = None
 
         mock_response = MagicMock()
-        mock_response.usage = None
+        mock_response.usage = MagicMock(prompt_tokens=1, completion_tokens=0)
         mock_response.choices = [mock_choice]
 
         with patch("litellm.completion", return_value=mock_response):
@@ -143,3 +145,132 @@ class TestLiteLLMBackend:
         expected_cost = 2 * ((100 * 0.00000015) + (50 * 0.0000006))
         assert backend.calls_made == 2
         assert backend.total_cost_usd == pytest.approx(expected_cost)
+
+
+def _response(prompt_tokens: object, completion_tokens: object) -> MagicMock:
+    choice = MagicMock()
+    choice.message.content = "ok"
+    response = MagicMock()
+    response.usage = MagicMock(
+        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+    )
+    response.choices = [choice]
+    return response
+
+
+class TestBudgetSafety2928:
+    @pytest.mark.parametrize(
+        "bad", [float("nan"), float("inf"), float("-inf"), 0.0, -1.0, True, "1"]
+    )
+    def test_invalid_budget_rejected(self, bad: object) -> None:
+        with pytest.raises(ValueError, match="budget_usd"):
+            LiteLLMBackend(budget_usd=bad)  # type: ignore[arg-type]
+
+    def test_priced_with_configured_model_not_gpt4o_mini(self) -> None:
+        """A pricier model must stop at the cap using its own rate."""
+        import litellm
+
+        expected = sum(
+            litellm.cost_per_token(
+                model="gpt-4o", prompt_tokens=100_000, completion_tokens=10_000
+            )
+        )
+        mini = sum(
+            litellm.cost_per_token(
+                model="gpt-4o-mini", prompt_tokens=100_000, completion_tokens=10_000
+            )
+        )
+        assert expected > 10 * mini
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=1.0)
+        with patch("litellm.completion", return_value=_response(100_000, 10_000)):
+            backend.complete("p")
+            assert backend.total_cost_usd == pytest.approx(expected)
+            assert backend.calls_made == 1
+
+    def test_single_call_cannot_overshoot_budget(self) -> None:
+        """Worst-case cost of the next call is checked before sending it."""
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=0.01)
+        with patch("litellm.completion") as completion:
+            with pytest.raises(BudgetExhausted, match="would be exceeded"):
+                backend.complete("x" * 4000, max_tokens=1024)
+        completion.assert_not_called()
+        assert backend.calls_made == 0
+
+    def test_unpriced_model_fails_closed_before_calling(self) -> None:
+        backend = LiteLLMBackend(model="no-such-model-xyz", budget_usd=1.0)
+        with patch("litellm.completion") as completion:
+            with pytest.raises(UnmeasurableCostError, match="no-such-model-xyz"):
+                backend.complete("p")
+        completion.assert_not_called()
+        assert backend.total_cost_usd == 0.0
+
+    @pytest.mark.parametrize("usage", [None, "missing"])
+    def test_missing_usage_is_not_free(self, usage: object) -> None:
+        backend = LiteLLMBackend(budget_usd=1.0)
+        response = _response(1, 1)
+        response.usage = (
+            None
+            if usage is None
+            else MagicMock(prompt_tokens=None, completion_tokens=None)
+        )
+        with patch("litellm.completion", return_value=response):
+            with pytest.raises(UnmeasurableCostError, match="usage"):
+                backend.complete("p")
+            with pytest.raises(BudgetExhausted):
+                backend.complete("p")
+
+
+class TestBudgetBound2928Delta:
+    def test_framed_cost_above_byte_bound_is_refused(self) -> None:
+        import litellm
+
+        byte_cost = sum(
+            litellm.cost_per_token(model="gpt-4o", prompt_tokens=1, completion_tokens=1)
+        )
+        framed_cost = sum(
+            litellm.cost_per_token(
+                model="gpt-4o", prompt_tokens=100_000, completion_tokens=1
+            )
+        )
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=byte_cost * 5)
+        assert byte_cost * 5 < framed_cost
+        with (
+            patch("litellm.token_counter", return_value=100_000),
+            patch("litellm.completion") as completion,
+        ):
+            with pytest.raises(BudgetExhausted):
+                backend.complete("p", max_tokens=1)
+        completion.assert_not_called()
+
+    def test_token_counter_failure_uses_byte_plus_margin(self) -> None:
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=1.0)
+        with (
+            patch("litellm.token_counter", side_effect=RuntimeError("x")),
+            patch("litellm.completion", return_value=_response(5, 5)),
+        ):
+            assert backend.complete("p", max_tokens=1) == "ok"
+
+    def test_failed_call_debits_worst_case(self) -> None:
+        import litellm
+
+        one = sum(
+            litellm.cost_per_token(
+                model="gpt-4o", prompt_tokens=9, completion_tokens=1000
+            )
+        )
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=one * 1.5)
+        with (
+            patch("litellm.token_counter", return_value=9),
+            patch("litellm.completion", side_effect=TimeoutError("t")),
+        ):
+            with pytest.raises(TimeoutError):
+                backend.complete("p", max_tokens=1000)
+            assert backend.total_cost_usd > 0
+            with pytest.raises(BudgetExhausted):
+                backend.complete("p", max_tokens=1000)
+
+    def test_no_hidden_provider_retries(self) -> None:
+        backend = LiteLLMBackend(model="gpt-4o", budget_usd=1.0)
+        with patch("litellm.completion", return_value=_response(5, 5)) as completion:
+            backend.complete("p", max_tokens=1)
+        assert completion.call_args.kwargs["num_retries"] == 0

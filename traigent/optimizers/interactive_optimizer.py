@@ -21,6 +21,7 @@ from traigent.config.types import TraigentConfig
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import parse_positive_finite_float
 
 if TYPE_CHECKING:
     from traigent.cloud.models import TrialStatus
@@ -114,23 +115,22 @@ def _resolve_optimizer_ready_timeout(value: Any = None) -> float:
     """Resolve the cloud optimizer readiness timeout in seconds."""
 
     raw = value
+    source = "optimizer_ready_timeout"
     if raw is None:
         raw = os.getenv(_OPTIMIZER_READY_TIMEOUT_ENV)
+        source = _OPTIMIZER_READY_TIMEOUT_ENV
     if raw is None:
         raw = os.getenv(_LEGACY_OPTIMIZER_READY_TIMEOUT_ENV)
+        source = _LEGACY_OPTIMIZER_READY_TIMEOUT_ENV
     if raw is None:
         return _DEFAULT_OPTIMIZER_READY_TIMEOUT_SECONDS
 
     try:
-        timeout = float(raw)
-    except (TypeError, ValueError) as exc:
+        return parse_positive_finite_float(source, raw)
+    except ValueError as exc:
         raise ValueError(
-            "optimizer_ready_timeout must be a positive number of seconds"
+            f"{source} must be a positive finite number of seconds, got {raw!r}"
         ) from exc
-
-    if timeout <= 0:
-        raise ValueError("optimizer_ready_timeout must be a positive number of seconds")
-    return timeout
 
 
 class CloudBrainOptimizationComplete(RuntimeError):
@@ -568,7 +568,11 @@ class InteractiveOptimizer(BaseOptimizer):
             "session_id": self.session_id,
             "completed_trials": self.session.completed_trials,
             "max_trials": self.session.max_trials,
-            "progress": self.session.completed_trials / self.session.max_trials,
+            "progress": (
+                self.session.completed_trials / self.session.max_trials
+                if self.session.max_trials > 0
+                else 1.0
+            ),
             "best_config": self.session.best_config,
             "best_metrics": self.session.best_metrics,
             "elapsed_time": elapsed,

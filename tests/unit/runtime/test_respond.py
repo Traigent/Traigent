@@ -23,8 +23,8 @@ from traigent.runtime.respond import respond
 
 from .conftest import (
     AGENT,
-    FIXTURES,
     FIX_MODULE,
+    FIXTURES,
     FRAGMENT_MODULE,
     PROJECT,
     FakeBackend,
@@ -513,3 +513,56 @@ async def test_declared_ceiling_changed_during_confirm_is_refused(
         )
     assert err.value.code == "policy_changed"
     fn.optimize.assert_not_awaited()
+
+
+@pytest.mark.parametrize("bad", ["2099-01-01T00:00:00", "2099-01-01", "x", 5, None])
+def test_hosted_grant_malformed_expiry_is_expired_3164(bad: object) -> None:
+    from traigent.runtime.respond import _validate_hosted_grant
+
+    attempt = {"attempt_ref": "a1"}
+    grant = {
+        "state": "granted",
+        "effect": "optimize",
+        "attempt_ref": "a1",
+        "expires_at": bad,
+    }
+    with pytest.raises(RuntimeRequirementError) as err:
+        _validate_hosted_grant(grant, attempt, manifest.utcnow)
+    assert err.value.code == "approval_expired"
+
+
+def test_hosted_grant_valid_aware_future_passes_3164() -> None:
+    from traigent.runtime.respond import _validate_hosted_grant
+
+    future = (manifest.utcnow() + timedelta(hours=1)).isoformat()
+    grant = {
+        "state": "granted",
+        "effect": "optimize",
+        "attempt_ref": "a1",
+        "expires_at": future,
+    }
+    _validate_hosted_grant(grant, {"attempt_ref": "a1"}, manifest.utcnow)
+
+
+def test_hosted_grant_without_expiry_is_expired_3164() -> None:
+    from traigent.runtime.respond import _validate_hosted_grant
+
+    grant = {"state": "granted", "effect": "optimize", "attempt_ref": "a1"}
+    with pytest.raises(RuntimeRequirementError) as err:
+        _validate_hosted_grant(grant, {"attempt_ref": "a1"}, manifest.utcnow)
+    assert err.value.code == "approval_expired"
+
+
+def test_hosted_grant_past_expiry_is_expired_3164() -> None:
+    from traigent.runtime.respond import _validate_hosted_grant
+
+    past = (manifest.utcnow() - timedelta(hours=1)).isoformat()
+    grant = {
+        "state": "granted",
+        "effect": "optimize",
+        "attempt_ref": "a1",
+        "expires_at": past,
+    }
+    with pytest.raises(RuntimeRequirementError) as err:
+        _validate_hosted_grant(grant, {"attempt_ref": "a1"}, manifest.utcnow)
+    assert err.value.code == "approval_expired"

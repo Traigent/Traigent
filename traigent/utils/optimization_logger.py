@@ -25,6 +25,7 @@ from traigent._version import __version__ as TRAIGENT_VERSION
 from traigent.api.types import OptimizationResult, TrialResult
 from traigent.config.types import ExecutionMode, resolve_execution_mode
 from traigent.core.objectives import ObjectiveSchema, normalize_objectives
+from traigent.utils.file_lock import storage_lock
 from traigent.utils.file_versioning import FileVersionManager, RunVersionInfo
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import (
@@ -36,6 +37,10 @@ from traigent.utils.secure_path import (
 from traigent.utils.trial_costs import coerce_finite_cost, is_cost_unmeasured
 
 logger = get_logger(__name__)
+
+# One lock per path for the whole process: loggers of one log root share files.
+_FILE_LOCKS: dict[Path, threading.Lock] = {}
+_FILE_LOCKS_GUARD = threading.Lock()
 
 
 def _validate_run_child_dir(
@@ -318,7 +323,7 @@ ENV_OPTIMIZATION_LOG_MAX_RUNS = "TRAIGENT_OPTIMIZATION_LOG_MAX_RUNS"
 _RUN_DIR_NAME_PATTERN = re.compile(r"^\d{8}_\d{6}_.+$")
 # Terminal statuses written by log_session_end() -> _update_status(); a run
 # dir whose status file carries one of these has provably finished.
-_TERMINAL_RUN_STATUSES = {"completed", "failed"}
+_TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled"}
 # Status filenames the logger itself mints at the run-dir root:
 # FILE_PATTERNS["status"] = "status_v{version}.json" (v2) and
 # LEGACY_PATTERNS["status"] = "status.json" (v1).
@@ -329,7 +334,7 @@ def _run_dir_shows_completion_evidence(run_dir: Path) -> bool:
     """Whether ``run_dir`` provably belongs to a *finished* run.
 
     Completion evidence = a status file the run writer itself produces at run
-    end (``log_session_end()`` -> ``_update_status("completed"|"failed")``,
+    end (``log_session_end()`` -> ``_update_status("completed"|"failed"|"cancelled")``,
     written to ``<run_dir>/status_v2.json`` / legacy ``status.json``) carrying
     a terminal status. An active run has ``"running"`` (written at session
     start) or no status file at all — neither counts as evidence. Any doubt
@@ -501,7 +506,6 @@ class OptimizationLogger:
         )
         self.experiment_path = self.run_path.parent.parent
 
-        self._file_locks: dict[Path, threading.Lock] = {}
         self._trial_buffer: list[TrialResult] = []
         self._buffer_lock = threading.Lock()
 
@@ -709,15 +713,27 @@ class OptimizationLogger:
             logger.debug("Could not write .gitignore to %s", self.base_path)
 
     @contextmanager
-    def _file_lock(self, file_path: Path):
-        if file_path not in self._file_locks:
-            self._file_locks[file_path] = threading.Lock()
-        with self._file_locks[file_path]:
-            yield
+    def _file_lock(self, file_path: Path, *, cross_process: bool = False):
+        """Serialise access to ``file_path`` across every logger in this process.
+
+        ``cross_process`` also takes an OS file lock, for files shared by
+        several runs of one log root (the experiment index).
+        """
+        with _FILE_LOCKS_GUARD:
+            lock = _FILE_LOCKS.setdefault(file_path, threading.Lock())
+        with lock:
+            if cross_process:
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                with storage_lock(file_path):
+                    yield
+            else:
+                yield
 
     def _atomic_write(self, file_path: Path, data: Any) -> None:
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = file_path.with_suffix(f"{file_path.suffix}.tmp.{os.getpid()}")
+        temp_path = file_path.with_suffix(
+            f"{file_path.suffix}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+        )
         sanitized = sanitize_for_logging(data)
         try:
             # nosec - temp_path derives from caller-supplied file_path which the
@@ -1099,6 +1115,8 @@ class OptimizationLogger:
         with self._buffer_lock:
             self._flush_trial_buffer()
 
+        run_status = self._terminal_run_status(optimization_result, error)
+
         best_config_file = (
             self.run_path / "artifacts" / self.file_manager.get_filename("best_config")
         )
@@ -1185,7 +1203,7 @@ class OptimizationLogger:
         )
         with self._file_lock(session_file):
             if session_file.exists():
-                with open(session_file) as handle:
+                with open(session_file, encoding="utf-8") as handle:
                     session_data = json.load(handle)
             else:
                 session_data = {}
@@ -1193,7 +1211,7 @@ class OptimizationLogger:
                 {
                     "end_time": datetime.now(UTC).isoformat(),
                     "duration": optimization_result.duration,
-                    "status": "failed" if error else "completed",
+                    "status": run_status,
                     "error": error,
                 }
             )
@@ -1207,10 +1225,29 @@ class OptimizationLogger:
         )
         self._atomic_write(manifest_file, final_manifest)
 
-        status = "failed" if error else "completed"
+        status = run_status
         self._update_status(status)
         self._update_experiment_index()
         logger.info(f"Logged session end for {self.run_id} with status: {status}")
+
+    @staticmethod
+    def _terminal_run_status(
+        optimization_result: OptimizationResult, error: str | None
+    ) -> str:
+        """Real terminal status for the run log (#3258).
+
+        An explicit ``error`` or a result whose status is FAILED/CANCELLED is
+        recorded as such; only a result that really completed says "completed".
+        """
+        if error:
+            return "failed"
+        result_status = getattr(optimization_result, "status", None)
+        value = getattr(result_status, "value", result_status)
+        if value in ("failed", "cancelled", "unknown"):
+            # "unknown" is a neutral, non-terminal status: never asserted as
+            # success (types.OptimizationStatus.UNKNOWN, #1302).
+            return str(value)
+        return "completed"
 
     def _update_status(self, status: str) -> None:
         status_file = self.run_path / self.file_manager.get_filename("status")
@@ -1222,9 +1259,9 @@ class OptimizationLogger:
 
     def _update_experiment_index(self) -> None:
         index_file = self.base_path / "index.json"
-        with self._file_lock(index_file):
+        with self._file_lock(index_file, cross_process=True):
             if index_file.exists():
-                with open(index_file) as handle:
+                with open(index_file, encoding="utf-8") as handle:
                     index_data = json.load(handle)
             else:
                 index_data = {"experiments": {}, "version": "2.0.0"}
@@ -1279,7 +1316,9 @@ class OptimizationLogger:
         validated_latest_file = validate_path(
             latest_file, checkpoints_dir, must_exist=True
         )
-        with safe_open(validated_latest_file, run_path, mode="r") as handle:
+        with safe_open(
+            validated_latest_file, run_path, mode="r", encoding="utf-8"
+        ) as handle:
             latest_data = json.load(handle)
 
         # Constrain the checkpoint reference to the run's checkpoints directory.
@@ -1293,7 +1332,7 @@ class OptimizationLogger:
             raise ValueError(
                 f"Invalid checkpoint reference in {latest_file}: {exc}"
             ) from exc
-        with safe_open(checkpoint_file, run_path, mode="r") as handle:
+        with safe_open(checkpoint_file, run_path, mode="r", encoding="utf-8") as handle:
             checkpoint_data = json.load(handle)
 
         history_file = (
@@ -1302,7 +1341,9 @@ class OptimizationLogger:
         validated_history_file = validate_path(
             history_file, checkpoints_dir, must_exist=True
         )
-        with safe_open(validated_history_file, run_path, mode="r") as handle:
+        with safe_open(
+            validated_history_file, run_path, mode="r", encoding="utf-8"
+        ) as handle:
             trial_history = json.load(handle)
 
         checkpoint_data["trial_history"] = trial_history

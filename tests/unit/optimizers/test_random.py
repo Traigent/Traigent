@@ -517,3 +517,134 @@ class TestRandomSearchOptimizer:
         config = optimizer.suggest_next_trial([])
         # range(0, 1, 5) = [0], so values = [0]
         assert config["x"] == 0
+
+
+class TestSeedAlias:
+    """Traigent#2947: ``seed`` must seed the sampler like ``random_seed``."""
+
+    SPACE = {"a": list(range(50)), "m": ["x", "y", "z", "w"], "t": (0.0, 1.0)}
+
+    @staticmethod
+    def _sequence(**kwargs):
+        opt = RandomSearchOptimizer(
+            TestSeedAlias.SPACE, ["accuracy"], max_trials=8, **kwargs
+        )
+        return [opt.suggest_next_trial([]) for _ in range(8)]
+
+    def test_same_seed_same_sequence(self):
+        assert self._sequence(seed=7) == self._sequence(seed=7)
+
+    def test_seed_equals_random_seed(self):
+        assert self._sequence(seed=7) == self._sequence(random_seed=7)
+
+    def test_different_seeds_differ(self):
+        assert self._sequence(seed=7) != self._sequence(seed=8)
+
+    def test_global_rng_untouched(self):
+        import random as _random
+
+        _random.seed(123)
+        before = _random.getstate()
+        self._sequence(seed=7)
+        assert _random.getstate() == before
+
+    def test_conflicting_seed_aliases_rejected(self):
+        with pytest.raises(ValueError, match="aliases"):
+            RandomSearchOptimizer({"a": [1, 2]}, ["accuracy"], seed=1, random_seed=2)
+
+    def test_reset_replays_seed_alias_sequence(self):
+        opt = RandomSearchOptimizer(self.SPACE, ["accuracy"], max_trials=8, seed=7)
+        first = [opt.suggest_next_trial([]) for _ in range(4)]
+        opt.reset()
+        assert [opt.suggest_next_trial([]) for _ in range(4)] == first
+
+    def test_grid_warns_seed_has_no_effect(self, caplog):
+        import logging
+
+        from traigent.optimizers.grid import GridSearchOptimizer
+
+        with caplog.at_level(logging.WARNING):
+            GridSearchOptimizer({"a": [1, 2]}, ["accuracy"], seed=7)
+        assert "seed=7 has no effect for GridSearchOptimizer" in caplog.text
+
+    def test_random_does_not_warn(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            RandomSearchOptimizer({"a": [1, 2]}, ["accuracy"], seed=7)
+        assert "has no effect" not in caplog.text
+
+    def test_registry_path_honours_seed(self):
+        from traigent.optimizers.registry import get_optimizer
+
+        def seq(seed):
+            opt = get_optimizer(
+                "random", self.SPACE, ["accuracy"], max_trials=6, seed=seed
+            )
+            return [opt.suggest_next_trial([]) for _ in range(6)]
+
+        assert seq(7) == seq(7)
+        assert seq(7) != seq(9)
+
+    def test_multi_objective_batch_threads_seed(self):
+        from traigent.optimizers.batch_optimizers import MultiObjectiveBatchOptimizer
+
+        def first(seed):
+            opt = MultiObjectiveBatchOptimizer(
+                configuration_space=self.SPACE,
+                objectives=["accuracy", "cost"],
+                seed=seed,
+            )
+            return [opt._base_optimizer.suggest_next_trial([]) for _ in range(5)]
+
+        assert first(3) == first(3)
+        assert first(3) != first(4)
+
+    def test_multi_objective_batch_random_seed_and_conflict(self):
+        from traigent.optimizers.batch_optimizers import MultiObjectiveBatchOptimizer
+
+        def build(**kw):
+            return MultiObjectiveBatchOptimizer(
+                configuration_space=self.SPACE,
+                objectives=["accuracy", "cost"],
+                **kw,
+            )
+
+        assert build(random_seed=5)._base_optimizer.random_seed == 5
+        with pytest.raises(ValueError, match="aliases"):
+            build(seed=1, random_seed=2)
+
+    def test_injected_base_optimizer_warns_seed_not_applied(self, caplog):
+        import logging
+
+        from traigent.optimizers.batch_optimizers import ParallelBatchOptimizer
+
+        base = RandomSearchOptimizer(self.SPACE, ["accuracy"])
+        with caplog.at_level(logging.WARNING):
+            ParallelBatchOptimizer(base_optimizer=base, seed=7)
+        assert "not applied to the injected base_optimizer" in caplog.text
+
+    def test_seed_kept_in_algorithm_config(self):
+        opt = RandomSearchOptimizer(self.SPACE, ["accuracy"], seed=7)
+        assert opt.algorithm_config["seed"] == 7
+
+    def test_remote_warning_names_fallback_only(self, caplog):
+        import logging
+
+        from traigent.optimizers.remote import (
+            MockRemoteSuggestionClient,
+            RemoteOptimizer,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            RemoteOptimizer(
+                {"a": [1, 2]},
+                ["accuracy"],
+                remote_enabled=True,
+                remote_client=MockRemoteSuggestionClient(),
+                seed=7,
+            )
+        assert (
+            "does not control RemoteOptimizer suggestions; it seeds only the local random fallback"
+            in caplog.text
+        )

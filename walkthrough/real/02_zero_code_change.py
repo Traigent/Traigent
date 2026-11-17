@@ -61,14 +61,18 @@ CONFIG_SPACE = {
 )
 def answer_question(question: str) -> str:
     """Your existing code - Traigent overrides the hardcoded values below."""
-    # These hardcoded values will be overridden by Traigent!
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
+    # Seamless mode rewrites these local assignments with each trial's
+    # configuration. The names must match the configuration keys; literals
+    # passed straight to ChatOpenAI(...) cannot be rewritten.
+    model = "gpt-4.1-mini"
+    temperature = 0.7
+    llm = ChatOpenAI(model=model, temperature=temperature)
     try:
         response = llm.invoke(f"Answer: {question}")
         return str(response.content)
     except Exception as exc:
-        print(f"LLM call failed: {type(exc).__name__}: {exc}")
-        return f"Error: {type(exc).__name__}: {exc}"
+        print(f"LLM call failed: {exc}")
+        return f"Error: {exc}"
 
 
 async def main() -> None:

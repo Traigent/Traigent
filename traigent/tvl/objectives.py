@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .models import BandTarget
-from .statistics import _t_cdf_approx
+from .statistics import _t_cdf_approx, _t_cdf_upper
 
 
 @dataclass(slots=True)
@@ -127,7 +127,7 @@ def _compute_p_value_one_sided_greater(t_stat: float, df: int) -> float:
     Returns:
         P-value for the test.
     """
-    return 1.0 - _t_cdf_approx(t_stat, df)
+    return _t_cdf_upper(t_stat, df)
 
 
 def _compute_p_value_one_sided_less(t_stat: float, df: int) -> float:

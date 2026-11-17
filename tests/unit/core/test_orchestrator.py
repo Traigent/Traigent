@@ -481,6 +481,249 @@ class TestOptimizationOrchestrator:
         )
 
     @pytest.mark.asyncio
+    async def test_mid_run_local_only_fallback_still_finalizes_session_once_2961(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """#2961: a mid-run fallback to LOCAL-ONLY must not strand the session.
+
+        The session was created, so the backend experiment stays RUNNING
+        unless the SDK sends exactly one finalize with the real outcome.
+        """
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        orchestrator.max_trials = 3
+        manager = orchestrator.backend_session_manager
+        submitted = 0
+
+        async def submit_then_fail(*_args: Any, **_kwargs: Any) -> bool:
+            nonlocal submitted
+            submitted += 1
+            if submitted >= 2:
+                manager._flag_backend_degraded("trial submission")
+                return False
+            return True
+
+        monkeypatch.setattr(manager, "submit_trial", submit_then_fail)
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert manager.backend_degraded
+        assert result.source == "local_fallback"
+        assert result.status == OptimizationStatus.COMPLETED
+        assert len(finalize_calls) == 1
+        assert finalize_calls[0]["status"] == "completed"
+        wire = manager._backend_client.finalize_session_sync
+        assert wire.call_args.kwargs["optimization_outcome"] == "completed"
+        assert result.metadata["persistence_status"] == "degraded"
+        assert result.metadata["backend_tracking"] == "partial"
+        assert orchestrator._session_finalized is True
+
+    @pytest.mark.asyncio
+    async def test_run_refused_before_any_trial_finalizes_once_with_stop_reason_2508(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """#2508: a created session whose first trial is refused by the cost
+        permit ends with zero trials, and its single finalize still says why."""
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        orchestrator.max_trials = 3
+        assert orchestrator.cost_enforcer is not None
+        monkeypatch.setattr(
+            orchestrator.cost_enforcer,
+            "acquire_permit_async",
+            AsyncMock(return_value=Permit(id=-1, amount=0.0, active=False)),
+        )
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert len(result.trials) == 0
+        assert result.stop_reason == "cost_limit"
+        assert len(finalize_calls) == 1
+        wire = (
+            orchestrator.backend_session_manager._backend_client.finalize_session_sync
+        )
+        assert wire.call_args.kwargs["stop_reason"] == "cost_limit"
+
+    @pytest.mark.asyncio
+    async def test_zero_timeout_run_finalizes_created_session_once_2508(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """#2508: a zero timeout ends the run before any trial; the created
+        session is finalized once, cancelled, with the timeout reason."""
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        orchestrator.timeout = 0.0
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.CANCELLED
+        assert len(result.trials) == 0
+        assert len(finalize_calls) == 1
+        wire = (
+            orchestrator.backend_session_manager._backend_client.finalize_session_sync
+        )
+        assert wire.call_args.kwargs["optimization_outcome"] == "cancelled"
+        assert wire.call_args.kwargs["stop_reason"] == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_mid_run_fallback_finalize_error_does_not_crash_run_2961(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """#2961: a failing best-effort finalize is logged, never raised."""
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        orchestrator.max_trials = 3
+        manager = orchestrator.backend_session_manager
+        manager._backend_client.finalize_session_sync = MagicMock(
+            side_effect=RuntimeError("backend down")
+        )
+        submitted = 0
+
+        async def submit_then_fail(*_args: Any, **_kwargs: Any) -> bool:
+            nonlocal submitted
+            submitted += 1
+            if submitted >= 2:
+                manager._flag_backend_degraded("trial submission")
+                return False
+            return True
+
+        monkeypatch.setattr(manager, "submit_trial", submit_then_fail)
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.COMPLETED
+        assert result.source == "local_fallback"
+        assert result.metadata["persistence_status"] == "failed"
+        assert manager._backend_client.finalize_session_sync.call_count == 1
+        assert finalize_calls == []
+
+    @pytest.mark.asyncio
+    async def test_preexisting_no_egress_still_blocks_finalize_2961(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+    ):
+        """#2961 guard: only a RUNTIME fallback re-opens the finalize path."""
+        orchestrator, _calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        manager = orchestrator.backend_session_manager
+        assert manager.finalize_egress_allowed() is True
+        manager._no_egress = True
+        assert manager.finalize_egress_allowed() is False
+        manager._no_egress = False
+        manager._traigent_config.no_egress = True  # ban without a runtime fallback
+        assert manager.finalize_egress_allowed() is False
+        manager._runtime_degraded = True  # degraded, but the ban pre-dated it
+        manager._egress_banned_before_fallback = True
+        assert manager.finalize_egress_allowed() is False
+        manager._egress_banned_before_fallback = False  # ban solely from fallback
+        assert manager.finalize_egress_allowed() is True
+
+    def test_explicit_no_egress_plus_fallback_blocks_finalize_2961(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+    ):
+        """An explicit pre-run no_egress ban stays closed through a fallback."""
+        orchestrator, _calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        manager = orchestrator.backend_session_manager
+        manager._traigent_config.no_egress = True
+        manager._flag_backend_degraded("trial submission")
+        assert manager._egress_banned_before_fallback is True
+        assert manager.finalize_egress_allowed() is False
+        manager.finalize_session("sess-1", OptimizationStatus.COMPLETED)
+        assert manager._backend_client.finalize_session_sync.call_count == 0
+
+    def test_fallback_only_finalizes_once_2961(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+    ):
+        """A fallback with no prior ban still finalizes the session."""
+        orchestrator, _calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        manager = orchestrator.backend_session_manager
+        manager._flag_backend_degraded("trial submission")
+        assert manager._egress_banned_before_fallback is False
+        assert manager.finalize_egress_allowed() is True
+        manager.finalize_session("sess-1", OptimizationStatus.COMPLETED)
+        assert manager._backend_client.finalize_session_sync.call_count == 1
+
+    def test_fallback_finalize_reports_cancelled_outcome_2961(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+    ):
+        """#2961: the fallback finalize carries the real terminal outcome."""
+        orchestrator, _calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        manager = orchestrator.backend_session_manager
+        manager._flag_backend_degraded("trial submission")
+
+        manager.finalize_session("sess-1", OptimizationStatus.CANCELLED)
+
+        wire = manager._backend_client.finalize_session_sync
+        assert wire.call_count == 1
+        assert wire.call_args.kwargs["optimization_outcome"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_finalizes_session_once_2961(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """#2961 control: the normal path sends one completed finalize."""
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch, config_space, objectives
+        )
+        orchestrator.max_trials = 3
+        manager = orchestrator.backend_session_manager
+        monkeypatch.setattr(manager, "submit_trial", AsyncMock(return_value=True))
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert not manager.backend_degraded
+        assert result.status == OptimizationStatus.COMPLETED
+        assert len(finalize_calls) == 1
+        assert finalize_calls[0]["status"] == "completed"
+
+    @pytest.mark.asyncio
     async def test_failed_infra_exception_finalizes_backend_session_as_failed(
         self,
         monkeypatch,
@@ -513,6 +756,44 @@ class TestOptimizationOrchestrator:
                 "session_aggregation": None,
             }
         ]
+
+    @pytest.mark.asyncio
+    async def test_declined_cost_approval_creates_no_backend_session_2960(
+        self,
+        monkeypatch,
+        config_space,
+        objectives,
+        mock_function,
+        sample_dataset,
+    ):
+        """#2960: a declined approval is decided BEFORE POST /sessions.
+
+        Creating the session first left a RUNNING experiment and spent one
+        plan trial on a run that never started. The decline must fail closed:
+        the typed error propagates and no session is created or finalized.
+        """
+        from traigent.utils.exceptions import CostLimitExceeded
+
+        orchestrator, finalize_calls = self._orchestrator_with_finalize_wire_capture(
+            monkeypatch,
+            config_space,
+            objectives,
+        )
+        orchestrator._check_cost_approval = MagicMock(
+            side_effect=CostLimitExceeded(10.0, 1.0)
+        )
+        manager = orchestrator.backend_session_manager
+        create_spy = MagicMock(wraps=manager.create_session)
+        monkeypatch.setattr(manager, "create_session", create_spy)
+
+        with pytest.raises(CostLimitExceeded):
+            await orchestrator.optimize(mock_function, sample_dataset)
+
+        orchestrator._check_cost_approval.assert_called_once()
+        create_spy.assert_not_called()
+        orchestrator.backend_client.create_session.assert_not_called()
+        assert finalize_calls == []
+        assert orchestrator._status == OptimizationStatus.FAILED
 
     @pytest.mark.asyncio
     async def test_failed_optimization_error_reraise_finalizes_backend_session_as_failed(
@@ -1114,8 +1395,45 @@ class TestOptimizationOrchestrator:
             trial_count=7,
         )
 
-        assert handled_trial_ids == ["trial_7", "trial_8", "trial_9"]
-        assert final_trial_count == 10
+        # #2943: permit-denied placeholders never started, so they are not
+        # handled as attempts and do not advance the trial count; the failed
+        # trial keeps its batch-anchored synthetic id.
+        assert handled_trial_ids == ["trial_8"]
+        assert final_trial_count == 8
+        # Denied indexes are freed once the batch settles and their placeholder
+        # ids cannot collide with a later real trial at the same index.
+        dispatched = getattr(orchestrator, "_trial_complete_dispatched", set())
+        assert 7 not in dispatched and 9 not in dispatched
+        assert [t.trial_id for t in orchestrator._trials] == [
+            "trial_7_not_started",
+            "trial_9_not_started",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_scheduled_index_keys_the_completion_dispatch_2943(
+        self, orchestrator
+    ):
+        """A trial after permit-denied items keeps the index it started under."""
+        trial = TrialResult(
+            trial_id="trial_9",
+            config={"value": 2},
+            metrics={"accuracy": 0.5},
+            status=TrialStatus.COMPLETED,
+            duration=0.0,
+            timestamp=datetime.now(UTC),
+        )
+        new_count = await orchestrator._handle_trial_result(
+            trial_result=trial,
+            optimizer_config={"value": 2},
+            current_trial_index=7,
+            session_id=None,
+            optuna_trial_id=None,
+            log_on_success=False,
+            scheduled_index=9,
+        )
+        assert new_count == 8
+        assert 9 in orchestrator._trial_complete_dispatched
+        assert 7 not in orchestrator._trial_complete_dispatched
 
     @pytest.mark.asyncio
     async def test_default_config_is_evaluated_first(
@@ -1146,6 +1464,56 @@ class TestOptimizationOrchestrator:
         assert len(result.trials) == 3
         assert result.trials[0].config == default_config
         assert len(mock_optimizer.suggested_configs) == 2
+
+    @pytest.mark.asyncio
+    async def test_seed_result_is_submitted_before_next_suggestion_1665(
+        self, mock_optimizer, mock_evaluator, mock_function, sample_dataset
+    ):
+        """A seed's result goes through the ordinary trial-submission path, and
+        is submitted before the optimizer is asked for the next suggestion."""
+        seed = {"param1": 7, "param2": "value_b"}
+        mock_optimizer.set_max_suggestions(10)
+        events: list[tuple[str, Any]] = []
+        original_suggest = mock_optimizer.suggest_next_trial
+
+        def recording_suggest(history):
+            events.append(("suggest", len(history)))
+            return original_suggest(history)
+
+        mock_optimizer.suggest_next_trial = recording_suggest
+
+        with patch(
+            "traigent.cloud.backend_client.BackendIntegratedClient"
+        ) as mock_backend:
+            mock_client = MagicMock()
+            mock_client.create_session.return_value = "session-seed"
+            mock_backend.return_value = mock_client
+
+            orchestrator = OptimizationOrchestrator(
+                optimizer=mock_optimizer,
+                evaluator=mock_evaluator,
+                max_trials=3,
+                timeout=5.0,
+            )
+            orchestrator.backend_client = mock_client
+            orchestrator.set_seed_configs([seed])
+
+            async def recording_submit(trial_result, *args, **kwargs):
+                events.append(("submit", dict(trial_result.config)))
+                return True
+
+            orchestrator.backend_session_manager.submit_trial = AsyncMock(
+                side_effect=recording_submit
+            )
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.trials[0].config == seed
+        assert len(result.trials) == 3
+        submits = [e for e in events if e[0] == "submit"]
+        assert submits[0] == ("submit", seed)
+        assert events.index(submits[0]) < events.index(
+            next(e for e in events if e[0] == "suggest")
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)

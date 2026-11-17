@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
 from traigent.cloud import content_less as content_less_session
+from traigent.cloud._detached_raise import raise_detached
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import (
     CloudEgressBlockedError,
@@ -52,6 +53,7 @@ from traigent.config.backend_config import (
 )
 from traigent.config.types import _warn_deprecated_once
 from traigent.core.session_types import (
+    PROJECT_CONTEXT_REQUIRED_MESSAGE,
     SessionCreationFailureDetail,
     SessionCreationHTTPError,
     safe_http_error_summary,
@@ -1301,6 +1303,11 @@ class ApiOperations:
             cast(Any, auth_exc).session_creation_failure = detail
             raise auth_exc from structured_cause
 
+        if detail.is_project_context_required:
+            project_exc = CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
+            cast(Any, project_exc).session_creation_failure = detail
+            raise project_exc from structured_cause
+
         if status_code in (500, 502, 503, 504):
             logger.debug("Backend HTTP error: %s", status_code)
             service_exc = CloudServiceError(f"Backend HTTP {status_code}")
@@ -1322,12 +1329,17 @@ class ApiOperations:
     def _handle_connector_error(self, error: aiohttp.ClientConnectorError) -> None:
         """Handle aiohttp connector errors — DEBUG only."""
         logger.debug("Backend connection failed: %s", error)
-        raise CloudServiceError("Backend unavailable (connection failed)") from error
+        # Drop the frame's only reference: the raised error's traceback keeps this
+        # frame (and its locals) alive for locals-capturing reporters (#3264).
+        del error
+        raise_detached(CloudServiceError("Backend unavailable (connection failed)"))
 
     def _handle_client_error(self, error: aiohttp.ClientError) -> None:
         """Handle generic aiohttp client errors — DEBUG only."""
         logger.debug("Network error connecting to backend: %s", error)
-        raise CloudServiceError(f"Network error: {error}") from error
+        failure = CloudServiceError(f"Network error: {error}")
+        del error  # see _handle_connector_error (#3264)
+        raise_detached(failure)
 
     def _handle_generic_session_exception(self, error: Exception) -> None:
         """Handle unexpected exceptions during session creation — DEBUG only."""

@@ -58,7 +58,7 @@ from traigent.utils.env_config import (
     strict_cost_accounting_origin,
 )
 from traigent.utils.exceptions import ConfigurationError, CostLimitExceeded
-from traigent.utils.money import format_usd
+from traigent.utils.money import cost_cap_reached, format_usd
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,13 @@ def validate_cost_limit(limit: object) -> float:
             f"({type(limit).__name__})."
         )
     value = float(limit)
-    if math.isnan(value) or value <= 0:
+    if not math.isfinite(value):
+        raise ConfigurationError(
+            f"cost limit must be a positive finite number of USD, got {value!r}. "
+            "Leave it unset to use the default "
+            f"{format_usd(DEFAULT_COST_LIMIT_USD)}."
+        )
+    if value <= 0:
         raise ConfigurationError(
             f"cost limit must be > 0 USD, got {value!r}. A nonpositive limit "
             "would block every planned trial before it starts (silent 0-trial "
@@ -376,7 +382,7 @@ def _spend_reached_limit(known_spend: object, cost_limit: object) -> bool:
     return (
         isinstance(known_spend, (int, float))
         and isinstance(cost_limit, (int, float))
-        and known_spend >= cost_limit
+        and cost_cap_reached(known_spend, cost_limit)
     )
 
 
@@ -768,15 +774,18 @@ class CostEnforcer:
                 # Blank means "unset" (callers blank it on purpose so a later
                 # load_dotenv cannot refill it): default, no warning.
                 return DEFAULT_COST_LIMIT_USD
+            # A malformed budget must not silently widen the cap: fail fast and
+            # name the variable. A leading "$" is accepted.
             try:
-                parsed = float(raw)
+                parsed = float(raw.strip().removeprefix("$"))
             except ValueError:
-                logger.warning(
-                    "Invalid TRAIGENT_RUN_COST_LIMIT=%r, using default %s",
-                    raw,
-                    DEFAULT_COST_LIMIT_USD,
+                parsed = float("nan")
+            if not math.isfinite(parsed):
+                raise ConfigurationError(
+                    f"TRAIGENT_RUN_COST_LIMIT={raw!r} is not a finite number of "
+                    "USD (for example 0.50). Fix the value or unset the variable "
+                    f"to use the default {format_usd(DEFAULT_COST_LIMIT_USD)}."
                 )
-                return DEFAULT_COST_LIMIT_USD
             # Nonpositive limits raise at config time instead of silently
             # blocking every trial (issue #1684 item 3); validate_cost_limit
             # in CostEnforcerConfig.__post_init__ enforces this, but raising
@@ -826,10 +835,10 @@ class CostEnforcer:
                 # the limit with it is proof enough. The trial-count fallback
                 # stays as an extra bound for the spend we cannot see.
                 return (
-                    self._accumulated_cost >= self.config.limit
+                    cost_cap_reached(self._accumulated_cost, self.config.limit)
                     or self._trial_count >= self.config.fallback_trial_limit
                 )
-            return self._accumulated_cost >= self.config.limit
+            return cost_cap_reached(self._accumulated_cost, self.config.limit)
 
     def waive_unknown_cost_trial_cap(self) -> None:
         """Let an explicitly sized run continue while its cost is unmeasured.
@@ -1156,6 +1165,7 @@ Options:
         unmeasured_examples: Sequence[str] | None = None,
         missing_usage_examples: int | None = None,
         attempted_examples: int | None = None,
+        vendor_error_only: bool = False,
     ) -> None:
         """Track actual cost after each trial (thread-safe).
 
@@ -1182,6 +1192,11 @@ Options:
             attempted_examples: Complete count of example attempts in this
                 trial, or None when not known. Both counts are needed for the
                 end-of-run message to distinguish partial from missing usage.
+            vendor_error_only: True when the trial failed and every call whose
+                cost is unknown raised before any response came back (429, 5xx,
+                connection error). Nothing returned is left unpriced, so strict
+                mode records the failed trial instead of raising (#3249). A
+                returned-but-unpriced call never sets this.
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1211,6 +1226,7 @@ Options:
                 unmeasured_examples=unmeasured_examples,
                 missing_usage_examples=missing_usage_examples,
                 attempted_examples=attempted_examples,
+                vendor_error_only=vendor_error_only,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost",
                 include_limit_in_warning=True,
@@ -1373,7 +1389,7 @@ Options:
 
         pct = self._accumulated_cost / self.config.limit
 
-        if pct >= 1.0:
+        if cost_cap_reached(self._accumulated_cost, self.config.limit):
             logger.warning(
                 f"COST LIMIT REACHED: {format_usd(self._accumulated_cost)} "
                 f"(limit: {format_usd(self.config.limit)})"
@@ -1396,6 +1412,7 @@ Options:
         unmeasured_examples: Sequence[str] | None = None,
         missing_usage_examples: int | None = None,
         attempted_examples: int | None = None,
+        vendor_error_only: bool = False,
     ) -> None:
         """Async version of track_cost.
 
@@ -1422,6 +1439,11 @@ Options:
             attempted_examples: Complete count of example attempts in this
                 trial, or None when not known. Both counts are needed for the
                 end-of-run message to distinguish partial from missing usage.
+            vendor_error_only: True when the trial failed and every call whose
+                cost is unknown raised before any response came back (429, 5xx,
+                connection error). Nothing returned is left unpriced, so strict
+                mode records the failed trial instead of raising (#3249). A
+                returned-but-unpriced call never sets this.
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1453,6 +1475,7 @@ Options:
                 unmeasured_examples=unmeasured_examples,
                 missing_usage_examples=missing_usage_examples,
                 attempted_examples=attempted_examples,
+                vendor_error_only=vendor_error_only,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost_async",
                 include_limit_in_warning=False,
@@ -1466,7 +1489,9 @@ Options:
             if total_trials >= self.config.fallback_trial_limit:
                 return Permit(id=-1, amount=0.0, active=False)  # Denied
             # The known spend floor still counts against the cost limit.
-            if self._accumulated_cost + self._reserved_cost >= self.config.limit:
+            if cost_cap_reached(
+                self._accumulated_cost + self._reserved_cost, self.config.limit
+            ):
                 return Permit(id=-1, amount=0.0, active=False)  # Denied
 
             self._in_flight_count += 1
@@ -1576,6 +1601,7 @@ Options:
         include_limit_in_warning: bool,
         trial_failed: bool = False,
         unmeasured_examples: Sequence[str] | None = None,
+        vendor_error_only: bool = False,
     ) -> None:
         """Handle unknown cost under the lock, including strict-mode failure."""
         examples_text = ""
@@ -1585,7 +1611,19 @@ Options:
                 + ", ".join(str(e) for e in list(unmeasured_examples)[:5])
                 + "."
             )
-        if require_cost_tracking:
+        if require_cost_tracking and trial_failed and vendor_error_only:
+            # Every call of the trial raised before a response came back, so no
+            # returned call is unpriced: the trial is recorded as failed and the
+            # run continues (#3249). A request can still have been processed
+            # before the error, so the spend is unknown (never $0) and falls
+            # through to the same unknown-cost bound as any unmeasured trial.
+            logger.warning(
+                "%s failed on provider errors with no response returned; its "
+                "spend is unknown and counted as a lower bound.%s",
+                trial_desc,
+                examples_text,
+            )
+        elif require_cost_tracking:
             raise CostTrackingRequiredError(
                 f"Cost extraction failed for {trial_desc} and "
                 f"{self._require_cost_tracking_reason}. An unpriced call is "
@@ -1691,6 +1729,7 @@ Options:
         unmeasured_examples: Sequence[str] | None = None,
         missing_usage_examples: int | None = None,
         attempted_examples: int | None = None,
+        vendor_error_only: bool = False,
         require_cost_tracking: bool,
         caller: str,
         include_limit_in_warning: bool,
@@ -1738,6 +1777,7 @@ Options:
                 include_limit_in_warning=include_limit_in_warning,
                 trial_failed=trial_failed,
                 unmeasured_examples=unmeasured_examples,
+                vendor_error_only=vendor_error_only,
             )
             return
 

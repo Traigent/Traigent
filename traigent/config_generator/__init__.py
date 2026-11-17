@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from traigent.config_generator.apply import read_source_text
 from traigent.config_generator.llm_backend import ConfigGenLLM, LiteLLMBackend
 from traigent.config_generator.pipeline import ConfigGeneratorPipeline
 from traigent.config_generator.types import AutoConfigResult
@@ -51,7 +52,7 @@ def generate_config(
         Which subsystems to run (``None`` = all).
     """
     file_path = Path(file_path)
-    source_code = file_path.read_text()
+    source_code = read_source_text(file_path)[0]
     # An unparseable file must fail, not yield a generic recommendation for
     # code that was never analysed (#2648). SyntaxError propagates.
     ast.parse(source_code)

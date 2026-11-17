@@ -71,6 +71,51 @@ class ServiceUnavailableError(RetryableError):
     """Service temporarily unavailable (retryable variant for circuit breaker)."""
 
 
+def _optional_exception_types(*dotted: str) -> tuple[type[BaseException], ...]:
+    """Resolve exception classes from HTTP clients that are already imported.
+
+    An exception of a client's type can only exist once that client's module is
+    loaded, so only ``sys.modules`` is consulted. This keeps ``import traigent``
+    from importing httpx, requests or aiohttp as a side effect.
+    """
+    import sys
+
+    found: list[type[BaseException]] = []
+    for path in dotted:
+        module_name, _, attr = path.rpartition(".")
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        cls = getattr(module, attr, None)
+        if isinstance(cls, type) and issubclass(cls, BaseException):
+            found.append(cls)
+    return tuple(found)
+
+
+def _timeout_exception_types() -> tuple[type[BaseException], ...]:
+    """Exceptions the ``retry_on_timeout`` flag covers (builtin + loaded clients)."""
+    return (
+        TimeoutError,
+        *_optional_exception_types(
+            "requests.exceptions.Timeout",
+            "httpx.TimeoutException",
+            "aiohttp.ServerTimeoutError",
+        ),
+    )
+
+
+def _connection_exception_types() -> tuple[type[BaseException], ...]:
+    """Exceptions the ``retry_on_connection_error`` flag covers."""
+    return (
+        ConnectionError,
+        *_optional_exception_types(
+            "requests.exceptions.ConnectionError",
+            "httpx.ConnectError",
+            "aiohttp.ClientConnectionError",
+        ),
+    )
+
+
 @dataclass
 class RetryConfig:
     """Configuration for retry behavior.
@@ -145,15 +190,11 @@ class RetryConfig:
             RetryStrategy.EXPONENTIAL,
             RetryStrategy.EXPONENTIAL_BACKOFF,
         ):
-            delay = min(
-                self.initial_delay * (self.exponential_base ** (attempt - 1)),
-                self.max_delay,
-            )
+            delay = self._exponential_delay(attempt)
         elif self.strategy in (RetryStrategy.LINEAR, RetryStrategy.LINEAR_BACKOFF):
             delay = min(self.initial_delay * attempt, self.max_delay)
         else:  # JITTER / RANDOM_JITTER
-            base_delay = self.initial_delay * (self.exponential_base ** (attempt - 1))
-            delay = min(base_delay, self.max_delay)
+            delay = self._exponential_delay(attempt)
 
         # Add jitter if enabled
         if self.jitter and self.strategy != RetryStrategy.JITTER:
@@ -162,7 +203,21 @@ class RetryConfig:
         elif self.strategy == RetryStrategy.JITTER:
             delay = _SECURE_RANDOM.uniform(0, delay)
 
-        return delay
+        # Clamp last so jitter can never push the delay past the documented cap
+        # (applies to every strategy, including FIXED and LINEAR).
+        return min(delay, self.max_delay)
+
+    def _exponential_delay(self, attempt: int) -> float:
+        """Exponential delay capped at max_delay; safe for very large attempts."""
+        try:
+            return min(
+                self.initial_delay * (self.exponential_base ** (attempt - 1)),
+                self.max_delay,
+            )
+        except OverflowError:
+            # base**(attempt-1) overflowed: the product is >= the cap unless the
+            # initial delay is zero.
+            return 0.0 if self.initial_delay == 0 else self.max_delay
 
 
 @dataclass
@@ -449,6 +504,16 @@ class RetryHandler:
             return False
 
         if isinstance(exception, AuthenticationError):
+            return False
+
+        if not self.config.retry_on_timeout and isinstance(
+            exception, _timeout_exception_types()
+        ):
+            return False
+
+        if not self.config.retry_on_connection_error and isinstance(
+            exception, _connection_exception_types()
+        ):
             return False
 
         status_code = getattr(exception, "status_code", None)

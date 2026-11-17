@@ -15,11 +15,11 @@ from typing import Any
 _CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 # Regex pattern for validating email addresses (RFC 5322 simplified)
-EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\Z")
 
 # Regex pattern for validating role names. Enterprise IdPs commonly emit
 # separators such as "api:read", "team.member", and "org/admin".
-ROLE_PATTERN = re.compile(r"^[a-z0-9_-][a-z0-9_:/.-]{0,49}$")
+ROLE_PATTERN = re.compile(r"^[a-z0-9_-][a-z0-9_:/.-]{0,49}\Z")
 
 # Security constant: Delay to prevent timing attacks on authentication.
 # This intentionally blocks to ensure constant-time failure responses.

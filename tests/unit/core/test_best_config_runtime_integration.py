@@ -79,7 +79,39 @@ def test_load_from_beats_env_path(tmp_path, monkeypatch):
     assert opt_func.best_config_snapshot.source == BestConfigSource.LOAD_FROM.value
 
 
-def test_load_from_canonical_config_id_mismatch_does_not_legacy_fallback(tmp_path):
+@pytest.mark.parametrize("kind", ["missing", "malformed"])
+def test_explicit_load_from_missing_or_malformed_fails_loudly_3268(
+    tmp_path, monkeypatch, kind
+):
+    env = tmp_path / "env.json"
+    env.write_text(json.dumps({"config": {"temperature": 0.9}}), encoding="utf-8")
+    monkeypatch.setenv("TRAIGENT_CONFIG_PATH", str(env))
+    explicit = tmp_path / "explicit.json"
+    if kind == "malformed":
+        explicit.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError):
+        OptimizedFunction(
+            func=plain_answer,
+            configuration_space={"temperature": [0.2, 0.9]},
+            load_from=str(explicit),
+            default_config={"temperature": 0.1},
+        )
+
+
+def test_implicit_env_path_missing_still_falls_back_3268(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRAIGENT_CONFIG_PATH", str(tmp_path / "absent.json"))
+    opt_func = OptimizedFunction(
+        func=plain_answer,
+        configuration_space={"temperature": [0.2, 0.9]},
+        default_config={"temperature": 0.1},
+    )
+    assert opt_func.current_config["temperature"] == 0.1
+
+
+def test_load_from_canonical_config_id_mismatch_raises_without_legacy_fallback(
+    tmp_path,
+):
     spec_path = write_repo_best_config(
         tmp_path,
         config_id="other-answerer",
@@ -87,16 +119,15 @@ def test_load_from_canonical_config_id_mismatch_does_not_legacy_fallback(tmp_pat
         function_ref=function_ref_for(plain_answer),
     )
 
-    opt_func = OptimizedFunction(
-        func=plain_answer,
-        configuration_space={"temperature": [0.1, 0.9]},
-        config_id="expected-answerer",
-        load_from=str(spec_path),
-        default_config={"temperature": 0.1},
-    )
-
-    assert opt_func.current_config["temperature"] == 0.1
-    assert opt_func.best_config_snapshot.source == BestConfigSource.DEFAULT.value
+    # An explicit load_from that cannot be used fails loudly (#3268).
+    with pytest.raises(ConfigurationError):
+        OptimizedFunction(
+            func=plain_answer,
+            configuration_space={"temperature": [0.1, 0.9]},
+            config_id="expected-answerer",
+            load_from=str(spec_path),
+            default_config={"temperature": 0.1},
+        )
 
 
 def test_repo_best_config_source_loads_at_init(tmp_path, monkeypatch):

@@ -28,7 +28,7 @@ from traigent.examples.providers._demo import (
     demo_scorer,
     run_optimization,
 )
-from traigent.integrations.llms.nous_auth import NOUS_BASE_URL, get_nous_api_key
+from traigent.integrations.llms.nous_auth import get_nous_api_key, get_nous_base_url
 
 _PROVIDER = get_provider("nous")
 ensure_packages([("langchain_openai", "langchain-openai")])
@@ -52,7 +52,7 @@ def answer(question: str) -> str:
     llm = ChatOpenAI(
         model=cfg["model"],
         temperature=cfg["temperature"],
-        base_url=NOUS_BASE_URL,
+        base_url=get_nous_base_url(),
         # Resolved per trial so a long run stays ahead of JWT expiry. In the
         # keyless mock demo this returns the seeded NOUS_API_KEY with no network.
         api_key=get_nous_api_key(),
