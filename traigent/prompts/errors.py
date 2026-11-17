@@ -39,6 +39,17 @@ KNOWN_PROBLEM_CODES: frozenset[str] = frozenset(
 _PROBLEM_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 
 
+def _sanitise(code: Any, problem_id: Any) -> tuple[str | None, str | None]:
+    """Keep only a known code and a well-formed problem id."""
+    safe_code = code if code in KNOWN_PROBLEM_CODES else None
+    safe_id = (
+        problem_id
+        if isinstance(problem_id, str) and _PROBLEM_ID_PATTERN.fullmatch(problem_id)
+        else None
+    )
+    return safe_code, safe_id
+
+
 class PromptApiError(ClientError):
     """A prompt request was rejected with a problem document.
 
@@ -56,6 +67,21 @@ class PromptApiError(ClientError):
 
     default_message = "Prompt request failed"
 
+    def __new__(
+        cls,
+        *,
+        code: str | None = None,
+        status_code: int | None = None,
+        problem_id: str | None = None,
+    ):
+        # PicklableExceptionMixin records the constructor call in __new__ and
+        # keeps it on the instance for pickle/copy replay. Hand it the
+        # sanitised values so raw server text never lands in ``vars(err)``.
+        safe_code, safe_id = _sanitise(code, problem_id)
+        return super().__new__(
+            cls, code=safe_code, status_code=status_code, problem_id=safe_id
+        )
+
     def __init__(
         self,
         *,
@@ -63,12 +89,7 @@ class PromptApiError(ClientError):
         status_code: int | None = None,
         problem_id: str | None = None,
     ) -> None:
-        safe_code = code if code in KNOWN_PROBLEM_CODES else None
-        safe_id = (
-            problem_id
-            if isinstance(problem_id, str) and _PROBLEM_ID_PATTERN.fullmatch(problem_id)
-            else None
-        )
+        safe_code, safe_id = _sanitise(code, problem_id)
         super().__init__(
             self.default_message,
             status_code=status_code,
