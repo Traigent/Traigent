@@ -15,7 +15,9 @@ from traigent.utils.cost_calculator import (
     get_model_token_pricing,
 )
 
-_SUPPORTED_PRICING_SOURCES = {"litellm", "builtin_pricing"}
+# "sdk_snapshot": ids litellm >= 1.103.10 dropped and the SDK restores from its
+# litellm 1.103.4 snapshot (identical rates to what 1.103.4 itself returned).
+_SUPPORTED_PRICING_SOURCES = {"litellm", "builtin_pricing", "sdk_snapshot"}
 
 
 class TestGetModelTokenPricing:
@@ -82,7 +84,7 @@ class TestGetModelTokenPricing:
         inp, out, method = get_model_token_pricing(name)
         assert inp > 0
         assert out > 0
-        assert method == "litellm"
+        assert method in {"litellm", "sdk_snapshot"}
 
     def test_model_absent_from_catalog_uses_builtin_pricing(
         self, monkeypatch: pytest.MonkeyPatch

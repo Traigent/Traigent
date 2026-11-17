@@ -58,18 +58,21 @@ def test_litellm_specifier_admits_later_1x_minor():
     """
     raw_spec = _get_litellm_specifier_from_pyproject()
     spec_set = SpecifierSet(raw_spec)
-    assert spec_set.contains("1.101.0"), (
-        f"litellm specifier '{raw_spec}' does NOT admit 1.101.0. "
+    assert spec_set.contains("1.104.0"), (
+        f"litellm specifier '{raw_spec}' does NOT admit 1.104.0. "
         "Keep a range ('>=<floor>,<2') rather than an exact pin (see GitHub issue #1418)."
     )
 
 
-def test_litellm_specifier_admits_security_floor_1_100_5():
-    """litellm specifier must admit the patched security floor 1.100.5."""
+def test_litellm_specifier_admits_security_floor_1_103_10():
+    """The floor is the AIKIDO-2026-31520 security floor: 1.103.10 in, 1.103.9 out."""
     raw_spec = _get_litellm_specifier_from_pyproject()
     spec_set = SpecifierSet(raw_spec)
-    assert spec_set.contains("1.100.5"), (
-        f"litellm specifier '{raw_spec}' does NOT admit 1.100.5, the patched security floor."
+    assert spec_set.contains("1.103.10"), (
+        f"litellm specifier '{raw_spec}' does NOT admit 1.103.10, the patched security floor."
+    )
+    assert not spec_set.contains("1.103.9"), (
+        f"litellm specifier '{raw_spec}' admits 1.103.9, which predates the security floor."
     )
 
 
@@ -101,7 +104,7 @@ def test_quickstart_install_hint_uses_range():
     assert "litellm==1.87.1" not in source, (
         "traigent/examples/quickstart/__main__.py still hardcodes 'litellm==1.87.1' "
         "in the install hint. Update it to match the pyproject.toml range "
-        "(e.g. 'litellm>=1.100.5,<2'). See GitHub issue #1418."
+        "(e.g. 'litellm>=1.103.10,<2'). See GitHub issue #1418."
     )
 
 
@@ -110,6 +113,6 @@ def test_requirements_txt_not_exact_litellm_pin():
     requirements_text = REQUIREMENTS_CORE_PATH.read_text()
     assert "litellm==1.87.1" not in requirements_text, (
         "requirements/requirements.txt still has 'litellm==1.87.1'. "
-        "Update it to match the pyproject.toml range (e.g. 'litellm>=1.100.5,<2'). "
+        "Update it to match the pyproject.toml range (e.g. 'litellm>=1.103.10,<2'). "
         "See GitHub issue #1418."
     )

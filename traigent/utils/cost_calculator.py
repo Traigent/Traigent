@@ -75,6 +75,12 @@ _SDK_OPENROUTER_SNAPSHOT = (
     Path(__file__).parent / "openrouter_prices_litellm_1_103_4.json"
 )
 
+# litellm >= 1.103.10 (AIKIDO-2026-31520) also dropped 274 non-OpenRouter ids that
+# 1.103.4 priced (bare ids, mistral/, xai/, together_ai/, vertex_ai/, gemini/,
+# ...). Same merge rule as the OpenRouter snapshot, same file shape; kept in its
+# own file so the OpenRouter snapshot stays byte-identical.
+_SDK_RETIRED_SNAPSHOT = Path(__file__).parent / "litellm_retired_prices_1_103_4.json"
+
 
 # Pricing fields of the entries the SDK snapshot supplied to ``litellm.model_cost``
 # (key -> copy of the entry's ``*cost*`` fields), filled under
@@ -132,15 +138,25 @@ def _sdk_snapshot_version() -> str:
         return "unknown"
 
 
-def _load_sdk_openrouter_snapshot() -> dict[str, Any]:
-    """Return the SDK-owned OpenRouter price snapshot ({} if unreadable)."""
+def _load_snapshot_models(path: Path) -> dict[str, Any]:
+    """Return the ``models`` map of an SDK snapshot file ({} if unreadable)."""
     try:
-        data = json.loads(_SDK_OPENROUTER_SNAPSHOT.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
         models = data.get("models", {})
         return models if isinstance(models, dict) else {}
     except (OSError, ValueError):  # silent-ok: unpriced stays unknown, never $0
-        logger.warning("SDK OpenRouter price snapshot unreadable")
+        logger.warning("SDK price snapshot %s unreadable", path.name)
         return {}
+
+
+def _load_sdk_openrouter_snapshot() -> dict[str, Any]:
+    """Return the SDK-owned OpenRouter price snapshot ({} if unreadable)."""
+    return _load_snapshot_models(_SDK_OPENROUTER_SNAPSHOT)
+
+
+def _load_sdk_retired_snapshot() -> dict[str, Any]:
+    """Return the SDK-owned non-OpenRouter retired-price snapshot."""
+    return _load_snapshot_models(_SDK_RETIRED_SNAPSHOT)
 
 
 # Claude 5.5 / Fable 5.1 first-party rates (USD per 1M tokens), used only for
@@ -197,6 +213,19 @@ def ensure_bundled_provider_prices() -> int:
                     current[key] = value
                     _sdk_snapshot_supplied[key] = _pricing_fields(value)
                     added += 1
+            # Retired non-OpenRouter ids: seeded exactly like litellm's own
+            # bundled map (no register_model, whose alias resolution mutates
+            # unrelated entries), then folded into litellm's provider model
+            # sets so provider routing still resolves them.
+            seeded: dict[str, Any] = {}
+            for key, value in _load_sdk_retired_snapshot().items():
+                if isinstance(value, dict) and key not in current:
+                    current[key] = dict(value)
+                    _sdk_snapshot_supplied[key] = _pricing_fields(value)
+                    seeded[key] = current[key]
+                    added += 1
+            if seeded and hasattr(litellm, "add_known_models"):
+                litellm.add_known_models(seeded)
             for model, (
                 input_mtok,
                 output_mtok,
