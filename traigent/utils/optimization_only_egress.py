@@ -2357,7 +2357,9 @@ _trace_gate_lock = threading.Lock()
 #: Per-process random salt for the in-memory cache handle below. The handle only stops
 #: the raw credential being a dict key; it never leaves the process. It is derived with
 #: a computationally expensive KDF (PBKDF2), not a bare fast hash, so it is not a usable
-#: credential fingerprint even if a cache dump leaked.
+#: credential fingerprint even if a cache dump leaked. The iteration count is kept low
+#: on purpose: ``ensure_trace_egress_allowed`` runs on every send, so the cost is paid
+#: per send (100k iterations would cost ~17 ms each).
 _CACHE_DIGEST_SALT = os.urandom(32)
 _CACHE_DIGEST_ITERATIONS = 2000
 
@@ -2367,7 +2369,7 @@ def _cache_digest(key_text: str) -> str:
         "sha256",
         key_text.encode("utf-8"),
         _CACHE_DIGEST_SALT,
-        _CACHE_DIGEST_ITERATIONS,
+        _CACHE_DIGEST_ITERATIONS,  # NOSONAR(S5344) - in-memory cache handle with a per-process random salt; never stored or sent, so a password-storage iteration floor does not apply; 100k costs ~17 ms per egress send
     ).hex()
 
 
@@ -2465,7 +2467,7 @@ class _DaemonExecutor:
                     return
                 try:
                     future.set_result(func(*args))
-                except BaseException as exc:  # noqa: BLE001 - relayed to the awaiter
+                except BaseException as exc:  # noqa: BLE001  # NOSONAR(S5754) - relayed to awaiter
                     future.set_exception(exc)
 
             threading.Thread(
@@ -2501,7 +2503,7 @@ def _run_validator(
         box["unrestricted"] = (
             getattr(manager, "_key_validation_unrestricted", False) is True
         )
-    except BaseException as exc:  # noqa: BLE001 - fail closed on anything
+    except BaseException as exc:  # noqa: BLE001  # NOSONAR(S5754) - fail closed
         box["exception"] = type(exc).__name__
     finally:
         entry.done.set()
@@ -2539,6 +2541,115 @@ def _validation_base(endpoint: Any) -> str | None:
         return None
 
 
+def _trace_origins(base: str, endpoint: Any) -> set[str]:
+    """Origins whose latch can restrict this credential (destination plus configured)."""
+    origins = {base, normalised_origin(endpoint) if endpoint else base}
+    try:
+        from traigent.config.backend_config import BackendConfig
+
+        origins.add(normalised_origin(BackendConfig.get_backend_url()))
+    except Exception:  # noqa: BLE001 - config unavailable: base/endpoint still checked
+        pass
+    return origins
+
+
+def _start_trace_validator(
+    key: tuple[str, str], entry: _TraceValidator, key_text: str, base: str
+) -> bool:
+    """Start the validator thread; on failure deregister it and report False (fail closed)."""
+    try:
+        threading.Thread(
+            target=_run_validator,
+            args=(key, entry, key_text, base),
+            name="traigent-trace-preflight",
+            daemon=True,
+        ).start()
+    except BaseException:  # noqa: BLE001  # NOSONAR(S5754) - fail closed
+        with _trace_gate_lock:
+            _trace_validators.pop(key, None)
+        return False
+    return True
+
+
+def _await_trace_validation(entry: _TraceValidator) -> str:
+    """Wait (bounded) for the validator and classify: "ok", "restricted" or "failed"."""
+    remaining = TRACE_PREFLIGHT_DEADLINE_S - (_trace_clock() - entry.started)
+    finished = entry.done.is_set() or (remaining > 0 and entry.done.wait(remaining))
+    if not finished:
+        logger.warning(
+            "Traigent trace export disabled: API key validation did not finish "
+            "within %.0fs (fail closed)",
+            TRACE_PREFLIGHT_DEADLINE_S,
+        )
+        return "failed"
+    if "exception" in entry.box or entry.box.get("error") is not None:
+        logger.warning(
+            "Traigent trace export disabled: API key could not be validated "
+            "(fail closed)"
+        )
+        return "failed"
+    if entry.box.get("restricted"):
+        return "restricted"
+    if entry.box.get("unrestricted") is True:
+        return "ok"
+    logger.warning(
+        "Traigent trace export disabled: key validation did not carry an "
+        "explicit optimization_only=false (fail closed)"
+    )
+    return "failed"
+
+
+def _warn_bearer_once() -> None:
+    global _warned_bearer_only
+    if not _warned_bearer_only:
+        _warned_bearer_only = True
+        logger.warning(
+            "trace export to Traigent with a Bearer credential cannot be "
+            "checked for optimization_only; refusing"
+        )
+
+
+def _claim_trace_validator(
+    key: tuple[str, str],
+) -> tuple[bool | None, _TraceValidator | None, bool]:
+    """Under the gate lock: ``(cached_allowed, None, False)`` when a usable decision is
+    cached, ``(None, None, False)`` when too many validations are in flight (deny), else
+    ``(None, entry, started)`` where ``started`` means the caller must launch the thread."""
+    now = _trace_clock()
+    with _trace_gate_lock:
+        cached = _trace_decisions.get(key)
+        if cached is not None and (
+            cached[1] or now - cached[2] < _TRACE_PREFLIGHT_FAILURE_TTL_S
+        ):
+            return cached[0], None, False
+        entry = _trace_validators.get(key)
+        if entry is not None:
+            return None, entry, False
+        if len(_trace_validators) >= _MAX_TRACE_VALIDATORS:
+            logger.warning(
+                "Traigent trace export disabled: too many key validations in "
+                "flight (fail closed)"
+            )
+            return None, None, False
+        entry = _TraceValidator(started=now)
+        _trace_validators[key] = entry
+        return None, entry, True
+
+
+def _credential_latched(origins: set[str], key_text: str) -> bool:
+    """True if any known origin has latched optimization_only for this X-API-Key."""
+    cred = {"X-API-Key": key_text}
+    return any(is_latched(credential_scope(o, cred)) for o in origins)
+
+
+def _env_denies() -> bool:
+    """optimization_only env switch on, or invalid (fail closed)."""
+    try:
+        return bool(env_setting())
+    except ValueError:
+        return True
+
+
 def ensure_trace_egress_allowed(
     api_key: str | None,
     endpoint: Any = None,
@@ -2569,25 +2680,16 @@ def ensure_trace_egress_allowed(
     next call revalidates (and can block up to the deadline); calls inside the window are
     denied from the cache. A latch set later still wins on every call.
     """
-    global _warned_bearer_only
     if not is_traigent_trace_endpoint(endpoint):
         return True
-    try:
-        if env_setting():
-            return False
-    except ValueError:
-        return False  # invalid env value: fail closed
+    if _env_denies():
+        return False
     key_text, bearer = _credential_headers(api_key, headers)
     # Any Bearer credential fails closed: the backend authenticates the JWT before the
     # API key, and the SDK cannot validate the Bearer's tenant restriction, so a request
     # carrying one (with or without an X-API-Key) cannot be checked for optimization_only.
     if bearer:
-        if not _warned_bearer_only:
-            _warned_bearer_only = True
-            logger.warning(
-                "trace export to Traigent with a Bearer credential cannot be "
-                "checked for optimization_only; refusing"
-            )
+        _warn_bearer_once()
         return False
     if not key_text:
         return False
@@ -2595,78 +2697,16 @@ def ensure_trace_egress_allowed(
     if base is None:
         return False
     key = (_cache_digest(key_text), base)
-    origins = {base, normalised_origin(endpoint) if endpoint else base}
-    try:
-        from traigent.config.backend_config import BackendConfig
+    origins = _trace_origins(base, endpoint)
 
-        origins.add(normalised_origin(BackendConfig.get_backend_url()))
-    except Exception:  # noqa: BLE001 - config unavailable: base/endpoint still checked
-        pass
+    cached, entry, start = _claim_trace_validator(key)
+    if entry is None:  # cached decision, or None (too many in flight): deny
+        return bool(cached) and not _credential_latched(origins, key_text)
+    if start and not _start_trace_validator(key, entry, key_text, base):
+        return False
 
-    def _latched() -> bool:
-        creds = [{"X-API-Key": key_text}] + (
-            [{"Authorization": bearer}] if bearer else []
-        )
-        return any(is_latched(credential_scope(o, c)) for o in origins for c in creds)
-
-    now = _trace_clock()
-    start = False
-    with _trace_gate_lock:
-        cached = _trace_decisions.get(key)
-        if cached is not None and (
-            cached[1] or now - cached[2] < _TRACE_PREFLIGHT_FAILURE_TTL_S
-        ):
-            return cached[0] and not _latched()
-        entry = _trace_validators.get(key)
-        if entry is None:
-            if len(_trace_validators) >= _MAX_TRACE_VALIDATORS:
-                logger.warning(
-                    "Traigent trace export disabled: too many key validations in "
-                    "flight (fail closed)"
-                )
-                return False
-            entry = _TraceValidator(started=now)
-            _trace_validators[key] = entry
-            start = True
-    if start:
-        try:
-            threading.Thread(
-                target=_run_validator,
-                args=(key, entry, key_text, base),
-                name="traigent-trace-preflight",
-                daemon=True,
-            ).start()
-        except BaseException:  # noqa: BLE001 - cannot start: fail closed
-            with _trace_gate_lock:
-                _trace_validators.pop(key, None)
-            return False
-
-    remaining = TRACE_PREFLIGHT_DEADLINE_S - (_trace_clock() - entry.started)
-    finished = entry.done.is_set() or (remaining > 0 and entry.done.wait(remaining))
-    if not finished:
-        logger.warning(
-            "Traigent trace export disabled: API key validation did not finish "
-            "within %.0fs (fail closed)",
-            TRACE_PREFLIGHT_DEADLINE_S,
-        )
-        status = "failed"
-    elif "exception" in entry.box or entry.box.get("error") is not None:
-        logger.warning(
-            "Traigent trace export disabled: API key could not be validated "
-            "(fail closed)"
-        )
-        status = "failed"
-    elif entry.box.get("restricted"):
-        status = "restricted"
-    elif entry.box.get("unrestricted") is True:
-        status = "ok"
-    else:
-        logger.warning(
-            "Traigent trace export disabled: key validation did not carry an "
-            "explicit optimization_only=false (fail closed)"
-        )
-        status = "failed"
-    latched = _latched()
+    status = _await_trace_validation(entry)
+    latched = _credential_latched(origins, key_text)
     allowed = status == "ok" and not latched
     definitive = allowed or status == "restricted" or latched
     with _trace_gate_lock:
