@@ -16,6 +16,7 @@ Tests cover:
 
 import asyncio
 import math
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -52,6 +53,7 @@ from traigent.evaluators.base import (
 )
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
+from traigent.utils.callbacks import CallbackManager, OptimizationCallback
 from traigent.utils.exceptions import OptimizationError, TrialPrunedError
 from traigent.utils.file_versioning import FileVersionManager
 
@@ -626,6 +628,147 @@ class TestOptimizationOrchestrator:
         assert [call["status"] for call in finalize_calls] == ["completed"]
 
     # Constructor Tests
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "cancel_at,preexisting_cancellations,late_cancellations",
+        [
+            ("start", 0, 2),
+            ("complete", 0, 2),
+            ("initialize", 0, 2),
+            ("finalize", 0, 2),
+            ("finalize", 1, 2),
+            ("finalize", 2, 2),
+            ("finalize", 0, 0),
+            ("finalize", 1, 0),
+            ("finalize", 2, 0),
+        ],
+    )
+    async def test_callback_cancellation_settles_admitted_lifecycle(
+        self,
+        orchestrator,
+        mock_function,
+        sample_dataset,
+        monkeypatch,
+        cancel_at,
+        preexisting_cancellations,
+        late_cancellations,
+    ):
+        """Cancel during real callbacks without orphaning trials or reservations."""
+        has_cancellation_counts = hasattr(asyncio.Task, "cancelling") and hasattr(
+            asyncio.Task, "uncancel"
+        )
+        if preexisting_cancellations and not has_cancellation_counts:
+            pytest.skip("Task cancellation counters require Python 3.11+")
+        entered = threading.Event()
+        release = threading.Event()
+        events = []
+
+        class Callback(OptimizationCallback):
+            def block(self, event):
+                if cancel_at == event and not entered.is_set():
+                    entered.set()
+                    assert release.wait(timeout=5)
+
+            def on_optimization_start(self, config_space, objectives, algorithm):
+                self.block("initialize")
+
+            def on_trial_start(self, trial_number, config):
+                events.append("start")
+                self.block("start")
+
+            def on_trial_complete(self, trial, progress):
+                events.append("complete")
+                self.block("complete")
+
+            def on_optimization_complete(self, result):
+                events.append("finalize")
+                self.block("finalize")
+
+        orchestrator.callback_manager = CallbackManager([Callback()], timeout=0)
+        orchestrator.parallel_trials = 2
+        orchestrator.parallel_execution_manager.parallel_trials = 2
+        orchestrator.max_trials = 4
+        finalize_local = MagicMock(
+            wraps=orchestrator.backend_session_manager.finalize_local_session
+        )
+        monkeypatch.setattr(
+            orchestrator.backend_session_manager,
+            "finalize_local_session",
+            finalize_local,
+        )
+        monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+        cancellation_counts_before_return = []
+
+        async def run_optimization():
+            current = asyncio.current_task()
+            assert current is not None
+            for _ in range(preexisting_cancellations):
+                current.cancel()
+            if preexisting_cancellations:
+                try:
+                    await asyncio.sleep(0)
+                except asyncio.CancelledError:
+                    # A prior owner acknowledged these requests but left its
+                    # count intact; terminal notification must preserve them.
+                    pass
+            try:
+                result = await orchestrator.optimize(mock_function, sample_dataset)
+            finally:
+                count_cancellations = getattr(current, "cancelling", None)
+                if callable(count_cancellations):
+                    cancellation_counts_before_return.append(count_cancellations())
+            return result
+
+        task = asyncio.create_task(run_optimization())
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+            for _ in range(late_cancellations):
+                task.cancel()
+                await asyncio.sleep(0)
+            await asyncio.sleep(0.02)
+            assert not task.done()
+            release.set()
+            expected_status = (
+                OptimizationStatus.COMPLETED
+                if cancel_at == "finalize"
+                else OptimizationStatus.CANCELLED
+            )
+            # A caller cancel that lands during on_optimization_complete is
+            # re-raised after persistence settles (COMPLETED, written once) and
+            # yields no result object; without one the run returns normally.
+            caller_cancelled = cancel_at == "finalize" and late_cancellations > 0
+            if caller_cancelled:
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                result = None
+            else:
+                result = await task
+                assert result.status == expected_status
+            if cancel_at == "finalize" and has_cancellation_counts:
+                # Caller's own requests are preserved, not undone (no swallow).
+                assert cancellation_counts_before_return == [
+                    preexisting_cancellations + late_cancellations
+                ]
+            expected_trials = (
+                4 if cancel_at == "finalize" else (2 if cancel_at == "complete" else 0)
+            )
+            expected_notifications = 1 if cancel_at == "start" else expected_trials
+            if result is not None:
+                assert len(result.trials) == expected_trials
+            assert events.count("start") == expected_notifications
+            assert events.count("complete") == expected_notifications
+            assert events.count("finalize") == 1
+            status = orchestrator.cost_enforcer.get_status()
+            assert status.trial_count == expected_trials
+            assert status.reserved_cost_usd == 0
+            assert status.in_flight_count == 0
+            finalize_local.assert_called_once()
+            assert finalize_local.call_args.args[1] == expected_status
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+            orchestrator.callback_manager.close()
 
     def test_orchestrator_creation_with_valid_params(
         self, mock_optimizer, mock_evaluator

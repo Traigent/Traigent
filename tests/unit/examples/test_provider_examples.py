@@ -132,7 +132,7 @@ def test_example_file_exists_and_matches_manifest(provider):
 
 
 @pytest.mark.parametrize("provider", _RUNNABLE, ids=[p["id"] for p in _RUNNABLE])
-def test_example_module_imports_against_live_sdk(provider):
+def test_example_module_imports_against_live_sdk(provider, tmp_path):
     """Importing the example exercises @traigent.optimize, EvaluationOptions,
     get_config and the provider entry point. A rename in the SDK surface makes
     this raise ImportError/AttributeError — the drift signal we want.
@@ -162,6 +162,9 @@ def test_example_module_imports_against_live_sdk(provider):
     env = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": os.environ.get("HOME", ""),
+        "TRAIGENT_SKIP_DOTENV": "1",
+        "LITELLM_MODE": "PRODUCTION",
+        "TRAIGENT_RESULTS_FOLDER": str(tmp_path / "results"),
         "ENVIRONMENT": "development",
         "TRAIGENT_MOCK_LLM": "true",
         "TRAIGENT_EXAMPLES_NO_INSTALL": "1",
@@ -173,9 +176,8 @@ def test_example_module_imports_against_live_sdk(provider):
         timeout=120,
         env=env,
     )
-    assert proc.returncode == 0, (
-        f"importing {module_name} failed:\n{proc.stdout}\n{proc.stderr}"
-    )
+    failure_details = f"importing {module_name} failed:\n{proc.stdout}\n{proc.stderr}"
+    assert proc.returncode == 0, failure_details
 
 
 def test_get_provider_unknown_raises():
@@ -256,7 +258,7 @@ def test_ensure_packages_declined_prompt_does_not_install(monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("module_name", ["openai", "groq", "nous"])
-def test_example_runs_end_to_end_in_mock(module_name):
+def test_example_runs_end_to_end_in_mock(module_name, tmp_path):
     """One LangChain (openai), one LiteLLM (groq) and the OAuth Nous Portal
     (nous) example run keyless in mock mode and print a ranked results table
     with a non-zero best score.
@@ -275,6 +277,9 @@ def test_example_runs_end_to_end_in_mock(module_name):
     env = {
         "PATH": __import__("os").environ.get("PATH", ""),
         "HOME": __import__("os").environ.get("HOME", ""),
+        "TRAIGENT_SKIP_DOTENV": "1",
+        "LITELLM_MODE": "PRODUCTION",
+        "TRAIGENT_RESULTS_FOLDER": str(tmp_path / "results"),
         "ENVIRONMENT": "development",
         "TRAIGENT_MOCK_LLM": "true",
         # Keyless mock walkthroughs opt out of the pre-run cost preflights;

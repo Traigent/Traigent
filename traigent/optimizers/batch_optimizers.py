@@ -15,12 +15,17 @@ import numbers
 import sys
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 from traigent.api.types import TrialResult
-from traigent.evaluators.base import MEASURED_ONLY_METRICS, Dataset, EvaluationResult
+from traigent.evaluators.base import (
+    MEASURED_ONLY_METRICS,
+    Dataset,
+    EvaluationResult,
+    _TaskBoundaryInterrupt,
+)
 from traigent.invokers.base import BaseInvoker, InvocationResult
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
@@ -30,6 +35,35 @@ from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
+
+
+async def _await_batch_trial(
+    config: dict[str, Any], future: Future[BatchTrial]
+) -> tuple[dict[str, Any], BatchTrial | Exception | _TaskBoundaryInterrupt]:
+    """Await one submitted trial without blocking the event loop."""
+    try:
+        return config, await asyncio.wrap_future(future)
+    except (KeyboardInterrupt, SystemExit) as exc:
+        return config, _TaskBoundaryInterrupt(exc)
+    except Exception as exc:
+        return config, exc
+
+
+def _consume_async_task_exception(task: asyncio.Task[Any]) -> None:
+    """Retrieve detached collector errors after optimizer cancellation."""
+    if not task.cancelled():
+        task.exception()
+
+
+async def _shutdown_batch_executor(
+    executor: ThreadPoolExecutor,
+) -> _TaskBoundaryInterrupt | None:
+    try:
+        await asyncio.to_thread(executor.shutdown, wait=True, cancel_futures=True)
+    except (KeyboardInterrupt, SystemExit) as exc:
+        return _TaskBoundaryInterrupt(exc)
+    return None
+
 
 #: Composite score for a trial missing a declared objective (an unmeasured
 #: cost). Finite on purpose: ``-inf`` is not valid strict JSON, so it could not
@@ -197,13 +231,13 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
         # Early stopping tracking
         trials_without_improvement = 0
+        early_stopped = False
 
         # Create configuration candidates
         remaining_configs = list(self.base_optimizer.generate_candidates(max_trials))
 
-        with ThreadPoolExecutor(
-            max_workers=self.batch_config.max_parallel_trials
-        ) as executor:
+        executor = ThreadPoolExecutor(max_workers=self.batch_config.max_parallel_trials)
+        try:
             while remaining_configs and len(completed_trials) < max_trials:
                 # Submit parallel trials
                 current_batch_size = min(
@@ -231,14 +265,40 @@ class ParallelBatchOptimizer(BaseOptimizer):
                     for config in trial_configs
                 }
 
-                # Collect results as they complete
-                for future in as_completed(future_to_config):
-                    config = future_to_config[future]
-                    try:
-                        trial = future.result()
+                # Each collector preserves the submitted config while awaiting
+                # its worker future. as_completed retains completion-order
+                # progress updates without synchronously waiting on the loop.
+                collectors = [
+                    asyncio.create_task(_await_batch_trial(config, future))
+                    for future, config in future_to_config.items()
+                ]
+                for collector in collectors:
+                    collector.add_done_callback(_consume_async_task_exception)
+
+                for completed in asyncio.as_completed(collectors):
+                    config, outcome = await completed
+                    if isinstance(outcome, _TaskBoundaryInterrupt):
+                        raise outcome.exc
+                    if isinstance(outcome, Exception):
+                        e = outcome
+                        logger.exception(
+                            "Trial failed for config %s: %s",
+                            config,
+                            e,
+                            exc_info=(type(e), e, e.__traceback__),
+                        )
+                        failed_trial = BatchTrial(
+                            configuration=config,
+                            score=float("-inf"),
+                            duration=0.0,
+                            metadata={"error": str(e), "failed": True},
+                        )
+                        completed_trials.append(failed_trial)
+                    else:
+                        trial = outcome
                         completed_trials.append(trial)
 
-                        (best_score, best_config, trials_without_improvement) = (
+                        best_score, best_config, trials_without_improvement = (
                             ParallelBatchOptimizer._record_trial_progress(
                                 self,
                                 trial,
@@ -249,35 +309,39 @@ class ParallelBatchOptimizer(BaseOptimizer):
                             )
                         )
 
-                        # Early stopping check
-                        if (
-                            self.batch_config.early_stopping_patience > 0
-                            and trials_without_improvement
-                            >= self.batch_config.early_stopping_patience
-                        ):
-                            logger.info(
-                                f"Early stopping after {trials_without_improvement} trials without improvement"
-                            )
-                            break
-
-                    except Exception as e:
-                        logger.exception(f"Trial failed for config {config}: {e}")
-                        # Create failed trial
-                        failed_trial = BatchTrial(
-                            configuration=config,
-                            score=float("-inf"),
-                            duration=0.0,
-                            metadata={"error": str(e), "failed": True},
-                        )
-                        completed_trials.append(failed_trial)
-
-                # Break if early stopping triggered
+                # Every result in a submitted batch must be accounted for before
+                # honoring patience. Submitted work may already have incurred cost,
+                # and a later completion can still become the winning config.
                 if (
                     self.batch_config.early_stopping_patience > 0
                     and trials_without_improvement
                     >= self.batch_config.early_stopping_patience
+                    and remaining_configs
+                    and len(completed_trials) < max_trials
                 ):
+                    early_stopped = True
+                    logger.info(
+                        "Early stopping after collecting a submitted batch with "
+                        "%d trials without improvement",
+                        trials_without_improvement,
+                    )
                     break
+        finally:
+            # Retain ownership of submitted work through cancellation, as the
+            # former context manager did, but never join threads on the loop.
+            shutdown_task = asyncio.create_task(_shutdown_batch_executor(executor))
+            cancellation: asyncio.CancelledError | None = None
+            while not shutdown_task.done():
+                try:
+                    await asyncio.shield(shutdown_task)
+                except asyncio.CancelledError as exc:
+                    if cancellation is None:
+                        cancellation = exc
+            shutdown_outcome = shutdown_task.result()
+            if isinstance(shutdown_outcome, _TaskBoundaryInterrupt):
+                raise shutdown_outcome.exc
+            if cancellation is not None:
+                raise cancellation
 
         total_duration = time.time() - start_time
 
@@ -288,8 +352,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
             duration=total_duration,
             convergence_info={
                 "parallel_workers": self.batch_config.max_parallel_trials,
-                "early_stopped": trials_without_improvement
-                >= self.batch_config.early_stopping_patience,
+                "early_stopped": early_stopped,
                 "total_trials": len(completed_trials),
             },
         )

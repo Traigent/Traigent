@@ -102,7 +102,7 @@ def test_no_markers_authenticated_no_agents_unavailable_mcp(
         "mcp?",
         (
             "print",
-            "`traigent mcp` is not available in this SDK build yet; "
+            "`traigent mcp register` is not available in this SDK build; "
             "MCP registration skipped.",
         ),
         "quickstart",

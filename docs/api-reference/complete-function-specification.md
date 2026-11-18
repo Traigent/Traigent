@@ -589,7 +589,8 @@ Exactly which exits carry it:
 | `ResolutionError` (unwrapped, type preserved) | yes | `exc.sync_session_id` |
 | Any other `Exception` (wrapped into `OptimizationError`) | yes, on the wrapper | `exc.sync_session_id` |
 | `SystemExit` / `GeneratorExit` / other non-`Exception` exits | yes, attached then re-raised untouched | `getattr(exc, "sync_session_id", None)` — no class default |
-| `KeyboardInterrupt` / `asyncio.CancelledError` | n/a — normally does not raise; a partial result is returned | `result.sync_session_id` (#2020) |
+| `KeyboardInterrupt` / `asyncio.CancelledError` during trials or before persistence | n/a — a partial result is returned with `status=cancelled` | `result.sync_session_id` (#2020) |
+| …**unless a cancel or interrupt lands during the `on_optimization_complete` callback** | the interrupt is re-raised, so the call returns no value; the run was already persisted once as COMPLETED (CANCELLED only when a timeout or deadline hard stop ended the run first) and is not finalized a second time. The decorated function keeps its results (`apply_best`, `current_config`), and the `save_to` file is still written | `traigent local list`, then `traigent sync <id>` |
 | …**unless a second interrupt lands during finalization** | no — a bare `KeyboardInterrupt`/`CancelledError` propagates, so there is no result and no attribute | `traigent local list`, then `traigent sync <id>` |
 | `CostLimitExceeded` | no, always `None` — the pre-run approval gate raises it before a session exists | — |
 

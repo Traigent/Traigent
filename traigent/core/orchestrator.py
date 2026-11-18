@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
 import dataclasses
 import inspect
@@ -14,7 +15,7 @@ import statistics
 import sys
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import UTC, datetime
 from difflib import get_close_matches
 from typing import TYPE_CHECKING, Any, cast
@@ -131,12 +132,22 @@ from traigent.core.stop_conditions import StopCondition
 from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.utils import extract_examples_attempted
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
-from traigent.evaluators.base import MEASURED_ONLY_METRICS, BaseEvaluator, Dataset
+from traigent.evaluators.base import (
+    MEASURED_ONLY_METRICS,
+    BaseEvaluator,
+    Dataset,
+    _TaskBoundaryInterrupt,
+)
 from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
 from traigent.tvl.promotion_gate import PromotionGate
-from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
+from traigent.utils.callbacks import (
+    CallbackManager,
+    OptimizationCallback,
+    ProgressInfo,
+    _snapshot_callback_arg,
+)
 from traigent.utils.env_config import (
     cost_preflight_mock_exempt,
 )
@@ -172,6 +183,23 @@ from traigent.utils.trial_costs import (
 from .tracing import optimization_session_span, record_optimization_complete
 
 logger = get_logger(__name__)
+
+
+@dataclasses.dataclass
+class _CallbackAwaitScope:
+    active: bool = False
+    cancellation: asyncio.CancelledError | None = None
+    interrupt: BaseException | None = None
+
+    def defer(self, cancellation: asyncio.CancelledError) -> bool:
+        if self.active:
+            self.cancellation = cancellation
+        return self.active
+
+
+_CALLBACK_AWAIT_SCOPE: contextvars.ContextVar[_CallbackAwaitScope | None] = (
+    contextvars.ContextVar("traigent_callback_await_scope", default=None)
+)
 
 # Orchestrator constants
 PROGRESS_LOG_INTERVAL = 10  # Log progress every N trials
@@ -1458,6 +1486,11 @@ class OptimizationOrchestrator:
         # Content identity v1 snapshot for the run in progress (see optimize()).
         self._content_identity_run: Any = None
         self._stop_reason: StopReason | None = None
+        # A cancel/interrupt that landed while on_optimization_complete ran.
+        # Set only after persistence is terminal; the lifecycle handler then
+        # re-raises it instead of finalizing the run a second time.
+        self._completion_interrupt: BaseException | None = None
+        self._completion_result: OptimizationResult | None = None
         # #1404: bounded auto-retry budget for transient vendor errors (429/503)
         # before the run loop gives up. Cumulative per category so the run always
         # terminates. Opt-in via TRAIGENT_VENDOR_MAX_RETRIES (default 0 = off).
@@ -1487,6 +1520,97 @@ class OptimizationOrchestrator:
         self._consumed_examples = 0
         # Lock for protecting shared state mutations during parallel trial execution
         self._state_lock = asyncio.Lock()
+        # Preserve the synchronous manager's single-call-at-a-time ordering
+        # while its entrypoints run away from the event loop.
+        self._callback_dispatch_lock = asyncio.Lock()
+
+    @staticmethod
+    async def _contain_task_interrupt(operation: Awaitable[Any]) -> Any:
+        """Transport shutdown interrupts as values until the lifecycle owner."""
+        try:
+            return await operation
+        except (KeyboardInterrupt, SystemExit) as exc:
+            return _TaskBoundaryInterrupt(exc)
+
+    @staticmethod
+    async def _settle_owned_task(
+        task: asyncio.Task[Any],
+        *,
+        defer_cancellation: Callable[[asyncio.CancelledError], bool] | None = None,
+    ) -> tuple[Any, asyncio.CancelledError | None]:
+        """Drain an owned lifecycle unit before delivering cancellation.
+
+        Settlement can be unbounded when the underlying work has no timeout.
+        Repeated cancellation must not abandon callbacks, paid results or permits.
+        """
+        cancellation: asyncio.CancelledError | None = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as exc:
+                if task.cancelled():
+                    raise
+                if task.done():
+                    cancellation = cancellation or exc
+                    break
+                # Ordinary trial cancellation retains the pre-existing path.
+                # Only cancellation at a newly introduced callback await needs
+                # to drain the admitted batch. Repeated cancellation cannot
+                # revoke ownership after that drain has started.
+                if (
+                    cancellation is None
+                    and defer_cancellation is not None
+                    and not defer_cancellation(exc)
+                ):
+                    task.cancel()
+                    continue
+                if cancellation is None:
+                    cancellation = exc
+        return task.result(), cancellation
+
+    async def _dispatch_callback_manager(
+        self, method_name: str, *args: Any, **kwargs: Any
+    ) -> None:
+        scope = _CALLBACK_AWAIT_SCOPE.get()
+        if scope is not None:
+            scope.active = True
+        try:
+            await self._dispatch_snapshot_callback_manager(method_name, *args, **kwargs)
+        finally:
+            if scope is not None:
+                scope.active = False
+
+    async def _dispatch_snapshot_callback_manager(
+        self, method_name: str, *args: Any, **kwargs: Any
+    ) -> None:
+        """Offload one synchronous callback-manager call in serialized order.
+
+        Snapshot arguments before waiting for the serialization lock, matching
+        the timing of the former direct call. The manager still applies its own
+        callback snapshots, timeout, failure and in-flight policies.
+        """
+        snapshot_args = tuple(_snapshot_callback_arg(arg) for arg in args)
+        snapshot_kwargs = {
+            key: _snapshot_callback_arg(value) for key, value in kwargs.items()
+        }
+        async with self._callback_dispatch_lock:
+            callback_task = asyncio.create_task(
+                self._contain_task_interrupt(
+                    asyncio.to_thread(
+                        getattr(self.callback_manager, method_name),
+                        *snapshot_args,
+                        **snapshot_kwargs,
+                    )
+                )
+            )
+            outcome, cancellation = await self._settle_owned_task(callback_task)
+            if type(outcome) is _TaskBoundaryInterrupt:
+                scope = _CALLBACK_AWAIT_SCOPE.get()
+                if scope is None:
+                    raise outcome.exc
+                scope.interrupt = scope.interrupt or outcome.exc
+            if cancellation is not None:
+                raise cancellation
 
     def _warn_if_baseline_shrinks_grid(self) -> None:
         """Warn when the default_config baseline leaves grid points unevaluated.
@@ -2924,7 +3048,9 @@ class OptimizationOrchestrator:
         new_count = current_trial_index + 1
 
         progress_info = self._get_progress_info(new_count)
-        self.callback_manager.on_trial_complete(trial_result, progress_info)
+        await self._dispatch_callback_manager(
+            "on_trial_complete", trial_result, progress_info
+        )
 
         if new_count % PROGRESS_LOG_INTERVAL == 0 or (
             log_on_success and trial_result.is_successful
@@ -3243,10 +3369,10 @@ class OptimizationOrchestrator:
         """
         scheduled_configs: list[dict[str, Any]] = []
         scheduled_optuna_ids: list[int | None] = []
-        tasks = []
+        tasks: list[Coroutine[Any, Any, Any]] = []
 
-        for descriptor, sample_ceiling in zip(
-            trial_descriptors, ceilings, strict=False
+        for descriptor_index, (descriptor, sample_ceiling) in enumerate(
+            zip(trial_descriptors, ceilings, strict=False)
         ):
             cfg, _, ds_for_trial, optuna_id = descriptor
             if sample_ceiling is not None and sample_ceiling <= 0:
@@ -3265,9 +3391,52 @@ class OptimizationOrchestrator:
                 continue
 
             trial_index = trial_count + len(scheduled_configs)
-            self.callback_manager.on_trial_start(trial_index, cfg)
+            await self._dispatch_callback_manager("on_trial_start", trial_index, cfg)
             scheduled_configs.append(cfg)
             scheduled_optuna_ids.append(optuna_id)
+            scope = _CALLBACK_AWAIT_SCOPE.get()
+            interruption = (
+                (scope.cancellation or scope.interrupt) if scope is not None else None
+            )
+            if interruption is not None:
+                # No trial coroutine has been dispatched yet. Stop here rather
+                # than starting paid work after a user/deadline cancellation.
+                for pending in tasks:
+                    pending.close()
+                for abandoned_index, (abandoned, abandoned_ceiling) in enumerate(
+                    zip(trial_descriptors, ceilings, strict=False)
+                ):
+                    if (
+                        abandoned_index < descriptor_index
+                        and abandoned_ceiling is not None
+                        and abandoned_ceiling <= 0
+                    ):
+                        continue  # Already abandoned by the zero-ceiling path.
+                    abandoned_cfg, _, _, abandoned_id = abandoned
+                    self._abandon_optuna_trial(
+                        abandoned_id,
+                        reason="trial_cancelled_before_dispatch",
+                        config=abandoned_cfg,
+                        status=TrialStatus.CANCELLED,
+                        pruned_step=0,
+                    )
+                    self._trials_prevented += 1
+                for offset, started_cfg in enumerate(scheduled_configs):
+                    cancelled_trial = TrialResult(
+                        trial_id=f"trial_{trial_count + offset}",
+                        config=started_cfg,
+                        metrics={},
+                        status=TrialStatus.CANCELLED,
+                        duration=0.0,
+                        timestamp=datetime.now(UTC),
+                        error_message="Trial cancelled before execution",
+                    )
+                    await self._dispatch_callback_manager(
+                        "on_trial_complete",
+                        cancelled_trial,
+                        self._get_progress_info(trial_count),
+                    )
+                raise interruption
             tasks.append(
                 self._run_trial_recording_subset(
                     self._trial_lifecycle.run_trial,
@@ -3525,6 +3694,48 @@ class OptimizationOrchestrator:
         remaining: float,
         remaining_samples: float | None = None,
     ) -> tuple[int, str]:
+        # Callback dispatch introduces awaits into scheduling/accounting. Treat
+        # one admitted batch as an owned lifecycle unit: cancellation cannot
+        # leave a start unpaired or skip booking a later completed trial's spend.
+        scope = _CallbackAwaitScope()
+        scope_restore = _CALLBACK_AWAIT_SCOPE.set(scope)
+        try:
+            batch_task = asyncio.create_task(
+                self._contain_task_interrupt(
+                    self._run_parallel_batch_owned(
+                        func,
+                        dataset,
+                        session_id,
+                        function_name,
+                        trial_count,
+                        remaining,
+                        remaining_samples,
+                    )
+                )
+            )
+        finally:
+            _CALLBACK_AWAIT_SCOPE.reset(scope_restore)
+        result, cancellation = await self._settle_owned_task(
+            batch_task, defer_cancellation=scope.defer
+        )
+        if type(result) is _TaskBoundaryInterrupt:
+            raise result.exc
+        if scope.interrupt is not None:
+            raise scope.interrupt
+        if cancellation is not None:
+            raise cancellation
+        return cast(tuple[int, str], result)
+
+    async def _run_parallel_batch_owned(
+        self,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+        function_name: str | None,
+        trial_count: int,
+        remaining: float,
+        remaining_samples: float | None = None,
+    ) -> tuple[int, str]:
         """Execute a batch of trials when parallel execution is enabled.
 
         This method orchestrates parallel trial execution by delegating to
@@ -3656,7 +3867,7 @@ class OptimizationOrchestrator:
             # TRAIGENT_WEB_URL); cosmetic link only, so not a warning.
             logger.debug("Cloud URL construction failed: %s", exc)
 
-    def _initialize_optimization_run(
+    async def _initialize_optimization_run(
         self,
         func: Callable[..., Any],
         dataset: Dataset,
@@ -3674,6 +3885,7 @@ class OptimizationOrchestrator:
 
         self._status = OptimizationStatus.RUNNING
         self._session_finalized = False
+        self._active_session_id = None
         self._start_time = time.time()
         # ExecutionBudget per-run flags (issue #1980); reset before
         # _apply_execution_budget so a reused orchestrator never carries stale
@@ -3803,8 +4015,11 @@ class OptimizationOrchestrator:
         if isinstance(example_limit, (int, float)) and not isinstance(
             example_limit, bool
         ):
-            self.callback_manager.on_run_settings({"example_timeout": example_limit})
-        self.callback_manager.on_optimization_start(
+            await self._dispatch_callback_manager(
+                "on_run_settings", {"example_timeout": example_limit}
+            )
+        await self._dispatch_callback_manager(
+            "on_optimization_start",
             config_space=self.optimizer.config_space,
             objectives=self.optimizer.objectives,
             algorithm=self.optimizer.__class__.__name__,
@@ -4132,7 +4347,19 @@ class OptimizationOrchestrator:
             self._content_identity_run = self._prepare_content_identity(func, dataset)
 
             # Perform standard initialization (logging, session creation, callbacks)
-            session_id = self._initialize_optimization_run(func, dataset, function_name)
+            initialization, initialization_cancellation = await self._settle_owned_task(
+                asyncio.create_task(
+                    self._contain_task_interrupt(
+                        self._initialize_optimization_run(func, dataset, function_name)
+                    )
+                )
+            )
+            initialization_interrupt: BaseException | None = initialization_cancellation
+            if type(initialization) is _TaskBoundaryInterrupt:
+                initialization_interrupt = initialization.exc
+                session_id = self._active_session_id
+            else:
+                session_id = initialization
 
             function_identifier = (
                 self._function_descriptor.identifier
@@ -4155,6 +4382,7 @@ class OptimizationOrchestrator:
                     session_id=session_id,
                     function_identifier=function_identifier,
                     session_span=session_span,
+                    initialization_cancellation=initialization_interrupt,
                 )
         finally:
             recorder = getattr(self, "_mock_recorder", None)
@@ -5439,6 +5667,19 @@ class OptimizationOrchestrator:
                     self._optimization_id,
                 )
 
+    def completion_settled_result(
+        self, exc: BaseException
+    ) -> OptimizationResult | None:
+        """Return the persisted result when ``exc`` is the completion-time interrupt.
+
+        The wrapper keeps its results (apply_best, current_config) for a run that
+        completed and was persisted before the caller's cancel was re-raised.
+        Returns None for any other exception.
+        """
+        if exc is not None and exc is self._completion_interrupt:
+            return self._completion_result
+        return None
+
     async def _finalize_optimization(
         self,
         result: OptimizationResult,
@@ -5528,11 +5769,28 @@ class OptimizationOrchestrator:
         ):
             await self._submit_workflow_traces(session_id)
 
-        self.callback_manager.on_optimization_complete(result)
+        # Persistence is already terminal here. A cancel that lands during the
+        # notification is the caller's: it must reach them, not be swallowed
+        # (asyncio: a task that swallows its cancel breaks timeout/wait_for).
+        # We do NOT finalize again - the lifecycle handler re-raises it.
+        completion_interrupt: BaseException | None = None
+        try:
+            await self._dispatch_callback_manager("on_optimization_complete", result)
+        except (KeyboardInterrupt, asyncio.CancelledError) as exc:
+            completion_interrupt = exc
+
+        if completion_interrupt is not None:
+            # Record before the summary logs so the identity guard in the lifecycle
+            # handler still matches even if logging raises.
+            self._completion_interrupt = completion_interrupt
+            self._completion_result = result
 
         self._log_local_only_summary()
 
         self._log_completion_cost(result)
+
+        if completion_interrupt is not None:
+            raise completion_interrupt
 
     def _log_completion_cost(self, result: OptimizationResult) -> None:
         """Log the completion line; a floor is printed as a minimum, not exact."""
@@ -5853,12 +6111,16 @@ class OptimizationOrchestrator:
             watchdog_deadline = self.timeout + grace
             self.backend_session_manager.ensure_run_id_recorded(session_id)
             try:
-                await asyncio.wait_for(
-                    self._run_optimization_loop(
-                        func, dataset, session_id, function_identifier
+                outcome = await asyncio.wait_for(
+                    self._contain_task_interrupt(
+                        self._run_optimization_loop(
+                            func, dataset, session_id, function_identifier
+                        )
                     ),
                     timeout=watchdog_deadline,
                 )
+                if type(outcome) is _TaskBoundaryInterrupt:
+                    raise outcome.exc
             except TimeoutError:
                 # Attribute the hung-trial deadline to the cumulative budget
                 # when its deadline was the binding clamp (issue #1980); else
@@ -5927,12 +6189,16 @@ class OptimizationOrchestrator:
         session_id: str | None,
         function_identifier: str | None,
         session_span: Any,
+        initialization_cancellation: BaseException | None = None,
     ) -> OptimizationResult:
         """Run optimization with tracing enabled."""
-        self._check_cost_approval(dataset)
-        self._apply_resume(dataset)
+        if initialization_cancellation is None:
+            self._check_cost_approval(dataset)
+            self._apply_resume(dataset)
 
         try:
+            if initialization_cancellation is not None:
+                raise initialization_cancellation
             # Check for immediate timeout
             if self.timeout is not None and self.timeout == 0:
                 return self._cancel_for_zero_timeout()
@@ -5969,6 +6235,9 @@ class OptimizationOrchestrator:
             return result
 
         except (KeyboardInterrupt, asyncio.CancelledError) as interrupt:
+            if interrupt is self._completion_interrupt:
+                # Completion already persisted once; re-raise, never finalize twice.
+                raise
             return await self._finalize_user_cancelled_optimization(
                 session_id, session_span, interrupt
             )

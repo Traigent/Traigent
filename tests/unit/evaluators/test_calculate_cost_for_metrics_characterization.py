@@ -376,7 +376,7 @@ def test_strict_unnamed_model_reads_input_then_output_then_message_fields(
 
 
 @pytest.mark.parametrize("name", [None, ""])
-def test_strict_unnamed_model_without_tokens_only_warns(
+def test_strict_unnamed_model_without_tokens_only_debug_logs(
     monkeypatch: pytest.MonkeyPatch, name: Any
 ) -> None:
     harness = _Harness(monkeypatch, strict=True)
@@ -394,7 +394,7 @@ def test_strict_unnamed_model_without_tokens_only_warns(
         ("tokens",),
         ("output_tokens",),
         (
-            "log_warning",
+            "log_debug",
             "Cost calculation skipped: model_name is None/empty. "
             "Ensure the optimization config includes a 'model' key or "
             "the LLM response exposes the model name. "
@@ -406,19 +406,19 @@ def test_strict_unnamed_model_without_tokens_only_warns(
     assert "compute" not in _names(harness.trace)
 
 
-def test_strict_unnamed_model_with_negative_tokens_only_warns(
+def test_strict_unnamed_model_with_negative_tokens_only_debug_logs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     harness = _Harness(monkeypatch, strict=True)
     harness.run(
         _Metrics(harness.trace, input_tokens=-1, output_tokens=-1), model_name=None
     )
-    assert harness.trace[-1][0] == "log_warning"
+    assert harness.trace[-1][0] == "log_debug"
     assert harness.trace[-1][2:] == (-1, -1)
 
 
 @pytest.mark.parametrize("name", [None, ""])
-def test_lenient_unnamed_model_warns_and_reads_tokens_only_for_the_message(
+def test_lenient_unnamed_model_marks_cost_unpriced_and_keeps_token_reads(
     monkeypatch: pytest.MonkeyPatch, name: Any
 ) -> None:
     harness = _Harness(monkeypatch, strict=False)
@@ -426,13 +426,16 @@ def test_lenient_unnamed_model_warns_and_reads_tokens_only_for_the_message(
         _Metrics(harness.trace, input_tokens=9, output_tokens=4), model_name=name
     )
     tail = harness.trace[harness.trace.index(("total_cost",)) + 1 :]
+    # Captured spend is marked unpriced (not verified $0); the run-level
+    # registry, not a per-call WARNING, carries the signal.
     assert tail == [
         ("tokens",),
         ("input_tokens",),
         ("tokens",),
         ("output_tokens",),
+        ("cost",),
         (
-            "log_warning",
+            "log_debug",
             "Cost calculation skipped: model_name is None/empty. "
             "Ensure the optimization config includes a 'model' key or "
             "the LLM response exposes the model name. "
@@ -442,6 +445,52 @@ def test_lenient_unnamed_model_warns_and_reads_tokens_only_for_the_message(
         ),
     ]
     assert "compute" not in _names(harness.trace)
+
+
+def test_lenient_unnamed_model_with_tokens_feeds_run_level_unpriced_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from traigent.core.optimized_function import _format_unpriced_model_warning
+    from traigent.utils.cost_calculator import (
+        UNNAMED_MODEL_PLACEHOLDER,
+        get_unpriced_runtime_occurrences,
+        reset_unpriced_runtime_models,
+    )
+
+    reset_unpriced_runtime_models()
+    try:
+        harness = _Harness(monkeypatch, strict=False)
+        harness.run(
+            _Metrics(harness.trace, input_tokens=9, output_tokens=4), model_name=None
+        )
+        # The run-level warning (_attach_unpriced_model_warning) reads this
+        # registry, so an unnamed model with captured spend must land in it.
+        occurrences = get_unpriced_runtime_occurrences()
+        assert occurrences == {UNNAMED_MODEL_PLACEHOLDER: 1}
+        # Its warning must name the real remedy, not a price table.
+        message = _format_unpriced_model_warning(
+            [UNNAMED_MODEL_PLACEHOLDER], occurrences
+        )
+        assert "model name" in message
+        assert "TRAIGENT_CUSTOM_MODEL_PRICING_JSON" not in message
+    finally:
+        reset_unpriced_runtime_models()
+
+
+def test_mixed_named_and_unnamed_warning_keeps_each_remedy_separate() -> None:
+    from traigent.core.optimized_function import _format_unpriced_model_warning
+    from traigent.utils.cost_calculator import UNNAMED_MODEL_PLACEHOLDER
+
+    message = _format_unpriced_model_warning(
+        ["gpt-x", UNNAMED_MODEL_PLACEHOLDER],
+        {"gpt-x": 2, UNNAMED_MODEL_PLACEHOLDER: 3},
+    )
+    # The placeholder is never printed as a model id, and the pricing remedy is
+    # offered only for the named model, not for the unnamed calls.
+    assert UNNAMED_MODEL_PLACEHOLDER not in message
+    assert message.count("TRAIGENT_CUSTOM_MODEL_PRICING_JSON") == 1
+    assert message.endswith("in the optimization configuration.")
+    assert "across 3 calls have unknown cost" in message
 
 
 # ---------------------------------------------------------------------- pricing

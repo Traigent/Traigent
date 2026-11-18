@@ -378,31 +378,15 @@ def _load_examples_from_json(path: Path) -> list[dict[str, Any]]:
 
 
 def _normalize_example_item(item: Any, *, source: str) -> dict[str, Any]:
-    if not isinstance(item, dict):
-        raise ValidationError(f"Dataset entry must be an object: {source}")
-    if "input" not in item:
-        raise ValidationError(f"Dataset entry missing required 'input' field: {source}")
-    if "output" not in item and "expected_output" not in item:
-        raise ValidationError(
-            f"Dataset entry missing required 'output' or 'expected_output' field: {source}"
-        )
-    has_output = "output" in item
-    has_expected_output = "expected_output" in item
-    output_value = item.get("output")
-    expected_output_value = item.get("expected_output")
-    if has_output and has_expected_output and output_value != expected_output_value:
-        raise ValidationError(
-            "Dataset entry has conflicting 'output' and 'expected_output' values: "
-            f"{source}"
-        )
-    expected_output = output_value if has_output else expected_output_value
-    metadata = {
-        key: value
-        for key, value in item.items()
-        if key not in {"input", "output", "expected_output"}
-    }
+    from traigent.evaluators.base import _coerce_dataset_example_mapping
+
+    input_data, expected_output, metadata = _coerce_dataset_example_mapping(
+        item,
+        source=source,
+        location="dataset entry",
+    )
     return {
-        "input": item["input"],
+        "input": input_data,
         "expected_output": expected_output,
         "metadata": metadata,
     }

@@ -13,6 +13,7 @@ when the local store actually holds a record under that id.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -344,6 +345,7 @@ async def test_default_store_run_emits_no_store_mismatch_warning(
 def _connected_orchestrator(config, manager):
     """Minimal orchestrator standing in for a connected, tracking-enabled run."""
     orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+    orchestrator._callback_dispatch_lock = asyncio.Lock()
     orchestrator._trials = []
     orchestrator._stop_reason = None
     orchestrator._optimization_id = "opt-2020-persist-fail"

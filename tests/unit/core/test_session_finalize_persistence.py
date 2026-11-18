@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import traceback
 from datetime import datetime
@@ -80,6 +81,7 @@ def _orchestrator(
     config: TraigentConfig, manager: BackendSessionManager
 ) -> OptimizationOrchestrator:
     orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
+    orchestrator._callback_dispatch_lock = asyncio.Lock()
     orchestrator._trials = []
     orchestrator._stop_reason = None
     orchestrator._optimization_id = "opt_finalize"
