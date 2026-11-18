@@ -35,7 +35,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -78,9 +78,7 @@ HEALTHY = 100
 CEILING_USD = 1.0
 #: Stored-profile digest both SDK suites must reproduce for this one declaration (parity check).
 #: Computed over the backend's stored profile fields, not over any SDK-side object.
-PARITY_PROFILE_DIGEST = (
-    "8edcf83d28a69b42f02c9b0d12f27ba3d1c7656b2fb6ba18b74b62be1789c765"
-)
+PARITY_PROFILE_DIGEST = "8edcf83d28a69b42f02c9b0d12f27ba3d1c7656b2fb6ba18b74b62be1789c765"  # pragma: allowlist secret
 
 TVL_FRAGMENT = """\
 tvl_version: "1.3"
@@ -714,11 +712,25 @@ def test_production_requirement_loop_against_real_backend(
         seen: dict[str, int] = {}
         for method, suffix, body in (
             ("GET", "/production-requirements", None),
-            ("GET", f"/agents/{agent}/production-status", None),
-            ("GET", f"/agents/{agent}/production-breaches", None),
+            (
+                "GET",
+                f"/api/v1/projects/{project}/agents/{agent}/production-status",
+                None,
+            ),
+            (
+                "GET",
+                f"/api/v1/projects/{project}/agents/{agent}/production-breaches",
+                None,
+            ),
             ("POST", "/production-requirements", req.native_body(agent)),
         ):
-            code, payload = intruder.request(method, suffix, body)
+            # Agent satellites live on the stable project mount (absolute path); requirements stay on v1beta.
+            if suffix.startswith("/api/"):
+                code, payload, _headers = intruder.send(
+                    method, f"{intruder.origin}{suffix}", body
+                )
+            else:
+                code, payload = intruder.request(method, suffix, body)
             seen[f"{method} {suffix}"] = code
             # Closed refusal, no data. The design expected 404; the backend answers 403
             # authorization_denied on some routes. Both are recorded in the receipt.

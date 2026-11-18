@@ -16,7 +16,7 @@ from .conftest import AGENT, PROJECT, FakeBackend, breach
 
 pytestmark = pytest.mark.backend_online
 
-LIST = ("GET", f"/agents/{AGENT}/production-breaches")
+LIST = ("GET", f"/api/v1/projects/{PROJECT}/agents/{AGENT}/production-breaches")
 
 
 def _declare(mode: str = "alert", hook=None, **kw):
