@@ -20,7 +20,12 @@ from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 from traigent.api.types import TrialResult
-from traigent.evaluators.base import MEASURED_ONLY_METRICS, Dataset, EvaluationResult
+from traigent.evaluators.base import (
+    MEASURED_ONLY_METRICS,
+    Dataset,
+    EvaluationResult,
+    _TaskBoundaryInterrupt,
+)
 from traigent.invokers.base import BaseInvoker, InvocationResult
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
@@ -34,10 +39,12 @@ logger = get_logger(__name__)
 
 async def _await_batch_trial(
     config: dict[str, Any], future: Future[BatchTrial]
-) -> tuple[dict[str, Any], BatchTrial | Exception]:
+) -> tuple[dict[str, Any], BatchTrial | Exception | _TaskBoundaryInterrupt]:
     """Await one submitted trial without blocking the event loop."""
     try:
         return config, await asyncio.wrap_future(future)
+    except (KeyboardInterrupt, SystemExit) as exc:
+        return config, _TaskBoundaryInterrupt(exc)
     except Exception as exc:
         return config, exc
 
@@ -46,6 +53,16 @@ def _consume_async_task_exception(task: asyncio.Task[Any]) -> None:
     """Retrieve detached collector errors after optimizer cancellation."""
     if not task.cancelled():
         task.exception()
+
+
+async def _shutdown_batch_executor(
+    executor: ThreadPoolExecutor,
+) -> _TaskBoundaryInterrupt | None:
+    try:
+        await asyncio.to_thread(executor.shutdown, wait=True, cancel_futures=True)
+    except (KeyboardInterrupt, SystemExit) as exc:
+        return _TaskBoundaryInterrupt(exc)
+    return None
 
 
 #: Composite score for a trial missing a declared objective (an unmeasured
@@ -260,6 +277,8 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
                 for completed in asyncio.as_completed(collectors):
                     config, outcome = await completed
+                    if isinstance(outcome, _TaskBoundaryInterrupt):
+                        raise outcome.exc
                     if isinstance(outcome, Exception):
                         e = outcome
                         logger.exception(
@@ -279,7 +298,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
                         trial = outcome
                         completed_trials.append(trial)
 
-                        (best_score, best_config, trials_without_improvement) = (
+                        best_score, best_config, trials_without_improvement = (
                             ParallelBatchOptimizer._record_trial_progress(
                                 self,
                                 trial,
@@ -310,9 +329,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
         finally:
             # Retain ownership of submitted work through cancellation, as the
             # former context manager did, but never join threads on the loop.
-            shutdown_task = asyncio.create_task(
-                asyncio.to_thread(executor.shutdown, wait=True, cancel_futures=True)
-            )
+            shutdown_task = asyncio.create_task(_shutdown_batch_executor(executor))
             cancellation: asyncio.CancelledError | None = None
             while not shutdown_task.done():
                 try:
@@ -320,7 +337,9 @@ class ParallelBatchOptimizer(BaseOptimizer):
                 except asyncio.CancelledError as exc:
                     if cancellation is None:
                         cancellation = exc
-            shutdown_task.result()
+            shutdown_outcome = shutdown_task.result()
+            if isinstance(shutdown_outcome, _TaskBoundaryInterrupt):
+                raise shutdown_outcome.exc
             if cancellation is not None:
                 raise cancellation
 

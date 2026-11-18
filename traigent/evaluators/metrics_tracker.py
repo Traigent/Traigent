@@ -1378,9 +1378,11 @@ class MetricsTracker:
         if self.sdk_evaluation_cost_only:
             return [m.custom_metrics for m in self.example_metrics]
         return [
-            {k: v for k, v in m.custom_metrics.items() if k != "evaluation_cost"}
-            if m.sdk_evaluation_cost
-            else m.custom_metrics
+            (
+                {k: v for k, v in m.custom_metrics.items() if k != "evaluation_cost"}
+                if m.sdk_evaluation_cost
+                else m.custom_metrics
+            )
             for m in self.example_metrics
         ]
 

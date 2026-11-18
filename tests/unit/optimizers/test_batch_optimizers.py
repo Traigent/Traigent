@@ -384,7 +384,7 @@ class TestParallelBatchOptimizer:
         import traigent.optimizers.batch_optimizers as batch_module
 
         run_context = contextvars.ContextVar("batch_run_context", default="missing")
-        token = run_context.set("current-run")
+        context_restore = run_context.set("current-run")
         optimizer = ParallelBatchOptimizer(
             base_optimizer=GridSearchOptimizer({"param1": [1, 2]}, ["accuracy"]),
             batch_config=BatchOptimizationConfig(
@@ -426,7 +426,7 @@ class TestParallelBatchOptimizer:
         try:
             result, heartbeat_ticks = asyncio.run(run_test())
         finally:
-            run_context.reset(token)
+            run_context.reset(context_restore)
         assert result.convergence_info["total_trials"] == 2
         assert heartbeat_ticks >= 10
         assert sorted(observed_contexts) == [(1, "current-run"), (2, "current-run")]

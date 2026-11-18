@@ -649,9 +649,8 @@ class TestOpenRouterCostExtraction:
         handler = GenericResponseHandler()
         cost = handler.extract_metadata_cost(MockLiteLLMResponse())
 
-        assert cost.total_cost == pytest.approx(0.0001), (
-            "usage.cost must take precedence over the _hidden_params estimate"
-        )
+        message = "usage.cost must take precedence over the _hidden_params estimate"
+        assert cost.total_cost == pytest.approx(0.0001), message
         assert cost.cost_estimated is False
 
     def test_explicit_zero_usage_cost_is_retained_over_hidden_estimate(self):
@@ -765,9 +764,10 @@ class TestOpenRouterCostExtraction:
         handler = GenericResponseHandler()
         cost = handler.extract_metadata_cost(MockLiteLLMResponse())
 
-        assert cost.total_cost == pytest.approx(0.00333), (
+        message = (
             "usage.cost must be returned directly without inspecting _hidden_params"
         )
+        assert cost.total_cost == pytest.approx(0.00333), message
 
     def test_no_provider_cost_returns_zero(self):
         """When neither _hidden_params nor usage.cost is set, cost stays 0."""
@@ -1321,9 +1321,8 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
             model_name=self._PRICED_MODEL,
         )
 
-        assert metrics.cost.total_cost == pytest.approx(0.25), (
-            f"billed ${metrics.cost.total_cost:.8f} instead of $0.25 (#2342)"
-        )
+        message = f"billed ${metrics.cost.total_cost:.8f} instead of $0.25 (#2342)"
+        assert metrics.cost.total_cost == pytest.approx(0.25), message
         assert metrics.cost.cost_explicit is True
 
     # --- the #2339 win that must be preserved ---------------------------
@@ -1345,9 +1344,8 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
             model_name=self._PRICED_MODEL,
         )
 
-        assert metrics.cost.total_cost == 0.0, (
-            "the provider's explicit $0 was replaced by an estimate (#2274)"
-        )
+        message = "the provider's explicit $0 was replaced by an estimate (#2274)"
+        assert metrics.cost.total_cost == 0.0, message
         assert metrics.cost.cost_explicit is True
         # Verified free, not unknown spend.
         assert metrics.cost.unpriced is False
@@ -1398,9 +1396,8 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
         assert metrics.cost.total_cost == pytest.approx(self._table_estimate())
         assert metrics.cost.total_cost > 0.0
         # Never the bad value, and never a bare $0 standing in for one.
-        assert metrics.cost.total_cost != pytest.approx(1.0), (
-            "float(True) is 1.0 -- a boolean booked a $1.00 charge"
-        )
+        message = "float(True) is 1.0 -- a boolean booked a $1.00 charge"
+        assert metrics.cost.total_cost != pytest.approx(1.0), message
         assert math.isfinite(metrics.cost.total_cost)
         # An estimate is not an explicit provider charge; the flag must not lie.
         assert metrics.cost.cost_explicit is False
@@ -1424,9 +1421,8 @@ class TestPlaceholderResponseCostDoesNotShadowRealCharge:
 
         payload = tracker.format_for_backend()
 
-        assert payload["cost"] >= 0.0, (
-            f"a negative cost reached the backend payload: {payload['cost']!r}"
-        )
+        message = f"a negative cost reached the backend payload: {payload['cost']!r}"
+        assert payload["cost"] >= 0.0, message
         assert payload["cost"] == pytest.approx(self._table_estimate())
 
 

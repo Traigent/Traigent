@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import json
+import os
+import subprocess
+import sys
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -139,7 +144,7 @@ async def test_dispatch_preserves_fresh_context_and_callback_failure_capture() -
     callback = _RecordingCallback()
     callback.release_first.set()
     orchestrator = _orchestrator(callback, timeout=1.0)
-    token = _CALLBACK_CONTEXT.set("run-secret-context")
+    context_restore = _CALLBACK_CONTEXT.set("run-context")
     try:
         await orchestrator._dispatch_callback_manager(
             "on_trial_start", 1, {"value": "x"}
@@ -154,7 +159,7 @@ async def test_dispatch_preserves_fresh_context_and_callback_failure_capture() -
         assert summary["exception_count"] == 1
         assert summary["failures"][0]["message"] == "callback failure"
     finally:
-        _CALLBACK_CONTEXT.reset(token)
+        _CALLBACK_CONTEXT.reset(context_restore)
         orchestrator.callback_manager.close()
 
 
@@ -215,7 +220,15 @@ async def test_deadline_during_start_callback_never_dispatches_trial() -> None:
 
     async def batch(*args):
         await orchestrator._schedule_and_run_parallel_trials(
-            None, [({"n": 1}, None, None, 7)], [1], None, 0
+            None,
+            [
+                ({"n": 0}, None, None, 6),
+                ({"n": 1}, None, None, 7),
+                ({"n": 2}, None, None, 8),
+            ],
+            [0, 1, 0],
+            None,
+            0,
         )
         return 0, "continue"
 
@@ -233,9 +246,55 @@ async def test_deadline_during_start_callback_never_dispatches_trial() -> None:
             "trial_start",
             "trial_complete",
         ]
-        assert orchestrator._trials_prevented == 1
-        orchestrator._abandon_optuna_trial.assert_called_once()
+        assert orchestrator._trials_prevented == 3
+        assert sorted(
+            call.args[0] for call in orchestrator._abandon_optuna_trial.call_args_list
+        ) == [6, 7, 8]
     finally:
         callback.release_first.set()
         timer.join(timeout=1)
         orchestrator.callback_manager.close()
+
+
+@pytest.mark.parametrize("kind", ["keyboard", "system"])
+@pytest.mark.parametrize(
+    "stage,deadline",
+    [
+        ("initialize", "none"),
+        ("start", "deadline"),
+        ("complete", "none"),
+        ("complete", "deadline"),
+    ],
+)
+def test_shutdown_interrupt_reaches_real_lifecycle_owner(
+    kind, stage, deadline, tmp_path
+):
+    env = os.environ.copy()
+    env["TRAIGENT_OPTIMIZATION_LOG_DIR"] = str(tmp_path / "logs")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("callback_interrupt_probe.py")),
+            kind,
+            stage,
+            deadline,
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    outcome = json.loads(result.stdout.splitlines()[-1])
+    expected_status = "cancelled" if kind == "keyboard" else "failed"
+    assert outcome["finalized"] == [expected_status]
+    if kind == "keyboard":
+        assert outcome["result_status"] == expected_status
+    else:
+        assert outcome["exception"] == "SystemExit"
+    expected_trials = 2 if stage == "complete" else 0
+    assert outcome["trials"] == expected_trials
+    assert outcome["accounted_trials"] == expected_trials
+    assert outcome["in_flight"] == 0
+    assert outcome["reserved"] == 0

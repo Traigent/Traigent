@@ -20,10 +20,16 @@ def _classify_changed_paths(paths: list[str], tmp_path: Path) -> dict[str, str]:
     """Run the exact has_match/set_output_bool block from the workflow shell."""
     workflow = _workflow()
     changes = workflow["jobs"]["changes"]
-    step = next(step for step in changes["steps"] if step.get("name") == "Classify changed files")
+    step = next(
+        step
+        for step in changes["steps"]
+        if step.get("name") == "Classify changed files"
+    )
     command = step["run"]
     lines = command.splitlines()
-    start = next(index for index, line in enumerate(lines) if line.startswith("has_match()"))
+    start = next(
+        index for index, line in enumerate(lines) if line.startswith("has_match()")
+    )
     end = next(
         index
         for index, line in enumerate(lines[start:], start)
@@ -82,10 +88,16 @@ def test_relevant_changes_run_the_example_suite_through_existing_unit_job(
         for step in unit_job["steps"]
         if step.get("name") == "Run shipped example script regressions"
     )
-    assert example_step["if"] == "${{ needs.changes.outputs.example_scripts_changed == 'true' }}"
+    assert (
+        example_step["if"]
+        == "${{ needs.changes.outputs.example_scripts_changed == 'true' }}"
+    )
     assert example_step["env"]["TRAIGENT_MOCK_LLM"] == "true"
     assert example_step["env"]["TRAIGENT_OFFLINE_MODE"] == "true"
-    assert example_step["run"] == "pytest tests/examples/test_example_scripts_run.py -q --tb=short"
+    assert (
+        example_step["run"]
+        == "pytest tests/examples/test_example_scripts_run.py -q --tb=short"
+    )
 
     changed_path_groups = [
         ["examples/core/simple-prompt/run.py"],
@@ -108,7 +120,10 @@ def test_relevant_changes_run_the_example_suite_through_existing_unit_job(
         assert outputs["code_changed"] == "true", paths
         assert outputs["example_scripts_changed"] == "true", paths
         assert _unit_job_runs(unit_job, outputs), paths
-        assert example_step["if"] == "${{ needs.changes.outputs.example_scripts_changed == 'true' }}"
+        assert (
+            example_step["if"]
+            == "${{ needs.changes.outputs.example_scripts_changed == 'true' }}"
+        )
 
 
 def test_unrelated_docs_do_not_select_the_example_script_step(tmp_path: Path) -> None:
