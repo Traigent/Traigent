@@ -15,8 +15,8 @@ cryptography>=50.0.0
 claude-code-sdk>=0.0.14
 mcp>=1.30.0,<3.0.0
 backoff>=2.2.0
-litellm>=1.100.5,<2
-filelock>=4.2.1,<5           # CVE-2026-112940/112913/112907; transitive via litellm -> tokenizers -> huggingface-hub
+litellm>=1.108.6,<2           # AIKIDO-2026-31520, AIKIDO-2026-652241
+filelock>=4.2.1,<5           # CVE-2026-112940/112913/112907; declared directly by litellm 1.108.6 (also via tokenizers -> huggingface-hub)
 tenacity>=8.1.0
 rank-bm25
 psutil>=5.8.0
