@@ -15,7 +15,7 @@ import numbers
 import sys
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
@@ -30,6 +30,23 @@ from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
+
+
+async def _await_batch_trial(
+    config: dict[str, Any], future: Future[BatchTrial]
+) -> tuple[dict[str, Any], BatchTrial | Exception]:
+    """Await one submitted trial without blocking the event loop."""
+    try:
+        return config, await asyncio.wrap_future(future)
+    except Exception as exc:
+        return config, exc
+
+
+def _consume_async_task_exception(task: asyncio.Task[Any]) -> None:
+    """Retrieve detached collector errors after optimizer cancellation."""
+    if not task.cancelled():
+        task.exception()
+
 
 #: Composite score for a trial missing a declared objective (an unmeasured
 #: cost). Finite on purpose: ``-inf`` is not valid strict JSON, so it could not
@@ -202,9 +219,8 @@ class ParallelBatchOptimizer(BaseOptimizer):
         # Create configuration candidates
         remaining_configs = list(self.base_optimizer.generate_candidates(max_trials))
 
-        with ThreadPoolExecutor(
-            max_workers=self.batch_config.max_parallel_trials
-        ) as executor:
+        executor = ThreadPoolExecutor(max_workers=self.batch_config.max_parallel_trials)
+        try:
             while remaining_configs and len(completed_trials) < max_trials:
                 # Submit parallel trials
                 current_batch_size = min(
@@ -232,11 +248,35 @@ class ParallelBatchOptimizer(BaseOptimizer):
                     for config in trial_configs
                 }
 
-                # Collect results as they complete
-                for future in as_completed(future_to_config):
-                    config = future_to_config[future]
-                    try:
-                        trial = future.result()
+                # Each collector preserves the submitted config while awaiting
+                # its worker future. as_completed retains completion-order
+                # progress updates without synchronously waiting on the loop.
+                collectors = [
+                    asyncio.create_task(_await_batch_trial(config, future))
+                    for future, config in future_to_config.items()
+                ]
+                for collector in collectors:
+                    collector.add_done_callback(_consume_async_task_exception)
+
+                for completed in asyncio.as_completed(collectors):
+                    config, outcome = await completed
+                    if isinstance(outcome, Exception):
+                        e = outcome
+                        logger.exception(
+                            "Trial failed for config %s: %s",
+                            config,
+                            e,
+                            exc_info=(type(e), e, e.__traceback__),
+                        )
+                        failed_trial = BatchTrial(
+                            configuration=config,
+                            score=float("-inf"),
+                            duration=0.0,
+                            metadata={"error": str(e), "failed": True},
+                        )
+                        completed_trials.append(failed_trial)
+                    else:
+                        trial = outcome
                         completed_trials.append(trial)
 
                         (best_score, best_config, trials_without_improvement) = (
@@ -249,17 +289,6 @@ class ParallelBatchOptimizer(BaseOptimizer):
                                 trials_without_improvement,
                             )
                         )
-
-                    except Exception as e:
-                        logger.exception(f"Trial failed for config {config}: {e}")
-                        # Create failed trial
-                        failed_trial = BatchTrial(
-                            configuration=config,
-                            score=float("-inf"),
-                            duration=0.0,
-                            metadata={"error": str(e), "failed": True},
-                        )
-                        completed_trials.append(failed_trial)
 
                 # Every result in a submitted batch must be accounted for before
                 # honoring patience. Submitted work may already have incurred cost,
@@ -278,6 +307,22 @@ class ParallelBatchOptimizer(BaseOptimizer):
                         trials_without_improvement,
                     )
                     break
+        finally:
+            # Retain ownership of submitted work through cancellation, as the
+            # former context manager did, but never join threads on the loop.
+            shutdown_task = asyncio.create_task(
+                asyncio.to_thread(executor.shutdown, wait=True, cancel_futures=True)
+            )
+            cancellation: asyncio.CancelledError | None = None
+            while not shutdown_task.done():
+                try:
+                    await asyncio.shield(shutdown_task)
+                except asyncio.CancelledError as exc:
+                    if cancellation is None:
+                        cancellation = exc
+            shutdown_task.result()
+            if cancellation is not None:
+                raise cancellation
 
         total_duration = time.time() - start_time
 

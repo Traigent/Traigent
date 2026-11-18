@@ -16,6 +16,7 @@ Tests cover:
 
 import asyncio
 import math
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -52,6 +53,7 @@ from traigent.evaluators.base import (
 )
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
+from traigent.utils.callbacks import CallbackManager, OptimizationCallback
 from traigent.utils.exceptions import OptimizationError, TrialPrunedError
 from traigent.utils.file_versioning import FileVersionManager
 
@@ -626,6 +628,87 @@ class TestOptimizationOrchestrator:
         assert [call["status"] for call in finalize_calls] == ["completed"]
 
     # Constructor Tests
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "cancel_at", ["start", "complete", "initialize", "finalize"]
+    )
+    async def test_callback_cancellation_settles_admitted_lifecycle(
+        self, orchestrator, mock_function, sample_dataset, monkeypatch, cancel_at
+    ):
+        """Cancel during real callbacks without orphaning trials or reservations."""
+        entered = threading.Event()
+        release = threading.Event()
+        events = []
+
+        class Callback(OptimizationCallback):
+            def block(self, event):
+                if cancel_at == event and not entered.is_set():
+                    entered.set()
+                    assert release.wait(timeout=5)
+
+            def on_optimization_start(self, config_space, objectives, algorithm):
+                self.block("initialize")
+
+            def on_trial_start(self, trial_number, config):
+                events.append("start")
+                self.block("start")
+
+            def on_trial_complete(self, trial, progress):
+                events.append("complete")
+                self.block("complete")
+
+            def on_optimization_complete(self, result):
+                events.append("finalize")
+                self.block("finalize")
+
+        orchestrator.callback_manager = CallbackManager([Callback()], timeout=0)
+        orchestrator.parallel_trials = 2
+        orchestrator.parallel_execution_manager.parallel_trials = 2
+        orchestrator.max_trials = 4
+        finalize_local = MagicMock(
+            wraps=orchestrator.backend_session_manager.finalize_local_session
+        )
+        monkeypatch.setattr(
+            orchestrator.backend_session_manager,
+            "finalize_local_session",
+            finalize_local,
+        )
+        monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+        task = asyncio.create_task(orchestrator.optimize(mock_function, sample_dataset))
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0.02)
+            assert not task.done()
+            release.set()
+            result = await task
+            expected_status = (
+                OptimizationStatus.COMPLETED
+                if cancel_at == "finalize"
+                else OptimizationStatus.CANCELLED
+            )
+            assert result.status == expected_status
+            expected_trials = (
+                4 if cancel_at == "finalize" else (2 if cancel_at == "complete" else 0)
+            )
+            expected_notifications = 1 if cancel_at == "start" else expected_trials
+            assert len(result.trials) == expected_trials
+            assert events.count("start") == expected_notifications
+            assert events.count("complete") == expected_notifications
+            assert events.count("finalize") == 1
+            status = orchestrator.cost_enforcer.get_status()
+            assert status.trial_count == expected_trials
+            assert status.reserved_cost_usd == 0
+            assert status.in_flight_count == 0
+            finalize_local.assert_called_once()
+            assert finalize_local.call_args.args[1] == expected_status
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+            orchestrator.callback_manager.close()
 
     def test_orchestrator_creation_with_valid_params(
         self, mock_optimizer, mock_evaluator

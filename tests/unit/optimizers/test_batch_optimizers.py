@@ -1,7 +1,9 @@
 """Tests for batch optimization strategies."""
 
 import asyncio
+import contextvars
 import math
+import threading
 import time
 from datetime import UTC, datetime
 
@@ -308,6 +310,53 @@ class TestParallelBatchOptimizer:
         assert len(result.trials) == 3
         assert result.convergence_info["early_stopped"] is False
 
+    def test_last_completion_resets_patience_and_allows_next_batch(self, monkeypatch):
+        optimizer = ParallelBatchOptimizer(
+            base_optimizer=GridSearchOptimizer({"param1": [1, 2, 3, 4]}, ["accuracy"]),
+            batch_config=BatchOptimizationConfig(
+                max_parallel_trials=3, early_stopping_patience=1
+            ),
+        )
+        recorded = {1: threading.Event(), 2: threading.Event()}
+        record_progress = ParallelBatchOptimizer._record_trial_progress
+
+        def record(self, trial, config, *args):
+            progress = record_progress(self, trial, config, *args)
+            if config["param1"] in recorded:
+                recorded[config["param1"]].set()
+            return progress
+
+        def run_trial(self, config, *args):
+            value = config["param1"]
+            if value in (2, 3):
+                assert recorded[value - 1].wait(timeout=5)
+            return BatchTrial(
+                configuration=config,
+                score={1: 10.0, 2: 0.0, 3: 100.0, 4: 101.0}[value],
+                duration=0.0,
+            )
+
+        monkeypatch.setattr(ParallelBatchOptimizer, "_record_trial_progress", record)
+        monkeypatch.setattr(ParallelBatchOptimizer, "_run_single_trial_sync", run_trial)
+        result = asyncio.run(
+            optimizer.optimize(
+                func=lambda *_: None,
+                dataset=self.dataset,
+                invoker=MockInvoker(),
+                evaluator=MockEvaluator(),
+                max_trials=4,
+            )
+        )
+        assert [trial.configuration["param1"] for trial in result.trials] == [
+            1,
+            2,
+            3,
+            4,
+        ]
+        assert result.best_config == {"param1": 4}
+        assert result.best_score == 101.0
+        assert result.convergence_info["early_stopped"] is False
+
     def test_patience_at_final_batch_does_not_report_early_stop(self):
         optimizer = ParallelBatchOptimizer(
             base_optimizer=GridSearchOptimizer({"param1": [1, 2]}, ["accuracy"]),
@@ -328,6 +377,122 @@ class TestParallelBatchOptimizer:
         result = asyncio.run(run_test())
         assert len(result.trials) == 2
         assert result.convergence_info["early_stopped"] is False
+
+    def test_async_optimize_keeps_heartbeat_and_trial_contexts_isolated(
+        self, monkeypatch
+    ):
+        import traigent.optimizers.batch_optimizers as batch_module
+
+        run_context = contextvars.ContextVar("batch_run_context", default="missing")
+        token = run_context.set("current-run")
+        optimizer = ParallelBatchOptimizer(
+            base_optimizer=GridSearchOptimizer({"param1": [1, 2]}, ["accuracy"]),
+            batch_config=BatchOptimizationConfig(
+                max_parallel_trials=2, early_stopping_patience=0
+            ),
+        )
+        observed_contexts = []
+
+        def run_trial(self, config, func, dataset, invoker, evaluator):
+            value = config["param1"]
+            observed_contexts.append((value, run_context.get()))
+            run_context.set(f"trial-{value}")
+            time.sleep(0.08)
+            return BatchTrial(configuration=config, score=float(value), duration=0.08)
+
+        monkeypatch.setattr(
+            batch_module.ParallelBatchOptimizer,
+            "_run_single_trial_sync",
+            run_trial,
+        )
+
+        async def run_test():
+            task = asyncio.create_task(
+                optimizer.optimize(
+                    func=lambda *_: None,
+                    dataset=self.dataset,
+                    invoker=MockInvoker(),
+                    evaluator=MockEvaluator(),
+                    max_trials=2,
+                )
+            )
+            heartbeat_ticks = 0
+            while not task.done():
+                heartbeat_ticks += 1
+                await asyncio.sleep(0.005)
+            result = await task
+            return result, heartbeat_ticks
+
+        try:
+            result, heartbeat_ticks = asyncio.run(run_test())
+        finally:
+            run_context.reset(token)
+        assert result.convergence_info["total_trials"] == 2
+        assert heartbeat_ticks >= 10
+        assert sorted(observed_contexts) == [(1, "current-run"), (2, "current-run")]
+
+    def test_cancelled_async_optimize_does_not_wait_in_executor_shutdown(
+        self, monkeypatch
+    ):
+        import traigent.optimizers.batch_optimizers as batch_module
+
+        optimizer = ParallelBatchOptimizer(
+            base_optimizer=GridSearchOptimizer({"param1": [1]}, ["accuracy"]),
+            batch_config=BatchOptimizationConfig(max_parallel_trials=1),
+        )
+        started = threading.Event()
+        release = threading.Event()
+
+        def run_trial(self, config, func, dataset, invoker, evaluator):
+            started.set()
+            release.wait(timeout=2)
+            return BatchTrial(configuration=config, score=1.0, duration=0.1)
+
+        monkeypatch.setattr(
+            batch_module.ParallelBatchOptimizer,
+            "_run_single_trial_sync",
+            run_trial,
+        )
+
+        async def run_test():
+            loop = asyncio.get_running_loop()
+            task = asyncio.create_task(
+                optimizer.optimize(
+                    func=lambda *_: None,
+                    dataset=self.dataset,
+                    invoker=MockInvoker(),
+                    evaluator=MockEvaluator(),
+                    max_trials=1,
+                )
+            )
+            ticks = 0
+            timer_done = threading.Event()
+
+            def cancel_then_release():
+                started.wait(timeout=1)
+                time.sleep(0.02)
+                loop.call_soon_threadsafe(task.cancel)
+                time.sleep(0.03)
+                loop.call_soon_threadsafe(task.cancel)
+                time.sleep(0.09)
+                release.set()
+                timer_done.set()
+
+            timer = threading.Thread(target=cancel_then_release, daemon=True)
+            timer.start()
+            try:
+                while not task.done():
+                    ticks += 1
+                    await asyncio.sleep(0.005)
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                assert ticks >= 10
+            finally:
+                release.set()
+                assert await asyncio.to_thread(timer_done.wait, 1)
+                await asyncio.to_thread(timer.join, 1)
+
+        asyncio.run(run_test())
 
     def test_early_stopping_min_delta_ignores_sub_delta_creep(self):
         """``early_stopping_min_delta`` must gate the patience counter: score
