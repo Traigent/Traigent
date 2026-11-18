@@ -176,9 +176,8 @@ def test_example_module_imports_against_live_sdk(provider, tmp_path):
         timeout=120,
         env=env,
     )
-    assert proc.returncode == 0, (
-        f"importing {module_name} failed:\n{proc.stdout}\n{proc.stderr}"
-    )
+    failure_details = f"importing {module_name} failed:\n{proc.stdout}\n{proc.stderr}"
+    assert proc.returncode == 0, failure_details
 
 
 def test_get_provider_unknown_raises():
