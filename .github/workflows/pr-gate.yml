@@ -40,6 +40,7 @@ jobs:
     outputs:
       py_changed: ${{ steps.changed.outputs.py_changed }}
       code_changed: ${{ steps.changed.outputs.code_changed }}
+      example_scripts_changed: ${{ steps.changed.outputs.example_scripts_changed }}
       # Total files touched by this diff range, independent of any path
       # pattern. required-pr-gate's skip verification
       # (scripts/ci/check_required_gate.py) trusts a downstream job's
@@ -116,7 +117,10 @@ jobs:
           }
 
           set_output_bool py_changed has_match '\.py$'
-          set_output_bool code_changed has_match '^(traigent|traigent_validation|tests|scripts|walkthrough)/|^(pyproject\.toml|requirements[^/]*\.txt|\.github/workflows/pr-gate\.yml)'
+          set_output_bool code_changed has_match '^(traigent|traigent_validation|tests|scripts|examples|walkthrough)/|^(pyproject\.toml|uv\.lock|requirements[^/]*\.txt|\.github/workflows/pr-gate\.yml)'
+          # Shipped scripts include walkthrough utilities/datasets; their test
+          # module also loads the shared conftest and rate-limit fixture plugin.
+          set_output_bool example_scripts_changed has_match '^(traigent|examples|walkthrough)/|^tests/fixtures/|^(tests/conftest\.py|tests/examples/test_example_scripts_run\.py|scripts/ci/install_sdk_requirements\.sh|scripts/ci/schema-pin\.txt|pyproject\.toml|uv\.lock|requirements[^/]*\.txt|\.github/workflows/pr-gate\.yml)$'
 
           # Inputs of the runtime-tvl-compiler job: any SDK code (the tests import
           # the package root), the shared conftest and the fixture plugin it loads,
@@ -435,6 +439,13 @@ jobs:
           PYTHONPATH: .
           TRAIGENT_TEST_REDIS_URL: redis://localhost:6379/15
         run: pytest tests/integration/test_session_manager_live_redis.py -q --tb=short
+      - name: Run shipped example script regressions
+        if: ${{ needs.changes.outputs.example_scripts_changed == 'true' }}
+        env:
+          PYTHONPATH: .
+          TRAIGENT_MOCK_LLM: "true"
+          TRAIGENT_OFFLINE_MODE: "true"
+        run: pytest tests/examples/test_example_scripts_run.py -q --tb=short
 
   collection:
     name: collection
