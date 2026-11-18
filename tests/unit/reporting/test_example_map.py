@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import jsonschema
-import pytest
 from click.testing import CliRunner
 
 import traigent.reporting.example_map as example_map_module
@@ -16,7 +15,6 @@ from traigent.reporting.example_map import (
     compute_dataset_fingerprint,
     validate_example_content_map,
 )
-from traigent.utils.exceptions import ValidationError
 
 
 def test_build_example_content_map_from_jsonl(tmp_path):
