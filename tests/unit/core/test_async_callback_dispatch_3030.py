@@ -271,6 +271,12 @@ def test_shutdown_interrupt_reaches_real_lifecycle_owner(
 ):
     env = os.environ.copy()
     env["TRAIGENT_OPTIMIZATION_LOG_DIR"] = str(tmp_path / "logs")
+    # The probe runs as a script, so sys.path[0] is tests/unit/core; the repo
+    # root must be on PYTHONPATH for `tests.unit` imports to resolve.
+    repo_root = str(Path(__file__).resolve().parents[3])
+    env["PYTHONPATH"] = os.pathsep.join(
+        p for p in (repo_root, env.get("PYTHONPATH")) if p
+    )
     result = subprocess.run(
         [
             sys.executable,

@@ -1719,6 +1719,11 @@ def cost_run_scope() -> Iterator[RunCostState]:
         _RUN_COST_STATE.reset(token)
 
 
+# Registry key for a call whose response exposed tokens but no model name, so
+# it cannot be priced at all. "<" cannot occur in a real model id.
+UNNAMED_MODEL_PLACEHOLDER = "<unnamed model>"
+
+
 def record_unpriced_runtime_model(model: str) -> None:
     """Record an occurrence of a model id that priced to $0 at runtime despite non-zero tokens."""
     if not model or not str(model).strip():

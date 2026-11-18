@@ -546,6 +546,33 @@ def _format_model_id_list(model_ids: Sequence[str]) -> str:
 def _format_unpriced_model_warning(
     model_ids: Sequence[str], occurrences: Mapping[str, int] | None = None
 ) -> str:
+    from traigent.utils.cost_calculator import UNNAMED_MODEL_PLACEHOLDER
+
+    named_ids = [m for m in model_ids if m != UNNAMED_MODEL_PLACEHOLDER]
+    if len(named_ids) == len(model_ids):
+        return _format_named_unpriced_warning(model_ids, occurrences)
+    # Calls with no model name cannot be priced by any price table: name the real
+    # remedy, and say their cost is unknown (excluded from total_cost, not $0).
+    unnamed_calls = occurrences.get(UNNAMED_MODEL_PLACEHOLDER, 0) if occurrences else 0
+    call_note = (
+        f" across {unnamed_calls} call{'' if unnamed_calls == 1 else 's'}"
+        if unnamed_calls
+        else ""
+    )
+    unnamed_clause = (
+        f"Calls with no model name{call_note} have unknown cost: their captured "
+        "spend cannot be priced and is excluded from total_cost. To fix it, expose "
+        "the model name on the LLM response (a 'model' or 'model_name' attribute "
+        "or key) or include a 'model' key in the optimization configuration."
+    )
+    if not named_ids:
+        return unnamed_clause
+    return f"{_format_named_unpriced_warning(named_ids, occurrences)} {unnamed_clause}"
+
+
+def _format_named_unpriced_warning(
+    model_ids: Sequence[str], occurrences: Mapping[str, int] | None = None
+) -> str:
     formatted = _format_model_id_list(model_ids)
     # When occurrence counts are available (the runtime path, #1597), make the
     # warning quantitative and explicit that $0 means UNKNOWN spend — not
@@ -3882,6 +3909,7 @@ class OptimizedFunction[**P, R]:
         # => ``optimize()`` completed and the id is on the result, which is the
         # only place left to read it from once this frame unwinds.
         result: OptimizationResult | None = None
+        settled_interrupt: BaseException | None = None
         try:
             try:
                 with ConfigurationSpaceContext(effective_config_space):
@@ -3899,23 +3927,27 @@ class OptimizedFunction[**P, R]:
                             function_name=self.experiment_name,
                         )
 
-                # Store results
-                self._optimization_results = result
-                self._csm.append_optimization_result(result)
+                self._record_completed_result(result)
 
-                # Update current config to best found.
-                if result.best_config:
-                    self._commit_best_config(result)
-
-                # Set state to OPTIMIZED on success
-                self._state = OptimizationState.OPTIMIZED
-
-            except BaseException:
-                # Set state to ERROR on failure -- including CancelledError and
-                # KeyboardInterrupt (BaseException), which used to leave the
-                # wrapper stuck in OPTIMIZING, where current_config raises.
-                self._state = OptimizationState.ERROR
-                raise
+            except BaseException as exc:
+                settled = orchestrator.completion_settled_result(exc)
+                if not isinstance(settled, OptimizationResult):
+                    # Set state to ERROR on failure -- including CancelledError and
+                    # KeyboardInterrupt (BaseException), which used to leave the
+                    # wrapper stuck in OPTIMIZING, where current_config raises.
+                    self._state = OptimizationState.ERROR
+                    raise
+                # The run completed and was persisted; only the caller's cancel
+                # landed late. Keep the results and finish the post-run work
+                # (warnings, budget snapshot, save_to) as on a normal finish, then
+                # re-raise the cancel just before returning.
+                try:
+                    self._record_completed_result(settled)
+                except BaseException:
+                    self._state = OptimizationState.ERROR
+                    raise
+                result = settled
+                settled_interrupt = exc
             # Surface any models that priced to $0 at runtime despite non-zero tokens
             # (#1407). Strict accounting already raised mid-run via
             # ``cost_from_tokens(strict=True)`` (fail-closed), so anything collected
@@ -3953,6 +3985,8 @@ class OptimizedFunction[**P, R]:
                 except Exception as e:
                     logger.debug(f"Failed to show upgrade hint: {e}")
 
+            if settled_interrupt is not None:
+                raise settled_interrupt
             return result  # type: ignore[no-any-return,return-value]
         except BaseException as post_orchestrator_failure:
             # #2029: everything above from ``self._optimization_results = result``
@@ -3967,7 +4001,36 @@ class OptimizedFunction[**P, R]:
             self._carry_result_sync_session_id(
                 orchestrator, post_orchestrator_failure, result
             )
+            if settled_interrupt is not None:
+                # The run was persisted and the caller cancelled it late. Keep the
+                # cancel as the caller's outcome (asyncio.timeout/wait_for need a
+                # CancelledError), and surface the post-run failure on it: a note,
+                # an ERROR log with the sync id, and the chained cause.
+                self._note_post_run_failure(
+                    settled_interrupt, post_orchestrator_failure, result
+                )
+                raise settled_interrupt from post_orchestrator_failure
             raise
+
+    def _note_post_run_failure(
+        self,
+        interrupt: BaseException,
+        failure: BaseException,
+        result: OptimizationResult | None,
+    ) -> None:
+        """Attach a post-run failure to a late caller cancel, and log it."""
+        sync_id = getattr(result, "sync_session_id", None)
+        recorded = (
+            f"The completed run is recorded under sync id {sync_id}."
+            if sync_id
+            else "The completed run has no local sync id; check the backend session."
+        )
+        message = (
+            "Optimization completed and was persisted, but a post-run step failed "
+            f"after the cancel: {type(failure).__name__}: {failure}. {recorded}"
+        )
+        interrupt.add_note(message)
+        logger.error(message)
 
     def _carry_result_sync_session_id(
         self,
@@ -5790,6 +5853,15 @@ Remediation:
             return self._commit_best_config(results)
         finally:
             self._release_exclusive_slot()
+
+    def _record_completed_result(self, result: OptimizationResult) -> None:
+        """Store a completed run's result and move the wrapper to OPTIMIZED."""
+        self._optimization_results = result
+        self._csm.append_optimization_result(result)
+        # Update current config to best found.
+        if result.best_config:
+            self._commit_best_config(result)
+        self._state = OptimizationState.OPTIMIZED
 
     def _commit_best_config(self, results: OptimizationResult | None = None) -> bool:
         """Apply ``results`` to this wrapper without the advancing-run guard.

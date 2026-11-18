@@ -2548,13 +2548,27 @@ def _skip_cost_for_unnamed_model(
             "TRAIGENT_STRICT_COST_ACCOUNTING=false to accept $0 for "
             "calls that cannot be priced."
         )
+    input_tokens = metrics.tokens.input_tokens
+    output_tokens = metrics.tokens.output_tokens
+    if input_tokens > 0 or output_tokens > 0:
+        # Spend was captured but cannot be priced. Feed the same run-level
+        # registry as a named unpriced model, so the run reports one warning
+        # with call counts instead of a per-call log, and mark this example's
+        # cost as unknown rather than verified $0 (#1597).
+        from traigent.utils.cost_calculator import (
+            UNNAMED_MODEL_PLACEHOLDER,
+            record_unpriced_runtime_model,
+        )
+
+        record_unpriced_runtime_model(UNNAMED_MODEL_PLACEHOLDER)
+        metrics.cost.unpriced = True
     logger.debug(
         "Cost calculation skipped: model_name is None/empty. "
         "Ensure the optimization config includes a 'model' key or "
         "the LLM response exposes the model name. "
         "tokens=(in=%d, out=%d)",
-        metrics.tokens.input_tokens,
-        metrics.tokens.output_tokens,
+        input_tokens,
+        output_tokens,
     )
 
 

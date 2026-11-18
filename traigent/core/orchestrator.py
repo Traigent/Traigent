@@ -1486,6 +1486,11 @@ class OptimizationOrchestrator:
         # Content identity v1 snapshot for the run in progress (see optimize()).
         self._content_identity_run: Any = None
         self._stop_reason: StopReason | None = None
+        # A cancel/interrupt that landed while on_optimization_complete ran.
+        # Set only after persistence is terminal; the lifecycle handler then
+        # re-raises it instead of finalizing the run a second time.
+        self._completion_interrupt: BaseException | None = None
+        self._completion_result: OptimizationResult | None = None
         # #1404: bounded auto-retry budget for transient vendor errors (429/503)
         # before the run loop gives up. Cumulative per category so the run always
         # terminates. Opt-in via TRAIGENT_VENDOR_MAX_RETRIES (default 0 = off).
@@ -5662,6 +5667,19 @@ class OptimizationOrchestrator:
                     self._optimization_id,
                 )
 
+    def completion_settled_result(
+        self, exc: BaseException
+    ) -> OptimizationResult | None:
+        """Return the persisted result when ``exc`` is the completion-time interrupt.
+
+        The wrapper keeps its results (apply_best, current_config) for a run that
+        completed and was persisted before the caller's cancel was re-raised.
+        Returns None for any other exception.
+        """
+        if exc is not None and exc is self._completion_interrupt:
+            return self._completion_result
+        return None
+
     async def _finalize_optimization(
         self,
         result: OptimizationResult,
@@ -5751,32 +5769,28 @@ class OptimizationOrchestrator:
         ):
             await self._submit_workflow_traces(session_id)
 
-        notification_task = asyncio.current_task()
-        count_cancellations = getattr(notification_task, "cancelling", None)
-        undo_cancellation = getattr(notification_task, "uncancel", None)
-        initial_cancelling = (
-            count_cancellations() if callable(count_cancellations) else None
-        )
+        # Persistence is already terminal here. A cancel that lands during the
+        # notification is the caller's: it must reach them, not be swallowed
+        # (asyncio: a task that swallows its cancel breaks timeout/wait_for).
+        # We do NOT finalize again - the lifecycle handler re-raises it.
+        completion_interrupt: BaseException | None = None
         try:
             await self._dispatch_callback_manager("on_optimization_complete", result)
-        except asyncio.CancelledError:
-            # Persistence is already terminal and the notification has settled.
-            # The former synchronous callback returned this terminal result;
-            # do not reinterpret it as a second cancelled lifecycle/finalize.
-            # Remove only requests suppressed by this notification boundary;
-            # earlier cancellation state still belongs to its original owner.
-            if (
-                initial_cancelling is not None
-                and callable(count_cancellations)
-                and callable(undo_cancellation)
-            ):
-                owned_requests = max(count_cancellations() - initial_cancelling, 0)
-                for _ in range(owned_requests):
-                    undo_cancellation()
+        except (KeyboardInterrupt, asyncio.CancelledError) as exc:
+            completion_interrupt = exc
+
+        if completion_interrupt is not None:
+            # Record before the summary logs so the identity guard in the lifecycle
+            # handler still matches even if logging raises.
+            self._completion_interrupt = completion_interrupt
+            self._completion_result = result
 
         self._log_local_only_summary()
 
         self._log_completion_cost(result)
+
+        if completion_interrupt is not None:
+            raise completion_interrupt
 
     def _log_completion_cost(self, result: OptimizationResult) -> None:
         """Log the completion line; a floor is printed as a minimum, not exact."""
@@ -6221,6 +6235,9 @@ class OptimizationOrchestrator:
             return result
 
         except (KeyboardInterrupt, asyncio.CancelledError) as interrupt:
+            if interrupt is self._completion_interrupt:
+                # Completion already persisted once; re-raise, never finalize twice.
+                raise
             return await self._finalize_user_cancelled_optimization(
                 session_id, session_span, interrupt
             )

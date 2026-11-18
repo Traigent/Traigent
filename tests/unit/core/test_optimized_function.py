@@ -11,6 +11,7 @@ Tests cover:
 - Commercial mode activation
 """
 
+import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
@@ -598,6 +599,146 @@ class TestOptimizedFunction:
                 call_args = mock_orchestrator.optimize.call_args
                 assert "func" in call_args[1]
                 assert call_args[1]["dataset"] == sample_dataset
+
+    def _completed_result(self, sample_objectives) -> OptimizationResult:
+        from datetime import datetime
+
+        return OptimizationResult(
+            trials=[],
+            best_config={"temperature": 0.5},
+            best_score=0.8,
+            optimization_id="test_opt_completion",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=sample_objectives,
+            algorithm="random",
+            timestamp=datetime.now(),
+            metadata={},
+        )
+
+    @pytest.mark.asyncio
+    async def test_completion_interrupt_keeps_completed_results(
+        self,
+        mock_function,
+        sample_config_space,
+        sample_objectives,
+        sample_dataset,
+        tmp_path,
+    ):
+        """A cancel re-raised after persistence keeps the wrapper's results.
+
+        The run was persisted before the caller's cancel landed in
+        on_optimization_complete. The call raises (no value), but the wrapper
+        must still reflect the completed run (OPTIMIZED with its results) and
+        still write the requested save_to file, as on a normal finish.
+        """
+        save_path = tmp_path / "completion.json"
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            max_trials=3,
+            eval_dataset=sample_dataset,
+            save_to=str(save_path),
+        )
+        completed = self._completed_result(sample_objectives)
+        interrupt = asyncio.CancelledError()
+        mock_orchestrator = Mock()
+        mock_orchestrator.optimize = AsyncMock(side_effect=interrupt)
+        mock_orchestrator.completion_settled_result = Mock(
+            side_effect=lambda exc: completed if exc is interrupt else None
+        )
+        with (
+            patch("traigent.optimizers.get_optimizer"),
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator",
+                return_value=mock_orchestrator,
+            ),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await opt_func.optimize(algorithm="random")
+
+        assert opt_func._state == OptimizationState.OPTIMIZED
+        assert opt_func._optimization_results is completed
+        assert save_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_post_run_failure_after_late_cancel_keeps_the_cancel(
+        self,
+        mock_function,
+        sample_config_space,
+        sample_objectives,
+        sample_dataset,
+        tmp_path,
+    ):
+        """A post-run failure does not replace a late caller cancel.
+
+        save_to points at a directory, so the export really fails with OSError
+        after the run was persisted. The caller must still get the same
+        CancelledError (asyncio.timeout/wait_for depend on it), with the failure
+        noted on it and chained as its cause.
+        """
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            max_trials=3,
+            eval_dataset=sample_dataset,
+            save_to=str(tmp_path),
+        )
+        completed = self._completed_result(sample_objectives)
+        interrupt = asyncio.CancelledError()
+        mock_orchestrator = Mock()
+        mock_orchestrator.optimize = AsyncMock(side_effect=interrupt)
+        mock_orchestrator.completion_settled_result = Mock(
+            side_effect=lambda exc: completed if exc is interrupt else None
+        )
+        with (
+            patch("traigent.optimizers.get_optimizer"),
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator",
+                return_value=mock_orchestrator,
+            ),
+        ):
+            with pytest.raises(asyncio.CancelledError) as raised:
+                await opt_func.optimize(algorithm="random")
+
+        assert raised.value is interrupt
+        assert any("post-run step failed" in note for note in raised.value.__notes__)
+        # This result carries no sync id, so the note must not name one.
+        assert any("no local sync id" in note for note in raised.value.__notes__)
+        # save_optimization_results wraps the OS error; the failure is the chained cause.
+        assert raised.value.__context__ is not None
+        assert opt_func._state == OptimizationState.OPTIMIZED
+
+    @pytest.mark.asyncio
+    async def test_ordinary_cancel_still_sets_wrapper_error(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """A cancel with no persisted completion still leaves the wrapper in ERROR."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            max_trials=3,
+            eval_dataset=sample_dataset,
+        )
+        mock_orchestrator = Mock()
+        mock_orchestrator.optimize = AsyncMock(side_effect=asyncio.CancelledError())
+        mock_orchestrator.completion_settled_result = Mock(return_value=None)
+        with (
+            patch("traigent.optimizers.get_optimizer"),
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator",
+                return_value=mock_orchestrator,
+            ),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await opt_func.optimize(algorithm="random")
+
+        assert opt_func._state == OptimizationState.ERROR
+        assert opt_func._optimization_results is None
 
     @pytest.mark.asyncio
     async def test_optimize_zero_max_trials_rejected(

@@ -712,10 +712,12 @@ class TestOptimizationOrchestrator:
                     # A prior owner acknowledged these requests but left its
                     # count intact; terminal notification must preserve them.
                     pass
-            result = await orchestrator.optimize(mock_function, sample_dataset)
-            count_cancellations = getattr(current, "cancelling", None)
-            if callable(count_cancellations):
-                cancellation_counts_before_return.append(count_cancellations())
+            try:
+                result = await orchestrator.optimize(mock_function, sample_dataset)
+            finally:
+                count_cancellations = getattr(current, "cancelling", None)
+                if callable(count_cancellations):
+                    cancellation_counts_before_return.append(count_cancellations())
             return result
 
         task = asyncio.create_task(run_optimization())
@@ -727,20 +729,33 @@ class TestOptimizationOrchestrator:
             await asyncio.sleep(0.02)
             assert not task.done()
             release.set()
-            result = await task
             expected_status = (
                 OptimizationStatus.COMPLETED
                 if cancel_at == "finalize"
                 else OptimizationStatus.CANCELLED
             )
-            assert result.status == expected_status
+            # A caller cancel that lands during on_optimization_complete is
+            # re-raised after persistence settles (COMPLETED, written once) and
+            # yields no result object; without one the run returns normally.
+            caller_cancelled = cancel_at == "finalize" and late_cancellations > 0
+            if caller_cancelled:
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                result = None
+            else:
+                result = await task
+                assert result.status == expected_status
             if cancel_at == "finalize" and has_cancellation_counts:
-                assert cancellation_counts_before_return == [preexisting_cancellations]
+                # Caller's own requests are preserved, not undone (no swallow).
+                assert cancellation_counts_before_return == [
+                    preexisting_cancellations + late_cancellations
+                ]
             expected_trials = (
                 4 if cancel_at == "finalize" else (2 if cancel_at == "complete" else 0)
             )
             expected_notifications = 1 if cancel_at == "start" else expected_trials
-            assert len(result.trials) == expected_trials
+            if result is not None:
+                assert len(result.trials) == expected_trials
             assert events.count("start") == expected_notifications
             assert events.count("complete") == expected_notifications
             assert events.count("finalize") == 1
