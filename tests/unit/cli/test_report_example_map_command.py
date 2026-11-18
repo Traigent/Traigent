@@ -64,7 +64,8 @@ def test_report_example_map_command_fails_on_invalid_dataset(tmp_path: Path):
     )
 
     assert result.exit_code != 0
-    assert "missing required 'input' field" in result.output.lower()
+    assert "missing 'input' (or 'input_data') field" in result.output.lower()
+    assert not output.exists()
 
 
 def test_report_example_map_command_defaults_to_resolved_dataset_path(
@@ -124,3 +125,27 @@ def test_report_example_map_reads_project_files_outside_the_sdk_install(
 
     assert result.exit_code == 0, result.output
     assert (tmp_path / "results" / "curation" / "map.json").exists()
+
+
+def test_report_example_map_command_accepts_missing_expected_output(tmp_path: Path):
+    dataset = tmp_path / "unlabelled.jsonl"
+    dataset.write_text(
+        json.dumps({"input_data": {"q": "hello"}}) + "\n", encoding="utf-8"
+    )
+    output = tmp_path / "example_map.json"
+
+    result = CliRunner().invoke(
+        cli,
+        ["report-example-map", "--dataset", str(dataset), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["example_map"] == {
+        "example_0": {
+            "example_num": 1,
+            "input": {"q": "hello"},
+            "expected_output": None,
+            "metadata": {},
+        }
+    }
