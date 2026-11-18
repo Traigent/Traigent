@@ -631,12 +631,35 @@ class TestOptimizationOrchestrator:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "cancel_at", ["start", "complete", "initialize", "finalize"]
+        "cancel_at,preexisting_cancellations,late_cancellations",
+        [
+            ("start", 0, 2),
+            ("complete", 0, 2),
+            ("initialize", 0, 2),
+            ("finalize", 0, 2),
+            ("finalize", 1, 2),
+            ("finalize", 2, 2),
+            ("finalize", 0, 0),
+            ("finalize", 1, 0),
+            ("finalize", 2, 0),
+        ],
     )
     async def test_callback_cancellation_settles_admitted_lifecycle(
-        self, orchestrator, mock_function, sample_dataset, monkeypatch, cancel_at
+        self,
+        orchestrator,
+        mock_function,
+        sample_dataset,
+        monkeypatch,
+        cancel_at,
+        preexisting_cancellations,
+        late_cancellations,
     ):
         """Cancel during real callbacks without orphaning trials or reservations."""
+        has_cancellation_counts = hasattr(asyncio.Task, "cancelling") and hasattr(
+            asyncio.Task, "uncancel"
+        )
+        if preexisting_cancellations and not has_cancellation_counts:
+            pytest.skip("Task cancellation counters require Python 3.11+")
         entered = threading.Event()
         release = threading.Event()
         events = []
@@ -675,12 +698,32 @@ class TestOptimizationOrchestrator:
             finalize_local,
         )
         monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
-        task = asyncio.create_task(orchestrator.optimize(mock_function, sample_dataset))
+        cancellation_counts_before_return = []
+
+        async def run_optimization():
+            current = asyncio.current_task()
+            assert current is not None
+            for _ in range(preexisting_cancellations):
+                current.cancel()
+            if preexisting_cancellations:
+                try:
+                    await asyncio.sleep(0)
+                except asyncio.CancelledError:
+                    # A prior owner acknowledged these requests but left its
+                    # count intact; terminal notification must preserve them.
+                    pass
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+            count_cancellations = getattr(current, "cancelling", None)
+            if callable(count_cancellations):
+                cancellation_counts_before_return.append(count_cancellations())
+            return result
+
+        task = asyncio.create_task(run_optimization())
         try:
             assert await asyncio.to_thread(entered.wait, 3)
-            task.cancel()
-            await asyncio.sleep(0)
-            task.cancel()
+            for _ in range(late_cancellations):
+                task.cancel()
+                await asyncio.sleep(0)
             await asyncio.sleep(0.02)
             assert not task.done()
             release.set()
@@ -691,6 +734,8 @@ class TestOptimizationOrchestrator:
                 else OptimizationStatus.CANCELLED
             )
             assert result.status == expected_status
+            if cancel_at == "finalize" and has_cancellation_counts:
+                assert cancellation_counts_before_return == [preexisting_cancellations]
             expected_trials = (
                 4 if cancel_at == "finalize" else (2 if cancel_at == "complete" else 0)
             )

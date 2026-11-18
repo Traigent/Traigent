@@ -5751,13 +5751,28 @@ class OptimizationOrchestrator:
         ):
             await self._submit_workflow_traces(session_id)
 
+        notification_task = asyncio.current_task()
+        count_cancellations = getattr(notification_task, "cancelling", None)
+        undo_cancellation = getattr(notification_task, "uncancel", None)
+        initial_cancelling = (
+            count_cancellations() if callable(count_cancellations) else None
+        )
         try:
             await self._dispatch_callback_manager("on_optimization_complete", result)
         except asyncio.CancelledError:
             # Persistence is already terminal and the notification has settled.
             # The former synchronous callback returned this terminal result;
             # do not reinterpret it as a second cancelled lifecycle/finalize.
-            pass
+            # Remove only requests suppressed by this notification boundary;
+            # earlier cancellation state still belongs to its original owner.
+            if (
+                initial_cancelling is not None
+                and callable(count_cancellations)
+                and callable(undo_cancellation)
+            ):
+                owned_requests = max(count_cancellations() - initial_cancelling, 0)
+                for _ in range(owned_requests):
+                    undo_cancellation()
 
         self._log_local_only_summary()
 
