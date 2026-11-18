@@ -54,9 +54,9 @@ async def main():
     finalized = []
     finalize_local = owner.backend_session_manager.finalize_local_session
 
-    def record_finalize(session_id, status):
+    def record_finalize(session_id, status, **kwargs):
         finalized.append(status.value)
-        return finalize_local(session_id, status)
+        return finalize_local(session_id, status, **kwargs)
 
     owner.backend_session_manager.finalize_local_session = record_finalize
 
