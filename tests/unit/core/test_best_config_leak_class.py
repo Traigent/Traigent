@@ -19,10 +19,10 @@ from __future__ import annotations
 import json
 import logging
 import traceback
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -455,7 +455,9 @@ _AGENT_REF = "agentref_" + "a" * 32
 
 
 def _client() -> BackendIntegratedClient:
-    return BackendIntegratedClient(api_key=FAKE_KEY, base_url="https://api.test")
+    return BackendIntegratedClient(
+        api_key=FAKE_KEY, base_url="https://api.test", project_id="proj-1"
+    )
 
 
 def _auth(client: BackendIntegratedClient, **kw: Any):
@@ -733,6 +735,7 @@ def _scn_gate_refusal_chain(tmp_path, monkeypatch, strict):
 
 def _scn_client_gate_refusal_chain(tmp_path, monkeypatch, strict):
     import requests
+
     from traigent.labels import transport_gate as tg
 
     client = _client()

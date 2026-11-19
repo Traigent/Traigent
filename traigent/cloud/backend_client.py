@@ -2493,6 +2493,37 @@ class BackendIntegratedClient:
             environment=environment,
         )
 
+    def _build_agent_head_url(self, agent_ref: str) -> str | None:
+        """Sanitized project-level head URL of one agent, or None if it cannot be built.
+
+        ``<api base>/projects/{project_id}/agents/{agent_ref}/best-config-head``. The
+        project is the client's configured project (``project_id`` or the project
+        environment variable), never an ``X-Project-Id`` header; without one there is
+        no URL, so the head read fails closed.
+        """
+        project = (self.project_id or read_optional_project_env() or "").strip()
+        if not project:
+            return None
+        parsed = urlparse(self.api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        path = (
+            f"{parsed.path.rstrip('/')}/projects/{quote(project, safe='')}"
+            f"/agents/{quote(agent_ref, safe='/')}/best-config-head"
+        )
+        return cast(
+            str,
+            urlunparse(parsed._replace(path=path, params="", query="", fragment="")),
+        )
+
     def fetch_agent_head_generation_sync(
         self, agent_id: str, *, environment: str | None = None
     ) -> int:
@@ -2509,10 +2540,9 @@ class BackendIntegratedClient:
         except ImportError as exc:  # pragma: no cover - requests is required
             raise CloudServiceError(REQUESTS_IS_UNAVAILABLE) from exc
 
-        base = self._build_best_config_url()
-        if not base:
+        url = self._build_agent_head_url(agent_id)
+        if not url:
             raise CloudServiceError("Backend agent-head URL is invalid")
-        url = f"{base}/agent-heads/{quote(agent_id, safe='')}"
 
         headers = self._get_sync_auth_headers(target="backend")
         # second, credential-scoped check now that the final headers are known
@@ -2654,7 +2684,7 @@ class BackendIntegratedClient:
         """Read a content-less agent's head generation by its opaque ``agent_ref``.
 
         Contract: TraigentSchema ``optimization/best_config_head_endpoints.json``
-        (``GET /api/v1/best-configs/agent-heads/by-ref/{agent_ref}?environment=``).
+        (``GET /api/v1/projects/{project_id}/agents/{agent_ref}/best-config-head?environment=``).
         Returns the generation (0 when never promoted). Any closed refusal raises
         ``CloudBestConfigHeadRefusedError``; any other failure raises
         ``CloudServiceError`` with fixed text. The caller captures this ONCE, at the
@@ -2671,10 +2701,9 @@ class BackendIntegratedClient:
             raise CloudBestConfigHeadRefusedError(HeadRefusalCode.HEAD_CAPTURE_INVALID)
         if environment not in content_less_session.ENVIRONMENTS:
             raise CloudBestConfigHeadRefusedError(HeadRefusalCode.HEAD_CAPTURE_INVALID)
-        base = self._build_best_config_url()
-        if not base:
+        url = self._build_agent_head_url(agent_ref)
+        if not url:
             raise CloudServiceError("Backend agent-head URL is invalid")
-        url = f"{base}/agent-heads/by-ref/{quote(agent_ref, safe='')}"
         headers = self._get_sync_auth_headers(target="backend")
 
         def _get_head() -> Any:
@@ -2709,12 +2738,11 @@ class BackendIntegratedClient:
         generation = data.get("generation") if isinstance(data, dict) else None
         if (
             not isinstance(data, dict)
-            or data.get("agent_ref") != agent_ref
+            or data.get("agent_id") != agent_ref
             or data.get("environment") != environment
             or isinstance(generation, bool)
             or not isinstance(generation, int)
             or not 0 <= generation <= _MAX_HEAD_GENERATION
-            or data.get("exists") is not (generation >= 1)
         ):
             raise CloudServiceError("Agent-head response did not match its contract")
         return generation

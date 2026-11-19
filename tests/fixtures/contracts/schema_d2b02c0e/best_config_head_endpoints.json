@@ -1,0 +1,122 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Traigent Content-less Best-config Head Routes",
+    "version": "1.0.0",
+    "description": "Project-scoped agent-head read of the content-less optimization channel. The protected-publish precondition (headers X-Traigent-Agent-Ref and X-Traigent-Expected-Head-Generation) is declared on POST /api/v1/best-configs in execution/best_config_endpoints.json; its rule and closed refusals are specified there. The operationId equals the policy-register operation id and the project is the path project, never X-Project-Id."
+  },
+  "paths": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/best-config-head": {
+      "get": {
+        "summary": "Read an agent's promotion head (generation 0 when never promoted)",
+        "description": "Captured by an SDK when an optimization STARTS and sent back as X-Traigent-Expected-Head-Generation when it publishes the winner. Refusal order: authentication, path project (closed 404), permission experiment.read, agent READ, agent in the path project, then a malformed agent ref or environment (400).",
+        "operationId": "best_configs.get_agent_head",
+        "x-asserted-against-backend": false,
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "x-content-class": "key_material",
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Server-issued project id."
+            }
+          },
+          {
+            "name": "agent_ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "description": "Closed run environment; absent means `default`.",
+            "schema": {
+              "$ref": "./session_capabilities_schema.json#/definitions/SessionEnvironment"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The head of the agent in the environment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./agent_head_response_schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed agent ref or environment outside the closed enum",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./agent_head_error_schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./agent_head_error_schema.json"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing experiment.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./agent_head_error_schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project, agent or feature not in the caller's reach (closed)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./agent_head_error_schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../rate_limit_info_schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./agent_head_error_schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -228,7 +228,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_agent_head_generation_sync",
         "raise",
-        "83ecb930d9de43aa",  # pragma: allowlist secret
+        "72535b45a65c49c8",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",

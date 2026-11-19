@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/agent_head_response_schema.json",
+  "title": "AgentHeadResponse",
+  "description": "200 body of GET /api/v1/projects/{project_id}/agents/{agent_ref}/best-config-head?environment=<SessionEnvironment>: the promotion head of the agent in the environment. generation 0 with null best_config_id, best_config_version, promoted_by_run_id and updated_at means the agent was never promoted there. A run captures `generation` when it STARTS and sends it back as X-Traigent-Expected-Head-Generation when it publishes its own result; it is not a token to refresh and reuse for a result computed against an older head (see best_config_head_refusal_schema.json, head_generation_stale). The project is the path project, never X-Project-Id. Shape mirrors TraigentBackend serialize_head wrapped in the standard success envelope.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "data"
+  ],
+  "properties": {
+    "success": {
+      "x-content-class": "closed_enum",
+      "const": true
+    },
+    "message": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "Agent head retrieved successfully"
+      ]
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent_id",
+        "environment",
+        "generation",
+        "best_config_id",
+        "best_config_version",
+        "promoted_by_run_id",
+        "updated_at"
+      ],
+      "properties": {
+        "agent_id": {
+          "$ref": "../labels/label_common_schema.json#/definitions/AgentRef",
+          "description": "The agent ref of the path, returned unchanged."
+        },
+        "environment": {
+          "$ref": "./session_capabilities_schema.json#/definitions/SessionEnvironment"
+        },
+        "generation": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Current head generation; 0 when never promoted. JSON-safe integer bound."
+        },
+        "best_config_id": {
+          "x-content-class": "key_material",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Server-issued id of the promoted best config; null when never promoted."
+        },
+        "best_config_version": {
+          "x-content-class": "number",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "Promoted version; null when never promoted."
+        },
+        "promoted_by_run_id": {
+          "x-content-class": "key_material",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Server-issued id of the run that promoted the head; null when never promoted."
+        },
+        "updated_at": {
+          "x-content-class": "timestamp",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When the head last moved; null when never promoted."
+        }
+      }
+    }
+  }
+}
