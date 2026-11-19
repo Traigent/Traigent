@@ -68,6 +68,7 @@ from traigent.cloud.dtos import (
 )
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.cloud.user_agent import get_sdk_user_agent
+from traigent.config.project import read_optional_project_env
 from traigent.labels.transport_gate import gate_session
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.logging import get_logger
@@ -3479,10 +3480,22 @@ class BackendAnalyticsClient:
     # === Agent decision (host-prompt) channel ===
 
     @staticmethod
-    def _agent_decision_headers(project_id: str | None) -> dict[str, str] | None:
-        if project_id is None:
-            return None
-        return BackendAnalyticsClient._project_headers(project_id)
+    def _agent_decision_path(project_id: str | None, agent_id: str, suffix: str) -> str:
+        """Project-level decision path; the project is never sent as ``X-Project-Id``.
+
+        ``/api/v1/projects/{project_id}/agents/{agent_ref}/decisions/{suffix}``. The
+        project is ``project_id`` or the project environment variable; without one the
+        call fails closed before any request is made.
+        """
+        project = (project_id or read_optional_project_env() or "").strip()
+        if not project:
+            raise ValueError(
+                "project_id is required (argument or TRAIGENT_PROJECT_ID)."
+            )
+        return (
+            f"/api/v1/projects/{quote(project, safe='')}"
+            f"/agents/{_exact_agent_id_segment(agent_id)}/decisions/{suffix}"
+        )
 
     async def agent_decision_ensure(
         self,
@@ -3493,19 +3506,18 @@ class BackendAnalyticsClient:
     ) -> dict[str, Any]:
         """Ask the backend for the OPEN decision on an agent (or ``{"decision": None}``).
 
-        Endpoint: ``POST /api/v1beta/agent-decisions/{agent_id}/ensure``. The body is the
-        closed ``{"kind": ...}`` object; tenant and project come from the authenticated
-        principal (``project_id``, when given, only selects the project via the usual header).
+        Endpoint: ``POST /api/v1/projects/{project_id}/agents/{agent_ref}/decisions/ensure``.
+        The body is the closed ``{"kind": ...}`` object; the project is in the path
+        (``project_id`` or ``TRAIGENT_PROJECT_ID``; required, never a header).
         """
         if kind not in AGENT_DECISION_KINDS:
             raise ValueError("kind must be a supported agent decision kind.")
-        aid = _exact_agent_id_segment(agent_id)
+        path = self._agent_decision_path(project_id, agent_id, "ensure")
         payload = await self._post_json(
-            f"/api/v1beta/agent-decisions/{aid}/ensure",
+            path,
             what=_AGENT_DECISION,
             envelope=False,
             json_body={"kind": kind},
-            headers=self._agent_decision_headers(project_id),
         )
         return _validated_agent_decision_response(payload, endpoint="ensure")
 
@@ -3514,19 +3526,19 @@ class BackendAnalyticsClient:
     ) -> dict[str, Any]:
         """Read the latest decision on an agent in any status (read-only).
 
-        Endpoint: ``GET /api/v1beta/agent-decisions/{agent_id}/latest``.
+        Endpoint: ``GET /api/v1/projects/{project_id}/agents/{agent_ref}/decisions/latest``.
         """
-        aid = _exact_agent_id_segment(agent_id)
+        path = self._agent_decision_path(project_id, agent_id, "latest")
         payload = await self._get_json(
-            f"/api/v1beta/agent-decisions/{aid}/latest",
+            path,
             what=_AGENT_DECISION,
             envelope=False,
-            headers=self._agent_decision_headers(project_id),
         )
         return _validated_agent_decision_response(payload, endpoint="latest")
 
     async def agent_decision_answer(
         self,
+        agent_id: str,
         decision_id: str,
         *,
         answer: str,
@@ -3538,7 +3550,8 @@ class BackendAnalyticsClient:
     ) -> dict[str, Any]:
         """Record the human's closed answer.
 
-        Endpoint: ``POST /api/v1beta/agent-decisions/{decision_id}/answer``. Idempotency is
+        Endpoint: ``POST /api/v1/projects/{project_id}/agents/{agent_ref}/decisions/{decision_id}/answer``.
+        Idempotency is
         carried by ``retry_nonce`` in the body (fresh per attempt, reused only to retry that
         attempt); the contract has no ``Idempotency-Key`` header.
         """
@@ -3560,8 +3573,9 @@ class BackendAnalyticsClient:
             retry_nonce
         ):
             raise ValueError("retry_nonce is not a valid retry nonce.")
+        path = self._agent_decision_path(project_id, agent_id, f"{decision_id}/answer")
         payload = await self._post_json(
-            f"/api/v1beta/agent-decisions/{decision_id}/answer",
+            path,
             what=_AGENT_DECISION,
             envelope=False,
             json_body={
@@ -3571,7 +3585,6 @@ class BackendAnalyticsClient:
                 "basis_digest": basis_digest,
                 "retry_nonce": retry_nonce,
             },
-            headers=self._agent_decision_headers(project_id),
         )
         return _validated_agent_decision_response(payload, endpoint="answer")
 

@@ -19,6 +19,11 @@ NONCE = "rn_" + "c" * 32
 AGENT = "agent_123"
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_project(monkeypatch) -> None:
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+
+
 def _decision(**overrides: object) -> dict[str, object]:
     base: dict[str, object] = {
         "decision_id": DECISION_ID,
@@ -97,6 +102,7 @@ class TestSignaturesAndRegistration:
             "project_id",
         }
         assert set(inspect.signature(t.agent_decision_answer_tool).parameters) == {
+            "agent_id",
             "decision_id",
             "answer",
             "options_version",
@@ -159,16 +165,43 @@ class TestEnsureAndLatest:
         )
 
     @pytest.mark.asyncio
-    async def test_latest_without_project_has_no_link(self, monkeypatch) -> None:
+    async def test_project_comes_from_env_when_not_given(self, monkeypatch) -> None:
         from traigent.analytics_mcp.tools import agent_decision_latest_tool
 
+        monkeypatch.setenv("TRAIGENT_PROJECT_ID", "proj_env")
         reader = AsyncMock()
         reader.agent_decision_latest.return_value = {"decision": None}
         _install_fake_client(monkeypatch, reader)
 
         result = await agent_decision_latest_tool(AGENT)
 
-        assert result == {"ok": True, "agent_decision": {"decision": None}}
+        assert result["ok"] is True
+        reader.agent_decision_latest.assert_awaited_once_with(
+            AGENT, project_id="proj_env"
+        )
+
+    @pytest.mark.asyncio
+    async def test_missing_project_fails_closed_before_any_call(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp import tools as t
+
+        reader = AsyncMock()
+        _install_fake_client(monkeypatch, reader)
+
+        outputs = [
+            await t.agent_decision_ensure_tool(AGENT),
+            await t.agent_decision_latest_tool(AGENT),
+            await t.agent_decision_answer_tool(
+                AGENT, DECISION_ID, "YES", "1", "1", DIGEST
+            ),
+        ]
+
+        assert all(o["ok"] is False for o in outputs)
+        assert all("project_id is required" in o["message"] for o in outputs)
+        reader.agent_decision_ensure.assert_not_called()
+        reader.agent_decision_latest.assert_not_called()
+        reader.agent_decision_answer.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -210,20 +243,28 @@ class TestAnswer:
         _install_fake_client(monkeypatch, reader)
 
         result = await agent_decision_answer_tool(
-            DECISION_ID, "YES", "1", "1", DIGEST, retry_nonce=NONCE
+            AGENT,
+            DECISION_ID,
+            "YES",
+            "1",
+            "1",
+            DIGEST,
+            retry_nonce=NONCE,
+            project_id="proj_1",
         )
 
         assert result["ok"] is True
         assert result["agent_decision"] == {"decision": answered}
         assert result["retry_nonce"] == NONCE
         reader.agent_decision_answer.assert_awaited_once_with(
+            AGENT,
             DECISION_ID,
             answer="YES",
             options_version="1",
             policy_version="1",
             basis_digest=DIGEST,
             retry_nonce=NONCE,
-            project_id=None,
+            project_id="proj_1",
         )
 
     @pytest.mark.asyncio
@@ -246,7 +287,7 @@ class TestAnswer:
         _install_fake_client(monkeypatch, reader)
 
         result = await agent_decision_answer_tool(
-            DECISION_ID, "NOT_NOW", "1", "1", DIGEST
+            AGENT, DECISION_ID, "NOT_NOW", "1", "1", DIGEST, project_id="proj_1"
         )
 
         assert AGENT_DECISION_NONCE_RE.fullmatch(result["retry_nonce"])
@@ -274,6 +315,8 @@ class TestAnswer:
         reader = AsyncMock()
         _install_fake_client(monkeypatch, reader)
         args: dict[str, object] = {
+            "agent_id": AGENT,
+            "project_id": "proj_1",
             "decision_id": DECISION_ID,
             "answer": "YES",
             "options_version": "1",
@@ -314,7 +357,7 @@ class TestClosedErrorMapping:
         )
         _install_fake_client(monkeypatch, reader)
 
-        result = await agent_decision_ensure_tool(AGENT)
+        result = await agent_decision_ensure_tool(AGENT, "proj_1")
 
         assert result["ok"] is False
         assert result["code"] == reason
@@ -332,7 +375,7 @@ class TestClosedErrorMapping:
         )
         _install_fake_client(monkeypatch, reader)
 
-        result = await agent_decision_latest_tool(AGENT)
+        result = await agent_decision_latest_tool(AGENT, "proj_1")
 
         assert result["code"] == "RATE_LIMITED"
         assert result["retry_after_seconds"] == 30
@@ -347,7 +390,7 @@ class TestClosedErrorMapping:
         )
         _install_fake_client(monkeypatch, reader)
 
-        result = await agent_decision_ensure_tool(AGENT)
+        result = await agent_decision_ensure_tool(AGENT, "proj_1")
 
         assert result["ok"] is False
         assert result["code"] == "backend_unavailable"
@@ -362,7 +405,7 @@ class TestClosedErrorMapping:
         reader.agent_decision_ensure.side_effect = AnalyticsClientError("CANARY body")
         _install_fake_client(monkeypatch, reader)
 
-        result = await agent_decision_ensure_tool(AGENT)
+        result = await agent_decision_ensure_tool(AGENT, "proj_1")
 
         assert result["code"] == "malformed_response"
         assert "CANARY" not in json.dumps(result)
@@ -388,13 +431,13 @@ class TestCanaryNeverLogged:
                 await t.agent_decision_ensure_tool(canary),
                 await t.agent_decision_ensure_tool(AGENT, canary),
                 await t.agent_decision_answer_tool(
-                    DECISION_ID, canary, "1", "1", DIGEST
+                    AGENT, DECISION_ID, canary, "1", "1", DIGEST, project_id="p1"
                 ),
                 await t.agent_decision_answer_tool(
-                    DECISION_ID, "YES", "1", "1", DIGEST, NONCE, canary
+                    AGENT, DECISION_ID, "YES", "1", "1", DIGEST, NONCE, canary
                 ),
                 await t.agent_decision_answer_tool(
-                    DECISION_ID, "YES", "1", "1", DIGEST, NONCE
+                    AGENT, DECISION_ID, "YES", "1", "1", DIGEST, NONCE, "p1"
                 ),
             ]
 
@@ -434,19 +477,19 @@ class TestClientRequestShape:
 
         assert result == {"decision": None}
         args, kwargs = http.post.call_args
-        assert args[0] == f"/api/v1beta/agent-decisions/{AGENT}/ensure"
+        assert args[0] == f"/api/v1/projects/proj_1/agents/{AGENT}/decisions/ensure"
         assert kwargs["json"] == {"kind": "PREPARE_BASELINE_EVALUATION"}
-        assert kwargs["headers"]["X-Project-Id"] == "proj_1"
+        assert "X-Project-Id" not in (kwargs.get("headers") or {})
 
     @pytest.mark.asyncio
     async def test_latest_is_a_get_with_no_body(self) -> None:
         client = self._client()
         client._client = http = self._http({"decision": _decision()})
 
-        await client.agent_decision_latest(AGENT)
+        await client.agent_decision_latest(AGENT, project_id="proj_1")
 
         args, kwargs = http.get.call_args
-        assert args[0] == f"/api/v1beta/agent-decisions/{AGENT}/latest"
+        assert args[0] == f"/api/v1/projects/proj_1/agents/{AGENT}/decisions/latest"
         assert "json" not in kwargs
         http.post.assert_not_called()
 
@@ -470,16 +513,20 @@ class TestClientRequestShape:
         )
 
         await client.agent_decision_answer(
+            AGENT,
             DECISION_ID,
             answer="NOT_NOW",
             options_version="1",
             policy_version="1",
             basis_digest=DIGEST,
             retry_nonce=NONCE,
+            project_id="proj_1",
         )
 
         args, kwargs = http.post.call_args
-        assert args[0] == f"/api/v1beta/agent-decisions/{DECISION_ID}/answer"
+        assert args[0] == (
+            f"/api/v1/projects/proj_1/agents/{AGENT}/decisions/{DECISION_ID}/answer"
+        )
         assert set(kwargs["json"]) == {
             "answer",
             "options_version",
@@ -508,7 +555,7 @@ class TestClientRequestShape:
         client._client = self._http(payload)
 
         with pytest.raises(AnalyticsClientError) as info:
-            await client.agent_decision_ensure(AGENT)
+            await client.agent_decision_ensure(AGENT, project_id="proj_1")
         assert "unexpected" not in str(info.value)
 
 
@@ -566,7 +613,7 @@ class TestAgentIdAndProjectIdInputs:
         reader.agent_decision_latest.return_value = {"decision": None}
         _install_fake_client(monkeypatch, reader)
 
-        result = await agent_decision_latest_tool(agent)
+        result = await agent_decision_latest_tool(agent, "proj_1")
 
         assert result["ok"] is True
         reader.agent_decision_latest.assert_awaited_once()
@@ -586,10 +633,55 @@ class TestAgentIdAndProjectIdInputs:
         http.get.return_value = response
         client._client = http
 
-        await client.agent_decision_latest("a/../b c?x=1")
+        await client.agent_decision_latest("a/../b c?x=1", project_id="p 1")
 
         path = http.get.call_args.args[0]
-        assert path == "/api/v1beta/agent-decisions/a%2F..%2Fb%20c%3Fx%3D1/latest"
+        assert path == (
+            "/api/v1/projects/p%201/agents/a%2F..%2Fb%20c%3Fx%3D1/decisions/latest"
+        )
+
+    @pytest.mark.backend_online
+    @pytest.mark.asyncio
+    async def test_client_fails_closed_without_project(self) -> None:
+        from traigent.cloud.analytics_client import BackendAnalyticsClient
+
+        client = BackendAnalyticsClient(
+            backend_url="http://localhost:5000",
+            api_key="uk_test_key",  # pragma: allowlist secret
+        )
+        response = MagicMock()
+        response.json.return_value = {"decision": None}
+        http = AsyncMock()
+        http.post.return_value = response
+        http.get.return_value = response
+        client._client = http
+
+        with pytest.raises(ValueError, match="project_id is required"):
+            await client.agent_decision_ensure(AGENT)
+        http.post.assert_not_called()
+
+    @pytest.mark.backend_online
+    @pytest.mark.asyncio
+    async def test_client_project_falls_back_to_env(self, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_PROJECT_ID", "proj_env")
+        from traigent.cloud.analytics_client import BackendAnalyticsClient
+
+        client = BackendAnalyticsClient(
+            backend_url="http://localhost:5000",
+            api_key="uk_test_key",  # pragma: allowlist secret
+        )
+        response = MagicMock()
+        response.json.return_value = {"decision": None}
+        http = AsyncMock()
+        http.post.return_value = response
+        http.get.return_value = response
+        client._client = http
+
+        await client.agent_decision_latest(AGENT)
+
+        assert http.get.call_args.args[0] == (
+            f"/api/v1/projects/proj_env/agents/{AGENT}/decisions/latest"
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -615,7 +707,7 @@ class TestAgentIdAndProjectIdInputs:
             await t.agent_decision_ensure_tool(AGENT, bad),
             await t.agent_decision_latest_tool(AGENT, bad),
             await t.agent_decision_answer_tool(
-                DECISION_ID, "YES", "1", "1", DIGEST, NONCE, bad
+                AGENT, DECISION_ID, "YES", "1", "1", DIGEST, NONCE, bad
             ),
         ]
 
@@ -660,8 +752,10 @@ class TestMalformedErrorBodiesAreFixedFailures:
         _install_fake_client(monkeypatch, reader)
 
         outputs = [
-            await t.agent_decision_ensure_tool(AGENT),
-            await t.agent_decision_answer_tool(DECISION_ID, "YES", "1", "1", DIGEST),
+            await t.agent_decision_ensure_tool(AGENT, "proj_1"),
+            await t.agent_decision_answer_tool(
+                AGENT, DECISION_ID, "YES", "1", "1", DIGEST, project_id="proj_1"
+            ),
         ]
 
         for result in outputs:
@@ -693,7 +787,7 @@ class TestAnswerErrorMapping:
         _install_fake_client(monkeypatch, reader)
 
         result = await agent_decision_answer_tool(
-            DECISION_ID, "YES", "1", "1", DIGEST, NONCE
+            AGENT, DECISION_ID, "YES", "1", "1", DIGEST, NONCE, "proj_1"
         )
 
         assert result["ok"] is False
@@ -724,9 +818,13 @@ class TestWholeContractIsEnforced:
     @pytest.mark.asyncio
     async def test_valid_open_and_answered_decisions_pass(self) -> None:
         open_client = self._client_with({"decision": _decision()})
-        assert (await open_client.agent_decision_ensure(AGENT))["decision"]
+        assert (await open_client.agent_decision_ensure(AGENT, project_id="proj_1"))[
+            "decision"
+        ]
         yes = self._client_with({"decision": _answered()})
-        assert (await yes.agent_decision_latest(AGENT))["decision"]["answer"] == "YES"
+        assert (await yes.agent_decision_latest(AGENT, project_id="proj_1"))[
+            "decision"
+        ]["answer"] == "YES"
         not_now = self._client_with(
             {
                 "decision": _answered(
@@ -738,12 +836,14 @@ class TestWholeContractIsEnforced:
             }
         )
         result = await not_now.agent_decision_answer(
+            AGENT,
             DECISION_ID,
             answer="NOT_NOW",
             options_version="1",
             policy_version="1",
             basis_digest=DIGEST,
             retry_nonce=NONCE,
+            project_id="proj_1",
         )
         assert result["decision"]["answer"] == "NOT_NOW"
 
@@ -791,7 +891,7 @@ class TestWholeContractIsEnforced:
         client = self._client_with({"decision": decision})
 
         with pytest.raises(AnalyticsClientError) as info:
-            await client.agent_decision_latest(AGENT)
+            await client.agent_decision_latest(AGENT, project_id="proj_1")
         assert "CANARY" not in str(info.value)
 
     @pytest.mark.asyncio
@@ -800,7 +900,7 @@ class TestWholeContractIsEnforced:
 
         client = self._client_with({"decision": _answered()})
         with pytest.raises(AnalyticsClientError):
-            await client.agent_decision_ensure(AGENT)
+            await client.agent_decision_ensure(AGENT, project_id="proj_1")
 
     @pytest.mark.asyncio
     async def test_answer_must_return_an_answered_decision_not_null(self) -> None:
@@ -810,12 +910,14 @@ class TestWholeContractIsEnforced:
             client = self._client_with(body)
             with pytest.raises(AnalyticsClientError):
                 await client.agent_decision_answer(
+                    AGENT,
                     DECISION_ID,
                     answer="YES",
                     options_version="1",
                     policy_version="1",
                     basis_digest=DIGEST,
                     retry_nonce=NONCE,
+                    project_id="proj_1",
                 )
 
 
@@ -848,7 +950,7 @@ class TestHttpLibrariesDoNotLogIds:
                 ),
                 base_url="http://localhost:5000",
             )
-            await client.agent_decision_latest(canary)
+            await client.agent_decision_latest(canary, project_id="proj_1")
             await client._client.aclose()
 
             assert canary not in caplog.text
@@ -872,7 +974,7 @@ class TestExactAgentIdSegment:
 
         for call in (client.agent_decision_ensure, client.agent_decision_latest):
             with pytest.raises(ValueError) as info:
-                await call(bad)
+                await call(bad, project_id="proj_1")
             assert str(info.value) == "agent_id is not a valid agent identifier."
         http.get.assert_not_called()
         http.post.assert_not_called()
@@ -890,8 +992,8 @@ class TestExactAgentIdSegment:
         client._client = http = AsyncMock()
         http.post.return_value = response
 
-        await client.agent_decision_ensure("pkg/agent")
+        await client.agent_decision_ensure("pkg/agent", project_id="proj_1")
 
         assert http.post.call_args.args[0] == (
-            "/api/v1beta/agent-decisions/pkg%2Fagent/ensure"
+            "/api/v1/projects/proj_1/agents/pkg%2Fagent/decisions/ensure"
         )
