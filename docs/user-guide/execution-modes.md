@@ -64,6 +64,21 @@ result = await my_agent.optimize()
 See [Execution Modes / Optimization Routing](../guides/execution-modes.md) for
 the full `algorithm` / `offline` routing reference within `local` and `cloud`.
 
+## When `algorithm="auto"` has no backend session
+
+`algorithm="auto"` asks the Traigent backend to pick configurations. If no
+backend session can be created (for example no `TRAIGENT_API_KEY` is set, or the
+backend is unreachable), the run does not fail: it falls back to a **local random
+search** on your machine and nothing is sent to Traigent. Set
+`TRAIGENT_REQUIRE_CLOUD=1` to fail instead of falling back.
+
+Traigent logs a warning once per run when this happens, naming the reason. You
+can also check the result:
+
+- `result.metadata["source"] == "local_fallback"` (a managed run reports
+  `"backend"`), with the reason in `result.metadata["fallback_reason"]`.
+- `result.cloud_url` is not set, because no backend experiment exists.
+
 ## Removed and deprecated names
 
 | Old name | Status | Replacement |
