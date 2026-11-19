@@ -1093,7 +1093,11 @@ def optimize(
     "--objectives",
     "-o",
     multiple=True,
-    help="Objectives to validate (e.g., accuracy, latency)",
+    help=(
+        "Objective names to check (repeatable). Built-in and custom metric "
+        "names are both accepted; only the name format is checked "
+        "(letter or underscore first, then letters, digits, '_', '-', '.')."
+    ),
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed validation output")
 @click.option(

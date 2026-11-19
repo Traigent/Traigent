@@ -192,6 +192,12 @@ def ensure_finite_config_space(config_space: Any) -> None:
             )
 
 
+_OBJECTIVE_NAME_MAX_LEN = 128
+_OBJECTIVE_NAME_RE = re.compile(
+    rf"^[A-Za-z_][A-Za-z0-9_.\-]{{0,{_OBJECTIVE_NAME_MAX_LEN - 1}}}$"
+)
+
+
 class Validators:
     """Core validation functions with consistent interface."""
 
@@ -908,19 +914,9 @@ class Validators:
             )
             return result
 
-        # Validate each objective
-        valid_objectives = {
-            "accuracy",
-            "cost",
-            "latency",
-            "throughput",
-            "quality",
-            "relevance",
-            "coherence",
-            "safety",
-            "helpfulness",
-        }
-
+        # Validate each objective. Custom metric names are allowed: only the
+        # structure of the name is checked, not membership in a fixed list.
+        seen: set[str] = set()
         for i, obj in enumerate(objectives):
             if not isinstance(obj, str):
                 result.add_error(
@@ -928,14 +924,22 @@ class Validators:
                     f"Objective must be string, got {type(obj).__name__}",
                     error_code="TYPE_ERROR",
                 )
-            elif obj not in valid_objectives:
+            elif not _OBJECTIVE_NAME_RE.match(obj):
+                result.add_error(
+                    f"objectives[{i}]",
+                    "Objective names must start with a letter or underscore and "
+                    "contain only letters, digits, '_', '-' or '.' "
+                    f"(max {_OBJECTIVE_NAME_MAX_LEN} characters)",
+                    error_code="INVALID_FORMAT",
+                    suggestions=["Use a metric name like 'accuracy' or 'my_metric'"],
+                )
+            elif obj in seen:
                 result.add_warning(
                     f"objectives[{i}]",
-                    f"Unknown objective '{obj}'",
-                    suggestions=[
-                        f"Common objectives: {', '.join(sorted(valid_objectives))}"
-                    ],
+                    f"Duplicate objective '{obj}'",
                 )
+            else:
+                seen.add(obj)
 
         # Check for conflicting objectives
         if "cost" in objectives and "quality" in objectives:
