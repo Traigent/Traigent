@@ -11,14 +11,10 @@ from traigent.utils.validation import Validators
 
 
 def test_custom_objective_names_are_valid() -> None:
-    result = Validators.validate_objectives(["my_metric", "f1.macro", "p95-latency"])
+    names = ["my_metric", "f1.macro", "quality score", "9lives", "précision", "x" * 200]
+    result = Validators.validate_objectives(names)
     assert result.is_valid
     assert not result.warnings
-
-
-def test_malformed_objective_names_are_rejected() -> None:
-    for bad in ("", "9lives", "has space", "x" * 200):
-        assert not Validators.validate_objectives([bad]).is_valid
 
 
 def test_non_string_objective_is_rejected() -> None:
@@ -41,5 +37,25 @@ def test_cli_accepts_custom_objective(tmp_path, monkeypatch) -> None:
     assert ok.exit_code == 0, ok.output
     assert "Objectives validation passed" in ok.output
 
-    bad = CliRunner().invoke(cli, ["validate", "d.jsonl", "-o", "bad name"])
-    assert bad.exit_code != 0
+    for name in ("quality score", "précision", "9lives"):
+        res = CliRunner().invoke(cli, ["validate", "d.jsonl", "-o", name])
+        assert res.exit_code == 0, res.output
+
+
+def test_decorator_accepts_spaced_and_non_ascii_objectives() -> None:
+    import traigent
+    from traigent.core.objectives import create_default_objectives
+
+    objectives = create_default_objectives(
+        ["quality score", "précision"],
+        orientations={"quality score": "maximize", "précision": "maximize"},
+    )
+
+    @traigent.optimize(
+        objectives=objectives,
+        configuration_space={"x": [1, 2]},
+    )
+    def fn(x: int = 1) -> int:
+        return x
+
+    assert fn is not None

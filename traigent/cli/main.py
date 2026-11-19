@@ -1095,8 +1095,8 @@ def optimize(
     multiple=True,
     help=(
         "Objective names to check (repeatable). Built-in and custom metric "
-        "names are both accepted; only the name format is checked "
-        "(letter or underscore first, then letters, digits, '_', '-', '.')."
+        "names are both accepted; each must be a string, and a repeated "
+        "name produces a warning."
     ),
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed validation output")
