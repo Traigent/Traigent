@@ -68,9 +68,11 @@ the full `algorithm` / `offline` routing reference within `local` and `cloud`.
 
 `algorithm="auto"` asks the Traigent backend to pick configurations. When the
 backend session cannot be created, the run falls back to a **local random
-search** on your machine, but only for connectivity-type failures: no API key,
-or an unreachable or unavailable backend (for example timeouts and 408, 500,
-502, 503 or 504 responses). Definitive authentication rejections, quota
+search** on your machine, but only for these failures: no API key; an
+unreachable or unavailable backend (for example timeouts and 408, 500, 502, 503
+or 504 responses); or an `auto` run where cloud is not required and both the
+typed and the legacy session-creation requests were answered with HTTP 400.
+Definitive authentication rejections, quota
 refusals, closed backend refusals and other client errors (for example 401,
 402, 403, 404, 409, 422 or 429) raise instead. Set `TRAIGENT_REQUIRE_CLOUD=1`
 to fail instead of falling back.
