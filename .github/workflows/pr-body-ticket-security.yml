@@ -1,0 +1,68 @@
+name: PR body ticket and security note
+
+# Owner decision 4A (2026-11-17), SOC 2 CMT.02 / CMT.04 / CMT.12: every product
+# PR links a ticket and carries a security note in its body. Parsing lives in
+# .github/scripts/check_pr_ticket_security.py (unit-tested alongside it).
+#
+# The PR body is untrusted input: it reaches the script only through env vars,
+# never interpolated into shell. Bot authors (dependabot, renovate,
+# github-actions) are exempt, keyed on the author login, never the branch name.
+# Required status check on develop (owner ruling 2026-11-18). It also runs on
+# merge_group so the merge queue gets a result: there it passes without a
+# body to read, because the PR's own run already gated the enqueue.
+# The trusted base-ref checker runs before any PR-head code so PR code cannot alter it.
+
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-body-ticket-security-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pr-body-ticket-security:
+    name: ticket and security note present
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Merge queue run
+        if: github.event_name == 'merge_group'
+        run: echo "merge queue run - the PR's own run of this check gated the enqueue"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        if: github.event_name == 'pull_request'
+        with:
+          path: head
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        if: github.event_name == 'pull_request'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      # The base-branch copy of the checker decides, so a PR cannot weaken the
+      # checker it is judged by. The head copy runs only on the bootstrap PR that
+      # adds it.
+      - name: Check PR body
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          if [ -f base/.github/scripts/check_pr_ticket_security.py ]; then
+            python3 base/.github/scripts/check_pr_ticket_security.py
+          else
+            echo "::warning::checker not on the base branch yet (bootstrap PR); running the PR's copy"
+            python3 head/.github/scripts/check_pr_ticket_security.py
+          fi
+      # Runs only after the trusted check above: it executes PR-head code.
+      - name: Unit-test the parser
+        if: github.event_name == 'pull_request'
+        run: python3 -m unittest discover -s head/.github/scripts -p "test_check_pr_ticket_security.py"
