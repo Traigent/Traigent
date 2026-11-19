@@ -908,19 +908,10 @@ class Validators:
             )
             return result
 
-        # Validate each objective
-        valid_objectives = {
-            "accuracy",
-            "cost",
-            "latency",
-            "throughput",
-            "quality",
-            "relevance",
-            "coherence",
-            "safety",
-            "helpfulness",
-        }
-
+        # Validate each objective. Custom metric names are allowed: like
+        # ObjectiveSchema, no restriction is placed on the name's characters
+        # or length, only that it is a string.
+        seen: set[str] = set()
         for i, obj in enumerate(objectives):
             if not isinstance(obj, str):
                 result.add_error(
@@ -928,14 +919,13 @@ class Validators:
                     f"Objective must be string, got {type(obj).__name__}",
                     error_code="TYPE_ERROR",
                 )
-            elif obj not in valid_objectives:
+            elif obj in seen:
                 result.add_warning(
                     f"objectives[{i}]",
-                    f"Unknown objective '{obj}'",
-                    suggestions=[
-                        f"Common objectives: {', '.join(sorted(valid_objectives))}"
-                    ],
+                    f"Duplicate objective '{obj}'",
                 )
+            else:
+                seen.add(obj)
 
         # Check for conflicting objectives
         if "cost" in objectives and "quality" in objectives:

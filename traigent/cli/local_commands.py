@@ -172,20 +172,16 @@ def _echo_session_json(session: Any) -> None:
     click.echo(json.dumps(session_data, indent=2, default=str))
 
 
-def _echo_best_score_lines(session: Any, summary: dict[str, Any] | None) -> None:
+def _echo_best_score_lines(session: Any) -> None:
+    # No "Improvement" line: the SDK never records a baseline score for a local
+    # session, so there is nothing to compare the best score against.
     if session.best_score is not None:
         click.echo(f"Best Score: {session.best_score:.4f}")
-        improvement = (summary or {}).get("improvement")
-        if improvement is not None:
-            click.echo(f"Improvement: {improvement * 100:.1f}%")
-        elif (summary or {}).get("baseline_score") == 0:
-            click.echo("Improvement: n/a (baseline 0)")
 
 
 def _echo_session_detailed(
     session: Any, storage: LocalStorageManager, session_id: str
 ) -> None:
-    summary = storage.get_session_summary(session_id)
     click.echo(f"\n📊 Session Details: {session_id}")
     click.echo("=" * 60)
     click.echo(f"Function: {session.function_name}")
@@ -212,7 +208,7 @@ def _echo_session_detailed(
     # here — only the stale justification is corrected.
     click.echo(f"Trials: {session.completed_trials}")
 
-    _echo_best_score_lines(session, summary)
+    _echo_best_score_lines(session)
 
     if session.best_config:
         click.echo("\n🎯 Best Configuration:")
@@ -230,11 +226,10 @@ def _echo_session_detailed(
 def _echo_session_summary(
     session: Any, storage: LocalStorageManager, session_id: str, config: Any
 ) -> None:
-    summary = storage.get_session_summary(session_id)
     click.echo(f"\n📊 {session.function_name} Optimization")
     click.echo(f"Status: {session.status} | Trials: {session.completed_trials}")
 
-    _echo_best_score_lines(session, summary)
+    _echo_best_score_lines(session)
 
     if session.best_config:
         click.echo(f"Best Config: {session.best_config}")
