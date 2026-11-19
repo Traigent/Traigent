@@ -85,7 +85,10 @@ def test_read_requests_carry_no_body_and_no_local_names(backend: FakeBackend) ->
     def fn() -> None: ...
 
     backend.on(
-        "GET", f"/agents/{AGENT}/production-breaches", 200, {"items": [breach()]}
+        "GET",
+        f"/api/v1/projects/{PROJECT}/agents/{AGENT}/production-breaches",
+        200,
+        {"items": [breach()]},
     )
     poll_once(list(fn.requirements), project_id=PROJECT, agent_id=AGENT)
     for request in backend.requests:

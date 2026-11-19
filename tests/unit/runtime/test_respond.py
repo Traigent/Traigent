@@ -34,8 +34,8 @@ from .conftest import (
 
 CREATE = ("POST", "/production-requirements")
 LIST = ("GET", "/production-requirements")
-BREACHES = ("GET", f"/agents/{AGENT}/production-breaches")
-NEXT = ("GET", f"/agent-readiness/{AGENT}/next-step")
+BREACHES = ("GET", f"/api/v1/projects/{PROJECT}/agents/{AGENT}/production-breaches")
+NEXT = ("GET", f"/api/v1/projects/{PROJECT}/agents/{AGENT}/next-step")
 RESTORE = {"step": {"code": "RESTORE_PRODUCTION_REQUIREMENT"}}
 
 
