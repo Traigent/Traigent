@@ -3,6 +3,13 @@
 # Traceability: CONC-Layer-Data FUNC-STORAGE FUNC-ANALYTICS
 
 Everything runs locally; no command here makes a network call.
+
+``confirm`` and ``check`` import and run the user's module in this process. Any
+``BaseException`` that escapes it other than ``KeyboardInterrupt`` (a module
+or function calling ``sys.exit(0)``, say) ends the command as the closed
+inconclusive result, never as a success: success comes only from the verdict
+logic at the end of ``check``. Limit: a process that ends itself with
+``os._exit`` (or is killed) cannot be caught.
 """
 
 from __future__ import annotations
@@ -350,8 +357,12 @@ def _load_function(spec: str) -> Any:
         )
     try:
         module = load_user_module(_resolve_module_path(module_part, None))
-    except Exception as exc:  # noqa: BLE001 - user module code, any error
-        # Closed message: a loader or user-module error may quote content.
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:  # noqa: BLE001 - user module code, even SystemExit
+        # Closed message: a loader or user-module error may quote content. A
+        # module that exits at import (sys.exit(0) included) never evaluated
+        # anything, so it is an unusable function, never a success.
         raise _Stop(
             2,
             "module_load_failed",
@@ -612,6 +623,15 @@ def _confirm(
         raise click.ClickException(
             f"The run failed ({type(exc).__name__}). Nothing was written."
         ) from exc
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:  # noqa: BLE001 - e.g. the function calls sys.exit
+        raise _Stop(
+            CONFIRM_BAD_INPUT,
+            "run_failed",
+            f"The run was ended from inside the function ({type(exc).__name__}). "
+            "Nothing was written.",
+        ) from exc
 
     observations = {}
     for eid, _row in selected:
@@ -808,6 +828,14 @@ def _check(
                 CHECK_INCONCLUSIVE,
                 "run_failed",
                 f"The run failed ({type(exc).__name__})",
+            ) from exc
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - e.g. the function calls sys.exit
+            raise _Stop(
+                CHECK_INCONCLUSIVE,
+                "run_failed",
+                f"The run was ended from inside the function ({type(exc).__name__})",
             ) from exc
         run_complete = run.completed
         for eid, _row in gated:
