@@ -768,7 +768,7 @@ def test_rows_carry_schema_version_one(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("version", "message"),
     [
-        (2, "newer than this SDK"),
+        (3, "newer than this SDK"),
         (None, "schema_version.* missing"),
         ("1", "not a version"),
     ],
