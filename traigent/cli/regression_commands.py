@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -910,6 +911,10 @@ def _check(
     show_output: bool,
 ) -> None:
     output = _UserOutput(show_output)
+    # check writes nothing: keep Python from leaving __pycache__ next to the
+    # user's modules while it imports them (put back whatever happens).
+    keep_bytecode = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     try:
         _check_run(
             module_spec,
@@ -921,6 +926,7 @@ def _check(
             output,
         )
     finally:
+        sys.dont_write_bytecode = keep_bytecode
         output.report()
 
 
@@ -1014,7 +1020,7 @@ def _check_run(
                 inconclusive.append((eid, tallied))
     if regressions:
         code, verdict = CHECK_REGRESSION, "regression"
-    elif inconclusive or not run_complete:
+    elif inconclusive or not run_complete or len(passed) != len(gated):
         code, verdict = CHECK_INCONCLUSIVE, "inconclusive"
     else:
         code, verdict = CHECK_OK, "pass"

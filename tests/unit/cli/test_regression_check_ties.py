@@ -167,3 +167,19 @@ def test_the_help_text_states_the_strict_rule() -> None:
     )
     assert "more scored attempts pass than fail" in text
     assert 'reason "tie"' in text
+
+
+def test_check_never_returns_0_unless_every_armed_row_passed_strictly(
+    ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tally that is neither pass, regression nor tie must not exit 0."""
+    from traigent.utils import regression_confirm
+
+    _arm(ws)
+    monkeypatch.setattr(regression_confirm.Tally, "passed_strictly", False)
+    monkeypatch.setattr(regression_confirm.Tally, "regressed", False)
+    monkeypatch.setattr(regression_confirm.Tally, "tied", False)
+    result = _run(ws, "check", "PP", "--repeats", "2", "--json")
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["verdict"] == "inconclusive" and payload["passed"] == 0

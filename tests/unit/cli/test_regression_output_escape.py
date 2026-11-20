@@ -204,3 +204,63 @@ def test_in_process_descriptors_come_back_even_if_flushing_blows_up(
     out = capfd.readouterr().out
     assert len(calls) == 2
     assert "after" in out and "inside" not in out
+
+
+# ------------------------------------------- check writes nothing, state is back
+
+
+def _files(root: Path) -> dict[str, bytes]:
+    return {
+        str(p.relative_to(root)): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
+
+
+def test_check_writes_no_file_anywhere_in_the_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    make_workspace(workspace)
+    _arm(workspace)
+    for pyc in workspace.rglob("*.pyc"):  # what a fresh CI checkout lacks
+        pyc.unlink()
+    before = _files(workspace)
+    for argv in (("check",), ("check", "--json")):
+        result = run_cli(workspace, *argv)
+        assert result.returncode == 0, result.stderr[-500:]
+    assert _files(workspace) == before  # no pyc, no lock, no temp file
+    assert not list(workspace.rglob("*.pyc"))
+
+
+def test_check_puts_the_bytecode_setting_and_open_descriptors_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from click.testing import CliRunner
+
+    from traigent.cli.main import cli
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+    monkeypatch.setenv("TRAIGENT_BACKEND_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("TRAIGENT_API_URL", "http://127.0.0.1:9")
+    monkeypatch.chdir(tmp_path)
+    make_workspace(tmp_path)
+    args = [
+        "regression",
+        "check",
+        "--module",
+        "agent.py:answer",
+        "--config",
+        "config.json",
+        "--dir",
+        "reg",
+    ]
+    confirm = ["regression", "confirm", *args[2:]]
+    assert CliRunner().invoke(cli, [*confirm, "--repeats", "2"]).exit_code == 0
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    fds_before = len(os.listdir("/proc/self/fd")) if os.path.isdir("/proc/self") else 0
+    assert CliRunner().invoke(cli, args).exit_code == 0
+    assert sys.dont_write_bytecode is False
+    if fds_before:
+        assert len(os.listdir("/proc/self/fd")) <= fds_before
