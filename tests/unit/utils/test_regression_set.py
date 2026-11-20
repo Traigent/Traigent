@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,11 @@ from traigent.evaluators.base import (
     EvaluationExample,
     _example_correlation_key,
 )
-from traigent.utils.file_lock import exclusive_lock
+from traigent.utils.file_lock import (
+    FileLockUnsupportedError,
+    exclusive_lock,
+    lock_path_for,
+)
 from traigent.utils.regression_set import (
     IdConflictError,
     RegressionSetError,
@@ -297,10 +302,50 @@ def test_lock_timeout_errors_and_writes_nothing(tmp_path: Path) -> None:
     assert _merge(tmp_path, _ds(("q9", "a9"), start=9)).rows_added == 1
 
 
-def test_lock_file_is_not_the_data_file(tmp_path: Path) -> None:
-    _merge(tmp_path, _ds(("q0", "a0")))
-    assert (tmp_path / ".regression.jsonl.lock").exists()
-    assert len((tmp_path / "regression.jsonl").read_text().splitlines()) == 1
+@pytest.fixture
+def lock_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A private system temp dir, so lock files can be inspected."""
+    lock_root = tmp_path / "systmp"
+    lock_root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(lock_root))
+    return lock_root
+
+
+def test_lock_file_is_not_in_the_repository_directory(
+    tmp_path: Path, lock_tmp: Path
+) -> None:
+    data = tmp_path / "repo"
+    _merge(data, _ds(("q0", "a0")))
+    assert sorted(p.name for p in data.iterdir()) == ["regression.jsonl"]
+    assert len((data / "regression.jsonl").read_text().splitlines()) == 1
+    locks = list(lock_tmp.rglob("*.lock"))
+    assert len(locks) == 1
+    assert locks[0].parent.parent == lock_tmp
+    assert oct(locks[0].parent.stat().st_mode & 0o777) == "0o700"
+
+
+def test_lock_path_is_keyed_by_the_data_files_real_path(
+    tmp_path: Path, lock_tmp: Path
+) -> None:
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "a")
+    one = lock_path_for(tmp_path / "a" / "regression.jsonl")
+    assert lock_path_for(link / "regression.jsonl") == one  # same file, same lock
+    assert lock_path_for(tmp_path / "b" / "regression.jsonl") != one
+
+
+def test_a_lock_directory_owned_by_someone_else_is_refused(
+    tmp_path: Path, lock_tmp: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock_path_for(tmp_path / "regression.jsonl")  # creates the directory
+    real_getuid = os.getuid
+    monkeypatch.setattr(os, "getuid", lambda: real_getuid() + 1)
+    # a different "user" gets a different directory name, so plant a clash
+    (lock_tmp / f"traigent-locks-{real_getuid() + 1}").mkdir()
+    with pytest.raises(FileLockUnsupportedError, match="another user"):
+        lock_path_for(tmp_path / "regression.jsonl")
 
 
 @pytest.mark.parametrize("absent", ["", None, True])
