@@ -293,6 +293,31 @@ class ConfigComparison:
             "example_ids": list(self.example_ids),
         }
 
+    def example_consistency(self) -> dict[str, Any]:
+        """Per-example consistency labels across this config's repeats.
+
+        Same shape as ``OptimizationResult.example_consistency()``. Needs at
+        least two repeats that produced per-example results; otherwise
+        ``examples`` is empty. Computed from the in-memory trials only.
+        """
+        from traigent.utils.example_consistency import (
+            build_consistency_report,
+            summarize_example_outcomes,
+            trial_example_outcomes,
+        )
+        from traigent.utils.hashing import generate_config_hash
+
+        per_repeat = [
+            outcomes
+            for outcomes in (trial_example_outcomes(t) for t in self.trials)
+            if outcomes is not None
+        ]
+        return build_consistency_report(
+            summarize_example_outcomes(per_repeat),
+            reps=len(per_repeat),
+            config_hash=generate_config_hash(self.config),
+        )
+
 
 def _trial_score(trial: Any, primary_metric: str) -> float | None:
     """The trial's numeric score, or None when it failed or is not a number."""
@@ -411,6 +436,25 @@ class ComparisonResult:
     mock_llm_mixed: bool = False
     strict_cost_accounting: bool = False
     strict_cost_accounting_origin: str | None = None
+
+    def example_consistency(self, config_index: int = 0) -> dict[str, Any]:
+        """Per-example consistency labels for ``configs[config_index]``.
+
+        Labels each example ``consistent_pass``, ``consistent_fail`` or
+        ``flaky`` across that config's ``repeats`` (see
+        ``ConfigComparison.example_consistency``). With ``repeats=1`` no
+        example has two evaluations, so ``examples`` is empty.
+
+        Raises:
+            IndexError: ``config_index`` is not a config of this comparison.
+        """
+        if (
+            isinstance(config_index, bool)
+            or not isinstance(config_index, int)
+            or not -len(self.configs) <= config_index < len(self.configs)
+        ):
+            raise IndexError("config_index is outside this comparison's configs.")
+        return self.configs[config_index].example_consistency()
 
     @property
     def completed(self) -> bool:
