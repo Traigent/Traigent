@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NoReturn
@@ -28,6 +30,7 @@ from traigent.utils.optimization_result_persistence import (
     UNRESTORED_OPTIMIZATION_ID_PREFIX,
 )
 from traigent.utils.outcome_matrix import select_failure_basis
+from traigent.utils.output_boundary import CapturedOutput, capture_output
 from traigent.utils.regression_confirm import (
     DEFAULT_CHECK_REPEATS,
     DEFAULT_CONFIRM_REPEATS,
@@ -323,6 +326,54 @@ class _Stop(Exception):
         self.message = message
 
 
+class _UserOutput:
+    """Everything user code and the SDK wrote across a command's windows.
+
+    ``window()`` contains one stretch of user code (module load, evaluation);
+    ``report()`` runs once at the end and prints a counts-only line on stderr,
+    or, with ``--show-output``, the collected text on stderr. Nothing is ever
+    printed on stdout, because the text can hold example content and ``--json``
+    owns stdout.
+    """
+
+    def __init__(self, show: bool) -> None:
+        self.show = show
+        self._captured: list[CapturedOutput] = []
+
+    @contextmanager
+    def window(self) -> Iterator[None]:
+        with capture_output() as captured:
+            self._captured.append(captured)
+            yield
+
+    def report(self) -> None:
+        lines = sum(c.line_count for c in self._captured)
+        if lines == 0:
+            return
+        if self.show:
+            click.echo(
+                "Output from your code and the SDK (may contain example content):",
+                err=True,
+            )
+            for captured in self._captured:
+                text = captured.text()
+                if text:
+                    click.echo(text, err=True)
+            return
+        click.echo(
+            f"{lines} lines of output from your code and the SDK were suppressed; "
+            "rerun with --show-output to see them on stderr",
+            err=True,
+        )
+
+
+SHOW_OUTPUT_HELP = (
+    "Print the output your code and the SDK produced while running (stdout, "
+    "stderr, logs, warnings) on stderr after the run; it may contain example "
+    "content. By default it is suppressed and only a line count is printed"
+)
+
+
 def _load_config(config_path: str) -> dict[str, Any]:
     from traigent.utils.secure_path import PathTraversalError, validate_user_path
 
@@ -478,6 +529,12 @@ def _interval(entry: Any) -> str:
     default=None,
     help="Why a row is disarmed; required with --disarm",
 )
+@click.option(
+    "--show-output",
+    "show_output",
+    is_flag=True,
+    help=SHOW_OUTPUT_HELP,
+)
 def regression_confirm(
     module_spec: str | None,
     config_path: str | None,
@@ -487,6 +544,7 @@ def regression_confirm(
     only_ids: tuple[str, ...],
     disarm_ids: tuple[str, ...],
     reason: str | None,
+    show_output: bool,
 ) -> None:
     """Run the regression rows under a configuration and mark what they do.
 
@@ -500,7 +558,9 @@ def regression_confirm(
 
     Everything is local: the command makes no call to the Traigent backend
     (your function calls your own model provider). Output has counts and ids,
-    never example content.
+    never example content. Anything your code or the SDK prints while running
+    is suppressed (a line count is printed on stderr); --show-output prints it
+    on stderr, where it may contain example content.
 
     Exit codes: 0 done; 1 other failure; 2 bad function, config or options;
     3 regression file missing, corrupt or edited by hand (nothing written);
@@ -517,7 +577,15 @@ def regression_confirm(
             raise click.UsageError("--reason only applies with --disarm")
         if not module_spec or not config_path:
             raise click.UsageError("--module and --config are required")
-        _confirm(module_spec, config_path, directory, repeats, max_cost, list(only_ids))
+        _confirm(
+            module_spec,
+            config_path,
+            directory,
+            repeats,
+            max_cost,
+            list(only_ids),
+            show_output,
+        )
     except _Stop as stop:
         _exit_with(stop, as_json=False)
 
@@ -594,6 +662,25 @@ def _confirm(
     repeats: int,
     max_cost: float | None,
     only_ids: list[str],
+    show_output: bool,
+) -> None:
+    output = _UserOutput(show_output)
+    try:
+        _confirm_run(
+            module_spec, config_path, directory, repeats, max_cost, only_ids, output
+        )
+    finally:
+        output.report()
+
+
+def _confirm_run(
+    module_spec: str,
+    config_path: str,
+    directory: str,
+    repeats: int,
+    max_cost: float | None,
+    only_ids: list[str],
+    output: _UserOutput,
 ) -> None:
     _, rows = _read_rows(directory, CONFIRM_BAD_FILE)
     entries = [(example_id_of(row, i), row) for i, row in enumerate(rows)]
@@ -602,14 +689,18 @@ def _confirm(
     if unknown:
         raise click.UsageError(f"--only-id names no row: {unknown}")
     selected = [(e, r) for e, r in entries if not only_ids or e in only_ids]
-    function = _load_function(module_spec)
+    with output.window():
+        function = _load_function(module_spec)
     config = _load_config(config_path)
     digest_of_config = generate_config_hash(config)
     before = {eid: row_status(row) for eid, row in selected}
     content = {eid: row["metadata"]["content_digest"] for eid, row in selected}
 
     try:
-        run = run_rows(function, config, selected, repeats=repeats, max_cost=max_cost)
+        with output.window():
+            run = run_rows(
+                function, config, selected, repeats=repeats, max_cost=max_cost
+            )
     except IdsNotAssignableError as exc:
         raise _Stop(CONFIRM_BAD_INPUT, "ids_not_assignable", str(exc)) from exc
     except ValueError as exc:
@@ -737,6 +828,12 @@ def _confirm(
     help="Also gate intermittent rows (default: reported as not gated)",
 )
 @click.option("--json", "as_json", is_flag=True, help="Print one JSON object")
+@click.option(
+    "--show-output",
+    "show_output",
+    is_flag=True,
+    help=SHOW_OUTPUT_HELP,
+)
 def regression_check(
     module_spec: str,
     config_path: str,
@@ -744,6 +841,7 @@ def regression_check(
     repeats: int,
     fail_on_intermittent: bool,
     as_json: bool,
+    show_output: bool,
 ) -> None:
     """Re-run the ARMED regression rows and fail on a regression (for CI).
 
@@ -754,7 +852,14 @@ def regression_check(
 
     Everything is local: no call to the Traigent backend (your function calls
     your own model provider). Output has counts, ids and intervals, never
-    example content.
+    example content. Anything your code or the SDK prints while running is
+    suppressed (a line count is printed on stderr); --show-output prints it
+    on stderr, where it may contain example content.
+
+    Trust: the regression file is edited by people and is NOT authenticated
+    evidence. A hand edit that stays internally consistent can arm or disarm a
+    row. Changes to the file should go through your repository's normal review.
+    A row whose content changed since it was confirmed is listed as not gated.
 
     Exit codes: 0 every armed row passed (or none are armed); 1 an armed row
     regressed (more than half of its scored attempts failed); 2 inconclusive
@@ -766,10 +871,27 @@ def regression_check(
     """
     try:
         _check(
-            module_spec, config_path, directory, repeats, fail_on_intermittent, as_json
+            module_spec,
+            config_path,
+            directory,
+            repeats,
+            fail_on_intermittent,
+            as_json,
+            show_output,
         )
     except _Stop as stop:
         _exit_with(stop, as_json)
+    except (click.ClickException, click.exceptions.Exit, click.Abort):
+        raise
+    except Exception as exc:  # noqa: BLE001 - keep --json one object on any path
+        _exit_with(
+            _Stop(
+                CHECK_INCONCLUSIVE,
+                "internal_error",
+                f"The check failed unexpectedly ({type(exc).__name__})",
+            ),
+            as_json,
+        )
 
 
 def _check(
@@ -779,9 +901,35 @@ def _check(
     repeats: int,
     fail_on_intermittent: bool,
     as_json: bool,
+    show_output: bool,
+) -> None:
+    output = _UserOutput(show_output)
+    try:
+        _check_run(
+            module_spec,
+            config_path,
+            directory,
+            repeats,
+            fail_on_intermittent,
+            as_json,
+            output,
+        )
+    finally:
+        output.report()
+
+
+def _check_run(
+    module_spec: str,
+    config_path: str,
+    directory: str,
+    repeats: int,
+    fail_on_intermittent: bool,
+    as_json: bool,
+    output: _UserOutput,
 ) -> None:
     _, rows = _read_rows(directory, CHECK_BAD_FILE)
-    function = _load_function(module_spec)
+    with output.window():
+        function = _load_function(module_spec)
     config = _load_config(config_path)
     gated_statuses = {STATUS_ARMED}
     if fail_on_intermittent:
@@ -813,7 +961,8 @@ def _check(
     run_complete = True
     if gated:
         try:
-            run = run_rows(function, config, gated, repeats=repeats)
+            with output.window():
+                run = run_rows(function, config, gated, repeats=repeats)
         except IdsNotAssignableError as exc:
             raise _Stop(CHECK_INCONCLUSIVE, "ids_not_assignable", str(exc)) from exc
         except ValueError as exc:
