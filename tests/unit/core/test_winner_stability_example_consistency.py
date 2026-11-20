@@ -117,8 +117,22 @@ def _isolated_logs(monkeypatch, tmp_path):
     monkeypatch.setenv("TRAIGENT_OPTIMIZATION_LOG_DIR", str(tmp_path / "logs"))
 
 
-async def _run(reps: int, script=None) -> Any:
-    evaluator = _ScriptedEvaluator(script or _SCRIPT)
+class _CrashingEvaluator(_ScriptedEvaluator):
+    """Raises on the given evaluation calls (0 is the search trial)."""
+
+    def __init__(self, script: dict[Any, list[float | None]], crash: set[int]):
+        super().__init__(script)
+        self.crash = crash
+
+    async def evaluate(self, *args: Any, **kwargs: Any) -> EvaluationResult:
+        if self.calls in self.crash:
+            self.calls += 1
+            raise RuntimeError("evaluator crashed")
+        return await super().evaluate(*args, **kwargs)
+
+
+async def _run(reps: int, script=None, evaluator=None) -> Any:
+    evaluator = evaluator or _ScriptedEvaluator(script or _SCRIPT)
     orchestrator = OptimizationOrchestrator(
         optimizer=_OneConfigOptimizer({"param1": [1]}, ["accuracy"]),
         evaluator=evaluator,
@@ -144,21 +158,24 @@ async def test_five_reruns_label_each_example_by_its_own_outcomes() -> None:
     examples = stored["examples"]
     assert examples["always_wrong"] == {
         "label": "consistent_fail",
+        "attempted": 5,
         "passes": 0,
         "fails": 5,
-        "unknowns": 0,
+        "errored": 0,
     }
     assert examples["sometimes_wrong"] == {
         "label": "flaky",
+        "attempted": 5,
         "passes": 2,
         "fails": 3,
-        "unknowns": 0,
+        "errored": 0,
     }
     assert examples["always_right"] == {
         "label": "consistent_pass",
+        "attempted": 5,
         "passes": 5,
         "fails": 0,
-        "unknowns": 0,
+        "errored": 0,
     }
     assert stored["reps"] == 5
     assert stored["config_hash"] == result.metadata["winner_stability"]["config_hash"]
@@ -187,14 +204,33 @@ async def test_integer_and_string_ids_are_not_merged_in_the_stability_path(
 
 
 @pytest.mark.asyncio
-async def test_errored_reruns_are_unknown_and_one_known_evaluation_gets_no_label() -> (
-    None
-):
+async def test_mostly_errored_example_gets_no_label_and_is_counted_as_errored() -> None:
     result = await _run(5)
 
-    # Four of five reruns errored: one known evaluation is not enough.
-    assert "mostly_errors" not in result.example_consistency_report["examples"]
-    assert "mostly_errors" not in result.example_consistency()["examples"]
+    # Four of five reruns errored: never a clean pass, and no label at all.
+    entry = result.example_consistency()["examples"]["mostly_errors"]
+    assert entry == {
+        "label": None,
+        "attempted": 5,
+        "passes": 1,
+        "fails": 0,
+        "errored": 4,
+    }
+    assert result.example_consistency()["counts"]["errored"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_rerun_is_one_errored_attempt_for_every_example() -> None:
+    """Reruns that crash are counted, not dropped, so ``reps`` is not undercounted."""
+    script = {"a": [1.0] * 6, "b": [0.0] * 6}
+    result = await _run(5, evaluator=_CrashingEvaluator(script, crash={2}))
+
+    report = result.example_consistency()
+    assert report["reps"] == 5
+    for row in report["examples"].values():
+        assert row["attempted"] == 5
+        assert row["errored"] == 1
+        assert row["passes"] + row["fails"] == 4
 
 
 @pytest.mark.asyncio
@@ -206,6 +242,7 @@ async def test_accessor_reports_counts_and_per_example_labels() -> None:
         "consistent_pass": 1,
         "consistent_fail": 1,
         "flaky": 1,
+        "errored": 1,
     }
     assert report["examples"]["sometimes_wrong"]["label"] == "flaky"
     assert report["reps"] == 5
@@ -245,6 +282,7 @@ async def test_single_rerun_records_no_labels() -> None:
         "consistent_pass": 0,
         "consistent_fail": 0,
         "flaky": 0,
+        "errored": 0,
     }
 
 
@@ -259,9 +297,10 @@ async def test_labels_survive_save_and_reload(tmp_path) -> None:
     assert reloaded.example_consistency() == result.example_consistency()
     assert reloaded.example_consistency()["examples"]["sometimes_wrong"] == {
         "label": "flaky",
+        "attempted": 5,
         "passes": 2,
         "fails": 3,
-        "unknowns": 0,
+        "errored": 0,
     }
 
 

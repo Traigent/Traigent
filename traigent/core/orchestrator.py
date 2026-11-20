@@ -1518,7 +1518,9 @@ class OptimizationOrchestrator:
         self._winner_stability_accounted_cost = 0.0
         self._winner_stability_unmeasured_reruns = 0
         self._winner_stability_recorded_ids: dict[Any, Any] = {}
-        self._winner_stability_example_outcomes: list[dict[str, str]] = []
+        # One entry per attempted rerun; ``None`` is an errored attempt (it
+        # crashed or returned no per-example results).
+        self._winner_stability_example_outcomes: list[dict[str, str] | None] = []
         self._winner_stability_example_collision = False
         # The backend session id for the active run. Read by the
         # certified-selection report guard to verify the incumbent's trial id
@@ -5600,8 +5602,8 @@ class OptimizationOrchestrator:
         """Run up to ``reps`` reruns and return the finite primary-objective scores.
 
         Each rerun's per-example pass/fail is also kept, in
-        ``self._winner_stability_example_outcomes`` (one map per rerun that
-        carried per-example results).
+        ``self._winner_stability_example_outcomes``: one entry per attempted
+        rerun, ``None`` when it crashed or returned no per-example results.
         """
         scores: list[float] = []
         self._winner_stability_example_outcomes = []
@@ -5620,10 +5622,14 @@ class OptimizationOrchestrator:
                 dataset=dataset,
                 session_id=session_id,
             )
-            if not proceed:
-                break
             rerun_trial = attempt.trial
+            if not proceed:
+                if attempt.dispatched:
+                    # The rerun started and then failed hard: one errored attempt.
+                    self._winner_stability_example_outcomes.append(None)
+                break
             if rerun_trial is None:
+                self._winner_stability_example_outcomes.append(None)
                 continue
             try:
                 rerun_outcomes = trial_example_outcomes(rerun_trial)
@@ -5632,8 +5638,7 @@ class OptimizationOrchestrator:
                 logger.warning("Per-example consistency not recorded: %s", exc)
                 self._winner_stability_example_collision = True
                 rerun_outcomes = None
-            if rerun_outcomes is not None:
-                self._winner_stability_example_outcomes.append(rerun_outcomes)
+            self._winner_stability_example_outcomes.append(rerun_outcomes)
             score = (
                 coerce_finite_objective_score(rerun_trial.get_metric(primary_objective))
                 if rerun_trial.is_successful

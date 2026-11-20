@@ -50,6 +50,7 @@ def test_repeats_label_every_example_for_each_config() -> None:
         "consistent_pass": 1,
         "consistent_fail": 1,
         "flaky": 1,
+        "errored": 0,
     }
     flaky = next(r for r in wobbly["examples"].values() if r["label"] == "flaky")
     assert flaky["passes"] + flaky["fails"] == 4 and flaky["passes"] == 2
@@ -71,6 +72,7 @@ def test_a_single_repeat_labels_nothing() -> None:
         "consistent_pass": 0,
         "consistent_fail": 0,
         "flaky": 0,
+        "errored": 0,
     }
 
 
@@ -109,3 +111,73 @@ def test_integer_and_string_ids_that_print_alike_are_not_merged() -> None:
 
     with pytest.raises(ValueError, match=r"1 \(int\).*'1' \(str\)"):
         comparison.example_consistency()
+
+
+def _run_result(scores: list[float] | None):
+    """A single-trial run result, or one whose repeat crashed (``None``)."""
+    from types import SimpleNamespace
+
+    from traigent.api.types import ExampleResult
+
+    if scores is None:
+        trials: list = []
+    else:
+        rows = [
+            ExampleResult(f"e{i}", {}, "y", "y", {"score": v}, 0.1, True).to_dict()
+            for i, v in enumerate(scores)
+        ]
+        trials = [
+            SimpleNamespace(
+                metadata={"example_results": rows},
+                metrics={"accuracy": 1.0},
+                score=1.0,
+                is_successful=True,
+            )
+        ]
+    stats = SimpleNamespace(
+        total_cost=0.0, cost_unmeasured_trials=0, cost_lower_bound=None
+    )
+    return SimpleNamespace(trials=trials, experiment_stats=stats)
+
+
+def test_a_crashed_repeat_is_an_errored_attempt_not_a_dropped_one() -> None:
+    from traigent.core.comparison import aggregate_config
+
+    runs = [
+        _run_result([1.0, 0.0]),
+        _run_result(None),  # crashed: no trial at all
+        _run_result([1.0, 0.0]),
+        _run_result([1.0, 0.0]),
+    ]
+    cmp = aggregate_config({"mode": "a"}, runs, "accuracy", ("e0", "e1"))
+
+    report = cmp.example_consistency()
+    assert report["reps"] == 4
+    assert {r["attempted"] for r in report["examples"].values()} == {4}
+    assert {r["errored"] for r in report["examples"].values()} == {1}
+    assert report["examples"]["e0"]["label"] == "consistent_pass"
+    assert report["examples"]["e1"]["label"] == "consistent_fail"
+
+
+def test_a_repeat_without_per_example_results_is_an_errored_attempt() -> None:
+    from traigent.core.comparison import aggregate_config
+
+    bare = _run_result([1.0, 0.0])
+    bare.trials[0].metadata = {}  # ran, but returned no per-example results
+    runs = [_run_result([1.0, 0.0]), bare, _run_result([1.0, 0.0])]
+    cmp = aggregate_config({"mode": "a"}, runs, "accuracy", ("e0", "e1"))
+
+    report = cmp.example_consistency()
+    assert report["reps"] == 3
+    assert {r["errored"] for r in report["examples"].values()} == {1}
+
+
+def test_mostly_crashed_repeats_give_no_label() -> None:
+    from traigent.core.comparison import aggregate_config
+
+    runs = [_run_result([1.0]), _run_result(None), _run_result(None)]
+    cmp = aggregate_config({"mode": "a"}, runs, "accuracy", ("e0",))
+
+    report = cmp.example_consistency()
+    assert report["examples"]["e0"]["label"] is None
+    assert report["counts"]["errored"] == 1

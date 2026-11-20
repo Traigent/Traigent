@@ -275,6 +275,9 @@ class ConfigComparison:
     failed_repeats: int
     example_ids: tuple[str, ...]
     trials: list[Any] = field(default_factory=list, repr=False)
+    #: One entry per repeat, in order: the repeat's trial, or ``None`` when the
+    #: repeat crashed and produced none.
+    repeat_trials: list[Any] = field(default_factory=list, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -297,8 +300,9 @@ class ConfigComparison:
         """Per-example consistency labels across this config's repeats.
 
         Same shape as ``OptimizationResult.example_consistency()``. Needs at
-        least two repeats that produced per-example results; otherwise
-        ``examples`` is empty. Computed from the in-memory trials only.
+        least two repeats; a repeat that crashed or returned no per-example
+        results counts as one errored attempt for every example. Computed from
+        the in-memory trials only.
         """
         from traigent.utils.example_consistency import (
             build_consistency_report,
@@ -307,10 +311,11 @@ class ConfigComparison:
         )
         from traigent.utils.hashing import generate_config_hash
 
+        # A repeat that crashed, or returned no per-example results, is one
+        # errored attempt for every example (``None``), never silently dropped.
         per_repeat = [
-            outcomes
-            for outcomes in (trial_example_outcomes(t) for t in self.trials)
-            if outcomes is not None
+            None if trial is None else trial_example_outcomes(trial)
+            for trial in self.repeat_trials
         ]
         return build_consistency_report(
             summarize_example_outcomes(per_repeat),
@@ -357,8 +362,10 @@ def aggregate_config(
     unmeasured = 0
     failed = 0
     trials: list[Any] = []
+    repeat_trials: list[Any] = []
     for result in run_results:
         trial = result.trials[0] if getattr(result, "trials", None) else None
+        repeat_trials.append(trial)
         if trial is None:
             failed += 1
             unmeasured += 1
@@ -395,6 +402,7 @@ def aggregate_config(
         failed_repeats=failed,
         example_ids=example_ids,
         trials=trials,
+        repeat_trials=repeat_trials,
     )
 
 

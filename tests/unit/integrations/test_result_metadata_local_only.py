@@ -34,7 +34,7 @@ async def _result_with_report():
         '"example_consistency"',
         '"example_consistency_report"',
         *report["examples"],
-        *{row["label"] for row in report["examples"].values()},
+        *{row["label"] for row in report["examples"].values() if row["label"]},
     ]
     return result, sentinels
 

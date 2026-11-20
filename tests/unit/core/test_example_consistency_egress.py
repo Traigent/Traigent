@@ -55,7 +55,9 @@ def _sentinels(result: OptimizationResult) -> tuple[list[str], list[str]]:
     """Strings that must not appear: (key + labels, example ids)."""
     report = result.example_consistency_report
     assert report and report["examples"]  # control: the run produced a report
-    labels = sorted({row["label"] for row in report["examples"].values()})
+    labels = sorted(
+        {row["label"] for row in report["examples"].values() if row["label"]}
+    )
     quoted = [f'"{name}"' for name in ("example_consistency", FIELD_NAME)]
     return [*quoted, *labels], list(report["examples"])
 
