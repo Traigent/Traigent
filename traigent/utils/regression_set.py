@@ -63,6 +63,7 @@ from typing import Any, Literal
 from traigent.evaluators.base import (
     Dataset,
     EvaluationExample,
+    _coerce_dataset_example_mapping,
     _example_correlation_key,
 )
 from traigent.utils.file_lock import (
@@ -710,8 +711,10 @@ def load_regression_dataset(
     The file is read, validated and digest-checked exactly once, and the
     dataset is built from those validated rows in memory, so a concurrent
     replacement of the file cannot make the returned rows disagree with the
-    labels that were selected. The same duplicate-id rule the file loader
-    applies is enforced by the :class:`Dataset` constructor.
+    labels that were selected. Each row goes through the same normalization as
+    ``Dataset.from_jsonl`` (top-level extra fields become metadata). The same
+    duplicate-id rule the file loader applies is enforced by the
+    :class:`Dataset` constructor.
 
     A valid file in which no row carries one of ``labels`` returns an **empty**
     dataset (for example a set that has no ``reliable`` rows yet): that is a
@@ -727,17 +730,28 @@ def load_regression_dataset(
     if isinstance(labels, str):
         raise TypeError("labels must be a sequence of label strings, not one string")
     path = regression_file(directory)
-    rows = read_regression_rows(path)
+    numbered = _read_numbered_rows(path)
+    stale = _stale_rows(numbered)
+    if stale:
+        raise StaleDigestError(path, stale)
     wanted = set(labels)
-    examples = [
-        EvaluationExample(
-            input_data=row["input"],
-            expected_output=row["output"],
-            metadata=dict(row["metadata"]),
+    source = str(path)
+    examples = []
+    for line_no, row in numbered:
+        if row["metadata"]["regression"]["label"] not in wanted:
+            continue
+        # The file loader's own normalization: top-level extra fields become
+        # metadata, expected-output aliases resolve by its precedence.
+        input_data, expected_output, metadata = _coerce_dataset_example_mapping(
+            row, source=source, location=f"line {line_no}"
         )
-        for row in rows
-        if row["metadata"]["regression"]["label"] in wanted
-    ]
+        examples.append(
+            EvaluationExample(
+                input_data=input_data,
+                expected_output=expected_output,
+                metadata=metadata,
+            )
+        )
     return Dataset(
         examples=examples,
         name="regression_set",

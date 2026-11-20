@@ -197,8 +197,8 @@ def test_load_reads_the_file_once_and_survives_a_replace_after_the_read(
     real_read = regression_set._read_numbered_rows
     reads: list[Path] = []
 
-    def read_then_replace(p: Path) -> Any:
-        result = real_read(p)
+    def read_then_replace(p: Path, **kw: Any) -> Any:
+        result = real_read(p, **kw)
         reads.append(p)
         path.write_bytes(replacement)  # the writer lands between the two reads
         return result
@@ -221,6 +221,58 @@ def test_load_rejects_duplicate_ids_like_the_file_loader(tmp_path: Path) -> None
     path.write_text(line + line, encoding="utf-8")
     with pytest.raises(RegressionSetError, match="repeats"):
         load_regression_dataset(tmp_path)
+
+
+def _raw_row(
+    example_id: Any,
+    label: str,
+    q: str,
+    extra: dict[str, Any] | None = None,
+    answer: str = "a",
+) -> dict[str, Any]:
+    """A digest-correct regression row, with optional top-level extra fields."""
+    return {
+        "input": {"q": q},
+        "output": answer,
+        "metadata": {
+            "example_id": example_id,
+            "content_digest": content_digest({"q": q}, answer),
+            "regression": {
+                "schema_version": 1,
+                "label": label,
+                "fails": None,
+                "reps": None,
+                "provenance": [],
+            },
+        },
+        **(extra or {}),
+    }
+
+
+def _write_rows(directory: Path, rows: list[dict[str, Any]]) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "regression.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    return path
+
+
+def test_top_level_extra_fields_load_like_the_file_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+    path = _write_rows(
+        tmp_path,
+        [
+            _raw_row("a", "seen_once", "q0", {"tenant_id": "t1", "note": [1]}),
+            _raw_row("b", "reliable", "q1"),
+            _raw_row("", "intermittent", "q2", {"tenant_id": "t2"}),
+            _raw_row("d", "seen_once", "q3", {"answer": "dropped alias"}),
+        ],
+    )
+    from_file = Dataset.from_jsonl(path)
+    in_memory = load_regression_dataset(tmp_path)
+    assert in_memory.examples == from_file.examples
+    assert in_memory.examples[0].metadata["tenant_id"] == "t1"
 
 
 # ------------------------------------------------------------- concurrency
