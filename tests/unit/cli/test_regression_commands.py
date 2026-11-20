@@ -332,3 +332,19 @@ def test_absent_ids_use_the_original_dataset_position(
     result = _add(ws, "run_ids")
     assert result.exit_code == 0, result.output
     _assert_reloads_with_failed_rows(ws, {"example_2": "a2", "example_3": "a3"})
+
+
+def test_add_refuses_row_edited_by_hand_and_file_is_identical(ws: Path) -> None:
+    assert _add(ws, "run_a").exit_code == 0
+    path = ws / "reg" / "regression.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[0])
+    row["output"] = "zzz-sentinel-edit"
+    lines[0] = json.dumps(row)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    before = path.read_bytes()
+    result = _add(ws, "run_b")
+    assert result.exit_code != 0
+    assert "line 1" in result.output and "example_1" in result.output
+    assert "zzz-sentinel-edit" not in result.output
+    assert path.read_bytes() == before

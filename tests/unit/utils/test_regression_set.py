@@ -15,6 +15,7 @@ from traigent.utils.file_lock import exclusive_lock
 from traigent.utils.regression_set import (
     IdConflictError,
     RegressionSetError,
+    StaleDigestError,
     content_digest,
     load_regression_dataset,
     merge_failures,
@@ -224,3 +225,66 @@ def test_absent_ids_fall_back_to_position_like_the_dataset_loader(
         "example_0",
         "example_1",
     ]
+
+
+# ------------------------------------------------------------ stale digest
+
+
+def _hand_edit_first_row(path: Path) -> None:
+    """Change a stored row's content but keep its content_digest."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[0])
+    row["output"] = "zzz-sentinel-edit"
+    lines[0] = json.dumps(row)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_add_refuses_row_edited_by_hand_and_writes_nothing(tmp_path: Path) -> None:
+    _merge(tmp_path, _ds(("q0", "a0"), ("q1", "a1")))
+    path = tmp_path / "regression.jsonl"
+    _hand_edit_first_row(path)
+    before = path.read_bytes()
+    with pytest.raises(StaleDigestError) as err:
+        _merge(tmp_path, _ds(("q0", "a0")), "r2")
+    message = str(err.value)
+    assert "'0'" in message and "line 1" in message
+    assert "zzz-sentinel-edit" not in message  # names the row, never the content
+    assert "--on-id-conflict replace" in message
+    assert path.read_bytes() == before
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_replace_accepts_edited_row_that_is_failing_now(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+    _merge(tmp_path, _ds(("q0", "a0"), ("q1", "a1")))
+    path = tmp_path / "regression.jsonl"
+    _hand_edit_first_row(path)
+    report = _merge(tmp_path, _ds(("q0", "a0")), "r2", on_id_conflict="replace")
+    assert report.rows_replaced == 1
+    first = json.loads(path.read_text().splitlines()[0])
+    assert first["output"] == "a0"
+    load_regression_dataset(tmp_path)  # digests consistent again
+
+
+def test_replace_does_not_waive_edited_rows_it_does_not_replace(
+    tmp_path: Path,
+) -> None:
+    _merge(tmp_path, _ds(("q0", "a0"), ("q1", "a1")))
+    path = tmp_path / "regression.jsonl"
+    _hand_edit_first_row(path)
+    before = path.read_bytes()
+    with pytest.raises(StaleDigestError):
+        _merge(tmp_path, _ds(("q1", "a1"), start=1), on_id_conflict="replace")
+    assert path.read_bytes() == before
+
+
+def test_load_refuses_row_edited_by_hand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+    _merge(tmp_path, _ds(("q0", "a0")))
+    _hand_edit_first_row(tmp_path / "regression.jsonl")
+    with pytest.raises(StaleDigestError, match=r"line 1"):
+        load_regression_dataset(tmp_path)

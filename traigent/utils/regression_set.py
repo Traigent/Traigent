@@ -85,6 +85,31 @@ class IdConflictError(RegressionSetError):
         )
 
 
+class StaleDigestError(RegressionSetError):
+    """A stored row's content no longer matches its stored ``content_digest``.
+
+    The row was edited by hand without updating the digest. Names the row id
+    and line number, never the content.
+
+    Attributes:
+        stale: ``(example_id, line_number)`` of every mismatching row.
+    """
+
+    def __init__(self, path: Path, stale: Sequence[tuple[str, int]]) -> None:
+        self.stale = list(stale)
+        named = ", ".join(f"{eid!r} (line {line})" for eid, line in self.stale)
+        super().__init__(
+            f"Regression file {path}: the content of {len(self.stale)} row(s) "
+            f"does not match the stored content_digest: {named}. The row was "
+            "edited by hand, so its provenance would describe different "
+            "content. Nothing was written. To accept the edited content for a "
+            "row whose example is failing now, re-run with --on-id-conflict "
+            "replace; otherwise undo the edit, or set the row's content_digest "
+            "to traigent.utils.regression_set.content_digest(row['input'], "
+            "row['output'])."
+        )
+
+
 @dataclass
 class MergeReport:
     """What a merge did."""
@@ -155,13 +180,8 @@ def _validate_row(path: Path, line_no: int, row: Any) -> dict[str, Any]:
     return row
 
 
-def read_regression_rows(path: Path) -> list[dict[str, Any]]:
-    """Parse and validate an existing regression file.
-
-    Raises:
-        RegressionSetError: When the file is missing, empty, or any line is not
-            a well-formed regression row (or ids repeat).
-    """
+def _read_numbered_rows(path: Path) -> list[tuple[int, dict[str, Any]]]:
+    """Parse and structurally validate the file; rows come with line numbers."""
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
@@ -173,7 +193,7 @@ def read_regression_rows(path: Path) -> list[dict[str, Any]]:
         raise RegressionSetError(
             f"Cannot read regression file {path}: {type(exc).__name__}"
         ) from exc
-    rows: list[dict[str, Any]] = []
+    rows: list[tuple[int, dict[str, Any]]] = []
     seen: set[str] = set()
     for line_no, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
@@ -187,12 +207,43 @@ def read_regression_rows(path: Path) -> list[dict[str, Any]]:
         if example_id in seen:
             raise _bad(path, line_no, "example_id repeats an earlier row")
         seen.add(example_id)
-        rows.append(row)
+        rows.append((line_no, row))
     if not rows:
         raise RegressionSetError(
             f"Regression file {path} holds no rows; it was not modified"
         )
     return rows
+
+
+def _stale_rows(rows: Sequence[tuple[int, dict[str, Any]]]) -> list[tuple[str, int]]:
+    """``(example_id, line)`` of rows whose content no longer matches the digest."""
+    stale: list[tuple[str, int]] = []
+    for line_no, row in rows:
+        try:
+            current = content_digest(row["input"], row["output"])
+        except (TypeError, ValueError):
+            current = None
+        if current != row["metadata"]["content_digest"]:
+            stale.append((row["metadata"]["example_id"], line_no))
+    return stale
+
+
+def read_regression_rows(path: Path) -> list[dict[str, Any]]:
+    """Parse and validate an existing regression file.
+
+    Every row's ``content_digest`` is recomputed from its ``input`` and
+    ``output``; a mismatch means the row was edited by hand.
+
+    Raises:
+        RegressionSetError: When the file is missing, empty, or any line is not
+            a well-formed regression row (or ids repeat).
+        StaleDigestError: A row's content does not match its stored digest.
+    """
+    numbered = _read_numbered_rows(path)
+    stale = _stale_rows(numbered)
+    if stale:
+        raise StaleDigestError(path, stale)
+    return [row for _, row in numbered]
 
 
 # --------------------------------------------------------------------- writing
@@ -351,6 +402,29 @@ def merge_failures(
         raise RegressionSetError(str(exc)) from exc
 
 
+def _admit_stale_rows(
+    path: Path,
+    numbered: Sequence[tuple[int, dict[str, Any]]],
+    rows: list[dict[str, Any]],
+    examples: Dataset,
+    on_id_conflict: str,
+) -> None:
+    """Refuse hand-edited rows, except those ``replace`` is about to overwrite."""
+    stale = _stale_rows(numbered)
+    if not stale:
+        return
+    if on_id_conflict == "replace":
+        incoming = {_incoming_id(ex, pos) for pos, ex in enumerate(examples.examples)}
+        if all(eid in incoming for eid, _ in stale):
+            stale_ids = {eid for eid, _ in stale}
+            for row in rows:
+                if row["metadata"]["example_id"] in stale_ids:
+                    # Forces the replace branch; the new row carries a fresh digest.
+                    row["metadata"]["content_digest"] = ""
+            return
+    raise StaleDigestError(path, stale)
+
+
 def _merge_locked(
     path: Path,
     examples: Dataset,
@@ -360,7 +434,9 @@ def _merge_locked(
     metric: str,
     on_id_conflict: str,
 ) -> MergeReport:
-    rows = read_regression_rows(path) if path.exists() else []
+    numbered = _read_numbered_rows(path) if path.exists() else []
+    rows = [row for _, row in numbered]
+    _admit_stale_rows(path, numbered, rows, examples, on_id_conflict)
     by_id = {row["metadata"]["example_id"]: i for i, row in enumerate(rows)}
     report = MergeReport(path=path)
     conflicts: list[str] = []
