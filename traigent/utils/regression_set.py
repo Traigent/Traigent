@@ -371,9 +371,36 @@ def _dump_line(row: dict[str, Any]) -> str:
     return text + "\n"
 
 
+def _check_digests(rows: Sequence[dict[str, Any]]) -> None:
+    """Refuse rows whose ``content_digest`` is empty or not their content's.
+
+    Runs before anything is written: a file holding such a row could not be
+    read back. Names ids and line numbers (positions in the file to be
+    written), never content.
+    """
+    bad = [
+        (row["metadata"]["example_id"], line_no)
+        for line_no, row in enumerate(rows, start=1)
+        if row["metadata"].get("content_digest")
+        != content_digest(row["input"], row["output"])
+    ]
+    if bad:
+        named = ", ".join(f"{eid!r} (line {line})" for eid, line in bad)
+        raise RegressionSetError(
+            f"Refusing to write: {len(bad)} row(s) would be stored with an empty "
+            f"or wrong content_digest: {named}. Nothing was written."
+        )
+
+
 def _atomic_write(path: Path, rows: Iterable[dict[str, Any]]) -> None:
-    """Write ``rows`` as JSONL via a temp sibling and an atomic rename."""
-    lines = [_dump_line(row) for row in rows]
+    """Write ``rows`` as JSONL via a temp sibling and an atomic rename.
+
+    Every row's ``content_digest`` must match its content (see
+    :func:`_check_digests`); otherwise nothing is written.
+    """
+    materialized = list(rows)
+    _check_digests(materialized)
+    lines = [_dump_line(row) for row in materialized]
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
     try:
@@ -476,9 +503,15 @@ def _plan_row(
         return
     stored = rows[index]["metadata"]
     variant = _variant_id(example_id, digest)
-    if stored["content_digest"] != digest and variant in by_id:
+    if (
+        stored["content_digest"] != digest
+        and variant in by_id
+        and example_id not in stale_originals
+    ):
         # An earlier keep-both stored this content under its variant id: the
         # evidence belongs to that row, not to a new conflict on the original id.
+        # Not for a stale original that replace admitted: that row must itself
+        # be replaced, not left with its placeholder digest.
         variant_index = by_id[variant]
         if rows[variant_index]["metadata"]["content_digest"] == digest:
             index, stored = variant_index, rows[variant_index]["metadata"]

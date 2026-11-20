@@ -420,7 +420,9 @@ def test_gitignore_is_appended_without_losing_existing_lines(tmp_path: Path) -> 
     (repo / ".gitignore").write_text("*.tmp\nkeep-me", encoding="utf-8")  # no newline
     report = _merge(repo, _ds(("q0", "a0")))
     assert report.gitignore_updated is True
-    assert (repo / ".gitignore").read_text() == "*.tmp\nkeep-me\n.regression.jsonl.lock\n"
+    assert (
+        repo / ".gitignore"
+    ).read_text() == "*.tmp\nkeep-me\n.regression.jsonl.lock\n"
 
 
 def test_gitignore_already_listing_the_lock_is_left_byte_identical(
@@ -739,6 +741,51 @@ def test_later_add_after_keep_both_attaches_to_the_stored_variant(
     ]
     # and the same run again is the same evidence
     assert _merge(tmp_path, drifted, "r3").provenance_added == 0
+
+
+def test_replace_of_a_stale_row_is_not_diverted_to_the_keep_both_variant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+    _merge(tmp_path, _ds(("q0", "a0")), "r1")
+    drifted = _ds(("q0", "DRIFTED"))
+    (alias,) = _merge(tmp_path, drifted, "r2", on_id_conflict="keep-both").added_ids
+    _hand_edit_first_row(tmp_path / "regression.jsonl")  # original A, stale digest
+    report = _merge(tmp_path, drifted, "r3", on_id_conflict="replace")
+    assert report.rows_replaced == 1
+    # the file reads back: no row keeps an empty digest
+    rows = {
+        r["metadata"]["example_id"]: r
+        for r in (
+            json.loads(line)
+            for line in (tmp_path / "regression.jsonl").read_text().splitlines()
+        )
+    }
+    assert sorted(rows) == sorted(["0", alias])
+    assert rows["0"]["output"] == "DRIFTED"
+    assert rows["0"]["metadata"]["content_digest"] == content_digest(
+        {"q": "q0"}, "DRIFTED"
+    )
+    load_regression_dataset(tmp_path)  # would raise StaleDigestError before
+
+
+@pytest.mark.parametrize("digest", ["", "sha256:" + "0" * 64])
+def test_the_writer_refuses_a_row_with_an_empty_or_wrong_digest(
+    tmp_path: Path, digest: str
+) -> None:
+    from traigent.utils.regression_set import _atomic_write, _new_row
+
+    good = _new_row(
+        _ds(("q0", "a0")).examples[0], "0", content_digest({"q": "q0"}, "a0"), {}
+    )
+    bad = _new_row(_ds(("q1", "SECRET-a1")).examples[0], "1", digest, {})
+    path = tmp_path / "regression.jsonl"
+    with pytest.raises(RegressionSetError) as err:
+        _atomic_write(path, [good, bad])
+    assert "'1' (line 2)" in str(err.value)
+    assert "'0'" not in str(err.value) and "SECRET" not in str(err.value)
+    assert not path.exists()
+    assert not list(tmp_path.glob(".*.tmp"))
 
 
 def test_a_third_content_still_conflicts_after_keep_both(tmp_path: Path) -> None:
