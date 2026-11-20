@@ -43,10 +43,16 @@ from pathlib import Path
 from typing import Any, Literal
 
 from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.utils.file_lock import (
+    FileLockTimeoutError,
+    FileLockUnsupportedError,
+    exclusive_lock,
+)
 
 REGRESSION_FILENAME = "regression.jsonl"
 DEFAULT_REGRESSION_DIR = "tests/regression"
 LABEL_SEEN_ONCE = "seen_once"
+DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
 
 OnIdConflict = Literal["refuse", "replace", "keep-both"]
 ON_ID_CONFLICT_CHOICES: tuple[str, ...] = ("refuse", "replace", "keep-both")
@@ -300,6 +306,7 @@ def merge_failures(
     config: Any,
     metric: str,
     on_id_conflict: OnIdConflict = "refuse",
+    lock_timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
 ) -> MergeReport:
     """Merge failing examples into ``<directory>/regression.jsonl``.
 
@@ -308,9 +315,12 @@ def merge_failures(
     added twice); an id whose content digest differs is handled per
     ``on_id_conflict``. Nothing is written unless the whole merge succeeds.
 
+    The whole read-merge-replace runs under a cross-process lock on the hidden
+    sibling ``.regression.jsonl.lock``, waiting at most ``lock_timeout`` seconds.
+
     Raises:
-        RegressionSetError: The existing file is unparseable, or the policy is
-            unknown.
+        RegressionSetError: The existing file is unparseable, the policy is
+            unknown, or the lock could not be taken in time (nothing written).
         IdConflictError: Ids clash and ``on_id_conflict`` is ``refuse``.
     """
     if on_id_conflict not in ON_ID_CONFLICT_CHOICES:
@@ -318,6 +328,26 @@ def merge_failures(
             f"on_id_conflict must be one of {list(ON_ID_CONFLICT_CHOICES)}"
         )
     path = regression_file(directory)
+    # The lock covers the whole read-merge-replace, and the file is read only
+    # after the lock is held, so concurrent adds cannot lose each other's rows.
+    try:
+        with exclusive_lock(path, timeout=lock_timeout):
+            return _merge_locked(
+                path, examples, run, date, config, metric, on_id_conflict
+            )
+    except (FileLockTimeoutError, FileLockUnsupportedError) as exc:
+        raise RegressionSetError(str(exc)) from exc
+
+
+def _merge_locked(
+    path: Path,
+    examples: Dataset,
+    run: str,
+    date: str,
+    config: Any,
+    metric: str,
+    on_id_conflict: str,
+) -> MergeReport:
     rows = read_regression_rows(path) if path.exists() else []
     by_id = {row["metadata"]["example_id"]: i for i, row in enumerate(rows)}
     report = MergeReport(path=path)
