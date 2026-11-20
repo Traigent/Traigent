@@ -452,6 +452,7 @@ def approve_command(
     "accept",
     help="Not supported in this release: releasing a candidate is planned, not built.",
     context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+    add_help_option=False,  # --help is inert text too: the refusal comes first
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def accept_command(args: tuple[str, ...]) -> None:

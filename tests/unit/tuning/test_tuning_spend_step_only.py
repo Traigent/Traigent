@@ -9,6 +9,7 @@ schedule), and hands the final check only to the adapter the SDK built.
 from __future__ import annotations
 
 import json
+import threading
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -115,6 +116,9 @@ def test_the_cli_accept_command_refuses_first_whatever_its_options_name(
         ["--authority", "/missing/authority.yml"],
         ["--tvl", "/missing/p.tvl.yml", "--store", str(store), "--generation", "x"],
         ["D1", "--generation", "not-a-number", "--reject", "--unknown-flag"],
+        ["--help"],
+        ["D1", "--approver", "--help"],
+        ["-h"],
     ):
         refusal = CliRunner().invoke(cli, ["tune", "event", "/x"])
         result = CliRunner().invoke(cli, ["tune", "accept", *args])
@@ -548,3 +552,37 @@ def test_a_grant_that_survived_a_crash_before_its_scope_closed_is_cancelled_on_t
         for ln in c._lines()
         if ln["category"] == "optimizations" and ln["record"].get("fact") == "finished"
     ] == ["cancelled"]
+
+
+def test_registering_adapters_concurrently_never_breaks_the_adapter_check(
+    tmp_path: Path,
+) -> None:
+    adapter = traigent_optimize_fn(_FakeSdkFunction([]))
+    keep: list[object] = []
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def register() -> None:
+        while not stop.is_set():
+            keep.append(traigent_optimize_fn(_FakeSdkFunction([])))
+
+    thread = threading.Thread(target=register)
+    thread.start()
+    try:
+        for _ in range(3000):
+            try:
+                assert controller_module._is_sdk_adapter(adapter)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+                break
+    finally:
+        stop.set()
+        thread.join()
+    assert not errors
+
+    third = _ThirdParty()
+    c = controller(tmp_path, third)
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    c.step(at(10))
+    assert third.calls == 1
+    c.step(at(11))  # the attempt is finished, not stranded as in progress

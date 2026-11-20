@@ -57,6 +57,7 @@ import re
 import tempfile
 import threading
 import time
+import types
 import weakref
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -1225,16 +1226,17 @@ class Controller:
         # The one journal scan the final gate would otherwise need: repair the tail
         # now, under the lock and before authentication; the gate only appends.
         append_start = _prepare_append(self._p("history.jsonl"))
+        # Only the adapter this SDK built may be handed the final check.  Decided
+        # before the marker: nothing after the marker may fail before the optimizer runs.
+        optimize_fn = self.optimize_fn
+        sdk_adapter = _is_sdk_adapter(optimize_fn)
+        accepts_dir = bool(getattr(optimize_fn, "accepts_candidate_dir", False))
         # Journal first (the marker), then the start fact at the effect instant:
         # a crash between the two leaves a marker that abandon_interrupted finds.
         _write_json(
             marker_path,
             {"attempt": attempt, "occurrence": ref, "state": "started"},
         )
-        optimize_fn = self.optimize_fn
-        # Only the adapter this SDK built may be handed the final check.
-        sdk_adapter = _is_sdk_adapter(optimize_fn)
-        accepts_dir = bool(getattr(optimize_fn, "accepts_candidate_dir", False))
 
         def lapse_at(instant: int, deadline: int | None = deadline) -> str | None:
             if deadline is not None and instant >= deadline:
@@ -1898,7 +1900,9 @@ _SDK_ADAPTERS: weakref.WeakSet[Callable[..., Any]] = weakref.WeakSet()
 
 def _is_sdk_adapter(candidate: Any) -> bool:
     try:
-        return any(candidate is adapter for adapter in list(_SDK_ADAPTERS))
+        # Every adapter is a plain function, which compares and hashes by identity, so
+        # membership is identity and never iterates the set a registration may grow.
+        return type(candidate) is types.FunctionType and candidate in _SDK_ADAPTERS
     except TypeError:  # unhashable: certainly not ours
         return False
 

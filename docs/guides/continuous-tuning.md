@@ -132,8 +132,8 @@ unknown cost), the **code version** the candidate and incumbent were measured on
 **observed generation** of the serving head. The code version is the
 `TRAIGENT_AGENT_CODE_VERSION` environment variable if set, else `Tuning(code_version=...)`, else
 `src:` plus a sha256 of the decorated function's module source; if none can be determined, no
-candidate gets promotion evidence (`E_NO_CODE_VERSION`), there is no default. A head carries the code version it was released for, and followed-head traces carry it
-as `head_code_version`; the local head file is read without signature verification.
+candidate gets promotion evidence (`E_NO_CODE_VERSION`), there is no default. Followed-head traces include `head_code_version` only when the head file supplies a nonempty
+value; the local generation-0 head has none. The local head file is read without signature verification.
 
 ```bash
 traigent tune status --text   --store .traigent/tuning/production/ticket-router --target agent.py:classify
