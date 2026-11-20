@@ -189,7 +189,7 @@ def test_a_second_paid_run_is_not_started_after_the_grant_expired_during_the_fir
     c.record_standing_grant(
         "G1", "tuning/on_new_model", 5, at(40) + timedelta(hours=2), "issuer-1", at(40)
     )
-    c.step()  # no explicit time: the controller reads the clock itself
+    c.step(ingestion_closed=True)  # no explicit time: the controller reads the clock
     assert len(ran) == 1
 
 

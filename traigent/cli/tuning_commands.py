@@ -180,7 +180,7 @@ def _controller_options(func: Any) -> Any:
                 "store",
                 type=click.Path(file_okay=False, path_type=Path),
                 default=None,
-                help="Store directory (default .traigent/tuning/<agent>/).",
+                help="Store directory (default .traigent/tuning/<environment>/<agent>/).",
             ),
             click.option(
                 "--tvl",
@@ -307,6 +307,7 @@ def _build_controller(
             store,
             optimize_fn,
             initial_config=initial_config or None,
+            environment=getattr(state, "environment", None) or "production",
             authority=authority,
             event_verifier=verifier,
         )
@@ -387,9 +388,18 @@ _record_command("window")
 @click.option(
     "--abandon-interrupted", is_flag=True, help="Cancel an interrupted attempt."
 )
+@click.option(
+    "--close-ingestion",
+    is_flag=True,
+    help=(
+        "Assert that no more events of the current second will arrive, so work may "
+        "start in it (by default nothing is spent in the second an event was recorded)."
+    ),
+)
 @_controller_options
 def step_command(
     abandon_interrupted: bool,
+    close_ingestion: bool,
     store: Path | None,
     tvl_path: Path | None,
     target: str | None,
@@ -400,13 +410,18 @@ def step_command(
     """Derive facts over the full history and act on them (optimize)."""
     controller = _build_controller(store, tvl_path, target, agent, authority_path)
     report = _guard(
-        lambda: controller.step(_now(now_text), abandon_interrupted=abandon_interrupted)
+        lambda: controller.step(
+            _now(now_text),
+            abandon_interrupted=abandon_interrupted,
+            ingestion_closed=True if close_ingestion else None,
+        )
     )
     _emit(
         {
             "approved": report.approved,
             "started": report.started,
             "finished": report.finished,
+            "deferred": report.deferred,
             "awaiting_approval": report.awaiting_approval,
             "head_written": report.head_written,
         }

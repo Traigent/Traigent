@@ -234,6 +234,11 @@ def _dataset_rows(dataset: Any) -> list[dict[str, Any]]:
     ]
 
 
+def dataset_digests(dataset: Any) -> set[str]:
+    """Content digest of a loaded ``Dataset`` (the same digest a holdout is checked by)."""
+    return {examples_digest(_dataset_rows(dataset))}
+
+
 def eval_set_identity(
     dataset: Any, loader: Callable[[Any], Any] | None = None
 ) -> tuple[set[str], list[dict[str, Any]] | None]:
@@ -442,6 +447,7 @@ __all__ = [
     "EvidenceUnavailable",
     "PromotionEvidence",
     "build_promotion_evidence",
+    "dataset_digests",
     "eval_set_identity",
     "examples_digest",
     "holdout_digest",

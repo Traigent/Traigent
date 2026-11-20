@@ -44,6 +44,9 @@ class TuningState:
     optimized: Any = None
     # The function under decoration; its module source gives the default code version.
     source: Any = None
+    # The deployment environment the decorated function runs in (``observe(environment=)``);
+    # the store and the CLI follow it, never the production default.
+    environment: str | None = None
 
     @property
     def errors(self) -> list[Diagnostic]:
@@ -121,7 +124,12 @@ def _snapshot_id_for(tune: Tuning) -> str:
 
 
 def attach_tuning(
-    target: Any, agent: str | None, tune: Tuning, *, source: Any = None
+    target: Any,
+    agent: str | None,
+    tune: Tuning,
+    *,
+    source: Any = None,
+    environment: str | None = None,
 ) -> TuningState:
     """Compile and validate ``tune`` (local, no network); return the state.
 
@@ -147,6 +155,7 @@ def attach_tuning(
         diagnostics=diagnostics,
         optimized=find_optimized(source if source is not None else target),
         source=source if source is not None else target,
+        environment=environment,
     )
     return state
 

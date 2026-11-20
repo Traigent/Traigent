@@ -111,10 +111,10 @@ def default_store_dir(agent: str, environment: str | None = None) -> Path:
     The environment is part of the path so a staging store and a production store
     of the same agent are never the same directory.
     """
-    if not _REF.match(agent):
+    if not _REF.match(agent) or agent in {".", ".."}:
         raise TuningError(E_INVALID_RECORD, "agent must be an opaque reference")
     env = environment or DEFAULT_ENVIRONMENT
-    if not _REF.match(env):
+    if not _REF.match(env) or env in {".", ".."}:
         raise TuningError(E_INVALID_RECORD, "environment must be an opaque reference")
     return DEFAULT_STORE_ROOT / env / agent
 
@@ -202,6 +202,8 @@ def parse_occurrence_ref(ref: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------------
 def _fsync_dir(directory: Path) -> None:
     """Make a create or rename in ``directory`` durable (its entry, not just the data)."""
+    if os.name == "nt":  # a directory cannot be opened for fsync on Windows
+        return
     fd = os.open(directory, os.O_RDONLY)
     try:
         os.fsync(fd)
@@ -209,9 +211,21 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
+def _mkdir_durable(directory: Path) -> None:
+    """Create ``directory`` (and parents); fsync the parent of each directory created."""
+    missing: list[Path] = []
+    current = directory
+    while not current.exists() and current != current.parent:
+        missing.append(current)
+        current = current.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    for created in reversed(missing):
+        _fsync_dir(created.parent)
+
+
 def _write_json(path: Path, value: Any) -> None:
     """Write JSON atomically: temp file in the same directory, fsync, rename."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_durable(path.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -323,7 +337,7 @@ def _repair_tail(path: Path) -> None:
 
 
 def _append_line(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_durable(path.parent)
     _repair_tail(path)
     created = not path.exists()
     with open(path, "a", encoding="utf-8") as fh:
@@ -360,6 +374,7 @@ class StepReport:
     finished: list[str] = field(default_factory=list)
     awaiting_approval: list[str] = field(default_factory=list)  # occurrence refs
     refused: list[str] = field(default_factory=list)  # "<attempt>:<closed reason>"
+    deferred: list[str] = field(default_factory=list)  # held: events still arriving
     head_written: int | None = None  # generation completed by crash recovery
 
     @property
@@ -458,7 +473,7 @@ class Controller:
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
-        self.dir.mkdir(parents=True, exist_ok=True)
+        _mkdir_durable(self.dir)
         with open(self._p(".lock"), "a+") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
             try:
@@ -803,19 +818,28 @@ class Controller:
         return copy.deepcopy(grant)
 
     def _grant_usable(
-        self, grant: Mapping[str, Any], rule_ref: str, moment: datetime
+        self,
+        grant: Mapping[str, Any],
+        rule_ref: str,
+        moment: datetime,
+        *,
+        authenticate: bool = True,
     ) -> bool:
         """A grant for this rule, agent and contract, optimize-only, unexpired, issued
-        by someone still on the authority list."""
+        by someone still on the authority list (``authenticate=False``: the issuer was
+        just authenticated, so only the cheap checks are repeated at the effect)."""
         return (
             grant["rule_ref"] == rule_ref
             and grant["agent_ref"] == self.meta["agent"]
             and grant["contract_digest"] == self.meta["contract_digest"]
             and grant.get("covers") == "optimize"
             and moment < _parse_instant(grant["expires_at"])
-            and self._on_list_now(
-                grant.get("issuer"),
-                _grant_context(grant.get("grant_id"), grant.get("rule_ref")),
+            and (
+                not authenticate
+                or self._on_list_now(
+                    grant.get("issuer"),
+                    _grant_context(grant.get("grant_id"), grant.get("rule_ref")),
+                )
             )
         )
 
@@ -848,13 +872,24 @@ class Controller:
 
     # -- the step -------------------------------------------------------------------
     def step(
-        self, now: datetime | None = None, *, abandon_interrupted: bool = False
+        self,
+        now: datetime | None = None,
+        *,
+        abandon_interrupted: bool = False,
+        ingestion_closed: bool | None = None,
     ) -> StepReport:
         """Re-derive over the whole history and act only on derived facts.
 
         Idempotent: with an unchanged history nothing is optimized or written twice.
         An attempt interrupted mid-optimization (marker without a result) is refused
         until ``abandon_interrupted`` records it as cancelled.
+
+        Ingestion: on the live clock (``now`` omitted) nothing is spent in the
+        whole second the latest external event was ingested in, because more
+        events of that second may still arrive and the relation orders a complete
+        second; the work is deferred (``report.deferred``) to the next second.  An
+        explicit ``now`` (a replay, a test, ``--now``) is the caller's statement
+        that the second is closed; ``ingestion_closed`` overrides either way.
         """
         self.state.require_validated()
         report = StepReport()
@@ -865,17 +900,26 @@ class Controller:
             clock: Callable[[], datetime] = (
                 (lambda: moment) if now is not None else (lambda: _utc(None))
             )
+            closed = (now is not None) if ingestion_closed is None else ingestion_closed
+            hold = None if closed else self._latest_event_instant()
             report.head_written = self._recover_commits()
             if self._has_schedule():
                 self._tick(self._instant(moment))
             for _ in range(64):
                 trace = self._derive()
-                if not self._advance(trace, clock, report, abandon_interrupted):
+                if not self._advance(trace, clock, report, abandon_interrupted, hold):
                     break
             trace = self._derive()
             report.facts = trace["facts"]
             self._check_head_consistent(trace)
         return report
+
+    def _latest_event_instant(self) -> int:
+        """The latest whole-second instant external events were ingested at (-1: none)."""
+        return max(
+            (ln["instant"] for ln in self._lines() if ln["category"] == "events"),
+            default=-1,
+        )
 
     def _tick(self, instant: int) -> None:
         """Advance the relation's clock, only when time passing derives something.
@@ -928,10 +972,34 @@ class Controller:
         finished = {f["attempt"] for f in facts if f["fact"] == "optimization_finished"}
         out = []
         for fact in facts:
-            if fact["fact"] != "attempt_opened" or fact["attempt"] in closed:
+            if fact["fact"] != "attempt_opened":
                 continue
-            out.append({**fact, "finished": fact["attempt"] in finished})
+            # A closed attempt is kept (flagged): its optimization may still be
+            # running or hold a saved finish marker that must be recorded.
+            out.append(
+                {
+                    **fact,
+                    "finished": fact["attempt"] in finished,
+                    "closed": fact["attempt"] in closed,
+                }
+            )
         return out
+
+    def _start_recorded(self, attempt: str) -> bool:
+        return any(
+            ln["category"] == "optimizations"
+            and ln["record"].get("attempt") == attempt
+            and ln["record"].get("fact") == "started"
+            for ln in self._lines()
+        )
+
+    def _finish_recorded(self, attempt: str) -> bool:
+        return any(
+            ln["category"] == "optimizations"
+            and ln["record"].get("attempt") == attempt
+            and ln["record"].get("fact") == "finished"
+            for ln in self._lines()
+        )
 
     def _approval_recorded(self, attempt: str) -> bool:
         return any(
@@ -958,7 +1026,12 @@ class Controller:
         )
 
     def _authorization_lapse(
-        self, occ: Mapping[str, Any], ref: str, moment: datetime
+        self,
+        occ: Mapping[str, Any],
+        ref: str,
+        moment: datetime,
+        *,
+        authenticate: bool = True,
     ) -> str | None:
         """Why the occurrence is no longer authorized at ``moment``; None when it is.
 
@@ -971,7 +1044,9 @@ class Controller:
             grants = _read_json(self._p("grants.json"), {})
             for grant in grants.values():
                 if (
-                    self._grant_usable(grant, rule_ref, moment)
+                    self._grant_usable(
+                        grant, rule_ref, moment, authenticate=authenticate
+                    )
                     and ref in grant["used"]
                     and len(grant["used"]) <= int(grant["max_occurrences"])
                 ):
@@ -980,7 +1055,9 @@ class Controller:
         approval = _read_json(self._p("approvals.json"), {}).get(ref)
         if approval is None:
             return "approval_missing"
-        if not self._on_list_now(approval.get("approver"), _approve_context(ref)):
+        if authenticate and not self._on_list_now(
+            approval.get("approver"), _approve_context(ref)
+        ):
             return "approver_not_authorized"
         return None
 
@@ -1010,6 +1087,7 @@ class Controller:
         clock: Callable[[], datetime],
         report: StepReport,
         abandon_interrupted: bool,
+        hold_through: int | None = None,
     ) -> bool:
         """Do at most one thing the derived facts call for; True when history grew."""
         facts = trace["facts"]
@@ -1023,6 +1101,8 @@ class Controller:
             instant = self._instant(moment)  # whole seconds
             marker_path = self._marker_path(attempt, ref)
             marker = _read_json(marker_path)
+            if opened["closed"] and marker is None:
+                continue  # closed and never started: nothing to finish, nothing blocks
             # Immediately before any authorization is used or the optimizer is
             # invoked: the relation, over the history up to now, must still show
             # this occurrence's scope as requiring intervention.
@@ -1049,6 +1129,8 @@ class Controller:
                 report.approved.append(attempt)
                 return True
             if marker is not None and "finished_record" in marker:
+                if self._finish_recorded(attempt):
+                    continue  # delivered once already (a closed attempt may ignore it)
                 self._append("optimizations", marker["finished_record"], instant)
                 report.finished.append(attempt)
                 return True
@@ -1072,11 +1154,37 @@ class Controller:
                 raise TuningError(E_NO_OPTIMIZER, f"{attempt} needs an optimize_fn")
             space = self._search_space(domains.get(attempt))
             admitted = self._admitted_values(domains.get(attempt))
+            # Authentication and history replay are done: read the clock NOW and
+            # check scope and authorization expiry immediately before the spend.
+            effect = clock()
+            if hold_through is not None and self._instant(effect) <= hold_through:
+                if attempt not in report.deferred:
+                    report.deferred.append(attempt)
+                continue
+            if not self._scope_requires_intervention(occ, self._instant(effect)):
+                lapse = "scope_expired"
+            else:
+                lapse = self._authorization_lapse(occ, ref, effect, authenticate=False)
+            if lapse is not None:
+                self._record_controller_fact(
+                    {"fact": "optimize_refused", "attempt": attempt, "reason": lapse}
+                )
+                report.refused.append(f"{attempt}:{lapse}")
+                continue
+            if not self._start_recorded(attempt):
+                # the relation tracks actual starts apart from approval (a standing
+                # approval counts as started only from this fact)
+                self._append(
+                    "optimizations",
+                    {"attempt": attempt, "fact": "started"},
+                    self._instant(clock()),
+                )
             _write_json(
                 marker_path,
                 {"attempt": attempt, "occurrence": ref, "state": "started"},
             )
             report.started.append(attempt)
+            self._loaded_digests = None
             try:
                 if getattr(self.optimize_fn, "accepts_candidate_dir", False):
                     isolated = cast(Callable[..., Any], self.optimize_fn)
@@ -1087,6 +1195,9 @@ class Controller:
                     )
                 else:
                     result = self.optimize_fn(copy.deepcopy(space))
+                self._loaded_digests = getattr(
+                    self.optimize_fn, "loaded_dataset_digests", None
+                )
                 completion, candidates, configs, gates = self._map_result(
                     attempt, result
                 )
@@ -1177,10 +1288,16 @@ class Controller:
         unpriced = _unpriced_models_of(config)
         try:
             source = getattr(optimized, "_dataset_from_source", None)
+            loaded = getattr(self, "_loaded_digests", None)
+            if getattr(self.optimize_fn, "accepts_candidate_dir", False) and not loaded:
+                # the real adapter always loads a dataset; none seen means the
+                # identity of what the run used is unknown
+                raise EvidenceUnavailable("eval_set_identity_unknown")
             eval_digests, _rows = eval_set_identity(
                 getattr(optimized, "eval_dataset", None),
                 source if callable(source) else None,
             )
+            eval_digests = set(eval_digests) | set(loaded or ())
             return build_promotion_evidence(
                 self.module,
                 fn=optimized,
@@ -1574,7 +1691,13 @@ class Controller:
                     generation=verdict.get("generation"),
                 )
             return self._commit_acceptance(
-                doc, line_record, meta, instant, str(ident), decide
+                doc,
+                line_record,
+                meta,
+                instant,
+                str(ident),
+                decide,
+                lambda: self._instant(clock()),
             )
 
     def _recorded_outcome(self, position: int, ident: str) -> AcceptanceOutcome:
@@ -1608,6 +1731,7 @@ class Controller:
         instant: int,
         current: Mapping[str, Any],
         serving: str | None = None,
+        approver_ok: bool | None = None,
     ) -> str | None:
         """Why the physical head must not take this write at ``instant``; None if it may.
 
@@ -1624,7 +1748,9 @@ class Controller:
             return "acceptance_not_usable"
         if not (decided <= at < expires):
             return "acceptance_not_usable"
-        if not self._on_list_now(doc.get("approver_ref"), doc):
+        if approver_ok is None:
+            approver_ok = self._on_list_now(doc.get("approver_ref"), doc)
+        if not approver_ok:
             return "approver_not_authorized"
         if int(current["generation"]) != doc["expected_head_generation"]:
             return "stale_generation"
@@ -1671,6 +1797,7 @@ class Controller:
         instant: int,
         ident: str,
         decide: Callable[[], tuple[dict[str, Any], int, dict[str, Any]]] | None = None,
+        fresh_instant: Callable[[], int] | None = None,
     ) -> AcceptanceOutcome:
         """Move the head and consume the acceptance as ONE commit (store lock held).
 
@@ -1682,23 +1809,36 @@ class Controller:
         current = read_head(self.dir)
         if current is None:
             raise TuningError(E_STORE_CORRUPT, "head.json is missing")
-        if decide is not None:
-            # At the commit, under the lock: expiry, scope (the relation's verdict)
-            # and the serving code version are re-decided at a fresh time.
-            fresh_record, fresh_instant, fresh_verdict = decide()
+        # Order at the commit: authenticate (a platform call) FIRST, then replay the
+        # history, and only then read the clock, the scope verdict and the serving
+        # code version, so nothing sampled earlier can be stale at the head write.
+        approver_ok = self._on_list_now(doc.get("approver_ref"), doc)
+        if decide is not None and fresh_instant is not None:
+            for _ in range(3):
+                fresh_record, fresh_instant_used, fresh_verdict = decide()
+                if fresh_instant() == fresh_instant_used:
+                    break
+            else:
+                self._record_controller_fact(
+                    {
+                        "fact": "head_write_refused",
+                        "acceptance": ident,
+                        "generation": int(current["generation"]) + 1,
+                        "reason": "acceptance_not_usable",
+                    }
+                )
+                return AcceptanceOutcome(ident, "refused", "acceptance_not_usable")
             if fresh_verdict["result"] != "written":
-                self._append("acceptances", fresh_record, fresh_instant, meta)
+                self._append("acceptances", fresh_record, fresh_instant_used, meta)
                 return AcceptanceOutcome(
                     acceptance_id=ident,
                     result=str(fresh_verdict["result"]),
                     reason=fresh_verdict.get("reason"),
                     generation=fresh_verdict.get("generation"),
                 )
-            line_record, instant = fresh_record, fresh_instant
+            line_record, instant = fresh_record, fresh_instant_used
         generation = int(current["generation"]) + 1
-        refusal = self._physical_refusal(
-            doc, instant, current, str(line_record["serving_code_version"])
-        )
+        refusal = self._physical_refusal(doc, instant, current, approver_ok=approver_ok)
         if refusal is not None:
             self._record_controller_fact(
                 {
@@ -2094,7 +2234,7 @@ _ARTIFACT_ENV_LOCK = threading.Lock()
 @contextlib.contextmanager
 def _isolated_artifacts(root: Path) -> Iterator[None]:
     """Route every SDK artifact written inside the block under ``root``."""
-    root.mkdir(parents=True, exist_ok=True)
+    _mkdir_durable(root)
     with _ARTIFACT_ENV_LOCK:
         saved = {name: os.environ.get(name) for name in _ARTIFACT_ROOT_ENV}
         for name in _ARTIFACT_ROOT_ENV:
@@ -2131,6 +2271,21 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
             else Path(tempfile.mkdtemp(prefix="traigent-candidate-"))
         )
         clone = _candidate_copy(fn)
+        # Record the identity of every dataset the run ACTUALLY loads (a per-call
+        # dataset or a generated override included), for the holdout-disjointness
+        # check at promotion.
+        from traigent.tuning.evidence import dataset_digests
+
+        loaded: set[str] = set()
+        run.loaded_dataset_digests = loaded  # type: ignore[attr-defined]
+        original_load = clone._load_dataset
+
+        def recording_load(*args: Any, **kwargs: Any) -> Any:
+            dataset = original_load(*args, **kwargs)
+            loaded.update(dataset_digests(dataset))
+            return dataset
+
+        clone._load_dataset = recording_load
         # a model the event admitted may be newer than the price table: it may run
         # with its cost unknown; every other unpriced model still fails the preflight
         clone._unpriced_models_allowed = frozenset(admitted_models)

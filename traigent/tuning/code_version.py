@@ -78,6 +78,18 @@ def source_digest(source: Any) -> str | None:
     current = _inner_callable(source)
     if current is None:
         return None
+    # The resolved callable ITSELF must have readable source: a function generated
+    # at run time (exec, a lambda from a string) merely claims a readable module,
+    # and two different ones would otherwise share that module's digest.
+    probe = current
+    if not (
+        inspect.isfunction(probe) or inspect.ismethod(probe) or inspect.isclass(probe)
+    ):
+        probe = type(current)  # a callable object: its class is what holds the code
+    try:
+        inspect.getsource(probe)
+    except (OSError, TypeError):
+        return None
     module = sys.modules.get(getattr(current, "__module__", None) or "")
     if module is None:
         module = inspect.getmodule(current)

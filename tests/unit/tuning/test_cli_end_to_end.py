@@ -147,9 +147,11 @@ def test_cli_runs_optimizer_behind_observe_without_evidence_never_deploys(
     ]
     try:
         _run(["event", "e1.json", *ctl])
-        occ = _json(_run(["step", *ctl]))["awaiting_approval"][0]
+        occ = _json(_run(["step", "--close-ingestion", *ctl]))["awaiting_approval"][0]
         _run(["approve", occ, "--approver", "alice", *ctl])
-        report = _json(_run(["step", *ctl]))  # E_NO_OPTIMIZER before the fix
+        report = _json(
+            _run(["step", "--close-ingestion", *ctl])
+        )  # E_NO_OPTIMIZER before the fix
         assert report["finished"]
         assert _json(_run(["status", *ctl]))["pending_deploys"] == []
         facts = _read_lines(tmp_path / "store" / "controller.jsonl")
@@ -183,9 +185,9 @@ def test_cli_failing_quality_on_the_holdout_rejects_and_never_deploys(
     ]
     try:
         _run(["event", "e1.json", *ctl])
-        occ = _json(_run(["step", *ctl]))["awaiting_approval"][0]
+        occ = _json(_run(["step", "--close-ingestion", *ctl]))["awaiting_approval"][0]
         _run(["approve", occ, "--approver", "alice", *ctl])
-        assert _json(_run(["step", *ctl]))["finished"]
+        assert _json(_run(["step", "--close-ingestion", *ctl]))["finished"]
         assert _json(_run(["status", *ctl]))["pending_deploys"] == []
         finished = [
             json.loads(p.read_text())["finished_record"]
@@ -221,7 +223,7 @@ def test_cli_loop_closes_through_observe_over_optimize(
         assert "wrote" in _run(["compile", "agent_e2e.py:classify", "-o", "p.tvl.yml"])
         _run(["check", "p.tvl.yml"])
         _run(["event", "e1.json", *ctl])
-        occ = _json(_run(["step", *ctl]))["awaiting_approval"][0]
+        occ = _json(_run(["step", "--close-ingestion", *ctl]))["awaiting_approval"][0]
         approve_text = _run(["status", "--text", *ctl])  # what Approve run shows
         assert "Approve run" in approve_text and "trigger:" in approve_text
         assert "spend limit: " in approve_text
@@ -229,7 +231,9 @@ def test_cli_loop_closes_through_observe_over_optimize(
         head = json.loads((tmp_path / "store" / "head.json").read_text())
         assert head["config"] == {"model": "anthropic/claude-haiku-4-5"}
         _run(["approve", occ, "--approver", "alice", *ctl])
-        _run(["step", *ctl])  # optimize runs once (mock mode); deploy now awaits
+        _run(
+            ["step", "--close-ingestion", *ctl]
+        )  # optimize runs once (mock mode); deploy now awaits
         status = _json(_run(["status", *ctl]))
         assert status["head"]["generation"] == 0
         assert len(status["pending_deploys"]) == 1
@@ -254,7 +258,7 @@ def test_cli_loop_closes_through_observe_over_optimize(
             _run(["accept", occ, "--generation", "0", "--approver", "alice", *ctl])
         )
         assert accepted["result"] == "written"
-        _run(["step", *ctl])
+        _run(["step", "--close-ingestion", *ctl])
         status = _json(_run(["status", *ctl]))
         assert status["head"]["generation"] == 1
         head = json.loads((tmp_path / "store" / "head.json").read_text())
@@ -264,7 +268,7 @@ def test_cli_loop_closes_through_observe_over_optimize(
         )  # the admitted model
         before = (tmp_path / "store" / "head.json").read_bytes()
         _run(["event", "e1.json", *ctl])
-        _run(["step", *ctl])
+        _run(["step", "--close-ingestion", *ctl])
         assert (tmp_path / "store" / "head.json").read_bytes() == before
         # a newer admitted model opens a new deploy (measured against the new head);
         # accepting it at generation 0 (the head has since moved) is refused as stale.
@@ -276,9 +280,9 @@ def test_cli_loop_closes_through_observe_over_optimize(
         }
         _write_event(tmp_path / "e6.json", e6)
         _run(["event", "e6.json", *ctl])
-        occ6 = _json(_run(["step", *ctl]))["awaiting_approval"][0]
+        occ6 = _json(_run(["step", "--close-ingestion", *ctl]))["awaiting_approval"][0]
         _run(["approve", occ6, "--approver", "alice", *ctl])
-        _run(["step", *ctl])
+        _run(["step", "--close-ingestion", *ctl])
         assert len(_json(_run(["status", *ctl]))["pending_deploys"]) == 1
         stale = _run(
             ["accept", occ6, "--generation", "0", "--approver", "alice", *ctl], ok=False

@@ -556,7 +556,11 @@ class _ObserveFactory:
             from traigent.tuning.state import attach_tuning
 
             wrapped.tuning = attach_tuning(  # type: ignore[attr-defined]
-                wrapped, self.agent, self.tune, source=func
+                wrapped,
+                self.agent,
+                self.tune,
+                source=func,
+                environment=self.environment,
             )
         return wrapped
 
