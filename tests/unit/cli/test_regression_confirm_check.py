@@ -71,6 +71,8 @@ def answer(q: str) -> str:
         raise RuntimeError("scripted failure")
     if mode == "slow":
         time.sleep(0.4)
+        with open("calls.log", "a") as log:
+            log.write(f"{time.time()}\\n")
         return right
     if mode == "costed":
         return traigent.with_usage(right, total_cost=0.01)
@@ -672,10 +674,13 @@ def test_an_add_during_a_slow_confirm_succeeds_and_its_row_survives(ws: Path) ->
         ],
     )
     assert added.exit_code == 0, added.output
+    added_at = time.time()
     # The add returned while the confirm was still inside its model calls: it
-    # did not wait for the confirm, so the lock is not held across them.
+    # did not wait for them, so the lock is not held across them.
     assert "confirm" not in done
     thread.join()
+    last_call = max(float(t) for t in (ws / "calls.log").read_text().split())
+    assert added_at < last_call
     assert done["confirm"].exit_code == 0, done["confirm"].output
     reg = _reg(ws)
     assert "example_4" in reg  # the confirm's write did not discard the added row
