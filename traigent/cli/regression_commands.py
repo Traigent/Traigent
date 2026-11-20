@@ -24,11 +24,12 @@ from traigent.utils.outcome_matrix import select_failure_basis
 from traigent.utils.regression_confirm import (
     DEFAULT_CHECK_REPEATS,
     DEFAULT_CONFIRM_REPEATS,
-    build_dataset,
+    IdsNotAssignableError,
+    Tally,
     example_id_of,
     observation_for,
     row_status,
-    run_config,
+    run_rows,
     tally,
 )
 from traigent.utils.regression_set import (
@@ -591,13 +592,9 @@ def _confirm(
     content = {eid: row["metadata"]["content_digest"] for eid, row in selected}
 
     try:
-        run = run_config(
-            function,
-            config,
-            build_dataset(selected),
-            repeats=repeats,
-            max_cost=max_cost,
-        )
+        run = run_rows(function, config, selected, repeats=repeats, max_cost=max_cost)
+    except IdsNotAssignableError as exc:
+        raise _Stop(CONFIRM_BAD_INPUT, "ids_not_assignable", str(exc)) from exc
     except ValueError as exc:
         raise _Stop(
             CONFIRM_BAD_INPUT,
@@ -612,6 +609,8 @@ def _confirm(
 
     observations = {}
     for eid, _row in selected:
+        if eid in run.unresolved:
+            continue  # results not tied to this row: no observation
         tallied = tally(run.per_attempt, eid)
         if tallied.outcome is not None:
             observations[eid] = observation_for(tallied, config)
@@ -660,6 +659,11 @@ def _confirm(
     if skipped:
         click.echo(
             f"skipped (row removed or its content changed while running): {skipped}"
+        )
+    if run.unresolved:
+        click.echo(
+            "not recorded (results could not be tied to the row): "
+            + ", ".join(f"{eid} ({why})" for eid, why in sorted(run.unresolved.items()))
         )
     if not run.completed:
         click.echo(
@@ -767,10 +771,13 @@ def _check(
     regressions: list[tuple[str, Any]] = []
     inconclusive: list[tuple[str, Any]] = []
     passed: list[str] = []
+    unresolved: dict[str, str] = {}
     run_complete = True
     if gated:
         try:
-            run = run_config(function, config, build_dataset(gated), repeats=repeats)
+            run = run_rows(function, config, gated, repeats=repeats)
+        except IdsNotAssignableError as exc:
+            raise _Stop(CHECK_INCONCLUSIVE, "ids_not_assignable", str(exc)) from exc
         except ValueError as exc:
             raise _Stop(
                 CHECK_INCONCLUSIVE,
@@ -786,6 +793,12 @@ def _check(
             ) from exc
         run_complete = run.completed
         for eid, _row in gated:
+            if eid in run.unresolved:
+                unresolved[eid] = run.unresolved[eid]
+                inconclusive.append(
+                    (eid, Tally(len(run.per_attempt), 0, 0, 0, None, None, None))
+                )
+                continue
             tallied = tally(run.per_attempt, eid)
             if tallied.scored == 0:
                 inconclusive.append((eid, tallied))
@@ -802,7 +815,9 @@ def _check(
 
     def shape(item: tuple[str, Any]) -> dict[str, Any]:
         eid, t = item
+        reason = {"reason": unresolved[eid]} if eid in unresolved else {}
         return {
+            **reason,
             "id": eid,
             "attempts": t.attempts,
             "passes": t.passes,
@@ -839,6 +854,7 @@ def _check(
             not_gated,
             run_complete,
             fail_on_intermittent,
+            unresolved,
         )
     raise SystemExit(code)
 
@@ -851,6 +867,7 @@ def _print_check(
     not_gated: dict[str, list[str]],
     run_complete: bool,
     fail_on_intermittent: bool,
+    unresolved: dict[str, str],
 ) -> None:
     label = "gated row(s)" if fail_on_intermittent else "armed row(s)"
     unarmed = sum(len(v) for v in not_gated.values())
@@ -870,6 +887,12 @@ def _print_check(
             f"fails={t.fails} errored={t.errored} pass_rate_95={_interval(t)}"
         )
     for eid, t in inconclusive:
+        if eid in unresolved:
+            click.echo(
+                f"INCONCLUSIVE {eid}: results could not be tied to the row "
+                f"({unresolved[eid]})"
+            )
+            continue
         click.echo(
             f"INCONCLUSIVE {eid}: attempts={t.attempts} passes={t.passes} "
             f"fails={t.fails} errored={t.errored} (no scored attempt)"
