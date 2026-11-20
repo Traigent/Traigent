@@ -53,6 +53,8 @@ from traigent.utils.regression_status import (
     STATUS_UNCONFIRMED,
     STATUSES,
     append_observation,
+    content_changed_since_measured,
+    status_when_last_measured,
 )
 
 
@@ -291,6 +293,9 @@ def regression_add(
 # ------------------------------------------------------- confirm and check
 
 #: ``check`` exit codes.
+#: ``not_gated`` key for rows that were gated when last measured but whose
+#: content has changed since.
+CONTENT_CHANGED = "content_changed"
 CHECK_OK = 0
 CHECK_REGRESSION = 1
 CHECK_INCONCLUSIVE = 2
@@ -542,6 +547,7 @@ def _disarm(
                 by_id[eid]["metadata"]["regression"],
                 {
                     "config_digest": None,
+                    "content_digest": by_id[eid]["metadata"]["content_digest"],
                     "date": date,
                     "reps": 0,
                     "passes": 0,
@@ -613,7 +619,7 @@ def _confirm(
             continue  # results not tied to this row: no observation
         tallied = tally(run.per_attempt, eid)
         if tallied.outcome is not None:
-            observations[eid] = observation_for(tallied, config)
+            observations[eid] = observation_for(tallied, config, content[eid])
 
     def apply(current: list[dict[str, Any]]) -> tuple[dict[str, str], list[str]]:
         # Re-read under the lock: merge by row, so rows another process added
@@ -762,11 +768,23 @@ def _check(
         gated_statuses.add(STATUS_INTERMITTENT)
     entries = [(example_id_of(row, i), row) for i, row in enumerate(rows)]
     gated = [(e, r) for e, r in entries if row_status(r) in gated_statuses]
+    # A row that was gated when last measured but whose content has changed
+    # since no longer gates: say so, instead of letting it fall silently into
+    # "unconfirmed".
+    changed = [
+        e
+        for e, r in entries
+        if status_when_last_measured(r["metadata"]["regression"]) in gated_statuses
+        and content_changed_since_measured(
+            r["metadata"]["regression"], r["metadata"]["content_digest"]
+        )
+    ]
     not_gated = {
-        status: [e for e, r in entries if row_status(r) == status]
+        status: [e for e, r in entries if row_status(r) == status and e not in changed]
         for status in (STATUS_KNOWN_FAILURE, STATUS_INTERMITTENT, STATUS_UNCONFIRMED)
         if status not in gated_statuses
     }
+    not_gated[CONTENT_CHANGED] = changed
 
     regressions: list[tuple[str, Any]] = []
     inconclusive: list[tuple[str, Any]] = []
@@ -900,7 +918,14 @@ def _print_check(
     if not run_complete:
         click.echo("The run stopped before every repeat finished.")
     for status, ids in not_gated.items():
-        if ids:
+        if not ids:
+            continue
+        if status == CONTENT_CHANGED:
+            click.echo(
+                "not gated (content changed since it was confirmed): "
+                f"{len(ids)} row(s): {', '.join(ids)}"
+            )
+        else:
             click.echo(f"not gated ({status}): {', '.join(ids)}")
 
 

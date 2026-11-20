@@ -78,7 +78,12 @@ from traigent.utils.file_lock import (
     lock_path_for,
 )
 from traigent.utils.hashing import generate_config_hash
-from traigent.utils.regression_status import confirmed_fields_problem, effective_status
+from traigent.utils.regression_status import (
+    LABEL_FOR_STATUS,
+    confirmed_fields_problem,
+    effective_status,
+    status_when_last_measured,
+)
 
 REGRESSION_FILENAME = "regression.jsonl"
 DEFAULT_REGRESSION_DIR = "tests/regression"
@@ -825,9 +830,13 @@ def load_regression_dataset(
             input_data=input_data, expected_output=expected_output, metadata=metadata
         )
         regression = row["metadata"]["regression"]
-        candidates.append(
-            (position, (regression["label"], effective_status(regression)), example)
-        )
+        status = effective_status(regression, row["metadata"]["content_digest"])
+        label = regression["label"]
+        if status != status_when_last_measured(regression):
+            # Content changed since the last confirm: the stored label belongs
+            # to the earlier content.
+            label = LABEL_FOR_STATUS[status]
+        candidates.append((position, (label, status), example))
     wanted = set(labels)
     examples: list[EvaluationExample] = []
     for position, names, example in candidates:

@@ -51,7 +51,9 @@ def example_id_of(row: Mapping[str, Any], position: int) -> str:
 
 
 def row_status(row: Mapping[str, Any]) -> str:
-    return effective_status(row["metadata"]["regression"])
+    """The row's status on its CURRENT content (older observations do not count)."""
+    metadata = row["metadata"]
+    return effective_status(metadata["regression"], metadata["content_digest"])
 
 
 #: Closed reasons a row's outcomes could not be tied to it in a run.
@@ -314,13 +316,21 @@ def tally(per_attempt: Sequence[Mapping[str, str] | None], example_id: str) -> T
 
 
 def observation_for(
-    tallied: Tally, config: Mapping[str, Any], date: str | None = None
+    tallied: Tally,
+    config: Mapping[str, Any],
+    content_digest: str,
+    date: str | None = None,
 ) -> dict[str, Any]:
-    """The observation a confirm run appends to a row."""
+    """The observation a confirm run appends to a row.
+
+    ``content_digest`` is the digest of the content the run measured; the
+    status replay counts the observation only while the row still has it.
+    """
     if tallied.outcome is None:
         raise ValueError("a tally with fewer than two attempts has no observation")
     return {
         "config_digest": generate_config_hash(dict(config)),
+        "content_digest": content_digest,
         "date": date or today(),
         "reps": tallied.attempts,
         "passes": tallied.passes,

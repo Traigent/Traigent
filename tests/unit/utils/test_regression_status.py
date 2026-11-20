@@ -15,6 +15,7 @@ from traigent.utils.regression_status import (
 def _obs(outcome: str, date: str = "2026-01-01") -> dict:
     return {
         "config_digest": "d",
+        "content_digest": "c",
         "date": date,
         "reps": 5,
         "passes": 5 if outcome == "all_pass" else 0,
@@ -78,3 +79,33 @@ def test_corrupt_version_two_fields_are_named() -> None:
         "status": "known_failure",
     }
     assert "reason" in (confirmed_fields_problem(no_reason) or "")
+
+
+def test_only_observations_on_the_current_content_count() -> None:
+    old = {**_obs("all_pass"), "content_digest": "old"}
+    new_fail = {**_obs("all_fail"), "content_digest": "new"}
+    assert derive_status([old], "old") == "armed"
+    assert derive_status([old], "new") == "unconfirmed"
+    assert derive_status([old, new_fail], "new") == "known_failure"
+    assert derive_status([old, new_fail], "old") == "armed"
+    block = {"observations": [old], "status": "armed", "armed_at": "x"}
+    assert effective_status(block, "old") == "armed"
+    assert effective_status(block, "new") == "unconfirmed"
+    assert confirmed_fields_problem(block) is None  # edited content is not corrupt
+
+
+def test_arming_does_not_carry_over_to_new_content() -> None:
+    block: dict = {"schema_version": 1, "label": "seen_once", "provenance": []}
+    append_observation(block, {**_obs("all_pass"), "content_digest": "a"}, 2)
+    assert block["status"] == "armed"
+    before, after = append_observation(
+        block, {**_obs("all_fail"), "content_digest": "b"}, 2
+    )
+    assert (before, after) == ("unconfirmed", "known_failure")
+    assert block["armed_at"] is None and block["label"] == "seen_once"
+
+
+def test_an_observation_without_a_content_digest_is_refused() -> None:
+    legacy = {k: v for k, v in _obs("all_pass").items() if k != "content_digest"}
+    problem = confirmed_fields_problem({"observations": [legacy], "status": "armed"})
+    assert "content_digest" in (problem or "")
