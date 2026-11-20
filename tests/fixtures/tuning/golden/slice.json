@@ -74,7 +74,7 @@
         "name": "quality_floor",
         "unit": "invocation",
         "violation": {
-          "checker": "customer:doc_label_check",
+          "checker": "customer:ticket_route_check",
           "label_in": [
             "fail"
           ]
@@ -133,7 +133,7 @@
       }
     ],
     "tvl": {
-      "module": "slice.doc_classifier"
+      "module": "slice.ticket_router"
     },
     "tvl_version": "1.7"
   },
@@ -168,7 +168,7 @@
       }
     ],
     "tvl": {
-      "module": "slice.doc_classifier"
+      "module": "slice.ticket_router"
     }
   },
   "sugar": {
@@ -182,7 +182,7 @@
     "keep": [
       {
         "at_most": "0.08",
-        "checker": "customer:doc_label_check",
+        "checker": "customer:ticket_route_check",
         "gate": "quality_gate",
         "monitor": "quality_prod",
         "name": "quality_floor",

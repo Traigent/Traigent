@@ -43,6 +43,9 @@ MODULE: dict[str, Any] = {
 }
 
 
+LABELS = {"customer:c": ["pass", "fail"]}
+
+
 def _holdout(tmp_path: Path, n: int = 60) -> Path:
     path = tmp_path / "h.jsonl"
     rows = [{"input": {"x": i}, "output": i % 2} for i in range(n)]
@@ -63,6 +66,7 @@ def _build(tmp_path: Path, **over: Any) -> Any:
     args: dict[str, Any] = {
         "fn": _agent,
         "checkers": {"customer:c": lambda ex, out: "pass"},
+        "checker_labels": LABELS,
         "holdout": _holdout(tmp_path),
         "candidate_config": {"good": True},
         "incumbent_config": {"good": False},
@@ -168,6 +172,7 @@ def test_among_requirements_are_refused_not_counted(tmp_path: Path) -> None:
                     "fail" if ex["input"]["x"] < 10 else "pass"
                 )
             },
+            checker_labels=LABELS,
             holdout=path,
             candidate_config={"good": True},
             incumbent_config={"good": False},
@@ -195,6 +200,7 @@ def test_each_invocation_and_checker_call_gets_independent_copies(
         MODULE,
         fn=agent,
         checkers={"customer:c": checker},
+        checker_labels=LABELS,
         holdout=path,
         candidate_config={"good": True},
         incumbent_config={"good": False},
@@ -241,3 +247,112 @@ def test_function_mutating_nested_config_cannot_change_the_candidate(
         incumbent_config={"opts": {"threshold": 1}},
     )
     assert config == {"opts": {"threshold": 1}}
+
+
+# -- evidence soundness ------------------------------------------------------------
+
+
+def test_a_raised_call_is_unresolved_not_a_zero_score(tmp_path: Path) -> None:
+    """A transient candidate failure must neither score 0.0 nor sink the candidate."""
+    from traigent.config.context import config_context
+
+    def flaky(x: int) -> int:
+        cfg = config_context.get() or {}
+        if cfg.get("good") and x == 7:
+            raise RuntimeError("provider timeout")
+        return x % 2 if cfg.get("good") or x % 4 < 2 else 1 - x % 2
+
+    evidence = _build(tmp_path, fn=flaky)
+    assert evidence.unresolved_rows == 1 and evidence.n == 60
+    assert evidence.counts["gate"]["u"] == 1  # counted toward max_unresolved_fraction
+    assert evidence.legacy_decision == "Promote"
+
+
+def test_an_incumbent_outage_does_not_inflate_the_candidate(tmp_path: Path) -> None:
+    """Rows the incumbent could not answer leave the pair; they are not free wins."""
+    from traigent.config.context import config_context
+
+    def down(x: int) -> int:
+        cfg = config_context.get() or {}
+        if not cfg.get("good") and x % 2 == 0:
+            raise RuntimeError("provider outage")
+        return x % 2
+
+    with pytest.raises(EvidenceUnavailable) as err:
+        _build(tmp_path, fn=down)
+    assert err.value.reason == "too_many_unresolved"
+
+
+def test_a_checker_answer_outside_the_declared_labels_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    from traigent.tuning.evidence import E_CHECKER_LABEL_OUT_OF_SET
+
+    def typo(ex: Any, out: Any) -> str:
+        return "pasz" if ex["input"]["x"] == 3 else "pass"  # a typo is not a pass
+
+    evidence = _build(tmp_path, checkers={"customer:c": typo})
+    assert evidence.counts["gate"]["u"] == 1 and evidence.counts["gate"]["k"] == 0
+    assert E_CHECKER_LABEL_OUT_OF_SET in evidence.errors
+
+
+def test_labels_must_be_declared_and_cover_the_violating_ones(tmp_path: Path) -> None:
+    with pytest.raises(EvidenceUnavailable) as err:
+        _build(tmp_path, checker_labels=None)
+    assert err.value.reason == "checker_labels_missing"
+    with pytest.raises(EvidenceUnavailable) as err:
+        _build(tmp_path, checker_labels={"customer:c": ["pass"]})  # no "fail"
+    assert err.value.reason == "checker_labels_inconsistent"
+
+
+def test_a_holdout_row_without_an_expected_output_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "bad.jsonl"
+    rows = [{"input": {"x": i}} for i in range(60)]  # no "output"
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    with pytest.raises(EvidenceUnavailable) as err:
+        _build(tmp_path, holdout=path)
+    assert err.value.reason == "holdout_missing_expected_output"
+    rows = [{"input": {"x": i}, "output": None} for i in range(60)]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    with pytest.raises(EvidenceUnavailable):  # a null expected output is no output
+        _build(tmp_path, holdout=path)
+
+
+def test_candidate_and_incumbent_are_interleaved_per_row(tmp_path: Path) -> None:
+    from traigent.config.context import config_context
+
+    order: list[tuple[int, bool]] = []
+
+    def agent(x: int) -> int:
+        cfg = config_context.get() or {}
+        order.append((x, bool(cfg.get("good"))))
+        return x % 2
+
+    _build(tmp_path, fn=agent)
+    assert len(order) == 120
+    pairs = [order[i : i + 2] for i in range(0, 120, 2)]
+    # each row is evaluated for both configurations back to back (paired) ...
+    assert all(a[0] == b[0] and a[1] != b[1] for a, b in pairs)
+    # ... and which side goes first alternates, so drift cannot favour one side
+    assert {a[1] for a, _ in pairs} == {True, False}
+
+
+def test_a_holdout_equal_to_the_optimization_eval_set_is_refused(
+    tmp_path: Path,
+) -> None:
+    from traigent.tuning.evidence import eval_set_identity
+
+    holdout = _holdout(tmp_path)
+    rows = [json.loads(line) for line in holdout.read_text().splitlines()]
+    # by file bytes
+    digests, _ = eval_set_identity(str(holdout))
+    with pytest.raises(EvidenceUnavailable) as err:
+        _build(tmp_path, eval_set_digests=digests)
+    assert err.value.reason == "holdout_is_optimization_eval_set"
+    # by content, whatever the file layout (an in-memory eval set)
+    digests, _ = eval_set_identity(rows)
+    with pytest.raises(EvidenceUnavailable):
+        _build(tmp_path, eval_set_digests=digests)
+    # a different eval set is fine
+    digests, _ = eval_set_identity([{"input": {"x": 999}, "output": 1}])
+    assert _build(tmp_path, eval_set_digests=digests).legacy_decision == "Promote"

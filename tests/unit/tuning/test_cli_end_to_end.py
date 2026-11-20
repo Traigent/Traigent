@@ -11,7 +11,10 @@ import pytest
 from click.testing import CliRunner
 
 from traigent.cli.main import cli
+from traigent.tuning.authority import sign_event
 from traigent.tuning.controller import _read_lines
+
+SECRET = "e2e-issuer-secret"  # pragma: allowlist secret
 
 WITNESS = """
 from unittest.mock import MagicMock
@@ -27,22 +30,23 @@ EVAL = [{"input": {"doc": f"level {i} invoice"}, "output": "billing"} for i in r
 TRACE_CLIENT = MagicMock()
 
 
-def doc_label_check(example, output):
+def ticket_route_check(example, output):
     return "fail" if not output else "pass"  # only an empty answer is a failure
 
 
 policy = Tuning(
-    keep=[FailureRate(checker="customer:doc_label_check", at_most="0.08")],
+    keep=[FailureRate(checker="customer:ticket_route_check", at_most="0.08")],
     on=[ModelReleased(family="anthropic", tier=["small", "medium"], admit="model"),
         OnBreach()],
     fix=ProposeFix(approval="human", deploy="if_promoted"),
     recover="since_head_move",
-    checkers={"customer:doc_label_check": doc_label_check},
+    checkers={"customer:ticket_route_check": ticket_route_check},
+    checker_labels={"customer:ticket_route_check": ["pass", "fail"]},
     holdout=HOLDOUT_ARG,
 )
 
 
-@observe(client=TRACE_CLIENT, agent="doc-classifier", tune=policy,
+@observe(client=TRACE_CLIENT, agent="ticket-router", tune=policy,
          follow="head", tuning_store="./store")
 @traigent.optimize(
     configuration_space={"model": ["anthropic/claude-haiku-4-5",
@@ -59,15 +63,33 @@ EVENT = {
     "kind": "model_released",
     "event_id": "E1",
     "issuer": "P",
-    "issued_at": 9,
+    "issued_at": 9 * 3600,
     "catalogue_revision": 1,
     "subject": {
         "model_ref": "anthropic/claude-haiku-5-5",
         "provider_family": "anthropic",
         "tier": "small",
     },
-    "authenticated": True,
 }
+
+
+def _write_event(path: Path, envelope: dict) -> None:
+    """A platform-signed envelope (the file's own flags are never read)."""
+    path.write_text(
+        json.dumps({**envelope, "signature": sign_event(envelope, SECRET)}),
+        encoding="utf-8",
+    )
+
+
+def _authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    monkeypatch.setenv("TRAIGENT_E2E_ISSUER", SECRET)
+    path = tmp_path / "authority.yml"
+    path.write_text(
+        "mode: local-trusted\napprovers: [alice]\n"
+        "event_issuers:\n  P:\n    secret_env: TRAIGENT_E2E_ISSUER\n",
+        encoding="utf-8",
+    )
+    return ["--authority", str(path)]
 
 
 def _holdout_text() -> str:
@@ -111,7 +133,7 @@ def test_cli_runs_optimizer_behind_observe_without_evidence_never_deploys(
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.chdir(tmp_path)
     _write_agent(tmp_path, "agent_e2e2", holdout=False)
-    (tmp_path / "e1.json").write_text(json.dumps(EVENT), encoding="utf-8")
+    _write_event(tmp_path / "e1.json", EVENT)
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("agent_e2e2", None)
     ctl = [
@@ -120,7 +142,8 @@ def test_cli_runs_optimizer_behind_observe_without_evidence_never_deploys(
         "--store",
         "./store",
         "--agent",
-        "doc-classifier",
+        "ticket-router",
+        *_authority(tmp_path, monkeypatch),
     ]
     try:
         _run(["event", "e1.json", *ctl])
@@ -146,7 +169,7 @@ def test_cli_failing_quality_on_the_holdout_rejects_and_never_deploys(
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.chdir(tmp_path)
     _write_agent(tmp_path, "agent_e2e3", all_fail=True)
-    (tmp_path / "e1.json").write_text(json.dumps(EVENT), encoding="utf-8")
+    _write_event(tmp_path / "e1.json", EVENT)
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("agent_e2e3", None)
     ctl = [
@@ -155,7 +178,8 @@ def test_cli_failing_quality_on_the_holdout_rejects_and_never_deploys(
         "--store",
         "./store",
         "--agent",
-        "doc-classifier",
+        "ticket-router",
+        *_authority(tmp_path, monkeypatch),
     ]
     try:
         _run(["event", "e1.json", *ctl])
@@ -181,7 +205,7 @@ def test_cli_loop_closes_through_observe_over_optimize(
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.chdir(tmp_path)
     _write_agent(tmp_path, "agent_e2e")
-    (tmp_path / "e1.json").write_text(json.dumps(EVENT), encoding="utf-8")
+    _write_event(tmp_path / "e1.json", EVENT)
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("agent_e2e", None)
     ctl = [
@@ -190,13 +214,17 @@ def test_cli_loop_closes_through_observe_over_optimize(
         "--store",
         "./store",
         "--agent",
-        "doc-classifier",
+        "ticket-router",
+        *_authority(tmp_path, monkeypatch),
     ]
     try:
         assert "wrote" in _run(["compile", "agent_e2e.py:classify", "-o", "p.tvl.yml"])
         _run(["check", "p.tvl.yml"])
         _run(["event", "e1.json", *ctl])
         occ = _json(_run(["step", *ctl]))["awaiting_approval"][0]
+        approve_text = _run(["status", "--text", *ctl])  # what Approve run shows
+        assert "Approve run" in approve_text and "trigger:" in approve_text
+        assert "spend limit: " in approve_text
         # the head is seeded from the optimized function's default config
         head = json.loads((tmp_path / "store" / "head.json").read_text())
         assert head["config"] == {"model": "anthropic/claude-haiku-4-5"}
@@ -205,6 +233,16 @@ def test_cli_loop_closes_through_observe_over_optimize(
         status = _json(_run(["status", *ctl]))
         assert status["head"]["generation"] == 0
         assert len(status["pending_deploys"]) == 1
+        text = _run(["status", "--text", *ctl])  # what Accept release shows
+        for needle in (
+            "Accept release",
+            "incumbent:  generation 0",
+            "candidate:",
+            "holdout:    80 rows",
+            "gate:       Promote",
+            "observed generation: 0",
+        ):
+            assert needle in text, text
         finished = [
             json.loads(p.read_text())["finished_record"]
             for p in (tmp_path / "store" / "attempts").glob("*.json")
@@ -233,10 +271,10 @@ def test_cli_loop_closes_through_observe_over_optimize(
         e6 = {
             **EVENT,
             "event_id": "E6",
-            "issued_at": 10,
+            "issued_at": 10 * 3600,
             "subject": {**EVENT["subject"], "model_ref": "anthropic/claude-haiku-5-6"},
         }
-        (tmp_path / "e6.json").write_text(json.dumps(e6), encoding="utf-8")
+        _write_event(tmp_path / "e6.json", e6)
         _run(["event", "e6.json", *ctl])
         occ6 = _json(_run(["step", *ctl]))["awaiting_approval"][0]
         _run(["approve", occ6, "--approver", "alice", *ctl])

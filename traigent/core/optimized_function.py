@@ -4474,6 +4474,20 @@ class OptimizedFunction[**P, R]:
             return
 
         missing = find_models_missing_price_coverage(model_ids)
+        # Models a caller admitted by name (Continuous Tuning's ``admit``: a model
+        # released after the price table shipped) may run with their cost unknown.
+        # Only those exact ids are exempt; every other unpriced model still fails
+        # the guards below.  The exemption is a private, instance-scoped set on an
+        # isolated candidate copy, never a call-time option.
+        exempt = getattr(self, "_unpriced_models_allowed", None) or ()
+        if exempt:
+            allowed = [m for m in missing if m in exempt]
+            if allowed:
+                logger.info(
+                    "Running admitted unpriced models with cost unknown: %s",
+                    ", ".join(allowed),
+                )
+            missing = [m for m in missing if m not in exempt]
         if not missing:
             return
 

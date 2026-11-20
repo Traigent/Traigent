@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from traigent.tuning.context import derive_module_context, merge_context
-from traigent.tuning.errors import E_TVL_VALIDATOR_UNAVAILABLE, TuningError
+from traigent.tuning.errors import (
+    E_TVL_VALIDATION_FAILED,
+    E_TVL_VALIDATOR_UNAVAILABLE,
+    TuningError,
+    TvlValidationFailed,
+    ValidatorUnavailable,
+)
 from traigent.tuning.policy import Tuning
 from traigent.tuning.validator import Diagnostic, lint_document, validator_available
 
@@ -15,8 +21,11 @@ from traigent.tuning.validator import Diagnostic, lint_document, validator_avail
 class TuningState:
     """Result of compiling and validating a policy at decoration time.
 
-    ``validated`` is False when the TVL toolchain is unavailable; every executing
-    path then refuses via :meth:`require_validated`.
+    ``validated`` is True only when the TVL linter ran and reported no
+    error-severity diagnostic.  When the toolchain is unavailable every executing
+    path refuses with ``E_TVL_VALIDATOR_UNAVAILABLE``; when the linter reported
+    errors it refuses with ``E_TVL_VALIDATION_FAILED``, carrying the TVL codes
+    unchanged (:meth:`require_validated`).
     """
 
     agent: str | None
@@ -34,10 +43,10 @@ class TuningState:
         return [d for d in self.diagnostics if d.severity == "error"]
 
     def require_validated(self) -> None:
-        """Raise ``E_TVL_VALIDATOR_UNAVAILABLE`` unless TVL validated this policy."""
+        """Refuse unless TVL validated this policy with no error diagnostic."""
+        if self.errors:
+            raise TvlValidationFailed(self.errors)
         if not self.validated:
-            from traigent.tuning.errors import ValidatorUnavailable
-
             raise ValidatorUnavailable("policy was not validated by the TVL toolchain")
 
 
@@ -93,7 +102,7 @@ def attach_tuning(
     doc = tune.to_tvl(context)
     if validator_available():
         diagnostics = lint_document(doc)
-        validated = True
+        validated = not any(d.is_error for d in diagnostics)
     else:
         diagnostics, validated = [], False
     state = TuningState(
@@ -112,6 +121,7 @@ __all__ = [
     "attach_tuning",
     "find_optimized",
     "initial_config_of",
+    "E_TVL_VALIDATION_FAILED",
     "E_TVL_VALIDATOR_UNAVAILABLE",
     "TuningError",
 ]

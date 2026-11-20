@@ -5,10 +5,17 @@
 with ``E_TVL_VALIDATOR_UNAVAILABLE``.
 """
 
+from traigent.tuning.authority import (
+    ApproverAuthority,
+    EventVerifier,
+    load_authority,
+    sign_event,
+)
 from traigent.tuning.context import derive_module_context
 from traigent.tuning.controller import (
     AcceptanceOutcome,
     Controller,
+    EventReceipt,
     HeadLoader,
     StepReport,
     traigent_optimize_fn,
@@ -16,10 +23,13 @@ from traigent.tuning.controller import (
 from traigent.tuning.errors import (
     E_FLOAT_RATE,
     E_INVALID_TUNING,
+    E_NO_APPROVER_AUTHORITY,
     E_NOT_ROUNDTRIPPABLE,
     E_RATE_PRECISION,
+    E_TVL_VALIDATION_FAILED,
     E_TVL_VALIDATOR_UNAVAILABLE,
     TuningError,
+    TvlValidationFailed,
     ValidatorUnavailable,
 )
 from traigent.tuning.policy import (
@@ -41,13 +51,18 @@ from traigent.tuning.validator import (
 
 __all__ = [
     "AcceptanceOutcome",
+    "ApproverAuthority",
     "Controller",
     "Diagnostic",
     "E_FLOAT_RATE",
     "E_INVALID_TUNING",
+    "E_NO_APPROVER_AUTHORITY",
     "E_NOT_ROUNDTRIPPABLE",
     "E_RATE_PRECISION",
+    "E_TVL_VALIDATION_FAILED",
     "E_TVL_VALIDATOR_UNAVAILABLE",
+    "EventReceipt",
+    "EventVerifier",
     "Every",
     "FailureRate",
     "HeadLoader",
@@ -59,11 +74,14 @@ __all__ = [
     "Tuning",
     "TuningError",
     "TuningState",
+    "TvlValidationFailed",
     "ValidatorUnavailable",
     "attach_tuning",
     "conditions_trace",
     "derive_module_context",
+    "load_authority",
     "require_validator",
+    "sign_event",
     "traigent_optimize_fn",
     "validator_available",
 ]

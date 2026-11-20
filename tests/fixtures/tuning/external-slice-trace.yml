@@ -12,7 +12,7 @@ spec_refs:
 module:
   tvl_version: '1.7'
   tvl:
-    module: slice.doc_classifier
+    module: slice.ticket_router
   environment:
     snapshot_id: '2026-11-20T00:00:00Z'
   evaluation_set:
@@ -36,7 +36,7 @@ module:
     kind: rate_bound
     unit: invocation
     violation:
-      checker: customer:doc_label_check
+      checker: customer:ticket_route_check
       label_in:
       - fail
     max_rate: 0.08
@@ -113,91 +113,91 @@ input:
       generation: 0
     contract_digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
     steps:
-    - instant: 10
+    - instant: 36000
       events:
       - kind: model_released
         event_id: E1
         issuer: P
-        issued_at: 9
+        issued_at: 32400
         catalogue_revision: 1
         subject:
           model_ref: anthropic/claude-haiku-5-5
           provider_family: anthropic
           tier: small
         authenticated: true
-    - instant: 10
+    - instant: 36000
       optimizations:
       - attempt: A1
         fact: approval
         state: granted
-    - instant: 11
+    - instant: 39600
       events:
       - kind: model_released
         event_id: E1
         issuer: P
-        issued_at: 9
+        issued_at: 32400
         catalogue_revision: 1
         subject:
           model_ref: anthropic/claude-haiku-5-5
           provider_family: anthropic
           tier: small
         authenticated: true
-    - instant: 12
+    - instant: 43200
       events:
       - kind: model_released
         event_id: E2
         issuer: P
-        issued_at: 11
+        issued_at: 39600
         catalogue_revision: 1
         subject:
           model_ref: openai/gpt-x
           provider_family: openai
           tier: small
         authenticated: true
-    - instant: 13
+    - instant: 46800
       events:
       - kind: model_released
         event_id: E3
         issuer: P
-        issued_at: 12
+        issued_at: 43200
         catalogue_revision: 1
         subject:
           model_ref: anthropic/claude-opus-5-5
           provider_family: anthropic
           tier: large
         authenticated: true
-    - instant: 14
+    - instant: 50400
       events:
       - kind: model_released
         event_id: E4
         issuer: P
-        issued_at: 13
+        issued_at: 46800
         catalogue_revision: 1
         subject:
           model_ref: anthropic/claude-haiku-5-6
           provider_family: anthropic
           tier: small
         authenticated: false
-    - instant: 15
+    - instant: 54000
       events:
       - kind: model_released
         event_id: E5
         issuer: P
-        issued_at: -70
+        issued_at: -252000
         catalogue_revision: 1
         subject:
           model_ref: anthropic/claude-haiku-5-7
           provider_family: anthropic
           tier: small
         authenticated: true
-    - instant: 24
+    - instant: 86400
       windows:
       - monitor: quality_prod
         start: 0
-        end: 24
+        end: 86400
         verdict: BREACHED
         head_generation: 0
-    - instant: 30
+    - instant: 108000
       optimizations:
       - attempt: A1
         fact: finished
@@ -209,7 +209,7 @@ input:
           legacy_decision: Promote
           monitor_verdicts:
             quality_gate: MET
-    - instant: 31
+    - instant: 111600
       acceptances:
       - record:
           format: tvl-release-acceptance/1
@@ -233,12 +233,12 @@ input:
           expires_at: '2026-11-27T00:00:00Z'
         authenticated: true
         approver_authorized: true
-    - instant: 31
+    - instant: 111600
       optimizations:
       - attempt: A2
         fact: approval
         state: granted
-    - instant: 32
+    - instant: 115200
       acceptances:
       - record:
           format: tvl-release-acceptance/1
@@ -262,7 +262,7 @@ input:
           expires_at: '2026-11-27T00:00:00Z'
         authenticated: true
         approver_authorized: true
-    - instant: 40
+    - instant: 144000
       optimizations:
       - attempt: A2
         fact: finished
@@ -274,7 +274,7 @@ input:
           legacy_decision: Promote
           monitor_verdicts:
             quality_gate: MET
-    - instant: 41
+    - instant: 147600
       acceptances:
       - record:
           format: tvl-release-acceptance/1
@@ -299,36 +299,36 @@ input:
           repairs_episode: EP1
         authenticated: true
         approver_authorized: true
-    - instant: 48
+    - instant: 172800
       windows:
       - monitor: quality_prod
-        start: 24
-        end: 48
+        start: 86400
+        end: 172800
         verdict: MET
         head_generation: 1
-    - instant: 72
+    - instant: 259200
       windows:
       - monitor: quality_prod
-        start: 48
-        end: 72
+        start: 172800
+        end: 259200
         verdict: MET
         head_generation: 1
-    - instant: 96
+    - instant: 345600
       windows:
       - monitor: quality_prod
-        start: 72
-        end: 96
+        start: 259200
+        end: 345600
         verdict: MET
         head_generation: 1
 expected:
   facts:
-  - instant: 10
+  - instant: 36000
     fact: event
     event:
       issuer: P
       event_id: E1
     result: admitted
-  - instant: 10
+  - instant: 36000
     fact: fired
     occurrence:
       response: tuning
@@ -338,7 +338,7 @@ expected:
         issuer: P
         event_id: E1
       j: 0
-  - instant: 10
+  - instant: 36000
     fact: attempt_opened
     attempt: A1
     occurrence:
@@ -349,7 +349,7 @@ expected:
         issuer: P
         event_id: E1
       j: 0
-  - instant: 10
+  - instant: 36000
     fact: search_domain
     attempt: A1
     tvar: model
@@ -357,57 +357,57 @@ expected:
     - anthropic/claude-haiku-4-5
     - anthropic/claude-sonnet-4-6
     - anthropic/claude-haiku-5-5
-  - instant: 11
+  - instant: 39600
     fact: event
     event:
       issuer: P
       event_id: E1
     result: redelivery
-  - instant: 12
+  - instant: 43200
     fact: event
     event:
       issuer: P
       event_id: E2
     result: admitted
-  - instant: 12
+  - instant: 43200
     fact: no_match
     event:
       issuer: P
       event_id: E2
-  - instant: 13
+  - instant: 46800
     fact: event
     event:
       issuer: P
       event_id: E3
     result: admitted
-  - instant: 13
+  - instant: 46800
     fact: no_match
     event:
       issuer: P
       event_id: E3
-  - instant: 14
+  - instant: 50400
     fact: event
     event:
       issuer: P
       event_id: E4
     result: rejected(unauthenticated)
-  - instant: 15
+  - instant: 54000
     fact: event
     event:
       issuer: P
       event_id: E5
     result: rejected(late)
-  - instant: 24
+  - instant: 86400
     fact: window
     closure: breached
     monitor: quality_prod
     start: 0
-  - instant: 24
+  - instant: 86400
     fact: episode_opened
     monitor: quality_prod
     episode: EP1
     opening_generation: 0
-  - instant: 24
+  - instant: 86400
     fact: fired
     occurrence:
       response: tuning
@@ -415,7 +415,7 @@ expected:
       scope_kind: episode
       scope: EP1
       j: 0
-  - instant: 24
+  - instant: 86400
     fact: held
     occurrence:
       response: tuning
@@ -424,11 +424,11 @@ expected:
       scope: EP1
       j: 0
     reason: repair_open
-  - instant: 30
+  - instant: 108000
     fact: optimization_finished
     attempt: A1
     outcome: promoted
-  - instant: 30
+  - instant: 108000
     fact: deploy_awaiting
     attempt: A1
     occurrence:
@@ -440,16 +440,16 @@ expected:
         event_id: E1
       j: 0
     candidate: 111111111111111111111111111111111111111111111111111111111111111b
-  - instant: 31
+  - instant: 111600
     fact: acceptance
     acceptance: R1
     result: written
     generation: 1
-  - instant: 31
+  - instant: 111600
     fact: attempt_closed
     attempt: A1
     reason: deploy_written
-  - instant: 31
+  - instant: 111600
     fact: attempt_opened
     attempt: A2
     occurrence:
@@ -458,15 +458,15 @@ expected:
       scope_kind: episode
       scope: EP1
       j: 0
-  - instant: 32
+  - instant: 115200
     fact: acceptance
     acceptance: R1
     result: consumed
-  - instant: 40
+  - instant: 144000
     fact: optimization_finished
     attempt: A2
     outcome: promoted
-  - instant: 40
+  - instant: 144000
     fact: deploy_awaiting
     attempt: A2
     occurrence:
@@ -476,72 +476,72 @@ expected:
       scope: EP1
       j: 0
     candidate: 222222222222222222222222222222222222222222222222222222222222222c
-  - instant: 41
+  - instant: 147600
     fact: acceptance
     acceptance: R2
     result: refused
     reason: stale_generation
-  - instant: 41
+  - instant: 147600
     fact: outcome
     attempt: A2
     event: deploy_refused
     reason: stale_generation
-  - instant: 41
+  - instant: 147600
     fact: attempt_closed
     attempt: A2
     reason: deploy_refused
-  - instant: 48
+  - instant: 172800
     fact: window
     closure: UNKNOWN(mixed_generation)
     monitor: quality_prod
-    start: 24
-  - instant: 72
+    start: 86400
+  - instant: 259200
     fact: window
     closure: counts
     progress: 1
     of: 2
     monitor: quality_prod
-    start: 48
-  - instant: 96
+    start: 172800
+  - instant: 345600
     fact: window
     closure: counts
     progress: 2
     of: 2
     monitor: quality_prod
-    start: 72
-  - instant: 96
+    start: 259200
+  - instant: 345600
     fact: episode_resolved
     monitor: quality_prod
     episode: EP1
   head_generations:
-  - instant: 10
+  - instant: 36000
     generation: 0
-  - instant: 11
+  - instant: 39600
     generation: 0
-  - instant: 12
+  - instant: 43200
     generation: 0
-  - instant: 13
+  - instant: 46800
     generation: 0
-  - instant: 14
+  - instant: 50400
     generation: 0
-  - instant: 15
+  - instant: 54000
     generation: 0
-  - instant: 24
+  - instant: 86400
     generation: 0
-  - instant: 30
+  - instant: 108000
     generation: 0
-  - instant: 31
+  - instant: 111600
     generation: 1
-  - instant: 32
+  - instant: 115200
     generation: 1
-  - instant: 40
+  - instant: 144000
     generation: 1
-  - instant: 41
+  - instant: 147600
     generation: 1
-  - instant: 48
+  - instant: 172800
     generation: 1
-  - instant: 72
+  - instant: 259200
     generation: 1
-  - instant: 96
+  - instant: 345600
     generation: 1
   max_open_attempts: 1

@@ -1,15 +1,22 @@
 """Local promotion evidence: a frozen candidate measured on a customer holdout.
 
 The customer supplies ``checkers`` (local functions ``(example, output) -> label``) and a
-``holdout`` (a JSONL file of ``{"input": {...}, "output": <expected>}`` examples).  This
-module runs the agent function with a configuration on every holdout example, applies
-each checker, and builds the counts ``{n, k, u, pl, complete}`` that TVL's promotion
+``holdout`` (a JSONL file of ``{"input": {...}, "output": <expected>}`` examples; every
+row must carry its expected output).  This module runs the agent function with the
+candidate AND the incumbent configuration on every holdout example (interleaved per
+row, so provider drift hits both alike), applies each checker, and builds the counts ``{n, k, u, pl, complete}`` that TVL's promotion
 monitors consume (RFC 0003 section 6.11, ``monitor_outcomes``).  Verdicts and the
 legacy promotion decision are computed by TVL (``tvl.promotion_monitor``,
 ``tvl.promotion``); nothing is decided here.  Holdout content, checker labels and agent
 outputs never leave the process: only counts, verdicts and a digest of the holdout file
 are returned.  Anything that cannot be computed honestly raises
 :class:`EvidenceUnavailable`, and the candidate stays ``NoDecision``.
+
+Soundness rules: a call that raised is *unresolved* (never a score of 0.0) and counts
+toward ``max_unresolved_fraction``; a checker answer outside the requirement's declared
+label set is unresolved and reported; a holdout equal to the optimization's own
+evaluation set is refused (it cannot be held aside).  Reusing one holdout across many
+decisions selects against it: see the guide ("holdout reuse").
 """
 
 from __future__ import annotations
@@ -19,13 +26,16 @@ import copy
 import hashlib
 import inspect
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 E_NO_PROMOTION_EVIDENCE = "E_NO_PROMOTION_EVIDENCE"
 MEASURED_OBJECTIVE = "accuracy"  # exact match against the holdout's expected output
+DEFAULT_MAX_UNRESOLVED_FRACTION = 0.05
+E_CHECKER_LABEL_OUT_OF_SET = "E_CHECKER_LABEL_OUT_OF_SET"
+COST_UNKNOWN = "COST_UNKNOWN_UNPRICED_MODEL"
 
 
 class EvidenceUnavailable(Exception):  # noqa: N818 - a closed reason, not an error type
@@ -44,6 +54,9 @@ class PromotionEvidence:
     monitor_verdicts: dict[str, str]
     holdout_digest: str
     counts: dict[str, dict[str, Any]]
+    n: int = 0  # holdout rows
+    unresolved_rows: int = 0  # rows left out of the paired comparison
+    errors: tuple[str, ...] = ()  # closed codes the approver must see
 
 
 def _read_bytes(path: Path | str) -> bytes:
@@ -72,6 +85,8 @@ def _parse_holdout(data: bytes) -> list[dict[str, Any]]:
             raise EvidenceUnavailable("holdout_invalid") from None
         if not isinstance(item, dict) or not isinstance(item.get("input"), dict):
             raise EvidenceUnavailable("holdout_invalid")
+        if item.get("output") is None:  # exact-match scoring needs an expected output
+            raise EvidenceUnavailable("holdout_missing_expected_output")
         examples.append(item)
     if not examples:
         raise EvidenceUnavailable("holdout_empty")
@@ -105,6 +120,19 @@ async def _await(awaitable: Any) -> Any:
     return await awaitable
 
 
+def _run_one(
+    fn: Callable[..., Any], config: Mapping[str, Any], example: Mapping[str, Any]
+) -> tuple[bool, Any]:
+    from traigent.config.context import ConfigurationContext
+
+    # every invocation gets its own deep copies; the originals stay immutable
+    try:
+        with ConfigurationContext(copy.deepcopy(dict(config))):
+            return True, _call(fn, copy.deepcopy(example["input"]))
+    except Exception:  # noqa: BLE001 - a failed call is unresolved, content never echoed
+        return False, None
+
+
 def run_holdout(
     fn: Callable[..., Any],
     config: Mapping[str, Any],
@@ -116,17 +144,31 @@ def run_holdout(
     the live function's own state is never changed.  An example whose call raises is
     ``(False, None)`` (unresolved), never dropped.
     """
-    from traigent.config.context import ConfigurationContext
+    return [_run_one(fn, config, example) for example in examples]
 
-    out: list[tuple[bool, Any]] = []
-    for example in examples:
-        # every invocation gets its own deep copies; the originals stay immutable
-        try:
-            with ConfigurationContext(copy.deepcopy(dict(config))):
-                out.append((True, _call(fn, copy.deepcopy(example["input"]))))
-        except Exception:  # noqa: BLE001 - a failed call is unresolved, content never echoed
-            out.append((False, None))
-    return out
+
+def run_holdout_paired(
+    fn: Callable[..., Any],
+    candidate_config: Mapping[str, Any],
+    incumbent_config: Mapping[str, Any],
+    examples: Sequence[Mapping[str, Any]],
+) -> tuple[list[tuple[bool, Any]], list[tuple[bool, Any]]]:
+    """Run candidate and incumbent on each example in turn (paired, interleaved).
+
+    Both configurations see the same example back to back, and the order alternates
+    by row, so a provider outage or drift during the run hits both sides alike
+    instead of confounding two sequential passes.
+    """
+    candidate: list[tuple[bool, Any]] = []
+    incumbent: list[tuple[bool, Any]] = []
+    for index, example in enumerate(examples):
+        if index % 2 == 0:
+            candidate.append(_run_one(fn, candidate_config, example))
+            incumbent.append(_run_one(fn, incumbent_config, example))
+        else:
+            incumbent.append(_run_one(fn, incumbent_config, example))
+            candidate.append(_run_one(fn, candidate_config, example))
+    return candidate, incumbent
 
 
 def monitor_counts(
@@ -134,8 +176,15 @@ def monitor_counts(
     violating: Sequence[str],
     examples: Sequence[Mapping[str, Any]],
     runs: Sequence[tuple[bool, Any]],
+    labels: Collection[str] | None = None,
+    stats: dict[str, int] | None = None,
 ) -> dict[str, Any]:
-    """``{n, k, u, pl, complete}`` of the violation predicate over the evaluation set."""
+    """``{n, k, u, pl, complete}`` of the violation predicate over the evaluation set.
+
+    A failed call, a checker error, a non-string answer and (when ``labels`` is
+    given) an answer outside the declared label set are all *unresolved*; the last
+    kind is also tallied in ``stats["out_of_label_set"]``.
+    """
     n = len(examples)
     k = u = 0
     for example, (ok, output) in zip(examples, runs, strict=True):
@@ -149,6 +198,10 @@ def monitor_counts(
             continue
         if not isinstance(label, str):
             u += 1
+        elif labels is not None and label not in labels:
+            u += 1
+            if stats is not None:
+                stats["out_of_label_set"] = stats.get("out_of_label_set", 0) + 1
         elif label in violating:
             k += 1
     return {"n": n, "k": k, "u": u, "pl": 0, "complete": True}
@@ -156,11 +209,66 @@ def monitor_counts(
 
 def _accuracy(
     examples: Sequence[Mapping[str, Any]], runs: Sequence[tuple[bool, Any]]
-) -> list[float]:
+) -> list[float | None]:
+    """Exact match per row; ``None`` (unresolved) when the call failed."""
     return [
-        1.0 if ok and output == example.get("output") else 0.0
+        (1.0 if output == example.get("output") else 0.0) if ok else None
         for example, (ok, output) in zip(examples, runs, strict=True)
     ]
+
+
+def examples_digest(examples: Sequence[Mapping[str, Any]]) -> str:
+    """``sha256:`` of the canonical ``(input, output)`` content of a set of examples."""
+    rows = [{"input": e.get("input"), "output": e.get("output")} for e in examples]
+    body = json.dumps(rows, sort_keys=True, separators=(",", ":"), default=str)
+    return _digest_of(body.encode("utf-8"))
+
+
+def eval_set_identity(dataset: Any) -> tuple[set[str], list[dict[str, Any]] | None]:
+    """Digests that identify the optimization's evaluation set, and its rows if known.
+
+    ``dataset`` is the optimized function's ``eval_dataset``: a JSONL path or an
+    in-memory list of ``{"input", "output"}`` rows.  Anything else (an object we
+    cannot read) yields no identity, never a guess.
+    """
+    digests: set[str] = set()
+    rows: list[dict[str, Any]] | None = None
+    if isinstance(dataset, (str, Path)):
+        try:
+            data = Path(dataset).read_bytes()
+        except OSError:
+            return digests, None
+        digests.add(_digest_of(data))
+        try:
+            rows = [
+                json.loads(line)
+                for line in data.decode("utf-8").splitlines()
+                if line.strip()
+            ]
+        except (ValueError, UnicodeDecodeError):
+            rows = None
+    elif isinstance(dataset, (list, tuple)):
+        rows = [dict(r) for r in dataset if isinstance(r, Mapping)]
+    if rows is not None and all(isinstance(r, dict) for r in rows):
+        digests.add(examples_digest(rows))
+    else:
+        rows = None
+    return digests, rows
+
+
+def _is_cost_objective(name: str) -> bool:
+    lowered = name.lower()
+    return any(word in lowered for word in ("cost", "price", "spend"))
+
+
+def _unresolved_limit(monitors: Sequence[Mapping[str, Any]]) -> float:
+    declared = [
+        float(m["decision"]["max_unresolved_fraction"])
+        for m in monitors
+        if isinstance(m.get("decision"), Mapping)
+        and "max_unresolved_fraction" in m["decision"]
+    ]
+    return min(declared) if declared else DEFAULT_MAX_UNRESOLVED_FRACTION
 
 
 def build_promotion_evidence(
@@ -171,10 +279,20 @@ def build_promotion_evidence(
     holdout: Path | str | None,
     candidate_config: Mapping[str, Any],
     incumbent_config: Mapping[str, Any],
+    checker_labels: Mapping[str, Sequence[str]] | None = None,
+    eval_set_digests: Collection[str] = (),
+    unpriced_models: Collection[str] = (),
 ) -> PromotionEvidence:
-    """Measure the frozen candidate (and the incumbent, paired) on the holdout.
+    """Measure the frozen candidate and the incumbent, paired, on the holdout.
 
-    Raises :class:`EvidenceUnavailable` when the evidence cannot be computed honestly.
+    ``checker_labels`` maps each checker to the full label set it may answer with
+    (TVL's checker registry); an answer outside it is unresolved.  A holdout whose
+    byte or content digest is in ``eval_set_digests`` (the optimization's own
+    evaluation set) is refused.  ``unpriced_models`` names the candidate's models
+    with no price: their cost is unknown, never zero, so when cost is an objective
+    the candidate is not promotable on cost (``cost_unknown_unpriced_model``) and
+    otherwise the gate carries ``COST_UNKNOWN_UNPRICED_MODEL``.  Raises
+    :class:`EvidenceUnavailable` when the evidence cannot be computed honestly.
     """
     monitors = [m for m in module.get("monitors", []) if m.get("phase") == "promotion"]
     if not monitors:
@@ -185,8 +303,12 @@ def build_promotion_evidence(
         raise EvidenceUnavailable("agent_function_missing")
     requirements = {r["name"]: r for r in module.get("requirements", [])}
     objectives = list(module.get("objectives", []))
-    if {o.get("name") for o in objectives} != {MEASURED_OBJECTIVE}:
+    names = {str(o.get("name")) for o in objectives}
+    if unpriced_models and any(_is_cost_objective(n) for n in names):
+        raise EvidenceUnavailable("cost_unknown_unpriced_model")
+    if names != {MEASURED_OBJECTIVE}:
         raise EvidenceUnavailable("objective_not_measurable")
+    label_sets: dict[str, frozenset[str]] = {}
     for monitor in monitors:
         requirement = requirements.get(str(monitor.get("requirement")))
         if requirement is None:
@@ -195,18 +317,30 @@ def build_promotion_evidence(
             # RFC 0003 s11.4.2 population: not evaluated locally; refuse, never count
             # out-of-population examples in the denominator.
             raise EvidenceUnavailable("requirement_among_unsupported")
-        checker_name = str((requirement.get("violation") or {}).get("checker"))
+        violation = requirement.get("violation") or {}
+        checker_name = str(violation.get("checker"))
         if not callable((checkers or {}).get(checker_name)):
             raise EvidenceUnavailable("checker_missing")
+        declared = (checker_labels or {}).get(checker_name)
+        if not declared:
+            raise EvidenceUnavailable("checker_labels_missing")
+        label_sets[checker_name] = frozenset(str(x) for x in declared)
+        if not set(violation.get("label_in", [])) <= label_sets[checker_name]:
+            raise EvidenceUnavailable("checker_labels_inconsistent")
     digest, examples = read_holdout(holdout)
-    candidate_runs = run_holdout(fn, candidate_config, examples)
-    incumbent_runs = run_holdout(fn, incumbent_config, examples)
+    held = set(eval_set_digests)
+    if digest in held or examples_digest(examples) in held:
+        raise EvidenceUnavailable("holdout_is_optimization_eval_set")
+    candidate_runs, incumbent_runs = run_holdout_paired(
+        fn, candidate_config, incumbent_config, examples
+    )
 
     from tvl.promotion import epsilon_pareto_gate
     from tvl.promotion_monitor import evaluate_promotion_monitor
 
     verdicts: dict[str, str] = {}
     all_counts: dict[str, dict[str, Any]] = {}
+    stats: dict[str, int] = {}
     for monitor in monitors:
         requirement = requirements[monitor["requirement"]]
         violation = requirement["violation"]
@@ -215,6 +349,8 @@ def build_promotion_evidence(
             list(violation.get("label_in", [])),
             examples,
             candidate_runs,
+            labels=label_sets[violation["checker"]],
+            stats=stats,
         )
         try:
             result = evaluate_promotion_monitor(requirement, monitor, counts)
@@ -225,19 +361,35 @@ def build_promotion_evidence(
             verdict = f"UNKNOWN({result['reason']})"
         verdicts[monitor["name"]] = verdict
         all_counts[monitor["name"]] = counts
+    errors: list[str] = []
+    if stats.get("out_of_label_set"):
+        errors.append(E_CHECKER_LABEL_OUT_OF_SET)
+    if unpriced_models:
+        errors.append(COST_UNKNOWN)
     # The legacy decision is TVL's own comparison with the incumbent, paired on the
-    # same holdout; monitors are joined by the relation, not here.
+    # same holdout rows.  A row either side could not resolve is left out of the pair
+    # (never scored 0.0) and counts toward the unresolved fraction.
+    mine = _accuracy(examples, candidate_runs)
+    theirs = _accuracy(examples, incumbent_runs)
+    pairs = [
+        (a, b)
+        for a, b in zip(mine, theirs, strict=True)
+        if a is not None and b is not None
+    ]
+    left_out = len(examples) - len(pairs)
+    if left_out / len(examples) > _unresolved_limit(monitors):
+        raise EvidenceUnavailable("too_many_unresolved")
     try:
         legacy, _evidence = epsilon_pareto_gate(
             {
                 "objective_values": {
-                    MEASURED_OBJECTIVE: {"samples": _accuracy(examples, incumbent_runs)}
+                    MEASURED_OBJECTIVE: {"samples": [b for _a, b in pairs]}
                 }
             },
             {
                 "objective_values": {
                     MEASURED_OBJECTIVE: {
-                        "samples": _accuracy(examples, candidate_runs),
+                        "samples": [a for a, _b in pairs],
                         "paired": True,
                     }
                 }
@@ -250,17 +402,31 @@ def build_promotion_evidence(
         raise EvidenceUnavailable("comparison_not_computable") from None
     if legacy not in {"Promote", "Reject", "NoDecision"}:
         raise EvidenceUnavailable("comparison_not_computable")
-    return PromotionEvidence(str(legacy), verdicts, digest, all_counts)
+    return PromotionEvidence(
+        str(legacy),
+        verdicts,
+        digest,
+        all_counts,
+        n=len(examples),
+        unresolved_rows=left_out,
+        errors=tuple(errors),
+    )
 
 
 __all__ = [
+    "DEFAULT_MAX_UNRESOLVED_FRACTION",
+    "COST_UNKNOWN",
+    "E_CHECKER_LABEL_OUT_OF_SET",
     "E_NO_PROMOTION_EVIDENCE",
     "EvidenceUnavailable",
     "PromotionEvidence",
     "build_promotion_evidence",
+    "eval_set_identity",
+    "examples_digest",
     "holdout_digest",
     "load_holdout",
     "read_holdout",
     "monitor_counts",
     "run_holdout",
+    "run_holdout_paired",
 ]

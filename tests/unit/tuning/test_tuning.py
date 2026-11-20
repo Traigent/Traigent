@@ -131,7 +131,7 @@ def test_observe_attaches_tuning_state(tmp_path: Path) -> None:
     dataset = tmp_path / "d.jsonl"
     dataset.write_text('{"input": {"q": "a"}, "output": "a"}\n')
     policy = Tuning(
-        keep=[FailureRate("customer:doc_label_check", "0.08", name="quality_floor")],
+        keep=[FailureRate("customer:ticket_route_check", "0.08", name="quality_floor")],
         audit=RandomAudit("0.02"),
         on=[
             ModelReleased(family=["anthropic"], tier=["small"], admit="model"),
@@ -139,7 +139,7 @@ def test_observe_attaches_tuning_state(tmp_path: Path) -> None:
         ],
     )
 
-    @traigent.observe(agent="doc-classifier", tune=policy)
+    @traigent.observe(agent="ticket-router", tune=policy)
     @traigent.optimize(
         configuration_space={
             "model": ["anthropic/claude-haiku-4-5", "anthropic/claude-sonnet-4-6"]
@@ -151,7 +151,7 @@ def test_observe_attaches_tuning_state(tmp_path: Path) -> None:
         return q
 
     state = classify.tuning
-    assert state.validated and state.agent == "doc-classifier"
+    assert state.validated and state.agent == "ticket-router"
     assert state.errors == []
     assert state.tvl["tvars"][0]["domain"] == [
         "anthropic/claude-haiku-4-5",
@@ -298,3 +298,64 @@ def test_cli_compile(tmp_path: Path) -> None:
     assert doc["tvl_version"] == "1.7" and doc["requirements"][0]["name"] == "q"
     check = CliRunner().invoke(cli, ["tune", "check", str(out)])
     assert check.exit_code == 0, check.output
+
+
+def test_validated_only_when_the_linter_ran_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``validated`` is true only with no error-severity diagnostic; else TVL's codes."""
+    from traigent.tuning import TvlValidationFailed
+    from traigent.tuning import state as state_module
+    from traigent.tuning.errors import E_TVL_VALIDATION_FAILED
+    from traigent.tuning.validator import Diagnostic
+
+    def build() -> object:
+        return state_module.attach_tuning(
+            lambda: None,
+            "a",
+            Tuning(keep=[FailureRate("customer:c", "0.1", name="q")]),
+        )
+
+    monkeypatch.setattr(
+        state_module,
+        "lint_document",
+        lambda _doc: [
+            Diagnostic("release_rollback_deferred", "error"),
+            Diagnostic("some_warning", "warning"),
+        ],
+    )
+    failed = build()
+    assert failed.validated is False
+    with pytest.raises(TvlValidationFailed) as err:
+        failed.require_validated()
+    assert err.value.code == E_TVL_VALIDATION_FAILED
+    assert "release_rollback_deferred" in str(err.value)  # the TVL code, unchanged
+    assert [d.code for d in err.value.diagnostics] == ["release_rollback_deferred"]
+
+    monkeypatch.setattr(
+        state_module,
+        "lint_document",
+        lambda _doc: [Diagnostic("some_warning", "warning")],
+    )
+    clean = build()
+    assert clean.validated is True and clean.errors == []
+    clean.require_validated()  # warnings do not block
+
+
+def test_a_policy_with_lint_errors_never_starts_a_controller(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from traigent.tuning import Controller, TvlValidationFailed
+    from traigent.tuning import state as state_module
+    from traigent.tuning.validator import Diagnostic
+
+    monkeypatch.setattr(
+        state_module,
+        "lint_document",
+        lambda _doc: [Diagnostic("release_rollback_deferred", "error")],
+    )
+    bad = state_module.attach_tuning(
+        lambda: None, "a", Tuning(keep=[FailureRate("customer:c", "0.1", name="q")])
+    )
+    with pytest.raises(TvlValidationFailed):
+        Controller(bad, tmp_path / "s", None)
