@@ -88,6 +88,7 @@ E_INVALID_GRANT = "E_INVALID_GRANT"
 E_NO_CANDIDATE_RUN = "E_NO_CANDIDATE_RUN"
 E_HEAD_DIVERGED = "E_HEAD_DIVERGED"
 E_LOCAL_AUTHORITY_IN_PRODUCTION = "E_LOCAL_AUTHORITY_IN_PRODUCTION"
+E_STANDING_DEPLOY_UNSUPPORTED = "E_STANDING_DEPLOY_UNSUPPORTED"
 
 GATE_FORMAT = "traigent-gate-result/1"
 ACCEPTANCE_FORMAT = "tvl-release-acceptance/1"
@@ -123,6 +124,16 @@ def _utc(now: datetime | None) -> datetime:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.astimezone(UTC).replace(microsecond=0)
+
+
+def _approve_context(ref: str) -> dict[str, Any]:
+    """What the authenticator is told when a run approval is decided or re-checked."""
+    return {"decision": "approve_run", "occurrence": ref}
+
+
+def _grant_context(grant_id: Any, rule_ref: Any) -> dict[str, Any]:
+    """What the authenticator is told when a standing grant is issued or used."""
+    return {"decision": "standing_grant", "grant_id": grant_id, "rule_ref": rule_ref}
 
 
 def _instant_text(moment: datetime) -> str:
@@ -382,6 +393,7 @@ class Controller:
         policy_state.require_validated()
         self.state = policy_state
         self.module: dict[str, Any] = policy_state.tvl
+        self._refuse_standing_deploy()
         agent = policy_state.agent
         if store_dir is None:
             if agent is None:
@@ -396,6 +408,25 @@ class Controller:
         self._init_store(agent or self.dir.name, environment, initial_config, now)
         with self._locked():  # finish or abandon a head move a crash interrupted
             self._recover_commits()
+
+    def _refuse_standing_deploy(self) -> None:
+        """``approval: standing`` on a rule whose deploy is ``if_promoted`` is refused.
+
+        A standing grant for a DEPLOY would need the acceptance-equivalent binding
+        fields (RFC 0012 section 2.3, last sentence); neither the reference relation
+        nor this controller implements them, and the deploy always waits for Accept
+        release.  Refusing is the honest answer: no fake support.
+        """
+        for response in self.module.get("responses", []):
+            for rule in response.get("rules", []):
+                if rule.get("approval") == "standing" and (
+                    rule.get("deploy", "never") == "if_promoted"
+                ):
+                    raise TuningError(
+                        E_STANDING_DEPLOY_UNSUPPORTED,
+                        "approval: standing is not supported on a rule whose deploy "
+                        "is if_promoted; use human approval, or deploy: never",
+                    )
 
     # -- store ----------------------------------------------------------------------
     def _p(self, name: str) -> Path:
@@ -459,9 +490,14 @@ class Controller:
     def _lines(self) -> list[dict[str, Any]]:
         return _read_lines(self._p("history.jsonl"))
 
-    def _history(self, extra: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def _history(
+        self,
+        extra: list[dict[str, Any]] | None = None,
+        lines: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         steps: list[dict[str, Any]] = []
-        for line in [*self._lines(), *(extra or [])]:
+        base = self._lines() if lines is None else lines
+        for line in [*base, *(extra or [])]:
             step: dict[str, Any] = {"instant": line["instant"]}
             if line["category"] != "tick":
                 step[line["category"]] = [line["record"]]
@@ -540,9 +576,19 @@ class Controller:
                 )
         return self.authority
 
-    def _on_list_now(self, approver: object) -> bool:
-        """Is ``approver`` allowed at this instant?  No authority means no."""
-        return self.authority is not None and self.authority.authorized(approver)
+    def _on_list_now(
+        self, approver: object, context: Mapping[str, Any] | None = None
+    ) -> bool:
+        """Is ``approver`` listed AND authenticated at this instant?
+
+        The same authenticator that decides a release acceptance decides every
+        other authority decision (a run approval, a standing grant): a platform
+        authenticator that answers False refuses.  No authority means no.
+        """
+        authority = self.authority
+        if authority is None or not authority.authorized(approver):
+            return False
+        return authority.authenticated(approver, context or {"decision": "authority"})
 
     # -- recording ------------------------------------------------------------------
     def record_event(
@@ -575,6 +621,7 @@ class Controller:
         if authenticated and isinstance(signature, str):
             meta["signature"] = signature
         with self._locked():
+            self._recover_commits()  # history must hold a crashed commit first
             instant = self._instant(_utc(now))
             self._append("events", record, instant, meta)
         return EventReceipt(instant, authenticated)
@@ -590,6 +637,7 @@ class Controller:
         self.state.require_validated()
         record = copy.deepcopy(dict(report))
         with self._locked():
+            self._recover_commits()  # history must hold a crashed commit first
             instant = self._instant(_utc(now))
             self._append("windows", record, instant)
         return instant
@@ -618,6 +666,10 @@ class Controller:
         if not authority.authorized(approver):
             raise TuningError(
                 E_APPROVER_NOT_AUTHORIZED, "that approver is not on the authority list"
+            )
+        if not authority.authenticated(approver, _approve_context(ref)):
+            raise TuningError(
+                E_APPROVER_NOT_AUTHORIZED, "that approver was not authenticated"
             )
         with self._locked():
             approvals = _read_json(self._p("approvals.json"), {})
@@ -651,6 +703,7 @@ class Controller:
         at every use.
         """
         self.state.require_validated()
+        self._refuse_standing_deploy()
         authority = self.require_authority()
         issued = _utc(now)
         expires = _utc(expires_at)
@@ -680,6 +733,10 @@ class Controller:
             raise TuningError(
                 E_APPROVER_NOT_AUTHORIZED,
                 "the grant issuer is not on the authority list",
+            )
+        if not authority.authenticated(issuer, _grant_context(grant_id, rule_ref)):
+            raise TuningError(
+                E_APPROVER_NOT_AUTHORIZED, "the grant issuer was not authenticated"
             )
         grant = {
             "grant_id": grant_id,
@@ -713,7 +770,10 @@ class Controller:
             and grant["contract_digest"] == self.meta["contract_digest"]
             and grant.get("covers") == "optimize"
             and moment < _parse_instant(grant["expires_at"])
-            and self._on_list_now(grant.get("issuer"))
+            and self._on_list_now(
+                grant.get("issuer"),
+                _grant_context(grant.get("grant_id"), grant.get("rule_ref")),
+            )
         )
 
     def _consume_grant(
@@ -754,9 +814,9 @@ class Controller:
         until ``abandon_interrupted`` records it as cancelled.
         """
         self.state.require_validated()
-        moment = _utc(now)
         report = StepReport()
         with self._locked():
+            moment = _utc(now)  # read after the lock: the time of the effect
             report.head_written = self._recover_commits()
             if self._has_schedule():
                 self._tick(self._instant(moment))
@@ -845,7 +905,9 @@ class Controller:
         if self._rule(occ).get("approval", "human") == "standing":
             return self._consume_grant(occ, ref, moment)
         approval = _read_json(self._p("approvals.json"), {}).get(ref)
-        return approval is not None and self._on_list_now(approval.get("approver"))
+        return approval is not None and self._on_list_now(
+            approval.get("approver"), _approve_context(ref)
+        )
 
     def _authorization_lapse(
         self, occ: Mapping[str, Any], ref: str, moment: datetime
@@ -870,7 +932,7 @@ class Controller:
         approval = _read_json(self._p("approvals.json"), {}).get(ref)
         if approval is None:
             return "approval_missing"
-        if not self._on_list_now(approval.get("approver")):
+        if not self._on_list_now(approval.get("approver"), _approve_context(ref)):
             return "approver_not_authorized"
         return None
 
@@ -1358,8 +1420,11 @@ class Controller:
         doc = copy.deepcopy(dict(record))
         approver = doc.get("approver_ref")
         ident = doc.get("acceptance_id")
-        moment = _utc(now)
         with self._locked():
+            # The effect time is read HERE, after the store lock is held: an
+            # acceptance that expired while this call waited behind another writer
+            # (an optimization holds the lock) is judged at its real effect time.
+            moment = _utc(now)
             self._recover_commits()
             prior = self._acceptance_lines()
             recorded = [ln["record"]["record"] for ln in prior]
@@ -1462,7 +1527,7 @@ class Controller:
             return "acceptance_not_usable"
         if not (decided <= at < expires):
             return "acceptance_not_usable"
-        if not self._on_list_now(doc.get("approver_ref")):
+        if not self._on_list_now(doc.get("approver_ref"), doc):
             return "approver_not_authorized"
         if int(current["generation"]) != doc["expected_head_generation"]:
             return "stale_generation"
@@ -1530,10 +1595,12 @@ class Controller:
             "config": self._config_for(fingerprint),
             "generation": generation,
         }
+        commit = secrets.token_hex(8)  # one id per attempt, never the acceptance id
         _append_line(
             self._p("commits.jsonl"),
             {
                 "fact": "commit_intent",
+                "commit": commit,
                 "acceptance": ident,
                 "instant": instant,
                 "from_generation": int(current["generation"]),
@@ -1547,7 +1614,12 @@ class Controller:
         self._append("acceptances", dict(line_record), instant, meta)
         _append_line(
             self._p("commits.jsonl"),
-            {"fact": "commit_done", "acceptance": ident, "generation": generation},
+            {
+                "fact": "commit_done",
+                "commit": commit,
+                "acceptance": ident,
+                "generation": generation,
+            },
         )
         return AcceptanceOutcome(ident, "written", None, generation)
 
@@ -1558,6 +1630,60 @@ class Controller:
         if head["generation"] not in known:
             _append_line(self._p("heads.jsonl"), dict(head))
 
+    def _record_recovered_acceptance(self, intent: Mapping[str, Any]) -> None:
+        """Put a crashed commit's acceptance into history at its ORIGINAL instant.
+
+        The head moved at that instant, so history records the consumption there
+        (never at ``max(original, last)``: a later instant could be past the
+        record's expiry and the relation would then reject what production already
+        did).  Every history-appending entry point recovers first, so normally the
+        line simply lands at the tail.  If history has meanwhile grown past that
+        instant (a writer that did not recover), the line is spliced in at its
+        instant: lines after it stay ordered after it, and the file is rewritten
+        atomically under the store lock.  If the relation still rejects the
+        result, nothing is written, the journal is NOT marked done, and the
+        store is refused with ``E_HEAD_DIVERGED`` (loud, never silently split).
+        """
+        line: dict[str, Any] = {
+            "instant": int(intent["instant"]),
+            "category": "acceptances",
+            "record": intent["line_record"],
+        }
+        if intent.get("meta"):
+            line["meta"] = dict(intent["meta"])
+        lines = self._lines()
+        index = len(lines)
+        while index > 0 and int(lines[index - 1]["instant"]) > line["instant"]:
+            index -= 1
+        merged = [*lines[:index], line, *lines[index:]]
+        try:
+            trace = conditions_trace(self.module, self._history(lines=merged))
+            derived = self._tvl_generation(trace)
+        except Exception:  # noqa: BLE001 - TVL closed errors; never echo content
+            derived = -1
+        if derived != int(intent["to_generation"]):
+            raise TuningError(
+                E_HEAD_DIVERGED,
+                "head.json moved but the relation does not accept the journalled "
+                "acceptance at its original instant; the commit stays open and the "
+                "store is not usable until reconciled",
+            )
+        if index == len(lines):
+            _append_line(self._p("history.jsonl"), line)
+            return
+        text = "".join(_frame(entry) + "\n" for entry in merged)
+        fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".history.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, self._p("history.jsonl"))
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
+
     def _recover_commits(self) -> int | None:
         """Finish or abandon a head move a crash interrupted (store lock held).
 
@@ -1566,22 +1692,27 @@ class Controller:
         * the head was not installed: abandon, never install late (the acceptance
           may have expired meanwhile); the deploy stays awaiting.
 
-        Returns the generation completed, if any.
+        Journal entries are keyed by the per-attempt ``commit`` id, never by the
+        acceptance id alone: an identical resubmission after an abandoned attempt
+        is a new attempt and is recovered on its own.  Returns the generation
+        completed, if any.
         """
+
+        def key(entry: Mapping[str, Any]) -> str:
+            return str(entry.get("commit") or entry["acceptance"])  # legacy: id
+
         entries = _read_lines(self._p("commits.jsonl"))
         finished = {
-            e["acceptance"]
+            key(e)
             for e in entries
             if e.get("fact") in ("commit_done", "commit_abandoned")
         }
         completed: int | None = None
         for intent in entries:
-            if (
-                intent.get("fact") != "commit_intent"
-                or intent["acceptance"] in finished
-            ):
+            if intent.get("fact") != "commit_intent" or key(intent) in finished:
                 continue
             ident = str(intent["acceptance"])
+            commit = intent.get("commit")
             head = read_head(self.dir)
             if head is None:
                 raise TuningError(E_STORE_CORRUPT, "head.json is missing")
@@ -1595,18 +1726,12 @@ class Controller:
                     for ln in self._acceptance_lines()
                 )
                 if not recorded:
-                    lines = self._lines()
-                    last = lines[-1]["instant"] if lines else 0
-                    self._append(
-                        "acceptances",
-                        intent["line_record"],
-                        max(int(intent["instant"]), last),
-                        intent.get("meta"),
-                    )
+                    self._record_recovered_acceptance(intent)
                 _append_line(
                     self._p("commits.jsonl"),
                     {
                         "fact": "commit_done",
+                        "commit": commit,
                         "acceptance": ident,
                         "generation": intent["to_generation"],
                         "recovered": True,
@@ -1616,7 +1741,7 @@ class Controller:
             elif int(head["generation"]) == intent["from_generation"]:
                 _append_line(
                     self._p("commits.jsonl"),
-                    {"fact": "commit_abandoned", "acceptance": ident},
+                    {"fact": "commit_abandoned", "commit": commit, "acceptance": ident},
                 )
                 self._record_controller_fact(
                     {
@@ -1658,6 +1783,23 @@ class Controller:
         limit = getattr(self.optimize_fn, "spend_limit", None)
         return dict(limit) if isinstance(limit, Mapping) and limit else None
 
+    def _approval_text(self, occ: Mapping[str, Any], ref: str) -> str:
+        """Who or what approved the run, as a person reads it.
+
+        TVL's relation models a standing grant as platform state (the attempt is
+        auto-approved); here the grant record is the platform state.  Both layers
+        mean the same, and ``status`` words it the same way: "approved by standing
+        grant <id>".
+        """
+        if self._rule(occ).get("approval", "human") == "standing":
+            grants = _read_json(self._p("grants.json"), {})
+            for grant_id in sorted(grants):
+                if ref in grants[grant_id].get("used", []):
+                    return f"approved by standing grant {grant_id}"
+            return "approved by standing grant"
+        approval = _read_json(self._p("approvals.json"), {}).get(ref) or {}
+        return f"approved by {approval.get('approver', 'an approver')}"
+
     def status(self) -> dict[str, Any]:
         """Head, open attempts and pending deploys (derived, read-only).
 
@@ -1692,6 +1834,8 @@ class Controller:
                 "occurrence": ref,
                 "state": state,
             }
+            if state in ("approved", "interrupted"):
+                entry["approval"] = self._approval_text(opened["occurrence"], ref)
             if state == "awaiting_approval":
                 domain = domains.get(opened["attempt"])
                 entry["approve_run"] = {

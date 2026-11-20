@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
-from traigent.tuning.context import derive_module_context, merge_context
+from traigent.tuning.context import (
+    DEFAULT_SNAPSHOT_ID,
+    derive_module_context,
+    merge_context,
+)
 from traigent.tuning.errors import (
     E_TVL_VALIDATION_FAILED,
     E_TVL_VALIDATOR_UNAVAILABLE,
@@ -13,7 +18,7 @@ from traigent.tuning.errors import (
     TvlValidationFailed,
     ValidatorUnavailable,
 )
-from traigent.tuning.policy import Tuning
+from traigent.tuning.policy import Every, Tuning
 from traigent.tuning.validator import Diagnostic, lint_document, validator_available
 
 
@@ -89,6 +94,30 @@ def initial_config_of(optimized: Any) -> dict[str, Any]:
     return config
 
 
+def _snapshot_id_for(tune: Tuning) -> str:
+    """The environment snapshot a derived context names.
+
+    TVL's schedule lint (``schedule_anchor_out_of_range``) needs every ``Every``
+    anchor to be at most one year after ``environment.snapshot_id``, so the 1970
+    placeholder makes any modern schedule fail.  With no explicit
+    ``module_context`` snapshot, the snapshot is the EARLIEST schedule anchor: the
+    moment the policy starts (a legal value: the anchor is then zero days after it).
+    Without a schedule the deterministic placeholder is kept.  An explicit
+    ``module_context["environment"]["snapshot_id"]`` always wins (the merge).
+    """
+    anchors = []
+    for trigger in getattr(tune, "on", ()):
+        if isinstance(trigger, Every):
+            try:
+                parsed = datetime.fromisoformat(trigger.anchor.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=UTC)
+                anchors.append((parsed, trigger.anchor))
+            except ValueError:
+                continue  # an unparseable anchor is the linter's finding
+    return min(anchors)[1] if anchors else DEFAULT_SNAPSHOT_ID
+
+
 def attach_tuning(
     target: Any, agent: str | None, tune: Tuning, *, source: Any = None
 ) -> TuningState:
@@ -97,7 +126,10 @@ def attach_tuning(
     The module context comes from ``source`` (the function under decoration),
     overridden by any ``module_context`` given to ``Tuning``.
     """
-    derived = derive_module_context(source if source is not None else target)
+    derived = derive_module_context(
+        source if source is not None else target,
+        snapshot_id=_snapshot_id_for(tune),
+    )
     context = merge_context(derived, tune.module_context)
     doc = tune.to_tvl(context)
     if validator_available():

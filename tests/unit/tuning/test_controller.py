@@ -807,6 +807,7 @@ def _standing_state() -> TuningState:
         for rule in response["rules"]:
             if rule["id"] == "on_new_model":
                 rule["approval"] = "standing"
+                rule["deploy"] = "never"  # standing + if_promoted is refused
     # the policy builder only knows human approval; the controller reads ``tvl``
     st = state()
     st.tvl = doc
@@ -841,7 +842,6 @@ def test_standing_rule_optimizes_only_under_a_recorded_grant(tmp_path: Path) -> 
     c.step(at(10))
     c.step(at(10))  # a retry of the same occurrence does not consume again
     assert len(opt.calls) == 1
-    assert c.accept(e_ref("E1"), "approver-1", 0, now=at(31)).result == "written"
 
     c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
     report = c.step(at(40))  # the grant allowed one occurrence
@@ -1361,7 +1361,7 @@ def test_standing_grant_needs_a_listed_issuer_now_and_at_every_use(
     assert len(opt.calls) == 1
 
 
-def test_a_standing_grant_covers_the_optimization_only_never_the_deploy(
+def test_a_standing_grant_covers_the_optimization_only_it_never_moves_the_head(
     tmp_path: Path,
 ) -> None:
     opt = FakeOptimizer()
@@ -1373,8 +1373,7 @@ def test_a_standing_grant_covers_the_optimization_only_never_the_deploy(
     c.step(at(10))
     assert len(opt.calls) == 1
     assert head(tmp_path)["generation"] == 0  # the grant never moved the head
-    assert len(c.status()["pending_deploys"]) == 1  # the deploy waits for a human
-    assert c.accept(e_ref("E1"), "approver-1", 0, now=at(31)).result == "written"
+    assert c.status()["pending_deploys"] == []  # deploy: never, nothing to accept
 
 
 def test_a_grant_never_allows_more_runs_than_its_count(tmp_path: Path) -> None:
@@ -1388,8 +1387,6 @@ def test_a_grant_never_allows_more_runs_than_its_count(tmp_path: Path) -> None:
             event(f"E{index}", f"anthropic/claude-haiku-5-{index}", hour - 1), at(hour)
         )
         c.step(at(hour))
-        if index == 0:
-            c.accept(e_ref("E0"), "approver-1", 0, now=at(hour + 1))
     assert len(opt.calls) == 1  # one use, one run
 
 

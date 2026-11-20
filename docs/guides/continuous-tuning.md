@@ -71,7 +71,7 @@ Rates are decimal strings or `decimal.Decimal`. Floats are rejected with `E_FLOA
 | `RandomAudit(rate)` | `hash_bernoulli_committed_v1` sampling on the runtime monitors (rate strictly between 0 and 1). |
 | `ModelReleased(family, tier, admit)` | rule `on_new_model`: external trigger `model_released`, `admit: {tvar}`, `protects` all kept requirements. |
 | `OnBreach()` | rule `on_breach` (or `on_breach_<name>` with several kept rates): monitor trigger `episode_opened`. |
-| `Every(days, anchor)` | schedule trigger with `protects`. |
+| `Every(days, anchor)` | schedule trigger with `protects`. With no explicit `module_context` snapshot, the TVL `environment.snapshot_id` is the earliest `Every` anchor (TVL requires every anchor within one year after the snapshot); set `module_context={"environment": {"snapshot_id": ...}}` to choose it. |
 | `ProposeFix(approval, deploy)` | `approval` and `deploy` on every rule; `approval="none"` is rejected. |
 
 The module context (tvars, objectives, evaluation set, environment) comes from the
@@ -136,11 +136,24 @@ Nothing is allowed by default.
   signature, the event is still recorded, as TVL's `rejected(unauthenticated)`, and fires
   nothing (`traigent tune event` prints `authenticated: false` and warns). A shared secret is the
   minimum a local setup can do; it does not replace the platform's signing.
+* **Every authority decision uses the same authenticator.** Approve run, a standing grant's
+  issuer and Accept release are each checked against the list and, in `platform` mode, against
+  your authenticator; one that answers False (or raises) refuses, at the decision and again
+  just before the effect.
 * **Standing grants** (`approval: standing`) cover the optimization only: the grant names the
   rule, a maximum count and an expiry of at most 30 days (RFC 0003 section 7.3), and its issuer
   must be on the authority list when it is recorded and at every use. Each occurrence consumes
-  one use. A grant never authorizes a deploy: the release still waits for Accept release. The
-  grant has no cost limit of its own (see known limits).
+  one use. The grant has no cost limit of its own (see known limits).
+  **Standing is not supported for a deploy.** A rule with `approval: standing` and
+  `deploy: if_promoted` is refused when the controller starts, with
+  `E_STANDING_DEPLOY_UNSUPPORTED`; use `deploy: never` with a standing grant, or human
+  approval with a deploy. (RFC 0012 section 2.3 says a standing deploy grant would carry the
+  acceptance's binding fields; neither the reference relation nor this SDK implements that,
+  so there is no partial version.)
+  **Same meaning, two layers.** TVL's reference relation models a standing grant as platform
+  state: the attempt is auto-approved. The SDK is that platform here, so it checks that a
+  grant record exists, is unexpired, has uses left and has a listed issuer. `tune status`
+  words the result the same way for both: "approved by standing grant G1".
 
 ## Time
 
@@ -182,9 +195,12 @@ Soundness rules:
   binds the gate digest and the holdout digest of **that deploy's own attempt**, never one found
   by scanning for a fingerprint, and the write is refused if the head is no longer that incumbent.
 
-**Holdout reuse risk.** A holdout proves independence from the optimizer's data, not from your
-own repeated decisions: every scheduled or event-triggered run that selects against the same
-holdout makes a lucky pass more likely, and the gate has no multiple-testing correction. The
+**Holdout reuse risk.** The digest check refuses a holdout whose file bytes or content are
+identical to the optimizer's `eval_dataset`. It does not prove the two sets are disjoint, nor
+that the holdout is independent of anything else; rows that overlap partially, or near
+duplicates, pass. Reuse is counted, not prevented: every scheduled or event-triggered run that
+selects against the same holdout makes a lucky pass more likely, and the gate has no
+multiple-testing correction. The
 holdout digest ties a decision to a file, and `status` shows how many earlier gates used the
 same holdout (`prior_uses`). Refresh the holdout with fresh cases on a cadence you can defend,
 and treat a high `prior_uses` as a reason to refuse.
@@ -259,6 +275,14 @@ TRAIGENT_TVL_REQUIRED=1 python -m pytest -q tests/unit/tuning
 * **A crash is repaired, never completed late.** After a crash the next start finishes a move
   whose head was installed (recording the acceptance at its original instant) and abandons one
   whose head was not, so an acceptance that expired meanwhile is never installed.
+  Every call that appends history (events, windows, acceptances, `step`) recovers an open
+  commit first, under the store lock, and the effect time of an acceptance is read after that
+  lock is held, so one that expired while waiting is refused. The journal keys each attempt
+  by its own commit id: an identical resubmission after an abandoned attempt is recovered on
+  its own. If history already moved past the crashed acceptance's instant, the acceptance is
+  placed at that original instant (the effect happened then) and later lines stay after it; if
+  the relation still cannot accept that, the store refuses with `E_HEAD_DIVERGED` and the
+  journal stays open.
 * **Acceptance ids are per record.** `acceptance_id` covers the approver, the decision instant
   and a nonce, so a retry after an expiry or an unauthorized attempt is a new record. Only an
   exact redelivery of a recorded record is deduplicated; the same id with other content is

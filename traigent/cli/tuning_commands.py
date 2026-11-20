@@ -513,6 +513,8 @@ def _status_text(status: dict[str, Any]) -> str:
     lines = [f"head: generation {head['generation']} ({head['fingerprint']})"]
     for attempt in status["open_attempts"]:
         lines.append(f"attempt {attempt['attempt']}: {attempt['state']}")
+        if attempt.get("approval"):
+            lines.append(f"  {attempt['approval']}")
         view = attempt.get("approve_run")
         if view:
             lines.append(f"  Approve run  {attempt['occurrence']}")
