@@ -149,6 +149,12 @@ from traigent.utils.env_config import (
 )
 from traigent.utils.env_config import is_backend_offline as is_backend_offline
 from traigent.utils.env_config import is_mock_llm, skip_provider_validation
+from traigent.utils.example_consistency import (
+    EXAMPLE_CONSISTENCY_METADATA_KEY,
+    build_consistency_report,
+    summarize_example_outcomes,
+    trial_example_outcomes,
+)
 from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.exceptions import (
     ConfigurationError,
@@ -1512,6 +1518,7 @@ class OptimizationOrchestrator:
         self._winner_stability_accounted_cost = 0.0
         self._winner_stability_unmeasured_reruns = 0
         self._winner_stability_recorded_ids: dict[Any, Any] = {}
+        self._winner_stability_example_outcomes: list[dict[str, str]] = []
         # The backend session id for the active run. Read by the
         # certified-selection report guard to verify the incumbent's trial id
         # was backend-acknowledged before attesting a winner.
@@ -5589,8 +5596,14 @@ class OptimizationOrchestrator:
         primary_objective: str,
         reps: int,
     ) -> list[float]:
-        """Run up to ``reps`` reruns and return the finite primary-objective scores."""
+        """Run up to ``reps`` reruns and return the finite primary-objective scores.
+
+        Each rerun's per-example pass/fail is also kept, in
+        ``self._winner_stability_example_outcomes`` (one map per rerun that
+        carried per-example results).
+        """
         scores: list[float] = []
+        self._winner_stability_example_outcomes = []
         for index in range(reps):
             attempt = _WinnerStabilityAttempt(
                 trial_id=f"winner_stability_{self._optimization_id}_{index + 1}"
@@ -5610,6 +5623,9 @@ class OptimizationOrchestrator:
             rerun_trial = attempt.trial
             if rerun_trial is None:
                 continue
+            rerun_outcomes = trial_example_outcomes(rerun_trial)
+            if rerun_outcomes is not None:
+                self._winner_stability_example_outcomes.append(rerun_outcomes)
             score = (
                 coerce_finite_objective_score(rerun_trial.get_metric(primary_objective))
                 if rerun_trial.is_successful
@@ -5626,6 +5642,24 @@ class OptimizationOrchestrator:
                 continue
             scores.append(float(score))
         return scores
+
+    def _record_example_consistency(self, result: OptimizationResult) -> None:
+        """Store per-example consistency counts for the winner's reruns.
+
+        Kept under its own ``result.metadata`` key, outside the
+        ``winner_stability`` block: it carries example ids and is local-only
+        (never sent to the backend). Nothing is stored unless at least one
+        example has two or more known reruns.
+        """
+        per_rerun = getattr(self, "_winner_stability_example_outcomes", None) or []
+        examples = summarize_example_outcomes(per_rerun)
+        if not examples:
+            return
+        result.metadata[EXAMPLE_CONSISTENCY_METADATA_KEY] = build_consistency_report(
+            examples,
+            reps=len(per_rerun),
+            config_hash=self._get_config_hash(result.best_config),
+        )
 
     def _build_winner_stability_block(
         self, result: OptimizationResult, scores: list[float]
@@ -5705,6 +5739,7 @@ class OptimizationOrchestrator:
                 self._winner_stability_accounted_cost,
                 getattr(self, "_winner_stability_unmeasured_reruns", 0),
             )
+            self._record_example_consistency(result)
 
             if not scores:
                 logger.warning(

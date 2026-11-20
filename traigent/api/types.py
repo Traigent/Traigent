@@ -1369,6 +1369,42 @@ class OptimizationResult:
             winning_trial_ids=winning_trial_ids,
         )
 
+    def example_consistency(self) -> dict[str, Any]:
+        """Per-example consistency labels from the winner's reruns.
+
+        Recorded when ``winner_stability_reps`` is at least 2: the winning
+        configuration is re-evaluated on the same examples and each example is
+        labelled ``consistent_pass``, ``consistent_fail`` or ``flaky`` from its
+        per-rerun outcomes (the ``failing_examples`` pass/fail rule; an error or
+        unscorable score is unknown and never a pass). Only the winner and only
+        the examples it was rerun on are labelled.
+
+        Returns:
+            ``{"counts": {label: n}, "examples": {id: {"label", "passes",
+            "fails", "unknowns"}}, "reps": int, "config_hash": str | None}``.
+            ``examples`` is empty (counts all zero) when no labels were
+            recorded. Labels are stored locally and never uploaded.
+        """
+        from traigent.utils.example_consistency import (
+            EXAMPLE_CONSISTENCY_METADATA_KEY,
+            build_consistency_report,
+        )
+
+        stored = (
+            self.metadata.get(EXAMPLE_CONSISTENCY_METADATA_KEY)
+            if isinstance(self.metadata, dict)
+            else None
+        )
+        if not isinstance(stored, Mapping):
+            return build_consistency_report(None)
+        examples = stored.get("examples")
+        reps = stored.get("reps")
+        return build_consistency_report(
+            examples if isinstance(examples, Mapping) else None,
+            reps=reps if isinstance(reps, int) else 0,
+            config_hash=stored.get("config_hash"),
+        )
+
     @property
     def eval_audit(self) -> EvalAudit | None:
         """Opt-in eval-dataset defect audit for this run (issues #1880 + #1881).
