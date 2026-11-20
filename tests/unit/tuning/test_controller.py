@@ -24,6 +24,7 @@ from traigent.tuning.controller import (
     E_INVALID_GRANT,
     E_NO_DEPLOY_AWAITING,
     E_STORE_CORRUPT,
+    E_STORE_FORMAT,
     Controller,
     HeadLoader,
     config_fingerprint,
@@ -483,7 +484,7 @@ class _Live:
     """A real mock-mode ``@traigent.optimize`` function and what it serves."""
 
     @staticmethod
-    def build() -> Any:
+    def build(**extra: Any) -> Any:
         @traigent.optimize(
             configuration_space={"model": [OLD["model"], NEW["model"]]},
             objectives=["accuracy"],
@@ -491,6 +492,7 @@ class _Live:
             offline=True,
             max_trials=2,
             default_config=dict(OLD),
+            **extra,
         )
         def live(q: str) -> str:
             return "a"
@@ -624,3 +626,106 @@ def test_required_env_makes_a_missing_toolchain_fail_not_skip(
     monkeypatch.setenv(conftest.REQUIRED_ENV, "1")
     with pytest.raises(pytest.fail.Exception):
         conftest.check_toolchain()
+
+
+def _grant_fixture(tmp_path: Path) -> tuple[Controller, FakeOptimizer]:
+    opt = FakeOptimizer()
+    c = _standing(tmp_path, opt)
+    c.record_standing_grant(
+        "G1", "tuning/on_new_model", 1, at(10) + timedelta(hours=2), "owner", at(10)
+    )
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    return c, opt
+
+
+@pytest.mark.parametrize("crash_at", ["before_optimizer", "before_approval_record"])
+def test_recovery_revalidates_an_expired_standing_grant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, crash_at: str
+) -> None:
+    c, opt = _grant_fixture(tmp_path)
+    if crash_at == "before_optimizer":
+        c.optimize_fn = None  # the approval persists, then the run never starts
+        with pytest.raises(TuningError):
+            c.step(at(11))
+    else:
+        real = Controller._append
+
+        def crash(self: Controller, category: str, record: Any, instant: int) -> None:
+            if record and record.get("fact") == "approval":
+                raise RuntimeError("simulated crash before the approval record")
+            real(self, category, record, instant)
+
+        monkeypatch.setattr(Controller, "_append", crash)
+        with pytest.raises(RuntimeError):
+            c.step(at(11))  # the grant use is persisted, the approval is not
+        monkeypatch.undo()
+
+    restarted = Controller(
+        _standing_state(), tmp_path / "store", opt, initial_config=OLD, now=T0
+    )
+    report = restarted.step(at(20))  # the grant expired at hour 12
+    assert opt.calls == [] and report.started == []
+    if crash_at == "before_optimizer":
+        assert report.refused and report.refused[0].endswith(":grant_expired")
+        reasons = [f["reason"] for f in restarted.controller_facts()]
+        assert reasons == ["grant_expired"]
+    else:  # the used-reference shortcut no longer revives an expired grant
+        assert report.awaiting_approval == [e_ref("E1")]
+    assert not list((tmp_path / "store" / "attempts").glob("*.json"))
+
+
+def test_newline_terminated_bad_record_is_corruption_never_truncated(
+    tmp_path: Path,
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
+    path = tmp_path / "store" / "history.jsonl"
+    first, second = path.read_text().splitlines()
+    path.write_text(first + "\n" + second.replace("E6", "EX") + "\n")  # committed
+    before = path.read_bytes()
+    with pytest.raises(TuningError) as err:
+        controller(tmp_path, FakeOptimizer())
+    assert err.value.code == E_STORE_CORRUPT
+    assert path.read_bytes() == before
+
+
+def test_legacy_plain_json_store_is_refused_untouched(tmp_path: Path) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    store = tmp_path / "store"
+    for name in ("history.jsonl", "heads.jsonl"):
+        path = store / name
+        lines = [ln.partition("\t")[2] for ln in path.read_text().splitlines()]
+        path.write_text("\n".join(lines))  # old format, even without a final newline
+    before = {n: (store / n).read_bytes() for n in ("history.jsonl", "heads.jsonl")}
+    with pytest.raises(TuningError) as err:
+        controller(tmp_path, FakeOptimizer())
+    assert err.value.code == E_STORE_FORMAT
+    assert str(store) in str(err.value) and "re-initialize" in str(err.value)
+    assert before == {n: (store / n).read_bytes() for n in before}
+
+
+def test_candidate_run_never_leaks_into_the_live_best_config_loaders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    monkeypatch.delenv("TRAIGENT_RESULTS_FOLDER", raising=False)
+    monkeypatch.delenv("TRAIGENT_OPTIMIZATION_LOG_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(tmp_path)
+    live = _Live.build()
+    candidate_dir = tmp_path / "store" / "candidates" / "attempt-1"
+    result = traigent_optimize_fn(live, algorithm="grid", max_trials=2)(
+        {"model": [OLD["model"], NEW["model"]]}, candidate_dir=candidate_dir
+    )
+    assert result.trials
+    # the candidate's artifacts exist, inside the store
+    assert list(candidate_dir.rglob("best_config*.json"))
+    # nothing landed where a live wrapper looks (cwd, home, results folder)
+    assert not list(tmp_path.glob(".traigent/**/best_config*.json"))
+    assert not list((tmp_path / "home").rglob("best_config*.json"))
+    assert "TRAIGENT_RESULTS_FOLDER" not in __import__("os").environ
+    # a fresh live wrapper does not pick the candidate up
+    fresh = _Live.build(auto_load_best=True)
+    assert dict(fresh.current_config) == OLD

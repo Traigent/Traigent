@@ -36,6 +36,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -54,6 +55,7 @@ E_UNKNOWN_GENERATION = "E_UNKNOWN_GENERATION"
 E_STORE_MISMATCH = "E_STORE_MISMATCH"
 E_NOT_AN_OCCURRENCE = "E_NOT_AN_OCCURRENCE"
 E_STORE_CORRUPT = "E_STORE_CORRUPT"
+E_STORE_FORMAT = "E_STORE_FORMAT"
 E_ACCEPTANCE_CONFLICT = "E_ACCEPTANCE_CONFLICT"
 E_INVALID_GRANT = "E_INVALID_GRANT"
 E_NO_CANDIDATE_RUN = "E_NO_CANDIDATE_RUN"
@@ -184,19 +186,43 @@ def _unframe(line: str) -> Any:
     return json.loads(body)
 
 
+_FRAME_PREFIX = re.compile(rb"[0-9a-f]{16}\t")
+
+
+def _is_legacy_line(piece: bytes) -> bool:
+    """A pre-checksum record: a bare JSON object with no checksum frame."""
+    if _FRAME_PREFIX.match(piece):
+        return False
+    try:
+        return isinstance(json.loads(piece.decode("utf-8")), dict)
+    except (ValueError, UnicodeDecodeError):
+        return False
+
+
 def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
     """``(values, valid_byte_length, torn)`` of a framed JSONL file.
 
-    A bad FINAL line is a torn append (crash mid-write): it is reported, not
-    returned.  A bad line anywhere else is corruption and raises.
+    Only a final line WITHOUT its trailing newline can be a torn append (a crash
+    mid-write): it is reported, not returned.  A newline-terminated record that
+    fails its checksum was committed, so it is corruption and raises, as does a
+    bad line anywhere else.  A file in the pre-checksum format (plain JSON lines)
+    raises ``E_STORE_FORMAT`` untouched.
     """
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
         return [], 0, False
+    pieces = raw.split(b"\n")
+    present = [p for p in pieces if p]
+    if present and all(_is_legacy_line(p) for p in present):
+        raise TuningError(
+            E_STORE_FORMAT,
+            f"the tuning store at {path.parent} was written in an older format "
+            "without checksums and cannot be read; re-initialize the store "
+            "(remove the directory and start again). Its files were not modified.",
+        )
     values: list[Any] = []
     valid = 0
-    pieces = raw.split(b"\n")
     for index, piece in enumerate(pieces):
         last = index == len(pieces) - 1
         if not piece:
@@ -207,10 +233,10 @@ def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
         try:
             values.append(_unframe(piece.decode("utf-8")))
         except (ValueError, UnicodeDecodeError):
-            if not any(pieces[index + 1 :]):
+            if last:  # no trailing newline: the append never completed
                 return values, valid, True
             raise TuningError(
-                E_STORE_CORRUPT, f"{path.name} has a damaged record before its end"
+                E_STORE_CORRUPT, f"{path.name} has a damaged record"
             ) from None
         valid += len(piece) + (0 if last else 1)
     return values, valid, False
@@ -554,11 +580,11 @@ class Controller:
                 or grant["contract_digest"] != self.meta["contract_digest"]
             ):
                 continue
+            if moment >= _parse_instant(grant["expires_at"]):
+                continue  # an expired grant authorizes nothing, used or not
             if ref in grant["used"]:
                 return True  # a retry of one occurrence does not consume again
-            if moment >= _parse_instant(grant["expires_at"]) or len(
-                grant["used"]
-            ) >= int(grant["max_occurrences"]):
+            if len(grant["used"]) >= int(grant["max_occurrences"]):
                 continue
             grant["used"].append(ref)
             _write_json(self._p("grants.json"), grants)
@@ -648,6 +674,32 @@ class Controller:
             return self._consume_grant(occ, ref, moment)
         return ref in _read_json(self._p("approvals.json"), {})
 
+    def _authorization_lapse(
+        self, occ: Mapping[str, Any], ref: str, moment: datetime
+    ) -> str | None:
+        """Why the occurrence is no longer authorized at ``moment``; None when it is.
+
+        Checked immediately before the optimizer runs, on every path (recovery
+        included): a recorded approval never outlives its grant.
+        """
+        if self._rule(occ).get("approval", "human") == "standing":
+            rule_ref = f"{occ['response']}/{occ['rule']}"
+            grants = _read_json(self._p("grants.json"), {})
+            for grant in grants.values():
+                if (
+                    grant["rule_ref"] == rule_ref
+                    and grant["agent_ref"] == self.meta["agent"]
+                    and grant["contract_digest"] == self.meta["contract_digest"]
+                    and ref in grant["used"]
+                    and moment < _parse_instant(grant["expires_at"])
+                    and len(grant["used"]) <= int(grant["max_occurrences"])
+                ):
+                    return None
+            return "grant_expired"
+        if ref in _read_json(self._p("approvals.json"), {}):
+            return None
+        return "approval_missing"
+
     def _scope_requires_intervention(self, attempt: str, ref: str, hour: int) -> bool:
         """Ask the relation, run to ``hour``, whether the occurrence's scope still counts."""
         from tvl.runtime_conditions import _Run
@@ -726,6 +778,13 @@ class Controller:
                 record = self._finished_record(attempt, "cancelled", [])
                 _write_json(marker_path, {**marker, "finished_record": record})
                 return True
+            lapse = self._authorization_lapse(occ, ref, moment)
+            if lapse is not None:
+                self._record_controller_fact(
+                    {"fact": "optimize_refused", "attempt": attempt, "reason": lapse}
+                )
+                report.refused.append(f"{attempt}:{lapse}")
+                continue
             if self.optimize_fn is None:
                 raise TuningError(E_NO_OPTIMIZER, f"{attempt} needs an optimize_fn")
             space = self._search_space(domains.get(attempt))
@@ -735,7 +794,14 @@ class Controller:
             )
             report.started.append(attempt)
             try:
-                result = self.optimize_fn(copy.deepcopy(space))
+                if getattr(self.optimize_fn, "accepts_candidate_dir", False):
+                    isolated = cast(Callable[..., Any], self.optimize_fn)
+                    result = isolated(
+                        copy.deepcopy(space),
+                        candidate_dir=self._p("candidates") / attempt,
+                    )
+                else:
+                    result = self.optimize_fn(copy.deepcopy(space))
                 completion, candidates, configs = self._map_result(attempt, result)
             except Exception:  # noqa: BLE001 - a failed run is recorded, content never echoed
                 completion, candidates, configs = "error", [], {}
@@ -1170,18 +1236,54 @@ def _candidate_copy(fn: Any) -> Any:
     return clone
 
 
+# The SDK resolves its artifact roots from the process environment; these are the
+# knobs that route the optimization log (best-config artifacts included) and local
+# storage.  They are swapped for the duration of one candidate run.
+_ARTIFACT_ROOT_ENV = ("TRAIGENT_OPTIMIZATION_LOG_DIR", "TRAIGENT_RESULTS_FOLDER")
+_ARTIFACT_ENV_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def _isolated_artifacts(root: Path) -> Iterator[None]:
+    """Route every SDK artifact written inside the block under ``root``."""
+    root.mkdir(parents=True, exist_ok=True)
+    with _ARTIFACT_ENV_LOCK:
+        saved = {name: os.environ.get(name) for name in _ARTIFACT_ROOT_ENV}
+        for name in _ARTIFACT_ROOT_ENV:
+            os.environ[name] = str(root)
+        try:
+            yield
+        finally:
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
 def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
     """Adapt a ``@traigent.optimize`` function: run it on the search space.
 
     The optimization runs on an isolated copy (see :func:`_candidate_copy`), so the
-    live function's configuration is never changed; a deploy only follows a recorded
-    human acceptance.
+    live function's configuration is never changed, and every artifact it writes
+    (including best-config files) lands in ``candidate_dir`` -- inside the tuning
+    store -- never where a live wrapper's best-config loaders look.  A deploy only
+    follows a recorded human acceptance.
     """
 
-    def run(search_space: dict[str, Any]) -> Any:
+    def run(search_space: dict[str, Any], *, candidate_dir: Path | None = None) -> Any:
+        root = (
+            Path(candidate_dir)
+            if candidate_dir is not None
+            else Path(tempfile.mkdtemp(prefix="traigent-candidate-"))
+        )
         clone = _candidate_copy(fn)
-        return asyncio.run(clone.optimize(configuration_space=search_space, **kwargs))
+        with _isolated_artifacts(root):
+            return asyncio.run(
+                clone.optimize(configuration_space=search_space, **kwargs)
+            )
 
+    run.accepts_candidate_dir = True  # type: ignore[attr-defined]
     return run
 
 
