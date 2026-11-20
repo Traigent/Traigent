@@ -122,10 +122,30 @@ def test_load_corrupt_file_raises(tmp_path: Path, content: str) -> None:
         load_regression_dataset(tmp_path)
 
 
-def test_load_with_no_matching_label_raises_not_empty(tmp_path: Path) -> None:
+def test_valid_file_with_no_matching_label_returns_an_empty_dataset(
+    tmp_path: Path,
+) -> None:
     _merge(tmp_path, _ds(("q0", "a0")))
-    with pytest.raises(RegressionSetError, match="no rows with label"):
-        load_regression_dataset(tmp_path, labels=("reliable",))
+    loaded = load_regression_dataset(tmp_path, labels=("reliable",))
+    assert isinstance(loaded, Dataset)
+    assert len(loaded) == 0
+
+
+def test_missing_corrupt_and_empty_files_still_raise_not_empty(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(RegressionSetError, match="does not exist"):
+        load_regression_dataset(tmp_path / "nowhere", labels=("reliable",))
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "regression.jsonl").write_text("{not json\n", encoding="utf-8")
+    with pytest.raises(RegressionSetError, match="not valid"):
+        load_regression_dataset(bad, labels=("reliable",))
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    (empty / "regression.jsonl").write_text("", encoding="utf-8")
+    with pytest.raises(RegressionSetError, match="holds no rows"):
+        load_regression_dataset(empty, labels=("reliable",))
 
 
 def test_load_reads_the_file_once_and_survives_a_replace_after_the_read(

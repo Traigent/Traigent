@@ -528,10 +528,6 @@ def load_regression_dataset(
         for row in rows
         if row["metadata"]["regression"]["label"] in wanted
     ]
-    if not examples:
-        raise RegressionSetError(
-            f"Regression file {path} has no rows with label in {sorted(wanted)}"
-        )
     return Dataset(
         examples=examples,
         name="regression_set",
