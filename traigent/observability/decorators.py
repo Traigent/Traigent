@@ -573,13 +573,21 @@ class _ObserveFactory:
             HeadLoader,
             default_store_dir,
         )
+        from traigent.utils.env_config import resolve_environment_name
 
+        # the same environment the controller and the CLI resolve: the declared one,
+        # else the process's, else production
+        environment = (
+            self.environment
+            or resolve_environment_name(default=None)
+            or DEFAULT_ENVIRONMENT
+        )
         store = (
             Path(self.tuning_store)
             if self.tuning_store is not None
-            else default_store_dir(str(self.agent), self.environment)
+            else default_store_dir(str(self.agent), environment)
         )
-        loader = HeadLoader(store, self.environment or DEFAULT_ENVIRONMENT)
+        loader = HeadLoader(store, environment)
 
         def _enter() -> tuple[Any, Any]:
             head = loader.head()

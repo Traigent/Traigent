@@ -175,12 +175,13 @@ class FakeOptimizer:
         if self.result is not None:
             return self.result
         return {
+            "loaded_dataset_digests": [],  # this fake run loaded no dataset
             "candidates": [
                 {
                     # the optimizer proposes a config; the controller measures it
                     "config": {"model": space["model"][-1]},
                 }
-            ]
+            ],
         }
 
 
@@ -190,6 +191,9 @@ def make(st: TuningState, store: Path, optimize: Any, **kw: Any) -> Controller:
     kw.setdefault("event_verifier", verifier())
     kw.setdefault("initial_config", OLD)
     kw.setdefault("now", T0)
+    kw.setdefault(
+        "environment", "development"
+    )  # local-trusted needs a non-production store
     return Controller(st, store, optimize, **kw)
 
 
@@ -310,7 +314,9 @@ def test_interrupted_attempt_is_not_started_twice(tmp_path: Path) -> None:
 
 
 def test_candidate_without_promotion_evidence_never_deploys(tmp_path: Path) -> None:
-    opt = FakeOptimizer(result={"best_config": NEW})  # a bare result
+    opt = FakeOptimizer(
+        result={"best_config": NEW, "loaded_dataset_digests": []}
+    )  # a bare result
     c = controller(tmp_path, opt)
     c.state.policy.holdout = None  # no holdout: nothing to measure the candidate on
     c.record_event(event("E1", NEW["model"], 9), at(10))
@@ -1047,37 +1053,18 @@ def _grant_fixture(tmp_path: Path) -> tuple[Controller, FakeOptimizer]:
     return c, opt
 
 
-@pytest.mark.parametrize("crash_at", ["before_optimizer", "before_approval_record"])
-def test_recovery_revalidates_an_expired_standing_grant(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, crash_at: str
-) -> None:
+def test_recovery_revalidates_an_expired_standing_grant(tmp_path: Path) -> None:
     c, opt = _grant_fixture(tmp_path)
-    if crash_at == "before_optimizer":
-        c.optimize_fn = None  # the approval persists, then the run never starts
-        with pytest.raises(TuningError):
-            c.step(at(11))
-    else:
-        real = Controller._append
-
-        def crash(self: Controller, category: str, record: Any, instant: int) -> None:
-            if record and record.get("fact") == "approval":
-                raise RuntimeError("simulated crash before the approval record")
-            real(self, category, record, instant)
-
-        monkeypatch.setattr(Controller, "_append", crash)
-        with pytest.raises(RuntimeError):
-            c.step(at(11))  # the grant use is persisted, the approval is not
-        monkeypatch.undo()
-
+    c.optimize_fn = None  # the grant use persists, then the run never starts
+    with pytest.raises(TuningError):
+        c.step(at(11))
     restarted = make(_standing_state(), tmp_path / "store", opt)
     report = restarted.step(at(20))  # the grant expired at hour 12
     assert opt.calls == [] and report.started == []
-    if crash_at == "before_optimizer":
-        assert report.refused and report.refused[0].endswith(":grant_expired")
-        reasons = [f["reason"] for f in restarted.controller_facts()]
-        assert reasons == ["grant_expired"]
-    else:  # the used-reference shortcut no longer revives an expired grant
-        assert report.awaiting_approval == [e_ref("E1")]
+    # the used-reference shortcut does not revive an expired grant, and a standing
+    # attempt that never started recorded no approval or start for the relation
+    assert report.awaiting_approval == [e_ref("E1")]
+    assert not [ln for ln in restarted._lines() if ln["category"] == "optimizations"]
     assert not list((tmp_path / "store" / "attempts").glob("*.json"))
 
 
@@ -1421,13 +1408,14 @@ def test_supplied_verdicts_are_ignored_the_candidate_is_measured(
 def test_supplied_verdicts_without_a_holdout_never_promote(tmp_path: Path) -> None:
     liar = FakeOptimizer(
         result={
+            "loaded_dataset_digests": [],
             "candidates": [
                 {
                     "config": dict(NEW),
                     "legacy_decision": "Promote",
                     "monitor_verdicts": {"quality_gate": "MET"},
                 }
-            ]
+            ],
         }
     )
     c = controller(tmp_path, liar)

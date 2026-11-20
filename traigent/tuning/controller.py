@@ -55,7 +55,7 @@ import re
 import secrets
 import tempfile
 import threading
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -364,6 +364,25 @@ def read_head(store_dir: Path | str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------------
 # results and reports
 # ---------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class OptimizerRun:
+    """What one optimizer invocation returns: its result AND the identity of the
+    datasets THAT run actually loaded (digests, never content).
+
+    An optimizer that cannot say what it loaded returns its bare result; the
+    candidates of such a run cannot be promoted (``eval_set_identity_unknown``).
+    A mapping result may carry the same information under ``loaded_dataset_digests``.
+    """
+
+    result: Any
+    loaded_dataset_digests: frozenset[str] | None
+
+    def __getattr__(self, name: str) -> Any:  # the wrapped result stays readable
+        if name.startswith("__") or name in {"result", "loaded_dataset_digests"}:
+            raise AttributeError(name)
+        return getattr(self.result, name)
+
+
 @dataclass
 class StepReport:
     """What one ``step`` did, derived facts included."""
@@ -624,9 +643,9 @@ class Controller:
                 "a release needs one",
             )
         if self.authority.mode == LOCAL_TRUSTED:
-            from traigent.utils.env_config import is_production_strict_env
+            from traigent.tuning.authority import local_trusted_refused
 
-            if is_production_strict_env():
+            if local_trusted_refused(self.meta.get("environment")):
                 raise TuningError(
                     E_LOCAL_AUTHORITY_IN_PRODUCTION,
                     "a local-trusted authority does not authenticate anyone; "
@@ -646,7 +665,11 @@ class Controller:
         authority = self.authority
         if authority is None or not authority.authorized(approver):
             return False
-        return authority.authenticated(approver, context or {"decision": "authority"})
+        return authority.authenticated(
+            approver,
+            context or {"decision": "authority"},
+            self.meta.get("environment"),
+        )
 
     # -- recording ------------------------------------------------------------------
     def record_event(
@@ -725,7 +748,9 @@ class Controller:
             raise TuningError(
                 E_APPROVER_NOT_AUTHORIZED, "that approver is not on the authority list"
             )
-        if not authority.authenticated(approver, _approve_context(ref)):
+        if not authority.authenticated(
+            approver, _approve_context(ref), self.meta.get("environment")
+        ):
             raise TuningError(
                 E_APPROVER_NOT_AUTHORIZED, "that approver was not authenticated"
             )
@@ -792,7 +817,9 @@ class Controller:
                 E_APPROVER_NOT_AUTHORIZED,
                 "the grant issuer is not on the authority list",
             )
-        if not authority.authenticated(issuer, _grant_context(grant_id, rule_ref)):
+        if not authority.authenticated(
+            issuer, _grant_context(grant_id, rule_ref), self.meta.get("environment")
+        ):
             raise TuningError(
                 E_APPROVER_NOT_AUTHORIZED, "the grant issuer was not authenticated"
             )
@@ -993,6 +1020,10 @@ class Controller:
             for ln in self._lines()
         )
 
+    def _grant_used(self, ref: str) -> bool:
+        grants = _read_json(self._p("grants.json"), {})
+        return any(ref in g.get("used", []) for g in grants.values())
+
     def _finish_recorded(self, attempt: str) -> bool:
         return any(
             ln["category"] == "optimizations"
@@ -1103,6 +1134,14 @@ class Controller:
             marker = _read_json(marker_path)
             if opened["closed"] and marker is None:
                 continue  # closed and never started: nothing to finish, nothing blocks
+            if marker is None and hold_through is not None and instant <= hold_through:
+                # More events of this second may still arrive: take NO decision for
+                # it (no grant use, no approval or attempt fact), so the relation
+                # receives the complete second before anything acts on it.
+                if attempt not in report.deferred:
+                    report.deferred.append(attempt)
+                continue
+            standing = self._rule(occ).get("approval", "human") == "standing"
             # Immediately before any authorization is used or the optimizer is
             # invoked: the relation, over the history up to now, must still show
             # this occurrence's scope as requiring intervention.
@@ -1116,7 +1155,15 @@ class Controller:
                 )
                 report.refused.append(f"{attempt}:scope_expired")
                 continue
-            if not self._approval_recorded(attempt):
+            if standing and marker is None:
+                # A standing attempt is born approved: no approval fact is recorded
+                # (the relation reads that as a start).  The grant is consumed here;
+                # the start is recorded only when the optimizer is invoked.
+                if not self._authorized_now(occ, ref, moment):
+                    if ref not in report.awaiting_approval:
+                        report.awaiting_approval.append(ref)
+                    continue
+            elif not standing and not self._approval_recorded(attempt):
                 if not self._authorized_now(occ, ref, moment):
                     if ref not in report.awaiting_approval:
                         report.awaiting_approval.append(ref)
@@ -1154,37 +1201,47 @@ class Controller:
                 raise TuningError(E_NO_OPTIMIZER, f"{attempt} needs an optimize_fn")
             space = self._search_space(domains.get(attempt))
             admitted = self._admitted_values(domains.get(attempt))
-            # Authentication and history replay are done: read the clock NOW and
-            # check scope and authorization expiry immediately before the spend.
-            effect = clock()
-            if hold_through is not None and self._instant(effect) <= hold_through:
-                if attempt not in report.deferred:
+            # Authentication and every history replay are done.  The last things
+            # before the spend: the scope verdict at a clock that did not move
+            # during its replay, then (cheap file reads only) the grant's validity,
+            # all against a fresh clock.  Nothing replays after this.
+            for _ in range(3):
+                replayed = self._instant(clock())
+                in_scope = self._scope_requires_intervention(occ, replayed)
+                effect = clock()
+                if self._instant(effect) == replayed:
+                    break
+            else:
+                if attempt not in report.deferred:  # too slow to be sure: retry later
                     report.deferred.append(attempt)
                 continue
-            if not self._scope_requires_intervention(occ, self._instant(effect)):
-                lapse = "scope_expired"
-            else:
-                lapse = self._authorization_lapse(occ, ref, effect, authenticate=False)
+            lapse = (
+                "scope_expired"
+                if not in_scope
+                else self._authorization_lapse(occ, ref, effect, authenticate=False)
+            )
             if lapse is not None:
                 self._record_controller_fact(
                     {"fact": "optimize_refused", "attempt": attempt, "reason": lapse}
                 )
                 report.refused.append(f"{attempt}:{lapse}")
                 continue
-            if not self._start_recorded(attempt):
-                # the relation tracks actual starts apart from approval (a standing
-                # approval counts as started only from this fact)
-                self._append(
-                    "optimizations",
-                    {"attempt": attempt, "fact": "started"},
-                    self._instant(clock()),
-                )
+            # Journal first (the marker), then the start fact: a crash between the
+            # two leaves a marker that abandon_interrupted finds and cancels.
             _write_json(
                 marker_path,
                 {"attempt": attempt, "occurrence": ref, "state": "started"},
             )
+            if not self._start_recorded(attempt):
+                _append_line(
+                    self._p("history.jsonl"),
+                    {
+                        "instant": self._instant(clock()),
+                        "category": "optimizations",
+                        "record": {"attempt": attempt, "fact": "started"},
+                    },
+                )
             report.started.append(attempt)
-            self._loaded_digests = None
             try:
                 if getattr(self.optimize_fn, "accepts_candidate_dir", False):
                     isolated = cast(Callable[..., Any], self.optimize_fn)
@@ -1195,9 +1252,6 @@ class Controller:
                     )
                 else:
                     result = self.optimize_fn(copy.deepcopy(space))
-                self._loaded_digests = getattr(
-                    self.optimize_fn, "loaded_dataset_digests", None
-                )
                 completion, candidates, configs, gates = self._map_result(
                     attempt, result
                 )
@@ -1266,7 +1320,11 @@ class Controller:
         )
 
     def _measure_candidate(
-        self, attempt: str, config: Mapping[str, Any], incumbent: Mapping[str, Any]
+        self,
+        attempt: str,
+        config: Mapping[str, Any],
+        incumbent: Mapping[str, Any],
+        loaded: Collection[str] | None = None,
     ) -> Any:
         """Promotion evidence for the frozen candidate, or None (-> ``NoDecision``).
 
@@ -1288,10 +1346,8 @@ class Controller:
         unpriced = _unpriced_models_of(config)
         try:
             source = getattr(optimized, "_dataset_from_source", None)
-            loaded = getattr(self, "_loaded_digests", None)
-            if getattr(self.optimize_fn, "accepts_candidate_dir", False) and not loaded:
-                # the real adapter always loads a dataset; none seen means the
-                # identity of what the run used is unknown
+            if loaded is None:
+                # this run did not say what it loaded: its identity is unknown
                 raise EvidenceUnavailable("eval_set_identity_unknown")
             eval_digests, _rows = eval_set_identity(
                 getattr(optimized, "eval_dataset", None),
@@ -1354,6 +1410,12 @@ class Controller:
         """
         from tvl.promotion_join import join_promotion_decisions
 
+        loaded: Collection[str] | None = None
+        if isinstance(result, OptimizerRun):
+            loaded, result = result.loaded_dataset_digests, result.result
+        elif isinstance(result, Mapping):
+            loaded = result.get("loaded_dataset_digests")
+
         def pick(name: str, default: Any = None) -> Any:
             if isinstance(result, Mapping):
                 return result.get(name, default)
@@ -1400,7 +1462,7 @@ class Controller:
                 legacy = "NoDecision"
                 given: Mapping[str, str] = {}
                 holdout_digest: str | None = None
-                evidence = self._measure_candidate(attempt, config, incumbent)
+                evidence = self._measure_candidate(attempt, config, incumbent, loaded)
                 if evidence is not None:
                     legacy = evidence.legacy_decision
                     given = evidence.monitor_verdicts
@@ -1650,7 +1712,9 @@ class Controller:
             position = len(recorded)
             # Authentication can be slow (a platform call): do it BEFORE the time
             # and the serving code version are sampled, so neither is stale.
-            authenticated = bool(authority.authenticated(approver, doc))
+            authenticated = bool(
+                authority.authenticated(approver, doc, self.meta.get("environment"))
+            )
             authorized = bool(authority.authorized(approver))
             meta = {"authentication": authority.mode}
 
@@ -1725,6 +1789,30 @@ class Controller:
         return self.submit_acceptance(record, now)
 
     # -- head -----------------------------------------------------------------------
+    def _prepare_physical(
+        self, doc: Mapping[str, Any]
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
+        """``(gate, config, refusal)``: the history replays and candidate lookup the
+        head write needs, done BEFORE the final time check (nothing replays after)."""
+        try:
+            deploy = self._deploy_fact(
+                {
+                    "response": doc["occurrence"]["response_ref"],
+                    "rule": doc["occurrence"]["rule_ref"],
+                    "scope_kind": doc["occurrence"]["scope_kind"],
+                    "scope": doc["occurrence"]["scope_ref"],
+                    "j": doc["occurrence"]["occurrence"],
+                }
+            )
+            gate = self._gate_of(deploy)
+        except (TuningError, KeyError, TypeError):
+            return None, None, "gate_evidence_missing"
+        try:
+            config = self._config_for(str(doc["candidate_fingerprint"]))
+        except (TuningError, KeyError):
+            return gate, None, "candidate_config_missing"
+        return gate, config, None
+
     def _physical_refusal(
         self,
         doc: Mapping[str, Any],
@@ -1732,6 +1820,8 @@ class Controller:
         current: Mapping[str, Any],
         serving: str | None = None,
         approver_ok: bool | None = None,
+        prepared: tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]
+        | None = None,
     ) -> str | None:
         """Why the physical head must not take this write at ``instant``; None if it may.
 
@@ -1739,6 +1829,7 @@ class Controller:
         usable (``decided_at <= t < expires_at``), the approver is authorized now, the
         head is still at the expected generation and fingerprint, the gate measured
         THIS incumbent, and the candidate's configuration is the one fingerprinted.
+        ``prepared`` carries the replay-derived inputs so no replay happens here.
         """
         at = self.origin + timedelta(seconds=instant)
         try:
@@ -1763,27 +1854,15 @@ class Controller:
                 return "code_version_mismatch"
         if doc.get("agent_code_version") != serving:
             return "code_version_mismatch"
-        try:
-            deploy = self._deploy_fact(
-                {
-                    "response": doc["occurrence"]["response_ref"],
-                    "rule": doc["occurrence"]["rule_ref"],
-                    "scope_kind": doc["occurrence"]["scope_kind"],
-                    "scope": doc["occurrence"]["scope_ref"],
-                    "j": doc["occurrence"]["occurrence"],
-                }
-            )
-            gate = self._gate_of(deploy)
-        except TuningError:
+        gate, config, refusal = prepared or self._prepare_physical(doc)
+        if refusal == "gate_evidence_missing" or gate is None:
             return "gate_evidence_missing"
         if (
             gate.get("incumbent_generation") != current["generation"]
             or gate.get("incumbent_fingerprint") != current["fingerprint"]
         ):
             return "gate_incumbent_stale"
-        try:
-            config = self._config_for(str(doc["candidate_fingerprint"]))
-        except TuningError:
+        if refusal is not None or config is None:
             return "candidate_config_missing"
         if config_fingerprint(config) != doc["candidate_fingerprint"]:
             return "config_fingerprint_mismatch"
@@ -1812,22 +1891,13 @@ class Controller:
         # Order at the commit: authenticate (a platform call) FIRST, then replay the
         # history, and only then read the clock, the scope verdict and the serving
         # code version, so nothing sampled earlier can be stale at the head write.
+        prepared = self._prepare_physical(doc)
         approver_ok = self._on_list_now(doc.get("approver_ref"), doc)
         if decide is not None and fresh_instant is not None:
             for _ in range(3):
                 fresh_record, fresh_instant_used, fresh_verdict = decide()
                 if fresh_instant() == fresh_instant_used:
                     break
-            else:
-                self._record_controller_fact(
-                    {
-                        "fact": "head_write_refused",
-                        "acceptance": ident,
-                        "generation": int(current["generation"]) + 1,
-                        "reason": "acceptance_not_usable",
-                    }
-                )
-                return AcceptanceOutcome(ident, "refused", "acceptance_not_usable")
             if fresh_verdict["result"] != "written":
                 self._append("acceptances", fresh_record, fresh_instant_used, meta)
                 return AcceptanceOutcome(
@@ -1837,8 +1907,13 @@ class Controller:
                     generation=fresh_verdict.get("generation"),
                 )
             line_record, instant = fresh_record, fresh_instant_used
+            # Replay may have crossed second boundaries: the deadlines (acceptance
+            # expiry) are checked at a clock read now, after all replay is done.
+            instant = max(instant, fresh_instant())
         generation = int(current["generation"]) + 1
-        refusal = self._physical_refusal(doc, instant, current, approver_ok=approver_ok)
+        refusal = self._physical_refusal(
+            doc, instant, current, approver_ok=approver_ok, prepared=prepared
+        )
         if refusal is not None:
             self._record_controller_fact(
                 {
@@ -2077,12 +2152,16 @@ class Controller:
         domains = {f["attempt"]: f for f in facts if f["fact"] == "search_domain"}
         attempts = []
         for opened in self._open_attempts(facts):
+            if opened["closed"]:
+                continue  # draining attempts exist for recovery, not as open work
             ref = occurrence_ref(opened["occurrence"])
             if opened["finished"]:
                 state = "deploy_awaiting"
             elif self._approval_recorded(opened["attempt"]) or (
-                self._rule(opened["occurrence"]).get("approval", "human") != "standing"
-                and ref in approvals
+                ref in approvals
+                if self._rule(opened["occurrence"]).get("approval", "human")
+                != "standing"
+                else self._grant_used(ref)
             ):
                 marker = _read_json(self._marker_path(opened["attempt"], ref))
                 state = (
@@ -2277,7 +2356,6 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
         from traigent.tuning.evidence import dataset_digests
 
         loaded: set[str] = set()
-        run.loaded_dataset_digests = loaded  # type: ignore[attr-defined]
         original_load = clone._load_dataset
 
         def recording_load(*args: Any, **kwargs: Any) -> Any:
@@ -2290,9 +2368,10 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
         # with its cost unknown; every other unpriced model still fails the preflight
         clone._unpriced_models_allowed = frozenset(admitted_models)
         with _isolated_artifacts(root):
-            return asyncio.run(
+            result = asyncio.run(
                 clone.optimize(configuration_space=search_space, **kwargs)
             )
+        return OptimizerRun(result, frozenset(loaded) if loaded else None)
 
     run.accepts_candidate_dir = True  # type: ignore[attr-defined]
     limits = {
@@ -2344,6 +2423,7 @@ __all__ = [
     "Controller",
     "EventReceipt",
     "HeadLoader",
+    "OptimizerRun",
     "StepReport",
     "config_fingerprint",
     "E_STORE_ENVIRONMENT_MISMATCH",

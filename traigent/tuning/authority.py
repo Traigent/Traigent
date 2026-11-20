@@ -40,6 +40,27 @@ _NOT_SIGNED = frozenset({"signature", "authenticated"})
 Authenticator = Callable[[str, Mapping[str, Any]], bool]
 
 
+def local_trusted_refused(store_environment: str | None = None) -> bool:
+    """Must a ``local-trusted`` authority be refused here?  Fails closed.
+
+    Refused unless BOTH the process environment is explicitly non-production
+    (an unset or unrecognised environment counts as production,
+    ``treat_as_production_policy``) AND the store's recorded environment is a
+    recognised non-production name: a production store never trusts a local
+    operator, whatever the process says.
+    """
+    from traigent.utils.env_config import (
+        _NON_PRODUCTION_ENV_NAMES,
+        treat_as_production_policy,
+    )
+
+    if treat_as_production_policy():
+        return True
+    if store_environment is None:
+        return False
+    return str(store_environment).strip().lower() not in _NON_PRODUCTION_ENV_NAMES
+
+
 @dataclass(frozen=True)
 class ApproverAuthority:
     """The approvers allowed to give the two human decisions, and how they are known."""
@@ -63,7 +84,12 @@ class ApproverAuthority:
         """True when ``approver`` is on the configured list (checked at effect time)."""
         return isinstance(approver, str) and approver in self.approvers
 
-    def authenticated(self, approver: object, context: Mapping[str, Any]) -> bool:
+    def authenticated(
+        self,
+        approver: object,
+        context: Mapping[str, Any],
+        store_environment: str | None = None,
+    ) -> bool:
         """Whether the approver is authenticated, by this authority's mode.
 
         ``local-trusted``: a configured local operator is trusted (no credential is
@@ -76,9 +102,7 @@ class ApproverAuthority:
         if self.mode == LOCAL_TRUSTED:
             # No credential is checked, so in production nobody is authenticated: a
             # saved approval or grant is refused at every use, not only at creation.
-            from traigent.utils.env_config import is_production_strict_env
-
-            if is_production_strict_env():
+            if local_trusted_refused(store_environment):
                 return False
             return self.authorized(approver)
         try:
@@ -197,6 +221,7 @@ __all__ = [
     "PLATFORM",
     "ApproverAuthority",
     "EventVerifier",
+    "local_trusted_refused",
     "authority_from_config",
     "load_authority",
     "sign_event",

@@ -137,8 +137,13 @@ Nothing is allowed by default.
   acceptance made this way is labelled `local-trusted` in the store, and the CLI prints it.
   **Production needs the platform (portal) to authenticate the person**: pass
   `ApproverAuthority(approvers, mode="platform", authenticator=callable)`, where the callable
-  asks the platform. A `local-trusted` authority is refused when `ENVIRONMENT` is a production
-  name (`E_LOCAL_AUTHORITY_IN_PRODUCTION`). An authenticator that raises never authenticates.
+  asks the platform. A `local-trusted` authority is refused unless the process environment is
+  explicitly non-production (`dev`, `development`, `local`, `test`, `testing`, `stage`,
+  `staging`; an unset or unrecognised `ENVIRONMENT` counts as production) AND the store's
+  recorded environment is non-production too: a production store never trusts a local
+  operator, whatever the process says (`E_LOCAL_AUTHORITY_IN_PRODUCTION`). The check is made
+  again at every use of a saved approval, grant or acceptance. The CLI and `observe` open the
+  store of the declared environment, else the process environment, else `production`. An authenticator that raises never authenticates.
 * **Events are verified, not declared.** An external event counts only if its `signature` is the
   HMAC-SHA256 of the envelope under its issuer's secret (`traigent.tuning.sign_event`). The
   envelope's own `authenticated` field is ignored. Without a configured issuer, or with a bad

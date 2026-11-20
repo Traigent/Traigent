@@ -1,5 +1,5 @@
-"""Delta-review items: code source, effect-time checks, environment, loaded-dataset
-identity, directory durability, ingestion close, draining attempts, path components."""
+"""Effect-time checks, environment, loaded-dataset identity, directory durability,
+ingestion close, draining attempts and path components."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def _clock(monkeypatch: pytest.MonkeyPatch, start: Any) -> list[Any]:
     return clock
 
 
-# -- D1. the resolved callable itself needs readable source -----------------------------
+# -- the resolved callable itself needs readable source -----------------------------
 def test_generated_functions_without_source_do_not_share_the_module_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -63,7 +63,7 @@ def test_generated_functions_without_source_do_not_share_the_module_digest(
     assert resolve_code_version("explicit-1", namespace["one"]) == "explicit-1"
 
 
-# -- D2. effect-time checks come AFTER authentication and replay ------------------------
+# -- effect-time checks come AFTER authentication and replay ------------------------
 def test_a_grant_that_expires_during_authentication_does_not_start_the_optimizer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -117,7 +117,7 @@ def test_a_release_whose_second_authentication_crosses_expiry_is_not_installed(
     assert head(tmp_path)["generation"] == 0
 
 
-# -- D3. the environment travels with the attached tuning state -------------------------
+# -- the environment travels with the attached tuning state -------------------------
 def test_the_attached_state_and_the_cli_carry_the_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -160,7 +160,7 @@ def test_the_attached_state_and_the_cli_carry_the_environment(
     assert "staging" in ctl.dir.parts
 
 
-# -- D4. identity of the dataset the run ACTUALLY loaded --------------------------------
+# -- identity of the dataset the run ACTUALLY loaded --------------------------------
 def test_a_per_call_dataset_equal_to_the_holdout_is_refused(tmp_path: Path) -> None:
     from traigent.tuning.evidence import _dataset_rows, examples_digest
 
@@ -182,8 +182,9 @@ def test_a_per_call_dataset_equal_to_the_holdout_is_refused(tmp_path: Path) -> N
     class RunsOnHoldout(FakeOptimizer):
         def __call__(self, space: dict[str, Any]) -> Any:
             # the run was given the holdout as its per-call dataset
-            self.loaded_dataset_digests = {examples_digest(holdout_rows)}
-            return super().__call__(space)
+            result = super().__call__(space)
+            result["loaded_dataset_digests"] = [examples_digest(holdout_rows)]
+            return result
 
     assert _dataset_rows is not None
     c = controller(tmp_path, RunsOnHoldout())
@@ -221,11 +222,14 @@ def test_the_real_adapter_records_the_digest_of_every_dataset_it_loaded(
         return q
 
     run = traigent_optimize_fn(agent, eval_dataset=rows)
-    run({"model": ["anthropic/claude-haiku-4-5"]}, candidate_dir=tmp_path / "c")
-    assert examples_digest(rows) in run.loaded_dataset_digests  # type: ignore[attr-defined]
+    outcome = run(
+        {"model": ["anthropic/claude-haiku-4-5"]}, candidate_dir=tmp_path / "c"
+    )
+    assert examples_digest(rows) in outcome.loaded_dataset_digests
+    assert not hasattr(run, "loaded_dataset_digests")  # nothing shared across runs
 
 
-# -- D5. a newly created directory entry is durable before the optimizer starts ---------
+# -- a newly created directory entry is durable before the optimizer starts ---------
 def test_a_new_directory_is_fsynced_into_its_parent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -243,7 +247,7 @@ def test_a_new_directory_is_fsynced_into_its_parent(
     assert str(tmp_path) in synced  # the new "attempts" entry itself
 
 
-# -- D8. no spend on the second events are still arriving in ----------------------------
+# -- no spend on the second events are still arriving in ----------------------------
 def test_no_spend_in_the_second_events_were_ingested_until_it_closes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -259,7 +263,7 @@ def test_no_spend_in_the_second_events_were_ingested_until_it_closes(
     assert len(opt.calls) == 1
 
 
-# -- D9. a closed (draining) attempt still records its saved finish ---------------------
+# -- a closed (draining) attempt still records its saved finish ---------------------
 def test_a_closed_attempt_with_a_saved_finish_marker_is_recorded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -288,7 +292,7 @@ def test_a_closed_attempt_with_a_saved_finish_marker_is_recorded(
     assert len(delivered) == 1  # the saved finish reached the relation, exactly once
 
 
-# -- D12. reserved path components -----------------------------------------------------
+# -- reserved path components -----------------------------------------------------
 @pytest.mark.parametrize("bad", [".", "..", ""])
 def test_dot_components_are_refused_in_the_default_store_path(bad: str) -> None:
     from traigent.tuning.controller import default_store_dir
@@ -300,7 +304,7 @@ def test_dot_components_are_refused_in_the_default_store_path(bad: str) -> None:
             default_store_dir("agent-1", bad)
 
 
-# -- D9 (relation input). the actual start of an optimization is recorded ---------------
+# -- the actual start of an optimization is recorded ---------------
 def test_the_start_of_an_optimization_is_recorded_once_before_it_runs(
     tmp_path: Path,
 ) -> None:
@@ -322,3 +326,213 @@ def test_the_start_of_an_optimization_is_recorded_once_before_it_runs(
 
 def _standing_controller(tmp_path: Path) -> Controller:
     return make(_standing_state(), tmp_path / "store", FakeOptimizer())
+
+
+# -- no history replay after the final effect-time check ---------------------------------
+def _replay_advances(
+    monkeypatch: pytest.MonkeyPatch, clock: list[Any], by: timedelta
+) -> None:
+    real = Controller._history
+
+    def slow(self: Controller, *args: Any, **kwargs: Any) -> Any:
+        clock[0] = clock[0] + by  # every history replay takes this long
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Controller, "_history", slow)
+
+
+def test_a_grant_that_expires_during_the_final_scope_replay_does_not_start_the_optimizer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _clock(monkeypatch, at(40))
+    opt = FakeOptimizer()
+    c = make(_standing_state(), tmp_path / "store", opt, now=at(0))
+    c.record_event(event("E1", NEW["model"], 39), at(40))
+    c.record_standing_grant(
+        "G1", "tuning/on_new_model", 5, at(40) + timedelta(hours=1), "issuer-1", at(40)
+    )
+    real = Controller._scope_requires_intervention
+    calls = [0]
+
+    def slow(self: Controller, occ: Any, instant: int) -> bool:
+        calls[0] += 1
+        if calls[0] >= 2:  # the replay made right before the spend is slow
+            clock[0] = clock[0] + timedelta(hours=2)
+        return real(self, occ, instant)
+
+    monkeypatch.setattr(Controller, "_scope_requires_intervention", slow)
+    c.step(ingestion_closed=True)
+    assert opt.calls == []
+
+
+def test_a_release_whose_replay_crosses_expiry_is_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _deploy_awaiting(tmp_path)
+    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
+    clock = _clock(monkeypatch, at(32))
+    _replay_advances(monkeypatch, clock, timedelta(days=30))
+    outcome = c.submit_acceptance(record)
+    assert outcome.result != "written"
+    assert head(tmp_path)["generation"] == 0
+
+
+def test_the_candidate_lookup_is_done_before_the_release_expiry_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _deploy_awaiting(tmp_path)
+    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
+    clock = _clock(monkeypatch, at(32))
+    real = Controller._deploy_fact
+
+    def slow(self: Controller, occ: Any) -> Any:
+        clock[0] = clock[0] + timedelta(days=30)  # the lookup replays history
+        return real(self, occ)
+
+    monkeypatch.setattr(Controller, "_deploy_fact", slow)
+    outcome = c.submit_acceptance(record)
+    assert outcome.result != "written"
+    assert head(tmp_path)["generation"] == 0
+
+
+def test_a_valid_release_is_not_refused_because_replay_crossed_a_second(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _deploy_awaiting(tmp_path)
+    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
+    clock = _clock(monkeypatch, at(32))
+    _replay_advances(monkeypatch, clock, timedelta(milliseconds=1500))
+    assert c.submit_acceptance(record).result == "written"
+    assert head(tmp_path)["generation"] == 1
+
+
+# -- every optimizer path returns the digests of what ITS run loaded ---------------------
+def test_an_injected_optimizer_that_reports_no_dataset_identity_cannot_promote(
+    tmp_path: Path,
+) -> None:
+    class Silent:
+        def __call__(self, space: dict[str, Any]) -> Any:
+            # the run may have used the holdout; it does not say what it loaded
+            return {"candidates": [{"config": {"model": space["model"][-1]}}]}
+
+    c = controller(tmp_path, Silent())
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    c.step(at(10))
+    assert any(
+        f.get("reason") == "eval_set_identity_unknown" for f in c.controller_facts()
+    )
+    assert c.status()["pending_deploys"] == []
+
+
+# -- ingestion: defer BEFORE any fact or grant use for an unclosed second ----------------
+def test_a_deferred_second_consumes_no_grant_and_appends_no_attempt_fact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clock(monkeypatch, at(10))
+    opt = FakeOptimizer()
+    c = make(_standing_state(), tmp_path / "store", opt, now=at(0))
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c.record_standing_grant(
+        "G1", "tuning/on_new_model", 5, at(10) + timedelta(days=1), "issuer-1", at(10)
+    )
+    c.step()  # live clock, inside the event's second
+    assert opt.calls == []
+    assert not [ln for ln in c._lines() if ln["category"] == "optimizations"]
+    grants = json.loads((tmp_path / "store" / "grants.json").read_text())
+    assert grants["G1"]["used"] == []
+
+
+def test_a_human_approval_is_not_appended_inside_an_unclosed_second(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clock(monkeypatch, at(10))
+    c = controller(tmp_path, FakeOptimizer(), now=at(0))
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    c.step()
+    assert not [ln for ln in c._lines() if ln["category"] == "optimizations"]
+
+
+# -- standing: the start is recorded at actual invocation, journaled, recoverable --------
+def test_a_standing_grant_that_never_spends_does_not_hold_the_next_occurrence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _clock(monkeypatch, at(40))
+    opt = FakeOptimizer()
+    slow = [True]
+
+    def hook(approver: str, context: Any) -> bool:
+        if slow[0]:
+            clock[0] = clock[0] + timedelta(hours=3)
+        return True
+
+    c = make(
+        _standing_state(),
+        tmp_path / "store",
+        opt,
+        now=at(0),
+        authority=ApproverAuthority(
+            frozenset(APPROVERS), mode="platform", authenticator=hook
+        ),
+    )
+    slow[0] = False
+    c.record_event(event("E1", NEW["model"], 39), at(40))
+    c.record_standing_grant(
+        "G1", "tuning/on_new_model", 1, at(40) + timedelta(hours=2), "issuer-1", at(40)
+    )
+    slow[0] = True
+    c.step(ingestion_closed=True)  # the grant lapses before the spend: zero calls
+    assert opt.calls == []
+    # a grant that never reached the optimizer recorded neither approval nor start
+    assert not [ln for ln in c._lines() if ln["category"] == "optimizations"]
+    slow[0] = False
+    later = at(24 * 40)  # E1's scope is long over
+    clock[0] = later
+    c.record_event(event("E2", NEW["model"], 24 * 40 - 1), later)
+    c.record_standing_grant(
+        "G2", "tuning/on_new_model", 1, later + timedelta(days=1), "issuer-1", later
+    )
+    c.step(ingestion_closed=True)
+    assert len(opt.calls) == 1  # E1's never-started attempt held nothing
+
+
+def test_a_crash_between_the_start_marker_and_the_start_fact_is_abandonable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opt = FakeOptimizer()
+    c = make(_standing_state(), tmp_path / "store", opt, now=at(0))
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c.record_standing_grant(
+        "G1", "tuning/on_new_model", 1, at(10) + timedelta(days=1), "issuer-1", at(10)
+    )
+    real = controller_module._append_line
+
+    def crash(path: Path, value: Any) -> None:
+        if isinstance(value, dict) and (value.get("record") or {}).get("fact") == (
+            "started"
+        ):
+            raise RuntimeError("crash after the marker, before the start fact")
+        real(path, value)
+
+    monkeypatch.setattr(controller_module, "_append_line", crash)
+    with pytest.raises(RuntimeError):
+        c.step(at(10))
+    monkeypatch.undo()
+    assert opt.calls == []
+    restarted = make(_standing_state(), tmp_path / "store", opt, now=at(0))
+    with pytest.raises(TuningError):  # an interrupted start is not silently re-run
+        restarted.step(at(10))
+    restarted.step(at(10), abandon_interrupted=True)
+    restarted.step(at(10))
+    assert opt.calls == []  # cancelled, never invoked
+
+
+# -- status lists only open attempts --------------------------------------------------
+def test_status_does_not_list_a_closed_attempt_as_open(tmp_path: Path) -> None:
+    c = _deploy_awaiting(tmp_path)
+    assert [a["attempt"] for a in c.status()["open_attempts"]] == ["A1"]
+    # a later fact moves the relation's clock past the scope's end
+    c.record_event(event("E9", NEW["model"], 24 * 60 - 1), at(24 * 60))
+    states = [a["attempt"] for a in c.status()["open_attempts"]]
+    assert "A1" not in states

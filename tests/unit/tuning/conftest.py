@@ -48,3 +48,15 @@ def _agent_code_version(monkeypatch: pytest.MonkeyPatch) -> None:
 def _dataset_root(monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
     """The optimizer's loader only reads datasets under this root."""
     monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+
+
+@pytest.fixture(autouse=True)
+def _explicit_non_production_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``local-trusted`` is refused unless the environment is explicitly non-production.
+
+    Tests that exercise it run as ``development``; the tests that are about
+    production or an unset environment change this themselves.
+    """
+    for name in ("TRAIGENT_ENVIRONMENT", "TRAIGENT_ENV"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "development")

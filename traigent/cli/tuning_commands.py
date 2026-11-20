@@ -242,6 +242,7 @@ def _build_controller(
         find_optimized,
         initial_config_of,
     )
+    from traigent.utils.env_config import resolve_environment_name
 
     _require_validator()
     optimize_fn = None
@@ -307,7 +308,9 @@ def _build_controller(
             store,
             optimize_fn,
             initial_config=initial_config or None,
-            environment=getattr(state, "environment", None) or "production",
+            environment=getattr(state, "environment", None)
+            or resolve_environment_name(default=None)
+            or "production",
             authority=authority,
             event_verifier=verifier,
         )

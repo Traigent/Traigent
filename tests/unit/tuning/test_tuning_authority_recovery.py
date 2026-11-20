@@ -239,7 +239,11 @@ def test_an_unreconcilable_recovery_is_loud_and_leaves_the_journal_open(
     )
     with pytest.raises(TuningError) as err:
         Controller(
-            state(), tmp_path / "store", FakeOptimizer(), authorized_approvers=APPROVERS
+            state(),
+            tmp_path / "store",
+            FakeOptimizer(),
+            authorized_approvers=APPROVERS,
+            environment="development",
         )
     assert err.value.code == E_HEAD_DIVERGED
     assert path.read_text() == before  # not marked done

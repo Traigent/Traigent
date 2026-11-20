@@ -1,5 +1,5 @@
-"""Merge-review blockers: code version, authority, clock, store environment,
-holdout identity, domains and journal durability."""
+"""Code version, authority, clock, store environment, holdout identity, domains and
+journal durability."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     state,
 )
 
-# -- 1. the code version hashes the agent, not the SDK wrapper --------------------------
+# -- the code version hashes the agent, not the SDK wrapper --------------------------
 _COUNTER = [0]
 
 
@@ -109,7 +109,7 @@ def test_unreadable_agent_source_is_refused_even_if_a_wrapper_has_source(
     assert err.value.code == "E_NO_CODE_VERSION"
 
 
-# -- 2. authority fails closed -----------------------------------------------------------
+# -- authority fails closed -----------------------------------------------------------
 def _hook(authority_hook: Any) -> ApproverAuthority:
     return ApproverAuthority(
         frozenset(APPROVERS), mode="platform", authenticator=authority_hook
@@ -130,7 +130,7 @@ def test_only_a_literal_true_from_a_synchronous_hook_authenticates() -> None:
 def test_a_saved_approval_is_not_used_once_the_environment_is_production(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "development")
     opt = FakeOptimizer()
     c = controller(tmp_path, opt)
     c.record_event(event("E1", NEW["model"], 9), at(10))
@@ -145,7 +145,7 @@ def test_a_saved_approval_is_not_used_once_the_environment_is_production(
 def test_a_saved_acceptance_authority_is_not_used_in_production(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "development")
     c = _deploy_awaiting(tmp_path)
     record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
     monkeypatch.setenv("ENVIRONMENT", "production")
@@ -156,7 +156,7 @@ def test_a_saved_acceptance_authority_is_not_used_in_production(
     assert head(tmp_path)["generation"] == 0
 
 
-# -- 3. the clock is re-read before each paid run and at the release commit -------------
+# -- the clock is re-read before each paid run and at the release commit -------------
 def _fake_clock(monkeypatch: pytest.MonkeyPatch, start: Any) -> list[Any]:
     clock = [start]
     real_utc = controller_module._utc
@@ -212,7 +212,7 @@ def test_a_release_whose_acceptance_expires_during_authentication_is_not_install
     assert head(tmp_path)["generation"] == 0
 
 
-# -- N1. --tvl runs any lint-clean module, even outside the builder's shape --------------
+# -- --tvl runs any lint-clean module, even outside the builder's shape --------------
 def test_cli_tvl_file_outside_the_builder_shape_runs_without_a_traceback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -249,7 +249,7 @@ def test_cli_tvl_file_outside_the_builder_shape_runs_without_a_traceback(
     assert json.loads(result.output)
 
 
-# -- 4. the store is per environment -----------------------------------------------------
+# -- the store is per environment -----------------------------------------------------
 def test_default_store_path_includes_the_environment() -> None:
     from traigent.tuning.controller import default_store_dir
 
@@ -274,7 +274,7 @@ def test_reopening_a_store_for_another_environment_is_refused(tmp_path: Path) ->
     assert HeadLoader(store, "staging").head() is not None
 
 
-# -- 5. holdout identity for every supported eval_dataset form ---------------------------
+# -- holdout identity for every supported eval_dataset form ---------------------------
 def test_eval_set_identity_covers_every_supported_form(tmp_path: Path) -> None:
     from traigent.evaluators.base import Dataset, EvaluationExample
     from traigent.tuning.evidence import (
@@ -326,7 +326,7 @@ def test_a_holdout_listed_as_a_path_list_eval_set_is_refused(tmp_path: Path) -> 
     )
 
 
-# -- 6. TVL domains are normalized; explicit strict pricing comes before exemptions ------
+# -- TVL domains are normalized; explicit strict pricing comes before exemptions ------
 def test_a_set_domain_is_normalized_before_computing_admitted_models(
     tmp_path: Path,
 ) -> None:
@@ -388,7 +388,7 @@ def test_an_unreadable_price_table_means_unpriced_never_priced(
     ]
 
 
-# -- 7. journal durability: the directory entry is fsynced -------------------------------
+# -- journal durability: the directory entry is fsynced -------------------------------
 def test_creating_and_renaming_journal_files_fsyncs_the_parent_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -413,7 +413,7 @@ def test_creating_and_renaming_journal_files_fsyncs_the_parent_directory(
     assert synced_dirs == []  # an append to an existing file adds no directory entry
 
 
-# -- 11 (SDK side). a whole-second instant reaches the relation as ONE step --------------
+# -- a whole-second instant reaches the relation as ONE step --------------
 def test_events_with_the_same_instant_form_one_relation_step(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer())
     lines = [
@@ -424,3 +424,62 @@ def test_events_with_the_same_instant_form_one_relation_step(tmp_path: Path) -> 
     steps = c._history(lines=lines)["steps"]
     assert [s["instant"] for s in steps] == [100, 101]
     assert steps[0]["events"] == [{"id": "from-Z"}, {"id": "from-A"}]
+
+
+# -- local-trusted is refused wherever production is possible (fail closed) --------------
+def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("TRAIGENT_ENVIRONMENT", "ENVIRONMENT", "TRAIGENT_ENV"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _local(tmp_path: Path, store_environment: str) -> Any:
+    return make(
+        state(),
+        tmp_path / f"store-{store_environment}",
+        FakeOptimizer(),
+        environment=store_environment,
+    )
+
+
+def test_local_trusted_is_refused_when_the_process_environment_is_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _local(tmp_path, "staging")
+    _clear_env(monkeypatch)
+    assert c._on_list_now("approver-1") is False
+    with pytest.raises(TuningError) as err:
+        c.require_authority()
+    assert err.value.code == "E_LOCAL_AUTHORITY_IN_PRODUCTION"
+
+
+def test_local_trusted_is_refused_for_an_unrecognised_production_like_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _local(tmp_path, "staging")
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "prod-eu")
+    assert c._on_list_now("approver-1") is False
+    with pytest.raises(TuningError):
+        c.require_authority()
+
+
+def test_local_trusted_is_refused_for_a_production_store_even_in_development(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _local(tmp_path, "production")
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    assert c._on_list_now("approver-1") is False
+    with pytest.raises(TuningError) as err:
+        c.require_authority()
+    assert err.value.code == "E_LOCAL_AUTHORITY_IN_PRODUCTION"
+
+
+def test_local_trusted_is_allowed_in_development_on_a_staging_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _local(tmp_path, "staging")
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    assert c._on_list_now("approver-1") is True
+    assert c.require_authority() is c.authority
