@@ -217,10 +217,15 @@ def _build_controller(
 ) -> Any:
     from traigent.tuning.controller import Controller, traigent_optimize_fn
     from traigent.tuning.policy import Tuning
-    from traigent.tuning.state import TuningState
+    from traigent.tuning.state import (
+        TuningState,
+        find_optimized,
+        initial_config_of,
+    )
 
     _require_validator()
     optimize_fn = None
+    initial_config: dict[str, Any] = {}
     if target is not None:
         file_part, _, function = target.rpartition(":")
         from traigent.cli.main import _load_user_module, _resolve_user_cli_path
@@ -237,8 +242,16 @@ def _build_controller(
         state: Any = getattr(fn, "tuning", None)
         if state is None:
             _die("function_not_found_or_has_no_tuning_policy")
-        if callable(getattr(fn, "optimize", None)):
-            optimize_fn = traigent_optimize_fn(fn)
+        optimized = getattr(state, "optimized", None) or find_optimized(fn)
+        if optimized is not None:
+            optimize_fn = traigent_optimize_fn(optimized)
+            initial_config = initial_config_of(optimized)
+        if not initial_config:
+            click.echo(
+                "warning: no default configuration found for the target; "
+                "the initial head config is {}",
+                err=True,
+            )
     elif tvl_path is not None:
         doc = _module_doc(tvl_path)
         state = TuningState(
@@ -251,7 +264,9 @@ def _build_controller(
     if state.agent is None and store is None:
         _die("--agent or --store is required")
     try:
-        return Controller(state, store, optimize_fn)
+        return Controller(
+            state, store, optimize_fn, initial_config=initial_config or None
+        )
     except TuningError as exc:
         _die(
             str(exc),

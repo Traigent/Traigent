@@ -100,6 +100,12 @@ TRAIGENT_TVL_REQUIRED=1 python -m pytest -q tests/unit/tuning
 * **Store durability.** `meta.json` is written last (an interrupted init is redone on the next
   start). History, heads and controller facts are checksummed JSONL: a torn final line is
   truncated and logged on load; a damaged earlier line raises `E_STORE_CORRUPT`.
+* **The CLI finds the optimizer and seeds the head.** With the order above, `observe` returns a plain
+  function; the inner `@traigent.optimize` function is exposed as `fn.tuning.optimized`, and
+  `traigent tune ... --target` uses it (walking `__wrapped__` as a fallback). When a store is created
+  from `--target`, head generation 0 holds the optimized function's `default_config` (else the first
+  value of each configuration-space dimension); if none can be determined the head starts `{}` and the
+  CLI prints a warning.
 * **Followed-head traces** (`observe(follow="head")`) carry only `agent`, `head_generation` and
   `head_fingerprint`; the head configuration is never copied into trace metadata.
 

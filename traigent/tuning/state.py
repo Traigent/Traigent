@@ -24,6 +24,10 @@ class TuningState:
     tvl: dict[str, Any]
     validated: bool
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    # The inner ``@traigent.optimize`` function (``fn.tuning.optimized``), when the
+    # decorated callable wraps one; observe() returns a plain function, so this is
+    # how the CLI and callers reach ``.optimize()`` through the documented order.
+    optimized: Any = None
 
     @property
     def errors(self) -> list[Diagnostic]:
@@ -35,6 +39,45 @@ class TuningState:
             from traigent.tuning.errors import ValidatorUnavailable
 
             raise ValidatorUnavailable("policy was not validated by the TVL toolchain")
+
+
+_MAX_UNWRAP_DEPTH = 16
+
+
+def find_optimized(fn: Any) -> Any:
+    """The object with a callable ``.optimize`` at or under ``fn`` (walks
+    ``__wrapped__``, bounded depth), or None."""
+    seen: set[int] = set()
+    current = fn
+    for _ in range(_MAX_UNWRAP_DEPTH):
+        if current is None or id(current) in seen:
+            return None
+        seen.add(id(current))
+        if callable(getattr(current, "optimize", None)):
+            return current
+        current = getattr(current, "__wrapped__", None)
+    return None
+
+
+def initial_config_of(optimized: Any) -> dict[str, Any]:
+    """The optimized function's default configuration: its ``default_config``,
+    else the first value of each configuration-space dimension; {} if unknown."""
+    if optimized is None:
+        return {}
+    default = getattr(optimized, "default_config", None)
+    if isinstance(default, dict) and default:
+        return dict(default)
+    space = getattr(optimized, "configuration_space", None)
+    if not isinstance(space, dict):
+        return {}
+    config: dict[str, Any] = {}
+    for key, values in space.items():
+        if isinstance(values, (list, tuple)):
+            if values:
+                config[key] = values[0]
+        elif not isinstance(values, (set, dict)):
+            config[key] = values
+    return config
 
 
 def attach_tuning(
@@ -54,9 +97,21 @@ def attach_tuning(
     else:
         diagnostics, validated = [], False
     state = TuningState(
-        agent=agent, policy=tune, tvl=doc, validated=validated, diagnostics=diagnostics
+        agent=agent,
+        policy=tune,
+        tvl=doc,
+        validated=validated,
+        diagnostics=diagnostics,
+        optimized=find_optimized(source if source is not None else target),
     )
     return state
 
 
-__all__ = ["TuningState", "attach_tuning", "E_TVL_VALIDATOR_UNAVAILABLE", "TuningError"]
+__all__ = [
+    "TuningState",
+    "attach_tuning",
+    "find_optimized",
+    "initial_config_of",
+    "E_TVL_VALIDATOR_UNAVAILABLE",
+    "TuningError",
+]
