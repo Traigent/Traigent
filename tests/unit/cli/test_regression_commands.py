@@ -132,15 +132,33 @@ def test_group_lists_only_add() -> None:
     section = result.output.split("Commands:")[1]
     names = [line.split()[0] for line in section.splitlines() if line.strip()]
     assert names == ["add"]
-    assert "committed to your" in " ".join(result.output.split())
+    assert "Review the file before you commit" in " ".join(result.output.split())
 
 
-def test_add_help_states_content_and_commit_intent() -> None:
-    result = CliRunner().invoke(cli, ["regression", "add", "--help"])
-    text = " ".join(result.output.split())
-    assert "holds your example content" in text
-    assert "committed to your own repository" in text
-    assert "--on-id-conflict" in text
+def test_help_says_content_is_unredacted_and_makes_no_redaction_claim() -> None:
+    for argv in (["regression", "--help"], ["regression", "add", "--help"]):
+        result = CliRunner().invoke(cli, argv)
+        text = " ".join(result.output.split())
+        assert "exactly as it is in your dataset" in text
+        assert "nothing in it is redacted" in text.lower()
+        assert "nothing is uploaded" in text.lower()
+        assert "review the file before you commit" in text.lower()
+        assert "pattern redaction" not in text.lower()
+        assert "redacted" not in text.lower().replace("nothing in it is redacted", "")
+    assert "--on-id-conflict" in " ".join(
+        CliRunner().invoke(cli, ["regression", "add", "--help"]).output.split()
+    )
+
+
+def test_written_rows_are_raw_not_redacted(ws: Path) -> None:
+    rows = [dict(r) for r in ROWS]
+    rows[1] = {"input": {"q": "mail alice@example.com"}, "output": "a1"}
+    _write_dataset(ws / "data.jsonl", rows)
+    PersistenceManager(str(ws / "results")).save_result(
+        _result({1}, rows), name="run_raw"
+    )
+    assert _add(ws, "run_raw").exit_code == 0
+    assert _rows(ws)[0]["input"] == {"q": "mail alice@example.com"}
 
 
 def test_first_add_writes_seen_once_rows_with_plan_fields(ws: Path) -> None:

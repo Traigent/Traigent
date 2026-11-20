@@ -25,11 +25,11 @@ from traigent.utils.regression_set import (
 def regression() -> None:
     """Keep failing examples as a regression set committed next to your code.
 
-    The set is the file <dir>/regression.jsonl. It holds YOUR example content
-    (inputs and expected outputs, with only the SDK's pattern redaction
-    applied) and is meant to be committed to your own repository. Do not
-    commit it to a public repository unless the examples are public.
-    Everything stays local: nothing is uploaded.
+    The set is the file <dir>/regression.jsonl. It holds the example content
+    (inputs and expected outputs) exactly as it is in your dataset: nothing in
+    it is redacted, so a regression test can rerun the exact example. Nothing
+    is uploaded; everything stays local. Review the file before you commit it,
+    and do not commit it to a public repository unless the examples are public.
     """
 
 
@@ -99,8 +99,10 @@ def regression_add(
     seen_once; an example already stored gains a provenance entry (run, date,
     config digest, metric) instead of a duplicate row.
 
-    The file holds your example content and is meant to be committed to your
-    own repository. Everything stays local: nothing is uploaded.
+    The file holds the example content exactly as it is in your dataset.
+    Nothing in it is redacted (a regression test must rerun the exact
+    example), and nothing is uploaded: everything stays local. Review the file
+    before you commit it to your own repository.
 
     Example:
         traigent regression add my_run --dataset eval.jsonl

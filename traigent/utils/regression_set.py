@@ -16,9 +16,10 @@ one JSON object per line::
 Rows reload through ``Dataset.from_jsonl`` (``output`` is one of its
 expected-output aliases) and through :func:`load_regression_dataset`.
 
-The file holds the user's example content (SDK pattern redaction only) and is
-meant to be committed to the user's own repository. Nothing here touches the
-network.
+The file holds the example content exactly as it is in the dataset: nothing in
+it is redacted, so a regression test can rerun the exact example. Review it
+before committing it to your own repository. Nothing is uploaded and nothing
+here touches the network.
 
 **Dedupe is by example id, guarded by a content digest.** SDK example ids can
 be positional (``example_<i>``), so the same id may name different content in
