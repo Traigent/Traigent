@@ -42,7 +42,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.evaluators.base import (
+    Dataset,
+    EvaluationExample,
+    _example_correlation_key,
+)
 from traigent.utils.file_lock import (
     FileLockTimeoutError,
     FileLockUnsupportedError,
@@ -255,8 +259,15 @@ def _new_row(
 
 
 def _incoming_id(example: EvaluationExample, position: int) -> str:
-    example_id = (example.metadata or {}).get("example_id")
-    return str(example_id) if example_id is not None else f"example_{position}"
+    """The row's id: ``metadata.example_id``, else ``example_<position>``.
+
+    ``None``, ``""`` and booleans count as absent, the same rule the dataset
+    loader applies (``_example_correlation_key``). ``position`` is the index in
+    ``examples``; callers that selected a subset of a larger dataset must stamp
+    each row's run-recorded id first (``select_examples_with_run_ids``), which
+    ``traigent regression add`` does.
+    """
+    return str(_example_correlation_key(example, position))
 
 
 def _plan_row(

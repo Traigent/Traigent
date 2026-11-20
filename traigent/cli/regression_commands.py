@@ -110,7 +110,7 @@ def regression_add(
     from traigent.evaluators.base import Dataset
     from traigent.utils.regression_dataset import (
         UnresolvedExampleIdError,
-        select_examples_by_id,
+        select_examples_with_run_ids,
     )
 
     out_dir = _resolve_user_cli_path(Path(directory), "Regression dir", for_write=True)
@@ -130,7 +130,7 @@ def regression_add(
         return
 
     try:
-        subset = select_examples_by_id(dataset, failing_ids, run_result)
+        subset = select_examples_with_run_ids(dataset, failing_ids, run_result)
     except UnresolvedExampleIdError as exc:
         raise click.ClickException(str(exc)) from exc
     except (TypeError, ValueError) as exc:

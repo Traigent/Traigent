@@ -35,9 +35,14 @@ ROWS: list[dict[str, Any]] = [
 ]
 
 
-def _example(index: int, accuracy: float, rows: list[dict[str, Any]]) -> dict:
+def _example(
+    index: int,
+    accuracy: float,
+    rows: list[dict[str, Any]],
+    ids: list[str] | None = None,
+) -> dict:
     return ExampleResult(
-        example_id=f"example_{index}",
+        example_id=ids[index] if ids else f"example_{index}",
         input_data=rows[index]["input"],
         expected_output=rows[index]["output"],
         actual_output="x",
@@ -47,7 +52,11 @@ def _example(index: int, accuracy: float, rows: list[dict[str, Any]]) -> dict:
     ).to_dict()
 
 
-def _result(failing: set[int], rows: list[dict[str, Any]] = ROWS) -> OptimizationResult:
+def _result(
+    failing: set[int],
+    rows: list[dict[str, Any]] = ROWS,
+    ids: list[str] | None = None,
+) -> OptimizationResult:
     per_ex = {i: (0.0 if i in failing else 1.0) for i in range(len(rows))}
     trial = TrialResult(
         trial_id="t0",
@@ -56,7 +65,9 @@ def _result(failing: set[int], rows: list[dict[str, Any]] = ROWS) -> Optimizatio
         status=TrialStatus.COMPLETED,
         duration=1.0,
         timestamp=datetime(2024, 1, 1, tzinfo=UTC),
-        metadata={"example_results": [_example(i, a, rows) for i, a in per_ex.items()]},
+        metadata={
+            "example_results": [_example(i, a, rows, ids) for i, a in per_ex.items()]
+        },
     )
     return OptimizationResult(
         trials=[trial],
@@ -264,3 +275,42 @@ def test_add_makes_no_network_request(ws: Path) -> None:
     assert cap.requests == []
     assert cap.guard_violations == []
     assert cap.dns_lookups == []
+
+
+def _custom_run(ws: Path, rows: list[dict[str, Any]], ids: list[str]) -> None:
+    _write_dataset(ws / "data.jsonl", rows)
+    PersistenceManager(str(ws / "results")).save_result(
+        _result({2, 3}, rows, ids), name="run_ids"
+    )
+
+
+def _assert_reloads_with_failed_rows(ws: Path, expected: dict[str, str]) -> None:
+    reloaded = Dataset.from_jsonl(ws / "reg" / "regression.jsonl")
+    assert {
+        e.metadata["example_id"]: e.expected_output for e in reloaded.examples
+    } == expected
+
+
+def test_custom_example_ids_are_stored_as_the_run_recorded_them(ws: Path) -> None:
+    rows = [
+        {**r, "metadata": {"example_id": f"case-{i}"}} for i, r in enumerate(ROWS)
+    ]
+    _custom_run(ws, rows, [f"case-{i}" for i in range(4)])
+    result = _add(ws, "run_ids")
+    assert result.exit_code == 0, result.output
+    _assert_reloads_with_failed_rows(ws, {"case-2": "a2", "case-3": "a3"})
+
+
+@pytest.mark.parametrize("second_absent", ["", None])
+def test_absent_ids_use_the_original_dataset_position(
+    ws: Path, second_absent: str | None
+) -> None:
+    """Failing rows 2 and 3 carry an empty/None/missing id; the run used the
+    positional id of the original dataset (not the position in the subset)."""
+    rows = [dict(r) for r in ROWS]
+    rows[2] = {**rows[2], "metadata": {"example_id": ""}}
+    rows[3] = {**rows[3], "metadata": {"example_id": second_absent}}
+    _custom_run(ws, rows, [f"example_{i}" for i in range(4)])
+    result = _add(ws, "run_ids")
+    assert result.exit_code == 0, result.output
+    _assert_reloads_with_failed_rows(ws, {"example_2": "a2", "example_3": "a3"})

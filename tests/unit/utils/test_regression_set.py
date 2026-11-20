@@ -201,3 +201,26 @@ def test_lock_file_is_not_the_data_file(tmp_path: Path) -> None:
     _merge(tmp_path, _ds(("q0", "a0")))
     assert (tmp_path / ".regression.jsonl.lock").exists()
     assert len((tmp_path / "regression.jsonl").read_text().splitlines()) == 1
+
+
+@pytest.mark.parametrize("absent", ["", None, True])
+def test_absent_ids_fall_back_to_position_like_the_dataset_loader(
+    tmp_path: Path, absent: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+    ds = Dataset(
+        examples=[
+            EvaluationExample(
+                input_data={"q": f"q{i}"},
+                expected_output=f"a{i}",
+                metadata={"example_id": absent},
+            )
+            for i in range(2)
+        ]
+    )
+    _merge(tmp_path, ds)
+    reloaded = Dataset.from_jsonl(tmp_path / "regression.jsonl")
+    assert [e.metadata["example_id"] for e in reloaded.examples] == [
+        "example_0",
+        "example_1",
+    ]
