@@ -45,6 +45,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
+import dataclasses
 import fcntl
 import hashlib
 import json
@@ -54,6 +55,7 @@ import re
 import secrets
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -84,11 +86,17 @@ E_ACCEPTANCE_CONFLICT = "E_ACCEPTANCE_CONFLICT"
 E_NO_CANDIDATE_RUN = "E_NO_CANDIDATE_RUN"
 E_HEAD_DIVERGED = "E_HEAD_DIVERGED"
 E_LOCAL_AUTHORITY_IN_PRODUCTION = "E_LOCAL_AUTHORITY_IN_PRODUCTION"
+E_FIXED_CLOCK_IN_PRODUCTION = "E_FIXED_CLOCK_IN_PRODUCTION"
 
 GATE_FORMAT = "traigent-gate-result/1"
 ACCEPTANCE_FORMAT = "tvl-release-acceptance/1"
 DEFAULT_STORE_ROOT = Path(".traigent") / "tuning"
 _REF = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+# The rule keys this release executes; every other key (``when``, cooldowns,
+# ``only_while`` / ``unless`` conditions, repeat limits, ...) is refused at construction.
+_SUPPORTED_RULE_KEYS = frozenset(
+    {"id", "trigger", "do", "approval", "deploy", "admit", "protects"}
+)
 _LEGACY = {"Promote", "Reject", "NoDecision"}
 _COMPLETIONS = {"normal", "error", "cancelled", "cost_limit"}
 OptimizeFn = Callable[[dict[str, Any]], Any]
@@ -128,6 +136,30 @@ def _utc(now: datetime | None) -> datetime:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.astimezone(UTC).replace(microsecond=0)
+
+
+def _effect_clock(now: datetime | None) -> Callable[[], datetime]:
+    """The clock an effect path (an optimizer run, a head write) reads.
+
+    ``now=None`` is the live clock, read afresh every time.  A fixed ``now`` is a
+    simulation or replay clock: refused when the process counts as production
+    (``treat_as_production_policy``, which also refuses when the environment is not
+    known), and otherwise a start instant that still advances with real time, so
+    nothing sampled after a lock wait or a slow step is frozen.
+    """
+    if now is None:
+        return lambda: _utc(None)
+    from traigent.utils.env_config import treat_as_production_policy
+
+    if treat_as_production_policy():
+        raise TuningError(
+            E_FIXED_CLOCK_IN_PRODUCTION,
+            "a fixed instant is for simulation and replay; production reads the "
+            "live clock",
+        )
+    base = _utc(now)
+    started = time.monotonic()
+    return lambda: _utc(base + timedelta(seconds=time.monotonic() - started))
 
 
 def _approve_context(ref: str) -> dict[str, Any]:
@@ -211,8 +243,12 @@ def _mkdir_durable(directory: Path) -> None:
         _fsync_dir(created.parent)
 
 
-def _write_json(path: Path, value: Any) -> None:
-    """Write JSON atomically: temp file in the same directory, fsync, rename."""
+def _stage_json(path: Path, value: Any) -> str:
+    """Write ``value`` to a durable temp file beside ``path``; return its name.
+
+    Nothing is visible at ``path`` until :func:`_publish_staged` renames it, so a
+    caller can do every slow step first and decide at the last instant.
+    """
     _mkdir_durable(path.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
@@ -220,12 +256,31 @@ def _write_json(path: Path, value: Any) -> None:
             json.dump(value, fh, sort_keys=True, indent=2)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
-        _fsync_dir(path.parent)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+    return tmp
+
+
+def _discard_staged(tmp: str) -> None:
+    with contextlib.suppress(OSError):
+        os.unlink(tmp)
+
+
+def _publish_staged(tmp: str, path: Path) -> None:
+    """Atomically rename a staged file into place, then make the rename durable."""
+    try:
+        os.replace(tmp, path)
+        _fsync_dir(path.parent)
+    except BaseException:
+        _discard_staged(tmp)
+        raise
+
+
+def _write_json(path: Path, value: Any) -> None:
+    """Write JSON atomically: temp file in the same directory, fsync, rename."""
+    _publish_staged(_stage_json(path, value), path)
 
 
 def _read_json(path: Path, default: Any = None) -> Any:
@@ -427,8 +482,13 @@ class Controller:
         now: datetime | None = None,
     ) -> None:
         policy_state.require_validated()
-        self.state = policy_state
-        self.module: dict[str, Any] = policy_state.tvl
+        # A private snapshot, taken once after validation: everything executed (and
+        # the store digest) comes from it, so a later change to the caller's
+        # dictionary, or to the state this controller exposes, runs nothing new.
+        self._module: dict[str, Any] = copy.deepcopy(policy_state.tvl)
+        self.state = dataclasses.replace(
+            policy_state, tvl=copy.deepcopy(policy_state.tvl)
+        )
         self._refuse_unsupported()
         agent = policy_state.agent
         if store_dir is None:
@@ -447,11 +507,15 @@ class Controller:
     def _refuse_unsupported(self) -> None:
         """Refuse a policy that uses a feature this release does not run.
 
-        TVL specifies standing approval and external-event triggers; this release
-        runs schedule and monitor-breach triggers with human approval only.  The
-        policy may still be compiled and checked; it is never run.
+        TVL specifies standing approval, external-event triggers, conditions on a
+        rule (``only_while``, ``unless``, cooldowns and repeat limits) and more; this
+        release runs a schedule or a monitor-breach trigger that starts an
+        optimization with human approval, and nothing else.  The rule keys and
+        trigger shapes it executes are allow-listed: anything else is refused here
+        rather than silently ignored.  The policy may still be compiled and checked;
+        it is never run.
         """
-        for response in self.module.get("responses", []):
+        for response in self._module.get("responses", []):
             for rule in response.get("rules", []):
                 if rule.get("approval") == "standing":
                     raise TuningError(
@@ -465,6 +529,19 @@ class Controller:
                         E_UNSUPPORTED_IN_RELEASE,
                         "external-event triggers (ModelReleased) are not supported "
                         "in this release; use a schedule or a monitor breach",
+                    )
+                unsupported = sorted(set(rule) - _SUPPORTED_RULE_KEYS)
+                if unsupported:
+                    raise TuningError(
+                        E_UNSUPPORTED_IN_RELEASE,
+                        "rule condition(s) not supported in this release: "
+                        + ", ".join(str(k) for k in unsupported),
+                    )
+                if not _supported_trigger(trigger):
+                    raise TuningError(
+                        E_UNSUPPORTED_IN_RELEASE,
+                        "only a schedule or a monitor-breach trigger is supported "
+                        "in this release",
                     )
 
     # -- store ----------------------------------------------------------------------
@@ -488,7 +565,7 @@ class Controller:
         initial_config: Mapping[str, Any] | None,
         now: datetime | None,
     ) -> None:
-        digest = "sha256:" + _digest(self.module)
+        digest = "sha256:" + _digest(self._module)
         with self._locked():
             meta = _read_json(self._p("meta.json"))
             if meta is None:
@@ -556,7 +633,7 @@ class Controller:
         }
 
     def _derive(self, extra: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        return conditions_trace(self.module, self._history(extra))
+        return conditions_trace(self._module, self._history(extra))
 
     def _instant(self, moment: datetime) -> int:
         """Whole seconds after the origin: the relation's clock, never rounded.
@@ -567,6 +644,17 @@ class Controller:
         seconds = int((_utc(moment) - self.origin).total_seconds())
         lines = self._lines()
         last = lines[-1]["instant"] if lines else 0
+        return max(seconds, last, 0)
+
+    def _effect_instant(self, clock: Callable[[], datetime]) -> int:
+        """The instant of an effect: every history read first, the clock sampled LAST.
+
+        Same value as ``_instant(clock())`` but nothing slow runs after the clock is
+        read, so the reading is as fresh as the effect that follows it.
+        """
+        lines = self._lines()
+        last = lines[-1]["instant"] if lines else 0
+        seconds = int((_utc(clock()) - self.origin).total_seconds())
         return max(seconds, last, 0)
 
     def _append(
@@ -736,12 +824,10 @@ class Controller:
         self.state.require_validated()
         report = StepReport()
         with self._locked():
-            moment = _utc(now)  # read after the lock: the time of the effect
-            # an explicit ``now`` is a fixed clock (tests, replays); otherwise the
-            # clock is re-read before every paid run and at its completion
-            clock: Callable[[], datetime] = (
-                (lambda: moment) if now is not None else (lambda: _utc(None))
-            )
+            # the clock is read after the lock: the time of the effect.  A fixed
+            # ``now`` (simulation only; production refuses it) still advances.
+            clock = _effect_clock(now)
+            moment = clock()
             report.head_written = self._recover_commits()
             if self._has_schedule():
                 self._tick(self._instant(moment))
@@ -786,12 +872,12 @@ class Controller:
     def _has_schedule(self) -> bool:
         return any(
             "schedule" in rule["trigger"]
-            for response in self.module.get("responses", [])
+            for response in self._module.get("responses", [])
             for rule in response["rules"]
         )
 
     def _rule(self, occ: Mapping[str, Any]) -> dict[str, Any]:
-        for response in self.module.get("responses", []):
+        for response in self._module.get("responses", []):
             if response["name"] != occ["response"]:
                 continue
             for rule in response["rules"]:
@@ -883,7 +969,7 @@ class Controller:
         try:
             rule = next(
                 r
-                for resp in self.module.get("responses", [])
+                for resp in self._module.get("responses", [])
                 if resp["name"] == response
                 for r in resp["rules"]
                 if r["id"] == rule_id
@@ -909,7 +995,7 @@ class Controller:
         from tvl.runtime_conditions import occurrence_status
 
         history = self._history([{"instant": instant, "category": "tick"}])
-        status = occurrence_status(self.module, history, dict(occ))
+        status = occurrence_status(self._module, history, dict(occ))
         if status["phase"] == "closed":
             return False
         return bool(status["scope_active"])
@@ -937,6 +1023,27 @@ class Controller:
             instant = self._instant(moment)  # whole seconds
             marker_path = self._marker_path(attempt, ref)
             marker = _read_json(marker_path)
+            if (
+                abandon_interrupted
+                and marker is None
+                and attempt not in report.approved
+                and self._approval_recorded(attempt)
+            ):
+                # A granted human approval already counts as the start (TVL), but the
+                # process stopped before the attempt marker existed: nothing else would
+                # ever finish it and every later schedule would stay held.  Explicit
+                # abandonment records it as cancelled.
+                record = self._finished_record(attempt, "cancelled", [])
+                _write_json(
+                    marker_path,
+                    {
+                        "attempt": attempt,
+                        "occurrence": ref,
+                        "state": "finished",
+                        "finished_record": record,
+                    },
+                )
+                return True
             if opened["closed"] and marker is None:
                 continue  # closed and never started: nothing to finish, nothing blocks
             # Immediately before any authorization is used or the optimizer is
@@ -1023,6 +1130,13 @@ class Controller:
                     },
                 )
             report.started.append(attempt)
+            # Argument preparation is finished before the final check: only the check
+            # itself separates the clock reading from the optimizer invocation.
+            accepts_dir = bool(
+                getattr(self.optimize_fn, "accepts_candidate_dir", False)
+            )
+            call_space = copy.deepcopy(space)
+            candidate_dir = self._p("candidates") / attempt
             lapse = self._effect_lapse(ref, in_scope, deadline, clock)
             if lapse is not None:
                 # The journaled start lost its authorization while it was being
@@ -1043,15 +1157,15 @@ class Controller:
                 )
                 return True
             try:
-                if getattr(self.optimize_fn, "accepts_candidate_dir", False):
+                if accepts_dir:
                     isolated = cast(Callable[..., Any], self.optimize_fn)
                     result = isolated(
-                        copy.deepcopy(space),
-                        candidate_dir=self._p("candidates") / attempt,
+                        call_space,
+                        candidate_dir=candidate_dir,
                         admitted_models=admitted,
                     )
                 else:
-                    result = self.optimize_fn(copy.deepcopy(space))
+                    result = self.optimize_fn(call_space)
                 completion, candidates, configs, gates = self._map_result(
                     attempt, result
                 )
@@ -1085,21 +1199,21 @@ class Controller:
     ) -> str | None:
         """Why the occurrence may not be spent on at THIS instant; None when it may.
 
-        Reads a fresh clock and small files only (never a history replay): the
-        scope must have counted at the last replay and must not have reached its
-        own deadline, and the approval must still be on the authority's list.
+        No history replay.  The scope must have counted at the last replay, the
+        approval must still be on the authority's list AND still authenticated (the
+        platform authenticator is called again here, so a revocation since the
+        approval is seen), and only then is the clock sampled for the scope's own
+        deadline: the reading is the last thing before the caller acts on the answer.
         """
         if not in_scope:
-            return "scope_expired"
-        if deadline is not None and self._instant(clock()) >= deadline:
             return "scope_expired"
         approval = _read_json(self._p("approvals.json"), {}).get(ref)
         if approval is None:
             return "approval_missing"
-        if self.authority is None or not self.authority.authorized(
-            approval.get("approver")
-        ):
+        if not self._on_list_now(approval.get("approver"), _approve_context(ref)):
             return "approver_not_authorized"
+        if deadline is not None and self._effect_instant(clock) >= deadline:
+            return "scope_expired"
         return None
 
     @staticmethod
@@ -1116,7 +1230,7 @@ class Controller:
     def _search_space(self, domain_fact: Mapping[str, Any] | None) -> dict[str, Any]:
         space: dict[str, Any] = {
             t["name"]: _normalized_domain(t["domain"])
-            for t in self.module.get("tvars", [])
+            for t in self._module.get("tvars", [])
         }
         if domain_fact is not None:
             space[domain_fact["tvar"]] = list(domain_fact["domain"])
@@ -1128,7 +1242,7 @@ class Controller:
             return []
         declared = [
             t["domain"]
-            for t in self.module.get("tvars", [])
+            for t in self._module.get("tvars", [])
             if t["name"] == domain_fact["tvar"]
         ]
         return [
@@ -1141,7 +1255,7 @@ class Controller:
     def _promotion_monitors(self) -> list[str]:
         return sorted(
             m["name"]
-            for m in self.module.get("monitors", [])
+            for m in self._module.get("monitors", [])
             if m.get("phase") == "promotion"
         )
 
@@ -1182,7 +1296,7 @@ class Controller:
             )
             eval_digests = set(eval_digests) | set(cast(Collection[str], loaded))
             return build_promotion_evidence(
-                self.module,
+                self._module,
                 fn=optimized,
                 checkers=getattr(policy, "checkers", None),
                 holdout=getattr(policy, "holdout", None),
@@ -1507,9 +1621,7 @@ class Controller:
             # The effect time is read after the store lock is held (and again at the
             # commit): an acceptance that expired while this call waited behind
             # another writer is judged at its real effect time.
-            clock: Callable[[], datetime] = (
-                (lambda: _utc(now)) if now is not None else (lambda: _utc(None))
-            )
+            clock = _effect_clock(now)
             self._recover_commits()
             prior = self._acceptance_lines()
             recorded = [ln["record"]["record"] for ln in prior]
@@ -1588,7 +1700,7 @@ class Controller:
                 instant,
                 str(ident),
                 decide,
-                lambda: self._instant(clock()),
+                lambda: self._effect_instant(clock),
             )
 
     def _recorded_outcome(self, position: int, ident: str) -> AcceptanceOutcome:
@@ -1796,12 +1908,21 @@ class Controller:
                 "meta": dict(meta),
             },
         )
-        # The very last step before the head moves: every deadline again, against a
-        # clock read now (the journal write above took time).  No replay here.
-        late = self._deadline_lapse(
-            doc, fresh_instant() if fresh_instant is not None else instant
-        )
+        # Everything slow happens before the clock is read: the platform authority is
+        # asked again (a revocation since the first check is seen) and the new head
+        # file is staged and fsynced.  Then the deadlines are checked against a clock
+        # sampled now, and the rename follows with nothing in between.
+        staged = _stage_json(self._p("head.json"), new_head)
+        approver_still_ok = self._on_list_now(doc.get("approver_ref"), doc)
+        late: str | None
+        if not approver_still_ok:
+            late = "approver_not_authorized"
+        else:
+            late = self._deadline_lapse(
+                doc, fresh_instant() if fresh_instant is not None else instant
+            )
         if late is not None:
+            _discard_staged(staged)
             _append_line(
                 self._p("commits.jsonl"),
                 {"fact": "commit_abandoned", "commit": commit, "acceptance": ident},
@@ -1815,7 +1936,7 @@ class Controller:
                 }
             )
             return AcceptanceOutcome(ident, "refused", late)
-        self._install_head(new_head)
+        self._install_head(new_head, staged)
         self._append("acceptances", dict(line_record), instant, meta)
         _append_line(
             self._p("commits.jsonl"),
@@ -1828,9 +1949,15 @@ class Controller:
         )
         return AcceptanceOutcome(ident, "written", None, generation)
 
-    def _install_head(self, head: Mapping[str, Any]) -> None:
-        """Write ``head.json`` (atomic), then make sure ``heads.jsonl`` names it."""
-        _write_json(self._p("head.json"), dict(head))
+    def _install_head(self, head: Mapping[str, Any], staged: str | None = None) -> None:
+        """Move ``head.json`` (atomic), then make sure ``heads.jsonl`` names it.
+
+        ``staged`` is a temp file already written and fsynced for exactly this head:
+        only the rename remains.  Without it the head is written here.
+        """
+        if staged is None:
+            staged = _stage_json(self._p("head.json"), dict(head))
+        _publish_staged(staged, self._p("head.json"))
         known = {h["generation"] for h in _read_lines(self._p("heads.jsonl"))}
         if head["generation"] not in known:
             _append_line(self._p("heads.jsonl"), dict(head))
@@ -1862,7 +1989,7 @@ class Controller:
             index -= 1
         merged = [*lines[:index], line, *lines[index:]]
         try:
-            trace = conditions_trace(self.module, self._history(lines=merged))
+            trace = conditions_trace(self._module, self._history(lines=merged))
             derived = self._tvl_generation(trace)
         except Exception:  # noqa: BLE001 - TVL closed errors; never echo content
             derived = -1
@@ -2091,14 +2218,24 @@ class Controller:
         }
 
 
-_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _supported_trigger(trigger: Any) -> bool:
+    """A schedule (``every_days`` + ``anchor``) or a monitor ``episode_opened`` breach."""
+    if not isinstance(trigger, Mapping):
+        return False
+    if set(trigger) == {"schedule"}:
+        spec = trigger["schedule"]
+        return isinstance(spec, Mapping) and set(spec) == {"every_days", "anchor"}
+    return set(trigger) == {"monitor", "event"} and trigger["event"] == "episode_opened"
 
 
 def _well_formed_digests(loaded: Any) -> bool:
     """A real collection of digest strings (never a bare string, which iterates as
     characters); anything else means the run's dataset identity is unknown."""
     return isinstance(loaded, (list, tuple, set, frozenset)) and all(
-        isinstance(item, str) and _DIGEST.match(item) for item in loaded
+        isinstance(item, str) and _DIGEST.fullmatch(item) for item in loaded
     )
 
 

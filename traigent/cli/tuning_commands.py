@@ -206,7 +206,13 @@ def _controller_options(func: Any) -> Any:
                 help=("Authority config (approvers). Needed by approve and accept."),
             ),
             click.option(
-                "--now", "now_text", default=None, help="UTC instant (testing)."
+                "--now",
+                "now_text",
+                default=None,
+                help=(
+                    "Fixed UTC instant for simulation and replay only; step and "
+                    "accept refuse it in production."
+                ),
             ),
         ]
     ):

@@ -7,6 +7,7 @@ this coverage sets ``TRAIGENT_TVL_REQUIRED=1``: a missing TVL 1.7 then FAILS.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 
 import pytest
 
@@ -51,12 +52,18 @@ def _dataset_root(monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _explicit_non_production_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def _explicit_non_production_environment() -> Iterator[None]:
     """``local-trusted`` is refused unless the environment is explicitly non-production.
 
     Tests that exercise it run as ``development``; the tests that are about
-    production or an unset environment change this themselves.
+    production or an unset environment change this themselves.  It uses its own
+    patcher so a test calling ``monkeypatch.undo()`` does not drop the environment.
     """
+    patcher = pytest.MonkeyPatch()
     for name in ("TRAIGENT_ENVIRONMENT", "TRAIGENT_ENV"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("ENVIRONMENT", "development")
+        patcher.delenv(name, raising=False)
+    patcher.setenv("ENVIRONMENT", "development")
+    try:
+        yield
+    finally:
+        patcher.undo()

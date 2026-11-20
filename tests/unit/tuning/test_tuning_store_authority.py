@@ -136,7 +136,13 @@ def test_a_saved_approval_is_not_used_once_the_environment_is_production(
     monkeypatch.setenv(
         "ENVIRONMENT", "production"
     )  # the process now runs in production
-    report = c.step(at(10))
+    real_utc = controller_module._utc  # production reads the live clock: fake it
+    monkeypatch.setattr(
+        controller_module,
+        "_utc",
+        lambda value: real_utc(value) if value is not None else at(10),
+    )
+    report = c.step()
     assert opt.calls == [] and report.awaiting_approval == [e_ref("E1")]
 
 

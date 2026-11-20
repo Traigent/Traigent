@@ -529,10 +529,11 @@ def _holdout_digest_variants() -> list[Any]:
         [digest, 3],  # a malformed entry
         ["not-a-digest"],
         [digest.upper()],
+        [digest + "\n"],  # a trailing newline is not a digest
     ]
 
 
-@pytest.mark.parametrize("index", range(7))
+@pytest.mark.parametrize("index", range(8))
 def test_a_malformed_loaded_digest_collection_is_an_unknown_identity(
     tmp_path: Path, index: int
 ) -> None:

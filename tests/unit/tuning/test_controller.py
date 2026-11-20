@@ -576,9 +576,9 @@ def _crash_install(monkeypatch: pytest.MonkeyPatch, *, after: bool = False) -> A
     """Make the head install die (``after``: right after head.json is written)."""
     real = Controller._install_head
 
-    def crash(self: Controller, head_: Any) -> None:
+    def crash(self: Controller, head_: Any, staged: Any = None) -> None:
         if after:
-            real(self, head_)
+            real(self, head_, staged)
         raise RuntimeError("simulated crash at the head install")
 
     monkeypatch.setattr(Controller, "_install_head", crash)
