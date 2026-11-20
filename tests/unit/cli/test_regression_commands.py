@@ -430,6 +430,16 @@ def test_success_says_the_file_is_unredacted_and_to_review_it(ws: Path) -> None:
     )
 
 
+def test_success_names_the_gitignore_it_wrote_only_the_first_time(ws: Path) -> None:
+    first = _add(ws, "run_a")
+    assert first.exit_code == 0, first.output
+    assert "lock file" in first.output and ".gitignore" in first.output
+    assert (ws / "reg" / ".gitignore").read_text() == ".regression.jsonl.lock\n"
+    second = _add(ws, "run_b")
+    assert second.exit_code == 0, second.output
+    assert ".gitignore" not in second.output
+
+
 def test_errors_do_not_echo_exception_text(
     ws: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

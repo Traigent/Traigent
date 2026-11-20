@@ -214,6 +214,11 @@ def regression_add(
         f"provenance entr{'y' if report.provenance_added == 1 else 'ies'}, "
         f"replaced {report.rows_replaced}; file: {report.path}"
     )
+    if report.gitignore_updated:
+        click.echo(
+            f"Added the lock file name to {report.path.parent / '.gitignore'} "
+            "so it stays out of version control."
+        )
     click.echo(
         "Note: this file holds unredacted example content and the examples' "
         "metadata. Review it before you commit it."

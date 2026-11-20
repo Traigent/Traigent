@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +16,6 @@ from traigent.evaluators.base import (
     _example_correlation_key,
 )
 from traigent.utils.file_lock import (
-    FileLockUnsupportedError,
     exclusive_lock,
     lock_path_for,
 )
@@ -302,50 +300,152 @@ def test_lock_timeout_errors_and_writes_nothing(tmp_path: Path) -> None:
     assert _merge(tmp_path, _ds(("q9", "a9"), start=9)).rows_added == 1
 
 
-@pytest.fixture
-def lock_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A private system temp dir, so lock files can be inspected."""
-    lock_root = tmp_path / "systmp"
-    lock_root.mkdir()
-    monkeypatch.setattr(tempfile, "tempdir", str(lock_root))
-    return lock_root
-
-
-def test_lock_file_is_not_in_the_repository_directory(
-    tmp_path: Path, lock_tmp: Path
+def test_lock_is_a_hidden_sibling_keyed_by_the_directory_entry(
+    tmp_path: Path,
 ) -> None:
-    data = tmp_path / "repo"
-    _merge(data, _ds(("q0", "a0")))
-    assert sorted(p.name for p in data.iterdir()) == ["regression.jsonl"]
-    assert len((data / "regression.jsonl").read_text().splitlines()) == 1
-    locks = list(lock_tmp.rglob("*.lock"))
-    assert len(locks) == 1
-    assert locks[0].parent.parent == lock_tmp
-    assert oct(locks[0].parent.stat().st_mode & 0o777) == "0o700"
+    data = tmp_path / "repo" / "regression.jsonl"
+    assert lock_path_for(data) == tmp_path / "repo" / ".regression.jsonl.lock"
+    # never resolved: a link spelling keeps its own entry, and a different
+    # directory never shares the lock
+    assert lock_path_for(tmp_path / "other" / "regression.jsonl") != lock_path_for(data)
+    _merge(tmp_path / "repo", _ds(("q0", "a0")))
+    names = sorted(p.name for p in (tmp_path / "repo").iterdir())
+    assert names == [".gitignore", ".regression.jsonl.lock", "regression.jsonl"]
 
 
-def test_lock_path_is_keyed_by_the_data_files_real_path(
-    tmp_path: Path, lock_tmp: Path
+def test_a_symlinked_data_file_is_refused_and_nothing_is_written(
+    tmp_path: Path,
 ) -> None:
-    (tmp_path / "a").mkdir()
-    (tmp_path / "b").mkdir()
+    """Three writers cannot split the lock: the link is refused up front."""
+    real = tmp_path / "real"
+    real.mkdir()
+    _merge(real, _ds(("q0", "a0")))
+    data = tmp_path / "repo" / "regression.jsonl"
+    data.parent.mkdir()
+    data.symlink_to(real / "regression.jsonl")
+    before = (real / "regression.jsonl").read_bytes()
+    for writer in range(3):
+        with pytest.raises(RegressionSetError, match="symbolic link"):
+            _merge(data.parent, _ds((f"q{writer}", f"a{writer}"), start=writer + 5))
+    assert data.is_symlink()  # the link was never replaced by a regular file
+    assert (real / "regression.jsonl").read_bytes() == before
+    assert not list(data.parent.glob(".*.tmp"))
+
+
+def test_a_dangling_symlinked_data_file_is_refused(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "regression.jsonl").symlink_to(tmp_path / "nowhere.jsonl")
+    with pytest.raises(RegressionSetError, match="symbolic link"):
+        _merge(repo, _ds(("q0", "a0")))
+    assert not (tmp_path / "nowhere.jsonl").exists()
+
+
+def test_a_symlinked_directory_shares_the_lock_with_the_real_one(
+    tmp_path: Path,
+) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
     link = tmp_path / "link"
-    link.symlink_to(tmp_path / "a")
-    one = lock_path_for(tmp_path / "a" / "regression.jsonl")
-    assert lock_path_for(link / "regression.jsonl") == one  # same file, same lock
-    assert lock_path_for(tmp_path / "b" / "regression.jsonl") != one
+    link.symlink_to(real)
+    with exclusive_lock(real / "regression.jsonl"):
+        with pytest.raises(RegressionSetError, match="Timed out"):
+            _merge(link, _ds(("q9", "a9"), start=9), lock_timeout=0.2)
 
 
-def test_a_lock_directory_owned_by_someone_else_is_refused(
-    tmp_path: Path, lock_tmp: Path, monkeypatch: pytest.MonkeyPatch
+def test_processes_with_different_tmpdirs_exclude_each_other(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+    import textwrap
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    other_tmp = tmp_path / "othertmp"
+    other_tmp.mkdir()
+    code = textwrap.dedent(
+        """
+        import sys
+        from pathlib import Path
+        from traigent.evaluators.base import Dataset, EvaluationExample
+        from traigent.utils.regression_set import (
+            RegressionSetError, RunEvidence, merge_failures)
+        ds = Dataset(examples=[EvaluationExample(
+            input_data={"q": "x"}, expected_output="y", metadata={"example_id": 7})])
+        ev = RunEvidence("r", "r", "2026-01-01", "best_config", 0.5, None, {})
+        try:
+            merge_failures(Path(sys.argv[1]), ds, evidence=ev, lock_timeout=0.3)
+        except RegressionSetError as exc:
+            print("TIMEOUT" if "Timed out" in str(exc) else "OTHER " + str(exc))
+        else:
+            print("WROTE")
+        """
+    )
+    env = {**os.environ, "TMPDIR": str(other_tmp)}
+    with exclusive_lock(repo / "regression.jsonl"):
+        held = subprocess.run(
+            [sys.executable, "-c", code, str(repo)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        )
+    assert held.stdout.strip() == "TIMEOUT", held.stdout + held.stderr
+    assert not (repo / "regression.jsonl").exists()
+    free = subprocess.run(
+        [sys.executable, "-c", code, str(repo)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    assert free.stdout.strip() == "WROTE"
+
+
+def test_gitignore_is_created_beside_the_data_file(tmp_path: Path) -> None:
+    report = _merge(tmp_path / "repo", _ds(("q0", "a0")))
+    assert report.gitignore_updated is True
+    gitignore = tmp_path / "repo" / ".gitignore"
+    assert gitignore.read_text() == ".regression.jsonl.lock\n"
+    # second add: already listed, reported once only
+    again = _merge(tmp_path / "repo", _ds(("q1", "a1"), start=1))
+    assert again.gitignore_updated is False
+    assert gitignore.read_text() == ".regression.jsonl.lock\n"
+
+
+def test_gitignore_is_appended_without_losing_existing_lines(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".gitignore").write_text("*.tmp\nkeep-me", encoding="utf-8")  # no newline
+    report = _merge(repo, _ds(("q0", "a0")))
+    assert report.gitignore_updated is True
+    assert (repo / ".gitignore").read_text() == "*.tmp\nkeep-me\n.regression.jsonl.lock\n"
+
+
+def test_gitignore_already_listing_the_lock_is_left_byte_identical(
+    tmp_path: Path,
 ) -> None:
-    lock_path_for(tmp_path / "regression.jsonl")  # creates the directory
-    real_getuid = os.getuid
-    monkeypatch.setattr(os, "getuid", lambda: real_getuid() + 1)
-    # a different "user" gets a different directory name, so plant a clash
-    (lock_tmp / f"traigent-locks-{real_getuid() + 1}").mkdir()
-    with pytest.raises(FileLockUnsupportedError, match="another user"):
-        lock_path_for(tmp_path / "regression.jsonl")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    original = "# mine\n/.regression.jsonl.lock\n"
+    (repo / ".gitignore").write_text(original, encoding="utf-8")
+    report = _merge(repo, _ds(("q0", "a0")))
+    assert report.gitignore_updated is False
+    assert (repo / ".gitignore").read_text() == original
+
+
+def test_no_gitignore_outside_the_regression_directory_is_touched(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".gitignore").write_text("outer\n", encoding="utf-8")
+    nested = tmp_path / "tests" / "regression"
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / ".gitignore").write_text("middle\n", encoding="utf-8")
+    _merge(nested, _ds(("q0", "a0")))
+    assert (tmp_path / ".gitignore").read_text() == "outer\n"
+    assert (tmp_path / "tests" / ".gitignore").read_text() == "middle\n"
+    assert (nested / ".gitignore").read_text() == ".regression.jsonl.lock\n"
 
 
 @pytest.mark.parametrize("absent", ["", None, True])

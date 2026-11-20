@@ -69,6 +69,7 @@ from traigent.utils.file_lock import (
     FileLockTimeoutError,
     FileLockUnsupportedError,
     exclusive_lock,
+    lock_path_for,
 )
 from traigent.utils.hashing import generate_config_hash
 
@@ -147,6 +148,9 @@ class MergeReport:
     provenance_added: int = 0
     rows_replaced: int = 0
     added_ids: list[str] = field(default_factory=list)
+    #: True when this merge created or extended the ``.gitignore`` beside the
+    #: file so the lock file stays out of version control.
+    gitignore_updated: bool = False
 
 
 @dataclass(frozen=True)
@@ -532,6 +536,13 @@ def merge_failures(
 
     The whole read-merge-replace runs under a cross-process lock on the hidden
     sibling ``.regression.jsonl.lock``, waiting at most ``lock_timeout`` seconds.
+    The first merge also makes sure ``<directory>/.gitignore`` lists that lock
+    file (and touches no other ``.gitignore``).
+
+    ``regression.jsonl`` must not be a symbolic link: the atomic replace would
+    turn the link into a regular file, so writers that locked the old entry
+    and writers that lock the new one could overlap. A link is refused, with
+    nothing written; point ``--dir`` at the directory holding the real file.
 
     Raises:
         RegressionSetError: The existing file is unparseable, the policy is
@@ -546,10 +557,47 @@ def merge_failures(
     # The lock covers the whole read-merge-replace, and the file is read only
     # after the lock is held, so concurrent adds cannot lose each other's rows.
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         with exclusive_lock(path, timeout=lock_timeout):
-            return _merge_locked(path, examples, evidence, on_id_conflict)
+            if path.is_symlink():
+                raise RegressionSetError(
+                    f"{path} is a symbolic link; refusing to write it, because "
+                    "the atomic replace would turn the link into a regular file "
+                    "and split the lock. Nothing was written. Point --dir at "
+                    "the directory that holds the real file, or replace the "
+                    "link with the file."
+                )
+            gitignore_updated = _ensure_lock_ignored(path)
+            report = _merge_locked(path, examples, evidence, on_id_conflict)
+            report.gitignore_updated = gitignore_updated
+            return report
     except (FileLockTimeoutError, FileLockUnsupportedError) as exc:
         raise RegressionSetError(str(exc)) from exc
+
+
+def _ensure_lock_ignored(path: Path) -> bool:
+    """List the lock file in ``<dir>/.gitignore``; ``True`` when that changed it.
+
+    Only the ``.gitignore`` in the regression directory itself is read or
+    written, and never through a symbolic link.
+    """
+    name = lock_path_for(path).name
+    gitignore = path.parent / ".gitignore"
+    if gitignore.is_symlink():
+        return False
+    try:
+        existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    except (OSError, UnicodeDecodeError):
+        return False
+    if any(line.strip() in (name, f"/{name}") for line in existing.split("\n")):
+        return False
+    separator = "" if not existing or existing.endswith("\n") else "\n"
+    try:
+        with gitignore.open("a", encoding="utf-8") as handle:
+            handle.write(f"{separator}{name}\n")
+    except OSError:
+        return False
+    return True
 
 
 def _admit_stale_rows(
