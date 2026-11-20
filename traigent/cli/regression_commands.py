@@ -306,6 +306,8 @@ def regression_add(
 #: ``not_gated`` key for rows that were gated when last measured but whose
 #: content has changed since.
 CONTENT_CHANGED = "content_changed"
+#: Closed reason listed with an inconclusive row whose scored attempts tied.
+REASON_TIE = "tie"
 CHECK_OK = 0
 CHECK_REGRESSION = 1
 CHECK_INCONCLUSIVE = 2
@@ -820,7 +822,10 @@ def _confirm_run(
     type=click.IntRange(min=1),
     default=DEFAULT_CHECK_REPEATS,
     show_default=True,
-    help="Times each row runs; a row regresses when most scored attempts fail",
+    help=(
+        "Times each row runs; a row passes only when more scored attempts pass "
+        "than fail, regresses when more fail than pass, and a tie is inconclusive"
+    ),
 )
 @click.option(
     "--fail-on-intermittent",
@@ -862,8 +867,9 @@ def regression_check(
     A row whose content changed since it was confirmed is listed as not gated.
 
     Exit codes: 0 every armed row passed (or none are armed); 1 an armed row
-    regressed (more than half of its scored attempts failed); 2 inconclusive
-    (no scored attempt for an armed row, function or config unusable);
+    regressed (more of its scored attempts failed than passed); 2 inconclusive
+    (an armed row with no scored attempt or with as many passes as fails, which
+    is listed with reason "tie"; function or config unusable);
     3 regression file missing, corrupt or edited by hand.
 
     Example:
@@ -997,10 +1003,15 @@ def _check_run(
             tallied = tally(run.per_attempt, eid)
             if tallied.scored == 0:
                 inconclusive.append((eid, tallied))
-            elif tallied.majority_failed:
+            elif tallied.regressed:
                 regressions.append((eid, tallied))
-            else:
+            elif tallied.tied:
+                inconclusive.append((eid, tallied))
+                unresolved[eid] = REASON_TIE
+            elif tallied.passed_strictly:
                 passed.append(eid)
+            else:  # unreachable: scored attempts are a pass, a fail or a tie
+                inconclusive.append((eid, tallied))
     if regressions:
         code, verdict = CHECK_REGRESSION, "regression"
     elif inconclusive or not run_complete:
@@ -1082,6 +1093,12 @@ def _print_check(
             f"fails={t.fails} errored={t.errored} pass_rate_95={_interval(t)}"
         )
     for eid, t in inconclusive:
+        if unresolved.get(eid) == REASON_TIE:
+            click.echo(
+                f"INCONCLUSIVE {eid}: tie: attempts={t.attempts} passes={t.passes} "
+                f"fails={t.fails} errored={t.errored} (as many passes as fails)"
+            )
+            continue
         if eid in unresolved:
             click.echo(
                 f"INCONCLUSIVE {eid}: results could not be tied to the row "

@@ -281,9 +281,19 @@ class Tally:
         return self.passes + self.fails
 
     @property
-    def majority_failed(self) -> bool:
-        """More than half of the scored attempts failed."""
-        return self.scored > 0 and self.fails * 2 > self.scored
+    def passed_strictly(self) -> bool:
+        """More scored attempts passed than failed (a tie does not pass)."""
+        return self.passes > self.fails
+
+    @property
+    def regressed(self) -> bool:
+        """More scored attempts failed than passed."""
+        return self.fails > self.passes
+
+    @property
+    def tied(self) -> bool:
+        """At least one scored attempt, and as many passes as fails."""
+        return self.scored > 0 and self.passes == self.fails
 
 
 def tally(per_attempt: Sequence[Mapping[str, str] | None], example_id: str) -> Tally:
