@@ -1,0 +1,547 @@
+case_format: tvl-runtime-case/1
+family: semantic_traces
+description: 'The 15-row slice history of the continuous-tuning design: external admit, redelivery, no-match,
+  rejected events, held breach, acceptance, stale refusal and generation-scoped closure.'
+spec_refs:
+- formalization/rfc-0011-tuning-conditions.md#2.2
+- formalization/rfc-0011-tuning-conditions.md#2.3
+- formalization/rfc-0011-tuning-conditions.md#2.5
+- formalization/rfc-0011-tuning-conditions.md#2.7
+- formalization/rfc-0012-release-acceptance.md#2.3
+- formalization/rfc-0012-release-acceptance.md#2.4
+module:
+  tvl_version: '1.7'
+  tvl:
+    module: slice.doc_classifier
+  environment:
+    snapshot_id: '2026-11-20T00:00:00Z'
+  evaluation_set:
+    dataset: test://slice
+  tvars:
+  - name: model
+    type: enum[str]
+    domain:
+    - anthropic/claude-haiku-4-5
+    - anthropic/claude-sonnet-4-6
+  objectives:
+  - name: quality
+    direction: maximize
+  promotion_policy:
+    dominance: epsilon_pareto
+    alpha: 0.05
+    min_effect:
+      quality: 0.02
+  requirements:
+  - name: quality_floor
+    kind: rate_bound
+    unit: invocation
+    violation:
+      checker: customer:doc_label_check
+      label_in:
+      - fail
+    max_rate: 0.08
+  monitors:
+  - name: quality_prod
+    requirement: quality_floor
+    phase: runtime
+    evidence:
+      source: customer_side
+      deployment_environment: production
+      attribution: agent_key_exact_v1
+      resolution: terminal_status_v1
+      sampling:
+        mode: hash_bernoulli_committed_v1
+        rate: 0.02
+    decision:
+      method: clopper_pearson_rational_v2
+      confidence: 0.95
+      false_alarm_budget: 0.05
+      min_samples: 200
+      max_unresolved_fraction: 0.05
+      horizon_days: 30
+      model: iid_bernoulli_within_window_v1
+    window:
+      tumbling_hours: 24
+      grace_minutes: 0
+    episode:
+      closure_windows: 2
+      closure_max_age_hours: 168
+      closure_scope: since_head_move
+  - name: quality_gate
+    requirement: quality_floor
+    phase: promotion
+    evidence:
+      source: evaluation_set
+    decision:
+      method: clopper_pearson_rational_v2
+      confidence: 0.95
+      false_alarm_budget: 0.05
+  responses:
+  - name: tuning
+    rules:
+    - id: on_new_model
+      trigger:
+        external: model_released
+        match:
+          provider_family:
+          - anthropic
+          tier:
+          - small
+          - medium
+      do: optimize
+      approval: human
+      deploy: if_promoted
+      admit:
+        tvar: model
+      protects:
+      - quality_floor
+    - id: on_breach
+      trigger:
+        monitor: quality_prod
+        event: episode_opened
+      do: optimize
+      approval: human
+      deploy: if_promoted
+input:
+  kind: conditions
+  history:
+    agent: agent-1
+    environment: production
+    origin: '2026-11-20T00:00:00Z'
+    head:
+      fingerprint: 000000000000000000000000000000000000000000000000000000000000000a
+      generation: 0
+    contract_digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    steps:
+    - instant: 10
+      events:
+      - kind: model_released
+        event_id: E1
+        issuer: P
+        issued_at: 9
+        catalogue_revision: 1
+        subject:
+          model_ref: anthropic/claude-haiku-5-5
+          provider_family: anthropic
+          tier: small
+        authenticated: true
+    - instant: 10
+      optimizations:
+      - attempt: A1
+        fact: approval
+        state: granted
+    - instant: 11
+      events:
+      - kind: model_released
+        event_id: E1
+        issuer: P
+        issued_at: 9
+        catalogue_revision: 1
+        subject:
+          model_ref: anthropic/claude-haiku-5-5
+          provider_family: anthropic
+          tier: small
+        authenticated: true
+    - instant: 12
+      events:
+      - kind: model_released
+        event_id: E2
+        issuer: P
+        issued_at: 11
+        catalogue_revision: 1
+        subject:
+          model_ref: openai/gpt-x
+          provider_family: openai
+          tier: small
+        authenticated: true
+    - instant: 13
+      events:
+      - kind: model_released
+        event_id: E3
+        issuer: P
+        issued_at: 12
+        catalogue_revision: 1
+        subject:
+          model_ref: anthropic/claude-opus-5-5
+          provider_family: anthropic
+          tier: large
+        authenticated: true
+    - instant: 14
+      events:
+      - kind: model_released
+        event_id: E4
+        issuer: P
+        issued_at: 13
+        catalogue_revision: 1
+        subject:
+          model_ref: anthropic/claude-haiku-5-6
+          provider_family: anthropic
+          tier: small
+        authenticated: false
+    - instant: 15
+      events:
+      - kind: model_released
+        event_id: E5
+        issuer: P
+        issued_at: -70
+        catalogue_revision: 1
+        subject:
+          model_ref: anthropic/claude-haiku-5-7
+          provider_family: anthropic
+          tier: small
+        authenticated: true
+    - instant: 24
+      windows:
+      - monitor: quality_prod
+        start: 0
+        end: 24
+        verdict: BREACHED
+        head_generation: 0
+    - instant: 30
+      optimizations:
+      - attempt: A1
+        fact: finished
+        completion: normal
+        candidates:
+        - evidence_valid: true
+          fingerprint: 111111111111111111111111111111111111111111111111111111111111111b
+          gate_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          legacy_decision: Promote
+          monitor_verdicts:
+            quality_gate: MET
+    - instant: 31
+      acceptances:
+      - record:
+          format: tvl-release-acceptance/1
+          acceptance_id: R1
+          agent_ref: agent-1
+          environment_ref: production
+          occurrence:
+            response_ref: tuning
+            rule_ref: on_new_model
+            scope_kind: external
+            scope_ref: ext:cb7b8407952d38e48eda00aaa286e7f58dbe02de4bc7927ae3d23893dc040325
+            occurrence: 0
+          candidate_fingerprint: 111111111111111111111111111111111111111111111111111111111111111b
+          gate_result_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          contract_digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+          expected_head_generation: 0
+          rollback_target: 000000000000000000000000000000000000000000000000000000000000000a
+          approver_ref: approver-1
+          decision: accept
+          decided_at: '2026-11-20T00:00:00Z'
+          expires_at: '2026-11-27T00:00:00Z'
+        authenticated: true
+        approver_authorized: true
+    - instant: 31
+      optimizations:
+      - attempt: A2
+        fact: approval
+        state: granted
+    - instant: 32
+      acceptances:
+      - record:
+          format: tvl-release-acceptance/1
+          acceptance_id: R1
+          agent_ref: agent-1
+          environment_ref: production
+          occurrence:
+            response_ref: tuning
+            rule_ref: on_new_model
+            scope_kind: external
+            scope_ref: ext:cb7b8407952d38e48eda00aaa286e7f58dbe02de4bc7927ae3d23893dc040325
+            occurrence: 0
+          candidate_fingerprint: 111111111111111111111111111111111111111111111111111111111111111b
+          gate_result_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          contract_digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+          expected_head_generation: 0
+          rollback_target: 000000000000000000000000000000000000000000000000000000000000000a
+          approver_ref: approver-1
+          decision: accept
+          decided_at: '2026-11-20T00:00:00Z'
+          expires_at: '2026-11-27T00:00:00Z'
+        authenticated: true
+        approver_authorized: true
+    - instant: 40
+      optimizations:
+      - attempt: A2
+        fact: finished
+        completion: normal
+        candidates:
+        - evidence_valid: true
+          fingerprint: 222222222222222222222222222222222222222222222222222222222222222c
+          gate_digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          legacy_decision: Promote
+          monitor_verdicts:
+            quality_gate: MET
+    - instant: 41
+      acceptances:
+      - record:
+          format: tvl-release-acceptance/1
+          acceptance_id: R2
+          agent_ref: agent-1
+          environment_ref: production
+          occurrence:
+            response_ref: tuning
+            rule_ref: on_breach
+            scope_kind: episode
+            scope_ref: EP1
+            occurrence: 0
+          candidate_fingerprint: 222222222222222222222222222222222222222222222222222222222222222c
+          gate_result_digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          contract_digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+          expected_head_generation: 0
+          rollback_target: 000000000000000000000000000000000000000000000000000000000000000a
+          approver_ref: approver-1
+          decision: accept
+          decided_at: '2026-11-20T00:00:00Z'
+          expires_at: '2026-11-27T00:00:00Z'
+          repairs_episode: EP1
+        authenticated: true
+        approver_authorized: true
+    - instant: 48
+      windows:
+      - monitor: quality_prod
+        start: 24
+        end: 48
+        verdict: MET
+        head_generation: 1
+    - instant: 72
+      windows:
+      - monitor: quality_prod
+        start: 48
+        end: 72
+        verdict: MET
+        head_generation: 1
+    - instant: 96
+      windows:
+      - monitor: quality_prod
+        start: 72
+        end: 96
+        verdict: MET
+        head_generation: 1
+expected:
+  facts:
+  - instant: 10
+    fact: event
+    event:
+      issuer: P
+      event_id: E1
+    result: admitted
+  - instant: 10
+    fact: fired
+    occurrence:
+      response: tuning
+      rule: on_new_model
+      scope_kind: external
+      scope:
+        issuer: P
+        event_id: E1
+      j: 0
+  - instant: 10
+    fact: attempt_opened
+    attempt: A1
+    occurrence:
+      response: tuning
+      rule: on_new_model
+      scope_kind: external
+      scope:
+        issuer: P
+        event_id: E1
+      j: 0
+  - instant: 10
+    fact: search_domain
+    attempt: A1
+    tvar: model
+    domain:
+    - anthropic/claude-haiku-4-5
+    - anthropic/claude-sonnet-4-6
+    - anthropic/claude-haiku-5-5
+  - instant: 11
+    fact: event
+    event:
+      issuer: P
+      event_id: E1
+    result: redelivery
+  - instant: 12
+    fact: event
+    event:
+      issuer: P
+      event_id: E2
+    result: admitted
+  - instant: 12
+    fact: no_match
+    event:
+      issuer: P
+      event_id: E2
+  - instant: 13
+    fact: event
+    event:
+      issuer: P
+      event_id: E3
+    result: admitted
+  - instant: 13
+    fact: no_match
+    event:
+      issuer: P
+      event_id: E3
+  - instant: 14
+    fact: event
+    event:
+      issuer: P
+      event_id: E4
+    result: rejected(unauthenticated)
+  - instant: 15
+    fact: event
+    event:
+      issuer: P
+      event_id: E5
+    result: rejected(late)
+  - instant: 24
+    fact: window
+    closure: breached
+    monitor: quality_prod
+    start: 0
+  - instant: 24
+    fact: episode_opened
+    monitor: quality_prod
+    episode: EP1
+    opening_generation: 0
+  - instant: 24
+    fact: fired
+    occurrence:
+      response: tuning
+      rule: on_breach
+      scope_kind: episode
+      scope: EP1
+      j: 0
+  - instant: 24
+    fact: held
+    occurrence:
+      response: tuning
+      rule: on_breach
+      scope_kind: episode
+      scope: EP1
+      j: 0
+    reason: repair_open
+  - instant: 30
+    fact: optimization_finished
+    attempt: A1
+    outcome: promoted
+  - instant: 30
+    fact: deploy_awaiting
+    attempt: A1
+    occurrence:
+      response: tuning
+      rule: on_new_model
+      scope_kind: external
+      scope:
+        issuer: P
+        event_id: E1
+      j: 0
+    candidate: 111111111111111111111111111111111111111111111111111111111111111b
+  - instant: 31
+    fact: acceptance
+    acceptance: R1
+    result: written
+    generation: 1
+  - instant: 31
+    fact: attempt_closed
+    attempt: A1
+    reason: deploy_written
+  - instant: 31
+    fact: attempt_opened
+    attempt: A2
+    occurrence:
+      response: tuning
+      rule: on_breach
+      scope_kind: episode
+      scope: EP1
+      j: 0
+  - instant: 32
+    fact: acceptance
+    acceptance: R1
+    result: consumed
+  - instant: 40
+    fact: optimization_finished
+    attempt: A2
+    outcome: promoted
+  - instant: 40
+    fact: deploy_awaiting
+    attempt: A2
+    occurrence:
+      response: tuning
+      rule: on_breach
+      scope_kind: episode
+      scope: EP1
+      j: 0
+    candidate: 222222222222222222222222222222222222222222222222222222222222222c
+  - instant: 41
+    fact: acceptance
+    acceptance: R2
+    result: refused
+    reason: stale_generation
+  - instant: 41
+    fact: outcome
+    attempt: A2
+    event: deploy_refused
+    reason: stale_generation
+  - instant: 41
+    fact: attempt_closed
+    attempt: A2
+    reason: deploy_refused
+  - instant: 48
+    fact: window
+    closure: UNKNOWN(mixed_generation)
+    monitor: quality_prod
+    start: 24
+  - instant: 72
+    fact: window
+    closure: counts
+    progress: 1
+    of: 2
+    monitor: quality_prod
+    start: 48
+  - instant: 96
+    fact: window
+    closure: counts
+    progress: 2
+    of: 2
+    monitor: quality_prod
+    start: 72
+  - instant: 96
+    fact: episode_resolved
+    monitor: quality_prod
+    episode: EP1
+  head_generations:
+  - instant: 10
+    generation: 0
+  - instant: 11
+    generation: 0
+  - instant: 12
+    generation: 0
+  - instant: 13
+    generation: 0
+  - instant: 14
+    generation: 0
+  - instant: 15
+    generation: 0
+  - instant: 24
+    generation: 0
+  - instant: 30
+    generation: 0
+  - instant: 31
+    generation: 1
+  - instant: 32
+    generation: 1
+  - instant: 40
+    generation: 1
+  - instant: 41
+    generation: 1
+  - instant: 48
+    generation: 1
+  - instant: 72
+    generation: 1
+  - instant: 96
+    generation: 1
+  max_open_attempts: 1

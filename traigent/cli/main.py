@@ -3226,6 +3226,10 @@ from traigent.cli.requirements_commands import requirements  # noqa: E402
 
 cli.add_command(requirements)
 
+from traigent.cli.tuning_commands import tune  # noqa: E402
+
+cli.add_command(tune)
+
 from traigent.cli.doctor_command import doctor  # noqa: E402
 
 cli.add_command(doctor)

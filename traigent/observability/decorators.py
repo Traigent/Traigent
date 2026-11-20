@@ -53,6 +53,9 @@ _current_observation_stack: contextvars.ContextVar[tuple[str, ...]] = (
         default=(),
     )
 )
+_followed_head: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "traigent_followed_head", default=None
+)
 _default_client: ObservabilityClient | None = None
 _default_client_lock = threading.Lock()
 
@@ -480,8 +483,20 @@ class _ObserveFactory:
         redact_input: bool = False,
         redact_output: bool = False,
         content_mode: str | None = None,
+        agent: str | None = None,
+        tune: Any = None,
+        follow: str | None = None,
+        tuning_store: Any = None,
     ) -> None:
+        if follow not in (None, "head"):
+            raise ValueError("follow must be None or 'head'")
+        if follow == "head" and agent is None and tuning_store is None:
+            raise ValueError("follow='head' needs an agent (or a tuning_store)")
         self.name = name
+        self.agent = agent
+        self.tune = tune
+        self.follow = follow
+        self.tuning_store = tuning_store
         self.client = client
         self.observation_type = observation_type
         self.tool_name = tool_name
@@ -526,6 +541,82 @@ class _ObserveFactory:
         return popped
 
     def __call__(self, func: Callable[..., Any]):
+        wrapped = self._wrap(func)
+        if self.follow == "head":
+            wrapped = self._follow_head(wrapped)
+        if self.tune is not None:
+            # Continuous Tuning: compile + validate locally (no network) and
+            # expose the result as ``fn.tuning``; calls themselves are unchanged.
+            from traigent.tuning.state import attach_tuning
+
+            wrapped.tuning = attach_tuning(  # type: ignore[attr-defined]
+                wrapped, self.agent, self.tune, source=func
+            )
+        return wrapped
+
+    def _follow_head(self, inner: Callable[..., Any]):
+        """Run ``inner`` with the store's head config active (loaded per call)."""
+        from pathlib import Path
+
+        from traigent.tuning.controller import HeadLoader, default_store_dir
+
+        store = (
+            Path(self.tuning_store)
+            if self.tuning_store is not None
+            else default_store_dir(str(self.agent))
+        )
+        loader = HeadLoader(store)
+
+        def _enter() -> tuple[Any, Any]:
+            head = loader.head()
+            if head is None:
+                return None, None
+            return (
+                _followed_head.set(
+                    {"agent": self.agent, "generation": int(head["generation"])}
+                ),
+                config_context.set(dict(head["config"])),
+            )
+
+        def _exit(tokens: tuple[Any, Any]) -> None:
+            if tokens[0] is not None:
+                config_context.reset(tokens[1])
+                _followed_head.reset(tokens[0])
+
+        if _is_async_callable(inner):
+
+            @functools.wraps(inner)
+            async def async_follow(*args, **kwargs):
+                tokens = _enter()
+                try:
+                    return await inner(*args, **kwargs)
+                finally:
+                    _exit(tokens)
+
+            return async_follow
+
+        @functools.wraps(inner)
+        def sync_follow(*args, **kwargs):
+            tokens = _enter()
+            try:
+                return inner(*args, **kwargs)
+            finally:
+                _exit(tokens)
+
+        return sync_follow
+
+    def _call_metadata(self) -> dict[str, Any] | None:
+        """Per-call trace metadata: the factory's, plus closed head stamps."""
+        stamp = _followed_head.get() if self.follow == "head" else None
+        if stamp is None:
+            return self.metadata
+        merged = dict(self.metadata or {})
+        if stamp["agent"] is not None:
+            merged["agent"] = str(stamp["agent"])
+        merged["head_generation"] = int(stamp["generation"])
+        return merged
+
+    def _wrap(self, func: Callable[..., Any]):
         observation_name = self.name or func.__name__
 
         if _is_async_callable(func):
@@ -543,7 +634,7 @@ class _ObserveFactory:
                     observation_type=self.observation_type,
                     tool_name=self.tool_name,
                     input_data=input_data,
-                    metadata=self.metadata,
+                    metadata=self._call_metadata(),
                     session_id=self.session_id,
                     user_id=self.user_id,
                     custom_trace_id=self.custom_trace_id,
@@ -574,7 +665,7 @@ class _ObserveFactory:
                 observation_type=self.observation_type,
                 tool_name=self.tool_name,
                 input_data=input_data,
-                metadata=self.metadata,
+                metadata=self._call_metadata(),
                 session_id=self.session_id,
                 user_id=self.user_id,
                 custom_trace_id=self.custom_trace_id,
@@ -660,6 +751,10 @@ def observe(
     redact_input: bool = False,
     redact_output: bool = False,
     content_mode: str | None = None,
+    agent: str | None = None,
+    tune: Any = None,
+    follow: str | None = None,
+    tuning_store: Any = None,
 ):
     """Create a decorator or context manager for observability instrumentation.
 
@@ -669,6 +764,16 @@ def observe(
     placeholders. `redact_input=True` and `redact_output=True` force placeholders
     for the corresponding side. The transport still applies pattern-based
     secret scrubbing before send.
+
+    ``agent`` and ``tune`` (a ``traigent.tuning.Tuning``) declare a Continuous
+    Tuning policy: decoration compiles it to a TVL 1.7 module, validates it with
+    the TVL toolchain when available, and attaches the result as ``fn.tuning``.
+    Calls are unaffected and nothing is sent anywhere.
+
+    ``follow="head"`` makes each call load the head configuration from the local
+    tuning store (``tuning_store`` or ``.traigent/tuning/<agent>/``), expose it
+    through ``traigent.get_config()``, and stamp the call's trace with ``agent`` and
+    ``head_generation`` (a reference and an integer, nothing else).
     """
 
     if callable(name):
@@ -691,4 +796,8 @@ def observe(
         redact_input=redact_input,
         redact_output=redact_output,
         content_mode=content_mode,
+        agent=agent,
+        tune=tune,
+        follow=follow,
+        tuning_store=tuning_store,
     )
