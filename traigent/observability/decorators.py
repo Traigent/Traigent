@@ -582,6 +582,7 @@ class _ObserveFactory:
                         "agent": self.agent,
                         "generation": int(head["generation"]),
                         "fingerprint": str(head.get("fingerprint", "")),
+                        "code_version": str(head.get("code_version") or ""),
                     }
                 ),
                 config_context.set(dict(head["config"])),
@@ -625,6 +626,10 @@ class _ObserveFactory:
         merged["head_generation"] = int(stamp["generation"])
         if stamp.get("fingerprint"):
             merged["head_fingerprint"] = str(stamp["fingerprint"])
+        if stamp.get(
+            "code_version"
+        ):  # the code this head was accepted for; never blocks serving
+            merged["head_code_version"] = str(stamp["code_version"])
         return merged
 
     def _wrap(self, func: Callable[..., Any]):

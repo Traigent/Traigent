@@ -32,3 +32,13 @@ def check_toolchain() -> None:
 @pytest.fixture(autouse=True)
 def _tvl_toolchain() -> None:
     check_toolchain()
+
+
+@pytest.fixture(autouse=True)
+def _agent_code_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Promotion evidence needs an agent code version (no default exists).
+
+    Most tests are not about the code version, so they pin one; the tests that
+    are delete or change this variable themselves.
+    """
+    monkeypatch.setenv("TRAIGENT_AGENT_CODE_VERSION", "test-code-v1")

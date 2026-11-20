@@ -97,6 +97,15 @@ monitor verdict, the joined decision, and any closed warning such as an unknown 
 **observed generation** of the serving head. You accept at that generation; if the head moved
 since, the acceptance is refused as stale.
 
+An acceptance also binds the **agent code version** (RFC 0012): the code the candidate and the
+incumbent were measured on, shown by `status` under Accept release as `code version`. It is the
+`TRAIGENT_AGENT_CODE_VERSION` environment variable if set, else `Tuning(code_version=...)`, else
+`src:` plus a sha256 of the decorated function's module source; if none can be determined, no
+candidate gets promotion evidence (`E_NO_CODE_VERSION`), there is no default. If the code serving
+at the moment of the write differs from the accepted one, nothing is written and the occurrence
+finishes `deploy_refused` with reason `code_version_mismatch`. `head.json` records the code
+version the head was accepted for, and followed-head traces carry it as `head_code_version`.
+
 ```bash
 traigent tune status --text   --store .traigent/tuning/ticket-router --target agent.py:classify
 traigent tune approve <occurrence>  --approver alice --authority authority.yml ...
@@ -298,8 +307,8 @@ TRAIGENT_TVL_REQUIRED=1 python -m pytest -q tests/unit/tuning
   from `--target`, head generation 0 holds the optimized function's `default_config` (else the first
   value of each configuration-space dimension); if none can be determined the head starts `{}` and the
   CLI prints a warning.
-* **Followed-head traces** (`observe(follow="head")`) carry only `agent`, `head_generation` and
-  `head_fingerprint`; the head configuration is never copied into trace metadata.
+* **Followed-head traces** (`observe(follow="head")`) carry only `agent`, `head_generation`,
+  `head_fingerprint` and `head_code_version`; the head configuration is never copied into trace metadata.
 
 ## Known limits
 

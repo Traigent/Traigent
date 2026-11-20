@@ -42,6 +42,8 @@ class TuningState:
     # decorated callable wraps one; observe() returns a plain function, so this is
     # how the CLI and callers reach ``.optimize()`` through the documented order.
     optimized: Any = None
+    # The function under decoration; its module source gives the default code version.
+    source: Any = None
 
     @property
     def errors(self) -> list[Diagnostic]:
@@ -144,6 +146,7 @@ def attach_tuning(
         validated=validated,
         diagnostics=diagnostics,
         optimized=find_optimized(source if source is not None else target),
+        source=source if source is not None else target,
     )
     return state
 

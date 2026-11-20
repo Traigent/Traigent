@@ -264,12 +264,20 @@ class Tuning:
         checkers: Mapping[str, Callable[[Any, Any], str]] | None = None,
         holdout: str | Path | None = None,
         checker_labels: Mapping[str, Sequence[str]] | None = None,
+        code_version: str | None = None,
     ) -> None:
         caller_file = None
         frame = inspect.currentframe()
         if frame is not None and frame.f_back is not None:
             caller_file = frame.f_back.f_code.co_filename
         del frame
+        # The agent code version an acceptance binds (RFC 0012); a code identifier,
+        # never compiled into TVL.  See traigent.tuning.code_version.
+        if code_version is not None:
+            from traigent.tuning.code_version import check_code_version
+
+            check_code_version(code_version, "code_version")
+        self.code_version: str | None = code_version
         self.keep = tuple(keep)
         self.audit = audit
         self.on = tuple(on)

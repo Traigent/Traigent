@@ -1148,6 +1148,15 @@ class Controller:
             )
             return None
 
+    def code_version(self) -> str:
+        """The agent code version in effect now (``TuningError`` if undeterminable)."""
+        from traigent.tuning.code_version import resolve_code_version
+
+        return resolve_code_version(
+            getattr(self.state.policy, "code_version", None),
+            getattr(self.state, "source", None),
+        )
+
     def _holdout_prior_uses(self, digest: str) -> int:
         """How many earlier gate results were measured on this very holdout."""
         return sum(
@@ -1195,6 +1204,14 @@ class Controller:
             )
         monitors = self._promotion_monitors()
         incumbent = read_head(self.dir) or {}
+        try:
+            code_version: str | None = self.code_version()
+        except TuningError as exc:
+            # No default: without a code version no candidate has promotion evidence.
+            code_version = None
+            self._record_controller_fact(
+                {"fact": "no_code_version", "code": exc.code, "attempt": attempt}
+            )
         candidates: list[dict[str, Any]] = []
         configs: dict[str, Any] = {}
         gates: dict[str, Any] = {}
@@ -1202,6 +1219,8 @@ class Controller:
             item = item if isinstance(item, Mapping) else {"config": item}
             config = item.get("config")
             try:
+                if code_version is None:
+                    raise ValueError("no code version")
                 if not isinstance(config, Mapping) or not config:
                     raise ValueError("no config")
                 config = copy.deepcopy(dict(config))  # frozen snapshot at selection
@@ -1237,6 +1256,7 @@ class Controller:
             gate_input: dict[str, Any] = {
                 "format": GATE_FORMAT,
                 "contract_digest": self.meta["contract_digest"],
+                "code_version": code_version,
                 "fingerprint": fingerprint,
                 "incumbent_fingerprint": incumbent.get("fingerprint"),
                 "incumbent_generation": incumbent.get("generation"),
@@ -1267,6 +1287,7 @@ class Controller:
                 "evidence_valid": True,
                 "fingerprint": fingerprint,
                 "gate_digest": gate_digest,
+                "code_version": code_version,
                 "legacy_decision": legacy,
                 "monitor_verdicts": verdicts,
             }
@@ -1340,6 +1361,7 @@ class Controller:
             "candidate_fingerprint": fingerprint,
             "gate_result_digest": str(candidate["gate_digest"]),
             "contract_digest": self.meta["contract_digest"],
+            "agent_code_version": str(candidate["code_version"]),
             "expected_head_generation": int(expected_head_generation),
             "rollback_target": self._generation_fingerprint(expected_head_generation),
             "approver_ref": approver,
@@ -1426,6 +1448,9 @@ class Controller:
             # (an optimization holds the lock) is judged at its real effect time.
             moment = _utc(now)
             self._recover_commits()
+            # The code version serving NOW, read under the lock: part of the atomic
+            # compare (RFC 0012 section 2.3).  Undeterminable -> refuse, no default.
+            serving = self.code_version()
             prior = self._acceptance_lines()
             recorded = [ln["record"]["record"] for ln in prior]
             if isinstance(ident, str):
@@ -1457,6 +1482,7 @@ class Controller:
                 "record": doc,
                 "authenticated": bool(authority.authenticated(approver, doc)),
                 "approver_authorized": bool(authority.authorized(approver)),
+                "serving_code_version": serving,
             }
             meta = {"authentication": authority.mode}
             line = {
@@ -1510,7 +1536,11 @@ class Controller:
 
     # -- head -----------------------------------------------------------------------
     def _physical_refusal(
-        self, doc: Mapping[str, Any], instant: int, current: Mapping[str, Any]
+        self,
+        doc: Mapping[str, Any],
+        instant: int,
+        current: Mapping[str, Any],
+        serving: str | None = None,
     ) -> str | None:
         """Why the physical head must not take this write at ``instant``; None if it may.
 
@@ -1533,6 +1563,13 @@ class Controller:
             return "stale_generation"
         if current["fingerprint"] != doc["rollback_target"]:
             return "rollback_target_mismatch"
+        if serving is None:
+            try:
+                serving = self.code_version()
+            except TuningError:
+                return "code_version_mismatch"
+        if doc.get("agent_code_version") != serving:
+            return "code_version_mismatch"
         try:
             deploy = self._deploy_fact(
                 {
@@ -1578,7 +1615,9 @@ class Controller:
         if current is None:
             raise TuningError(E_STORE_CORRUPT, "head.json is missing")
         generation = int(current["generation"]) + 1
-        refusal = self._physical_refusal(doc, instant, current)
+        refusal = self._physical_refusal(
+            doc, instant, current, str(line_record["serving_code_version"])
+        )
         if refusal is not None:
             self._record_controller_fact(
                 {
@@ -1594,6 +1633,8 @@ class Controller:
             "fingerprint": fingerprint,
             "config": self._config_for(fingerprint),
             "generation": generation,
+            # the agent code this head was accepted for (RFC 0012 section 2.2)
+            "code_version": str(doc["agent_code_version"]),
         }
         commit = secrets.token_hex(8)  # one id per attempt, never the acceptance id
         _append_line(
@@ -1865,6 +1906,7 @@ class Controller:
                             "generation": gate.get("incumbent_generation"),
                         },
                         "candidate": {"fingerprint": f["candidate"]},
+                        "code_version": gate.get("code_version"),
                         "holdout": {
                             "digest": gate.get("holdout_digest"),
                             "rows": gate.get("holdout_rows"),

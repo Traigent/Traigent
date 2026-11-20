@@ -1472,6 +1472,7 @@ def test_the_gate_names_the_incumbent_it_measured(tmp_path: Path) -> None:
 _GATE_KEYS = {
     "format",
     "contract_digest",
+    "code_version",
     "fingerprint",
     "incumbent_fingerprint",
     "incumbent_generation",
