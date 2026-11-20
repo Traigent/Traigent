@@ -138,12 +138,12 @@ def _by_id(ws: Path) -> dict[str, dict[str, Any]]:
     return {r["metadata"]["example_id"]: r for r in _rows(ws)}
 
 
-def test_group_lists_only_add() -> None:
+def test_group_lists_the_regression_commands() -> None:
     result = CliRunner().invoke(cli, ["regression", "--help"])
     assert result.exit_code == 0
     section = result.output.split("Commands:")[1]
     names = [line.split()[0] for line in section.splitlines() if line.strip()]
-    assert names == ["add"]
+    assert names == ["add", "check", "confirm"]
     assert "Review the file before you commit" in " ".join(result.output.split())
 
 

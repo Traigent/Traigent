@@ -19,6 +19,11 @@ one JSON object per line::
                                      "failed_by": "score",
                                      "metric_field": "accuracy"}]}}}
 
+Version 2 rows (written by ``traigent regression confirm``) add ``status``,
+``observations``, ``armed_at`` and ``armed_config_digest`` to that block and keep
+``label`` as the version 1 name of the status; ``add`` still writes version 1 and
+both versions read. See ``traigent.utils.regression_status``.
+
 ``schema_version`` is per row (a JSONL file has no header, and a row stays
 self-describing when rows are copied or merged). A reader refuses a row whose
 major version is newer than it understands, and refuses a row without the field
@@ -55,7 +60,7 @@ import json
 import os
 import secrets
 import stat
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -73,12 +78,23 @@ from traigent.utils.file_lock import (
     lock_path_for,
 )
 from traigent.utils.hashing import generate_config_hash
+from traigent.utils.regression_status import (
+    LABEL_FOR_STATUS,
+    confirmed_fields_problem,
+    effective_status,
+    status_when_last_measured,
+)
 
 REGRESSION_FILENAME = "regression.jsonl"
 DEFAULT_REGRESSION_DIR = "tests/regression"
 LABEL_SEEN_ONCE = "seen_once"
-#: Major version of the row format this module reads and writes.
+#: Version of the row format ``add`` writes.
 SCHEMA_VERSION = 1
+#: Version ``confirm`` writes: rows gain ``status``, ``observations`` and the
+#: arming fields. ``label`` stays, mirroring the status in the old vocabulary.
+CONFIRMED_SCHEMA_VERSION = 2
+#: Newest row format this reader understands (versions 1 and 2).
+MAX_READ_SCHEMA_VERSION = CONFIRMED_SCHEMA_VERSION
 DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
 
 OnIdConflict = Literal["refuse", "replace", "keep-both"]
@@ -265,17 +281,21 @@ def _validate_row(path: Path, line_no: int, row: Any) -> dict[str, Any]:
         raise _bad(
             path, line_no, "'metadata.regression.schema_version' is not a version"
         )
-    if version > SCHEMA_VERSION:
+    if version > MAX_READ_SCHEMA_VERSION:
         raise _bad(
             path,
             line_no,
             f"schema_version {version} is newer than this SDK reads "
-            f"({SCHEMA_VERSION}); upgrade traigent",
+            f"({MAX_READ_SCHEMA_VERSION}); upgrade traigent",
         )
     if not isinstance(regression.get("label"), str):
         raise _bad(path, line_no, "'metadata.regression.label' is not a string")
     if not isinstance(regression.get("provenance"), list):
         raise _bad(path, line_no, "'metadata.regression.provenance' is not a list")
+    if version >= CONFIRMED_SCHEMA_VERSION:
+        problem = confirmed_fields_problem(regression)
+        if problem is not None:
+            raise _bad(path, line_no, problem)
     return row
 
 
@@ -708,6 +728,49 @@ def _merge_locked(
     return report
 
 
+def update_rows_locked[T](
+    directory: str | os.PathLike[str],
+    update: Callable[[list[dict[str, Any]]], T],
+    *,
+    lock_timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
+) -> T:
+    """Read, change and atomically rewrite the file, all under the file lock.
+
+    The file is read only after the lock is held, so rows another process added
+    or changed since the caller last looked are never discarded. ``update``
+    mutates the rows in place and returns a value for the caller; the file is
+    rewritten only when the rows changed. The file must exist, be well formed
+    and pass its digest checks, otherwise nothing is written.
+
+    Raises:
+        RegressionSetError: Missing, malformed or symbolic-link file, or the
+            lock could not be taken in time.
+        StaleDigestError: A stored row was edited by hand.
+    """
+    path = regression_file(directory)
+    try:
+        with exclusive_lock(path, timeout=lock_timeout):
+            if path.is_symlink():
+                raise RegressionSetError(
+                    f"{path} is a symbolic link; refusing to write it. Nothing "
+                    "was written. Point --dir at the directory that holds the "
+                    "real file."
+                )
+            _ensure_lock_ignored(path)
+            numbered = _read_numbered_rows(path)
+            stale = _stale_rows(numbered)
+            if stale:
+                raise StaleDigestError(path, stale)
+            rows = [row for _, row in numbered]
+            before = json.dumps(rows, sort_keys=True)
+            result = update(rows)
+            if json.dumps(rows, sort_keys=True) != before:
+                _atomic_write(path, rows)
+            return result
+    except (FileLockTimeoutError, FileLockUnsupportedError) as exc:
+        raise RegressionSetError(str(exc)) from exc
+
+
 # --------------------------------------------------------------------- loading
 
 
@@ -716,6 +779,13 @@ def load_regression_dataset(
     labels: Sequence[str] = (LABEL_SEEN_ONCE, "reliable", "intermittent"),
 ) -> Dataset:
     """Load the regression set as a :class:`Dataset`, keeping only ``labels``.
+
+    A row is kept when its ``label`` or its confirmation ``status`` (see
+    ``traigent.utils.regression_status``) is in ``labels``. ``traigent regression
+    confirm`` keeps ``label`` in step with the status (``seen_once`` for
+    unconfirmed and known_failure rows, ``intermittent``, ``reliable`` for armed
+    rows), so ``labels=("reliable",)`` and ``labels=("armed",)`` both select the
+    armed rows; a version 1 row reads as ``unconfirmed``.
 
     The file is read, validated and digest-checked exactly once, and the
     dataset is built from those validated rows in memory, so a concurrent
@@ -751,7 +821,7 @@ def load_regression_dataset(
     # loader rejects is rejected here even when one of the clashing rows would
     # have been filtered out.
     source = str(path)
-    candidates: list[tuple[int, str, EvaluationExample]] = []
+    candidates: list[tuple[int, tuple[str, str], EvaluationExample]] = []
     for position, (line_no, row) in enumerate(numbered):
         input_data, expected_output, metadata = _coerce_dataset_example_mapping(
             row, source=source, location=f"line {line_no}"
@@ -759,11 +829,18 @@ def load_regression_dataset(
         example = EvaluationExample(
             input_data=input_data, expected_output=expected_output, metadata=metadata
         )
-        candidates.append((position, row["metadata"]["regression"]["label"], example))
+        regression = row["metadata"]["regression"]
+        status = effective_status(regression, row["metadata"]["content_digest"])
+        label = regression["label"]
+        if status != status_when_last_measured(regression):
+            # Content changed since the last confirm: the stored label belongs
+            # to the earlier content.
+            label = LABEL_FOR_STATUS[status]
+        candidates.append((position, (label, status), example))
     wanted = set(labels)
     examples: list[EvaluationExample] = []
-    for position, label, example in candidates:
-        if label not in wanted:
+    for position, names, example in candidates:
+        if wanted.isdisjoint(names):
             continue
         if position != len(examples):
             # Filtering moves the example, so a positional fallback id would
