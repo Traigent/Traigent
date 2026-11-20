@@ -128,3 +128,116 @@ def test_missing_inputs_raise_a_closed_reason(
 def test_the_same_config_is_not_a_promotion(tmp_path: Path) -> None:
     evidence = _build(tmp_path, incumbent_config={"good": True})
     assert evidence.legacy_decision == "NoDecision"
+
+
+# -- review blockers -------------------------------------------------------------
+
+
+def test_parameter_injection_sees_the_candidate_config(tmp_path: Path) -> None:
+    from traigent.config.providers import ParameterBasedProvider
+
+    seen: list[str] = []
+
+    def agent(x: int, config: Any = None) -> int:
+        seen.append(config.model)
+        return x % 2 if config.model == "B" or x % 4 < 2 else 1 - x % 2
+
+    wrapped = ParameterBasedProvider().inject_config(agent, {"model": "A"}, "config")
+    evidence = _build(
+        tmp_path,
+        fn=wrapped,
+        candidate_config={"model": "B"},
+        incumbent_config={"model": "A"},
+    )
+    assert evidence.legacy_decision == "Promote"
+    assert seen.count("B") == 60 and seen.count("A") == 60
+
+
+def test_among_requirements_are_refused_not_counted(tmp_path: Path) -> None:
+    module = json.loads(json.dumps(MODULE))
+    module["requirements"][0]["among"] = {"checker": "customer:pop", "label_in": ["in"]}
+    path = tmp_path / "h.jsonl"
+    rows = [{"input": {"x": i}, "output": i % 2} for i in range(1000)]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    with pytest.raises(EvidenceUnavailable) as err:
+        build_promotion_evidence(
+            module,
+            fn=_agent,
+            checkers={
+                "customer:c": lambda ex, out: (
+                    "fail" if ex["input"]["x"] < 10 else "pass"
+                )
+            },
+            holdout=path,
+            candidate_config={"good": True},
+            incumbent_config={"good": False},
+        )
+    assert err.value.reason == "requirement_among_unsupported"
+
+
+def test_each_invocation_and_checker_call_gets_independent_copies(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "h.jsonl"
+    rows = [{"input": {"items": [1, 2, 3]}, "output": 3} for _ in range(40)]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    seen: list[int] = []
+
+    def agent(items: list[int]) -> int:
+        seen.append(len(items))
+        return items.pop()
+
+    def checker(ex: Any, out: Any) -> str:
+        ex["input"]["items"].clear()
+        return "pass"
+
+    build_promotion_evidence(
+        MODULE,
+        fn=agent,
+        checkers={"customer:c": checker},
+        holdout=path,
+        candidate_config={"good": True},
+        incumbent_config={"good": False},
+    )
+    assert set(seen) == {3}
+
+
+def test_digest_and_examples_come_from_one_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.tuning import evidence as ev
+
+    path = _holdout(tmp_path)
+    original = path.read_bytes()
+    swapped = b'{"input": {"x": 1}, "output": 0}\n' * 60
+    reads = iter([original, swapped, swapped])
+    monkeypatch.setattr(Path, "read_bytes", lambda self: next(reads))
+    monkeypatch.setattr(
+        Path, "read_text", lambda self, *a, **k: next(reads).decode("utf-8")
+    )
+    digest, examples = ev.read_holdout(path)
+    import hashlib
+
+    assert digest == "sha256:" + hashlib.sha256(original).hexdigest()
+    assert [e["input"]["x"] for e in examples] == list(range(60))
+
+
+def test_function_mutating_nested_config_cannot_change_the_candidate(
+    tmp_path: Path,
+) -> None:
+    config = {"opts": {"threshold": 1}}
+
+    def agent(x: int) -> int:
+        from traigent.config.context import config_context
+
+        cfg = config_context.get() or {}
+        cfg["opts"]["threshold"] += 1
+        return x % 2
+
+    _build(
+        tmp_path,
+        fn=agent,
+        candidate_config=config,
+        incumbent_config={"opts": {"threshold": 1}},
+    )
+    assert config == {"opts": {"threshold": 1}}

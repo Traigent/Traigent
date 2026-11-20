@@ -918,6 +918,7 @@ class Controller:
             try:
                 if not isinstance(config, Mapping) or not config:
                     raise ValueError("no config")
+                config = copy.deepcopy(dict(config))  # frozen snapshot at selection
                 fingerprint = config_fingerprint(config)
                 legacy = item.get("legacy_decision", "NoDecision")
                 given = item.get("monitor_verdicts") or {}
@@ -928,6 +929,15 @@ class Controller:
                         legacy = evidence.legacy_decision
                         given = evidence.monitor_verdicts
                         holdout_digest = evidence.holdout_digest
+                if config_fingerprint(config) != fingerprint:
+                    self._record_controller_fact(
+                        {
+                            "fact": "candidate_config_changed",
+                            "attempt": attempt,
+                            "fingerprint": fingerprint,
+                        }
+                    )
+                    raise ValueError("config changed during evaluation")
                 if legacy not in _LEGACY:
                     legacy = "NoDecision"
                 verdicts = {
@@ -950,7 +960,7 @@ class Controller:
             if holdout_digest is not None:
                 gate_input["holdout_digest"] = holdout_digest
             gate_digest = "sha256:" + _digest(gate_input)
-            configs[fingerprint] = dict(config)
+            configs[fingerprint] = copy.deepcopy(config)
             record: dict[str, Any] = {
                 "evidence_valid": True,
                 "fingerprint": fingerprint,
@@ -1193,6 +1203,15 @@ class Controller:
                 )
                 break  # a later generation never skips an unwritten one
             config = self._config_for(fingerprint)
+            if config_fingerprint(config) != fingerprint:
+                self._record_controller_fact(
+                    {
+                        "fact": "head_write_refused",
+                        "generation": generation,
+                        "reason": "config_fingerprint_mismatch",
+                    }
+                )
+                break
             head = {
                 "fingerprint": fingerprint,
                 "config": config,

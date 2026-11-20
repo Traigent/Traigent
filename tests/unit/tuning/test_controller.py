@@ -784,3 +784,20 @@ def test_candidate_run_never_leaks_into_the_live_best_config_loaders(
     # a fresh live wrapper does not pick the candidate up
     fresh = _Live.build(auto_load_best=True)
     assert dict(fresh.current_config) == OLD
+
+
+def test_candidate_config_mutated_during_evaluation_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+
+    def mutating(_attempt: str, config: Any) -> None:
+        config["opts"]["threshold"] = 2  # the fingerprint was taken at threshold 1
+        return None
+
+    monkeypatch.setattr(c, "_measure_candidate", mutating)
+    original = {"model": NEW["model"], "opts": {"threshold": 1}}
+    completion, candidates, configs = c._map_result("a1", {"best_config": original})
+    assert candidates == [{"evidence_valid": False}]
+    assert configs == {}
+    assert original["opts"]["threshold"] == 1  # the caller's object is untouched

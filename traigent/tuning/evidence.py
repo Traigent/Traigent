@@ -15,6 +15,7 @@ are returned.  Anything that cannot be computed honestly raises
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import inspect
 import json
@@ -45,21 +46,22 @@ class PromotionEvidence:
     counts: dict[str, dict[str, Any]]
 
 
-def holdout_digest(path: Path | str) -> str:
-    """``sha256:`` of the holdout file's bytes."""
+def _read_bytes(path: Path | str) -> bytes:
     try:
-        data = Path(path).read_bytes()
+        return Path(path).read_bytes()
     except OSError:
         raise EvidenceUnavailable("holdout_unreadable") from None
+
+
+def _digest_of(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def load_holdout(path: Path | str) -> list[dict[str, Any]]:
-    """The holdout examples; each is a mapping with an ``input`` mapping."""
+def _parse_holdout(data: bytes) -> list[dict[str, Any]]:
     try:
-        text = Path(path).read_text(encoding="utf-8")
-    except OSError:
-        raise EvidenceUnavailable("holdout_unreadable") from None
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise EvidenceUnavailable("holdout_invalid") from None
     examples: list[dict[str, Any]] = []
     for line in text.splitlines():
         if not line.strip():
@@ -74,6 +76,22 @@ def load_holdout(path: Path | str) -> list[dict[str, Any]]:
     if not examples:
         raise EvidenceUnavailable("holdout_empty")
     return examples
+
+
+def read_holdout(path: Path | str) -> tuple[str, list[dict[str, Any]]]:
+    """``(digest, examples)`` from ONE read: the digest covers the parsed bytes."""
+    data = _read_bytes(path)
+    return _digest_of(data), _parse_holdout(data)
+
+
+def holdout_digest(path: Path | str) -> str:
+    """``sha256:`` of the holdout file's bytes."""
+    return _digest_of(_read_bytes(path))
+
+
+def load_holdout(path: Path | str) -> list[dict[str, Any]]:
+    """The holdout examples; each is a mapping with an ``input`` mapping."""
+    return _parse_holdout(_read_bytes(path))
 
 
 def _call(fn: Callable[..., Any], arguments: Mapping[str, Any]) -> Any:
@@ -98,17 +116,16 @@ def run_holdout(
     the live function's own state is never changed.  An example whose call raises is
     ``(False, None)`` (unresolved), never dropped.
     """
-    from traigent.config.context import config_context
+    from traigent.config.context import ConfigurationContext
 
     out: list[tuple[bool, Any]] = []
     for example in examples:
-        token = config_context.set(dict(config))
+        # every invocation gets its own deep copies; the originals stay immutable
         try:
-            out.append((True, _call(fn, example["input"])))
+            with ConfigurationContext(copy.deepcopy(dict(config))):
+                out.append((True, _call(fn, copy.deepcopy(example["input"]))))
         except Exception:  # noqa: BLE001 - a failed call is unresolved, content never echoed
             out.append((False, None))
-        finally:
-            config_context.reset(token)
     return out
 
 
@@ -126,7 +143,7 @@ def monitor_counts(
             u += 1
             continue
         try:
-            label = checker(example, output)
+            label = checker(copy.deepcopy(example), copy.deepcopy(output))
         except Exception:  # noqa: BLE001 - a checker error is unresolved
             u += 1
             continue
@@ -174,11 +191,14 @@ def build_promotion_evidence(
         requirement = requirements.get(str(monitor.get("requirement")))
         if requirement is None:
             raise EvidenceUnavailable("requirement_missing")
+        if "among" in requirement:
+            # RFC 0003 s11.4.2 population: not evaluated locally; refuse, never count
+            # out-of-population examples in the denominator.
+            raise EvidenceUnavailable("requirement_among_unsupported")
         checker_name = str((requirement.get("violation") or {}).get("checker"))
         if not callable((checkers or {}).get(checker_name)):
             raise EvidenceUnavailable("checker_missing")
-    digest = holdout_digest(holdout)
-    examples = load_holdout(holdout)
+    digest, examples = read_holdout(holdout)
     candidate_runs = run_holdout(fn, candidate_config, examples)
     incumbent_runs = run_holdout(fn, incumbent_config, examples)
 
@@ -240,6 +260,7 @@ __all__ = [
     "build_promotion_evidence",
     "holdout_digest",
     "load_holdout",
+    "read_holdout",
     "monitor_counts",
     "run_holdout",
 ]
