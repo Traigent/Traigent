@@ -27,12 +27,12 @@ E_NO_CODE_VERSION = "E_NO_CODE_VERSION"
 E_INVALID_CODE_VERSION = "E_INVALID_CODE_VERSION"
 CODE_VERSION_ENV = "TRAIGENT_AGENT_CODE_VERSION"
 # Same shape as the CodeVersion definition of tvl-release-acceptance.schema.json.
-_CODE_VERSION = re.compile(r"^[A-Za-z0-9_.:+-]{1,128}$")
+_CODE_VERSION = re.compile(r"[A-Za-z0-9_.:+-]{1,128}")
 
 
 def check_code_version(value: Any, origin: str) -> str:
     """``value`` if it is a legal code identifier, else a closed error (never echoed)."""
-    if not isinstance(value, str) or not _CODE_VERSION.match(value):
+    if not isinstance(value, str) or not _CODE_VERSION.fullmatch(value):
         raise TuningError(
             E_INVALID_CODE_VERSION,
             f"{origin} must be 1-128 characters of [A-Za-z0-9_.:+-]",

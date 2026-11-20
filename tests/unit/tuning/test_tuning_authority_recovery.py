@@ -121,3 +121,22 @@ def test_every_with_a_modern_anchor_validates_without_a_module_context() -> None
     codes = [d.code for d in st.diagnostics]
     assert "schedule_anchor_out_of_range" not in codes
     assert st.validated is True
+
+
+# -- opaque references are matched whole: a trailing newline is not accepted ---------
+def test_an_approver_with_a_trailing_newline_is_refused(tmp_path: Path) -> None:
+    from traigent.tuning.controller import E_INVALID_RECORD
+
+    c = make(state(), tmp_path / "a", FakeOptimizer(), authority=_platform([True]))
+    with pytest.raises(TuningError) as err:
+        c.approve_optimization(e_ref("E1"), "approver-1\n", at(10))
+    assert err.value.code == E_INVALID_RECORD
+
+
+def test_an_agent_or_environment_with_a_trailing_newline_is_refused() -> None:
+    from traigent.tuning.controller import E_INVALID_RECORD, default_store_dir
+
+    for args in (("agent\n", None), ("agent", "production\n")):
+        with pytest.raises(TuningError) as err:
+            default_store_dir(*args)
+        assert err.value.code == E_INVALID_RECORD
