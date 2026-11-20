@@ -606,3 +606,43 @@ def test_config_digest_is_the_sdk_config_hash_and_null_for_all_configs() -> None
     cfg = {"model": "m", "t": 0.2}
     assert config_digest_for("best_config", cfg) == generate_config_hash(cfg)
     assert config_digest_for("all_configs", cfg) is None
+
+
+# ------------------------------------------------------------------ keep-both
+
+
+def test_later_add_after_keep_both_attaches_to_the_stored_variant(
+    tmp_path: Path,
+) -> None:
+    _merge(tmp_path, _ds(("q0", "a0")), "r1")
+    drifted = _ds(("q0", "DRIFTED"))
+    first = _merge(tmp_path, drifted, "r2", on_id_conflict="keep-both")
+    (alias,) = first.added_ids
+    assert alias.startswith("0~")
+    # the same drifted example comes up again in a later run, with the default
+    # policy: it matches the stored variant instead of conflicting again
+    again = _merge(tmp_path, drifted, "r3")
+    assert (again.rows_added, again.provenance_added) == (0, 1)
+    rows = {
+        r["metadata"]["example_id"]: r
+        for r in map(
+            json.loads, (tmp_path / "regression.jsonl").read_text().splitlines()
+        )
+    }
+    assert sorted(rows) == sorted(["0", alias])
+    assert [e["run"] for e in rows[alias]["metadata"]["regression"]["provenance"]] == [
+        "r2",
+        "r3",
+    ]
+    assert [e["run"] for e in rows["0"]["metadata"]["regression"]["provenance"]] == [
+        "r1"
+    ]
+    # and the same run again is the same evidence
+    assert _merge(tmp_path, drifted, "r3").provenance_added == 0
+
+
+def test_a_third_content_still_conflicts_after_keep_both(tmp_path: Path) -> None:
+    _merge(tmp_path, _ds(("q0", "a0")), "r1")
+    _merge(tmp_path, _ds(("q0", "B")), "r2", on_id_conflict="keep-both")
+    with pytest.raises(IdConflictError):
+        _merge(tmp_path, _ds(("q0", "C")), "r3")

@@ -439,6 +439,11 @@ def _incoming_id(example: EvaluationExample, position: int) -> str:
     return str(_example_correlation_key(example, position))
 
 
+def _variant_id(example_id: str, digest: str) -> str:
+    """The id keep-both gives incoming content that clashes with ``example_id``."""
+    return f"{example_id}~{digest.split(':', 1)[1][:8]}"
+
+
 def _mark_superseded(entry: Any, old_digest: str) -> Any:
     """A provenance entry kept across a replace, tagged with the content it was for."""
     if isinstance(entry, dict) and "superseded_content_digest" not in entry:
@@ -466,6 +471,13 @@ def _plan_row(
         report.added_ids.append(example_id)
         return
     stored = rows[index]["metadata"]
+    variant = _variant_id(example_id, digest)
+    if stored["content_digest"] != digest and variant in by_id:
+        # An earlier keep-both stored this content under its variant id: the
+        # evidence belongs to that row, not to a new conflict on the original id.
+        variant_index = by_id[variant]
+        if rows[variant_index]["metadata"]["content_digest"] == digest:
+            index, stored = variant_index, rows[variant_index]["metadata"]
     if stored["content_digest"] == digest:
         entries = stored["regression"]["provenance"]
         key = _evidence_key(provenance)
@@ -485,7 +497,7 @@ def _plan_row(
         report.rows_replaced += 1
         return
     if on_conflict == "keep-both":
-        alias = f"{example_id}~{digest.split(':', 1)[1][:8]}"
+        alias = _variant_id(example_id, digest)
         _plan_row(
             example,
             alias,
