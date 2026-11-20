@@ -20,7 +20,10 @@ import uuid
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
-from traigent.cloud.url_security import validate_cloud_base_url_async
+from traigent.cloud.url_security import (
+    same_host_redirect_trace_configs,
+    validate_cloud_base_url_async,
+)
 from traigent.core.constants import MAX_RETRIES
 from traigent.labels.transport_gate import gate_session
 from traigent.utils.exceptions import RateLimitError
@@ -286,7 +289,11 @@ class PasswordAuthHandler:
         )
 
         async def perform_login():
-            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+            async with gate_session(
+                aiohttp.ClientSession(
+                    trace_configs=same_host_redirect_trace_configs(), trust_env=True
+                )
+            ) as session:
                 async with session.post(
                     login_url,
                     json={

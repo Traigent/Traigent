@@ -46,6 +46,7 @@ from traigent.cloud.smart_pruning import (
     normalize_intermediate_report_payload,
     normalize_smart_pruning_options,
 )
+from traigent.cloud.url_security import same_host_redirect_trace_configs
 from traigent.config.backend_config import (
     BackendConfig,
     EndpointNotConfiguredError,
@@ -108,6 +109,7 @@ _JSON_CONTENT_TYPE = "application/json"
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
+
 
 logger = get_logger(__name__)
 
@@ -1034,6 +1036,7 @@ class ApiOperations:
             self._content_less_ctx = None
         async with gate_session(
             cast(Any, aiohttp).ClientSession(
+                trace_configs=same_host_redirect_trace_configs(),
                 connector=connector,
                 trust_env=True,
             ),
@@ -1234,6 +1237,7 @@ class ApiOperations:
             )
             async with gate_session(
                 cast(Any, aiohttp).ClientSession(
+                    trace_configs=same_host_redirect_trace_configs(),
                     connector=self._build_connector(),
                     trust_env=True,
                 ),
@@ -1394,6 +1398,7 @@ class ApiOperations:
 
             async with gate_session(
                 cast(Any, aiohttp).ClientSession(
+                    trace_configs=same_host_redirect_trace_configs(),
                     connector=connector,
                     trust_env=True,
                 ),
@@ -1638,6 +1643,7 @@ class ApiOperations:
 
         async with gate_session(
             cast(Any, aiohttp).ClientSession(
+                trace_configs=same_host_redirect_trace_configs(),
                 connector=connector,
                 trust_env=True,
             ),
@@ -1715,6 +1721,7 @@ class ApiOperations:
 
             async with gate_session(
                 cast(Any, aiohttp).ClientSession(
+                    trace_configs=same_host_redirect_trace_configs(),
                     connector=connector,
                     trust_env=True,
                 ),
