@@ -157,25 +157,31 @@ async def test_five_reruns_label_each_example_by_its_own_outcomes() -> None:
     stored = result.example_consistency_report
     examples = stored["examples"]
     assert examples["always_wrong"] == {
-        "label": "consistent_fail",
+        "label": "all_fail",
         "attempted": 5,
         "passes": 0,
         "fails": 5,
         "errored": 0,
+        "pass_rate_low": 0.0,
+        "pass_rate_high": 0.434,
     }
     assert examples["sometimes_wrong"] == {
-        "label": "flaky",
+        "label": "mixed",
         "attempted": 5,
         "passes": 2,
         "fails": 3,
         "errored": 0,
+        "pass_rate_low": 0.118,
+        "pass_rate_high": 0.769,
     }
     assert examples["always_right"] == {
-        "label": "consistent_pass",
+        "label": "all_pass",
         "attempted": 5,
         "passes": 5,
         "fails": 0,
         "errored": 0,
+        "pass_rate_low": 0.566,
+        "pass_rate_high": 1.0,
     }
     assert stored["reps"] == 5
     assert stored["config_hash"] == result.metadata["winner_stability"]["config_hash"]
@@ -215,6 +221,8 @@ async def test_mostly_errored_example_gets_no_label_and_is_counted_as_errored() 
         "passes": 1,
         "fails": 0,
         "errored": 4,
+        "pass_rate_low": 0.207,
+        "pass_rate_high": 1.0,
     }
     assert result.example_consistency()["counts"]["errored"] == 1
 
@@ -239,12 +247,12 @@ async def test_accessor_reports_counts_and_per_example_labels() -> None:
 
     report = result.example_consistency()
     assert report["counts"] == {
-        "consistent_pass": 1,
-        "consistent_fail": 1,
-        "flaky": 1,
+        "all_pass": 1,
+        "all_fail": 1,
+        "mixed": 1,
         "errored": 1,
     }
-    assert report["examples"]["sometimes_wrong"]["label"] == "flaky"
+    assert report["examples"]["sometimes_wrong"]["label"] == "mixed"
     assert report["reps"] == 5
 
 
@@ -279,9 +287,9 @@ async def test_single_rerun_records_no_labels() -> None:
     assert result.example_consistency_report is None
     assert "example_consistency" not in result.metadata
     assert result.example_consistency()["counts"] == {
-        "consistent_pass": 0,
-        "consistent_fail": 0,
-        "flaky": 0,
+        "all_pass": 0,
+        "all_fail": 0,
+        "mixed": 0,
         "errored": 0,
     }
 
@@ -296,11 +304,13 @@ async def test_labels_survive_save_and_reload(tmp_path) -> None:
 
     assert reloaded.example_consistency() == result.example_consistency()
     assert reloaded.example_consistency()["examples"]["sometimes_wrong"] == {
-        "label": "flaky",
+        "label": "mixed",
         "attempted": 5,
         "passes": 2,
         "fails": 3,
         "errored": 0,
+        "pass_rate_low": 0.118,
+        "pass_rate_high": 0.769,
     }
 
 

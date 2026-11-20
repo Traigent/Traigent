@@ -2,7 +2,7 @@
 
 Runs the real local compare pipeline with a stub agent (no provider calls). The
 agent's answer for one example alternates between calls, so that example is
-flaky for the config while the others are stable.
+mixed for the config while the others are stable.
 """
 
 from __future__ import annotations
@@ -44,22 +44,22 @@ def test_repeats_label_every_example_for_each_config() -> None:
 
     wobbly = comparison.example_consistency(0)
     labels = {eid: row["label"] for eid, row in wobbly["examples"].items()}
-    assert sorted(labels.values()) == ["consistent_fail", "consistent_pass", "flaky"]
+    assert sorted(labels.values()) == ["all_fail", "all_pass", "mixed"]
     assert wobbly["reps"] == 4
     assert wobbly["counts"] == {
-        "consistent_pass": 1,
-        "consistent_fail": 1,
-        "flaky": 1,
+        "all_pass": 1,
+        "all_fail": 1,
+        "mixed": 1,
         "errored": 0,
     }
-    flaky = next(r for r in wobbly["examples"].values() if r["label"] == "flaky")
-    assert flaky["passes"] + flaky["fails"] == 4 and flaky["passes"] == 2
+    mixed_row = next(r for r in wobbly["examples"].values() if r["label"] == "mixed")
+    assert mixed_row["passes"] + mixed_row["fails"] == 4 and mixed_row["passes"] == 2
 
     steady = comparison.example_consistency(config_index=1)
     assert sorted(r["label"] for r in steady["examples"].values()) == [
-        "consistent_fail",
-        "consistent_pass",
-        "consistent_pass",
+        "all_fail",
+        "all_pass",
+        "all_pass",
     ]
 
 
@@ -69,9 +69,9 @@ def test_a_single_repeat_labels_nothing() -> None:
     report = comparison.example_consistency()
     assert report["examples"] == {}
     assert report["counts"] == {
-        "consistent_pass": 0,
-        "consistent_fail": 0,
-        "flaky": 0,
+        "all_pass": 0,
+        "all_fail": 0,
+        "mixed": 0,
         "errored": 0,
     }
 
@@ -155,8 +155,8 @@ def test_a_crashed_repeat_is_an_errored_attempt_not_a_dropped_one() -> None:
     assert report["reps"] == 4
     assert {r["attempted"] for r in report["examples"].values()} == {4}
     assert {r["errored"] for r in report["examples"].values()} == {1}
-    assert report["examples"]["e0"]["label"] == "consistent_pass"
-    assert report["examples"]["e1"]["label"] == "consistent_fail"
+    assert report["examples"]["e0"]["label"] == "all_pass"
+    assert report["examples"]["e1"]["label"] == "all_fail"
 
 
 def test_a_repeat_without_per_example_results_is_an_errored_attempt() -> None:

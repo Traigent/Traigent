@@ -448,8 +448,8 @@ class ComparisonResult:
     def example_consistency(self, config_index: int = 0) -> dict[str, Any]:
         """Per-example consistency labels for ``configs[config_index]``.
 
-        Labels each example ``consistent_pass``, ``consistent_fail`` or
-        ``flaky`` across that config's ``repeats`` (see
+        Labels each example ``all_pass``, ``all_fail`` or ``mixed``
+        across that config's ``repeats`` (see
         ``ConfigComparison.example_consistency``). With ``repeats=1`` no
         example has two evaluations, so ``examples`` is empty.
 

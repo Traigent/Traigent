@@ -7,12 +7,15 @@ When the same configuration is evaluated more than once on the same examples
 outcome per attempt. This module turns those outcomes into one label per
 example:
 
-* ``consistent_pass``: every scored attempt passed
-* ``consistent_fail``: every scored attempt failed
-* ``flaky``: both outcomes occurred
+* ``all_pass``: every scored attempt passed
+* ``all_fail``: every scored attempt failed
+* ``mixed``: both outcomes occurred
 
-For every example the report keeps ``attempted``, ``passes``, ``fails`` and
-``errored`` attempt counts.
+The labels describe what was observed and claim nothing beyond it: ``all_pass``
+over five attempts does not mean the example always passes. For every example
+the report keeps ``attempted``, ``passes``, ``fails`` and ``errored`` attempt
+counts and a 95% Wilson score interval on the pass rate over the scored
+attempts (``pass_rate_low``, ``pass_rate_high``, three decimals).
 
 An attempt is *errored* (unknown) when it produced no judgment: its cell carries
 an error (``error`` is not ``None``, an empty string included), the evaluation
@@ -36,15 +39,19 @@ ids and counts are kept: no inputs, outputs or error text.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from traigent.utils.outcome_matrix import _classify_cell, _extract_cell, _get
 
-CONSISTENT_PASS = "consistent_pass"
-CONSISTENT_FAIL = "consistent_fail"
-FLAKY = "flaky"
-CONSISTENCY_LABELS: tuple[str, ...] = (CONSISTENT_PASS, CONSISTENT_FAIL, FLAKY)
+ALL_PASS = "all_pass"
+ALL_FAIL = "all_fail"
+MIXED = "mixed"
+CONSISTENCY_LABELS: tuple[str, ...] = (ALL_PASS, ALL_FAIL, MIXED)
+
+#: z for a two-sided 95% interval.
+Z_95 = 1.959963984540054
 
 #: Same default threshold as ``OptimizationResult.failing_examples``.
 DEFAULT_PASS_THRESHOLD = 0.5
@@ -59,6 +66,22 @@ ERRORED = "errored"
 PASS = "pass"
 FAIL = "fail"
 UNKNOWN = "unknown"
+
+
+def wilson_interval(passes: int, scored: int, z: float = Z_95) -> tuple[float, float]:
+    """Wilson score interval for ``passes`` out of ``scored`` attempts.
+
+    Closed form, standard library only. ``scored`` must be positive.
+    """
+    if scored <= 0 or not 0 <= passes <= scored:
+        raise ValueError("wilson_interval needs 0 <= passes <= scored and scored > 0")
+    p = passes / scored
+    z2 = z * z
+    denominator = 1 + z2 / scored
+    center = (p + z2 / (2 * scored)) / denominator
+    half = z * math.sqrt(p * (1 - p) / scored + z2 / (4 * scored * scored))
+    half /= denominator
+    return max(0.0, center - half), min(1.0, center + half)
 
 
 def cell_outcome(cell: Any, threshold: float = DEFAULT_PASS_THRESHOLD) -> str:
@@ -85,7 +108,7 @@ def classify_consistency(outcomes: Iterable[bool | None]) -> str | None:
             or a fail.
 
     Returns:
-        ``"consistent_pass"``, ``"consistent_fail"`` or ``"flaky"``; ``None``
+        ``"all_pass"``, ``"all_fail"`` or ``"mixed"``; ``None``
         when there are fewer than two attempts or errored attempts are at least
         half of them (the example is then reported as errored, not labelled).
     """
@@ -96,10 +119,10 @@ def classify_consistency(outcomes: Iterable[bool | None]) -> str | None:
     passes = sum(1 for o in attempts if o)
     scored = len(attempts) - errored
     if passes == scored:
-        return CONSISTENT_PASS
+        return ALL_PASS
     if passes == 0:
-        return CONSISTENT_FAIL
-    return FLAKY
+        return ALL_FAIL
+    return MIXED
 
 
 class ExampleIdCollisionError(ValueError):
@@ -150,6 +173,14 @@ def trial_example_outcomes(
     return outcomes
 
 
+def _pass_rate_interval(passes: int, scored: int) -> tuple[float | None, float | None]:
+    """95% Wilson interval rounded to three decimals; ``None`` with nothing scored."""
+    if scored <= 0:
+        return None, None
+    low, high = wilson_interval(passes, scored)
+    return round(low, 3), round(high, 3)
+
+
 def summarize_example_outcomes(
     per_attempt: Sequence[Mapping[str, str] | None],
 ) -> dict[str, dict[str, Any]]:
@@ -176,14 +207,18 @@ def summarize_example_outcomes(
             UNKNOWN if outcomes is None else outcomes.get(example_id, UNKNOWN)
             for outcomes in per_attempt
         ]
+        passes, fails = marks.count(PASS), marks.count(FAIL)
+        low, high = _pass_rate_interval(passes, passes + fails)
         summary[example_id] = {
             "label": classify_consistency(
                 [True if m == PASS else False if m == FAIL else None for m in marks]
             ),
             "attempted": len(marks),
-            "passes": marks.count(PASS),
-            "fails": marks.count(FAIL),
+            "passes": passes,
+            "fails": fails,
             "errored": marks.count(UNKNOWN),
+            "pass_rate_low": low,
+            "pass_rate_high": high,
         }
     return summary
 
@@ -215,6 +250,8 @@ def build_consistency_report(
             "passes": int(entry.get("passes", 0)),
             "fails": int(entry.get("fails", 0)),
             "errored": int(entry.get("errored", 0)),
+            "pass_rate_low": entry.get("pass_rate_low"),
+            "pass_rate_high": entry.get("pass_rate_high"),
         }
     return {
         "counts": counts,
@@ -225,11 +262,20 @@ def build_consistency_report(
 
 
 def format_consistency_line(report: Mapping[str, Any], scope: str) -> str | None:
-    """The one-line CLI summary, or ``None`` when nothing was reported."""
+    """The one-line CLI summary, or ``None`` when nothing was reported.
+
+    The trailing clause shows what the best possible result means: an example
+    that passed every one of ``reps`` attempts has a 95% Wilson interval of
+    ``low-high`` on its pass rate.
+    """
     if not report.get("examples"):
         return None
     counts = report["counts"]
-    parts = ", ".join(f"{counts[label]} {label}" for label in CONSISTENCY_LABELS)
-    if counts.get(ERRORED):
-        parts += f", {counts[ERRORED]} {ERRORED}"
-    return f"{parts} ({scope}, {report['reps']} reps)"
+    reps = int(report["reps"])
+    parts = ", ".join(f"{counts[key]} {key}" for key in (*CONSISTENCY_LABELS, ERRORED))
+    low, high = wilson_interval(reps, reps)
+    return (
+        f"Repeat outcomes ({scope}, {reps} reps): {parts}; "
+        f"{ALL_PASS} at {reps}/{reps} means a 95% interval of "
+        f"{low:.2f}-{high:.2f} on the pass rate"
+    )

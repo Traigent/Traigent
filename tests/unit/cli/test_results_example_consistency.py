@@ -54,9 +54,11 @@ def test_show_prints_one_consistency_line_when_labels_exist(tmp_path) -> None:
 
     output = _show(store, "with_labels")
 
-    lines = [ln for ln in output.splitlines() if ln.startswith("Consistency:")]
+    lines = [ln for ln in output.splitlines() if ln.startswith("Repeat outcomes")]
     assert lines == [
-        "Consistency: 1 consistent_pass, 1 consistent_fail, 1 flaky (winner, 3 reps)"
+        "Repeat outcomes (winner, 3 reps): 1 all_pass, 1 all_fail, 1 mixed, "
+        "0 errored; all_pass at 3/3 means a 95% interval of 0.44-1.00 on the "
+        "pass rate"
     ]
 
 
@@ -66,7 +68,7 @@ def test_show_prints_nothing_without_labels(tmp_path) -> None:
 
     output = _show(store, "no_labels")
 
-    assert "Consistency" not in output
+    assert "Repeat outcomes" not in output
     assert "Summary" in output
 
 
@@ -75,4 +77,4 @@ def test_malformed_stored_value_prints_nothing(tmp_path, junk) -> None:
     store = tmp_path / "store"
     PersistenceManager(str(store)).save_result(_result(junk), name="junk")
 
-    assert "Consistency" not in _show(store, "junk")
+    assert "Repeat outcomes" not in _show(store, "junk")

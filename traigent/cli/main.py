@@ -1432,7 +1432,7 @@ def _print_result_summary(result: Any) -> None:
     console.print(summary_table)
     consistency_line = _consistency_summary_line(result)
     if consistency_line is not None:
-        console.print(f"Consistency: {consistency_line}", markup=False)
+        console.print(consistency_line, markup=False)
     if preset_selection is not None:
         console.print(f"[dim]{_ADVISORY_SELECTION_NOTICE}[/dim]")
 

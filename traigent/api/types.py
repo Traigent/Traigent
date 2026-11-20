@@ -1383,14 +1383,19 @@ class OptimizationResult:
 
         Recorded when ``winner_stability_reps`` is at least 2: the winning
         configuration is re-evaluated on the same examples and each example is
-        labelled ``consistent_pass``, ``consistent_fail`` or ``flaky`` from its
-        per-rerun outcomes (the ``failing_examples`` pass/fail rule; an error or
-        unscorable score is unknown and never a pass). Only the winner and only
-        the examples it was rerun on are labelled.
+        labelled ``all_pass``, ``all_fail`` or ``mixed`` from its per-rerun
+        outcomes (the ``failing_examples`` score rule; an error or unscorable
+        score is errored and never a pass). The labels describe what was
+        observed, not a guarantee. Only the winner and only the examples it was
+        rerun on are reported.
 
         Returns:
-            ``{"counts": {label: n}, "examples": {id: {"label", "passes",
-            "fails", "unknowns"}}, "reps": int, "config_hash": str | None}``.
+            ``{"counts": {label: n, "errored": n}, "examples": {id: {"label",
+            "attempted", "passes", "fails", "errored", "pass_rate_low",
+            "pass_rate_high"}}, "reps": int, "config_hash": str | None}``.
+            ``label`` is ``None`` for an example whose errored attempts were at
+            least half of its attempts. The pass-rate bounds are a 95% Wilson
+            interval over the scored attempts.
             ``examples`` is empty (counts all zero) when no labels were
             recorded.
 
