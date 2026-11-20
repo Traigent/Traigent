@@ -128,6 +128,47 @@ def test_load_with_no_matching_label_raises_not_empty(tmp_path: Path) -> None:
         load_regression_dataset(tmp_path, labels=("reliable",))
 
 
+def test_load_reads_the_file_once_and_survives_a_replace_after_the_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The file is replaced right after its only read: the rows still match."""
+    from traigent.utils import regression_set
+
+    _merge(tmp_path, _ds(("q0", "a0"), ("q1", "a1")))
+    path = tmp_path / "regression.jsonl"
+    other = tmp_path / "other"
+    _merge(other, _ds(("OTHER0", "b0"), ("OTHER1", "b1")))
+    replacement = (other / "regression.jsonl").read_bytes()
+
+    real_read = regression_set._read_numbered_rows
+    reads: list[Path] = []
+
+    def read_then_replace(p: Path) -> Any:
+        result = real_read(p)
+        reads.append(p)
+        path.write_bytes(replacement)  # the writer lands between the two reads
+        return result
+
+    def no_second_read(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("the file must not be opened a second time")
+
+    monkeypatch.setattr(regression_set, "_read_numbered_rows", read_then_replace)
+    monkeypatch.setattr(Dataset, "from_jsonl", no_second_read)
+    loaded = load_regression_dataset(tmp_path)
+    assert len(reads) == 1
+    assert [e.input_data for e in loaded.examples] == [{"q": "q0"}, {"q": "q1"}]
+    assert [e.expected_output for e in loaded.examples] == ["a0", "a1"]
+
+
+def test_load_rejects_duplicate_ids_like_the_file_loader(tmp_path: Path) -> None:
+    _merge(tmp_path, _ds(("q0", "a0")))
+    path = tmp_path / "regression.jsonl"
+    line = path.read_text(encoding="utf-8")
+    path.write_text(line + line, encoding="utf-8")
+    with pytest.raises(RegressionSetError, match="repeats"):
+        load_regression_dataset(tmp_path)
+
+
 # ------------------------------------------------------------- concurrency
 
 

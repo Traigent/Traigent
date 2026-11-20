@@ -497,33 +497,44 @@ def load_regression_dataset(
 ) -> Dataset:
     """Load the regression set as a :class:`Dataset`, keeping only ``labels``.
 
+    The file is read, validated and digest-checked exactly once, and the
+    dataset is built from those validated rows in memory, so a concurrent
+    replacement of the file cannot make the returned rows disagree with the
+    labels that were selected. The same duplicate-id rule the file loader
+    applies is enforced by the :class:`Dataset` constructor.
+
+    A valid file in which no row carries one of ``labels`` returns an **empty**
+    dataset (for example a set that has no ``reliable`` rows yet): that is a
+    normal state, not an error, and a caller can tell it from a broken file
+    because a broken file raises. Callers that cannot run on zero examples
+    should test ``len(dataset)``.
+
     Raises:
-        RegressionSetError: The file is missing or unparseable, or no row has
-            one of the requested labels (an empty dataset is never returned).
+        RegressionSetError: The file is missing, unreadable, has no rows or
+            holds a malformed row (or repeated ids).
+        StaleDigestError: A row was edited by hand after it was written.
     """
     if isinstance(labels, str):
         raise TypeError("labels must be a sequence of label strings, not one string")
     path = regression_file(directory)
     rows = read_regression_rows(path)
     wanted = set(labels)
-    kept = [r for r in rows if r["metadata"]["regression"]["label"] in wanted]
-    if not kept:
+    examples = [
+        EvaluationExample(
+            input_data=row["input"],
+            expected_output=row["output"],
+            metadata=dict(row["metadata"]),
+        )
+        for row in rows
+        if row["metadata"]["regression"]["label"] in wanted
+    ]
+    if not examples:
         raise RegressionSetError(
             f"Regression file {path} has no rows with label in {sorted(wanted)}"
         )
-    try:
-        full = Dataset.from_jsonl(path)
-    except Exception as exc:
-        raise RegressionSetError(
-            f"Regression file {path} does not load as a dataset: {type(exc).__name__}"
-        ) from exc
-    keep_ids = {r["metadata"]["example_id"] for r in kept}
-    examples = [
-        ex for ex in full.examples if (ex.metadata or {}).get("example_id") in keep_ids
-    ]
     return Dataset(
         examples=examples,
         name="regression_set",
         description=f"Regression set from {path}",
-        metadata=dict(full.metadata or {}),
+        metadata={"source_path": str(path)},
     )
