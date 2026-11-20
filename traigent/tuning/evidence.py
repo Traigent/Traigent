@@ -7,9 +7,11 @@ candidate AND the incumbent configuration on every holdout example (interleaved 
 row, so provider drift hits both alike), applies each checker, and builds the counts ``{n, k, u, pl, complete}`` that TVL's promotion
 monitors consume (RFC 0003 section 6.11, ``monitor_outcomes``).  Verdicts and the
 legacy promotion decision are computed by TVL (``tvl.promotion_monitor``,
-``tvl.promotion``); nothing is decided here.  Holdout content, checker labels and agent
-outputs never leave the process: only counts, verdicts and a digest of the holdout file
-are returned.  Anything that cannot be computed honestly raises
+``tvl.promotion``); nothing is decided here.  The controller records and returns only
+counts, verdicts and a digest of the holdout file: it never stores or returns holdout
+content, checker labels or agent outputs.  The agent function and the customer's
+checkers run as configured and keep their own network behaviour (an agent may call a
+hosted model with each row's input); this module does not isolate them.  Anything that cannot be computed honestly raises
 :class:`EvidenceUnavailable`, and the candidate stays ``NoDecision``.
 
 Soundness rules: a call that raised is *unresolved* (never a score of 0.0) and counts
@@ -29,7 +31,7 @@ import json
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 E_NO_PROMOTION_EVIDENCE = "E_NO_PROMOTION_EVIDENCE"
 MEASURED_OBJECTIVE = "accuracy"  # exact match against the holdout's expected output
@@ -224,35 +226,54 @@ def examples_digest(examples: Sequence[Mapping[str, Any]]) -> str:
     return _digest_of(body.encode("utf-8"))
 
 
-def eval_set_identity(dataset: Any) -> tuple[set[str], list[dict[str, Any]] | None]:
-    """Digests that identify the optimization's evaluation set, and its rows if known.
+def _dataset_rows(dataset: Any) -> list[dict[str, Any]]:
+    """``{"input", "output"}`` rows of a loaded ``Dataset``."""
+    return [
+        {"input": ex.input_data, "output": ex.expected_output}
+        for ex in dataset.examples
+    ]
 
-    ``dataset`` is the optimized function's ``eval_dataset``: a JSONL path or an
-    in-memory list of ``{"input", "output"}`` rows.  Anything else (an object we
-    cannot read) yields no identity, never a guess.
+
+def eval_set_identity(
+    dataset: Any, loader: Callable[[Any], Any] | None = None
+) -> tuple[set[str], list[dict[str, Any]] | None]:
+    """Digests that identify the optimization's evaluation set, and its rows.
+
+    ``dataset`` is the optimized function's ``eval_dataset`` in any form the
+    optimizer accepts (a path, a list of paths, a ``Dataset``, inline rows).  The
+    rows are loaded with the OPTIMIZER'S OWN loader (``loader``) so the identity is
+    what the optimizer really evaluated on.  When an evaluation set exists but its
+    identity cannot be established, :class:`EvidenceUnavailable` is raised: a
+    holdout that might be the optimization's own data is never promoted on.
     """
-    digests: set[str] = set()
-    rows: list[dict[str, Any]] | None = None
+    if dataset is None:
+        return set(), None
+    if loader is None:
+        # the optimizer's own resolution, not a re-implementation (it only needs
+        # ``self`` for its static helper, so the class itself serves)
+        from traigent.core.optimized_function import OptimizedFunction
+
+        def loader(source: Any) -> Any:
+            return OptimizedFunction._dataset_from_source(
+                cast(Any, OptimizedFunction), source
+            )
+
+    try:
+        loaded = loader(dataset)
+        rows = _dataset_rows(loaded)
+    except Exception:  # noqa: BLE001 - closed reason; never echo content
+        raise EvidenceUnavailable("eval_set_identity_unknown") from None
+    digests = {examples_digest(rows)}
+    paths: list[Any] = []
     if isinstance(dataset, (str, Path)):
-        try:
-            data = Path(dataset).read_bytes()
-        except OSError:
-            return digests, None
-        digests.add(_digest_of(data))
-        try:
-            rows = [
-                json.loads(line)
-                for line in data.decode("utf-8").splitlines()
-                if line.strip()
-            ]
-        except (ValueError, UnicodeDecodeError):
-            rows = None
+        paths = [dataset]
     elif isinstance(dataset, (list, tuple)):
-        rows = [dict(r) for r in dataset if isinstance(r, Mapping)]
-    if rows is not None and all(isinstance(r, dict) for r in rows):
-        digests.add(examples_digest(rows))
-    else:
-        rows = None
+        paths = [p for p in dataset if isinstance(p, (str, Path))]
+    for path in paths:  # the files' own bytes, so a holdout copy is recognised too
+        try:
+            digests.add(_digest_of(Path(path).read_bytes()))
+        except OSError:
+            raise EvidenceUnavailable("eval_set_identity_unknown") from None
     return digests, rows
 
 

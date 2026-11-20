@@ -583,7 +583,7 @@ def test_cli_surfaces_the_tvl_diagnostic_for_release_rollback(
 
 
 # ---------------------------------------------------------------------------------
-# second-model review fixes
+# hardening: untrusted output, evidence and refusal paths
 # ---------------------------------------------------------------------------------
 SENTINEL = "SENTINEL-PROMPT-TEXT-7f3a"
 

@@ -278,9 +278,16 @@ def _build_controller(
         failing = [d for d in diagnostics if d.is_error]
         if failing:
             _die(str(TvlValidationFailed(failing)))
+        try:
+            policy = Tuning.from_tvl(doc)
+        except TuningError:
+            # outside the builder's shape: the controller reads ``state.tvl`` and
+            # a ``--tvl`` file carries no local checkers or holdout, so the policy
+            # is a neutral one
+            policy = Tuning()
         state = TuningState(
             agent=agent,
-            policy=Tuning.from_tvl(doc),
+            policy=policy,
             tvl=doc,
             validated=not any(d.is_error for d in diagnostics),
             diagnostics=diagnostics,

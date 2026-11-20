@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import inspect
 import json
 import os
 from collections.abc import Callable, Iterable, Mapping
@@ -73,11 +74,21 @@ class ApproverAuthority:
         if not isinstance(approver, str):
             return False
         if self.mode == LOCAL_TRUSTED:
+            # No credential is checked, so in production nobody is authenticated: a
+            # saved approval or grant is refused at every use, not only at creation.
+            from traigent.utils.env_config import is_production_strict_env
+
+            if is_production_strict_env():
+                return False
             return self.authorized(approver)
         try:
-            return bool(self.authenticator(str(approver), context))  # type: ignore[misc]
+            answer = self.authenticator(str(approver), context)  # type: ignore[misc]
         except Exception:  # noqa: BLE001 - an authenticator failure never authenticates
             return False
+        if inspect.iscoroutine(answer):
+            answer.close()  # an async hook was never awaited: that is not a yes
+            return False
+        return answer is True  # only a literal True; truthy non-bools are refused
 
 
 def signing_input(envelope: Mapping[str, Any]) -> bytes:

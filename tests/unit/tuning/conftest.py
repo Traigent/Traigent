@@ -42,3 +42,9 @@ def _agent_code_version(monkeypatch: pytest.MonkeyPatch) -> None:
     are delete or change this variable themselves.
     """
     monkeypatch.setenv("TRAIGENT_AGENT_CODE_VERSION", "test-code-v1")
+
+
+@pytest.fixture(autouse=True)
+def _dataset_root(monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
+    """The optimizer's loader only reads datasets under this root."""
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))

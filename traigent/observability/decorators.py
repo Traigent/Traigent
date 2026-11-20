@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import copy
 import functools
 import inspect
 import itertools
@@ -563,14 +564,18 @@ class _ObserveFactory:
         """Run ``inner`` with the store's head config active (loaded per call)."""
         from pathlib import Path
 
-        from traigent.tuning.controller import HeadLoader, default_store_dir
+        from traigent.tuning.controller import (
+            DEFAULT_ENVIRONMENT,
+            HeadLoader,
+            default_store_dir,
+        )
 
         store = (
             Path(self.tuning_store)
             if self.tuning_store is not None
-            else default_store_dir(str(self.agent))
+            else default_store_dir(str(self.agent), self.environment)
         )
-        loader = HeadLoader(store)
+        loader = HeadLoader(store, self.environment or DEFAULT_ENVIRONMENT)
 
         def _enter() -> tuple[Any, Any]:
             head = loader.head()
@@ -585,7 +590,7 @@ class _ObserveFactory:
                         "code_version": str(head.get("code_version") or ""),
                     }
                 ),
-                config_context.set(dict(head["config"])),
+                config_context.set(copy.deepcopy(dict(head["config"]))),
             )
 
         def _exit(tokens: tuple[Any, Any]) -> None:

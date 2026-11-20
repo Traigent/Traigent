@@ -1,4 +1,4 @@
-"""Final-review fixes: authenticator everywhere, effect time under the lock,
+"""Hardening: authenticator everywhere, effect time under the lock,
 journal retries, recovery against concurrent ingestion, standing mode, schedules."""
 
 from __future__ import annotations

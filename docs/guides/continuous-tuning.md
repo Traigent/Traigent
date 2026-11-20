@@ -107,7 +107,7 @@ finishes `deploy_refused` with reason `code_version_mismatch`. `head.json` recor
 version the head was accepted for, and followed-head traces carry it as `head_code_version`.
 
 ```bash
-traigent tune status --text   --store .traigent/tuning/ticket-router --target agent.py:classify
+traigent tune status --text   --store .traigent/tuning/production/ticket-router --target agent.py:classify
 traigent tune approve <occurrence>  --approver alice --authority authority.yml ...
 traigent tune accept  <deploy>      --generation 0 --approver alice --authority authority.yml ...
 ```

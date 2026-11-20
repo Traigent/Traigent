@@ -80,6 +80,7 @@ E_NO_OPTIMIZER = "E_NO_OPTIMIZER"
 E_NO_DEPLOY_AWAITING = "E_NO_DEPLOY_AWAITING"
 E_UNKNOWN_GENERATION = "E_UNKNOWN_GENERATION"
 E_STORE_MISMATCH = "E_STORE_MISMATCH"
+E_STORE_ENVIRONMENT_MISMATCH = "E_STORE_ENVIRONMENT_MISMATCH"
 E_NOT_AN_OCCURRENCE = "E_NOT_AN_OCCURRENCE"
 E_STORE_CORRUPT = "E_STORE_CORRUPT"
 E_STORE_FORMAT = "E_STORE_FORMAT"
@@ -101,11 +102,21 @@ MAX_GRANT_DAYS = 30  # RFC 0003 section 7.3: a standing grant expires within 30 
 logger = logging.getLogger(__name__)
 
 
-def default_store_dir(agent: str) -> Path:
-    """``.traigent/tuning/<agent>/`` relative to the working directory."""
+DEFAULT_ENVIRONMENT = "production"
+
+
+def default_store_dir(agent: str, environment: str | None = None) -> Path:
+    """``.traigent/tuning/<environment>/<agent>/`` relative to the working directory.
+
+    The environment is part of the path so a staging store and a production store
+    of the same agent are never the same directory.
+    """
     if not _REF.match(agent):
         raise TuningError(E_INVALID_RECORD, "agent must be an opaque reference")
-    return DEFAULT_STORE_ROOT / agent
+    env = environment or DEFAULT_ENVIRONMENT
+    if not _REF.match(env):
+        raise TuningError(E_INVALID_RECORD, "environment must be an opaque reference")
+    return DEFAULT_STORE_ROOT / env / agent
 
 
 def _digest(value: Any) -> str:
@@ -189,6 +200,15 @@ def parse_occurrence_ref(ref: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------------
 # atomic file helpers
 # ---------------------------------------------------------------------------------
+def _fsync_dir(directory: Path) -> None:
+    """Make a create or rename in ``directory`` durable (its entry, not just the data)."""
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def _write_json(path: Path, value: Any) -> None:
     """Write JSON atomically: temp file in the same directory, fsync, rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -199,6 +219,7 @@ def _write_json(path: Path, value: Any) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+        _fsync_dir(path.parent)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
@@ -304,10 +325,13 @@ def _repair_tail(path: Path) -> None:
 def _append_line(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     _repair_tail(path)
+    created = not path.exists()
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(_frame(value) + "\n")
         fh.flush()
         os.fsync(fh.fileno())
+    if created:
+        _fsync_dir(path.parent)
 
 
 def _read_lines(path: Path) -> list[dict[str, Any]]:
@@ -398,7 +422,7 @@ class Controller:
         if store_dir is None:
             if agent is None:
                 raise TuningError(E_INVALID_RECORD, "store_dir or an agent is required")
-            store_dir = default_store_dir(agent)
+            store_dir = default_store_dir(agent, environment)
         self.dir = Path(store_dir)
         self.optimize_fn = optimize_fn
         if authority is None and authorized_approvers is not None:
@@ -475,6 +499,11 @@ class Controller:
                 _write_json(self._p("meta.json"), meta)
             elif meta["contract_digest"] != digest or meta["agent"] != agent:
                 raise TuningError(E_STORE_MISMATCH, "store belongs to another policy")
+            elif meta.get("environment") != environment:
+                raise TuningError(
+                    E_STORE_ENVIRONMENT_MISMATCH,
+                    "store was created for another environment",
+                )
             else:
                 for name in (
                     "history.jsonl",
@@ -498,6 +527,20 @@ class Controller:
         steps: list[dict[str, Any]] = []
         base = self._lines() if lines is None else lines
         for line in [*base, *(extra or [])]:
+            # The external events of one whole-second instant are delivered as ONE
+            # step: the relation orders a complete instant's events itself
+            # (RFC 0011), so they are never split across steps.  Evaluation
+            # categories (windows, optimizations, acceptances) keep one step per
+            # line: each is a later observation of the instant.
+            prev = steps[-1] if steps else None
+            if (
+                line["category"] == "events"
+                and prev is not None
+                and prev["instant"] == line["instant"]
+                and set(prev) == {"instant", "events"}
+            ):
+                prev["events"].append(line["record"])
+                continue
             step: dict[str, Any] = {"instant": line["instant"]}
             if line["category"] != "tick":
                 step[line["category"]] = [line["record"]]
@@ -817,12 +860,17 @@ class Controller:
         report = StepReport()
         with self._locked():
             moment = _utc(now)  # read after the lock: the time of the effect
+            # an explicit ``now`` is a fixed clock (tests, replays); otherwise the
+            # clock is re-read before every paid run and at its completion
+            clock: Callable[[], datetime] = (
+                (lambda: moment) if now is not None else (lambda: _utc(None))
+            )
             report.head_written = self._recover_commits()
             if self._has_schedule():
                 self._tick(self._instant(moment))
             for _ in range(64):
                 trace = self._derive()
-                if not self._advance(trace, moment, report, abandon_interrupted):
+                if not self._advance(trace, clock, report, abandon_interrupted):
                     break
             trace = self._derive()
             report.facts = trace["facts"]
@@ -959,7 +1007,7 @@ class Controller:
     def _advance(
         self,
         trace: dict[str, Any],
-        moment: datetime,
+        clock: Callable[[], datetime],
         report: StepReport,
         abandon_interrupted: bool,
     ) -> bool:
@@ -971,6 +1019,7 @@ class Controller:
                 continue
             attempt, occ = opened["attempt"], opened["occurrence"]
             ref = occurrence_ref(occ)
+            moment = clock()  # fresh before each decision that can spend
             instant = self._instant(moment)  # whole seconds
             marker_path = self._marker_path(attempt, ref)
             marker = _read_json(marker_path)
@@ -1057,7 +1106,7 @@ class Controller:
                     "gates": gates,
                 },
             )
-            self._append("optimizations", record, instant)
+            self._append("optimizations", record, self._instant(clock()))
             report.finished.append(attempt)
             return True
         return False
@@ -1075,7 +1124,8 @@ class Controller:
 
     def _search_space(self, domain_fact: Mapping[str, Any] | None) -> dict[str, Any]:
         space: dict[str, Any] = {
-            t["name"]: copy.deepcopy(t["domain"]) for t in self.module.get("tvars", [])
+            t["name"]: _normalized_domain(t["domain"])
+            for t in self.module.get("tvars", [])
         }
         if domain_fact is not None:
             space[domain_fact["tvar"]] = list(domain_fact["domain"])
@@ -1085,13 +1135,16 @@ class Controller:
         """Values the event admitted into the search domain (not in the declared one)."""
         if domain_fact is None:
             return []
-        declared = {
-            v
+        declared = [
+            t["domain"]
             for t in self.module.get("tvars", [])
             if t["name"] == domain_fact["tvar"]
-            for v in t["domain"]
-        }
-        return [v for v in domain_fact["domain"] if v not in declared]
+        ]
+        return [
+            v
+            for v in domain_fact["domain"]
+            if not any(_declared_contains(spec, v) for spec in declared)
+        ]
 
     # -- mapping Traigent results to the relation's candidate shape ------------------
     def _promotion_monitors(self) -> list[str]:
@@ -1121,11 +1174,13 @@ class Controller:
 
         policy = self.state.policy
         optimized = getattr(self.state, "optimized", None)
-        eval_digests, _rows = eval_set_identity(
-            getattr(optimized, "eval_dataset", None)
-        )
         unpriced = _unpriced_models_of(config)
         try:
+            source = getattr(optimized, "_dataset_from_source", None)
+            eval_digests, _rows = eval_set_identity(
+                getattr(optimized, "eval_dataset", None),
+                source if callable(source) else None,
+            )
             return build_promotion_evidence(
                 self.module,
                 fn=optimized,
@@ -1443,14 +1498,13 @@ class Controller:
         approver = doc.get("approver_ref")
         ident = doc.get("acceptance_id")
         with self._locked():
-            # The effect time is read HERE, after the store lock is held: an
-            # acceptance that expired while this call waited behind another writer
-            # (an optimization holds the lock) is judged at its real effect time.
-            moment = _utc(now)
+            # The effect time is read after the store lock is held (and again at the
+            # commit): an acceptance that expired while this call waited behind
+            # another writer is judged at its real effect time.
+            clock: Callable[[], datetime] = (
+                (lambda: _utc(now)) if now is not None else (lambda: _utc(None))
+            )
             self._recover_commits()
-            # The code version serving NOW, read under the lock: part of the atomic
-            # compare (RFC 0012 section 2.3).  Undeterminable -> refuse, no default.
-            serving = self.code_version()
             prior = self._acceptance_lines()
             recorded = [ln["record"]["record"] for ln in prior]
             if isinstance(ident, str):
@@ -1477,29 +1531,40 @@ class Controller:
                             "other content",
                         )
             position = len(recorded)
-            instant = self._instant(moment)
-            line_record = {
-                "record": doc,
-                "authenticated": bool(authority.authenticated(approver, doc)),
-                "approver_authorized": bool(authority.authorized(approver)),
-                "serving_code_version": serving,
-            }
+            # Authentication can be slow (a platform call): do it BEFORE the time
+            # and the serving code version are sampled, so neither is stale.
+            authenticated = bool(authority.authenticated(approver, doc))
+            authorized = bool(authority.authorized(approver))
             meta = {"authentication": authority.mode}
-            line = {
-                "instant": instant,
-                "category": "acceptances",
-                "record": line_record,
-            }
-            try:
-                trace = self._derive([line])
-            except TuningError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - TVL closed errors; never echo content
-                raise TuningError(
-                    E_INVALID_RECORD, "acceptances rejected by the TVL relation"
-                ) from exc
-            verdicts = [f for f in trace["facts"] if f["fact"] == "acceptance"]
-            verdict = verdicts[position]
+
+            def decide() -> tuple[dict[str, Any], int, dict[str, Any]]:
+                """The relation's verdict at a freshly read time and code version."""
+                # Undeterminable code version -> refuse, no default.
+                serving = self.code_version()
+                instant = self._instant(clock())
+                line_record = {
+                    "record": doc,
+                    "authenticated": authenticated,
+                    "approver_authorized": authorized,
+                    "serving_code_version": serving,
+                }
+                line = {
+                    "instant": instant,
+                    "category": "acceptances",
+                    "record": line_record,
+                }
+                try:
+                    trace = self._derive([line])
+                except TuningError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - TVL closed errors; never echo content
+                    raise TuningError(
+                        E_INVALID_RECORD, "acceptances rejected by the TVL relation"
+                    ) from exc
+                verdicts = [f for f in trace["facts"] if f["fact"] == "acceptance"]
+                return line_record, instant, verdicts[position]
+
+            line_record, instant, verdict = decide()
             if verdict["result"] != "written":
                 self._append("acceptances", line_record, instant, meta)
                 return AcceptanceOutcome(
@@ -1508,7 +1573,9 @@ class Controller:
                     reason=verdict.get("reason"),
                     generation=verdict.get("generation"),
                 )
-            return self._commit_acceptance(doc, line_record, meta, instant, str(ident))
+            return self._commit_acceptance(
+                doc, line_record, meta, instant, str(ident), decide
+            )
 
     def _recorded_outcome(self, position: int, ident: str) -> AcceptanceOutcome:
         verdicts = [f for f in self._derive()["facts"] if f["fact"] == "acceptance"]
@@ -1603,6 +1670,7 @@ class Controller:
         meta: Mapping[str, Any],
         instant: int,
         ident: str,
+        decide: Callable[[], tuple[dict[str, Any], int, dict[str, Any]]] | None = None,
     ) -> AcceptanceOutcome:
         """Move the head and consume the acceptance as ONE commit (store lock held).
 
@@ -1614,6 +1682,19 @@ class Controller:
         current = read_head(self.dir)
         if current is None:
             raise TuningError(E_STORE_CORRUPT, "head.json is missing")
+        if decide is not None:
+            # At the commit, under the lock: expiry, scope (the relation's verdict)
+            # and the serving code version are re-decided at a fresh time.
+            fresh_record, fresh_instant, fresh_verdict = decide()
+            if fresh_verdict["result"] != "written":
+                self._append("acceptances", fresh_record, fresh_instant, meta)
+                return AcceptanceOutcome(
+                    acceptance_id=ident,
+                    result=str(fresh_verdict["result"]),
+                    reason=fresh_verdict.get("reason"),
+                    generation=fresh_verdict.get("generation"),
+                )
+            line_record, instant = fresh_record, fresh_instant
         generation = int(current["generation"]) + 1
         refusal = self._physical_refusal(
             doc, instant, current, str(line_record["serving_code_version"])
@@ -1720,6 +1801,7 @@ class Controller:
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, self._p("history.jsonl"))
+            _fsync_dir(self.dir)
         except BaseException:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
@@ -1939,15 +2021,46 @@ class Controller:
         }
 
 
+def _normalized_domain(spec: Any) -> Any:
+    """A declared TVL domain as the optimizer's search space expects it.
+
+    ``{set: [...]}`` becomes the list; any other form is passed through unchanged.
+    """
+    if isinstance(spec, Mapping) and isinstance(spec.get("set"), list):
+        return copy.deepcopy(list(spec["set"]))
+    return copy.deepcopy(spec)
+
+
+def _declared_contains(spec: Any, value: Any) -> bool:
+    """Is ``value`` inside the declared domain ``spec``?
+
+    Fails closed: a domain shape that cannot be read counts as containing the value,
+    so the value is NOT "newly admitted" and gets no unpriced-model exemption.
+    """
+    if isinstance(spec, (list, tuple)):
+        return value in spec
+    if isinstance(spec, Mapping):
+        if isinstance(spec.get("set"), list):
+            return value in spec["set"]
+        bounds = spec.get("range")
+        if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
+            try:
+                return bool(float(bounds[0]) <= float(value) <= float(bounds[1]))
+            except (TypeError, ValueError):
+                return False
+    return True
+
+
 def _unpriced_models_of(config: Mapping[str, Any]) -> list[str]:
     """Models named in ``config`` that have no price (their cost is unknown)."""
     from traigent.core.optimized_function import _extract_config_model_ids
     from traigent.utils.cost_calculator import find_models_missing_price_coverage
 
+    ids = _extract_config_model_ids(config)
     try:
-        return find_models_missing_price_coverage(_extract_config_model_ids(config))
-    except Exception:  # noqa: BLE001 - an unreadable price table means "cannot say"
-        return []
+        return find_models_missing_price_coverage(ids)
+    except Exception:  # noqa: BLE001 - an unreadable price table: nothing is known priced
+        return sorted(str(i) for i in ids)  # fail closed: cost unknown, never "priced"
 
 
 def _candidate_copy(fn: Any) -> Any:
@@ -2038,8 +2151,9 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
 class HeadLoader:
     """Loads the head configuration from a store at call time (cached by generation)."""
 
-    def __init__(self, store_dir: Path | str) -> None:
+    def __init__(self, store_dir: Path | str, environment: str | None = None) -> None:
         self.dir = Path(store_dir)
+        self.environment = environment
         self._stamp: tuple[int, int] | None = None
         self._head: dict[str, Any] | None = None
 
@@ -2050,6 +2164,13 @@ class HeadLoader:
             return None
         stamp = (st.st_mtime_ns, st.st_size)
         if stamp != self._stamp:
+            if self.environment is not None:
+                meta = _read_json(self.dir / "meta.json") or {}
+                if meta.get("environment") != self.environment:
+                    raise TuningError(
+                        E_STORE_ENVIRONMENT_MISMATCH,
+                        "store was created for another environment",
+                    )
             self._head = read_head(self.dir)
             self._stamp = stamp
         return self._head
@@ -2070,6 +2191,7 @@ __all__ = [
     "HeadLoader",
     "StepReport",
     "config_fingerprint",
+    "E_STORE_ENVIRONMENT_MISMATCH",
     "default_store_dir",
     "occurrence_ref",
     "parse_occurrence_ref",

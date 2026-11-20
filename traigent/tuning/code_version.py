@@ -40,24 +40,54 @@ def check_code_version(value: Any, origin: str) -> str:
     return value
 
 
-def source_digest(source: Any) -> str | None:
-    """``src:<sha256>`` of the module source of ``source``, or None if unreadable."""
+_MAX_UNWRAP = 32
+
+
+def _inner_callable(source: Any) -> Any:
+    """The agent callable under any SDK or ``functools`` wrapper layers.
+
+    Follows ``OptimizedFunction.func``, ``functools`` ``__wrapped__`` and bound
+    ``__func__`` until none is left; the innermost callable is the agent.
+    """
     seen: set[int] = set()
     current = source
-    while current is not None and id(current) not in seen:
+    for _ in range(_MAX_UNWRAP):
+        if current is None or id(current) in seen:
+            break
         seen.add(id(current))
-        module = sys.modules.get(getattr(current, "__module__", None) or "")
-        if module is None:
-            module = inspect.getmodule(current)
-        if module is not None:
-            try:
-                text = inspect.getsource(module)
-            except (OSError, TypeError):
-                text = None
-            if text is not None:
-                return "src:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
-        current = getattr(current, "__wrapped__", None)
-    return None
+        nxt = None
+        for attr in ("__wrapped__", "func", "__func__"):
+            candidate = getattr(current, attr, None)
+            if candidate is not None and callable(candidate):
+                nxt = candidate
+                break
+        if nxt is None:
+            break
+        current = nxt
+    return current
+
+
+def source_digest(source: Any) -> str | None:
+    """``src:<sha256>`` of the module source of the AGENT under ``source``.
+
+    Wrapper layers (``@traigent.optimize``, ``@observe``, ``functools.wraps``) are
+    unwrapped first, so the digest follows the agent's own code and never the SDK
+    wrapper's module.  None when the agent's source is unreadable: there is no
+    fallback to an outer layer, because that would bind code that is not the agent.
+    """
+    current = _inner_callable(source)
+    if current is None:
+        return None
+    module = sys.modules.get(getattr(current, "__module__", None) or "")
+    if module is None:
+        module = inspect.getmodule(current)
+    if module is None:
+        return None
+    try:
+        text = inspect.getsource(module)
+    except (OSError, TypeError):
+        return None
+    return "src:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def resolve_code_version(explicit: str | None, source: Any) -> str:
