@@ -39,12 +39,31 @@ DEFAULT_PASS_THRESHOLD = 0.5
 #: ``result.metadata`` key holding the stored counts. Local only; never uploaded.
 EXAMPLE_CONSISTENCY_METADATA_KEY = "example_consistency"
 
+#: ``result.metadata`` keys that stay on the user's machine. Every code path
+#: that copies result metadata to a remote destination (tracking services,
+#: uploaded artifacts) must drop these via :func:`without_local_only_metadata`.
+LOCAL_ONLY_RESULT_METADATA_KEYS: frozenset[str] = frozenset(
+    {EXAMPLE_CONSISTENCY_METADATA_KEY}
+)
+
 #: Fewest known evaluations an example needs to be labelled.
 MIN_KNOWN_EVALUATIONS = 2
 
 PASS = "pass"
 FAIL = "fail"
 UNKNOWN = "unknown"
+
+
+def without_local_only_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return a shallow copy of ``metadata`` minus the local-only keys.
+
+    The input is never mutated, so the result keeps its labels locally.
+    """
+    return {
+        key: value
+        for key, value in (metadata or {}).items()
+        if key not in LOCAL_ONLY_RESULT_METADATA_KEYS
+    }
 
 
 def cell_outcome(cell: Any, threshold: float = DEFAULT_PASS_THRESHOLD) -> str:
