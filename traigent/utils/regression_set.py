@@ -279,8 +279,15 @@ def _validate_row(path: Path, line_no: int, row: Any) -> dict[str, Any]:
     return row
 
 
-def _read_numbered_rows(path: Path) -> list[tuple[int, dict[str, Any]]]:
-    """Parse and structurally validate the file; rows come with line numbers."""
+def _read_numbered_rows(
+    path: Path, *, effective_ids: bool = False
+) -> list[tuple[int, dict[str, Any]]]:
+    """Parse and structurally validate the file; rows come with line numbers.
+
+    Ids must be unique. With ``effective_ids`` they are compared the way
+    ``Dataset`` compares them: an empty id counts as ``example_<position>``,
+    the row's position among the file's rows.
+    """
     try:
         # Bytes, not read_text(): text mode would translate a bare "\r" into a
         # line break, and the file's records are separated by "\n" only.
@@ -308,6 +315,8 @@ def _read_numbered_rows(path: Path) -> list[tuple[int, dict[str, Any]]]:
             raise _bad(path, line_no, "line is not valid JSON") from exc
         row = _validate_row(path, line_no, parsed)
         example_id = row["metadata"]["example_id"]
+        if effective_ids and example_id == "":
+            example_id = f"example_{len(rows)}"
         if example_id in seen:
             raise _bad(path, line_no, "example_id repeats an earlier row")
         seen.add(example_id)
@@ -712,9 +721,11 @@ def load_regression_dataset(
     dataset is built from those validated rows in memory, so a concurrent
     replacement of the file cannot make the returned rows disagree with the
     labels that were selected. Each row goes through the same normalization as
-    ``Dataset.from_jsonl`` (top-level extra fields become metadata). The same
-    duplicate-id rule the file loader applies is enforced by the
-    :class:`Dataset` constructor.
+    ``Dataset.from_jsonl`` (top-level extra fields become metadata), and the
+    duplicate-id rule is applied to every row of the file, in source order,
+    before ``labels`` filters: a file ``from_jsonl`` rejects is rejected here
+    whatever ``labels`` says. A row without an id keeps the ``example_<n>`` id
+    of its position in the whole file even when filtering moves it.
 
     A valid file in which no row carries one of ``labels`` returns an **empty**
     dataset (for example a set that has no ``reliable`` rows yet): that is a
@@ -730,28 +741,38 @@ def load_regression_dataset(
     if isinstance(labels, str):
         raise TypeError("labels must be a sequence of label strings, not one string")
     path = regression_file(directory)
-    numbered = _read_numbered_rows(path)
+    numbered = _read_numbered_rows(path, effective_ids=True)
     stale = _stale_rows(numbered)
     if stale:
         raise StaleDigestError(path, stale)
-    wanted = set(labels)
+    # Every row of the file is normalized by the file loader's own function
+    # and its effective id was checked across the WHOLE file, in source order,
+    # by the read above, before any label filter applies: a clash the file
+    # loader rejects is rejected here even when one of the clashing rows would
+    # have been filtered out.
     source = str(path)
-    examples = []
-    for line_no, row in numbered:
-        if row["metadata"]["regression"]["label"] not in wanted:
-            continue
-        # The file loader's own normalization: top-level extra fields become
-        # metadata, expected-output aliases resolve by its precedence.
+    candidates: list[tuple[int, str, EvaluationExample]] = []
+    for position, (line_no, row) in enumerate(numbered):
         input_data, expected_output, metadata = _coerce_dataset_example_mapping(
             row, source=source, location=f"line {line_no}"
         )
-        examples.append(
-            EvaluationExample(
-                input_data=input_data,
-                expected_output=expected_output,
-                metadata=metadata,
-            )
+        example = EvaluationExample(
+            input_data=input_data, expected_output=expected_output, metadata=metadata
         )
+        candidates.append((position, row["metadata"]["regression"]["label"], example))
+    wanted = set(labels)
+    examples: list[EvaluationExample] = []
+    for position, label, example in candidates:
+        if label not in wanted:
+            continue
+        if position != len(examples):
+            # Filtering moves the example, so a positional fallback id would
+            # change; pin the id the whole file gave it.
+            example.metadata = {
+                **(example.metadata or {}),
+                "example_id": _example_correlation_key(example, position),
+            }
+        examples.append(example)
     return Dataset(
         examples=examples,
         name="regression_set",

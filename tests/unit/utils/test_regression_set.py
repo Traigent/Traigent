@@ -275,6 +275,76 @@ def test_top_level_extra_fields_load_like_the_file_loader(
     assert in_memory.examples[0].metadata["tenant_id"] == "t1"
 
 
+def test_a_filtered_out_row_still_takes_part_in_id_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Row 0 has an empty id (effective ``example_0``); row 1 says ``example_0``."""
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+    path = _write_rows(
+        tmp_path,
+        [_raw_row("", "seen_once", "q0"), _raw_row("example_0", "reliable", "q1")],
+    )
+    with pytest.raises(Exception, match="uplicate example_id"):
+        Dataset.from_jsonl(path)
+    for labels in (("reliable",), ("seen_once",), ("reliable", "seen_once")):
+        with pytest.raises(RegressionSetError, match="repeats"):
+            load_regression_dataset(tmp_path, labels=labels)
+
+
+def test_a_positional_fallback_id_is_the_position_in_the_whole_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+    _write_rows(
+        tmp_path,
+        [_raw_row("x", "seen_once", "q0"), _raw_row("", "reliable", "q1")],
+    )
+    kept = load_regression_dataset(tmp_path, labels=("reliable",))
+    assert [_example_correlation_key(e, i) for i, e in enumerate(kept.examples)] == [
+        "example_1"
+    ]
+
+
+def test_loader_accepts_and_rejects_exactly_like_the_file_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import random
+
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+    rng = random.Random(20261120)
+    labels = ("seen_once", "reliable", "intermittent")
+    ids = ["", "", "example_0", "example_1", "example_2", "a", "b"]
+    accepted = rejected = 0
+    for case in range(300):
+        rows = [
+            _raw_row(
+                rng.choice(ids),
+                rng.choice(labels),
+                f"q{i}",
+                rng.choice([None, {"tenant_id": f"t{i}"}, {"answer": "x"}]),
+            )
+            for i in range(rng.randint(1, 5))
+        ]
+        directory = tmp_path / f"case{case}"
+        path = _write_rows(directory, rows)
+        try:
+            expected: Dataset | None = Dataset.from_jsonl(path)
+        except Exception:
+            expected = None
+        try:
+            actual: Dataset | None = load_regression_dataset(directory, labels=labels)
+        except RegressionSetError:
+            actual = None
+        assert (expected is None) == (actual is None), (case, rows)
+        if expected is None:
+            rejected += 1
+        else:
+            accepted += 1
+            assert actual is not None
+            assert actual.examples == expected.examples, case
+    assert accepted > 20 and rejected > 20  # both branches really ran
+
+
 # ------------------------------------------------------------- concurrency
 
 
