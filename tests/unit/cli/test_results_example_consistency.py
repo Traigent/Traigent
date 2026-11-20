@@ -72,9 +72,66 @@ def test_show_prints_nothing_without_labels(tmp_path) -> None:
     assert "Summary" in output
 
 
-@pytest.mark.parametrize("junk", ["not a dict", 7, {"examples": "bad"}])
-def test_malformed_stored_value_prints_nothing(tmp_path, junk) -> None:
+def _entry(**overrides: object) -> dict:
+    entry = {
+        "label": "all_pass",
+        "attempted": 3,
+        "passes": 3,
+        "fails": 0,
+        "errored": 0,
+        "pass_rate_low": 0.439,
+        "pass_rate_high": 1.0,
+    }
+    entry.update(overrides)
+    return entry
+
+
+def _report(**overrides: object) -> dict:
+    report = {
+        "counts": {},
+        "examples": {"a": _entry()},
+        "reps": 3,
+        "config_hash": "abc",
+    }
+    report.update(overrides)
+    return report
+
+
+_MALFORMED = [
+    pytest.param("not a dict", id="string"),
+    pytest.param(7, id="int"),
+    pytest.param([], id="list"),
+    pytest.param({"examples": "bad"}, id="examples-not-a-mapping"),
+    pytest.param(_report(examples={"a": 5}), id="entry-not-a-mapping"),
+    pytest.param(_report(examples={"a": [1, 2]}), id="entry-is-a-list"),
+    pytest.param(_report(examples={"a": _entry(passes="3")}), id="count-is-a-string"),
+    pytest.param(_report(examples={"a": _entry(fails=1.5)}), id="count-is-a-float"),
+    pytest.param(_report(examples={"a": _entry(passes=True)}), id="count-is-a-bool"),
+    pytest.param(_report(examples={"a": _entry(errored=-1)}), id="count-is-negative"),
+    pytest.param(_report(examples={"a": _entry(attempted=None)}), id="count-missing"),
+    pytest.param(_report(examples={"a": _entry(label="flaky")}), id="unknown-label"),
+    pytest.param(_report(examples={"a": _entry(pass_rate_low=7)}), id="rate-too-big"),
+    pytest.param(_report(reps=True), id="reps-is-a-bool"),
+    pytest.param(_report(reps="3"), id="reps-is-a-string"),
+    pytest.param(_report(reps=-1), id="reps-is-negative"),
+    pytest.param(_report(config_hash=5), id="hash-is-not-a-string"),
+]
+
+
+@pytest.mark.parametrize("junk", _MALFORMED)
+def test_malformed_stored_report_is_a_note_not_a_crash(tmp_path, junk) -> None:
     store = tmp_path / "store"
     PersistenceManager(str(store)).save_result(_result(junk), name="junk")
 
-    assert "Repeat outcomes" not in _show(store, "junk")
+    output = _show(store, "junk")  # exit code 0 is asserted inside
+
+    assert "the stored report is unreadable" in output
+    assert "Summary" in output
+
+
+@pytest.mark.parametrize("junk", _MALFORMED)
+def test_accessor_reads_a_malformed_report_as_no_report(junk) -> None:
+    report = _result(junk).example_consistency()
+
+    assert report["examples"] == {}
+    assert report["reps"] == 0

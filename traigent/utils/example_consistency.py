@@ -261,6 +261,57 @@ def build_consistency_report(
     }
 
 
+def _is_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_rate(value: Any) -> bool:
+    return value is None or (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and 0.0 <= value <= 1.0
+    )
+
+
+def _is_readable_entry(example_id: Any, entry: Any) -> bool:
+    return (
+        isinstance(example_id, str)
+        and isinstance(entry, Mapping)
+        and (entry.get("label") is None or entry.get("label") in CONSISTENCY_LABELS)
+        and all(
+            _is_count(entry.get(key))
+            for key in ("attempted", "passes", "fails", "errored")
+        )
+        and _is_rate(entry.get("pass_rate_low"))
+        and _is_rate(entry.get("pass_rate_high"))
+    )
+
+
+def normalize_stored_report(stored: Any) -> dict[str, Any] | None:
+    """Validate a stored report and return it in canonical shape.
+
+    Returns ``None`` when ``stored`` is not a readable report: not a mapping,
+    entries that are not mappings, labels outside the closed set, counts that
+    are not non-negative integers (a ``bool`` is not an integer here), rates
+    outside ``[0, 1]``. A damaged report is refused whole, never partly read.
+    """
+    if not isinstance(stored, Mapping):
+        return None
+    examples = stored.get("examples")
+    reps = stored.get("reps")
+    config_hash = stored.get("config_hash")
+    if (
+        not isinstance(examples, Mapping)
+        or not isinstance(reps, int)
+        or not _is_count(reps)
+        or not (config_hash is None or isinstance(config_hash, str))
+        or not all(_is_readable_entry(key, entry) for key, entry in examples.items())
+    ):
+        return None
+    return build_consistency_report(examples, reps=reps, config_hash=config_hash)
+
+
 def format_consistency_line(report: Mapping[str, Any], scope: str) -> str | None:
     """The one-line CLI summary, or ``None`` when nothing was reported.
 

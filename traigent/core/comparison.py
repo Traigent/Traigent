@@ -454,14 +454,19 @@ class ComparisonResult:
         example has two evaluations, so ``examples`` is empty.
 
         Raises:
-            IndexError: ``config_index`` is not a config of this comparison.
+            TypeError: ``config_index`` is not an integer (a ``bool`` is not).
+            IndexError: ``config_index`` is negative or not below the number of
+                configs; negative values do not count from the end.
         """
-        if (
-            isinstance(config_index, bool)
-            or not isinstance(config_index, int)
-            or not -len(self.configs) <= config_index < len(self.configs)
-        ):
-            raise IndexError("config_index is outside this comparison's configs.")
+        if isinstance(config_index, bool) or not isinstance(config_index, int):
+            raise TypeError(
+                f"config_index must be an int, got {type(config_index).__name__}."
+            )
+        if not 0 <= config_index < len(self.configs):
+            raise IndexError(
+                f"config_index {config_index} is outside 0..{len(self.configs) - 1} "
+                f"({len(self.configs)} configs compared)."
+            )
         return self.configs[config_index].example_consistency()
 
     @property

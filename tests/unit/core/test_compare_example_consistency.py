@@ -76,11 +76,20 @@ def test_a_single_repeat_labels_nothing() -> None:
     }
 
 
-def test_config_index_out_of_range_raises_index_error() -> None:
+@pytest.mark.parametrize("index", [5, 1, -1, -2])
+def test_config_index_out_of_range_or_negative_raises_index_error(index) -> None:
     comparison = _make().compare([{"mode": "steady"}], repeats=2)
 
-    with pytest.raises(IndexError):
-        comparison.example_consistency(config_index=5)
+    with pytest.raises(IndexError, match="outside 0..0"):
+        comparison.example_consistency(config_index=index)
+
+
+@pytest.mark.parametrize("index", [True, False, 1.0, "0", None])
+def test_config_index_that_is_not_an_int_raises_type_error(index) -> None:
+    comparison = _make().compare([{"mode": "steady"}], repeats=2)
+
+    with pytest.raises(TypeError, match="config_index must be an int"):
+        comparison.example_consistency(config_index=index)
 
 
 def test_integer_and_string_ids_that_print_alike_are_not_merged() -> None:

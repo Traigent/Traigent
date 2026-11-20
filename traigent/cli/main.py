@@ -1395,12 +1395,24 @@ def _format_metric_diff(m1: Any, m2: Any) -> str:
 
 
 def _consistency_summary_line(result: Any) -> str | None:
-    """The per-example consistency summary, or None when no labels were recorded."""
+    """The per-example consistency line, or None when nothing was recorded.
+
+    A stored report that cannot be read yields a one-line note instead of an
+    error: showing a result must never fail on this optional section.
+    """
     accessor = getattr(result, "example_consistency", None)
     if not callable(accessor):
         return None
-    from traigent.utils.example_consistency import format_consistency_line
+    from traigent.utils.example_consistency import (
+        format_consistency_line,
+        normalize_stored_report,
+    )
 
+    stored = getattr(result, "example_consistency_report", None)
+    if stored is None:
+        return None
+    if normalize_stored_report(stored) is None:
+        return "Repeat outcomes: the stored report is unreadable and was skipped"
     report = accessor()
     if not isinstance(report, dict):
         return None

@@ -1406,18 +1406,15 @@ class OptimizationResult:
         whatever it does with the object runs on your machine under your
         control.
         """
-        from traigent.utils.example_consistency import build_consistency_report
-
-        stored = self.example_consistency_report
-        if not isinstance(stored, Mapping):
-            return build_consistency_report(None)
-        examples = stored.get("examples")
-        reps = stored.get("reps")
-        return build_consistency_report(
-            examples if isinstance(examples, Mapping) else None,
-            reps=reps if isinstance(reps, int) else 0,
-            config_hash=stored.get("config_hash"),
+        from traigent.utils.example_consistency import (
+            build_consistency_report,
+            normalize_stored_report,
         )
+
+        # A report that cannot be read (damaged file, hand edit) reads as no
+        # report rather than raising; ``traigent results show`` says so.
+        report = normalize_stored_report(self.example_consistency_report)
+        return report if report is not None else build_consistency_report(None)
 
     @property
     def eval_audit(self) -> EvalAudit | None:
