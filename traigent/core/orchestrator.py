@@ -149,6 +149,14 @@ from traigent.utils.env_config import (
 )
 from traigent.utils.env_config import is_backend_offline as is_backend_offline
 from traigent.utils.env_config import is_mock_llm, skip_provider_validation
+from traigent.utils.example_consistency import (
+    DEFAULT_PASS_THRESHOLD,
+    ExampleIdCollisionError,
+    build_consistency_report,
+    scoring_metric,
+    summarize_example_outcomes,
+    trial_example_outcomes,
+)
 from traigent.utils.example_id import LOCAL_MARKER_KEY
 from traigent.utils.exceptions import (
     ConfigurationError,
@@ -1512,6 +1520,10 @@ class OptimizationOrchestrator:
         self._winner_stability_accounted_cost = 0.0
         self._winner_stability_unmeasured_reruns = 0
         self._winner_stability_recorded_ids: dict[Any, Any] = {}
+        # One entry per attempted rerun; ``None`` is an errored attempt (it
+        # crashed or returned no per-example results).
+        self._winner_stability_example_outcomes: list[dict[str, str] | None] = []
+        self._winner_stability_example_collision = False
         # The backend session id for the active run. Read by the
         # certified-selection report guard to verify the incumbent's trial id
         # was backend-acknowledged before attesting a winner.
@@ -5589,8 +5601,15 @@ class OptimizationOrchestrator:
         primary_objective: str,
         reps: int,
     ) -> list[float]:
-        """Run up to ``reps`` reruns and return the finite primary-objective scores."""
+        """Run up to ``reps`` reruns and return the finite primary-objective scores.
+
+        Each rerun's per-example pass/fail is also kept, in
+        ``self._winner_stability_example_outcomes``: one entry per attempted
+        rerun, ``None`` when it crashed or returned no per-example results.
+        """
         scores: list[float] = []
+        self._winner_stability_example_outcomes = []
+        self._winner_stability_example_collision = False
         for index in range(reps):
             attempt = _WinnerStabilityAttempt(
                 trial_id=f"winner_stability_{self._optimization_id}_{index + 1}"
@@ -5605,11 +5624,23 @@ class OptimizationOrchestrator:
                 dataset=dataset,
                 session_id=session_id,
             )
-            if not proceed:
-                break
             rerun_trial = attempt.trial
+            if not proceed:
+                if attempt.dispatched:
+                    # The rerun started and then failed hard: one errored attempt.
+                    self._winner_stability_example_outcomes.append(None)
+                break
             if rerun_trial is None:
+                self._winner_stability_example_outcomes.append(None)
                 continue
+            try:
+                rerun_outcomes = trial_example_outcomes(rerun_trial)
+            except ExampleIdCollisionError as exc:
+                # The run is not lost: only the per-example view is skipped.
+                logger.warning("Per-example consistency not recorded: %s", exc)
+                self._winner_stability_example_collision = True
+                rerun_outcomes = None
+            self._winner_stability_example_outcomes.append(rerun_outcomes)
             score = (
                 coerce_finite_objective_score(rerun_trial.get_metric(primary_objective))
                 if rerun_trial.is_successful
@@ -5626,6 +5657,28 @@ class OptimizationOrchestrator:
                 continue
             scores.append(float(score))
         return scores
+
+    def _record_example_consistency(self, result: OptimizationResult) -> None:
+        """Store per-example consistency counts for the winner's reruns.
+
+        Kept in the dedicated ``result.example_consistency_report`` attribute,
+        not in ``result.metadata``: it carries example ids and is local-only,
+        and nothing that serializes metadata ever sees it. Nothing is stored
+        unless at least one example has two or more known reruns.
+        """
+        if getattr(self, "_winner_stability_example_collision", False):
+            return
+        per_rerun = getattr(self, "_winner_stability_example_outcomes", None) or []
+        examples = summarize_example_outcomes(per_rerun)
+        if not examples:
+            return
+        result.example_consistency_report = build_consistency_report(
+            examples,
+            reps=len(per_rerun),
+            config_hash=self._get_config_hash(result.best_config),
+            metric=scoring_metric(per_rerun),
+            threshold=DEFAULT_PASS_THRESHOLD,
+        )
 
     def _build_winner_stability_block(
         self, result: OptimizationResult, scores: list[float]
@@ -5705,6 +5758,7 @@ class OptimizationOrchestrator:
                 self._winner_stability_accounted_cost,
                 getattr(self, "_winner_stability_unmeasured_reruns", 0),
             )
+            self._record_example_consistency(result)
 
             if not scores:
                 logger.warning(

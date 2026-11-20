@@ -1394,6 +1394,35 @@ def _format_metric_diff(m1: Any, m2: Any) -> str:
     return "-"
 
 
+def _consistency_summary_line(result: Any) -> str | None:
+    """The per-example consistency line, or None when nothing was recorded.
+
+    A stored report that cannot be read yields a one-line note instead of an
+    error: showing a result must never fail on this optional section.
+    """
+    accessor = getattr(result, "example_consistency", None)
+    if not callable(accessor):
+        return None
+    from traigent.utils.example_consistency import (
+        format_consistency_line,
+        normalize_stored_report,
+    )
+
+    unreadable = "Repeat outcomes: the stored report is unreadable and was skipped"
+    stored = getattr(result, "example_consistency_report", None)
+    if stored is None:
+        return None
+    try:
+        if normalize_stored_report(stored) is None:
+            return unreadable
+        report = accessor()
+        if not isinstance(report, dict):
+            return None
+        return format_consistency_line(report, "winner")
+    except Exception:  # noqa: BLE001 - this optional line never changes the exit code
+        return unreadable
+
+
 def _print_result_summary(result: Any) -> None:
     """Print the summary section of a result."""
     console.print("[bold]Summary[/bold]")
@@ -1417,6 +1446,9 @@ def _print_result_summary(result: Any) -> None:
         )
 
     console.print(summary_table)
+    consistency_line = _consistency_summary_line(result)
+    if consistency_line is not None:
+        console.print(consistency_line, markup=False)
     if preset_selection is not None:
         console.print(f"[dim]{_ADVISORY_SELECTION_NOTICE}[/dim]")
 

@@ -1051,6 +1051,8 @@ class OptimizationResult:
         algorithm: Name of the optimization algorithm used.
         timestamp: When the optimization completed.
         metadata: Additional metadata from the optimization run.
+        example_consistency_report: Per-example repeat outcomes of the winner
+            (read it through ``example_consistency()``); local only.
         preset_selection: Advisory preset-selection record restored from a result
             persisted by an older SDK build. No code path in this build can
             populate this on a live run; it exists for backward-compatible
@@ -1269,6 +1271,13 @@ class OptimizationResult:
     snapshot_ref: Any = field(default=None, repr=False)
     client_evidence_path: str | None = field(default=None, repr=False)
 
+    # Per-example consistency counts for the winner's reruns (see
+    # ``example_consistency()``). A dedicated attribute rather than a
+    # ``metadata`` key on purpose: it carries example ids, and code that
+    # serializes ``metadata`` (trackers, exporters, MCP responses) never walks
+    # it. Saved and loaded explicitly by the local persistence layer.
+    example_consistency_report: dict[str, Any] | None = field(default=None, repr=False)
+
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )
@@ -1368,6 +1377,50 @@ class OptimizationResult:
             best_config=self.best_config,
             winning_trial_ids=winning_trial_ids,
         )
+
+    def example_consistency(self) -> dict[str, Any]:
+        """Per-example consistency labels from the winner's reruns.
+
+        Recorded when ``winner_stability_reps`` is at least 2: the winning
+        configuration is re-evaluated on the same examples and each example is
+        labelled ``all_pass``, ``all_fail`` or ``mixed`` from its per-rerun
+        outcomes (the ``failing_examples`` score rule; an error or unscorable
+        score is errored and never a pass). The labels describe what was
+        observed, not a guarantee. Only the winner and only the examples it was
+        rerun on are reported.
+
+        Returns:
+            ``{"counts": {label: n, "errored": n}, "examples": {id: {"label",
+            "attempted", "passes", "fails", "errored", "pass_rate_low",
+            "pass_rate_high"}}, "reps": int, "config_hash": str | None,
+            "metric": str | None, "threshold": float | None}``.
+            ``label`` is ``None`` for an example whose errored attempts were at
+            least half of its attempts. The pass-rate bounds are a 95% Wilson
+            interval over the scored attempts. ``metric`` and ``threshold``
+            say what decided pass or fail: a cell passes when its per-example
+            ``score`` (else ``accuracy``) is at least ``threshold`` (0.5). That
+            reads correctly only for a higher-is-better score in ``[0, 1]``; for
+            a lower-is-better or differently scaled metric the labels are not
+            meaningful.
+            ``examples`` is empty (counts all zero) when no labels were
+            recorded.
+
+        The report lives in a dedicated attribute that the SDK's uploads,
+        trackers and exports never read, and it is saved only to the local
+        result store. It is not a privacy boundary against your own code: a
+        completion callback receives this whole result object by design, and
+        whatever it does with the object runs on your machine under your
+        control.
+        """
+        from traigent.utils.example_consistency import (
+            build_consistency_report,
+            normalize_stored_report,
+        )
+
+        # A report that cannot be read (damaged file, hand edit) reads as no
+        # report rather than raising; ``traigent results show`` says so.
+        report = normalize_stored_report(self.example_consistency_report)
+        return report if report is not None else build_consistency_report(None)
 
     @property
     def eval_audit(self) -> EvalAudit | None:
