@@ -52,27 +52,18 @@ def test_a_scope_that_ends_during_the_final_history_read_does_not_start_the_opti
     opt = FakeOptimizer()
     c = controller(tmp_path, opt, now=at(0))
     c.approve_optimization(e_ref("E1"), "approver-1", at(40))
-    armed = [False]
-    real_write = controller_module._write_json
-    real_lines = Controller._lines
+    real_last = Controller._last_persisted_instant
 
-    def write(path: Path, value: Any) -> None:
-        real_write(path, value)
-        if value.get("state") == "started":
-            armed[0] = True  # from here on every history read is slow
+    def slow_last(self: Controller) -> int:
+        last = real_last(self)  # the final history read of the preparation
+        clock[0] = _scope_end() + timedelta(seconds=1)
+        return last
 
-    def slow_lines(self: Controller) -> Any:
-        lines = real_lines(self)
-        if armed[0]:
-            clock[0] = _scope_end() + timedelta(seconds=1)
-        return lines
-
-    monkeypatch.setattr(controller_module, "_write_json", write)
-    monkeypatch.setattr(Controller, "_lines", slow_lines)
+    monkeypatch.setattr(Controller, "_last_persisted_instant", slow_last)
     report = c.step()
     assert opt.calls == []
     assert report.refused and report.refused[0].endswith(":scope_expired")
-    assert _finished(c) == ["cancelled"]
+    assert _finished(c) == []
 
 
 def test_a_release_whose_head_staging_crosses_expiry_is_not_installed(
@@ -122,7 +113,8 @@ def test_an_authenticator_that_revokes_before_the_spend_stops_the_optimizer(
         controller_module._write_json = real_write
     assert opt.calls == []
     assert report.refused and report.refused[0].endswith(":approver_not_authorized")
-    assert _finished(c) == ["cancelled"]
+    assert _finished(c) == []  # nothing started: the attempt stays open
+    assert not list((tmp_path / "store" / "attempts").glob("*.json"))
 
 
 def test_an_authenticator_that_revokes_before_the_head_moves_stops_the_release(
@@ -150,7 +142,7 @@ def _crash_after_approval(c: Controller, monkeypatch: pytest.MonkeyPatch) -> Non
     def crash(self: Controller, *args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("simulated crash after the approval was journaled")
 
-    monkeypatch.setattr(Controller, "_effect_lapse", crash)
+    monkeypatch.setattr(Controller, "_scope_deadline", crash)
     with pytest.raises(RuntimeError):
         c.step(at(10))
     monkeypatch.undo()

@@ -134,8 +134,10 @@ def test_a_retry_after_an_abandoned_commit_is_recovered_on_its_own(
     ]
     assert [e["fact"] for e in commits] == [
         "commit_intent",
+        "commit_effect",
         "commit_abandoned",
         "commit_intent",
+        "commit_effect",
         "commit_done",
     ]
     assert len({e["commit"] for e in commits}) == 2

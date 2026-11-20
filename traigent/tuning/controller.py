@@ -36,6 +36,17 @@ intent done.  A refused write never reaches the history (so the relation and
 start: an installed head gets its acceptance recorded at the original instant; a head
 that was never installed is abandoned (an expired acceptance is never installed late).
 
+**One gated step for every effect.**  Spending (invoking the optimizer) and releasing
+(installing a head) both go through ``Controller._gated_effect``.  The operation builds
+its clock at entry (a fixed instant is refused in production).  Under the store lock it
+prepares everything: history replay, scope verdict and deadline, argument copies, the
+staged head file, the last persisted instant, and any lock the effect itself needs.
+Then, with no further replay: the platform authenticator is called afresh, the serving
+code version is rechecked (release), the clock is sampled ONCE (a persisted instant
+ahead of it refuses), deadlines are checked against that sample, and that sample is the
+instant recorded for the effect (the start fact, the head move, the head record, and
+crash recovery) just before the effect itself.  Every failure denies.
+
 Nothing here decides a promotion: every candidate is measured here, on the customer's
 holdout against the incumbent; supplied verdicts are ignored.  No network is used.
 """
@@ -60,7 +71,7 @@ from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from traigent.tuning.authority import LOCAL_TRUSTED, ApproverAuthority
 from traigent.tuning.errors import (
@@ -97,6 +108,9 @@ _REF = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _SUPPORTED_RULE_KEYS = frozenset(
     {"id", "trigger", "do", "approval", "deploy", "admit", "protects"}
 )
+# The actions this release runs: "optimize" invokes the optimizer for an approved
+# attempt; "notify" only derives a TVL fact (the controller itself does nothing).
+_SUPPORTED_ACTIONS = frozenset({"optimize", "notify"})
 _LEGACY = {"Promote", "Reject", "NoDecision"}
 _COMPLETIONS = {"normal", "error", "cancelled", "cost_limit"}
 OptimizeFn = Callable[[dict[str, Any]], Any]
@@ -462,6 +476,25 @@ class AcceptanceOutcome:
         return self.result in {"written", "reject_recorded"}
 
 
+_T = TypeVar("_T")
+
+
+class _GateRefused(Exception):
+    """The final gate of an effect refused: nothing was spent or installed."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class _GateFailed(Exception):
+    """Something in the final gate raised (not a refusal): the effect is not run."""
+
+    def __init__(self, original: Exception) -> None:
+        super().__init__(str(original))
+        self.original = original
+
+
 class Controller:
     """Executes the TVL relation locally over a durable store.
 
@@ -536,6 +569,11 @@ class Controller:
                         E_UNSUPPORTED_IN_RELEASE,
                         "rule condition(s) not supported in this release: "
                         + ", ".join(str(k) for k in unsupported),
+                    )
+                if rule.get("do") not in _SUPPORTED_ACTIONS:
+                    raise TuningError(
+                        E_UNSUPPORTED_IN_RELEASE,
+                        "only the optimize and notify actions are supported in this release",
                     )
                 if not _supported_trigger(trigger):
                     raise TuningError(
@@ -646,17 +684,6 @@ class Controller:
         last = lines[-1]["instant"] if lines else 0
         return max(seconds, last, 0)
 
-    def _effect_instant(self, clock: Callable[[], datetime]) -> int:
-        """The instant of an effect: every history read first, the clock sampled LAST.
-
-        Same value as ``_instant(clock())`` but nothing slow runs after the clock is
-        read, so the reading is as fresh as the effect that follows it.
-        """
-        lines = self._lines()
-        last = lines[-1]["instant"] if lines else 0
-        seconds = int((_utc(clock()) - self.origin).total_seconds())
-        return max(seconds, last, 0)
-
     def _append(
         self,
         category: str,
@@ -682,6 +709,81 @@ class Controller:
                 E_INVALID_RECORD, f"{category} rejected by the TVL relation"
             ) from exc
         _append_line(self._p("history.jsonl"), line)
+
+    def _last_persisted_instant(self) -> int:
+        """The last instant the history journal holds (0 when it is empty)."""
+        lines = self._lines()
+        return int(lines[-1]["instant"]) if lines else 0
+
+    def _gated_effect(
+        self,
+        *,
+        clock: Callable[[], datetime],
+        last_persisted: int,
+        authenticate: Callable[[], bool],
+        recheck: Callable[[], str | None],
+        lapse_at: Callable[[int], str | None],
+        record: Callable[[int], None],
+        effect: Callable[[Callable[[], int]], _T],
+    ) -> tuple[_T | None, str | None, int | None]:
+        """The ONE path every effect takes: spend (invoke the optimizer) and release
+        (install a head).
+
+        The caller has already done ALL preparation under the store lock (history
+        replay, scope verdict, deadline, argument copies, staged files, any lock the
+        effect itself needs) and captured ``last_persisted``.  What runs here, in this
+        order, and nothing slow after it:
+
+        1. the platform authenticator, called afresh (never a cached answer);
+        2. ``recheck``: state that must be re-read after the authenticator returned
+           (the serving agent code version for a release);
+        3. the clock, sampled ONCE: a persisted instant ahead of it refuses;
+        4. ``lapse_at(instant)``: deadlines and scope expiry against that sample;
+        5. ``record(instant)``: the one effect instant goes into the journal;
+        6. the effect itself.
+
+        ``effect`` receives ``final_check``, which runs steps 1-5 and returns the
+        instant; the effect calls it immediately before it acts (an adapter that waits
+        for a lock calls it after the wait).  Every failure denies.  Returns
+        ``(value, refusal, instant)``.
+        """
+        gated: list[int] = []
+
+        def final_check() -> int:
+            if gated:
+                raise TuningError(E_INVALID_RECORD, "the final check runs once")
+            try:
+                authenticated = bool(authenticate())
+            except Exception:  # noqa: BLE001 - an authenticator that fails never authenticates
+                authenticated = False
+            if not authenticated:
+                raise _GateRefused("approver_not_authorized")
+            try:
+                reason = recheck()
+                if reason is not None:
+                    raise _GateRefused(reason)
+                sample = _utc(clock())
+                instant = int((sample - self.origin).total_seconds())
+                if instant < last_persisted:
+                    raise _GateRefused("persisted_time_ahead")
+                reason = lapse_at(instant)
+                if reason is not None:
+                    raise _GateRefused(reason)
+                record(instant)
+            except _GateRefused:
+                raise
+            except Exception as exc:
+                raise _GateFailed(exc) from exc
+            gated.append(instant)
+            return instant
+
+        try:
+            value = effect(final_check)
+        except _GateRefused as refusal:
+            return None, refusal.reason, None
+        except _GateFailed as failed:
+            raise failed.original from None
+        return value, None, gated[0] if gated else None
 
     # -- authority ------------------------------------------------------------------
     def require_authority(self) -> ApproverAuthority:
@@ -743,10 +845,11 @@ class Controller:
         that has not ended yet is refused by the relation, never moved forward.
         """
         self.state.require_validated()
+        clock = _effect_clock(now)  # operation entry: refused when fixed in production
         record = copy.deepcopy(dict(report))
         with self._locked():
             self._recover_commits()  # history must hold a crashed commit first
-            instant = self._instant(_utc(now))
+            instant = self._instant(clock())
             self._append("windows", record, instant)
         return instant
 
@@ -823,10 +926,11 @@ class Controller:
         """
         self.state.require_validated()
         report = StepReport()
+        # Operation entry: a live clock is read afresh on every read; a fixed ``now``
+        # (simulation only; production refuses it) starts advancing HERE, so a wait
+        # for the store lock moves the first scheduling read.
+        clock = _effect_clock(now)
         with self._locked():
-            # the clock is read after the lock: the time of the effect.  A fixed
-            # ``now`` (simulation only; production refuses it) still advances.
-            clock = _effect_clock(now)
             moment = clock()
             report.head_written = self._recover_commits()
             if self._has_schedule():
@@ -935,23 +1039,6 @@ class Controller:
         return approval is not None and self._on_list_now(
             approval.get("approver"), _approve_context(ref)
         )
-
-    def _authorization_lapse(
-        self, ref: str, *, authenticate: bool = True
-    ) -> str | None:
-        """Why the occurrence is no longer authorized; None when it still is.
-
-        Checked immediately before the optimizer runs, on every path (recovery
-        included): a recorded approval never outlives its approver's authority.
-        """
-        approval = _read_json(self._p("approvals.json"), {}).get(ref)
-        if approval is None:
-            return "approval_missing"
-        if authenticate and not self._on_list_now(
-            approval.get("approver"), _approve_context(ref)
-        ):
-            return "approver_not_authorized"
-        return None
 
     def _scope_deadline(
         self, response: str, rule_id: str, scope_kind: str, scope: Any
@@ -1086,135 +1173,151 @@ class Controller:
                 record = self._finished_record(attempt, "cancelled", [])
                 _write_json(marker_path, {**marker, "finished_record": record})
                 return True
-            lapse = self._authorization_lapse(ref)
-            if lapse is not None:
-                self._record_controller_fact(
-                    {"fact": "optimize_refused", "attempt": attempt, "reason": lapse}
-                )
-                report.refused.append(f"{attempt}:{lapse}")
-                continue
-            if self.optimize_fn is None:
-                raise TuningError(E_NO_OPTIMIZER, f"{attempt} needs an optimize_fn")
-            space = self._search_space(domains.get(attempt))
-            admitted = self._admitted_values(domains.get(attempt))
-            # Authentication and the one history replay are done here; they are
-            # the last of either.  What follows reads only the clock and small
-            # files: the scope verdict replayed once, the scope's own deadline
-            # carried out of that replay, and the approval, each rechecked against
-            # a fresh clock (``_effect_lapse``) before the journal and again as the
-            # very last step before the optimizer is invoked.
-            in_scope = self._scope_requires_intervention(occ, self._instant(clock()))
-            deadline = self._scope_deadline(
-                occ["response"], occ["rule"], occ["scope_kind"], occ["scope"]
-            )
-            lapse = self._effect_lapse(ref, in_scope, deadline, clock)
-            if lapse is not None:
-                self._record_controller_fact(
-                    {"fact": "optimize_refused", "attempt": attempt, "reason": lapse}
-                )
-                report.refused.append(f"{attempt}:{lapse}")
-                continue
-            # Journal first (the marker), then the start fact: a crash between the
-            # two leaves a marker that abandon_interrupted finds and cancels.
-            _write_json(
-                marker_path,
-                {"attempt": attempt, "occurrence": ref, "state": "started"},
-            )
-            if not self._start_recorded(attempt):
+            if self._spend(
+                report, attempt, occ, ref, domains.get(attempt), marker_path, clock
+            ):
+                return True
+            continue
+        return False
+
+    def _spend(
+        self,
+        report: StepReport,
+        attempt: str,
+        occ: Mapping[str, Any],
+        ref: str,
+        domain_fact: Mapping[str, Any] | None,
+        marker_path: Path,
+        clock: Callable[[], datetime],
+    ) -> bool:
+        """Invoke the optimizer for an approved attempt through the gated effect.
+
+        True when the attempt ran and its outcome was recorded; False when the
+        spend was refused (a controller fact says why and the attempt stays open).
+        """
+        if self.optimize_fn is None:
+            raise TuningError(E_NO_OPTIMIZER, f"{attempt} needs an optimize_fn")
+        # -- preparation: every read and write the spend needs, under the store
+        # lock and BEFORE the final gate ------------------------------------
+        approval = _read_json(self._p("approvals.json"), {}).get(ref)
+        if approval is None:
+            self._refuse_spend(report, attempt, "approval_missing")
+            return False
+        approver = approval.get("approver")
+        space = self._search_space(domain_fact)
+        admitted = self._admitted_values(domain_fact)
+        in_scope = self._scope_requires_intervention(occ, self._instant(clock()))
+        deadline = self._scope_deadline(
+            occ["response"], occ["rule"], occ["scope_kind"], occ["scope"]
+        )
+        if not in_scope:
+            self._refuse_spend(report, attempt, "scope_expired")
+            return False
+        accepts_dir = bool(getattr(self.optimize_fn, "accepts_candidate_dir", False))
+        call_space = copy.deepcopy(space)
+        candidate_dir = self._p("candidates") / attempt
+        start_recorded = self._start_recorded(attempt)
+        last_persisted = self._last_persisted_instant()
+        # Journal first (the marker), then the start fact at the effect instant:
+        # a crash between the two leaves a marker that abandon_interrupted finds.
+        _write_json(
+            marker_path,
+            {"attempt": attempt, "occurrence": ref, "state": "started"},
+        )
+        optimize_fn = self.optimize_fn
+
+        def lapse_at(instant: int, deadline: int | None = deadline) -> str | None:
+            if deadline is not None and instant >= deadline:
+                return "scope_expired"
+            return None
+
+        def record_start(instant: int, attempt: str = attempt) -> None:
+            if not start_recorded:
                 _append_line(
                     self._p("history.jsonl"),
                     {
-                        "instant": self._instant(clock()),
+                        "instant": instant,
                         "category": "optimizations",
                         "record": {"attempt": attempt, "fact": "started"},
                     },
                 )
-            report.started.append(attempt)
-            # Argument preparation is finished before the final check: only the check
-            # itself separates the clock reading from the optimizer invocation.
-            accepts_dir = bool(
-                getattr(self.optimize_fn, "accepts_candidate_dir", False)
-            )
-            call_space = copy.deepcopy(space)
-            candidate_dir = self._p("candidates") / attempt
-            lapse = self._effect_lapse(ref, in_scope, deadline, clock)
-            if lapse is not None:
-                # The journaled start lost its authorization while it was being
-                # written: nothing runs; the start finishes as cancelled.
-                self._record_controller_fact(
-                    {"fact": "optimize_refused", "attempt": attempt, "reason": lapse}
-                )
-                report.refused.append(f"{attempt}:{lapse}")
-                record = self._finished_record(attempt, "cancelled", [])
-                _write_json(
-                    marker_path,
-                    {
-                        "attempt": attempt,
-                        "occurrence": ref,
-                        "state": "finished",
-                        "finished_record": record,
-                    },
-                )
-                return True
+
+        def run(
+            final_check: Callable[[], int],
+            attempt: str = attempt,
+            call_space: dict[str, Any] = call_space,
+        ) -> tuple[str, list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+            ran: list[int] = []
+
+            def checked() -> int:
+                ran.append(1)
+                return final_check()
+
             try:
                 if accepts_dir:
-                    isolated = cast(Callable[..., Any], self.optimize_fn)
+                    # the adapter waits for its own lock first and calls the
+                    # final check immediately before the optimizer starts
+                    isolated = cast(Callable[..., Any], optimize_fn)
                     result = isolated(
                         call_space,
                         candidate_dir=candidate_dir,
                         admitted_models=admitted,
+                        final_check=checked,
                     )
+                    if not ran:
+                        raise TuningError(
+                            E_NO_CANDIDATE_RUN, "the optimizer skipped the check"
+                        )
                 else:
-                    result = self.optimize_fn(call_space)
-                completion, candidates, configs, gates = self._map_result(
-                    attempt, result
-                )
+                    final_check()
+                    result = optimize_fn(call_space)
+                return self._map_result(attempt, result)
+            except (_GateRefused, _GateFailed):
+                raise
             except Exception:  # noqa: BLE001 - a failed run is recorded, content never echoed
-                completion, candidates, configs, gates = "error", [], {}, {}
-            record = self._finished_record(attempt, completion, candidates)
-            # Persist the outcome BEFORE recording it: a crash in between must
-            # never re-run a finished optimization.
-            _write_json(
-                marker_path,
-                {
-                    "attempt": attempt,
-                    "occurrence": ref,
-                    "state": "finished",
-                    "finished_record": record,
-                    "configs": configs,
-                    "gates": gates,
-                },
-            )
-            self._append("optimizations", record, self._instant(clock()))
-            report.finished.append(attempt)
-            return True
-        return False
+                return "error", [], {}, {}
 
-    def _effect_lapse(
-        self,
-        ref: str,
-        in_scope: bool,
-        deadline: int | None,
-        clock: Callable[[], datetime],
-    ) -> str | None:
-        """Why the occurrence may not be spent on at THIS instant; None when it may.
+        outcome, refusal, _instant_used = self._gated_effect(
+            clock=clock,
+            last_persisted=last_persisted,
+            authenticate=lambda: self._on_list_now(approver, _approve_context(ref)),
+            recheck=lambda: None,
+            lapse_at=lapse_at,
+            record=record_start,
+            effect=run,
+        )
+        if refusal is not None or outcome is None:
+            # nothing started: the marker goes, the attempt stays open
+            with contextlib.suppress(FileNotFoundError):
+                marker_path.unlink()
+            self._refuse_spend(report, attempt, refusal or "gate_refused")
+            return False
+        completion, candidates, configs, gates = outcome
+        report.started.append(attempt)
+        record = self._finished_record(attempt, completion, candidates)
+        # Persist the outcome BEFORE recording it: a crash in between must
+        # never re-run a finished optimization.
+        _write_json(
+            marker_path,
+            {
+                "attempt": attempt,
+                "occurrence": ref,
+                "state": "finished",
+                "finished_record": record,
+                "configs": configs,
+                "gates": gates,
+            },
+        )
+        self._append("optimizations", record, self._instant(clock()))
+        report.finished.append(attempt)
+        return True
 
-        No history replay.  The scope must have counted at the last replay, the
-        approval must still be on the authority's list AND still authenticated (the
-        platform authenticator is called again here, so a revocation since the
-        approval is seen), and only then is the clock sampled for the scope's own
-        deadline: the reading is the last thing before the caller acts on the answer.
-        """
-        if not in_scope:
-            return "scope_expired"
-        approval = _read_json(self._p("approvals.json"), {}).get(ref)
-        if approval is None:
-            return "approval_missing"
-        if not self._on_list_now(approval.get("approver"), _approve_context(ref)):
-            return "approver_not_authorized"
-        if deadline is not None and self._effect_instant(clock) >= deadline:
-            return "scope_expired"
-        return None
+    def _refuse_spend(self, report: StepReport, attempt: str, reason: str) -> None:
+        """Journal a refused spend (a closed controller fact) and report it."""
+        self._record_controller_fact(
+            {"fact": "optimize_refused", "attempt": attempt, "reason": reason}
+        )
+        report.refused.append(f"{attempt}:{reason}")
 
     @staticmethod
     def _finished_record(
@@ -1613,15 +1716,14 @@ class Controller:
         content is ``E_ACCEPTANCE_CONFLICT``.
         """
         self.state.require_validated()
+        # Operation entry: the clock is built before the store lock is awaited, so a
+        # wait behind another writer is part of the time the effect is judged at.
         authority = self.require_authority()
+        clock = _effect_clock(now)
         doc = copy.deepcopy(dict(record))
         approver = doc.get("approver_ref")
         ident = doc.get("acceptance_id")
         with self._locked():
-            # The effect time is read after the store lock is held (and again at the
-            # commit): an acceptance that expired while this call waited behind
-            # another writer is judged at its real effect time.
-            clock = _effect_clock(now)
             self._recover_commits()
             prior = self._acceptance_lines()
             recorded = [ln["record"]["record"] for ln in prior]
@@ -1694,13 +1796,7 @@ class Controller:
                     generation=verdict.get("generation"),
                 )
             return self._commit_acceptance(
-                doc,
-                line_record,
-                meta,
-                instant,
-                str(ident),
-                decide,
-                lambda: self._effect_instant(clock),
+                doc, line_record, meta, instant, str(ident), clock
             )
 
     def _recorded_outcome(self, position: int, ident: str) -> AcceptanceOutcome:
@@ -1836,44 +1932,29 @@ class Controller:
         meta: Mapping[str, Any],
         instant: int,
         ident: str,
-        decide: Callable[[], tuple[dict[str, Any], int, dict[str, Any]]] | None = None,
-        fresh_instant: Callable[[], int] | None = None,
+        clock: Callable[[], datetime],
     ) -> AcceptanceOutcome:
         """Move the head and consume the acceptance as ONE commit (store lock held).
 
-        Order: refusal checks, journal intent, install the head, record the
-        acceptance, journal done.  A refusal records nothing in the history (the
-        relation stays at the serving generation) and is journalled; a crash is
-        repaired by :meth:`_recover_commits`.
+        Preparation (replay, non-time refusals, staged head file, journal intent,
+        last persisted instant), then the one gated effect: authenticate, recheck the
+        serving code version, sample the clock once, check deadlines against that
+        sample, journal it as THE effect instant, rename the head, record the
+        acceptance at that instant, journal done.  A refusal records nothing in the
+        history (the relation stays at the serving generation) and is journalled; a
+        crash is repaired by :meth:`_recover_commits` at the journalled instant.
         """
         current = read_head(self.dir)
         if current is None:
             raise TuningError(E_STORE_CORRUPT, "head.json is missing")
-        # Order at the commit: authenticate (a platform call) FIRST, then replay the
-        # history, and only then read the clock, the scope verdict and the serving
-        # code version, so nothing sampled earlier can be stale at the head write.
         prepared = self._prepare_physical(doc)
-        approver_ok = self._on_list_now(doc.get("approver_ref"), doc)
-        if decide is not None and fresh_instant is not None:
-            for _ in range(3):
-                fresh_record, fresh_instant_used, fresh_verdict = decide()
-                if fresh_instant() == fresh_instant_used:
-                    break
-            if fresh_verdict["result"] != "written":
-                self._append("acceptances", fresh_record, fresh_instant_used, meta)
-                return AcceptanceOutcome(
-                    acceptance_id=ident,
-                    result=str(fresh_verdict["result"]),
-                    reason=fresh_verdict.get("reason"),
-                    generation=fresh_verdict.get("generation"),
-                )
-            line_record, instant = fresh_record, fresh_instant_used
-            # Replay may have crossed second boundaries: the deadlines (acceptance
-            # expiry) are checked at a clock read now, after all replay is done.
-            instant = max(instant, fresh_instant())
+        try:
+            serving: str | None = self.code_version()
+        except TuningError:
+            serving = None
         generation = int(current["generation"]) + 1
         refusal = self._physical_refusal(
-            doc, instant, current, approver_ok=approver_ok, prepared=prepared
+            doc, instant, current, serving=serving, approver_ok=True, prepared=prepared
         )
         if refusal is not None:
             self._record_controller_fact(
@@ -1908,19 +1989,48 @@ class Controller:
                 "meta": dict(meta),
             },
         )
-        # Everything slow happens before the clock is read: the platform authority is
-        # asked again (a revocation since the first check is seen) and the new head
-        # file is staged and fsynced.  Then the deadlines are checked against a clock
-        # sampled now, and the rename follows with nothing in between.
         staged = _stage_json(self._p("head.json"), new_head)
-        approver_still_ok = self._on_list_now(doc.get("approver_ref"), doc)
-        late: str | None
-        if not approver_still_ok:
-            late = "approver_not_authorized"
-        else:
-            late = self._deadline_lapse(
-                doc, fresh_instant() if fresh_instant is not None else instant
+        last_persisted = self._last_persisted_instant()
+
+        def serving_matches() -> str | None:
+            try:
+                now_serving = self.code_version()
+            except TuningError:
+                return "code_version_mismatch"
+            if doc.get("agent_code_version") != now_serving:
+                return "code_version_mismatch"
+            return None
+
+        def journal_instant(effect_instant: int) -> None:
+            _append_line(
+                self._p("commits.jsonl"),
+                {"fact": "commit_effect", "commit": commit, "instant": effect_instant},
             )
+
+        def install(final_check: Callable[[], int]) -> int:
+            effect_instant = final_check()
+            self._install_head(new_head, staged, effect_instant)
+            self._append("acceptances", dict(line_record), effect_instant, meta)
+            _append_line(
+                self._p("commits.jsonl"),
+                {
+                    "fact": "commit_done",
+                    "commit": commit,
+                    "acceptance": ident,
+                    "generation": generation,
+                },
+            )
+            return effect_instant
+
+        _, late, _used = self._gated_effect(
+            clock=clock,
+            last_persisted=last_persisted,
+            authenticate=lambda: self._on_list_now(doc.get("approver_ref"), doc),
+            recheck=serving_matches,
+            lapse_at=lambda at: self._deadline_lapse(doc, at),
+            record=journal_instant,
+            effect=install,
+        )
         if late is not None:
             _discard_staged(staged)
             _append_line(
@@ -1936,31 +2046,29 @@ class Controller:
                 }
             )
             return AcceptanceOutcome(ident, "refused", late)
-        self._install_head(new_head, staged)
-        self._append("acceptances", dict(line_record), instant, meta)
-        _append_line(
-            self._p("commits.jsonl"),
-            {
-                "fact": "commit_done",
-                "commit": commit,
-                "acceptance": ident,
-                "generation": generation,
-            },
-        )
         return AcceptanceOutcome(ident, "written", None, generation)
 
-    def _install_head(self, head: Mapping[str, Any], staged: str | None = None) -> None:
+    def _install_head(
+        self,
+        head: Mapping[str, Any],
+        staged: str | None = None,
+        instant: int | None = None,
+    ) -> None:
         """Move ``head.json`` (atomic), then make sure ``heads.jsonl`` names it.
 
         ``staged`` is a temp file already written and fsynced for exactly this head:
-        only the rename remains.  Without it the head is written here.
+        only the rename remains.  Without it the head is written here.  ``instant`` is
+        the effect instant: it rides on the ``heads.jsonl`` record of this head.
         """
         if staged is None:
             staged = _stage_json(self._p("head.json"), dict(head))
         _publish_staged(staged, self._p("head.json"))
         known = {h["generation"] for h in _read_lines(self._p("heads.jsonl"))}
         if head["generation"] not in known:
-            _append_line(self._p("heads.jsonl"), dict(head))
+            entry = dict(head)
+            if instant is not None:
+                entry["instant"] = instant
+            _append_line(self._p("heads.jsonl"), entry)
 
     def _record_recovered_acceptance(self, intent: Mapping[str, Any]) -> None:
         """Put a crashed commit's acceptance into history at its ORIGINAL instant.
@@ -2040,10 +2148,19 @@ class Controller:
             for e in entries
             if e.get("fact") in ("commit_done", "commit_abandoned")
         }
+        # the instant the effect was sampled at (journaled before the rename): the
+        # one a recovered head move is recorded at, never the earlier intent instant
+        effects = {
+            key(e): int(e["instant"])
+            for e in entries
+            if e.get("fact") == "commit_effect"
+        }
         completed: int | None = None
         for intent in entries:
             if intent.get("fact") != "commit_intent" or key(intent) in finished:
                 continue
+            if key(intent) in effects:
+                intent = {**intent, "instant": effects[key(intent)]}
             ident = str(intent["acceptance"])
             commit = intent.get("commit")
             head = read_head(self.dir)
@@ -2053,7 +2170,8 @@ class Controller:
                 int(head["generation"]) == intent["to_generation"]
                 and head["fingerprint"] == intent["fingerprint"]
             ):
-                self._install_head(head)  # heads.jsonl may be missing its line
+                # heads.jsonl may be missing its line
+                self._install_head(head, None, int(intent["instant"]))
                 recorded = any(
                     ln["record"]["record"].get("acceptance_id") == ident
                     for ln in self._acceptance_lines()
@@ -2342,6 +2460,7 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
         *,
         candidate_dir: Path | None = None,
         admitted_models: Sequence[str] = (),
+        final_check: Callable[[], Any] | None = None,
     ) -> Any:
         root = (
             Path(candidate_dir)
@@ -2367,6 +2486,10 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
         # with its cost unknown; every other unpriced model still fails the preflight
         clone._unpriced_models_allowed = frozenset(admitted_models)
         with _isolated_artifacts(root):
+            # The artifact lock is held now: whatever waited for it is over.  The
+            # controller's final check is the last thing before the optimizer starts.
+            if final_check is not None:
+                final_check()
             result = asyncio.run(
                 clone.optimize(configuration_space=search_space, **kwargs)
             )

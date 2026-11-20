@@ -348,7 +348,7 @@ def test_a_scope_that_ends_during_the_final_scope_replay_does_not_start_the_opti
     assert report.refused and report.refused[0].endswith(":scope_expired")
 
 
-def test_a_scope_that_ends_while_the_start_is_journaled_cancels_the_run(
+def test_a_scope_that_ends_while_the_start_marker_is_written_does_not_start_the_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The very last check is made after the start marker is written, not before."""
@@ -372,10 +372,11 @@ def test_a_scope_that_ends_while_the_start_is_journaled_cancels_the_run(
         for ln in c._lines()
         if ln["category"] == "optimizations" and ln["record"].get("fact") == "finished"
     ]
-    assert [f["completion"] for f in finished] == ["cancelled"]
+    assert finished == []  # nothing started: no start fact, no leftover marker
+    assert not list((tmp_path / "store" / "attempts").glob("*.json"))
 
 
-def test_a_revoked_approver_at_the_journaled_start_cancels_the_run(
+def test_a_revoked_approver_at_the_start_marker_does_not_start_the_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     opt = FakeOptimizer()
@@ -396,7 +397,8 @@ def test_a_revoked_approver_at_the_journaled_start_cancels_the_run(
         for ln in c._lines()
         if ln["category"] == "optimizations" and ln["record"].get("fact") == "finished"
     ]
-    assert [f["completion"] for f in finished] == ["cancelled"]
+    assert finished == []  # nothing started: no start fact, no leftover marker
+    assert not list((tmp_path / "store" / "attempts").glob("*.json"))
 
 
 def test_replay_that_takes_a_second_each_never_defers_a_valid_run(
@@ -489,8 +491,7 @@ def test_a_release_is_not_installed_after_its_scope_ended_during_replay(
 
     def slow(self: Controller, extra: Any = None) -> Any:
         verdict = real(self, extra)
-        if extra and extra[0].get("category") == "acceptances":
-            clock[0] = clock[0] + timedelta(seconds=1)  # each verdict replay is slow
+        clock[0] = clock[0] + timedelta(seconds=2)  # every replay is slow
         return verdict
 
     monkeypatch.setattr(Controller, "_derive", slow)

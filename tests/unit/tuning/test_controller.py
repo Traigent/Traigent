@@ -576,9 +576,11 @@ def _crash_install(monkeypatch: pytest.MonkeyPatch, *, after: bool = False) -> A
     """Make the head install die (``after``: right after head.json is written)."""
     real = Controller._install_head
 
-    def crash(self: Controller, head_: Any, staged: Any = None) -> None:
+    def crash(
+        self: Controller, head_: Any, staged: Any = None, instant: Any = None
+    ) -> None:
         if after:
-            real(self, head_, staged)
+            real(self, head_, staged, instant)
         raise RuntimeError("simulated crash at the head install")
 
     monkeypatch.setattr(Controller, "_install_head", crash)
@@ -713,7 +715,7 @@ def test_outcome_is_the_committed_result(tmp_path: Path) -> None:
         json.loads(ln.partition("\t")[2])["fact"]
         for ln in (tmp_path / "store" / "commits.jsonl").read_text().splitlines()
     ]
-    assert done == ["commit_intent", "commit_done"]
+    assert done == ["commit_intent", "commit_effect", "commit_done"]
 
 
 def test_a_reissued_acceptance_after_an_unauthorized_attempt_is_not_a_conflict(
