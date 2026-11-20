@@ -658,3 +658,69 @@ def select_failing_example_ids(
             "failing examples"
         )
     return failing
+
+
+def select_failure_basis(
+    matrix: Mapping[str, Any],
+    example_ids: Iterable[str],
+    *,
+    threshold: float = 0.5,
+    mode: str = "all_configs",
+    best_config: Mapping[str, Any] | None = None,
+    winning_trial_ids: Iterable[Any] | None = None,
+) -> dict[str, tuple[str, str]]:
+    """What decided each failing example, under the same rules as selection.
+
+    For every id in ``example_ids`` returns ``(failed_by, metric_field)``
+    looking at the same selected columns :func:`select_failing_example_ids`
+    uses:
+
+    * ``failed_by`` is ``"error"`` when the cell failed on an error or
+      ``success=False``, ``"score"`` when it failed on a score below
+      ``threshold``, and ``"mixed"`` when the selected cells failed for both
+      reasons.
+    * ``metric_field`` is the field that was compared: ``"score"``,
+      ``"accuracy"`` (used only when ``score`` is absent), ``"error"`` when
+      the cells failed on an error and no score was compared, or ``"mixed"``
+      when more than one field decided.
+
+    Ids that did not fail in every selected column are omitted.
+    """
+    threshold = _validate_threshold(threshold)
+    if mode not in FAILING_EXAMPLE_MODES:
+        raise ValueError(
+            f"mode must be one of {list(FAILING_EXAMPLE_MODES)}, got {mode!r}"
+        )
+    wanted = set(example_ids)
+    columns = _matrix_columns(matrix)
+    if mode == "best_config":
+        selected_ids = _winner_column_ids(columns, best_config, winning_trial_ids)
+    else:
+        selected_ids = [trial_id for trial_id, _ in columns]
+    if not selected_ids:
+        raise ValueError("The outcome matrix has no trial columns")
+    basis: dict[str, tuple[str, str]] = {}
+    for position, row in enumerate(matrix.get("examples") or []):
+        example_id, cells_by_id = _row_id_and_cells(position, row)
+        if example_id not in wanted or example_id in basis:
+            continue
+        reasons: set[str] = set()
+        fields: set[str] = set()
+        for trial_id in selected_ids:
+            cell = cells_by_id.get(trial_id)
+            if not isinstance(cell, Mapping) or (
+                _classify_cell(cell, threshold) != _FAIL
+            ):
+                break
+            if cell.get("error") is not None or cell.get("success") is False:
+                reasons.add("error")
+                fields.add("error")
+            else:
+                reasons.add("score")
+                fields.add("score" if cell.get("score") is not None else "accuracy")
+        else:
+            basis[example_id] = (
+                reasons.pop() if len(reasons) == 1 else "mixed",
+                fields.pop() if len(fields) == 1 else "mixed",
+            )
+    return basis

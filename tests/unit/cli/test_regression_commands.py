@@ -24,6 +24,7 @@ from traigent.api.types import (
 )
 from traigent.cli.main import cli
 from traigent.evaluators.base import Dataset
+from traigent.utils.hashing import generate_config_hash
 from traigent.utils.persistence import PersistenceManager
 from traigent.utils.regression_set import load_regression_dataset
 
@@ -40,15 +41,18 @@ def _example(
     accuracy: float,
     rows: list[dict[str, Any]],
     ids: list[str] | None = None,
+    error: str | None = None,
+    metrics: dict[str, Any] | None = None,
 ) -> dict:
     return ExampleResult(
         example_id=ids[index] if ids else f"example_{index}",
         input_data=rows[index]["input"],
         expected_output=rows[index]["output"],
         actual_output="x",
-        metrics={"accuracy": accuracy},
+        metrics=metrics if metrics is not None else {"accuracy": accuracy},
         execution_time=0.1,
-        success=True,
+        success=error is None,
+        error_message=error,
     ).to_dict()
 
 
@@ -56,8 +60,13 @@ def _result(
     failing: set[int],
     rows: list[dict[str, Any]] = ROWS,
     ids: list[str] | None = None,
+    oid: str = "opt-reg",
+    objectives: list[str] | None = None,
+    errors: dict[int, str] | None = None,
+    scores: dict[int, float] | None = None,
 ) -> OptimizationResult:
     per_ex = {i: (0.0 if i in failing else 1.0) for i in range(len(rows))}
+    per_ex.update(scores or {})
     trial = TrialResult(
         trial_id="t0",
         config={"model": "a"},
@@ -66,18 +75,21 @@ def _result(
         duration=1.0,
         timestamp=datetime(2024, 1, 1, tzinfo=UTC),
         metadata={
-            "example_results": [_example(i, a, rows, ids) for i, a in per_ex.items()]
+            "example_results": [
+                _example(i, a, rows, ids, (errors or {}).get(i))
+                for i, a in per_ex.items()
+            ]
         },
     )
     return OptimizationResult(
         trials=[trial],
         best_config={"model": "a"},
         best_score=0.5,
-        optimization_id="opt-reg",
+        optimization_id=oid,
         duration=1.0,
         convergence_info={},
         status=OptimizationStatus.COMPLETED,
-        objectives=["accuracy"],
+        objectives=objectives or ["accuracy"],
         algorithm="GridSearchOptimizer",
         timestamp=datetime(2024, 1, 1, tzinfo=UTC),
         metadata={"function_name": "f"},
@@ -94,8 +106,8 @@ def ws(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.chdir(tmp_path)
     _write_dataset(tmp_path / "data.jsonl", ROWS)
     pm = PersistenceManager(str(tmp_path / "results"))
-    pm.save_result(_result({1, 2}), name="run_a")
-    pm.save_result(_result({2, 3}), name="run_b")
+    pm.save_result(_result({1, 2}, oid="opt-a"), name="run_a")
+    pm.save_result(_result({2, 3}, oid="opt-b"), name="run_b")
     return tmp_path
 
 
@@ -175,8 +187,13 @@ def test_first_add_writes_seen_once_rows_with_plan_fields(ws: Path) -> None:
     assert reg["label"] == "seen_once"
     assert len(reg["provenance"]) == 1
     prov = reg["provenance"][0]
-    assert prov["run"] == "run_a" and prov["metric"] == "accuracy"
-    assert len(prov["config_digest"]) == 12 and prov["date"]
+    assert reg["schema_version"] == 1
+    assert prov["run"] == "run_a" and prov["run_id"] == "opt-a"
+    assert prov["imported"]
+    assert prov["mode"] == "best_config" and prov["threshold"] == 0.5
+    assert prov["config_digest"] == generate_config_hash({"model": "a"})
+    assert (prov["failed_by"], prov["metric_field"]) == ("score", "accuracy")
+    assert "metric" not in prov and "date" not in prov
 
 
 def test_overlapping_runs_give_one_row_per_example_with_two_provenance(
@@ -222,7 +239,7 @@ def _drift_dataset_and_result(ws: Path) -> None:
     drifted[2] = {"input": {"q": "drifted two"}, "output": "d2"}
     _write_dataset(ws / "data.jsonl", drifted)
     PersistenceManager(str(ws / "results")).save_result(
-        _result({2, 3}, drifted), name="run_drift"
+        _result({2, 3}, drifted, oid="opt-drift"), name="run_drift"
     )
 
 
@@ -348,3 +365,57 @@ def test_add_refuses_row_edited_by_hand_and_file_is_identical(ws: Path) -> None:
     assert "line 1" in result.output and "example_1" in result.output
     assert "zzz-sentinel-edit" not in result.output
     assert path.read_bytes() == before
+
+
+def _prov(ws: Path, example_id: str) -> list[dict[str, Any]]:
+    return _by_id(ws)[example_id]["metadata"]["regression"]["provenance"]
+
+
+def test_cost_first_run_records_the_field_that_decided_not_the_objective(
+    ws: Path,
+) -> None:
+    PersistenceManager(str(ws / "results")).save_result(
+        _result({1}, oid="opt-cost", objectives=["cost", "accuracy"]), name="run_cost"
+    )
+    assert _add(ws, "run_cost").exit_code == 0
+    (prov,) = _prov(ws, "example_1")
+    assert prov["metric_field"] == "accuracy" and prov["failed_by"] == "score"
+    assert "cost" not in prov.values()
+
+
+def test_execution_error_is_recorded_as_error_not_as_a_score(ws: Path) -> None:
+    PersistenceManager(str(ws / "results")).save_result(
+        _result({1}, oid="opt-err", errors={1: "boom"}, scores={1: 1.0}),
+        name="run_err",
+    )
+    assert _add(ws, "run_err").exit_code == 0
+    (prov,) = _prov(ws, "example_1")
+    assert (prov["failed_by"], prov["metric_field"]) == ("error", "error")
+    assert "boom" not in json.dumps(_rows(ws))
+
+
+def test_same_saved_run_under_another_name_adds_no_provenance(ws: Path) -> None:
+    assert _add(ws, "run_a").exit_code == 0
+    before = (ws / "reg" / "regression.jsonl").read_bytes()
+    pm = PersistenceManager(str(ws / "results"))
+    pm.save_result(_result({1, 2}, oid="opt-a"), name="run_a_again")
+    result = _add(ws, "run_a_again")
+    assert result.exit_code == 0, result.output
+    assert "0 new provenance entries" in result.output
+    assert (ws / "reg" / "regression.jsonl").read_bytes() == before
+
+
+def test_all_configs_mode_records_null_config_digest_and_mode(ws: Path) -> None:
+    assert _add(ws, "run_a", "--mode", "all_configs").exit_code == 0
+    (prov,) = _prov(ws, "example_1")
+    assert prov["mode"] == "all_configs" and prov["config_digest"] is None
+
+
+def test_custom_threshold_changes_what_fails_and_is_recorded(ws: Path) -> None:
+    PersistenceManager(str(ws / "results")).save_result(
+        _result({3}, oid="opt-thr", scores={1: 0.6, 2: 0.8}), name="run_thr"
+    )
+    assert _add(ws, "run_thr", "--threshold", "0.7").exit_code == 0
+    rows = _by_id(ws)
+    assert sorted(rows) == ["example_1", "example_3"]  # 0.6 < 0.7, 0.8 passes
+    assert _prov(ws, "example_1")[0]["threshold"] == 0.7

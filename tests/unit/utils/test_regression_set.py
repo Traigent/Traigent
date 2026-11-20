@@ -10,12 +10,18 @@ from typing import Any
 
 import pytest
 
-from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.evaluators.base import (
+    Dataset,
+    EvaluationExample,
+    _example_correlation_key,
+)
 from traigent.utils.file_lock import exclusive_lock
 from traigent.utils.regression_set import (
     IdConflictError,
     RegressionSetError,
+    RunEvidence,
     StaleDigestError,
+    config_digest_for,
     content_digest,
     load_regression_dataset,
     merge_failures,
@@ -36,9 +42,34 @@ def _ds(*pairs: tuple[str, str], start: int = 0) -> Dataset:
     )
 
 
-def _merge(d: Path, ds: Dataset, run: str = "r1", **kw):
+def _evidence(
+    ds: Dataset,
+    run: str = "r1",
+    imported: str = "2026-01-01",
+    mode: str = "best_config",
+    threshold: float = 0.5,
+) -> RunEvidence:
+    """Evidence for run ``run`` (its name and its id are the same string)."""
+    basis = {
+        str(_example_correlation_key(ex, i)): ("score", "accuracy")
+        for i, ex in enumerate(ds.examples)
+    }
+    return RunEvidence(
+        run_id=run,
+        run_name=run,
+        imported=imported,
+        mode=mode,
+        threshold=threshold,
+        config_digest=config_digest_for(mode, {"m": 1}),
+        basis=basis,
+    )
+
+
+def _merge(d: Path, ds: Dataset, run: str = "r1", imported: str = "2026-01-01", **kw):
+    mode = kw.pop("mode", "best_config")
+    threshold = kw.pop("threshold", 0.5)
     return merge_failures(
-        d, ds, run=run, date="2026-01-01", config={"m": 1}, metric="accuracy", **kw
+        d, ds, evidence=_evidence(ds, run, imported, mode, threshold), **kw
     )
 
 
@@ -341,9 +372,7 @@ def test_replace_accepts_edited_row_that_is_failing_now(
     # the earlier entry is kept, marked with the digest of the content it described
     entries = first["metadata"]["regression"]["provenance"]
     assert [e["run"] for e in entries] == ["r1", "r2"]
-    assert entries[0]["superseded_content_digest"] == content_digest(
-        {"q": "q0"}, "a0"
-    )
+    assert entries[0]["superseded_content_digest"] == content_digest({"q": "q0"}, "a0")
     assert "superseded_content_digest" not in entries[1]
 
 
@@ -442,9 +471,93 @@ def test_reader_splits_on_newline_only_for_a_raw_separator_in_a_string(
         "metadata": {
             "example_id": "x",
             "content_digest": content_digest({"q": "a\u2028b"}, "o\u0085p"),
-            "regression": {"label": "seen_once", "provenance": []},
+            "regression": {
+                "schema_version": 1,
+                "label": "seen_once",
+                "provenance": [],
+            },
         },
     }
     path = tmp_path / "regression.jsonl"
     path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
     assert read_regression_rows(path)[0]["input"] == {"q": "a\u2028b"}
+
+
+# ------------------------------------------------------- schema and identity
+
+
+def _written_row(tmp_path: Path) -> dict[str, Any]:
+    _merge(tmp_path, _ds(("q0", "a0")))
+    return json.loads((tmp_path / "regression.jsonl").read_text().splitlines()[0])
+
+
+def test_rows_carry_schema_version_one(tmp_path: Path) -> None:
+    row = _written_row(tmp_path)
+    assert row["metadata"]["regression"]["schema_version"] == 1
+
+
+@pytest.mark.parametrize(
+    ("version", "message"),
+    [
+        (2, "newer than this SDK"),
+        (None, "schema_version.* missing"),
+        ("1", "not a version"),
+    ],
+)
+def test_reader_refuses_a_row_with_an_unreadable_schema_version(
+    tmp_path: Path, version: Any, message: str
+) -> None:
+    row = _written_row(tmp_path)
+    regression = row["metadata"]["regression"]
+    if version is None:
+        del regression["schema_version"]
+    else:
+        regression["schema_version"] = version
+    path = tmp_path / "regression.jsonl"
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    with pytest.raises(RegressionSetError, match=message) as err:
+        read_regression_rows(path)
+    assert "line 1" in str(err.value)
+    with pytest.raises(RegressionSetError):
+        load_regression_dataset(tmp_path)
+    with pytest.raises(RegressionSetError):  # and a merge refuses it, untouched
+        _merge(tmp_path, _ds(("q9", "a9"), start=9))
+
+
+def test_same_run_on_a_later_date_or_name_is_the_same_evidence(tmp_path: Path) -> None:
+    _merge(tmp_path, _ds(("q0", "a0")), "r1", imported="2026-01-01")
+    before = (tmp_path / "regression.jsonl").read_bytes()
+    ds = _ds(("q0", "a0"))
+    renamed = RunEvidence(
+        run_id="r1",
+        run_name="renamed",
+        imported="2027-05-05",
+        mode="best_config",
+        threshold=0.5,
+        config_digest=config_digest_for("best_config", {"m": 1}),
+        basis={"0": ("score", "accuracy")},
+    )
+    report = merge_failures(tmp_path, ds, evidence=renamed)
+    assert report.provenance_added == 0
+    assert (tmp_path / "regression.jsonl").read_bytes() == before
+
+
+def test_same_run_with_another_mode_or_threshold_is_new_evidence(
+    tmp_path: Path,
+) -> None:
+    _merge(tmp_path, _ds(("q0", "a0")), "r1")
+    assert (
+        _merge(tmp_path, _ds(("q0", "a0")), "r1", threshold=0.9).provenance_added == 1
+    )
+    assert (
+        _merge(tmp_path, _ds(("q0", "a0")), "r1", mode="all_configs").provenance_added
+        == 1
+    )
+
+
+def test_config_digest_is_the_sdk_config_hash_and_null_for_all_configs() -> None:
+    from traigent.utils.hashing import generate_config_hash
+
+    cfg = {"model": "m", "t": 0.2}
+    assert config_digest_for("best_config", cfg) == generate_config_hash(cfg)
+    assert config_digest_for("all_configs", cfg) is None

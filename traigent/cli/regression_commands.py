@@ -7,16 +7,24 @@ Everything runs locally; no command here makes a network call.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import click
 
+from traigent.utils.optimization_result_persistence import (
+    UNRESTORED_OPTIMIZATION_ID_PREFIX,
+)
+from traigent.utils.outcome_matrix import select_failure_basis
 from traigent.utils.regression_set import (
     DEFAULT_REGRESSION_DIR,
     ON_ID_CONFLICT_CHOICES,
     RegressionSetError,
+    RunEvidence,
+    config_digest_for,
     merge_failures,
 )
 
@@ -33,10 +41,44 @@ def regression() -> None:
     """
 
 
-def _metric_name(run_result: Any) -> str:
-    objectives = getattr(run_result, "objectives", None) or []
-    first = objectives[0] if objectives else None
-    return first if isinstance(first, str) else "accuracy"
+def _run_identity(run_result: Any) -> str:
+    """A stable id for the saved run, independent of its name and import date.
+
+    The run's optimization id when it was persisted; otherwise (results saved
+    before ids were persisted) a digest of the run's outcome matrix.
+    """
+    optimization_id = getattr(run_result, "optimization_id", None)
+    if (
+        isinstance(optimization_id, str)
+        and optimization_id
+        and not optimization_id.startswith(UNRESTORED_OPTIMIZATION_ID_PREFIX)
+    ):
+        return optimization_id
+    text = json.dumps(
+        run_result.example_matrix, sort_keys=True, default=str, separators=(",", ":")
+    )
+    return "matrix-sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _failure_basis(
+    run_result: Any, failing_ids: list[str], threshold: float, mode: str
+) -> dict[str, tuple[str, str]]:
+    """What decided each failure; same winning-column rule as ``failing_examples``."""
+    winning_trial_ids = None
+    metadata = getattr(run_result, "metadata", None)
+    summary = metadata.get("session_summary") if isinstance(metadata, dict) else None
+    if isinstance(summary, dict):
+        stamped = summary.get("winning_trial_ids")
+        if isinstance(stamped, list) and stamped:
+            winning_trial_ids = stamped
+    return select_failure_basis(
+        run_result.example_matrix,
+        failing_ids,
+        threshold=threshold,
+        mode=mode,
+        best_config=run_result.best_config,
+        winning_trial_ids=winning_trial_ids,
+    )
 
 
 @regression.command("add")
@@ -96,8 +138,9 @@ def regression_add(
     RUN is a saved result name (as in 'traigent results show'). Failing
     examples are selected and joined to rows of --dataset exactly as in
     'traigent results export-failures'. A new example becomes a row labelled
-    seen_once; an example already stored gains a provenance entry (run, date,
-    config digest, metric) instead of a duplicate row.
+    seen_once; an example already stored gains a provenance entry (run id, mode,
+    threshold, config digest, the field that decided the failure) instead of a
+    duplicate row. Adding the same saved run again adds nothing.
 
     The file holds the example content exactly as it is in your dataset.
     Nothing in it is redacted (a regression test must rerun the exact
@@ -139,13 +182,19 @@ def regression_add(
         raise click.ClickException(f"Cannot select failing examples: {exc}") from exc
 
     try:
+        evidence = RunEvidence(
+            run_id=_run_identity(run_result),
+            run_name=run,
+            imported=datetime.now(UTC).date().isoformat(),
+            mode=mode,
+            threshold=threshold,
+            config_digest=config_digest_for(mode, run_result.best_config),
+            basis=_failure_basis(run_result, failing_ids, threshold, mode),
+        )
         report = merge_failures(
             out_dir,
             subset,
-            run=run,
-            date=datetime.now(UTC).date().isoformat(),
-            config=run_result.best_config if mode == "best_config" else None,
-            metric=_metric_name(run_result),
+            evidence=evidence,
             on_id_conflict=on_id_conflict,  # type: ignore[arg-type]
         )
     except RegressionSetError as exc:

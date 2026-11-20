@@ -7,11 +7,27 @@ one JSON object per line::
 
     {"input": {...}, "output": "...",
      "metadata": {"example_id": "ex12", "content_digest": "sha256:...",
-                  "regression": {"label": "seen_once", "fails": null,
-                                 "reps": null,
-                                 "provenance": [{"run": "...", "date": "...",
-                                                 "config_digest": "...",
-                                                 "metric": "..."}]}}}
+                  "regression": {"schema_version": 1, "label": "seen_once",
+                                 "fails": null, "reps": null,
+                                 "provenance": [{
+                                     "run_id": "<saved run's optimization id>",
+                                     "run": "<saved result name>",
+                                     "imported": "2026-11-20",
+                                     "mode": "best_config",
+                                     "threshold": 0.5,
+                                     "config_digest": "<generate_config_hash>",
+                                     "failed_by": "score",
+                                     "metric_field": "accuracy"}]}}}
+
+``schema_version`` is per row (a JSONL file has no header, and a row stays
+self-describing when rows are copied or merged). A reader refuses a row whose
+major version is newer than it understands, and refuses a row without the field
+(a preview format whose provenance has a different shape), each with a message
+naming the line. ``run_id`` and ``mode`` and ``threshold`` identify an
+evidence entry: adding the same saved run again, on any date, under any name,
+adds nothing. ``run`` and ``imported`` are informational only. ``config_digest``
+is the SDK's ``generate_config_hash`` of the winning configuration, or ``null``
+with ``mode: "all_configs"`` (no single configuration is meant).
 
 Rows reload through ``Dataset.from_jsonl`` (``output`` is one of its
 expected-output aliases) and through :func:`load_regression_dataset`.
@@ -54,10 +70,13 @@ from traigent.utils.file_lock import (
     FileLockUnsupportedError,
     exclusive_lock,
 )
+from traigent.utils.hashing import generate_config_hash
 
 REGRESSION_FILENAME = "regression.jsonl"
 DEFAULT_REGRESSION_DIR = "tests/regression"
 LABEL_SEEN_ONCE = "seen_once"
+#: Major version of the row format this module reads and writes.
+SCHEMA_VERSION = 1
 DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
 
 OnIdConflict = Literal["refuse", "replace", "keep-both"]
@@ -130,6 +149,61 @@ class MergeReport:
     added_ids: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class RunEvidence:
+    """The saved run behind a merge, and why each example counted as failing.
+
+    Attributes:
+        run_id: Stable identity of the saved run (its optimization id, or a
+            digest of its outcome matrix when the id was not persisted). Part
+            of the evidence identity.
+        run_name: The name the result was saved under; informational.
+        imported: Import date; informational, never part of the identity.
+        mode: ``"best_config"`` or ``"all_configs"``.
+        threshold: The per-example score below which a cell failed.
+        config_digest: ``generate_config_hash`` of the winning configuration;
+            ``None`` in ``all_configs`` mode.
+        basis: ``example_id -> (failed_by, metric_field)`` as returned by
+            ``select_failure_basis``; the field that was compared and whether
+            the cells failed by ``score`` or by execution ``error``.
+    """
+
+    run_id: str
+    run_name: str
+    imported: str
+    mode: str
+    threshold: float
+    config_digest: str | None
+    basis: dict[str, tuple[str, str]] = field(default_factory=dict)
+
+    def provenance_for(self, example_id: str) -> dict[str, Any]:
+        failed_by, metric_field = self.basis.get(example_id, ("unknown", "unknown"))
+        return {
+            "run_id": self.run_id,
+            "run": self.run_name,
+            "imported": self.imported,
+            "mode": self.mode,
+            "threshold": self.threshold,
+            "config_digest": self.config_digest,
+            "failed_by": failed_by,
+            "metric_field": metric_field,
+        }
+
+
+def config_digest_for(mode: str, config: Any) -> str | None:
+    """The SDK's config hash for ``best_config`` runs; ``None`` for all_configs."""
+    if mode == "all_configs" or config is None:
+        return None
+    return generate_config_hash(config)
+
+
+def _evidence_key(entry: Any) -> tuple[Any, ...] | None:
+    """Identity of a provenance entry: what was decided, not when it was imported."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("run_id"), str):
+        return None
+    return (entry["run_id"], entry.get("mode"), entry.get("threshold"))
+
+
 def regression_file(directory: str | os.PathLike[str]) -> Path:
     """The regression file inside ``directory``."""
     return Path(directory) / REGRESSION_FILENAME
@@ -145,14 +219,6 @@ def content_digest(input_data: Any, expected_output: Any) -> str:
         separators=(",", ":"),
     )
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def config_digest(config: Any) -> str | None:
-    """Short digest naming a configuration, or ``None`` when there is none."""
-    if config is None:
-        return None
-    text = json.dumps(config, sort_keys=True, default=str, separators=(",", ":"))
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 # --------------------------------------------------------------------- reading
@@ -182,6 +248,25 @@ def _validate_row(path: Path, line_no: int, row: Any) -> dict[str, Any]:
     regression = metadata.get("regression")
     if not isinstance(regression, dict):
         raise _bad(path, line_no, "'metadata.regression' is missing or not an object")
+    version = regression.get("schema_version")
+    if version is None:
+        raise _bad(
+            path,
+            line_no,
+            "'metadata.regression.schema_version' is missing (a file from an "
+            "earlier preview format; re-create it with 'traigent regression add')",
+        )
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise _bad(
+            path, line_no, "'metadata.regression.schema_version' is not a version"
+        )
+    if version > SCHEMA_VERSION:
+        raise _bad(
+            path,
+            line_no,
+            f"schema_version {version} is newer than this SDK reads "
+            f"({SCHEMA_VERSION}); upgrade traigent",
+        )
     if not isinstance(regression.get("label"), str):
         raise _bad(path, line_no, "'metadata.regression.label' is not a string")
     if not isinstance(regression.get("provenance"), list):
@@ -327,6 +412,7 @@ def _new_row(
             "example_id": example_id,
             "content_digest": digest,
             "regression": {
+                "schema_version": SCHEMA_VERSION,
                 "label": LABEL_SEEN_ONCE,
                 "fails": None,
                 "reps": None,
@@ -382,7 +468,8 @@ def _plan_row(
     stored = rows[index]["metadata"]
     if stored["content_digest"] == digest:
         entries = stored["regression"]["provenance"]
-        if provenance not in entries:
+        key = _evidence_key(provenance)
+        if key is None or all(_evidence_key(entry) != key for entry in entries):
             entries.append(provenance)
             report.provenance_added += 1
         return
@@ -419,18 +506,16 @@ def merge_failures(
     directory: str | os.PathLike[str],
     examples: Dataset,
     *,
-    run: str,
-    date: str,
-    config: Any,
-    metric: str,
+    evidence: RunEvidence,
     on_id_conflict: OnIdConflict = "refuse",
     lock_timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
 ) -> MergeReport:
     """Merge failing examples into ``<directory>/regression.jsonl``.
 
     A new id becomes a row labelled ``seen_once``; a repeat of a stored id with
-    the same content digest gains a provenance entry (an identical entry is not
-    added twice); an id whose content digest differs is handled per
+    the same content digest gains a provenance entry (an entry for the same
+    ``run_id``, ``mode`` and ``threshold`` is not added twice, whatever the
+    import date or saved name); an id whose content digest differs is handled per
     ``on_id_conflict``. Nothing is written unless the whole merge succeeds.
 
     The whole read-merge-replace runs under a cross-process lock on the hidden
@@ -450,9 +535,7 @@ def merge_failures(
     # after the lock is held, so concurrent adds cannot lose each other's rows.
     try:
         with exclusive_lock(path, timeout=lock_timeout):
-            return _merge_locked(
-                path, examples, run, date, config, metric, on_id_conflict
-            )
+            return _merge_locked(path, examples, evidence, on_id_conflict)
     except (FileLockTimeoutError, FileLockUnsupportedError) as exc:
         raise RegressionSetError(str(exc)) from exc
 
@@ -491,10 +574,7 @@ def _admit_stale_rows(
 def _merge_locked(
     path: Path,
     examples: Dataset,
-    run: str,
-    date: str,
-    config: Any,
-    metric: str,
+    evidence: RunEvidence,
     on_id_conflict: str,
 ) -> MergeReport:
     numbered = _read_numbered_rows(path) if path.exists() else []
@@ -503,19 +583,14 @@ def _merge_locked(
     by_id = {row["metadata"]["example_id"]: i for i, row in enumerate(rows)}
     report = MergeReport(path=path)
     conflicts: list[str] = []
-    provenance = {
-        "run": run,
-        "date": date,
-        "config_digest": config_digest(config),
-        "metric": metric,
-    }
     for position, example in enumerate(examples.examples):
         digest = content_digest(example.input_data, example.expected_output)
+        incoming_id = _incoming_id(example, position)
         _plan_row(
             example,
-            _incoming_id(example, position),
+            incoming_id,
             digest,
-            provenance,
+            evidence.provenance_for(incoming_id),
             by_id,
             rows,
             on_id_conflict,
