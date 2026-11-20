@@ -88,7 +88,12 @@ def test_only_observations_on_the_current_content_count() -> None:
     assert derive_status([old], "new") == "unconfirmed"
     assert derive_status([old, new_fail], "new") == "known_failure"
     assert derive_status([old, new_fail], "old") == "armed"
-    block = {"observations": [old], "status": "armed", "armed_at": "x"}
+    block = {
+        "observations": [old],
+        "status": "armed",
+        "armed_at": old["date"],
+        "armed_config_digest": old["config_digest"],
+    }
     assert effective_status(block, "old") == "armed"
     assert effective_status(block, "new") == "unconfirmed"
     assert confirmed_fields_problem(block) is None  # edited content is not corrupt
@@ -109,3 +114,20 @@ def test_an_observation_without_a_content_digest_is_refused() -> None:
     legacy = {k: v for k, v in _obs("all_pass").items() if k != "content_digest"}
     problem = confirmed_fields_problem({"observations": [legacy], "status": "armed"})
     assert "content_digest" in (problem or "")
+
+
+def test_arming_fields_are_validated_against_the_observations() -> None:
+    block: dict = {"schema_version": 1, "label": "seen_once", "provenance": []}
+    append_observation(block, _obs("all_pass", "2026-01-05"), 2)
+    assert confirmed_fields_problem(block) is None
+    for key, wrong in (
+        ("armed_at", None),
+        ("armed_at", "2020-01-01"),
+        ("armed_config_digest", None),
+        ("armed_config_digest", "other"),
+    ):
+        problem = confirmed_fields_problem({**block, key: wrong})
+        assert problem is not None and key in problem
+    unarmed: dict = {"schema_version": 1, "label": "seen_once", "provenance": []}
+    append_observation(unarmed, _obs("all_fail"), 2)
+    assert confirmed_fields_problem({**unarmed, "armed_at": "2026-01-01"})

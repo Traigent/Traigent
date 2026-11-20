@@ -121,6 +121,34 @@ def derive_status(
     return status
 
 
+def derive_arming(
+    observations: Sequence[Mapping[str, Any]] | None, content_digest: str | None
+) -> tuple[str | None, str | None]:
+    """``(armed_at, armed_config_digest)`` for ``content_digest``, replayed.
+
+    The first ``all_pass`` observation on that content after the last
+    ``disarmed`` one on it (armed is sticky, so later outcomes do not move it);
+    ``(None, None)`` when the content is not armed. A pure function of the
+    observations and the digest, so the stored fields never depend on which
+    content a row had before.
+    """
+    armed_at: str | None = None
+    config: str | None = None
+    for observation in observations or ():
+        if (
+            content_digest is not None
+            and observation.get("content_digest") != content_digest
+        ):
+            continue
+        outcome = observation.get("outcome")
+        if outcome == OUTCOME_DISARMED:
+            armed_at = config = None
+        elif outcome == OUTCOME_ALL_PASS and armed_at is None:
+            armed_at = observation.get("date")
+            config = observation.get("config_digest")
+    return armed_at, config
+
+
 def effective_status(
     regression: Mapping[str, Any], content_digest: str | None = None
 ) -> str:
@@ -219,9 +247,17 @@ def confirmed_fields_problem(regression: Mapping[str, Any]) -> str | None:
             "'metadata.regression.status' does not match its observations "
             f"(they replay to {derived!r}); the row was edited by hand"
         )
-    if derived == STATUS_ARMED:
-        if not isinstance(regression.get("armed_at"), str):
-            return "'metadata.regression.armed_at' is not a string on an armed row"
+    newest = observations[-1].get("content_digest") if observations else None
+    armed_at, armed_config = derive_arming(observations, newest)
+    for key, expected in (
+        ("armed_at", armed_at),
+        ("armed_config_digest", armed_config),
+    ):
+        if regression.get(key) != expected:
+            return (
+                f"'metadata.regression.{key}' does not match its observations "
+                "(it is derived from them); the row was edited by hand"
+            )
     return None
 
 
@@ -248,10 +284,9 @@ def append_observation(
     The observation's ``content_digest`` names the content it was measured on;
     the status is replayed over the observations of that content only (older
     ones stay in the list but count for nothing). Upgrades a version 1 block to
-    ``schema_version``, replays the status,
-    records ``armed_at`` and ``armed_config_digest`` the first time the row is
-    armed (cleared again by a disarm), and keeps ``label``, ``fails`` and
-    ``reps`` in step. Returns ``(status_before, status_after)``.
+    ``schema_version``, replays the status, derives ``armed_at`` and
+    ``armed_config_digest`` from the observations of that content (see
+    ``derive_arming``), and keeps ``label``, ``fails`` and ``reps`` in step. Returns ``(status_before, status_after)``.
     """
     observations = regression.setdefault("observations", [])
     bound_to = observation["content_digest"]
@@ -261,13 +296,9 @@ def append_observation(
     regression["schema_version"] = schema_version
     regression["status"] = after
     regression["label"] = LABEL_FOR_STATUS[after]
-    if after == STATUS_ARMED:
-        if before != STATUS_ARMED:
-            regression["armed_at"] = observation["date"]
-            regression["armed_config_digest"] = observation.get("config_digest")
-    else:
-        regression["armed_at"] = None
-        regression["armed_config_digest"] = None
+    regression["armed_at"], regression["armed_config_digest"] = derive_arming(
+        observations, bound_to
+    )
     usable = _latest_usable(observations, bound_to)
     regression["fails"] = usable.get("fails")
     regression["reps"] = usable.get("reps")
