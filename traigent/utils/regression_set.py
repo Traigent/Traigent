@@ -26,7 +26,8 @@ be positional (``example_<i>``), so the same id may name different content in
 different runs. A merge whose id matches an existing row but whose content
 digest differs is refused and writes nothing, unless the caller names a policy:
 ``replace`` swaps the stored row for the new content, ``keep-both`` stores the
-new content under a distinct id.
+new content under a distinct id. ``replace`` keeps the row's earlier
+provenance entries, each marked with the digest of the content it described.
 
 Error messages name ids and fields, never example content.
 """
@@ -80,8 +81,12 @@ class IdConflictError(RegressionSetError):
             f"{len(self.example_ids)} example id(s) already in the regression set "
             f"name different content (content_digest differs): {self.example_ids}. "
             "Example ids can be positional, so the dataset may have changed. "
-            "Nothing was written; pass --on-id-conflict replace or keep-both to "
-            "choose."
+            "Nothing was written. Choose one: --on-id-conflict replace "
+            "overwrites each stored row with the incoming content (its earlier "
+            "provenance entries are kept, marked with the digest of the content "
+            "they described); --on-id-conflict keep-both leaves the stored rows "
+            "as they are and stores the incoming content under a new id "
+            "'<id>~<8 hex of the content digest>'."
         )
 
 
@@ -102,11 +107,15 @@ class StaleDigestError(RegressionSetError):
             f"Regression file {path}: the content of {len(self.stale)} row(s) "
             f"does not match the stored content_digest: {named}. The row was "
             "edited by hand, so its provenance would describe different "
-            "content. Nothing was written. To accept the edited content for a "
-            "row whose example is failing now, re-run with --on-id-conflict "
-            "replace; otherwise undo the edit, or set the row's content_digest "
-            "to traigent.utils.regression_set.content_digest(row['input'], "
-            "row['output'])."
+            "content. Nothing was written. Resolve it one of three ways: undo "
+            "the edit; keep the edit by setting the row's content_digest to "
+            "traigent.utils.regression_set.content_digest(row['input'], "
+            "row['output']); or re-run with --on-id-conflict replace, which "
+            "applies only when the row's example id is among the failing "
+            "examples being added, and DISCARDS the edit by overwriting the "
+            "row's input, output and metadata with the incoming dataset "
+            "content (the row's earlier provenance entries are kept, marked "
+            "with the digest of the content they described)."
         )
 
 
@@ -344,6 +353,13 @@ def _incoming_id(example: EvaluationExample, position: int) -> str:
     return str(_example_correlation_key(example, position))
 
 
+def _mark_superseded(entry: Any, old_digest: str) -> Any:
+    """A provenance entry kept across a replace, tagged with the content it was for."""
+    if isinstance(entry, dict) and "superseded_content_digest" not in entry:
+        return {**entry, "superseded_content_digest": old_digest}
+    return entry
+
+
 def _plan_row(
     example: EvaluationExample,
     example_id: str,
@@ -354,6 +370,7 @@ def _plan_row(
     on_conflict: str,
     report: MergeReport,
     conflicts: list[str],
+    stale_originals: dict[str, str],
 ) -> None:
     index = by_id.get(example_id)
     if index is None:
@@ -370,13 +387,29 @@ def _plan_row(
             report.provenance_added += 1
         return
     if on_conflict == "replace":
-        rows[index] = _new_row(example, example_id, digest, provenance)
+        replacement = _new_row(example, example_id, digest, provenance)
+        old_digest = stale_originals.get(example_id, stored["content_digest"])
+        kept = [
+            _mark_superseded(entry, old_digest)
+            for entry in stored["regression"]["provenance"]
+        ]
+        replacement["metadata"]["regression"]["provenance"] = kept + [provenance]
+        rows[index] = replacement
         report.rows_replaced += 1
         return
     if on_conflict == "keep-both":
         alias = f"{example_id}~{digest.split(':', 1)[1][:8]}"
         _plan_row(
-            example, alias, digest, provenance, by_id, rows, "refuse", report, conflicts
+            example,
+            alias,
+            digest,
+            provenance,
+            by_id,
+            rows,
+            "refuse",
+            report,
+            conflicts,
+            stale_originals,
         )
         return
     conflicts.append(example_id)
@@ -430,20 +463,28 @@ def _admit_stale_rows(
     rows: list[dict[str, Any]],
     examples: Dataset,
     on_id_conflict: str,
-) -> None:
-    """Refuse hand-edited rows, except those ``replace`` is about to overwrite."""
+) -> dict[str, str]:
+    """Refuse hand-edited rows, except those ``replace`` is about to overwrite.
+
+    Returns ``{example_id: stored content_digest}`` for the rows it admitted,
+    so the replace can mark the kept provenance with the digest it described.
+    """
     stale = _stale_rows(numbered)
     if not stale:
-        return
+        return {}
     if on_id_conflict == "replace":
         incoming = {_incoming_id(ex, pos) for pos, ex in enumerate(examples.examples)}
         if all(eid in incoming for eid, _ in stale):
             stale_ids = {eid for eid, _ in stale}
+            originals: dict[str, str] = {}
             for row in rows:
                 if row["metadata"]["example_id"] in stale_ids:
+                    originals[row["metadata"]["example_id"]] = row["metadata"][
+                        "content_digest"
+                    ]
                     # Forces the replace branch; the new row carries a fresh digest.
                     row["metadata"]["content_digest"] = ""
-            return
+            return originals
     raise StaleDigestError(path, stale)
 
 
@@ -458,7 +499,7 @@ def _merge_locked(
 ) -> MergeReport:
     numbered = _read_numbered_rows(path) if path.exists() else []
     rows = [row for _, row in numbered]
-    _admit_stale_rows(path, numbered, rows, examples, on_id_conflict)
+    stale_originals = _admit_stale_rows(path, numbered, rows, examples, on_id_conflict)
     by_id = {row["metadata"]["example_id"]: i for i, row in enumerate(rows)}
     report = MergeReport(path=path)
     conflicts: list[str] = []
@@ -480,6 +521,7 @@ def _merge_locked(
             on_id_conflict,
             report,
             conflicts,
+            stale_originals,
         )
     if conflicts:
         raise IdConflictError(conflicts)

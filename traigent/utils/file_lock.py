@@ -112,8 +112,10 @@ def exclusive_lock(
                 raise FileLockTimeoutError(
                     f"Timed out after {timeout:g}s waiting for the lock on "
                     f"{lock_path}; another process is writing {path.name}. "
-                    "Nothing was written. Retry, or remove the lock file if "
-                    "no other process is running."
+                    "Nothing was written. Check whether another command is "
+                    "still running, then retry. Do not delete the lock file: "
+                    "removing a file another process holds locked lets a "
+                    "second writer in."
                 )
             time.sleep(poll_interval)
         try:

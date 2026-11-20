@@ -252,8 +252,14 @@ def test_lock_timeout_errors_and_writes_nothing(tmp_path: Path) -> None:
     path = tmp_path / "regression.jsonl"
     before = path.read_bytes()
     with exclusive_lock(path):
-        with pytest.raises(RegressionSetError, match="Timed out"):
+        with pytest.raises(RegressionSetError, match="Timed out") as err:
             _merge(tmp_path, _ds(("q9", "a9"), start=9), lock_timeout=0.2)
+        message = str(err.value)
+        assert "another command is still running" in message
+        assert "retry" in message
+        # deleting a lock another process holds would let a second writer in
+        assert "remove the lock" not in message
+        assert "Do not delete the lock file" in message
     assert path.read_bytes() == before
     assert not list(tmp_path.glob(".*.tmp"))
     # the lock is released afterwards, so the same add now succeeds
@@ -311,7 +317,11 @@ def test_add_refuses_row_edited_by_hand_and_writes_nothing(tmp_path: Path) -> No
     message = str(err.value)
     assert "'0'" in message and "line 1" in message
     assert "zzz-sentinel-edit" not in message  # names the row, never the content
-    assert "--on-id-conflict replace" in message
+    # each resolution is described as what it does to the row
+    assert "DISCARDS the edit" in message
+    assert "overwriting" in message
+    assert "earlier provenance entries are kept" in message
+    assert "accept the edited content" not in message
     assert path.read_bytes() == before
     assert not list(tmp_path.glob(".*.tmp"))
 
@@ -328,6 +338,27 @@ def test_replace_accepts_edited_row_that_is_failing_now(
     first = json.loads(path.read_text().splitlines()[0])
     assert first["output"] == "a0"
     load_regression_dataset(tmp_path)  # digests consistent again
+    # the earlier entry is kept, marked with the digest of the content it described
+    entries = first["metadata"]["regression"]["provenance"]
+    assert [e["run"] for e in entries] == ["r1", "r2"]
+    assert entries[0]["superseded_content_digest"] == content_digest(
+        {"q": "q0"}, "a0"
+    )
+    assert "superseded_content_digest" not in entries[1]
+
+
+def test_replace_of_a_changed_row_keeps_its_old_provenance_marked(
+    tmp_path: Path,
+) -> None:
+    _merge(tmp_path, _ds(("q0", "a0")), "r1")
+    old_digest = content_digest({"q": "q0"}, "a0")
+    report = _merge(tmp_path, _ds(("q0", "CHANGED")), "r2", on_id_conflict="replace")
+    assert report.rows_replaced == 1
+    row = json.loads((tmp_path / "regression.jsonl").read_text().splitlines()[0])
+    entries = row["metadata"]["regression"]["provenance"]
+    assert [e["run"] for e in entries] == ["r1", "r2"]
+    assert entries[0]["superseded_content_digest"] == old_digest
+    assert row["metadata"]["content_digest"] == content_digest({"q": "q0"}, "CHANGED")
 
 
 def test_replace_does_not_waive_edited_rows_it_does_not_replace(

@@ -249,9 +249,11 @@ def test_on_id_conflict_replace_overwrites_the_stored_row(ws: Path) -> None:
     rows = _by_id(ws)
     assert sorted(rows) == ["example_1", "example_2", "example_3"]
     assert rows["example_2"]["input"] == {"q": "drifted two"}
-    assert [
-        p["run"] for p in rows["example_2"]["metadata"]["regression"]["provenance"]
-    ] == ["run_drift"]
+    entries = rows["example_2"]["metadata"]["regression"]["provenance"]
+    # the replaced content's history is kept and marked, then the new entry
+    assert [p["run"] for p in entries] == ["run_a", "run_drift"]
+    assert "superseded_content_digest" in entries[0]
+    assert "superseded_content_digest" not in entries[1]
 
 
 def test_on_id_conflict_keep_both_stores_both_contents(ws: Path) -> None:
