@@ -4,15 +4,14 @@ Continuous Tuning keeps a deployed agent inside a quality bound and re-optimizes
 something changes: a breach is observed or a schedule ticks. This release is a pilot: it runs
 schedule and breach triggers with human approval of each run only. The local controller
 runs the **spend step** (it invokes the optimizer once a person has approved); releasing a
-candidate runs through the platform-signed head, never through this controller (see
+candidate is planned, not built (a platform-signed release does not exist yet), and this controller never does it (see
 [Supported in this release](#supported-in-this-release)).
 
 TVL 1.7 is the source of truth. `traigent.tuning` is sugar that emits a TVL 1.7 module
 (requirements, monitors, responses); the TVL reference toolchain validates it. The sugar can
 express nothing TVL cannot, and `Tuning(tvl="policy.tvl.yml")` accepts any valid TVL fragment.
 
-A support-ticket router that re-tunes itself on a schedule, serves whatever head the platform
-last signed, and proves a candidate on a held-aside set before anyone is asked:
+A support-ticket router that re-tunes itself on a schedule, serves the head configuration from the local head file, and proves a candidate on a held-aside set before anyone is asked:
 
 ```python
 import traigent
@@ -23,7 +22,7 @@ def ticket_route_check(example, output):          # answers with a label declare
 
 @traigent.observe(
     agent="ticket-router",
-    follow="head",                                # every call runs on the signed head config
+    follow="head",                                # every call reads the local head file (generation 0 until a release mechanism exists)
     tune=Tuning(
         keep=[FailureRate("customer:ticket_route_check", at_most="0.08", window="24h", name="quality_floor")],
         audit=RandomAudit(rate="0.02"),
@@ -70,7 +69,7 @@ it with `E_UNSUPPORTED_IN_RELEASE`, naming the feature.
 | Standing approval (`approval: standing`) and standing grants | a policy with a standing rule is refused when the controller is built; recording a grant refuses; nothing reads a grants file |
 | External events (`ModelReleased`, `record_event`, `traigent tune event`) | a policy with an external trigger is refused when the controller is built; recording an event refuses |
 | RFC 0011 Part B (`when`, cooldown, `silent_for`, `fired_count`) | not implemented by the reference relation |
-| Releasing a candidate (`submit_acceptance`, `accept`, `traigent tune accept`) | runs through the platform-signed head; every release entry point refuses with `E_UNSUPPORTED_IN_RELEASE` before it touches the store, and this controller never moves `head.json` |
+| Releasing a candidate (`submit_acceptance`, `accept`, `traigent tune accept`) | is planned, not built (a platform-signed release does not exist yet); every release entry point refuses with `E_UNSUPPORTED_IN_RELEASE` before it touches the store, and this controller never moves `head.json` |
 | Release rollback (`target: release_rollback_target`) | deferred out of TVL 1.7; the linter reports `release_rollback_deferred` |
 
 | | Python SDK | JavaScript SDK |
@@ -123,7 +122,7 @@ attempt awaiting approval (`approve_run`): the trigger that fired (the rule's TV
 its approval mode) and the **spend limit** the optimizer will run under (`max_trials`,
 `cost_limit`, `timeout` of the optimized function; `none configured` when there is none).
 
-**Release** is not decided here. A measured candidate waits for the platform-signed head;
+**Release** is not decided here. A measured candidate waits for a release mechanism that is planned, not built;
 `status` prints, per pending deploy (`release_evidence`, read-only): the **incumbent** (the head
 the gate measured: fingerprint and generation), the **candidate** fingerprint, the **holdout
 counts** per promotion monitor (`n`, `k` violations, `u` unresolved), the rows left out of the
@@ -133,9 +132,8 @@ unknown cost), the **code version** the candidate and incumbent were measured on
 **observed generation** of the serving head. The code version is the
 `TRAIGENT_AGENT_CODE_VERSION` environment variable if set, else `Tuning(code_version=...)`, else
 `src:` plus a sha256 of the decorated function's module source; if none can be determined, no
-candidate gets promotion evidence (`E_NO_CODE_VERSION`), there is no default. A head the
-platform signed carries the code version it was released for, and followed-head traces carry it
-as `head_code_version`.
+candidate gets promotion evidence (`E_NO_CODE_VERSION`), there is no default. A head carries the code version it was released for, and followed-head traces carry it
+as `head_code_version`; the local head file is read without signature verification.
 
 ```bash
 traigent tune status --text   --store .traigent/tuning/production/ticket-router --target agent.py:classify
@@ -299,8 +297,7 @@ TRAIGENT_TVL_REQUIRED=1 python -m pytest -q tests/unit/tuning
   malformed entry) means the identity is unknown and the candidate has no promotion evidence
   (`eval_set_identity_unknown`).
 * **The head never moves here.** `head.json` is written once, when the store is created
-  (generation 0), and only read afterwards. Release acceptance runs through the platform-signed
-  head; `submit_acceptance`, `accept`, `build_acceptance` and `traigent tune accept` refuse with
+  (generation 0), and only read afterwards. Release acceptance is planned, not built (a platform-signed release does not exist yet); `submit_acceptance`, `accept`, `build_acceptance` and `traigent tune accept` refuse with
   `E_UNSUPPORTED_IN_RELEASE` before any I/O. `step` raises `E_HEAD_DIVERGED` if `head.json` names
   a generation the relation does not.
 * **The optimization runs on an isolated copy** of the `@traigent.optimize` function, so the live

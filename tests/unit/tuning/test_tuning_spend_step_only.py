@@ -1,6 +1,6 @@
 """The local controller runs the spend step only.
 
-Release acceptance runs through the platform-signed head: every release entry point
+Release acceptance is planned, not built: every release entry point
 refuses before touching the store.  The spend step's final gate scans no journal after
 its clock sample, cancels an approved attempt it refuses (so it never holds a later
 schedule), and hands the final check only to the adapter the SDK built.
@@ -104,6 +104,24 @@ def test_the_cli_accept_command_refuses_and_creates_no_store(
         assert result.exit_code != 0
         assert E_UNSUPPORTED_IN_RELEASE in result.output
     assert not store.exists()  # nothing was read, nothing was created
+
+
+def test_the_cli_accept_command_refuses_first_whatever_its_options_name(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "s"
+    for args in (
+        [],
+        ["--authority", "/missing/authority.yml"],
+        ["--tvl", "/missing/p.tvl.yml", "--store", str(store), "--generation", "x"],
+        ["D1", "--generation", "not-a-number", "--reject", "--unknown-flag"],
+    ):
+        refusal = CliRunner().invoke(cli, ["tune", "event", "/x"])
+        result = CliRunner().invoke(cli, ["tune", "accept", *args])
+        assert result.exit_code == refusal.exit_code != 0
+        assert E_UNSUPPORTED_IN_RELEASE in result.output
+        assert "does not exist" not in result.output
+    assert not store.exists()
 
 
 def test_the_cli_accept_command_leaves_an_existing_store_byte_identical(
@@ -407,3 +425,126 @@ def test_the_sdk_adapter_runs_the_final_check_inside_its_artifact_lock(
         ]["fact"]
         == "finished"
     )
+
+
+# -- a grant followed by an expired scope cancels, never holds ------------------------------
+def test_a_scope_that_expires_right_after_a_grant_cancels_the_attempt_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _clock(monkeypatch, at(10))
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt, now=at(0))
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    real_append = c._append
+
+    def append_then_expire(category: str, record: Any, instant: Any) -> Any:
+        out = real_append(category, record, instant)
+        if isinstance(record, dict) and record.get("fact") == "approval":
+            clock[0] = _scope_end() + timedelta(seconds=1)  # lapses right after
+        return out
+
+    monkeypatch.setattr(c, "_append", append_then_expire)
+
+    def finishes() -> list[str]:
+        return [
+            ln["record"]["completion"]
+            for ln in c._lines()
+            if ln["category"] == "optimizations"
+            and ln["record"].get("fact") == "finished"
+        ]
+
+    c.step()
+    assert finishes() == ["cancelled"]  # already by the first step
+    c.step()
+    assert opt.calls == []
+    completions = [
+        ln["record"]["completion"]
+        for ln in c._lines()
+        if ln["category"] == "optimizations" and ln["record"].get("fact") == "finished"
+    ]
+    assert completions == ["cancelled"]
+    clock[0] = at(41)
+    c.step(at(41))
+    (first,) = [
+        o for o in c._open_attempts(c._derive()["facts"]) if o["attempt"] == "A1"
+    ]
+    assert first["closed"]  # the relation sees the granted attempt as ended
+    assert [
+        ln["record"]["completion"]
+        for ln in c._lines()
+        if ln["category"] == "optimizations" and ln["record"].get("fact") == "finished"
+    ] == ["cancelled"]  # still recorded exactly once
+    assert opt.calls == []
+
+
+# -- the SDK adapter is recognised by identity, not equality ----------------------------------
+def test_an_optimizer_equal_and_hash_alike_to_the_sdk_adapter_is_not_the_sdk_adapter(
+    tmp_path: Path,
+) -> None:
+    adapter = traigent_optimize_fn(_FakeSdkFunction([]))
+
+    class _Lookalike(_ThirdParty):
+        def __eq__(self, other: object) -> bool:
+            return True
+
+        def __hash__(self) -> int:
+            return hash(adapter)
+
+    third = _Lookalike()
+    assert not controller_module._is_sdk_adapter(third)
+    assert controller_module._is_sdk_adapter(adapter)
+    c = controller(tmp_path, third)
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    c.step(at(10))
+    assert third.calls == 1 and third.received_final_check == [None]
+
+
+# -- a head ahead of the history is refused before any spend -----------------------------------
+def test_a_head_ahead_of_the_history_raises_before_any_spend_or_journal_write(
+    tmp_path: Path,
+) -> None:
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt)
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    (tmp_path / "store" / "head.json").write_text(
+        json.dumps({"generation": 1}), encoding="utf-8"
+    )
+    before = _tree(tmp_path / "store")
+    with pytest.raises(TuningError) as err:
+        c.step(at(10))
+    assert err.value.code == "E_HEAD_DIVERGED"
+    assert opt.calls == []
+    assert _tree(tmp_path / "store") == before
+
+
+def test_a_grant_that_survived_a_crash_before_its_scope_closed_is_cancelled_on_the_next_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _clock(monkeypatch, at(10))
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt, now=at(0))
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    real_append = c._append
+
+    def append_then_expire(category: str, record: Any, instant: Any) -> Any:
+        out = real_append(category, record, instant)
+        if isinstance(record, dict) and record.get("fact") == "approval":
+            clock[0] = _scope_end() + timedelta(seconds=1)
+        return out
+
+    def crash(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("process stopped")
+
+    monkeypatch.setattr(c, "_append", append_then_expire)
+    with monkeypatch.context() as m:
+        m.setattr(c, "_cancel_refused", crash)
+        with pytest.raises(RuntimeError):
+            c.step()
+    clock[0] = _scope_end() + timedelta(days=2)  # the relation now closes the scope
+    c.step()
+    assert opt.calls == []
+    assert [
+        ln["record"]["completion"]
+        for ln in c._lines()
+        if ln["category"] == "optimizations" and ln["record"].get("fact") == "finished"
+    ] == ["cancelled"]

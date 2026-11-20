@@ -9,7 +9,7 @@ the whole history and acts ONLY on derived facts:
   (**Approve run**) by an approver the configured authority allows.
 
 This controller runs the spend step only.  It never installs a head: releasing a
-candidate runs through the platform-signed head, and the release entry points
+candidate is planned, not built, and the release entry points
 (``submit_acceptance``, ``accept``, ``build_acceptance``) refuse with
 ``E_UNSUPPORTED_IN_RELEASE`` before touching the store.  The head it reads
 (``head.json``, written once when the store is created) is read-only here.
@@ -464,7 +464,7 @@ class AcceptanceOutcome:
     """The result shape of a release acceptance.
 
     This release's local controller never produces one: every release entry point
-    refuses with ``E_UNSUPPORTED_IN_RELEASE`` (the platform-signed head releases).
+    refuses with ``E_UNSUPPORTED_IN_RELEASE`` (releasing is planned, not built).
     """
 
     acceptance_id: str
@@ -920,6 +920,8 @@ class Controller:
         # for the store lock moves the first scheduling read.
         clock = _effect_clock(now)
         with self._locked():
+            # Read-only divergence check BEFORE any journal write or spend.
+            self._check_head_consistent(self._derive())
             moment = clock()
             if self._has_schedule():
                 self._tick(self._instant(moment))
@@ -1120,11 +1122,25 @@ class Controller:
                 )
                 return True
             if opened["closed"] and marker is None:
+                if self._approval_recorded(attempt):
+                    # a recorded grant already counts as the start (TVL): record the
+                    # cancellation so the attempt never holds a later schedule.
+                    self._cancel_refused(
+                        report, attempt, ref, marker_path, "attempt_closed"
+                    )
+                    return True
                 continue  # closed and never started: nothing to finish, nothing blocks
             # Immediately before any authorization is used or the optimizer is
             # invoked: the relation, over the history up to now, must still show
             # this occurrence's scope as requiring intervention.
             if marker is None and not self._scope_requires_intervention(occ, instant):
+                if self._approval_recorded(attempt):
+                    # granted, then the scope lapsed before any start: a granted
+                    # approval counts as the start, so cancel rather than hold.
+                    self._cancel_refused(
+                        report, attempt, ref, marker_path, "scope_expired"
+                    )
+                    return True
                 self._record_controller_fact(
                     {
                         "fact": "optimize_refused",
@@ -1600,7 +1616,7 @@ class Controller:
             candidates.append(record)
         return str(completion), candidates, configs, gates
 
-    # -- release (the platform-signed head; not run by this controller) --------------
+    # -- release (planned, not built; not run by this controller) --------------
     def build_acceptance(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
         """Release acceptance is not run by this controller: refused before any I/O."""
         raise TuningError(E_UNSUPPORTED_IN_RELEASE, RELEASE_REFUSAL)
@@ -1672,7 +1688,7 @@ class Controller:
 
         Each attempt awaiting approval carries ``approve_run`` (what the human
         decision **Approve run** spends and why); each pending deploy carries
-        ``release_evidence`` (the candidate evidence the platform-signed head releases
+        ``release_evidence`` (the candidate evidence a planned release mechanism would release
         from; this controller never installs it).
         """
         self.state.require_validated()
@@ -1882,7 +1898,7 @@ _SDK_ADAPTERS: weakref.WeakSet[Callable[..., Any]] = weakref.WeakSet()
 
 def _is_sdk_adapter(candidate: Any) -> bool:
     try:
-        return candidate in _SDK_ADAPTERS
+        return any(candidate is adapter for adapter in list(_SDK_ADAPTERS))
     except TypeError:  # unhashable: certainly not ours
         return False
 
@@ -1894,7 +1910,7 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
     live function's configuration is never changed, and every artifact it writes
     (including best-config files) lands in ``candidate_dir`` -- inside the tuning
     store -- never where a live wrapper's best-config loaders look.  A deploy only
-    follows the platform-signed head, never this adapter.
+    follows the local head file, never this adapter.
     """
 
     def run(

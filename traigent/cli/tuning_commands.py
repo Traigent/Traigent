@@ -173,7 +173,7 @@ def simulate_command(file_path: Path, history_path: Path, fmt: str) -> None:
 
 # ---------------------------------------------------------------------------------
 # The local loop controller: record facts, step, approve, status.  Release runs
-# through the platform-signed head, not here.
+# through a platform mechanism that is planned, not built; not here.
 # ---------------------------------------------------------------------------------
 def _controller_options(func: Any) -> Any:
     for option in reversed(
@@ -450,26 +450,13 @@ def approve_command(
 
 @tune.command(
     "accept",
-    help="Not supported in this release: release runs through the platform-signed head.",
+    help="Not supported in this release: releasing a candidate is planned, not built.",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
 )
-@click.argument("deploy", required=False)
-@click.option("--generation", "generation", type=int, default=None)
-@click.option("--approver", default=None, help="Opaque approver reference.")
-@click.option("--reject", is_flag=True, help="Record a rejection instead.")
-@_controller_options
-def accept_command(
-    deploy: str | None,
-    generation: int | None,
-    approver: str | None,
-    reject: bool,
-    store: Path | None,
-    tvl_path: Path | None,
-    target: str | None,
-    agent: str | None,
-    authority_path: Path | None,
-    now_text: str | None,
-) -> None:
-    # Refused before the controller is built: nothing is read or created.
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def accept_command(args: tuple[str, ...]) -> None:
+    # Every argument and option is inert text: nothing is validated, read or created
+    # before the refusal, so no input can change the outcome.
     _die(f"{E_UNSUPPORTED_IN_RELEASE}: {RELEASE_REFUSAL}")
 
 
@@ -488,7 +475,7 @@ def status_command(
     """Head, open attempts and candidates awaiting release, with the evidence shown.
 
     ``approve_run`` (Approve run): the trigger and the spend limit.
-    ``release_evidence`` (read-only; the platform-signed head releases): incumbent,
+    ``release_evidence`` (read-only; releasing is planned, not built): incumbent,
     candidate, holdout counts, gate result and the observed head generation.
     """
     controller = _build_controller(store, tvl_path, target, agent, authority_path)
@@ -523,7 +510,7 @@ def _status_text(status: dict[str, Any]) -> str:
                 )
     for deploy in status["pending_deploys"]:
         view = deploy["release_evidence"]
-        lines.append(f"Awaiting platform-signed release  {deploy['occurrence']}")
+        lines.append(f"Awaiting release (planned, not built)  {deploy['occurrence']}")
         inc = view["incumbent"]
         lines.append(
             f"    incumbent:  generation {inc['generation']} ({inc['fingerprint']})"

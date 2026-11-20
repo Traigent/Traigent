@@ -215,7 +215,7 @@ def test_cli_runs_the_spend_loop_through_observe_over_optimize(
         assert len(status["pending_deploys"]) == 1
         text = _run(["status", "--text", *ctl])  # the release evidence
         for needle in (
-            "Awaiting platform-signed release",
+            "Awaiting release (planned, not built)",
             "incumbent:  generation 0",
             "candidate:",
             "holdout:    80 rows",

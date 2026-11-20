@@ -5,7 +5,7 @@ are, and never trusts a flag in a file.  Two things are configured explicitly:
 
 * an :class:`ApproverAuthority`: the approver references allowed to approve a run
   (**Approve run**), checked again at the instant of the effect (release acceptance
-  runs through the platform-signed head, not here);
+  is planned, not built, and not done here);
 * an :class:`EventVerifier`: the issuers whose external events count, each with a
   shared secret.  An event is authenticated only when its ``signature`` is the
   HMAC-SHA256 of the envelope under its issuer's secret; the envelope's own

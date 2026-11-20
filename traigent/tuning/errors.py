@@ -15,8 +15,8 @@ E_APPROVER_NOT_AUTHORIZED = "E_APPROVER_NOT_AUTHORIZED"
 E_AUTHORITY_CONFIG = "E_AUTHORITY_CONFIG"
 E_UNSUPPORTED_IN_RELEASE = "E_UNSUPPORTED_IN_RELEASE"
 RELEASE_REFUSAL = (
-    "release acceptance runs through the platform-signed head; this release's "
-    "local controller runs the spend step only"
+    "releasing a candidate is not available: a platform-signed release is planned, "
+    "not built, and this version's local controller runs the spend step only"
 )
 
 
