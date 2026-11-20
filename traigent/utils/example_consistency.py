@@ -336,18 +336,36 @@ def _is_rate(value: Any) -> bool:
     )
 
 
-def _is_readable_entry(example_id: Any, entry: Any) -> bool:
-    return (
+def _is_known_label(label: Any) -> bool:
+    # Type-check first: an unhashable stored value must not reach a membership test.
+    return label is None or (isinstance(label, str) and label in CONSISTENCY_LABELS)
+
+
+def _is_readable_entry(example_id: Any, entry: Any, reps: int) -> bool:
+    if not (
         isinstance(example_id, str)
         and isinstance(entry, Mapping)
-        and (entry.get("label") is None or entry.get("label") in CONSISTENCY_LABELS)
+        and _is_known_label(entry.get("label"))
         and all(
             _is_count(entry.get(key))
             for key in ("attempted", "passes", "fails", "errored")
         )
         and _is_rate(entry.get("pass_rate_low"))
         and _is_rate(entry.get("pass_rate_high"))
+    ):
+        return False
+    passes, fails, errored = entry["passes"], entry["fails"], entry["errored"]
+    attempted = entry["attempted"]
+    if attempted != passes + fails + errored or attempted > reps:
+        return False
+    # The label must be the one the counts produce.
+    expected = classify_consistency(
+        [True] * passes + [False] * fails + [None] * errored
     )
+    if entry["label"] != expected:
+        return False
+    low, high = entry.get("pass_rate_low"), entry.get("pass_rate_high")
+    return low is None or high is None or low <= high
 
 
 def normalize_stored_report(stored: Any) -> dict[str, Any] | None:
@@ -356,8 +374,19 @@ def normalize_stored_report(stored: Any) -> dict[str, Any] | None:
     Returns ``None`` when ``stored`` is not a readable report: not a mapping,
     entries that are not mappings, labels outside the closed set, counts that
     are not non-negative integers (a ``bool`` is not an integer here), rates
-    outside ``[0, 1]``. A damaged report is refused whole, never partly read.
+    outside ``[0, 1]``, an interval whose low bound exceeds its high bound, an
+    entry whose counts do not add up to ``attempted``, whose ``attempted``
+    exceeds ``reps``, or whose label contradicts its counts, and ``reps`` below
+    one when there are entries. A damaged report is refused whole, never partly
+    read. Never raises.
     """
+    try:
+        return _normalize_stored_report(stored)
+    except Exception:  # noqa: BLE001 - any odd stored value is an unreadable report
+        return None
+
+
+def _normalize_stored_report(stored: Any) -> dict[str, Any] | None:
     if not isinstance(stored, Mapping):
         return None
     examples = stored.get("examples")
@@ -370,9 +399,12 @@ def normalize_stored_report(stored: Any) -> dict[str, Any] | None:
         or not isinstance(reps, int)
         or not _is_count(reps)
         or not (config_hash is None or isinstance(config_hash, str))
-        or not (metric is None or metric in _METRICS)
+        or not (metric is None or (isinstance(metric, str) and metric in _METRICS))
         or not (threshold is None or _is_finite_number(threshold))
-        or not all(_is_readable_entry(key, entry) for key, entry in examples.items())
+        or (bool(examples) and reps < 1)
+        or not all(
+            _is_readable_entry(key, entry, reps) for key, entry in examples.items()
+        )
     ):
         return None
     return build_consistency_report(
@@ -391,10 +423,19 @@ def format_consistency_line(report: Mapping[str, Any], scope: str) -> str | None
     that passed every one of ``reps`` attempts has a 95% Wilson interval of
     ``low-high`` on its pass rate.
     """
+    try:
+        return _format_consistency_line(report, scope)
+    except Exception:  # noqa: BLE001 - an optional summary line never raises
+        return None
+
+
+def _format_consistency_line(report: Mapping[str, Any], scope: str) -> str | None:
     if not report.get("examples"):
         return None
     counts = report["counts"]
     reps = int(report["reps"])
+    if reps < 1:
+        return None
     parts = ", ".join(f"{counts[key]} {key}" for key in (*CONSISTENCY_LABELS, ERRORED))
     low, high = wilson_interval(reps, reps)
     return (

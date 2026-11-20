@@ -295,7 +295,18 @@ def test_report_records_the_metric_and_threshold_that_decided() -> None:
 
 @pytest.mark.parametrize(
     "overrides",
-    [{"metric": "latency"}, {"metric": 3}, {"threshold": "0.5"}, {"threshold": True}],
+    [
+        {"metric": "latency"},
+        {"metric": 3},
+        {"metric": []},
+        {"metric": {}},
+        {"metric": ["score"]},
+        {"threshold": "0.5"},
+        {"threshold": True},
+        {"threshold": 10**400},
+        {"reps": 0},
+        {"reps": 1},
+    ],
 )
 def test_a_stored_report_with_a_bad_metric_or_threshold_is_unreadable(
     overrides,
@@ -310,3 +321,40 @@ def test_a_stored_report_with_a_bad_metric_or_threshold_is_unreadable(
     report.update(overrides)
 
     assert normalize_stored_report(report) is None
+
+
+def test_a_report_is_unreadable_when_its_entries_contradict_each_other() -> None:
+    good = {
+        "label": "all_pass",
+        "attempted": 2,
+        "passes": 2,
+        "fails": 0,
+        "errored": 0,
+        "pass_rate_low": 0.34,
+        "pass_rate_high": 1.0,
+    }
+
+    def stored(reps: int = 2, **entry: object) -> dict:
+        return {
+            "counts": {},
+            "examples": {"a": {**good, **entry}},
+            "reps": reps,
+            "config_hash": None,
+            "metric": "score",
+            "threshold": 0.5,
+        }
+
+    assert normalize_stored_report(stored()) is not None
+    for bad in (
+        stored(reps=0),
+        stored(reps=-1),
+        stored(reps=1),
+        stored(attempted=3),
+        stored(fails=1),
+        stored(passes=1, fails=1),
+        stored(label="all_fail"),
+        stored(label=[]),
+        stored(pass_rate_low=0.9, pass_rate_high=0.1),
+        [stored()],
+    ):
+        assert normalize_stored_report(bad) is None

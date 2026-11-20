@@ -1408,15 +1408,19 @@ def _consistency_summary_line(result: Any) -> str | None:
         normalize_stored_report,
     )
 
+    unreadable = "Repeat outcomes: the stored report is unreadable and was skipped"
     stored = getattr(result, "example_consistency_report", None)
     if stored is None:
         return None
-    if normalize_stored_report(stored) is None:
-        return "Repeat outcomes: the stored report is unreadable and was skipped"
-    report = accessor()
-    if not isinstance(report, dict):
-        return None
-    return format_consistency_line(report, "winner")
+    try:
+        if normalize_stored_report(stored) is None:
+            return unreadable
+        report = accessor()
+        if not isinstance(report, dict):
+            return None
+        return format_consistency_line(report, "winner")
+    except Exception:  # noqa: BLE001 - this optional line never changes the exit code
+        return unreadable
 
 
 def _print_result_summary(result: Any) -> None:
