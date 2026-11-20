@@ -155,18 +155,46 @@ def capture_output() -> Iterator[CapturedOutput]:
                 for logger, handlers in saved_handlers:
                     logger.handlers = handlers
     finally:
-        captured.warning_lines = [
-            line
-            for item in recorded
-            for line in warnings.formatwarning(
-                item.message, item.category, item.filename, item.lineno
-            ).splitlines()
-            if line.strip()
-        ]
-        captured.log_lines = collector.lines
+        _finish(captured, collector, recorded, fd_state)
+
+
+def _finish(
+    captured: CapturedOutput,
+    collector: _Collector,
+    recorded: list[warnings.WarningMessage],
+    fd_state: tuple[int, int, IO[bytes]] | None,
+) -> None:
+    """Close the window. Each step is a ``finally`` of the one before it.
+
+    Descriptors 1 and 2 come first and are put back whatever goes wrong while
+    flushing; formatting what was captured happens only after they are back,
+    and a failure there becomes a content-free note, never an escape.
+    """
+    try:
         if fd_state is not None:
-            _flush_everything()
-            captured.fd_text = _restore_descriptors(fd_state)
+            try:
+                _flush_everything()
+            finally:
+                captured.fd_text = _restore_descriptors(fd_state)
+    finally:
+        captured.log_lines = list(collector.lines)
+        captured.warning_lines = _format_warnings(recorded)
+
+
+def _format_warnings(recorded: list[warnings.WarningMessage]) -> list[str]:
+    lines: list[str] = []
+    for item in recorded:
+        try:
+            lines.extend(
+                line
+                for line in warnings.formatwarning(
+                    item.message, item.category, item.filename, item.lineno
+                ).splitlines()
+                if line.strip()
+            )
+        except Exception:  # noqa: BLE001 - a user formatter must not escape the boundary
+            lines.append("(a warning could not be formatted)")
+    return lines
 
 
 def _redirect_descriptors() -> tuple[int, int, IO[bytes]]:
@@ -192,15 +220,34 @@ def _redirect_descriptors() -> tuple[int, int, IO[bytes]]:
 
 
 def _restore_descriptors(state: tuple[int, int, IO[bytes]]) -> str:
+    """Put descriptors 1 and 2 back, then read the capture file.
+
+    Every step runs whatever happened in the one before; a capture file that
+    cannot be read yields an empty text, never an exception.
+    """
     saved_out, saved_err, sink = state
     try:
-        os.dup2(saved_out, 1)
-        os.dup2(saved_err, 2)
+        try:
+            os.dup2(saved_out, 1)
+        finally:
+            os.dup2(saved_err, 2)
     finally:
-        os.close(saved_out)
-        os.close(saved_err)
+        try:
+            os.close(saved_out)
+        finally:
+            try:
+                os.close(saved_err)
+            finally:
+                text = _read_sink(sink)
+    return text
+
+
+def _read_sink(sink: IO[bytes]) -> str:
     try:
-        sink.seek(0)
-        return sink.read().decode("utf-8", errors="replace")
+        try:
+            sink.seek(0)
+            return sink.read().decode("utf-8", errors="replace")
+        except (OSError, ValueError):
+            return ""
     finally:
         sink.close()

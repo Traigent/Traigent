@@ -82,3 +82,125 @@ def test_show_output_still_reaches_stderr_only(tmp_path: Path) -> None:
     assert MARK_PY not in shown.stdout
     assert json.loads(shown.stdout)["verdict"] == "pass"
     assert MARK_PY in shown.stderr  # opt-in, stderr only
+
+
+# ---------------------------------------------- cleanup cannot be skipped
+
+RAISING_FORMATWARNING = _source(
+    "    import warnings\n"
+    "    def _bad(*args, **kwargs):\n"
+    '        raise RuntimeError("formatter-secret")\n'
+    "    warnings.formatwarning = _bad\n"
+    '    warnings.warn("a warning")'
+)
+RAISING_LOG_FORMAT = _source(
+    "    import logging\n"
+    "    class _Handler(logging.StreamHandler):\n"
+    "        def format(self, record):\n"
+    '            raise RuntimeError("log-format-secret")\n'
+    "    logging.getLogger().addHandler(_Handler())\n"
+    '    logging.getLogger("traigent").addHandler(_Handler())\n'
+    '    logging.getLogger("user.module").warning("a log line")\n'
+    '    logging.getLogger("traigent").warning("an sdk log line")'
+)
+RAISING_FLUSH = _source(
+    "    class _Out:\n"
+    "        def write(self, text):\n"
+    "            return len(text)\n"
+    "        def flush(self):\n"
+    '            raise RuntimeError("flush-secret")\n'
+    "    sys.stdout = _Out()\n"
+    "    sys.stderr = _Out()\n"
+    '    print("some text")'
+)
+RAISING_DUNDER_FLUSH = RAISING_FLUSH.replace(
+    "    sys.stdout = _Out()\n    sys.stderr = _Out()\n",
+    "    sys.__stdout__ = _Out()\n    sys.__stderr__ = _Out()\n",
+)
+HAZARDS = {
+    "dunder_flush": RAISING_DUNDER_FLUSH,
+    "formatwarning": RAISING_FORMATWARNING,
+    "log_format": RAISING_LOG_FORMAT,
+    "flush": RAISING_FLUSH,
+}
+
+
+@pytest.mark.parametrize("hazard", sorted(HAZARDS))
+def test_a_failing_formatter_or_flush_cannot_skip_the_restore(
+    tmp_path: Path, hazard: str
+) -> None:
+    make_workspace(tmp_path, HAZARDS[hazard])
+    confirm = run_cli(tmp_path, "confirm", "--repeats", "2")
+    assert confirm.returncode == 0, confirm.stderr[-800:]
+    assert "armed" in confirm.stdout  # the command's own result reached stdout
+    plain = run_cli(tmp_path, "check")
+    assert plain.returncode == 0, plain.stderr[-800:]
+    assert "1 armed row(s): 1 passed" in plain.stdout
+    as_json = run_cli(tmp_path, "check", "--json")
+    assert as_json.returncode == 0, as_json.stderr[-800:]
+    assert json.loads(as_json.stdout)["verdict"] == "pass"
+    for secret in ("formatter-secret", "log-format-secret", "flush-secret"):
+        assert secret not in plain.stdout + plain.stderr + as_json.stdout
+        assert secret not in as_json.stderr
+
+
+@pytest.mark.parametrize("hazard", sorted(HAZARDS))
+def test_a_failing_check_exit_code_survives_the_hazard(
+    tmp_path: Path, hazard: str
+) -> None:
+    """A regression is still exit 1 when cleanup hits a hazard."""
+    make_workspace(tmp_path, HAZARDS[hazard])
+    assert run_cli(tmp_path, "confirm", "--repeats", "2").returncode == 0
+    (tmp_path / "agent.py").write_text(
+        HAZARDS[hazard].replace('q.startswith("pass")', "False"), encoding="utf-8"
+    )
+    result = run_cli(tmp_path, "check", "--json")
+    assert result.returncode == 1, result.stderr[-800:]
+    assert json.loads(result.stdout)["verdict"] == "regression"
+
+
+def test_in_process_a_raising_formatwarning_still_restores_descriptors(
+    capfd: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import warnings
+
+    from traigent.utils.output_boundary import capture_output
+
+    def bad(*args: object, **kwargs: object) -> str:
+        raise RuntimeError("formatter-secret")
+
+    monkeypatch.setattr(warnings, "formatwarning", bad)
+    with capture_output() as captured:
+        warnings.warn("careful", stacklevel=2)
+        os.write(1, b"inside\n")
+    os.write(1, b"after\n")
+    out = capfd.readouterr().out
+    assert "after" in out and "inside" not in out
+    assert captured.warning_lines == ["(a warning could not be formatted)"]
+    assert "formatter-secret" not in captured.text()
+    assert captured.line_count >= 2  # the note is in the count
+
+
+def test_in_process_descriptors_come_back_even_if_flushing_blows_up(
+    capfd: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from traigent.utils import output_boundary
+
+    calls: list[int] = []
+
+    def broken() -> None:
+        calls.append(1)
+        if len(calls) > 1:  # the closing flush, not the opening one
+            raise RuntimeError("flush went wrong")
+
+    monkeypatch.setattr(output_boundary, "_flush_everything", broken)
+    with pytest.raises(RuntimeError):
+        with output_boundary.capture_output():
+            os.write(1, b"inside\n")
+    os.write(1, b"after\n")
+    out = capfd.readouterr().out
+    assert len(calls) == 2
+    assert "after" in out and "inside" not in out
