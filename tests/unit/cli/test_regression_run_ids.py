@@ -154,8 +154,10 @@ def test_a_duplicated_result_id_leaves_those_rows_unrecorded(
     # The first row's id came back twice and the second never: neither is
     # recorded, and the closed reasons are printed.
     assert "id_duplicated" in result.output and "id_missing" in result.output
-    assert all("observations" not in v["metadata"]["regression"]
-               for v in read_rows(ws).values())
+    assert all(
+        "observations" not in v["metadata"]["regression"]
+        for v in read_rows(ws).values()
+    )
 
 
 def test_a_missing_result_id_leaves_only_that_row_unrecorded(
@@ -175,7 +177,9 @@ def test_check_is_inconclusive_for_a_row_whose_id_is_missing_or_duplicated(
     write_rows(ws, [ROW_B, make_row("C", {"q": "pass2"})])
     assert invoke(ws, "confirm", "--repeats", "2").exit_code == 0
     for rule, drop, reason in (("echo", {0}, "id_missing"),):
-        monkeypatch.setattr(OptimizedFunction, "compare", _fake_compare(rule, drop=drop))
+        monkeypatch.setattr(
+            OptimizedFunction, "compare", _fake_compare(rule, drop=drop)
+        )
         result = invoke(ws, "check", "--json")
         assert result.exit_code == 2, result.output
         payload = json.loads(result.stdout)

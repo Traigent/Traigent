@@ -196,7 +196,7 @@ def _noise() -> None:
     print("out")
     print("err", file=sys.stderr)
     logging.getLogger("traigent").warning("sdk log")
-    warnings.warn("careful")
+    warnings.warn("careful", stacklevel=2)
     os.write(1, b"fd out\n")
     subprocess.run(["echo", "child"], check=False)
 

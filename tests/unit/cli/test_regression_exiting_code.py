@@ -38,7 +38,9 @@ def _swap_module(ws: Path, source: str) -> None:
 def test_a_module_that_exits_at_import_makes_check_inconclusive(
     ws: Path, code: object
 ) -> None:
-    _swap_module(ws, MODULE_SOURCE.replace("import sys", f"import sys\nsys.exit({code!r})"))
+    _swap_module(
+        ws, MODULE_SOURCE.replace("import sys", f"import sys\nsys.exit({code!r})")
+    )
     result = invoke(ws, "check", "--json")
     assert result.exit_code == 2, result.output
     payload = json.loads(result.stdout)  # exactly one object, nothing else

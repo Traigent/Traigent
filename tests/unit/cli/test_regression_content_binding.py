@@ -125,9 +125,7 @@ def test_replace_in_add_resets_the_row_to_unconfirmed(ws: Path) -> None:
         ]
     )
     evidence = RunEvidence("run-2", "run-2", "2026-02-02", "best_config", 0.5, None, {})
-    merge_failures(
-        ws / "reg", incoming, evidence=evidence, on_id_conflict="replace"
-    )
+    merge_failures(ws / "reg", incoming, evidence=evidence, on_id_conflict="replace")
     rows = read_regression_rows(ws / "reg" / "regression.jsonl")
     regression = rows[0]["metadata"]["regression"]
     assert "observations" not in regression and regression["label"] == "seen_once"
@@ -161,12 +159,21 @@ def test_disarm_records_the_content_it_applies_to(ws: Path) -> None:
 
     result = CliRunner().invoke(
         cli,
-        ["regression", "confirm", "--dir", str(ws / "reg"), "--disarm", "P",
-         "--reason", "other"],
+        [
+            "regression",
+            "confirm",
+            "--dir",
+            str(ws / "reg"),
+            "--disarm",
+            "P",
+            "--reason",
+            "other",
+        ],
     )
     assert result.exit_code == 0, result.output
     regression = read_rows(ws)["P"]["metadata"]["regression"]
-    assert regression["observations"][-1]["content_digest"] == (
-        read_rows(ws)["P"]["metadata"]["content_digest"]
+    assert (
+        regression["observations"][-1]["content_digest"]
+        == (read_rows(ws)["P"]["metadata"]["content_digest"])
     )
     assert regression["status"] == "known_failure"
