@@ -101,6 +101,19 @@ def classify_consistency(outcomes: Iterable[bool | None]) -> str | None:
     return FLAKY
 
 
+class ExampleIdCollisionError(ValueError):
+    """Two distinct example ids have the same text form (e.g. ``1`` and ``"1"``).
+
+    Stored reports key examples by text, so merging them would report one
+    example's outcomes under the other's id. Nothing is merged: the caller
+    gets this error naming both ids.
+    """
+
+
+def _same_example_id(first: Any, second: Any) -> bool:
+    return type(first) is type(second) and first == second
+
+
 def trial_example_outcomes(
     trial: Any, threshold: float = DEFAULT_PASS_THRESHOLD
 ) -> dict[str, str] | None:
@@ -108,17 +121,31 @@ def trial_example_outcomes(
 
     Returns ``None`` when the trial carries no per-example results, so the
     caller can tell "no evidence" from "every example unknown".
+
+    Raises:
+        ExampleIdCollisionError: two distinct ids (such as ``1`` and ``"1"``)
+            share a text form. Nothing is merged.
     """
     metadata = getattr(trial, "metadata", None)
     rows = metadata.get("example_results") if isinstance(metadata, Mapping) else None
     if not isinstance(rows, list):
         return None
     outcomes: dict[str, str] = {}
+    originals: dict[str, Any] = {}
     for row in rows:
         example_id = _get(row, "example_id")
         if example_id is None:
             continue
-        outcomes[str(example_id)] = cell_outcome(_extract_cell(row), threshold)
+        key = str(example_id)
+        if key in originals and not _same_example_id(originals[key], example_id):
+            raise ExampleIdCollisionError(
+                f"Example ids {originals[key]!r} ({type(originals[key]).__name__}) "
+                f"and {example_id!r} ({type(example_id).__name__}) have the same "
+                f"text form {key!r}, so their per-example outcomes cannot be "
+                "kept apart. Give every example an id that is distinct as text."
+            )
+        originals[key] = example_id
+        outcomes[key] = cell_outcome(_extract_cell(row), threshold)
     return outcomes
 
 

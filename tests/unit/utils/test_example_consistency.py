@@ -6,6 +6,7 @@ import pytest
 
 from traigent.api.types import ExampleResult
 from traigent.utils.example_consistency import (
+    ExampleIdCollisionError,
     cell_outcome,
     classify_consistency,
     format_consistency_line,
@@ -118,3 +119,30 @@ def test_consistency_line_text() -> None:
     assert format_consistency_line(report, "winner") == (
         "41 consistent_pass, 2 consistent_fail, 3 flaky (winner, 5 reps)"
     )
+
+
+def test_integer_one_and_string_one_are_never_merged() -> None:
+    class _Trial:
+        metadata = {
+            "example_results": [
+                ExampleResult(1, {}, "x", "y", {"score": 0.0}, 0.1, True).to_dict(),
+                ExampleResult("1", {}, "x", "x", {"score": 1.0}, 0.1, True).to_dict(),
+            ]
+        }
+
+    with pytest.raises(ExampleIdCollisionError) as excinfo:
+        trial_example_outcomes(_Trial())
+    message = str(excinfo.value)
+    assert "1 (int)" in message and "'1' (str)" in message
+
+
+def test_the_same_id_twice_is_not_a_collision() -> None:
+    class _Trial:
+        metadata = {
+            "example_results": [
+                ExampleResult(7, {}, "x", "x", {"score": 1.0}, 0.1, True).to_dict(),
+                ExampleResult(7, {}, "x", "x", {"score": 1.0}, 0.1, True).to_dict(),
+            ]
+        }
+
+    assert trial_example_outcomes(_Trial()) == {"7": "pass"}

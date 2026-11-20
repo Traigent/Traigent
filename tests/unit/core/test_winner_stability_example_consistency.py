@@ -165,6 +165,28 @@ async def test_five_reruns_label_each_example_by_its_own_outcomes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_integer_and_string_ids_are_not_merged_in_the_stability_path(
+    caplog,
+) -> None:
+    """Ids ``1`` (always fails) and ``"1"`` (always passes) stay apart.
+
+    Merging them would label one example with the other's outcomes. Nothing is
+    recorded for the run instead, the winner-stability block is untouched, and
+    the warning names both ids.
+    """
+    script: dict[Any, list[float | None]] = {
+        1: [0.0] * 6,
+        "1": [1.0] * 6,
+    }
+    with caplog.at_level("WARNING"):
+        result = await _run(5, script)
+
+    assert result.example_consistency()["examples"] == {}
+    assert result.metadata["winner_stability"]["reps"] == 5
+    assert "1 (int)" in caplog.text and "'1' (str)" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_errored_reruns_are_unknown_and_one_known_evaluation_gets_no_label() -> (
     None
 ):

@@ -151,6 +151,7 @@ from traigent.utils.env_config import is_backend_offline as is_backend_offline
 from traigent.utils.env_config import is_mock_llm, skip_provider_validation
 from traigent.utils.example_consistency import (
     EXAMPLE_CONSISTENCY_METADATA_KEY,
+    ExampleIdCollisionError,
     build_consistency_report,
     summarize_example_outcomes,
     trial_example_outcomes,
@@ -1519,6 +1520,7 @@ class OptimizationOrchestrator:
         self._winner_stability_unmeasured_reruns = 0
         self._winner_stability_recorded_ids: dict[Any, Any] = {}
         self._winner_stability_example_outcomes: list[dict[str, str]] = []
+        self._winner_stability_example_collision = False
         # The backend session id for the active run. Read by the
         # certified-selection report guard to verify the incumbent's trial id
         # was backend-acknowledged before attesting a winner.
@@ -5604,6 +5606,7 @@ class OptimizationOrchestrator:
         """
         scores: list[float] = []
         self._winner_stability_example_outcomes = []
+        self._winner_stability_example_collision = False
         for index in range(reps):
             attempt = _WinnerStabilityAttempt(
                 trial_id=f"winner_stability_{self._optimization_id}_{index + 1}"
@@ -5623,7 +5626,13 @@ class OptimizationOrchestrator:
             rerun_trial = attempt.trial
             if rerun_trial is None:
                 continue
-            rerun_outcomes = trial_example_outcomes(rerun_trial)
+            try:
+                rerun_outcomes = trial_example_outcomes(rerun_trial)
+            except ExampleIdCollisionError as exc:
+                # The run is not lost: only the per-example view is skipped.
+                logger.warning("Per-example consistency not recorded: %s", exc)
+                self._winner_stability_example_collision = True
+                rerun_outcomes = None
             if rerun_outcomes is not None:
                 self._winner_stability_example_outcomes.append(rerun_outcomes)
             score = (
@@ -5651,6 +5660,8 @@ class OptimizationOrchestrator:
         (never sent to the backend). Nothing is stored unless at least one
         example has two or more known reruns.
         """
+        if getattr(self, "_winner_stability_example_collision", False):
+            return
         per_rerun = getattr(self, "_winner_stability_example_outcomes", None) or []
         examples = summarize_example_outcomes(per_rerun)
         if not examples:

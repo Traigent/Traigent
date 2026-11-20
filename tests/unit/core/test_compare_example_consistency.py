@@ -79,3 +79,33 @@ def test_config_index_out_of_range_raises_index_error() -> None:
 
     with pytest.raises(IndexError):
         comparison.example_consistency(config_index=5)
+
+
+def test_integer_and_string_ids_that_print_alike_are_not_merged() -> None:
+    rows = [
+        {
+            "input": {"text": "bad"},
+            "expected_output": "yes",
+            "metadata": {"example_id": 1},
+        },
+        {
+            "input": {"text": "good"},
+            "expected_output": "yes",
+            "metadata": {"example_id": "1"},
+        },
+    ]
+
+    def agent(text: str) -> str:
+        return "no" if text == "bad" else "yes"
+
+    wrapped = traigent.optimize(
+        eval_dataset=rows,
+        objectives=["accuracy"],
+        configuration_space={"mode": ["a"]},
+        execution_mode="local",
+        max_trials=1,
+    )(agent)
+    comparison = wrapped.compare([{"mode": "a"}], repeats=3)
+
+    with pytest.raises(ValueError, match=r"1 \(int\).*'1' \(str\)"):
+        comparison.example_consistency()
