@@ -119,7 +119,6 @@ def test_without_a_code_version_no_candidate_has_promotion_evidence(
 
     c = tc.controller(tmp_path, tc.FakeOptimizer())
     c.state.source = None  # nothing to digest
-    c.record_event(tc.event("E1", NEW["model"], 9), at(10))
     tc.to_deploy_awaiting(c, e_ref("E1"), 10)
     assert (
         c.status()["pending_deploys"] == []

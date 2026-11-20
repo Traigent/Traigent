@@ -19,6 +19,7 @@ import yaml
 
 from traigent.tuning.errors import (
     E_TVL_VALIDATOR_UNAVAILABLE,
+    E_UNSUPPORTED_IN_RELEASE,
     TuningError,
     TvlValidationFailed,
 )
@@ -202,10 +203,7 @@ def _controller_options(func: Any) -> Any:
                 type=click.Path(exists=True, dir_okay=False, path_type=Path),
                 envvar="TRAIGENT_TUNING_AUTHORITY",
                 default=None,
-                help=(
-                    "Authority config (approvers, trusted event issuers). Needed "
-                    "by approve and accept; without it no event is authenticated."
-                ),
+                help=("Authority config (approvers). Needed by approve and accept."),
             ),
             click.option(
                 "--now", "now_text", default=None, help="UTC instant (testing)."
@@ -300,7 +298,7 @@ def _build_controller(
     if state.agent is None and store is None:
         _die("--agent or --store is required")
     try:
-        authority, verifier = (
+        authority, _verifier = (
             load_authority(authority_path) if authority_path else (None, None)
         )
         return Controller(
@@ -312,7 +310,6 @@ def _build_controller(
             or resolve_environment_name(default=None)
             or "production",
             authority=authority,
-            event_verifier=verifier,
         )
     except TuningError as exc:
         _die(
@@ -339,70 +336,56 @@ def _emit(value: Any) -> None:
     click.echo(json.dumps(value, indent=2, sort_keys=True, default=str))
 
 
-def _record_command(kind: str) -> Any:
-    @tune.command(kind, help=f"Record a {kind} fact from FILE (JSON or YAML).")
-    @click.argument(
-        "file_path", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+@tune.command("window", help="Record a window fact from FILE (JSON or YAML).")
+@click.argument(
+    "file_path", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@_controller_options
+def window_command(
+    file_path: Path,
+    store: Path | None,
+    tvl_path: Path | None,
+    target: str | None,
+    agent: str | None,
+    authority_path: Path | None,
+    now_text: str | None,
+) -> None:
+    controller = _build_controller(store, tvl_path, target, agent, authority_path)
+    data = _load_yaml(file_path, "window file")
+    if not isinstance(data, dict):
+        _die("window file must hold a mapping")
+    instant = _guard(lambda: controller.record_window(data, _now(now_text)))
+    _emit({"recorded": "window", "instant": instant})
+
+
+@tune.command(
+    "event",
+    help="Not supported in this release: external events are refused.",
+)
+@click.argument("file_path", type=click.Path(dir_okay=False, path_type=Path))
+@_controller_options
+def event_command(
+    file_path: Path,
+    store: Path | None,
+    tvl_path: Path | None,
+    target: str | None,
+    agent: str | None,
+    authority_path: Path | None,
+    now_text: str | None,
+) -> None:
+    _die(
+        f"{E_UNSUPPORTED_IN_RELEASE}: recording external events is not supported "
+        "in this release"
     )
-    @_controller_options
-    def command(
-        file_path: Path,
-        store: Path | None,
-        tvl_path: Path | None,
-        target: str | None,
-        agent: str | None,
-        authority_path: Path | None,
-        now_text: str | None,
-    ) -> None:
-        controller = _build_controller(store, tvl_path, target, agent, authority_path)
-        data = _load_yaml(file_path, f"{kind} file")
-        if not isinstance(data, dict):
-            _die(f"{kind} file must hold a mapping")
-        record = (
-            controller.record_event if kind == "event" else controller.record_window
-        )
-        result = _guard(lambda: record(data, _now(now_text)))
-        if kind == "event":
-            if not result.authenticated:
-                click.echo(
-                    "warning: the event is not authenticated (no trusted issuer "
-                    "signature); it was recorded as rejected(unauthenticated) and "
-                    "fires nothing",
-                    err=True,
-                )
-            _emit(
-                {
-                    "recorded": kind,
-                    "instant": result.instant,
-                    "authenticated": result.authenticated,
-                }
-            )
-        else:
-            _emit({"recorded": kind, "instant": result})
-
-    return command
-
-
-_record_command("event")
-_record_command("window")
 
 
 @tune.command("step")
 @click.option(
     "--abandon-interrupted", is_flag=True, help="Cancel an interrupted attempt."
 )
-@click.option(
-    "--close-ingestion",
-    is_flag=True,
-    help=(
-        "Assert that no more events of the current second will arrive, so work may "
-        "start in it (by default nothing is spent in the second an event was recorded)."
-    ),
-)
 @_controller_options
 def step_command(
     abandon_interrupted: bool,
-    close_ingestion: bool,
     store: Path | None,
     tvl_path: Path | None,
     target: str | None,
@@ -416,7 +399,6 @@ def step_command(
         lambda: controller.step(
             _now(now_text),
             abandon_interrupted=abandon_interrupted,
-            ingestion_closed=True if close_ingestion else None,
         )
     )
     _emit(
@@ -424,7 +406,6 @@ def step_command(
             "approved": report.approved,
             "started": report.started,
             "finished": report.finished,
-            "deferred": report.deferred,
             "awaiting_approval": report.awaiting_approval,
             "head_written": report.head_written,
         }

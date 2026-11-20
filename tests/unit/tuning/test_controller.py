@@ -18,11 +18,10 @@ import traigent
 from traigent.cli.main import cli
 from traigent.config.context import config_context
 from traigent.observability import observe
-from traigent.tuning.authority import ApproverAuthority, EventVerifier, sign_event
+from traigent.tuning.authority import ApproverAuthority
 from traigent.tuning.controller import (
     E_ACCEPTANCE_CONFLICT,
     E_ATTEMPT_IN_PROGRESS,
-    E_INVALID_GRANT,
     E_NO_DEPLOY_AWAITING,
     E_STORE_CORRUPT,
     E_STORE_FORMAT,
@@ -35,6 +34,7 @@ from traigent.tuning.controller import (
 from traigent.tuning.errors import (
     E_APPROVER_NOT_AUTHORIZED,
     E_NO_APPROVER_AUTHORITY,
+    E_UNSUPPORTED_IN_RELEASE,
     TuningError,
     ValidatorUnavailable,
 )
@@ -51,15 +51,12 @@ T0 = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
 OLD = {"model": "anthropic/claude-haiku-4-5"}
 NEW = {"model": "anthropic/claude-haiku-5-5"}
 NEWER = {"model": "anthropic/claude-haiku-5-6"}
-SECRET = b"test-issuer-secret"  # pragma: allowlist secret
-ISSUER_ENV = "TRAIGENT_TEST_ISSUER_P"
+CANDIDATES = [NEW["model"], NEWER["model"], "anthropic/claude-haiku-5-7"]
+# the hour (after T0) each named occurrence's schedule first ticks
+OCCURRENCE_HOURS = {"E1": 9, "E6": 39, "E7": 40}
 APPROVERS = frozenset({"approver-1", "issuer-1", "boss"})
 ROWS = 1000
 KIT: dict[str, Any] = {}
-
-
-def verifier() -> EventVerifier:
-    return EventVerifier({"P": SECRET})
 
 
 def _skill_agent(x: int) -> str:
@@ -90,23 +87,23 @@ def _holdout(tmp_path: Path) -> None:
     KIT["holdout"] = path
 
 
-def _ref(event_id: str) -> str:
-    """The deploy reference of an external occurrence, scope_ref from TVL itself."""
+def _ref(name: str) -> str:
+    """The reference of a schedule occurrence, scope_ref from TVL itself."""
     return occurrence_ref(
         {
             "response": "tuning",
-            "rule": "on_new_model",
-            "scope_kind": "external",
-            "scope": {"issuer": "P", "event_id": event_id},
+            "rule": f"on_{name}",
+            "scope_kind": "schedule",
+            "scope": "0",
             "j": 0,
         }
     )
 
 
 @functools.cache
-def e_ref(event_id: str) -> str:
+def e_ref(name: str) -> str:
     """Resolved lazily: TVL is only imported once a test runs (and was not skipped)."""
-    return _ref(event_id)
+    return _ref(name)
 
 
 def at(hours: int) -> datetime:
@@ -119,6 +116,33 @@ def module() -> dict[str, Any]:
     # the local evidence measures accuracy (exact match on the holdout)
     doc["objectives"] = [{"name": "accuracy", "direction": "maximize"}]
     doc["promotion_policy"]["min_effect"] = {"accuracy": 0.02}
+    doc["tvars"][0]["domain"] = [
+        OLD["model"],
+        "anthropic/claude-sonnet-4-6",
+        *CANDIDATES,
+    ]
+    # the occurrences are schedules (the pilot's trigger): each ticks once, at
+    # its own anchor, and its scope lasts thirty days
+    breach = [r for r in doc["responses"][0]["rules"] if r["id"] == "on_breach"]
+    scheduled = [
+        {
+            "id": f"on_{name}",
+            "trigger": {
+                "schedule": {
+                    "every_days": 30,
+                    "anchor": (T0 + timedelta(hours=hour)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                }
+            },
+            "do": "optimize",
+            "approval": "human",
+            "deploy": "if_promoted",
+            "protects": ["quality_floor"],
+        }
+        for name, hour in OCCURRENCE_HOURS.items()
+    ]
+    doc["responses"][0]["rules"] = [*scheduled, *breach]
     return doc
 
 
@@ -142,33 +166,13 @@ def state(doc: dict[str, Any] | None = None, *, validated: bool = True) -> Tunin
     return st
 
 
-def event(
-    event_id: str, model: str, issued_hour: int, *, secret: bytes | None = SECRET
-) -> dict[str, Any]:
-    """A signed ``model_released`` envelope (``issued_hour``: hours after the origin)."""
-    envelope: dict[str, Any] = {
-        "kind": "model_released",
-        "event_id": event_id,
-        "issuer": "P",
-        "issued_at": issued_hour * 3600,
-        "catalogue_revision": 1,
-        "subject": {
-            "model_ref": model,
-            "provider_family": "anthropic",
-            "tier": "small",
-        },
-    }
-    if secret is not None:
-        envelope["signature"] = sign_event(envelope, secret)
-    return envelope
-
-
 class FakeOptimizer:
     """Stands in for ``fn.optimize``; records every call."""
 
-    def __init__(self, result: Any = None) -> None:
+    def __init__(self, result: Any = None, models: list[str] | None = None) -> None:
         self.calls: list[dict[str, Any]] = []
         self.result = result
+        self.models = models or CANDIDATES
 
     def __call__(self, space: dict[str, Any]) -> Any:
         self.calls.append(space)
@@ -179,16 +183,17 @@ class FakeOptimizer:
             "candidates": [
                 {
                     # the optimizer proposes a config; the controller measures it
-                    "config": {"model": space["model"][-1]},
+                    "config": {
+                        "model": self.models[min(len(self.calls), len(self.models)) - 1]
+                    },
                 }
             ],
         }
 
 
 def make(st: TuningState, store: Path, optimize: Any, **kw: Any) -> Controller:
-    """A controller with the test authority and trusted issuer configured."""
+    """A controller with the test authority configured."""
     kw.setdefault("authorized_approvers", APPROVERS)
-    kw.setdefault("event_verifier", verifier())
     kw.setdefault("initial_config", OLD)
     kw.setdefault("now", T0)
     kw.setdefault(
@@ -216,7 +221,6 @@ def test_slice_end_to_end(tmp_path: Path) -> None:
     assert head(tmp_path)["generation"] == 0
 
     # E1 -> attempt opened, but nothing runs without a recorded approval.
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     report = c.step(at(10))
     assert report.awaiting_approval == [e_ref("E1")]
     assert opt.calls == []
@@ -236,12 +240,10 @@ def test_slice_end_to_end(tmp_path: Path) -> None:
     assert head(tmp_path)["config"] == NEW
 
     # redelivered E1 does nothing.
-    c.record_event(event("E1", NEW["model"], 9), at(32))
     c.step(at(32))
     assert len(opt.calls) == 1 and head(tmp_path)["generation"] == 1
 
     # a stale acceptance (generation 0) for a new deploy is refused; head unchanged.
-    c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
     to_deploy_awaiting(c, e_ref("E6"), 40)
     assert len(opt.calls) == 2
     stale = c.accept(e_ref("E6"), "approver-1", 0, now=at(41))
@@ -261,7 +263,6 @@ def test_crash_between_optimize_and_record_never_reruns(
 ) -> None:
     opt = FakeOptimizer()
     c = controller(tmp_path, opt)
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
 
     real = Controller._append
@@ -288,7 +289,6 @@ def test_crash_between_optimize_and_record_never_reruns(
 def test_interrupted_attempt_is_not_started_twice(tmp_path: Path) -> None:
     opt = FakeOptimizer()
     c = controller(tmp_path, opt)
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     marker_dir = tmp_path / "store" / "attempts"
     c.step(at(10))  # runs and finishes
@@ -296,7 +296,6 @@ def test_interrupted_attempt_is_not_started_twice(tmp_path: Path) -> None:
     data = json.loads(marker.read_text(encoding="utf-8"))
     # A store holding only an in-progress marker (crash mid-optimize): refuse.
     c2 = make(state(), tmp_path / "other", opt)
-    c2.record_event(event("E1", NEW["model"], 9), at(10))
     c2.approve_optimization(e_ref("E1"), "approver-1", at(10))
     (tmp_path / "other" / "attempts").mkdir()
     (tmp_path / "other" / "attempts" / marker.name).write_text(
@@ -319,7 +318,6 @@ def test_candidate_without_promotion_evidence_never_deploys(tmp_path: Path) -> N
     )  # a bare result
     c = controller(tmp_path, opt)
     c.state.policy.holdout = None  # no holdout: nothing to measure the candidate on
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     to_deploy_awaiting(c, e_ref("E1"), 10)
     assert len(opt.calls) == 1
     assert c.status()["pending_deploys"] == []
@@ -332,7 +330,6 @@ def test_candidate_without_promotion_evidence_never_deploys(tmp_path: Path) -> N
 
 def test_acceptance_with_wrong_contract_digest_is_refused(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer())
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     to_deploy_awaiting(c, e_ref("E1"), 10)
     record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
     record["contract_digest"] = "sha256:" + "d" * 64
@@ -343,7 +340,6 @@ def test_acceptance_with_wrong_contract_digest_is_refused(tmp_path: Path) -> Non
 
 def test_unauthorized_approver_is_refused_on_both_decisions(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer(), authorized_approvers={"boss"})
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     with pytest.raises(TuningError) as err:  # Approve run
         c.approve_optimization(e_ref("E1"), "intern", at(10))
     assert err.value.code == E_APPROVER_NOT_AUTHORIZED
@@ -364,7 +360,6 @@ def test_platform_authenticated_but_unlisted_approver_is_unauthorized(
     c = controller(
         tmp_path, FakeOptimizer(), authority=platform, authorized_approvers=None
     )
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     c.approve_optimization(e_ref("E1"), "boss", at(10))
     c.step(at(10))
     outcome = c.accept(e_ref("E1"), "intern", 0, now=at(31))
@@ -387,10 +382,13 @@ def test_authenticator_failure_never_authenticates(tmp_path: Path) -> None:
     assert platform.authenticated("boss", {}) is False
 
 
-def test_invalid_record_never_lands_in_history(tmp_path: Path) -> None:
+def test_recording_an_external_event_is_refused_in_this_release(
+    tmp_path: Path,
+) -> None:
     c = controller(tmp_path, FakeOptimizer())
-    with pytest.raises(TuningError):
+    with pytest.raises(TuningError) as err:
         c.record_event({"kind": "model_released"}, at(10))
+    assert err.value.code == E_UNSUPPORTED_IN_RELEASE
     assert not (tmp_path / "store" / "history.jsonl").exists()
 
 
@@ -403,7 +401,6 @@ def test_every_executing_path_refuses_without_a_validated_policy(
     c.state.validated = False
     for call in (
         lambda: c.step(at(1)),
-        lambda: c.record_event(event("E1", "m", 0), at(1)),
         lambda: c.record_window({}, at(1)),
         lambda: c.approve_optimization(e_ref("E1"), "a", at(1)),
         lambda: c.accept(e_ref("E1"), "a", 0, now=at(1)),
@@ -435,7 +432,6 @@ def test_observe_follow_head_sees_the_new_config_and_stamps_generation(
     assert seen[-1] == OLD
     assert stamp()["agent"] == "agent-1" and stamp()["head_generation"] == 0
 
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     to_deploy_awaiting(c, e_ref("E1"), 10)
     c.accept(e_ref("E1"), "approver-1", 0, now=at(31))
 
@@ -453,7 +449,6 @@ def test_fingerprint_is_the_tvl_canonical_digest() -> None:
 def _cli_fixture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Any, list[str]]:
-    monkeypatch.setenv(ISSUER_ENV, SECRET.decode())
     doc = tmp_path / "module.yml"
     doc.write_text(yaml.safe_dump(module()), encoding="utf-8")
     auth = tmp_path / "authority.yml"
@@ -462,7 +457,6 @@ def _cli_fixture(
             {
                 "mode": "local-trusted",
                 "approvers": ["approver-1"],
-                "event_issuers": {"P": {"secret_env": ISSUER_ENV}},
             }
         ),
         encoding="utf-8",
@@ -474,22 +468,17 @@ def _cli_fixture(
 def test_cli_drives_the_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runner = CliRunner()
     auth, common = _cli_fixture(tmp_path, monkeypatch)
-    ev = tmp_path / "e1.json"
-    ev.write_text(json.dumps(event("E1", NEW["model"], 9)), encoding="utf-8")
 
     def run(*args: str, authority: bool = True) -> Any:
         extra = ["--authority", str(auth)] if authority else []
         return runner.invoke(cli, ["tune", *args, *common, *extra])
 
-    first = run("event", str(ev), "--now", "2026-11-20T10:00:00Z")
-    assert first.exit_code == 0, first.output
-    assert json.loads(first.output)["authenticated"] is True
     step = run("step", "--now", "2026-11-20T10:00:00Z")
     assert json.loads(step.output)["awaiting_approval"] == [e_ref("E1")]
     status = json.loads(run("status").output)
     assert status["open_attempts"][0]["state"] == "awaiting_approval"
     view = status["open_attempts"][0]["approve_run"]  # what Approve run shows
-    assert view["trigger"]["external"] == "model_released"
+    assert "schedule" in view["trigger"]
     assert "spend_limit" in view
 
     # no authority configured: neither human decision can be given
@@ -511,15 +500,13 @@ def test_cli_drives_the_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert missing.exit_code != 0  # no optimize_fn via --tvl: nothing awaits
 
 
-def test_cli_unauthenticated_event_fires_nothing(
+def test_cli_event_command_is_refused_in_this_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runner = CliRunner()
     auth, common = _cli_fixture(tmp_path, monkeypatch)
-    forged = event("E1", NEW["model"], 9, secret=None)
-    forged["authenticated"] = True  # the file's own claim is never read
-    path = tmp_path / "forged.json"
-    path.write_text(json.dumps(forged), encoding="utf-8")
+    path = tmp_path / "event.json"
+    path.write_text(json.dumps({"kind": "model_released"}), encoding="utf-8")
     for extra in (["--authority", str(auth)], []):
         result = runner.invoke(
             cli,
@@ -533,24 +520,9 @@ def test_cli_unauthenticated_event_fires_nothing(
                 "2026-11-20T10:00:00Z",
             ],
         )
-        assert result.exit_code == 0
-        assert (
-            json.loads(result.output[result.output.index("{") :])["authenticated"]
-            is False
-        )
-    step = runner.invoke(
-        cli,
-        [
-            "tune",
-            "step",
-            *common,
-            "--authority",
-            str(auth),
-            "--now",
-            "2026-11-20T10:00:00Z",
-        ],
-    )
-    assert json.loads(step.output)["awaiting_approval"] == []
+        assert result.exit_code != 0
+        assert E_UNSUPPORTED_IN_RELEASE in result.output
+    assert not (tmp_path / "s" / "history.jsonl").exists()
 
 
 def test_cli_surfaces_the_tvl_diagnostic_for_release_rollback(
@@ -596,7 +568,6 @@ SENTINEL = "SENTINEL-PROMPT-TEXT-7f3a"
 
 def _deploy_awaiting(tmp_path: Path, opt: Any = None, **kw: Any) -> Controller:
     c = controller(tmp_path, opt or FakeOptimizer(), **kw)
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     to_deploy_awaiting(c, e_ref("E1"), 10)
     return c
 
@@ -811,58 +782,58 @@ def _standing_state() -> TuningState:
     doc = module()
     for response in doc["responses"]:
         for rule in response["rules"]:
-            if rule["id"] == "on_new_model":
+            if rule["id"] == "on_E1":
                 rule["approval"] = "standing"
-                rule["deploy"] = "never"  # standing + if_promoted is refused
+                rule["deploy"] = "never"
     # the policy builder only knows human approval; the controller reads ``tvl``
     st = state()
     st.tvl = doc
     return st
 
 
-def _standing(tmp_path: Path, opt: Any) -> Controller:
-    return make(_standing_state(), tmp_path / "store", opt)
+def test_standing_approval_is_refused_when_the_controller_is_built(
+    tmp_path: Path,
+) -> None:
+    for deploy in ("never", "if_promoted"):
+        st = _standing_state()
+        st.tvl["responses"][0]["rules"][0]["deploy"] = deploy
+        with pytest.raises(TuningError) as err:
+            make(st, tmp_path / f"store-{deploy}", FakeOptimizer())
+        assert err.value.code == E_UNSUPPORTED_IN_RELEASE
+        assert "standing" in err.value.detail
 
 
-def test_standing_rule_optimizes_only_under_a_recorded_grant(tmp_path: Path) -> None:
+def test_standing_grants_cannot_be_recorded_and_no_grant_file_is_read(
+    tmp_path: Path,
+) -> None:
     opt = FakeOptimizer()
-    c = _standing(tmp_path, opt)
-    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c = controller(tmp_path, opt)
+    with pytest.raises(TuningError) as err:
+        c.record_standing_grant(
+            "G1", "tuning/on_E1", 1, at(10) + timedelta(days=1), "issuer-1", at(10)
+        )
+    assert err.value.code == E_UNSUPPORTED_IN_RELEASE
+    # a grants file dropped into the store authorizes nothing
+    (tmp_path / "store" / "grants.json").write_text(
+        json.dumps(
+            {
+                "G1": {
+                    "grant_id": "G1",
+                    "rule_ref": "tuning/on_E1",
+                    "agent_ref": "agent-1",
+                    "contract_digest": c.meta["contract_digest"],
+                    "covers": "optimize",
+                    "issuer": "issuer-1",
+                    "expires_at": "2027-01-01T00:00:00Z",
+                    "max_occurrences": 5,
+                    "used": [],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     report = c.step(at(10))
     assert opt.calls == [] and report.awaiting_approval == [e_ref("E1")]
-
-    with pytest.raises(TuningError) as err:  # expiry beyond 30 days
-        c.record_standing_grant(
-            "G0",
-            "tuning/on_new_model",
-            1,
-            at(10) + timedelta(days=31),
-            "issuer-1",
-            at(10),
-        )
-    assert err.value.code == E_INVALID_GRANT
-
-    c.record_standing_grant(
-        "G1", "tuning/on_new_model", 1, at(10) + timedelta(days=30), "issuer-1", at(10)
-    )
-    c.step(at(10))
-    c.step(at(10))  # a retry of the same occurrence does not consume again
-    assert len(opt.calls) == 1
-
-    c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
-    report = c.step(at(40))  # the grant allowed one occurrence
-    assert len(opt.calls) == 1 and report.awaiting_approval == [e_ref("E6")]
-
-
-def test_expired_standing_grant_does_not_authorize(tmp_path: Path) -> None:
-    opt = FakeOptimizer()
-    c = _standing(tmp_path, opt)
-    c.record_standing_grant(
-        "G1", "tuning/on_new_model", 5, at(10) + timedelta(hours=2), "issuer-1", at(10)
-    )
-    c.record_event(event("E1", NEW["model"], 19), at(20))
-    c.step(at(20))
-    assert opt.calls == []
 
 
 class _Live:
@@ -902,13 +873,15 @@ def test_real_adapter_runs_optimization_without_changing_the_live_config(
 def test_expired_scope_blocks_a_late_approved_optimization(tmp_path: Path) -> None:
     opt = FakeOptimizer()
     c = controller(tmp_path, opt)
-    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c.step(at(10))  # the schedule ticks: the attempt opens
     late = at(10) + timedelta(days=31)
     c.approve_optimization(e_ref("E1"), "approver-1", late)
     report = c.step(late)
     assert opt.calls == [] and report.started == []
-    assert report.refused and report.refused[0].endswith(":scope_expired")
-    assert [f["reason"] for f in c.controller_facts()] == ["scope_expired"]
+    assert any(
+        f["fact"] == "attempt_closed" and f["reason"] == "scope_expired"
+        for f in report.facts
+    )
     assert not list((tmp_path / "store" / "attempts").glob("*.json"))
 
 
@@ -923,7 +896,6 @@ def test_result_after_scope_expiry_is_recorded_never_deployed(
     """
     opt = FakeOptimizer()
     c = controller(tmp_path, opt)
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     real = Controller._append
 
@@ -1000,12 +972,17 @@ def test_init_crash_is_recoverable(
     assert len((tmp_path / "store" / "heads.jsonl").read_text().splitlines()) == 1
 
 
+def _two_history_lines(c: Controller) -> None:
+    """Two recorded facts: each schedule's first tick lands one line of history."""
+    c.step(at(10))
+    c.step(at(40))
+
+
 def test_torn_history_tail_is_truncated_and_earlier_lines_verified(
     tmp_path: Path,
 ) -> None:
     c = controller(tmp_path, FakeOptimizer())
-    c.record_event(event("E1", NEW["model"], 9), at(10))
-    c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
+    _two_history_lines(c)
     path = tmp_path / "store" / "history.jsonl"
     data = path.read_bytes()
     path.write_bytes(data[: len(data) - 25])  # a crash mid-append of the last line
@@ -1013,17 +990,16 @@ def test_torn_history_tail_is_truncated_and_earlier_lines_verified(
     restarted = controller(tmp_path, FakeOptimizer())
     assert len(path.read_text().splitlines()) == 1  # torn tail truncated
     assert len(restarted.status()["open_attempts"]) == 1  # E1 survives
-    restarted.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
+    restarted.step(at(40))
     assert len(path.read_text().splitlines()) == 2
 
 
 def test_damaged_earlier_line_is_corruption_not_a_torn_tail(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer())
-    c.record_event(event("E1", NEW["model"], 9), at(10))
-    c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
+    _two_history_lines(c)
     path = tmp_path / "store" / "history.jsonl"
     first, second = path.read_text().splitlines()
-    path.write_text(first.replace("E1", "EX") + "\n" + second + "\n")
+    path.write_text(first.replace("instant", "instanx") + "\n" + second + "\n")
     with pytest.raises(TuningError) as err:
         controller(tmp_path, FakeOptimizer())
     assert err.value.code == E_STORE_CORRUPT
@@ -1043,40 +1019,16 @@ def test_required_env_makes_a_missing_toolchain_fail_not_skip(
         conftest.check_toolchain()
 
 
-def _grant_fixture(tmp_path: Path) -> tuple[Controller, FakeOptimizer]:
-    opt = FakeOptimizer()
-    c = _standing(tmp_path, opt)
-    c.record_standing_grant(
-        "G1", "tuning/on_new_model", 1, at(10) + timedelta(hours=2), "issuer-1", at(10)
-    )
-    c.record_event(event("E1", NEW["model"], 9), at(10))
-    return c, opt
-
-
-def test_recovery_revalidates_an_expired_standing_grant(tmp_path: Path) -> None:
-    c, opt = _grant_fixture(tmp_path)
-    c.optimize_fn = None  # the grant use persists, then the run never starts
-    with pytest.raises(TuningError):
-        c.step(at(11))
-    restarted = make(_standing_state(), tmp_path / "store", opt)
-    report = restarted.step(at(20))  # the grant expired at hour 12
-    assert opt.calls == [] and report.started == []
-    # the used-reference shortcut does not revive an expired grant, and a standing
-    # attempt that never started recorded no approval or start for the relation
-    assert report.awaiting_approval == [e_ref("E1")]
-    assert not [ln for ln in restarted._lines() if ln["category"] == "optimizations"]
-    assert not list((tmp_path / "store" / "attempts").glob("*.json"))
-
-
 def test_newline_terminated_bad_record_is_corruption_never_truncated(
     tmp_path: Path,
 ) -> None:
     c = controller(tmp_path, FakeOptimizer())
-    c.record_event(event("E1", NEW["model"], 9), at(10))
-    c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
+    _two_history_lines(c)
     path = tmp_path / "store" / "history.jsonl"
     first, second = path.read_text().splitlines()
-    path.write_text(first + "\n" + second.replace("E6", "EX") + "\n")  # committed
+    path.write_text(
+        first + "\n" + second.replace("instant", "instanx") + "\n"
+    )  # committed
     before = path.read_bytes()
     with pytest.raises(TuningError) as err:
         controller(tmp_path, FakeOptimizer())
@@ -1086,7 +1038,7 @@ def test_newline_terminated_bad_record_is_corruption_never_truncated(
 
 def test_legacy_plain_json_store_is_refused_untouched(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer())
-    c.record_event(event("E1", NEW["model"], 9), at(10))
+    _two_history_lines(c)
     store = tmp_path / "store"
     for name in ("history.jsonl", "heads.jsonl"):
         path = store / name
@@ -1157,7 +1109,7 @@ def _history(tmp_path: Path) -> list[dict[str, Any]]:
 def test_history_instants_are_whole_seconds_after_the_origin(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer())
     moment = T0 + timedelta(hours=10, minutes=37, seconds=12)
-    c.record_event(event("E1", NEW["model"], 9), moment)
+    c.step(moment)
     assert [ln["instant"] for ln in _history(tmp_path)] == [10 * 3600 + 37 * 60 + 12]
     assert c.origin == T0  # UTC midnight: windows of 24 h line up with calendar days
 
@@ -1209,11 +1161,11 @@ def test_a_window_that_has_not_ended_is_refused_not_moved_forward(
 
 def test_a_later_clock_never_moves_recorded_time_backwards(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer())
-    c.record_event(event("E1", NEW["model"], 9), at(10))
-    c.record_event(
-        event("E2", "anthropic/claude-haiku-5-6", 9), at(9)
-    )  # clock set back
-    assert [ln["instant"] for ln in _history(tmp_path)] == [10 * 3600, 10 * 3600]
+    c.step(at(10))
+    c.approve_optimization(e_ref("E1"), "approver-1", at(9))
+    c.step(at(9))  # clock set back
+    instants = [ln["instant"] for ln in _history(tmp_path)]
+    assert instants == sorted(instants) and instants[-1] >= 10 * 3600
 
 
 def test_step_adds_a_tick_only_when_time_passing_derives_something(
@@ -1251,9 +1203,6 @@ def test_without_an_authority_nobody_can_approve_or_accept(tmp_path: Path) -> No
     for call in (
         lambda: c.approve_optimization(e_ref("E1"), "approver-1", at(1)),
         lambda: c.submit_acceptance({}, at(1)),
-        lambda: c.record_standing_grant(
-            "G1", "tuning/on_new_model", 1, at(1) + timedelta(days=1), "issuer-1", at(1)
-        ),
     ):
         with pytest.raises(TuningError) as err:
             call()
@@ -1276,34 +1225,26 @@ def test_local_trusted_is_labelled_and_refused_in_production(
     assert err.value.code == "E_LOCAL_AUTHORITY_IN_PRODUCTION"
 
 
-def test_an_event_is_authenticated_by_the_verifier_never_by_its_own_flag(
+def test_a_policy_with_an_external_trigger_is_refused_when_the_controller_is_built(
     tmp_path: Path,
 ) -> None:
-    c = controller(tmp_path, FakeOptimizer())
-    forged = event("E1", NEW["model"], 9, secret=None)
-    forged["authenticated"] = True  # a file's own claim
-    assert c.record_event(forged, at(10)).authenticated is False
-    wrong_key = event("E2", NEW["model"], 9, secret=b"another-secret")
-    assert c.record_event(wrong_key, at(10)).authenticated is False
-    tampered = event("E3", NEW["model"], 9)
-    tampered["subject"]["model_ref"] = "anthropic/claude-haiku-9-9"  # after signing
-    assert c.record_event(tampered, at(10)).authenticated is False
-    stranger = event("E4", NEW["model"], 9)
-    stranger["issuer"] = "mallory"
-    assert c.record_event(stranger, at(10)).authenticated is False
-    assert c.step(at(10)).awaiting_approval == []  # nothing fired
-    facts = [f for f in c._derive()["facts"] if f["fact"] == "event"]
-    assert {f["result"] for f in facts} == {"rejected(unauthenticated)"}
-    # a later authentic copy of a rejected id is still admitted (RFC 0011 section 2.13)
-    assert c.record_event(event("E1", NEW["model"], 9), at(10)).authenticated is True
-    assert c.step(at(10)).awaiting_approval == [e_ref("E1")]
-
-
-def test_without_a_verifier_no_event_counts(tmp_path: Path) -> None:
-    c = make(state(), tmp_path / "store", FakeOptimizer(), event_verifier=None)
-    c.event_verifier = None
-    assert c.record_event(event("E1", NEW["model"], 9), at(10)).authenticated is False
-    assert c.step(at(10)).awaiting_approval == []
+    doc = module()
+    doc["responses"][0]["rules"].append(
+        {
+            "id": "on_new_model",
+            "trigger": {"external": "model_released"},
+            "do": "optimize",
+            "approval": "human",
+            "deploy": "if_promoted",
+            "protects": ["quality_floor"],
+        }
+    )
+    st = state()
+    st.tvl = doc  # the policy still compiles to TVL; only the controller refuses
+    with pytest.raises(TuningError) as err:
+        make(st, tmp_path / "store", FakeOptimizer())
+    assert err.value.code == E_UNSUPPORTED_IN_RELEASE
+    assert "external" in err.value.detail
 
 
 def test_a_revoked_approver_cannot_start_a_run_that_was_approved(
@@ -1311,7 +1252,6 @@ def test_a_revoked_approver_cannot_start_a_run_that_was_approved(
 ) -> None:
     opt = FakeOptimizer()
     c = controller(tmp_path, opt)
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     c.authority = ApproverAuthority(frozenset({"someone-else"}))  # authority changed
     report = c.step(at(10))
@@ -1319,62 +1259,6 @@ def test_a_revoked_approver_cannot_start_a_run_that_was_approved(
     c.authority = ApproverAuthority(APPROVERS)
     c.step(at(10))
     assert len(opt.calls) == 1
-
-
-def test_standing_grant_needs_a_listed_issuer_now_and_at_every_use(
-    tmp_path: Path,
-) -> None:
-    opt = FakeOptimizer()
-    c = _standing(tmp_path, opt)
-    with pytest.raises(TuningError) as err:
-        c.record_standing_grant(
-            "G1",
-            "tuning/on_new_model",
-            2,
-            at(10) + timedelta(days=1),
-            "stranger",
-            at(10),
-        )
-    assert err.value.code == E_APPROVER_NOT_AUTHORIZED
-    grant = c.record_standing_grant(
-        "G1", "tuning/on_new_model", 1, at(10) + timedelta(days=1), "issuer-1", at(10)
-    )
-    assert grant["covers"] == "optimize" and grant["authentication"] == "local-trusted"
-    c.record_event(event("E1", NEW["model"], 9), at(10))
-    c.authority = ApproverAuthority(frozenset({"someone-else"}))  # issuer revoked
-    assert c.step(at(10)).awaiting_approval == [e_ref("E1")] and opt.calls == []
-    c.authority = ApproverAuthority(APPROVERS)
-    c.step(at(10))
-    assert len(opt.calls) == 1
-
-
-def test_a_standing_grant_covers_the_optimization_only_it_never_moves_the_head(
-    tmp_path: Path,
-) -> None:
-    opt = FakeOptimizer()
-    c = _standing(tmp_path, opt)
-    c.record_standing_grant(
-        "G1", "tuning/on_new_model", 5, at(10) + timedelta(days=1), "issuer-1", at(10)
-    )
-    c.record_event(event("E1", NEW["model"], 9), at(10))
-    c.step(at(10))
-    assert len(opt.calls) == 1
-    assert head(tmp_path)["generation"] == 0  # the grant never moved the head
-    assert c.status()["pending_deploys"] == []  # deploy: never, nothing to accept
-
-
-def test_a_grant_never_allows_more_runs_than_its_count(tmp_path: Path) -> None:
-    opt = FakeOptimizer()
-    c = _standing(tmp_path, opt)
-    c.record_standing_grant(
-        "G1", "tuning/on_new_model", 1, at(10) + timedelta(days=2), "issuer-1", at(10)
-    )
-    for index, hour in enumerate((10, 40, 70)):
-        c.record_event(
-            event(f"E{index}", f"anthropic/claude-haiku-5-{index}", hour - 1), at(hour)
-        )
-        c.step(at(hour))
-    assert len(opt.calls) == 1  # one use, one run
 
 
 # ---------------------------------------------------------------------------------
@@ -1396,7 +1280,6 @@ def test_supplied_verdicts_are_ignored_the_candidate_is_measured(
         }
     )
     c = controller(tmp_path, liar)
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     to_deploy_awaiting(c, e_ref("E1"), 10)
     assert c.status()["pending_deploys"] == []  # measured: not better than itself
     assert any(f["fact"] == "external_verdicts_ignored" for f in c.controller_facts())
@@ -1420,7 +1303,6 @@ def test_supplied_verdicts_without_a_holdout_never_promote(tmp_path: Path) -> No
     )
     c = controller(tmp_path, liar)
     c.state.policy.holdout = None
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     to_deploy_awaiting(c, e_ref("E1"), 10)
     assert c.status()["pending_deploys"] == []
     assert any(f.get("reason") == "holdout_missing" for f in c.controller_facts())
@@ -1475,8 +1357,7 @@ def test_digests_come_from_the_deploys_own_attempt_not_a_fingerprint_scan(
     tmp_path: Path,
 ) -> None:
     """The same configuration measured twice, on two holdouts: each deploy binds ITS own."""
-    c = controller(tmp_path, FakeOptimizer())
-    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c = controller(tmp_path, FakeOptimizer(models=[NEW["model"]]))
     to_deploy_awaiting(c, e_ref("E1"), 10)
     reject = c.accept(e_ref("E1"), "approver-1", 0, "reject", now=at(11))
     assert reject.result == "reject_recorded"
@@ -1492,9 +1373,8 @@ def test_digests_come_from_the_deploys_own_attempt_not_a_fingerprint_scan(
     KIT["holdout"].write_text(
         "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
     )
-    c.record_event(event("E7", NEW["model"], 40), at(41))  # the SAME candidate config
-    to_deploy_awaiting(c, e_ref("E7"), 41)
-    record = c.build_acceptance(e_ref("E7"), "approver-1", 0, now=at(42))
+    to_deploy_awaiting(c, e_ref("E6"), 41)
+    record = c.build_acceptance(e_ref("E6"), "approver-1", 0, now=at(42))
     assert (
         record["holdout_digest"] != first_digest
     )  # the second attempt's, not the first's
@@ -1503,13 +1383,12 @@ def test_digests_come_from_the_deploys_own_attempt_not_a_fingerprint_scan(
 
 def test_the_status_shows_both_human_decisions(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer())
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     c.step(at(10))
     attempt = c.status()["open_attempts"][0]
     run = attempt["approve_run"]  # Approve run
-    assert run["trigger"]["external"] == "model_released"
+    assert run["trigger"]["schedule"]["every_days"] == 30
     assert run["spend_limit"] is None  # honest: this controller has no limit set
-    assert run["admits"]["domain"][-1] == NEW["model"]
+    assert run["admits"] is None  # no event admits a model in this release
     to_deploy_awaiting(c, e_ref("E1"), 10)
     release = c.status()["pending_deploys"][0]["accept_release"]  # Accept release
     assert release["incumbent"]["generation"] == 0

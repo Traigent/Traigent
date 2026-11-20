@@ -28,7 +28,6 @@ from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     at,
     controller,
     e_ref,
-    event,
     head,
     make,
     state,
@@ -133,7 +132,6 @@ def test_a_saved_approval_is_not_used_once_the_environment_is_production(
     monkeypatch.setenv("ENVIRONMENT", "development")
     opt = FakeOptimizer()
     c = controller(tmp_path, opt)
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     monkeypatch.setenv(
         "ENVIRONMENT", "production"
@@ -166,31 +164,6 @@ def _fake_clock(monkeypatch: pytest.MonkeyPatch, start: Any) -> list[Any]:
         lambda value: real_utc(value) if value is not None else clock[0],
     )
     return clock
-
-
-def test_a_second_paid_run_is_not_started_after_the_grant_expired_during_the_first(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from .test_controller import _standing_state
-
-    clock = _fake_clock(monkeypatch, at(40))
-    ran: list[int] = []
-
-    class SlowOptimizer(FakeOptimizer):
-        def __call__(self, space: dict[str, Any]) -> Any:
-            ran.append(len(ran))
-            clock[0] = clock[0] + timedelta(hours=3)  # the first run outlasts the grant
-            return super().__call__(space)
-
-    opt = SlowOptimizer()
-    c = make(_standing_state(), tmp_path / "store", opt, now=at(0))
-    c.record_event(event("E1", NEW["model"], 39), at(40))
-    c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
-    c.record_standing_grant(
-        "G1", "tuning/on_new_model", 5, at(40) + timedelta(hours=2), "issuer-1", at(40)
-    )
-    c.step(ingestion_closed=True)  # no explicit time: the controller reads the clock
-    assert len(ran) == 1
 
 
 def test_a_release_whose_acceptance_expires_during_authentication_is_not_installed(
@@ -317,7 +290,6 @@ def test_a_holdout_listed_as_a_path_list_eval_set_is_refused(tmp_path: Path) -> 
             return OptimizedFunction._dataset_from_source(OptimizedFunction, source)
 
     c.state.optimized = Optimized()
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     c.step(at(10))
     assert any(
@@ -337,9 +309,10 @@ def test_a_set_domain_is_normalized_before_computing_admitted_models(
     doc["tvars"][0]["domain"] = {"set": declared}
     st = state(doc)
     c = make(st, tmp_path / "store", FakeOptimizer())
-    fact = {"tvar": "model", "domain": [*declared, NEW["model"]]}
-    assert c._admitted_values(fact) == [NEW["model"]]  # not every declared model
-    assert c._search_space(fact)["model"] == [*declared, NEW["model"]]
+    extra = "anthropic/claude-haiku-9-9"
+    fact = {"tvar": "model", "domain": [*declared, extra]}
+    assert c._admitted_values(fact) == [extra]  # not every declared model
+    assert c._search_space(fact)["model"] == [*declared, extra]
     assert c._admitted_values({"tvar": "model", "domain": declared}) == []
 
 
@@ -411,19 +384,6 @@ def test_creating_and_renaming_journal_files_fsyncs_the_parent_directory(
     synced_dirs.clear()
     controller_module._append_line(tmp_path / "commits.jsonl", {"fact": "y"})
     assert synced_dirs == []  # an append to an existing file adds no directory entry
-
-
-# -- a whole-second instant reaches the relation as ONE step --------------
-def test_events_with_the_same_instant_form_one_relation_step(tmp_path: Path) -> None:
-    c = controller(tmp_path, FakeOptimizer())
-    lines = [
-        {"instant": 100, "category": "events", "record": {"id": "from-Z"}},
-        {"instant": 100, "category": "events", "record": {"id": "from-A"}},
-        {"instant": 101, "category": "events", "record": {"id": "later"}},
-    ]
-    steps = c._history(lines=lines)["steps"]
-    assert [s["instant"] for s in steps] == [100, 101]
-    assert steps[0]["events"] == [{"id": "from-Z"}, {"id": "from-A"}]
 
 
 # -- local-trusted is refused wherever production is possible (fail closed) --------------

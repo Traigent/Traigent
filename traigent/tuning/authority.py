@@ -40,14 +40,14 @@ _NOT_SIGNED = frozenset({"signature", "authenticated"})
 Authenticator = Callable[[str, Mapping[str, Any]], bool]
 
 
-def local_trusted_refused(store_environment: str | None = None) -> bool:
+def local_trusted_refused(store_environment: str | None) -> bool:
     """Must a ``local-trusted`` authority be refused here?  Fails closed.
 
     Refused unless BOTH the process environment is explicitly non-production
     (an unset or unrecognised environment counts as production,
     ``treat_as_production_policy``) AND the store's recorded environment is a
-    recognised non-production name: a production store never trusts a local
-    operator, whatever the process says.
+    recognised non-production name (a missing or unknown name is refused): a
+    production store never trusts a local operator, whatever the process says.
     """
     from traigent.utils.env_config import (
         _NON_PRODUCTION_ENV_NAMES,
@@ -56,9 +56,9 @@ def local_trusted_refused(store_environment: str | None = None) -> bool:
 
     if treat_as_production_policy():
         return True
-    if store_environment is None:
-        return False
-    return str(store_environment).strip().lower() not in _NON_PRODUCTION_ENV_NAMES
+    if not isinstance(store_environment, str):
+        return True  # a store with no recorded environment is never trusted
+    return store_environment.strip().lower() not in _NON_PRODUCTION_ENV_NAMES
 
 
 @dataclass(frozen=True)

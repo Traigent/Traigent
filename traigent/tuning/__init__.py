@@ -7,15 +7,12 @@ with ``E_TVL_VALIDATOR_UNAVAILABLE``.
 
 from traigent.tuning.authority import (
     ApproverAuthority,
-    EventVerifier,
     load_authority,
-    sign_event,
 )
 from traigent.tuning.context import derive_module_context
 from traigent.tuning.controller import (
     AcceptanceOutcome,
     Controller,
-    EventReceipt,
     HeadLoader,
     StepReport,
     traigent_optimize_fn,
@@ -28,6 +25,7 @@ from traigent.tuning.errors import (
     E_RATE_PRECISION,
     E_TVL_VALIDATION_FAILED,
     E_TVL_VALIDATOR_UNAVAILABLE,
+    E_UNSUPPORTED_IN_RELEASE,
     TuningError,
     TvlValidationFailed,
     ValidatorUnavailable,
@@ -61,8 +59,7 @@ __all__ = [
     "E_RATE_PRECISION",
     "E_TVL_VALIDATION_FAILED",
     "E_TVL_VALIDATOR_UNAVAILABLE",
-    "EventReceipt",
-    "EventVerifier",
+    "E_UNSUPPORTED_IN_RELEASE",
     "Every",
     "FailureRate",
     "HeadLoader",
@@ -81,7 +78,6 @@ __all__ = [
     "derive_module_context",
     "load_authority",
     "require_validator",
-    "sign_event",
     "traigent_optimize_fn",
     "validator_available",
 ]

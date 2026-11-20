@@ -16,8 +16,7 @@ Store layout (one directory, default ``.traigent/tuning/<agent>/``)::
     meta.json        agent, environment, origin, contract digest, initial head
     head.json        {fingerprint, config, generation}         (atomic temp+rename)
     heads.jsonl      every head ever written (config lookup, binding of an acceptance)
-    history.jsonl    recorded facts (checksummed JSONL): events, windows, approvals, finishes, acceptances
-    grants.json      standing grants (closed records, with their consumed uses)
+    history.jsonl    recorded facts (checksummed JSONL): windows, approvals, finishes, acceptances
     controller.jsonl controller facts: refused optimizations and refused head writes
     commits.jsonl    the head-move journal: intent, then done or abandoned
     approvals.json   optimization approvals keyed by occurrence ref
@@ -61,14 +60,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
-from traigent.tuning.authority import (
-    LOCAL_TRUSTED,
-    ApproverAuthority,
-    EventVerifier,
-)
+from traigent.tuning.authority import LOCAL_TRUSTED, ApproverAuthority
 from traigent.tuning.errors import (
     E_APPROVER_NOT_AUTHORIZED,
     E_NO_APPROVER_AUTHORITY,
+    E_UNSUPPORTED_IN_RELEASE,
     TuningError,
 )
 from traigent.tuning.state import TuningState
@@ -85,11 +81,9 @@ E_NOT_AN_OCCURRENCE = "E_NOT_AN_OCCURRENCE"
 E_STORE_CORRUPT = "E_STORE_CORRUPT"
 E_STORE_FORMAT = "E_STORE_FORMAT"
 E_ACCEPTANCE_CONFLICT = "E_ACCEPTANCE_CONFLICT"
-E_INVALID_GRANT = "E_INVALID_GRANT"
 E_NO_CANDIDATE_RUN = "E_NO_CANDIDATE_RUN"
 E_HEAD_DIVERGED = "E_HEAD_DIVERGED"
 E_LOCAL_AUTHORITY_IN_PRODUCTION = "E_LOCAL_AUTHORITY_IN_PRODUCTION"
-E_STANDING_DEPLOY_UNSUPPORTED = "E_STANDING_DEPLOY_UNSUPPORTED"
 
 GATE_FORMAT = "traigent-gate-result/1"
 ACCEPTANCE_FORMAT = "tvl-release-acceptance/1"
@@ -98,7 +92,6 @@ _REF = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _LEGACY = {"Promote", "Reject", "NoDecision"}
 _COMPLETIONS = {"normal", "error", "cancelled", "cost_limit"}
 OptimizeFn = Callable[[dict[str, Any]], Any]
-MAX_GRANT_DAYS = 30  # RFC 0003 section 7.3: a standing grant expires within 30 days
 logger = logging.getLogger(__name__)
 
 
@@ -140,11 +133,6 @@ def _utc(now: datetime | None) -> datetime:
 def _approve_context(ref: str) -> dict[str, Any]:
     """What the authenticator is told when a run approval is decided or re-checked."""
     return {"decision": "approve_run", "occurrence": ref}
-
-
-def _grant_context(grant_id: Any, rule_ref: Any) -> dict[str, Any]:
-    """What the authenticator is told when a standing grant is issued or used."""
-    return {"decision": "standing_grant", "grant_id": grant_id, "rule_ref": rule_ref}
 
 
 def _instant_text(moment: datetime) -> str:
@@ -393,7 +381,6 @@ class StepReport:
     finished: list[str] = field(default_factory=list)
     awaiting_approval: list[str] = field(default_factory=list)  # occurrence refs
     refused: list[str] = field(default_factory=list)  # "<attempt>:<closed reason>"
-    deferred: list[str] = field(default_factory=list)  # held: events still arriving
     head_written: int | None = None  # generation completed by crash recovery
 
     @property
@@ -420,14 +407,6 @@ class AcceptanceOutcome:
         return self.result in {"written", "reject_recorded"}
 
 
-@dataclass(frozen=True)
-class EventReceipt:
-    """What recording an external event did: where it landed and whether it counted."""
-
-    instant: int
-    authenticated: bool
-
-
 class Controller:
     """Executes the TVL relation locally over a durable store.
 
@@ -445,13 +424,12 @@ class Controller:
         initial_config: Mapping[str, Any] | None = None,
         authority: ApproverAuthority | None = None,
         authorized_approvers: set[str] | frozenset[str] | None = None,
-        event_verifier: EventVerifier | None = None,
         now: datetime | None = None,
     ) -> None:
         policy_state.require_validated()
         self.state = policy_state
         self.module: dict[str, Any] = policy_state.tvl
-        self._refuse_standing_deploy()
+        self._refuse_unsupported()
         agent = policy_state.agent
         if store_dir is None:
             if agent is None:
@@ -462,28 +440,31 @@ class Controller:
         if authority is None and authorized_approvers is not None:
             authority = ApproverAuthority(frozenset(authorized_approvers))
         self.authority = authority
-        self.event_verifier = event_verifier
         self._init_store(agent or self.dir.name, environment, initial_config, now)
         with self._locked():  # finish or abandon a head move a crash interrupted
             self._recover_commits()
 
-    def _refuse_standing_deploy(self) -> None:
-        """``approval: standing`` on a rule whose deploy is ``if_promoted`` is refused.
+    def _refuse_unsupported(self) -> None:
+        """Refuse a policy that uses a feature this release does not run.
 
-        A standing grant for a DEPLOY would need the acceptance-equivalent binding
-        fields (RFC 0012 section 2.3, last sentence); neither the reference relation
-        nor this controller implements them, and the deploy always waits for Accept
-        release.  Refusing is the honest answer: no fake support.
+        TVL specifies standing approval and external-event triggers; this release
+        runs schedule and monitor-breach triggers with human approval only.  The
+        policy may still be compiled and checked; it is never run.
         """
         for response in self.module.get("responses", []):
             for rule in response.get("rules", []):
-                if rule.get("approval") == "standing" and (
-                    rule.get("deploy", "never") == "if_promoted"
-                ):
+                if rule.get("approval") == "standing":
                     raise TuningError(
-                        E_STANDING_DEPLOY_UNSUPPORTED,
-                        "approval: standing is not supported on a rule whose deploy "
-                        "is if_promoted; use human approval, or deploy: never",
+                        E_UNSUPPORTED_IN_RELEASE,
+                        "standing approval is not supported in this release; "
+                        "use human approval",
+                    )
+                trigger = rule.get("trigger")
+                if isinstance(trigger, Mapping) and "external" in trigger:
+                    raise TuningError(
+                        E_UNSUPPORTED_IN_RELEASE,
+                        "external-event triggers (ModelReleased) are not supported "
+                        "in this release; use a schedule or a monitor breach",
                     )
 
     # -- store ----------------------------------------------------------------------
@@ -561,20 +542,6 @@ class Controller:
         steps: list[dict[str, Any]] = []
         base = self._lines() if lines is None else lines
         for line in [*base, *(extra or [])]:
-            # The external events of one whole-second instant are delivered as ONE
-            # step: the relation orders a complete instant's events itself
-            # (RFC 0011), so they are never split across steps.  Evaluation
-            # categories (windows, optimizations, acceptances) keep one step per
-            # line: each is a later observation of the instant.
-            prev = steps[-1] if steps else None
-            if (
-                line["category"] == "events"
-                and prev is not None
-                and prev["instant"] == line["instant"]
-                and set(prev) == {"instant", "events"}
-            ):
-                prev["events"].append(line["record"])
-                continue
             step: dict[str, Any] = {"instant": line["instant"]}
             if line["category"] != "tick":
                 step[line["category"]] = [line["record"]]
@@ -659,7 +626,7 @@ class Controller:
         """Is ``approver`` listed AND authenticated at this instant?
 
         The same authenticator that decides a release acceptance decides every
-        other authority decision (a run approval, a standing grant): a platform
+        other authority decision (a run approval): a platform
         authenticator that answers False refuses.  No authority means no.
         """
         authority = self.authority
@@ -672,40 +639,12 @@ class Controller:
         )
 
     # -- recording ------------------------------------------------------------------
-    def record_event(
-        self, envelope: Mapping[str, Any], now: datetime | None = None
-    ) -> EventReceipt:
-        """Append an external event envelope; authentication comes from the verifier.
-
-        The envelope's own ``authenticated`` field is never read: it is replaced by
-        the result of the configured :class:`EventVerifier` (an HMAC ``signature``
-        from a trusted issuer).  An unverifiable event is still recorded, as the
-        relation's ``rejected(unauthenticated)``, and fires nothing.
-        """
-        self.state.require_validated()
-        record = copy.deepcopy(dict(envelope))
-        authenticated = bool(
-            self.event_verifier is not None and self.event_verifier.verify(record)
+    def record_event(self, *_args: Any, **_kwargs: Any) -> None:
+        """External events are not supported in this release."""
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "recording external events is not supported in this release",
         )
-        signature = record.pop("signature", None)
-        record["authenticated"] = authenticated
-        issued = record.get("issued_at")
-        if isinstance(issued, str):  # convenience: an instant becomes whole seconds
-            try:
-                delta = _parse_instant(issued) - self.origin
-            except ValueError:
-                raise TuningError(
-                    E_INVALID_RECORD, "issued_at is not an instant"
-                ) from None
-            record["issued_at"] = int(delta.total_seconds())
-        meta: dict[str, Any] = {"verified_by": "hmac-sha256" if authenticated else None}
-        if authenticated and isinstance(signature, str):
-            meta["signature"] = signature
-        with self._locked():
-            self._recover_commits()  # history must hold a crashed commit first
-            instant = self._instant(_utc(now))
-            self._append("events", record, instant, meta)
-        return EventReceipt(instant, authenticated)
 
     def record_window(
         self, report: Mapping[str, Any], now: datetime | None = None
@@ -766,128 +705,12 @@ class Controller:
             )
             _write_json(self._p("approvals.json"), approvals)
 
-    def record_standing_grant(
-        self,
-        grant_id: str,
-        rule_ref: str,
-        max_occurrences: int,
-        expires_at: datetime,
-        issuer: str,
-        now: datetime | None = None,
-    ) -> dict[str, Any]:
-        """Record a standing grant for an ``approval: standing`` optimize rule.
-
-        RFC 0003 section 7.3: a closed record bound to this agent and contract,
-        naming the rule (``response/rule``), a maximum occurrence count and an expiry
-        (exclusive) at most 30 days after issue.  Each occurrence consumes one use; a
-        retry of the same occurrence does not.  The grant covers the optimization
-        ONLY (``covers: "optimize"``): its deploy still needs **Accept release** by a
-        human (section 7.6 item 2).  The issuer must be on the authority list, now and
-        at every use.
-        """
-        self.state.require_validated()
-        self._refuse_standing_deploy()
-        authority = self.require_authority()
-        issued = _utc(now)
-        expires = _utc(expires_at)
-        rule_ok = False
-        parts = rule_ref.split("/") if isinstance(rule_ref, str) else []
-        if len(parts) == 2:
-            for response in self.module.get("responses", []):
-                for rule in response["rules"]:
-                    if (response["name"], rule["id"]) == tuple(parts):
-                        rule_ok = (
-                            rule.get("do") == "optimize"
-                            and rule.get("approval") == "standing"
-                        )
-        if not (
-            isinstance(grant_id, str)
-            and _REF.match(grant_id)
-            and isinstance(issuer, str)
-            and _REF.match(issuer)
-            and rule_ok
-            and isinstance(max_occurrences, int)
-            and not isinstance(max_occurrences, bool)
-            and 1 <= max_occurrences <= 10_000
-            and issued < expires <= issued + timedelta(days=MAX_GRANT_DAYS)
-        ):
-            raise TuningError(E_INVALID_GRANT, "standing grant is not a valid record")
-        if not authority.authorized(issuer):
-            raise TuningError(
-                E_APPROVER_NOT_AUTHORIZED,
-                "the grant issuer is not on the authority list",
-            )
-        if not authority.authenticated(
-            issuer, _grant_context(grant_id, rule_ref), self.meta.get("environment")
-        ):
-            raise TuningError(
-                E_APPROVER_NOT_AUTHORIZED, "the grant issuer was not authenticated"
-            )
-        grant = {
-            "grant_id": grant_id,
-            "rule_ref": rule_ref,
-            "agent_ref": self.meta["agent"],
-            "contract_digest": self.meta["contract_digest"],
-            "covers": "optimize",
-            "issuer": issuer,
-            "authentication": authority.mode,
-            "issued_at": _instant_text(issued),
-            "expires_at": _instant_text(expires),
-            "max_occurrences": max_occurrences,
-            "used": [],
-        }
-        with self._locked():
-            grants = _read_json(self._p("grants.json"), {})
-            if grant_id in grants:
-                raise TuningError(E_INVALID_GRANT, "grant id already recorded")
-            grants[grant_id] = grant
-            _write_json(self._p("grants.json"), grants)
-        return copy.deepcopy(grant)
-
-    def _grant_usable(
-        self,
-        grant: Mapping[str, Any],
-        rule_ref: str,
-        moment: datetime,
-        *,
-        authenticate: bool = True,
-    ) -> bool:
-        """A grant for this rule, agent and contract, optimize-only, unexpired, issued
-        by someone still on the authority list (``authenticate=False``: the issuer was
-        just authenticated, so only the cheap checks are repeated at the effect)."""
-        return (
-            grant["rule_ref"] == rule_ref
-            and grant["agent_ref"] == self.meta["agent"]
-            and grant["contract_digest"] == self.meta["contract_digest"]
-            and grant.get("covers") == "optimize"
-            and moment < _parse_instant(grant["expires_at"])
-            and (
-                not authenticate
-                or self._on_list_now(
-                    grant.get("issuer"),
-                    _grant_context(grant.get("grant_id"), grant.get("rule_ref")),
-                )
-            )
+    def record_standing_grant(self, *_args: Any, **_kwargs: Any) -> None:
+        """Standing grants are not supported in this release."""
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "standing grants are not supported in this release",
         )
-
-    def _consume_grant(
-        self, occ: Mapping[str, Any], ref: str, moment: datetime
-    ) -> bool:
-        """Consume one use of a matching standing grant (idempotent per occurrence)."""
-        rule_ref = f"{occ['response']}/{occ['rule']}"
-        grants = _read_json(self._p("grants.json"), {})
-        for grant_id in sorted(grants):
-            grant = grants[grant_id]
-            if not self._grant_usable(grant, rule_ref, moment):
-                continue  # an expired or unauthorized grant authorizes nothing
-            if ref in grant["used"]:
-                return True  # a retry of one occurrence does not consume again
-            if len(grant["used"]) >= int(grant["max_occurrences"]):
-                continue
-            grant["used"].append(ref)
-            _write_json(self._p("grants.json"), grants)
-            return True
-        return False
 
     def controller_facts(self) -> list[dict[str, Any]]:
         """Closed facts the controller itself recorded (refusals); TVL never sees them."""
@@ -903,20 +726,12 @@ class Controller:
         now: datetime | None = None,
         *,
         abandon_interrupted: bool = False,
-        ingestion_closed: bool | None = None,
     ) -> StepReport:
         """Re-derive over the whole history and act only on derived facts.
 
         Idempotent: with an unchanged history nothing is optimized or written twice.
         An attempt interrupted mid-optimization (marker without a result) is refused
         until ``abandon_interrupted`` records it as cancelled.
-
-        Ingestion: on the live clock (``now`` omitted) nothing is spent in the
-        whole second the latest external event was ingested in, because more
-        events of that second may still arrive and the relation orders a complete
-        second; the work is deferred (``report.deferred``) to the next second.  An
-        explicit ``now`` (a replay, a test, ``--now``) is the caller's statement
-        that the second is closed; ``ingestion_closed`` overrides either way.
         """
         self.state.require_validated()
         report = StepReport()
@@ -927,26 +742,17 @@ class Controller:
             clock: Callable[[], datetime] = (
                 (lambda: moment) if now is not None else (lambda: _utc(None))
             )
-            closed = (now is not None) if ingestion_closed is None else ingestion_closed
-            hold = None if closed else self._latest_event_instant()
             report.head_written = self._recover_commits()
             if self._has_schedule():
                 self._tick(self._instant(moment))
             for _ in range(64):
                 trace = self._derive()
-                if not self._advance(trace, clock, report, abandon_interrupted, hold):
+                if not self._advance(trace, clock, report, abandon_interrupted):
                     break
             trace = self._derive()
             report.facts = trace["facts"]
             self._check_head_consistent(trace)
         return report
-
-    def _latest_event_instant(self) -> int:
-        """The latest whole-second instant external events were ingested at (-1: none)."""
-        return max(
-            (ln["instant"] for ln in self._lines() if ln["category"] == "events"),
-            default=-1,
-        )
 
     def _tick(self, instant: int) -> None:
         """Advance the relation's clock, only when time passing derives something.
@@ -1020,10 +826,6 @@ class Controller:
             for ln in self._lines()
         )
 
-    def _grant_used(self, ref: str) -> bool:
-        grants = _read_json(self._p("grants.json"), {})
-        return any(ref in g.get("used", []) for g in grants.values())
-
     def _finish_recorded(self, attempt: str) -> bool:
         return any(
             ln["category"] == "optimizations"
@@ -1040,49 +842,22 @@ class Controller:
             for ln in self._lines()
         )
 
-    def _authorized_now(
-        self, occ: Mapping[str, Any], ref: str, moment: datetime
-    ) -> bool:
-        """A recorded authorization for THIS occurrence, whatever the rule's mode.
-
-        ``standing`` consumes a recorded standing grant; every other mode (``human``
-        and any mode the controller does not know) needs ``approve_optimization``,
-        by an approver the authority allows now.
-        """
-        if self._rule(occ).get("approval", "human") == "standing":
-            return self._consume_grant(occ, ref, moment)
+    def _authorized_now(self, occ: Mapping[str, Any], ref: str) -> bool:
+        """A recorded approval for THIS occurrence by an approver the authority allows
+        now (every approval mode other than ``human`` is refused at construction)."""
         approval = _read_json(self._p("approvals.json"), {}).get(ref)
         return approval is not None and self._on_list_now(
             approval.get("approver"), _approve_context(ref)
         )
 
     def _authorization_lapse(
-        self,
-        occ: Mapping[str, Any],
-        ref: str,
-        moment: datetime,
-        *,
-        authenticate: bool = True,
+        self, ref: str, *, authenticate: bool = True
     ) -> str | None:
-        """Why the occurrence is no longer authorized at ``moment``; None when it is.
+        """Why the occurrence is no longer authorized; None when it still is.
 
         Checked immediately before the optimizer runs, on every path (recovery
-        included): a recorded approval never outlives its grant or its approver's
-        authority.
+        included): a recorded approval never outlives its approver's authority.
         """
-        if self._rule(occ).get("approval", "human") == "standing":
-            rule_ref = f"{occ['response']}/{occ['rule']}"
-            grants = _read_json(self._p("grants.json"), {})
-            for grant in grants.values():
-                if (
-                    self._grant_usable(
-                        grant, rule_ref, moment, authenticate=authenticate
-                    )
-                    and ref in grant["used"]
-                    and len(grant["used"]) <= int(grant["max_occurrences"])
-                ):
-                    return None
-            return "grant_expired"
         approval = _read_json(self._p("approvals.json"), {}).get(ref)
         if approval is None:
             return "approval_missing"
@@ -1091,6 +866,37 @@ class Controller:
         ):
             return "approver_not_authorized"
         return None
+
+    def _scope_deadline(
+        self, response: str, rule_id: str, scope_kind: str, scope: Any
+    ) -> int | None:
+        """The whole second (after the origin) at which a schedule scope ends.
+
+        A schedule scope lasts until the next tick, so its end is known without
+        replaying the history.  A monitor-breach scope ends only when its episode
+        closes (a recorded window report, never the clock): no deadline.
+        """
+        if scope_kind != "schedule":
+            return None
+        from tvl.lints import parse_utc_instant
+
+        try:
+            rule = next(
+                r
+                for resp in self.module.get("responses", [])
+                if resp["name"] == response
+                for r in resp["rules"]
+                if r["id"] == rule_id
+            )
+            spec = rule["trigger"]["schedule"]
+            anchor = parse_utc_instant(spec["anchor"])
+            tick = int(scope)
+            every = int(spec["every_days"])
+        except (StopIteration, KeyError, TypeError, ValueError):
+            raise TuningError(E_NOT_AN_OCCURRENCE, "unknown schedule scope") from None
+        if anchor is None:
+            raise TuningError(E_NOT_AN_OCCURRENCE, "unknown schedule scope")
+        return int((anchor - self.origin).total_seconds()) + (tick + 1) * every * 86400
 
     def _scope_requires_intervention(
         self, occ: Mapping[str, Any], instant: int
@@ -1118,7 +924,6 @@ class Controller:
         clock: Callable[[], datetime],
         report: StepReport,
         abandon_interrupted: bool,
-        hold_through: int | None = None,
     ) -> bool:
         """Do at most one thing the derived facts call for; True when history grew."""
         facts = trace["facts"]
@@ -1134,14 +939,6 @@ class Controller:
             marker = _read_json(marker_path)
             if opened["closed"] and marker is None:
                 continue  # closed and never started: nothing to finish, nothing blocks
-            if marker is None and hold_through is not None and instant <= hold_through:
-                # More events of this second may still arrive: take NO decision for
-                # it (no grant use, no approval or attempt fact), so the relation
-                # receives the complete second before anything acts on it.
-                if attempt not in report.deferred:
-                    report.deferred.append(attempt)
-                continue
-            standing = self._rule(occ).get("approval", "human") == "standing"
             # Immediately before any authorization is used or the optimizer is
             # invoked: the relation, over the history up to now, must still show
             # this occurrence's scope as requiring intervention.
@@ -1155,16 +952,8 @@ class Controller:
                 )
                 report.refused.append(f"{attempt}:scope_expired")
                 continue
-            if standing and marker is None:
-                # A standing attempt is born approved: no approval fact is recorded
-                # (the relation reads that as a start).  The grant is consumed here;
-                # the start is recorded only when the optimizer is invoked.
-                if not self._authorized_now(occ, ref, moment):
-                    if ref not in report.awaiting_approval:
-                        report.awaiting_approval.append(ref)
-                    continue
-            elif not standing and not self._approval_recorded(attempt):
-                if not self._authorized_now(occ, ref, moment):
+            if not self._approval_recorded(attempt):
+                if not self._authorized_now(occ, ref):
                     if ref not in report.awaiting_approval:
                         report.awaiting_approval.append(ref)
                     continue
@@ -1190,7 +979,7 @@ class Controller:
                 record = self._finished_record(attempt, "cancelled", [])
                 _write_json(marker_path, {**marker, "finished_record": record})
                 return True
-            lapse = self._authorization_lapse(occ, ref, moment)
+            lapse = self._authorization_lapse(ref)
             if lapse is not None:
                 self._record_controller_fact(
                     {"fact": "optimize_refused", "attempt": attempt, "reason": lapse}
@@ -1201,25 +990,17 @@ class Controller:
                 raise TuningError(E_NO_OPTIMIZER, f"{attempt} needs an optimize_fn")
             space = self._search_space(domains.get(attempt))
             admitted = self._admitted_values(domains.get(attempt))
-            # Authentication and every history replay are done.  The last things
-            # before the spend: the scope verdict at a clock that did not move
-            # during its replay, then (cheap file reads only) the grant's validity,
-            # all against a fresh clock.  Nothing replays after this.
-            for _ in range(3):
-                replayed = self._instant(clock())
-                in_scope = self._scope_requires_intervention(occ, replayed)
-                effect = clock()
-                if self._instant(effect) == replayed:
-                    break
-            else:
-                if attempt not in report.deferred:  # too slow to be sure: retry later
-                    report.deferred.append(attempt)
-                continue
-            lapse = (
-                "scope_expired"
-                if not in_scope
-                else self._authorization_lapse(occ, ref, effect, authenticate=False)
+            # Authentication and the one history replay are done here; they are
+            # the last of either.  What follows reads only the clock and small
+            # files: the scope verdict replayed once, the scope's own deadline
+            # carried out of that replay, and the approval, each rechecked against
+            # a fresh clock (``_effect_lapse``) before the journal and again as the
+            # very last step before the optimizer is invoked.
+            in_scope = self._scope_requires_intervention(occ, self._instant(clock()))
+            deadline = self._scope_deadline(
+                occ["response"], occ["rule"], occ["scope_kind"], occ["scope"]
             )
+            lapse = self._effect_lapse(ref, in_scope, deadline, clock)
             if lapse is not None:
                 self._record_controller_fact(
                     {"fact": "optimize_refused", "attempt": attempt, "reason": lapse}
@@ -1242,6 +1023,25 @@ class Controller:
                     },
                 )
             report.started.append(attempt)
+            lapse = self._effect_lapse(ref, in_scope, deadline, clock)
+            if lapse is not None:
+                # The journaled start lost its authorization while it was being
+                # written: nothing runs; the start finishes as cancelled.
+                self._record_controller_fact(
+                    {"fact": "optimize_refused", "attempt": attempt, "reason": lapse}
+                )
+                report.refused.append(f"{attempt}:{lapse}")
+                record = self._finished_record(attempt, "cancelled", [])
+                _write_json(
+                    marker_path,
+                    {
+                        "attempt": attempt,
+                        "occurrence": ref,
+                        "state": "finished",
+                        "finished_record": record,
+                    },
+                )
+                return True
             try:
                 if getattr(self.optimize_fn, "accepts_candidate_dir", False):
                     isolated = cast(Callable[..., Any], self.optimize_fn)
@@ -1275,6 +1075,32 @@ class Controller:
             report.finished.append(attempt)
             return True
         return False
+
+    def _effect_lapse(
+        self,
+        ref: str,
+        in_scope: bool,
+        deadline: int | None,
+        clock: Callable[[], datetime],
+    ) -> str | None:
+        """Why the occurrence may not be spent on at THIS instant; None when it may.
+
+        Reads a fresh clock and small files only (never a history replay): the
+        scope must have counted at the last replay and must not have reached its
+        own deadline, and the approval must still be on the authority's list.
+        """
+        if not in_scope:
+            return "scope_expired"
+        if deadline is not None and self._instant(clock()) >= deadline:
+            return "scope_expired"
+        approval = _read_json(self._p("approvals.json"), {}).get(ref)
+        if approval is None:
+            return "approval_missing"
+        if self.authority is None or not self.authority.authorized(
+            approval.get("approver")
+        ):
+            return "approver_not_authorized"
+        return None
 
     @staticmethod
     def _finished_record(
@@ -1346,14 +1172,15 @@ class Controller:
         unpriced = _unpriced_models_of(config)
         try:
             source = getattr(optimized, "_dataset_from_source", None)
-            if loaded is None:
-                # this run did not say what it loaded: its identity is unknown
+            if not _well_formed_digests(loaded):
+                # this run did not say, or did not say well, what it loaded: its
+                # identity is unknown
                 raise EvidenceUnavailable("eval_set_identity_unknown")
             eval_digests, _rows = eval_set_identity(
                 getattr(optimized, "eval_dataset", None),
                 source if callable(source) else None,
             )
-            eval_digests = set(eval_digests) | set(loaded or ())
+            eval_digests = set(eval_digests) | set(cast(Collection[str], loaded))
             return build_promotion_evidence(
                 self.module,
                 fn=optimized,
@@ -1813,6 +1640,33 @@ class Controller:
             return gate, None, "candidate_config_missing"
         return gate, config, None
 
+    def _deadline_lapse(self, doc: Mapping[str, Any], instant: int) -> str | None:
+        """Which clock deadline of this acceptance has passed at ``instant``; None if none.
+
+        Two deadlines apply: the record's own usability window
+        (``decided_at <= t < expires_at``) and the end of the occurrence's scope
+        (a schedule scope ends at its next tick).  Arithmetic only, no replay, so
+        it is safe as the very last check before a head is installed.
+        """
+        at = self.origin + timedelta(seconds=instant)
+        try:
+            decided = _parse_instant(str(doc["decided_at"]))
+            expires = _parse_instant(str(doc["expires_at"]))
+            occ = doc["occurrence"]
+            deadline = self._scope_deadline(
+                str(occ["response_ref"]),
+                str(occ["rule_ref"]),
+                str(occ["scope_kind"]),
+                occ["scope_ref"],
+            )
+        except (KeyError, ValueError, TypeError, TuningError):
+            return "acceptance_not_usable"
+        if not (decided <= at < expires):
+            return "acceptance_not_usable"
+        if deadline is not None and instant >= deadline:
+            return "scope_expired"
+        return None
+
     def _physical_refusal(
         self,
         doc: Mapping[str, Any],
@@ -1831,14 +1685,9 @@ class Controller:
         THIS incumbent, and the candidate's configuration is the one fingerprinted.
         ``prepared`` carries the replay-derived inputs so no replay happens here.
         """
-        at = self.origin + timedelta(seconds=instant)
-        try:
-            decided = _parse_instant(str(doc["decided_at"]))
-            expires = _parse_instant(str(doc["expires_at"]))
-        except (KeyError, ValueError):
-            return "acceptance_not_usable"
-        if not (decided <= at < expires):
-            return "acceptance_not_usable"
+        lapse = self._deadline_lapse(doc, instant)
+        if lapse is not None:
+            return lapse
         if approver_ok is None:
             approver_ok = self._on_list_now(doc.get("approver_ref"), doc)
         if not approver_ok:
@@ -1947,6 +1796,25 @@ class Controller:
                 "meta": dict(meta),
             },
         )
+        # The very last step before the head moves: every deadline again, against a
+        # clock read now (the journal write above took time).  No replay here.
+        late = self._deadline_lapse(
+            doc, fresh_instant() if fresh_instant is not None else instant
+        )
+        if late is not None:
+            _append_line(
+                self._p("commits.jsonl"),
+                {"fact": "commit_abandoned", "commit": commit, "acceptance": ident},
+            )
+            self._record_controller_fact(
+                {
+                    "fact": "head_write_refused",
+                    "acceptance": ident,
+                    "generation": generation,
+                    "reason": late,
+                }
+            )
+            return AcceptanceOutcome(ident, "refused", late)
         self._install_head(new_head)
         self._append("acceptances", dict(line_record), instant, meta)
         _append_line(
@@ -2121,20 +1989,8 @@ class Controller:
         limit = getattr(self.optimize_fn, "spend_limit", None)
         return dict(limit) if isinstance(limit, Mapping) and limit else None
 
-    def _approval_text(self, occ: Mapping[str, Any], ref: str) -> str:
-        """Who or what approved the run, as a person reads it.
-
-        TVL's relation models a standing grant as platform state (the attempt is
-        auto-approved); here the grant record is the platform state.  Both layers
-        mean the same, and ``status`` words it the same way: "approved by standing
-        grant <id>".
-        """
-        if self._rule(occ).get("approval", "human") == "standing":
-            grants = _read_json(self._p("grants.json"), {})
-            for grant_id in sorted(grants):
-                if ref in grants[grant_id].get("used", []):
-                    return f"approved by standing grant {grant_id}"
-            return "approved by standing grant"
+    def _approval_text(self, ref: str) -> str:
+        """Who approved the run, as a person reads it."""
         approval = _read_json(self._p("approvals.json"), {}).get(ref) or {}
         return f"approved by {approval.get('approver', 'an approver')}"
 
@@ -2157,12 +2013,7 @@ class Controller:
             ref = occurrence_ref(opened["occurrence"])
             if opened["finished"]:
                 state = "deploy_awaiting"
-            elif self._approval_recorded(opened["attempt"]) or (
-                ref in approvals
-                if self._rule(opened["occurrence"]).get("approval", "human")
-                != "standing"
-                else self._grant_used(ref)
-            ):
+            elif self._approval_recorded(opened["attempt"]) or ref in approvals:
                 marker = _read_json(self._marker_path(opened["attempt"], ref))
                 state = (
                     "interrupted"
@@ -2177,7 +2028,7 @@ class Controller:
                 "state": state,
             }
             if state in ("approved", "interrupted"):
-                entry["approval"] = self._approval_text(opened["occurrence"], ref)
+                entry["approval"] = self._approval_text(ref)
             if state == "awaiting_approval":
                 domain = domains.get(opened["attempt"])
                 entry["approve_run"] = {
@@ -2238,6 +2089,17 @@ class Controller:
             "open_attempts": attempts,
             "pending_deploys": deploys,
         }
+
+
+_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _well_formed_digests(loaded: Any) -> bool:
+    """A real collection of digest strings (never a bare string, which iterates as
+    characters); anything else means the run's dataset identity is unknown."""
+    return isinstance(loaded, (list, tuple, set, frozenset)) and all(
+        isinstance(item, str) and _DIGEST.match(item) for item in loaded
+    )
 
 
 def _normalized_domain(spec: Any) -> Any:
@@ -2421,7 +2283,6 @@ class HeadLoader:
 __all__ = [
     "AcceptanceOutcome",
     "Controller",
-    "EventReceipt",
     "HeadLoader",
     "OptimizerRun",
     "StepReport",

@@ -5,23 +5,21 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from traigent.cli.main import cli
-from traigent.tuning.authority import sign_event
 from traigent.tuning.controller import _read_lines
-
-SECRET = "e2e-issuer-secret"  # pragma: allowlist secret
 
 WITNESS = """
 from unittest.mock import MagicMock
 
 import traigent
 from traigent.observability import observe
-from traigent.tuning.policy import FailureRate, ModelReleased, OnBreach, ProposeFix, Tuning
+from traigent.tuning.policy import Every, FailureRate, ModelReleased, OnBreach, ProposeFix, Tuning
 
 # synthetic: a newer model answers harder documents ("level N" needs skill >= N)
 SKILL = {"anthropic/claude-haiku-4-5": 0, "anthropic/claude-sonnet-4-6": 1,
@@ -36,8 +34,7 @@ def ticket_route_check(example, output):
 
 policy = Tuning(
     keep=[FailureRate(checker="customer:ticket_route_check", at_most="0.08")],
-    on=[ModelReleased(family="anthropic", tier=["small", "medium"], admit="model"),
-        OnBreach()],
+    on=[TRIGGER, OnBreach()],
     fix=ProposeFix(approval="human", deploy="if_promoted"),
     recover="since_head_move",
     checkers={"customer:ticket_route_check": ticket_route_check},
@@ -50,8 +47,10 @@ policy = Tuning(
          follow="head", tuning_store="./store")
 @traigent.optimize(
     configuration_space={"model": ["anthropic/claude-haiku-4-5",
-                                   "anthropic/claude-sonnet-4-6"]},
+                                   "anthropic/claude-sonnet-4-6",
+                                   "anthropic/claude-haiku-5-5"]},
     objectives=["accuracy"], eval_dataset=EVAL, offline=True, max_trials=4,
+    algorithm="grid",
     default_config={"model": "anthropic/claude-haiku-4-5"},
 )
 def classify(doc: str) -> str:
@@ -59,36 +58,11 @@ def classify(doc: str) -> str:
     level = int(doc.split()[1])
     return "billing" if SKILL.get(model, 0) >= level else "support"
 """
-EVENT = {
-    "kind": "model_released",
-    "event_id": "E1",
-    "issuer": "P",
-    "issued_at": 9 * 3600,
-    "catalogue_revision": 1,
-    "subject": {
-        "model_ref": "anthropic/claude-haiku-5-5",
-        "provider_family": "anthropic",
-        "tier": "small",
-    },
-}
-
-
-def _write_event(path: Path, envelope: dict) -> None:
-    """A platform-signed envelope (the file's own flags are never read)."""
-    path.write_text(
-        json.dumps({**envelope, "signature": sign_event(envelope, SECRET)}),
-        encoding="utf-8",
-    )
 
 
 def _authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    monkeypatch.setenv("TRAIGENT_E2E_ISSUER", SECRET)
     path = tmp_path / "authority.yml"
-    path.write_text(
-        "mode: local-trusted\napprovers: [alice]\n"
-        "event_issuers:\n  P:\n    secret_env: TRAIGENT_E2E_ISSUER\n",
-        encoding="utf-8",
-    )
+    path.write_text("mode: local-trusted\napprovers: [alice]\n", encoding="utf-8")
     return ["--authority", str(path)]
 
 
@@ -101,11 +75,23 @@ def _holdout_text() -> str:
 
 
 def _write_agent(
-    tmp_path: Path, name: str, holdout: bool = True, all_fail: bool = False
+    tmp_path: Path,
+    name: str,
+    holdout: bool = True,
+    all_fail: bool = False,
+    external: bool = False,
 ) -> None:
     arg = '"holdout.jsonl"' if holdout else "None"
+    midnight = datetime.now(UTC).strftime("%Y-%m-%dT00:00:00Z")  # the store's origin
+    trigger = (
+        'ModelReleased(family="anthropic", tier=["small"], admit="model")'
+        if external
+        else f'Every(30, "{midnight}")'
+    )
     (tmp_path / f"{name}.py").write_text(
-        WITNESS.replace("HOLDOUT_ARG", arg).replace(
+        WITNESS.replace("HOLDOUT_ARG", arg)
+        .replace("TRIGGER,", f"{trigger},")
+        .replace(
             'return "fail" if not output else "pass"',
             "return 'fail'" if all_fail else 'return "fail" if not output else "pass"',
         ),
@@ -133,7 +119,6 @@ def test_cli_runs_optimizer_behind_observe_without_evidence_never_deploys(
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.chdir(tmp_path)
     _write_agent(tmp_path, "agent_e2e2", holdout=False)
-    _write_event(tmp_path / "e1.json", EVENT)
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("agent_e2e2", None)
     ctl = [
@@ -146,12 +131,9 @@ def test_cli_runs_optimizer_behind_observe_without_evidence_never_deploys(
         *_authority(tmp_path, monkeypatch),
     ]
     try:
-        _run(["event", "e1.json", *ctl])
-        occ = _json(_run(["step", "--close-ingestion", *ctl]))["awaiting_approval"][0]
+        occ = _json(_run(["step", *ctl]))["awaiting_approval"][0]
         _run(["approve", occ, "--approver", "alice", *ctl])
-        report = _json(
-            _run(["step", "--close-ingestion", *ctl])
-        )  # E_NO_OPTIMIZER before the fix
+        report = _json(_run(["step", *ctl]))  # E_NO_OPTIMIZER before the fix
         assert report["finished"]
         assert _json(_run(["status", *ctl]))["pending_deploys"] == []
         facts = _read_lines(tmp_path / "store" / "controller.jsonl")
@@ -171,7 +153,6 @@ def test_cli_failing_quality_on_the_holdout_rejects_and_never_deploys(
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.chdir(tmp_path)
     _write_agent(tmp_path, "agent_e2e3", all_fail=True)
-    _write_event(tmp_path / "e1.json", EVENT)
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("agent_e2e3", None)
     ctl = [
@@ -184,10 +165,9 @@ def test_cli_failing_quality_on_the_holdout_rejects_and_never_deploys(
         *_authority(tmp_path, monkeypatch),
     ]
     try:
-        _run(["event", "e1.json", *ctl])
-        occ = _json(_run(["step", "--close-ingestion", *ctl]))["awaiting_approval"][0]
+        occ = _json(_run(["step", *ctl]))["awaiting_approval"][0]
         _run(["approve", occ, "--approver", "alice", *ctl])
-        assert _json(_run(["step", "--close-ingestion", *ctl]))["finished"]
+        assert _json(_run(["step", *ctl]))["finished"]
         assert _json(_run(["status", *ctl]))["pending_deploys"] == []
         finished = [
             json.loads(p.read_text())["finished_record"]
@@ -207,7 +187,6 @@ def test_cli_loop_closes_through_observe_over_optimize(
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.chdir(tmp_path)
     _write_agent(tmp_path, "agent_e2e")
-    _write_event(tmp_path / "e1.json", EVENT)
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("agent_e2e", None)
     ctl = [
@@ -222,8 +201,7 @@ def test_cli_loop_closes_through_observe_over_optimize(
     try:
         assert "wrote" in _run(["compile", "agent_e2e.py:classify", "-o", "p.tvl.yml"])
         _run(["check", "p.tvl.yml"])
-        _run(["event", "e1.json", *ctl])
-        occ = _json(_run(["step", "--close-ingestion", *ctl]))["awaiting_approval"][0]
+        occ = _json(_run(["step", *ctl]))["awaiting_approval"][0]
         approve_text = _run(["status", "--text", *ctl])  # what Approve run shows
         assert "Approve run" in approve_text and "trigger:" in approve_text
         assert "spend limit: " in approve_text
@@ -231,9 +209,7 @@ def test_cli_loop_closes_through_observe_over_optimize(
         head = json.loads((tmp_path / "store" / "head.json").read_text())
         assert head["config"] == {"model": "anthropic/claude-haiku-4-5"}
         _run(["approve", occ, "--approver", "alice", *ctl])
-        _run(
-            ["step", "--close-ingestion", *ctl]
-        )  # optimize runs once (mock mode); deploy now awaits
+        _run(["step", *ctl])  # optimize runs once (mock mode); deploy now awaits
         status = _json(_run(["status", *ctl]))
         assert status["head"]["generation"] == 0
         assert len(status["pending_deploys"]) == 1
@@ -258,37 +234,12 @@ def test_cli_loop_closes_through_observe_over_optimize(
             _run(["accept", occ, "--generation", "0", "--approver", "alice", *ctl])
         )
         assert accepted["result"] == "written"
-        _run(["step", "--close-ingestion", *ctl])
+        _run(["step", *ctl])
         status = _json(_run(["status", *ctl]))
         assert status["head"]["generation"] == 1
         head = json.loads((tmp_path / "store" / "head.json").read_text())
         assert head["generation"] == 1
-        assert (
-            head["config"]["model"] == "anthropic/claude-haiku-5-5"
-        )  # the admitted model
-        before = (tmp_path / "store" / "head.json").read_bytes()
-        _run(["event", "e1.json", *ctl])
-        _run(["step", "--close-ingestion", *ctl])
-        assert (tmp_path / "store" / "head.json").read_bytes() == before
-        # a newer admitted model opens a new deploy (measured against the new head);
-        # accepting it at generation 0 (the head has since moved) is refused as stale.
-        e6 = {
-            **EVENT,
-            "event_id": "E6",
-            "issued_at": 10 * 3600,
-            "subject": {**EVENT["subject"], "model_ref": "anthropic/claude-haiku-5-6"},
-        }
-        _write_event(tmp_path / "e6.json", e6)
-        _run(["event", "e6.json", *ctl])
-        occ6 = _json(_run(["step", "--close-ingestion", *ctl]))["awaiting_approval"][0]
-        _run(["approve", occ6, "--approver", "alice", *ctl])
-        _run(["step", "--close-ingestion", *ctl])
-        assert len(_json(_run(["status", *ctl]))["pending_deploys"]) == 1
-        stale = _run(
-            ["accept", occ6, "--generation", "0", "--approver", "alice", *ctl], ok=False
-        )
-        assert "stale_generation" in stale
-        assert _json(_run(["status", *ctl]))["head"]["generation"] == 1
+        assert head["config"]["model"] == "anthropic/claude-haiku-5-5"  # the best
         # a followed call stamps the closed head metadata only
         import agent_e2e
 
@@ -300,4 +251,38 @@ def test_cli_loop_closes_through_observe_over_optimize(
         )
     finally:
         sys.modules.pop("agent_e2e", None)
+        shutil.rmtree(tmp_path / "store", ignore_errors=True)
+
+
+def test_cli_refuses_external_events_and_external_triggers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    monkeypatch.chdir(tmp_path)
+    _write_agent(tmp_path, "agent_e2e4", external=True)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    sys.modules.pop("agent_e2e4", None)
+    ctl = [
+        "--target",
+        "agent_e2e4.py:classify",
+        "--store",
+        "./store",
+        "--agent",
+        "ticket-router",
+        *_authority(tmp_path, monkeypatch),
+    ]
+    try:
+        # the policy still compiles and checks: TVL specifies the trigger
+        assert "wrote" in _run(["compile", "agent_e2e4.py:classify", "-o", "p.tvl.yml"])
+        _run(["check", "p.tvl.yml"])
+        (tmp_path / "e1.json").write_text(
+            '{"kind": "model_released"}', encoding="utf-8"
+        )
+        for command in (["event", "e1.json"], ["step"]):
+            out = _run([*command, *ctl], ok=False)
+            assert "E_UNSUPPORTED_IN_RELEASE" in out
+        assert not (tmp_path / "store" / "history.jsonl").exists()
+    finally:
+        sys.modules.pop("agent_e2e4", None)
         shutil.rmtree(tmp_path / "store", ignore_errors=True)

@@ -1,5 +1,5 @@
 """Hardening: authenticator everywhere, effect time under the lock,
-journal retries, recovery against concurrent ingestion, standing mode, schedules."""
+journal retries, recovery against later history, schedules."""
 
 from __future__ import annotations
 
@@ -21,27 +21,28 @@ from traigent.tuning import controller as controller_module
 from traigent.tuning.authority import ApproverAuthority
 from traigent.tuning.controller import (
     E_HEAD_DIVERGED,
-    E_STANDING_DEPLOY_UNSUPPORTED,
     Controller,
 )
-from traigent.tuning.errors import E_APPROVER_NOT_AUTHORIZED, TuningError
+from traigent.tuning.errors import (
+    E_APPROVER_NOT_AUTHORIZED,
+    E_UNSUPPORTED_IN_RELEASE,
+    TuningError,
+)
 from traigent.tuning.policy import Every
 from traigent.tuning.state import attach_tuning
 
 from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     APPROVERS,
     NEW,
-    NEWER,
     OLD,
+    T0,
     FakeOptimizer,
     _crash_install,
     _deploy_awaiting,
     _holdout,
-    _standing_state,
     at,
     controller,
     e_ref,
-    event,
     head,
     make,
     state,
@@ -57,28 +58,13 @@ def _platform(answer: list[bool]) -> ApproverAuthority:
 
 
 # -- 1. the authenticator decides every authority decision ----------------------------
-def test_a_platform_authenticator_returning_false_refuses_run_approval_and_grants(
+def test_a_platform_authenticator_returning_false_refuses_run_approval(
     tmp_path: Path,
 ) -> None:
     answer = [False]
     c = make(state(), tmp_path / "a", FakeOptimizer(), authority=_platform(answer))
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     with pytest.raises(TuningError) as err:
         c.approve_optimization(e_ref("E1"), "approver-1", at(10))
-    assert err.value.code == E_APPROVER_NOT_AUTHORIZED
-
-    g = make(
-        _standing_state(), tmp_path / "b", FakeOptimizer(), authority=_platform(answer)
-    )
-    with pytest.raises(TuningError) as err:
-        g.record_standing_grant(
-            "G1",
-            "tuning/on_new_model",
-            1,
-            at(10) + timedelta(days=1),
-            "issuer-1",
-            at(10),
-        )
     assert err.value.code == E_APPROVER_NOT_AUTHORIZED
 
 
@@ -88,7 +74,6 @@ def test_authentication_is_rechecked_when_an_approved_run_is_about_to_start(
     answer = [True]
     opt = FakeOptimizer()
     c = make(state(), tmp_path / "a", opt, authority=_platform(answer))
-    c.record_event(event("E1", NEW["model"], 9), at(10))
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     answer[0] = False  # the platform no longer vouches for the approver
     report = c.step(at(10))
@@ -156,7 +141,7 @@ def test_a_retry_after_an_abandoned_commit_is_recovered_on_its_own(
     assert len({e["commit"] for e in commits}) == 2
 
 
-# -- 4. recovery against concurrent ingestion -----------------------------------------
+# -- 4. recovery against later history -----------------------------------------
 def _crash_after_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Controller, dict[str, Any]]:
@@ -172,12 +157,11 @@ def _crash_after_install(
     return other, record
 
 
-def test_ingestion_by_another_controller_recovers_the_commit_first(
+def test_a_later_step_by_another_controller_recovers_the_commit_first(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     other, _ = _crash_after_install(tmp_path, monkeypatch)
     late = at(31) + timedelta(days=8)  # past the acceptance's expiry
-    other.record_event(event("E2", NEWER["model"], 31 + 8 * 24 - 1), late)
 
     restarted = controller(tmp_path, FakeOptimizer())
     assert restarted._tvl_generation(restarted._derive()) == 1
@@ -198,9 +182,7 @@ def test_history_that_grew_past_the_crash_still_takes_the_acceptance_at_its_inst
     other, _ = _crash_after_install(tmp_path, monkeypatch)
     late = at(31) + timedelta(days=8)
     monkeypatch.setattr(Controller, "_recover_commits", lambda self: None)
-    other.record_event(
-        event("E2", NEWER["model"], 31 + 8 * 24 - 1), late
-    )  # no recovery
+    other._append("tick", None, int((late - T0).total_seconds()))  # no recovery
     monkeypatch.undo()
 
     restarted = controller(tmp_path, FakeOptimizer())  # recovery splices it in
@@ -211,7 +193,7 @@ def test_history_that_grew_past_the_crash_still_takes_the_acceptance_at_its_inst
         for ln in (tmp_path / "store" / "history.jsonl").read_text().splitlines()
     ]
     instants = [ln["instant"] for ln in lines]
-    assert instants == sorted(instants)  # the later event is ordered after it
+    assert instants == sorted(instants)  # the later line is ordered after it
     accepted = [ln for ln in lines if ln["category"] == "acceptances"]
     assert [a["instant"] for a in accepted] == [31 * 3600]
     facts = [f for f in restarted._derive()["facts"] if f["fact"] == "acceptance"]
@@ -249,26 +231,24 @@ def test_an_unreconcilable_recovery_is_loud_and_leaves_the_journal_open(
     assert path.read_text() == before  # not marked done
 
 
-# -- 6. standing mode ------------------------------------------------------------------
+# -- 6. standing mode is not part of this release ---------------------------------------
 def test_standing_on_a_rule_that_deploys_if_promoted_is_refused(tmp_path: Path) -> None:
-    st = _standing_state()
+    st = state()
     for response in st.tvl["responses"]:
         for rule in response["rules"]:
-            if rule["id"] == "on_new_model":
+            if rule["id"] == "on_E1":
+                rule["approval"] = "standing"
                 rule["deploy"] = "if_promoted"
     with pytest.raises(TuningError) as err:
         make(st, tmp_path / "s", FakeOptimizer())
-    assert err.value.code == E_STANDING_DEPLOY_UNSUPPORTED
+    assert err.value.code == E_UNSUPPORTED_IN_RELEASE
 
 
-def test_status_says_which_standing_grant_approved_the_run(
+def test_status_names_the_human_who_approved_the_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    c = make(_standing_state(), tmp_path / "s", FakeOptimizer())
-    c.record_standing_grant(
-        "G1", "tuning/on_new_model", 5, at(10) + timedelta(days=1), "issuer-1", at(10)
-    )
-    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c = make(state(), tmp_path / "s", FakeOptimizer())
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     real = Controller._append
 
     def crash(self: Controller, category: str, record: Any, *a: Any, **k: Any) -> None:
@@ -281,7 +261,7 @@ def test_status_says_which_standing_grant_approved_the_run(
         c.step(at(10))
     monkeypatch.undo()
     entries = [a for a in c.status()["open_attempts"] if a["occurrence"] == e_ref("E1")]
-    assert entries and entries[0]["approval"] == "approved by standing grant G1"
+    assert entries and entries[0]["approval"] == "approved by approver-1"
 
 
 # -- 7. a modern schedule anchor needs no explicit snapshot ----------------------------
