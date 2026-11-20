@@ -165,8 +165,10 @@ def regression_add(
     try:
         dataset = Dataset.from_jsonl(dataset_path)
     except Exception as exc:
+        # Closed message: a loader error may quote part of a row.
         raise click.ClickException(
-            f"Cannot load dataset '{dataset_path}': {exc}"
+            f"Cannot load dataset '{dataset_path}' ({type(exc).__name__}); check "
+            "that it is valid JSONL or JSON with an input field on every row"
         ) from exc
 
     run_result, failing_ids = _select_run_failures(run, storage_dir, threshold, mode)
@@ -179,7 +181,10 @@ def regression_add(
     except UnresolvedExampleIdError as exc:
         raise click.ClickException(str(exc)) from exc
     except (TypeError, ValueError) as exc:
-        raise click.ClickException(f"Cannot select failing examples: {exc}") from exc
+        raise click.ClickException(
+            f"Cannot select failing examples ({type(exc).__name__}); the dataset "
+            "rows do not match the run"
+        ) from exc
 
     try:
         evidence = RunEvidence(
@@ -208,6 +213,10 @@ def regression_add(
         f"Added {report.rows_added} row(s), {report.provenance_added} new "
         f"provenance entr{'y' if report.provenance_added == 1 else 'ies'}, "
         f"replaced {report.rows_replaced}; file: {report.path}"
+    )
+    click.echo(
+        "Note: this file holds unredacted example content and the examples' "
+        "metadata. Review it before you commit it."
     )
 
 

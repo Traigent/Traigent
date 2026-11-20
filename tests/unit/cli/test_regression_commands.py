@@ -419,3 +419,55 @@ def test_custom_threshold_changes_what_fails_and_is_recorded(ws: Path) -> None:
     rows = _by_id(ws)
     assert sorted(rows) == ["example_1", "example_3"]  # 0.6 < 0.7, 0.8 passes
     assert _prov(ws, "example_1")[0]["threshold"] == 0.7
+
+
+def test_success_says_the_file_is_unredacted_and_to_review_it(ws: Path) -> None:
+    result = _add(ws, "run_a")
+    assert result.exit_code == 0, result.output
+    assert "unredacted example content" in result.output
+    assert (
+        "metadata" in result.output and "Review it before you commit" in result.output
+    )
+
+
+def test_errors_do_not_echo_exception_text(
+    ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel = "sentinel-example-text"
+
+    def boom(*_a: Any, **_k: Any) -> Any:
+        raise ValueError(sentinel)
+
+    from traigent.utils import regression_dataset
+
+    monkeypatch.setattr(regression_dataset, "select_examples_with_run_ids", boom)
+    result = _add(ws, "run_a")
+    assert result.exit_code != 0 and sentinel not in result.output
+    assert "ValueError" in result.output
+
+    monkeypatch.setattr(Dataset, "from_jsonl", boom)
+    result = _add(ws, "run_a")
+    assert result.exit_code != 0 and sentinel not in result.output
+    assert "ValueError" in result.output
+    assert not (ws / "reg").exists()
+
+
+def test_zero_failures_exits_zero_and_creates_nothing(ws: Path) -> None:
+    PersistenceManager(str(ws / "results")).save_result(
+        _result(set(), oid="opt-clean"), name="run_clean"
+    )
+    result = _add(ws, "run_clean")
+    assert result.exit_code == 0, result.output
+    assert "No failing examples" in result.output
+    assert not (ws / "reg").exists()
+
+
+def test_zero_failures_leaves_an_existing_file_untouched(ws: Path) -> None:
+    assert _add(ws, "run_a").exit_code == 0
+    path = ws / "reg" / "regression.jsonl"
+    before, mtime = path.read_bytes(), path.stat().st_mtime_ns
+    PersistenceManager(str(ws / "results")).save_result(
+        _result(set(), oid="opt-clean"), name="run_clean"
+    )
+    assert _add(ws, "run_clean").exit_code == 0
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == (before, mtime)
