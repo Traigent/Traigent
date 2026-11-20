@@ -96,28 +96,6 @@ def test_a_scope_that_ends_during_authentication_does_not_start_the_optimizer(
     assert opt.calls == []
 
 
-def test_a_release_whose_second_authentication_crosses_expiry_is_not_installed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    clock = _clock(monkeypatch, at(32))
-    calls = [0]
-
-    def hook(approver: str, context: Any) -> bool:
-        calls[0] += 1
-        if calls[0] == 2:  # the check made at the physical head write
-            clock[0] = clock[0] + timedelta(days=30)
-        return True
-
-    c.authority = ApproverAuthority(
-        frozenset(APPROVERS), mode="platform", authenticator=hook
-    )
-    outcome = c.submit_acceptance(record)
-    assert outcome.result != "written"
-    assert head(tmp_path)["generation"] == 0
-
-
 # -- the environment travels with the attached tuning state -------------------------
 def test_the_attached_state_and_the_cli_carry_the_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -372,8 +350,8 @@ def test_a_scope_that_ends_while_the_start_marker_is_written_does_not_start_the_
         for ln in c._lines()
         if ln["category"] == "optimizations" and ln["record"].get("fact") == "finished"
     ]
-    assert finished == []  # nothing started: no start fact, no leftover marker
-    assert not list((tmp_path / "store" / "attempts").glob("*.json"))
+    assert [r["completion"] for r in finished] == ["cancelled"]  # never started
+    assert started_lines(c) == []
 
 
 def test_a_revoked_approver_at_the_start_marker_does_not_start_the_run(
@@ -397,8 +375,8 @@ def test_a_revoked_approver_at_the_start_marker_does_not_start_the_run(
         for ln in c._lines()
         if ln["category"] == "optimizations" and ln["record"].get("fact") == "finished"
     ]
-    assert finished == []  # nothing started: no start fact, no leftover marker
-    assert not list((tmp_path / "store" / "attempts").glob("*.json"))
+    assert [r["completion"] for r in finished] == ["cancelled"]  # never started
+    assert started_lines(c) == []
 
 
 def test_replay_that_takes_a_second_each_never_defers_a_valid_run(
@@ -412,92 +390,6 @@ def test_replay_that_takes_a_second_each_never_defers_a_valid_run(
     for _ in range(3):  # consecutive steps: the first one already runs it
         c.step()
     assert len(opt.calls) == 1
-
-
-def test_a_release_whose_replay_crosses_expiry_is_not_installed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    clock = _clock(monkeypatch, at(32))
-    _replay_advances(monkeypatch, clock, timedelta(days=30))
-    outcome = c.submit_acceptance(record)
-    assert outcome.result != "written"
-    assert head(tmp_path)["generation"] == 0
-
-
-def test_the_candidate_lookup_is_done_before_the_release_expiry_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    clock = _clock(monkeypatch, at(32))
-    real = Controller._deploy_fact
-
-    def slow(self: Controller, occ: Any) -> Any:
-        clock[0] = clock[0] + timedelta(days=30)  # the lookup replays history
-        return real(self, occ)
-
-    monkeypatch.setattr(Controller, "_deploy_fact", slow)
-    outcome = c.submit_acceptance(record)
-    assert outcome.result != "written"
-    assert head(tmp_path)["generation"] == 0
-
-
-def test_a_valid_release_is_not_refused_because_replay_crossed_a_second(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    clock = _clock(monkeypatch, at(32))
-    _replay_advances(monkeypatch, clock, timedelta(milliseconds=1500))
-    assert c.submit_acceptance(record).result == "written"
-    assert head(tmp_path)["generation"] == 1
-
-
-def test_a_release_whose_journal_write_crosses_expiry_is_not_installed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    clock = _clock(monkeypatch, at(32))
-    real = controller_module._append_line
-
-    def slow(path: Path, value: Any) -> None:
-        real(path, value)
-        if isinstance(value, dict) and value.get("fact") == "commit_intent":
-            clock[0] = clock[0] + timedelta(days=8)  # past the 7 day expiry
-
-    monkeypatch.setattr(controller_module, "_append_line", slow)
-    outcome = c.submit_acceptance(record)
-    assert (outcome.result, outcome.reason) == ("refused", "acceptance_not_usable")
-    assert head(tmp_path)["generation"] == 0
-    monkeypatch.undo()
-    restarted = controller(tmp_path, FakeOptimizer())
-    assert head(tmp_path)["generation"] == 0 and restarted.status()["pending_deploys"]
-
-
-def test_a_release_is_not_installed_after_its_scope_ended_during_replay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The relation said written a moment ago; the scope has ended since."""
-    c = _deploy_awaiting(tmp_path)
-    end = _scope_end()
-    record = c.build_acceptance(
-        e_ref("E1"), "approver-1", 0, now=end - timedelta(seconds=4)
-    )
-    clock = _clock(monkeypatch, end - timedelta(seconds=4))
-    real = Controller._derive
-
-    def slow(self: Controller, extra: Any = None) -> Any:
-        verdict = real(self, extra)
-        clock[0] = clock[0] + timedelta(seconds=2)  # every replay is slow
-        return verdict
-
-    monkeypatch.setattr(Controller, "_derive", slow)
-    outcome = c.submit_acceptance(record)
-    assert (outcome.result, outcome.reason) == ("refused", "scope_expired")
-    assert head(tmp_path)["generation"] == 0
 
 
 # -- every optimizer path returns the digests of what ITS run loaded ---------------------
@@ -600,16 +492,19 @@ def test_a_crash_between_the_start_marker_and_the_start_fact_is_abandonable(
     opt = FakeOptimizer()
     c = controller(tmp_path, opt, now=at(0))
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
-    real = controller_module._append_line
+    real = controller_module._prepare_append
 
-    def crash(path: Path, value: Any) -> None:
-        if isinstance(value, dict) and (value.get("record") or {}).get("fact") == (
-            "started"
-        ):
-            raise RuntimeError("crash after the marker, before the start fact")
-        real(path, value)
+    def crashing_prepare(path: Path) -> Any:
+        append = real(path)
 
-    monkeypatch.setattr(controller_module, "_append_line", crash)
+        def crash(value: Any) -> None:
+            if (value.get("record") or {}).get("fact") == "started":
+                raise RuntimeError("crash after the marker, before the start fact")
+            append(value)
+
+        return crash
+
+    monkeypatch.setattr(controller_module, "_prepare_append", crashing_prepare)
     with pytest.raises(RuntimeError):
         c.step(at(10))
     monkeypatch.undo()

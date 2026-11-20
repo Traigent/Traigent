@@ -2,15 +2,17 @@
 
 Continuous Tuning keeps a deployed agent inside a quality bound and re-optimizes it when
 something changes: a breach is observed or a schedule ticks. This release is a pilot: it runs
-schedule and breach triggers with human approval and human acceptance only (see
+schedule and breach triggers with human approval of each run only. The local controller
+runs the **spend step** (it invokes the optimizer once a person has approved); releasing a
+candidate runs through the platform-signed head, never through this controller (see
 [Supported in this release](#supported-in-this-release)).
 
 TVL 1.7 is the source of truth. `traigent.tuning` is sugar that emits a TVL 1.7 module
 (requirements, monitors, responses); the TVL reference toolchain validates it. The sugar can
 express nothing TVL cannot, and `Tuning(tvl="policy.tvl.yml")` accepts any valid TVL fragment.
 
-A support-ticket router that re-tunes itself on a schedule, serves whatever head
-a person last accepted, and proves a candidate on a held-aside set before anyone is asked:
+A support-ticket router that re-tunes itself on a schedule, serves whatever head the platform
+last signed, and proves a candidate on a held-aside set before anyone is asked:
 
 ```python
 import traigent
@@ -21,7 +23,7 @@ def ticket_route_check(example, output):          # answers with a label declare
 
 @traigent.observe(
     agent="ticket-router",
-    follow="head",                                # every call runs on the accepted head config
+    follow="head",                                # every call runs on the signed head config
     tune=Tuning(
         keep=[FailureRate("customer:ticket_route_check", at_most="0.08", window="24h", name="quality_floor")],
         audit=RandomAudit(rate="0.02"),
@@ -58,17 +60,17 @@ it with `E_UNSUPPORTED_IN_RELEASE`, naming the feature.
 
 | Supported in this release | Notes |
 | --- | --- |
-| Schedule triggers (`Every`) | a schedule scope lasts until the next tick; the end is carried out of the history replay and checked against a fresh clock before the optimizer starts and before a head is installed |
+| Schedule triggers (`Every`) | a schedule scope lasts until the next tick; the end is carried out of the history replay and checked against a fresh clock before the optimizer starts |
 | Monitor-breach triggers (`OnBreach`) | driven by the window reports you hand to `record_window`; no external event is needed |
 | Human approval of each run (**Approve run**) | by an approver on the configured authority list, checked again at the effect |
-| Human acceptance of each release (**Accept release**) | the only way the head moves |
-| Holdout promotion evidence, followed head, local store | as described below |
+| Holdout promotion evidence, reading the head, local store | as described below |
 
 | Specified in TVL, not supported by the SDK yet | What the SDK does |
 | --- | --- |
 | Standing approval (`approval: standing`) and standing grants | a policy with a standing rule is refused when the controller is built; recording a grant refuses; nothing reads a grants file |
 | External events (`ModelReleased`, `record_event`, `traigent tune event`) | a policy with an external trigger is refused when the controller is built; recording an event refuses |
 | RFC 0011 Part B (`when`, cooldown, `silent_for`, `fired_count`) | not implemented by the reference relation |
+| Releasing a candidate (`submit_acceptance`, `accept`, `traigent tune accept`) | runs through the platform-signed head; every release entry point refuses with `E_UNSUPPORTED_IN_RELEASE` before it touches the store, and this controller never moves `head.json` |
 | Release rollback (`target: release_rollback_target`) | deferred out of TVL 1.7; the linter reports `release_rollback_deferred` |
 
 | | Python SDK | JavaScript SDK |
@@ -81,8 +83,10 @@ it with `E_UNSUPPORTED_IN_RELEASE`, naming the feature.
 
 A release witness (an end-to-end run against the real CLI) should observe:
 
-* a schedule policy runs from `step` to a pending deploy, a human approval and a human
-  acceptance, and the head moves exactly once, at the accepted generation;
+* a schedule policy runs from `step` to a human approval and an optimizer run that leaves a
+  candidate pending, and the head does not move;
+* `traigent tune accept ...` exits non-zero with `E_UNSUPPORTED_IN_RELEASE` and creates or
+  changes nothing in the store;
 * a policy with a `ModelReleased` trigger compiles and checks, and `traigent tune step` on it
   exits non-zero with `E_UNSUPPORTED_IN_RELEASE`;
 * `traigent tune event FILE` exits non-zero with `E_UNSUPPORTED_IN_RELEASE` and writes nothing;
@@ -109,51 +113,48 @@ Rates are decimal strings or `decimal.Decimal`. Floats are rejected with `E_FLOA
 The module context (tvars, objectives, evaluation set, environment) comes from the
 `@traigent.optimize` function. For tests pass `Tuning(..., module_context={...})`.
 
-## The two human decisions
+## The human decision this controller takes
 
-The loop asks a person exactly twice, and `traigent tune status` (or `status --text`) shows
-what each decision is about.
+The local loop asks a person once, and `traigent tune status` (or `status --text`) shows what
+the decision is about.
 
 **Approve run** allows one optimization to spend. Before you approve, `status` prints, per
 attempt awaiting approval (`approve_run`): the trigger that fired (the rule's TVL trigger and
 its approval mode) and the **spend limit** the optimizer will run under (`max_trials`,
 `cost_limit`, `timeout` of the optimized function; `none configured` when there is none).
 
-**Accept release** lets a measured candidate into production. Before you accept, `status`
-prints, per pending deploy (`accept_release`): the **incumbent** (the head the gate measured:
-fingerprint and generation), the **candidate** fingerprint, the **holdout counts** per
-promotion monitor (`n`, `k` violations, `u` unresolved), the rows left out of the paired
-comparison, how often this holdout was used before, the **gate result** (TVL's comparison, each
-monitor verdict, the joined decision, and any closed warning such as an unknown cost), and the
-**observed generation** of the serving head. You accept at that generation; if the head moved
-since, the acceptance is refused as stale.
-
-An acceptance also binds the **agent code version** (RFC 0012): the code the candidate and the
-incumbent were measured on, shown by `status` under Accept release as `code version`. It is the
+**Release** is not decided here. A measured candidate waits for the platform-signed head;
+`status` prints, per pending deploy (`release_evidence`, read-only): the **incumbent** (the head
+the gate measured: fingerprint and generation), the **candidate** fingerprint, the **holdout
+counts** per promotion monitor (`n`, `k` violations, `u` unresolved), the rows left out of the
+paired comparison, how often this holdout was used before, the **gate result** (TVL's
+comparison, each monitor verdict, the joined decision, and any closed warning such as an
+unknown cost), the **code version** the candidate and incumbent were measured on, and the
+**observed generation** of the serving head. The code version is the
 `TRAIGENT_AGENT_CODE_VERSION` environment variable if set, else `Tuning(code_version=...)`, else
 `src:` plus a sha256 of the decorated function's module source; if none can be determined, no
-candidate gets promotion evidence (`E_NO_CODE_VERSION`), there is no default. If the code serving
-at the moment of the write differs from the accepted one, nothing is written and the occurrence
-finishes `deploy_refused` with reason `code_version_mismatch`. `head.json` records the code
-version the head was accepted for, and followed-head traces carry it as `head_code_version`.
+candidate gets promotion evidence (`E_NO_CODE_VERSION`), there is no default. A head the
+platform signed carries the code version it was released for, and followed-head traces carry it
+as `head_code_version`.
 
 ```bash
 traigent tune status --text   --store .traigent/tuning/production/ticket-router --target agent.py:classify
 traigent tune approve <occurrence>  --approver alice --authority authority.yml ...
-traigent tune accept  <deploy>      --generation 0 --approver alice --authority authority.yml ...
 ```
+
+`traigent tune accept` still exists so existing scripts get a clear answer: it exits non-zero
+with `E_UNSUPPORTED_IN_RELEASE` before it reads or creates anything.
 
 ## Who may decide
 
 Nothing is allowed by default.
 
 * **Authority.** `Controller(..., authority=ApproverAuthority(...))` (or `authorized_approvers=`)
-  names who may give both decisions. Without one, `approve_optimization` and
-  `submit_acceptance` refuse with `E_NO_APPROVER_AUTHORITY`, and so do `traigent tune approve`
-  and `accept` unless `--authority FILE` (or `TRAIGENT_TUNING_AUTHORITY`) names a config. An
-  approver not on the list is refused (`E_APPROVER_NOT_AUTHORIZED` for Approve run; recorded as
-  `unauthenticated`/`unauthorized` for Accept release). The list is checked again at the effect:
-  just before the optimizer runs, and at the instant the head is written.
+  names who may approve a run. Without one, `approve_optimization` refuses with
+  `E_NO_APPROVER_AUTHORITY`, and so does `traigent tune approve` unless `--authority FILE` (or
+  `TRAIGENT_TUNING_AUTHORITY`) names a config. An approver not on the list is refused
+  (`E_APPROVER_NOT_AUTHORIZED`). The list is checked again at the effect, just before the
+  optimizer runs.
 * **Local mode is `local-trusted`.** The config file lists approvers:
 
   ```yaml
@@ -162,8 +163,8 @@ Nothing is allowed by default.
   ```
 
   `local-trusted` means: the operator running the command is trusted to be a listed approver. No
-  credential is checked, so it proves nothing about who they are. Every approval and
-  acceptance made this way is labelled `local-trusted` in the store, and the CLI prints it.
+  credential is checked, so it proves nothing about who they are. Every approval
+  made this way is labelled `local-trusted` in the store, and the CLI prints it.
   **Production needs the platform (portal) to authenticate the person**: pass
   `ApproverAuthority(approvers, mode="platform", authenticator=callable)`, where the callable
   asks the platform. A `local-trusted` authority is refused unless the process environment is
@@ -172,11 +173,11 @@ Nothing is allowed by default.
   recorded environment is a recognised non-production name (a missing or unknown name is
   refused): a production store never trusts a local
   operator, whatever the process says (`E_LOCAL_AUTHORITY_IN_PRODUCTION`). The check is made
-  again at every use of a saved approval or acceptance. The CLI and `observe` open the
+  again at every use of a saved approval. The CLI and `observe` open the
   store of the declared environment, else the process environment, else `production`. An authenticator that raises never authenticates.
-* **Every authority decision uses the same authenticator.** Approve run and Accept release are
-  each checked against the list and, in `platform` mode, against your authenticator; one that
-  answers False (or raises) refuses, at the decision and again just before the effect.
+* **Every authority decision uses the same authenticator.** Approve run is checked against the
+  list and, in `platform` mode, against your authenticator; one that answers False (or raises)
+  refuses, at the decision and again just before the effect.
 
 ## Time
 
@@ -214,9 +215,9 @@ Soundness rules:
   (`holdout_missing_expected_output`).
 * A holdout whose bytes or content equal the optimized function's `eval_dataset` is refused
   (`holdout_is_optimization_eval_set`).
-* The gate result names the incumbent it measured (fingerprint and generation). The acceptance
-  binds the gate digest and the holdout digest of **that deploy's own attempt**, never one found
-  by scanning for a fingerprint, and the write is refused if the head is no longer that incumbent.
+* The gate result names the incumbent it measured (fingerprint and generation), and carries the
+  gate digest and the holdout digest of **that deploy's own attempt**, never one found by
+  scanning for a fingerprint.
 
 **Holdout reuse risk.** The digest check refuses a holdout whose file bytes or content are
 identical to the optimizer's `eval_dataset`. It does not prove the two sets are disjoint, nor
@@ -281,47 +282,31 @@ TRAIGENT_TVL_REQUIRED=1 python -m pytest -q tests/unit/tuning
   immediately before the optimizer runs. No record, no optimize.
 * **Deadlines are re-checked at the effect, against a fresh clock.** The scope is replayed once
   (the TVL relation); its own end (a schedule scope ends at the next tick) is carried out of that
-  replay. The very last step before the optimizer is invoked, and before a head is installed, is a
-  read of the clock and small files only: the scope end, the approval and, for a release, the
-  acceptance's usability window. The history is never replayed after that last check, and a replay
-  that takes longer than a second never defers a valid run. If a start that is already journaled
-  loses its authorization, the optimizer is not invoked and the attempt finishes `cancelled`; an
-  expired scope or approval before the journal is refused and recorded as a controller fact
+  replay. Before authentication, under the store lock, the controller repairs the journal tail and
+  prepares the start-fact append. The very last step before the optimizer is invoked is then the
+  authenticator, one clock sample and an append that reads no journal: nothing scans or repairs a
+  journal after the clock is sampled, and a replay that takes longer than a second never defers a
+  valid run. An approved attempt the final gate refuses (the scope ended, the approver was
+  revoked, or the journal is ahead of the clock) finishes `cancelled`, so a human grant that
+  never spent does not hold a later schedule; the refusal is recorded as a controller fact
   (`optimize_refused`).
+* **Only the SDK's own adapter is handed the final check.** `traigent_optimize_fn` calls it
+  inside its artifact lock, immediately before the optimization starts. Every other injected
+  optimizer, including one that advertises `accepts_candidate_dir`, is gated by the controller
+  immediately before it is invoked and never receives the check.
 * **The loaded dataset must be named well.** An optimizer reports the digests of the datasets it
   loaded as a list of `sha256:<64 hex>` strings; anything else (a bare string, nothing, a
   malformed entry) means the identity is unknown and the candidate has no promotion evidence
   (`eval_set_identity_unknown`).
-* **The head moves in one commit, under the store lock** (`submit_acceptance`). The relation is
-  dry-run first; only a derived `written` goes on to the physical write, which re-checks, at that
-  instant: the acceptance is usable (`decided_at <= t < expires_at`), the approver is on the
-  list, the serving head is at the expected generation and fingerprint, the gate measured that
-  incumbent, and the candidate's configuration matches its fingerprint. It then journals an
-  intent (`commits.jsonl`), installs `head.json`, records the acceptance, and journals done. The
-  CLI prints the **committed** result, not a replayed verdict.
-* **A refused write leaves no trace in the relation.** If the head refuses (`head_write_refused`
-  in `controller_facts()`), the acceptance is not recorded as consumed, so the relation and
-  `head.json` cannot disagree and the deploy keeps waiting. `step` raises `E_HEAD_DIVERGED` if
-  they ever do.
-* **A crash is repaired, never completed late.** After a crash the next start finishes a move
-  whose head was installed (recording the acceptance at its original instant) and abandons one
-  whose head was not, so an acceptance that expired meanwhile is never installed.
-  Every call that appends history (windows, acceptances, `step`) recovers an open
-  commit first, under the store lock, and the effect time of an acceptance is read after that
-  lock is held, so one that expired while waiting is refused. The journal keys each attempt
-  by its own commit id: an identical resubmission after an abandoned attempt is recovered on
-  its own. If history already moved past the crashed acceptance's instant, the acceptance is
-  placed at that original instant (the effect happened then) and later lines stay after it; if
-  the relation still cannot accept that, the store refuses with `E_HEAD_DIVERGED` and the
-  journal stays open.
-* **Acceptance ids are per record.** `acceptance_id` covers the approver, the decision instant
-  and a nonce, so a retry after an expiry or an unauthorized attempt is a new record. Only an
-  exact redelivery of a recorded record is deduplicated; the same id with other content is
-  `E_ACCEPTANCE_CONFLICT`.
+* **The head never moves here.** `head.json` is written once, when the store is created
+  (generation 0), and only read afterwards. Release acceptance runs through the platform-signed
+  head; `submit_acceptance`, `accept`, `build_acceptance` and `traigent tune accept` refuse with
+  `E_UNSUPPORTED_IN_RELEASE` before any I/O. `step` raises `E_HEAD_DIVERGED` if `head.json` names
+  a generation the relation does not.
 * **The optimization runs on an isolated copy** of the `@traigent.optimize` function, so the live
   function keeps serving its head.
 * **Store durability.** `meta.json` is written last (an interrupted init is redone on the next
-  start). History, heads, controller facts and the commit journal are checksummed JSONL: a torn
+  start). History and controller facts are checksummed JSONL: a torn
   final line is truncated and logged on load; a damaged earlier line raises `E_STORE_CORRUPT`.
 * **The CLI finds the optimizer and seeds the head.** With the order above, `observe` returns a plain
   function; the inner `@traigent.optimize` function is exposed as `fn.tuning.optimized`, and

@@ -1,4 +1,4 @@
-"""CLI: ``traigent tune compile|check|simulate`` (Continuous Tuning).
+"""CLI: ``traigent tune compile|check|simulate`` and the local spend loop (Continuous Tuning).
 
 TVL is the source of truth: ``check`` prints the TVL reference linter's
 diagnostics unchanged and ``simulate`` runs the TVL reference relation.  Both
@@ -20,6 +20,7 @@ import yaml
 from traigent.tuning.errors import (
     E_TVL_VALIDATOR_UNAVAILABLE,
     E_UNSUPPORTED_IN_RELEASE,
+    RELEASE_REFUSAL,
     TuningError,
     TvlValidationFailed,
 )
@@ -171,7 +172,8 @@ def simulate_command(file_path: Path, history_path: Path, fmt: str) -> None:
 
 
 # ---------------------------------------------------------------------------------
-# The local loop controller: record facts, step, approve, accept, status.
+# The local loop controller: record facts, step, approve, status.  Release runs
+# through the platform-signed head, not here.
 # ---------------------------------------------------------------------------------
 def _controller_options(func: Any) -> Any:
     for option in reversed(
@@ -203,15 +205,15 @@ def _controller_options(func: Any) -> Any:
                 type=click.Path(exists=True, dir_okay=False, path_type=Path),
                 envvar="TRAIGENT_TUNING_AUTHORITY",
                 default=None,
-                help=("Authority config (approvers). Needed by approve and accept."),
+                help=("Authority config (approvers). Needed by approve."),
             ),
             click.option(
                 "--now",
                 "now_text",
                 default=None,
                 help=(
-                    "Fixed UTC instant for simulation and replay only; step and "
-                    "accept refuse it in production."
+                    "Fixed UTC instant for simulation and replay only; step "
+                    "refuses it in production."
                 ),
             ),
         ]
@@ -413,7 +415,6 @@ def step_command(
             "started": report.started,
             "finished": report.finished,
             "awaiting_approval": report.awaiting_approval,
-            "head_written": report.head_written,
         }
     )
 
@@ -447,16 +448,19 @@ def approve_command(
     _emit({"approved": occurrence, "authentication": authority.mode})
 
 
-@tune.command("accept")
-@click.argument("deploy")
-@click.option("--generation", "generation", type=int, required=True)
-@click.option("--approver", required=True, help="Opaque approver reference.")
+@tune.command(
+    "accept",
+    help="Not supported in this release: release runs through the platform-signed head.",
+)
+@click.argument("deploy", required=False)
+@click.option("--generation", "generation", type=int, default=None)
+@click.option("--approver", default=None, help="Opaque approver reference.")
 @click.option("--reject", is_flag=True, help="Record a rejection instead.")
 @_controller_options
 def accept_command(
-    deploy: str,
-    generation: int,
-    approver: str,
+    deploy: str | None,
+    generation: int | None,
+    approver: str | None,
     reject: bool,
     store: Path | None,
     tvl_path: Path | None,
@@ -465,33 +469,8 @@ def accept_command(
     authority_path: Path | None,
     now_text: str | None,
 ) -> None:
-    """Accept release: accept (or reject) the deploy awaiting DEPLOY (needs --authority).
-
-    GENERATION is the head generation you saw in ``tune status``.  The result is the
-    committed one: ``written`` means the serving head now has the new generation.
-    """
-    controller = _build_controller(store, tvl_path, target, agent, authority_path)
-    authority = _guard(controller.require_authority)
-    outcome = _guard(
-        lambda: controller.accept(
-            deploy,
-            approver,
-            generation,
-            "reject" if reject else "accept",
-            _now(now_text),
-        )
-    )
-    _emit(
-        {
-            "acceptance": outcome.acceptance_id,
-            "result": outcome.result,
-            "reason": outcome.reason,
-            "generation": outcome.generation,
-            "authentication": authority.mode,
-        }
-    )
-    if not outcome.ok:
-        raise click.exceptions.Exit(EXIT_ERRORS)
+    # Refused before the controller is built: nothing is read or created.
+    _die(f"{E_UNSUPPORTED_IN_RELEASE}: {RELEASE_REFUSAL}")
 
 
 @tune.command("status")
@@ -506,11 +485,11 @@ def status_command(
     authority_path: Path | None,
     now_text: str | None,
 ) -> None:
-    """Head, open attempts and pending deploys, with what each human decision shows.
+    """Head, open attempts and candidates awaiting release, with the evidence shown.
 
     ``approve_run`` (Approve run): the trigger and the spend limit.
-    ``accept_release`` (Accept release): incumbent, candidate, holdout counts, gate
-    result and the observed head generation.
+    ``release_evidence`` (read-only; the platform-signed head releases): incumbent,
+    candidate, holdout counts, gate result and the observed head generation.
     """
     controller = _build_controller(store, tvl_path, target, agent, authority_path)
     status = _guard(controller.status)
@@ -543,8 +522,8 @@ def _status_text(status: dict[str, Any]) -> str:
                     f"    admits:      {json.dumps(view['admits'], sort_keys=True)}"
                 )
     for deploy in status["pending_deploys"]:
-        view = deploy["accept_release"]
-        lines.append(f"Accept release  {deploy['occurrence']}")
+        view = deploy["release_evidence"]
+        lines.append(f"Awaiting platform-signed release  {deploy['occurrence']}")
         inc = view["incumbent"]
         lines.append(
             f"    incumbent:  generation {inc['generation']} ({inc['fingerprint']})"

@@ -6,7 +6,6 @@ from __future__ import annotations
 import os
 import sys
 import textwrap
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -146,21 +145,7 @@ def test_a_saved_approval_is_not_used_once_the_environment_is_production(
     assert opt.calls == [] and report.awaiting_approval == [e_ref("E1")]
 
 
-def test_a_saved_acceptance_authority_is_not_used_in_production(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("ENVIRONMENT", "development")
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    monkeypatch.setenv("ENVIRONMENT", "production")
-    with pytest.raises(TuningError) as err:
-        c.submit_acceptance(record, at(31))
-    assert err.value.code == "E_LOCAL_AUTHORITY_IN_PRODUCTION"
-    assert c._on_list_now("approver-1", record) is False
-    assert head(tmp_path)["generation"] == 0
-
-
-# -- the clock is re-read before each paid run and at the release commit -------------
+# -- the clock is re-read before each paid run --------------------------------------
 def _fake_clock(monkeypatch: pytest.MonkeyPatch, start: Any) -> list[Any]:
     clock = [start]
     real_utc = controller_module._utc
@@ -170,25 +155,6 @@ def _fake_clock(monkeypatch: pytest.MonkeyPatch, start: Any) -> list[Any]:
         lambda value: real_utc(value) if value is not None else clock[0],
     )
     return clock
-
-
-def test_a_release_whose_acceptance_expires_during_authentication_is_not_installed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    clock = _fake_clock(monkeypatch, at(32))
-
-    def slow_hook(approver: str, context: Any) -> bool:
-        clock[0] = clock[0] + timedelta(days=30)  # authentication is slow
-        return True
-
-    c.authority = ApproverAuthority(
-        frozenset(APPROVERS), mode="platform", authenticator=slow_hook
-    )
-    outcome = c.submit_acceptance(record)
-    assert outcome.result != "written"
-    assert head(tmp_path)["generation"] == 0
 
 
 # -- --tvl runs any lint-clean module, even outside the builder's shape --------------

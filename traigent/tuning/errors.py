@@ -14,6 +14,10 @@ E_NO_APPROVER_AUTHORITY = "E_NO_APPROVER_AUTHORITY"
 E_APPROVER_NOT_AUTHORIZED = "E_APPROVER_NOT_AUTHORIZED"
 E_AUTHORITY_CONFIG = "E_AUTHORITY_CONFIG"
 E_UNSUPPORTED_IN_RELEASE = "E_UNSUPPORTED_IN_RELEASE"
+RELEASE_REFUSAL = (
+    "release acceptance runs through the platform-signed head; this release's "
+    "local controller runs the spend step only"
+)
 
 
 class TuningError(ValueError):

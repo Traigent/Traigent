@@ -63,27 +63,7 @@ def test_a_scope_that_ends_during_the_final_history_read_does_not_start_the_opti
     report = c.step()
     assert opt.calls == []
     assert report.refused and report.refused[0].endswith(":scope_expired")
-    assert _finished(c) == []
-
-
-def test_a_release_whose_head_staging_crosses_expiry_is_not_installed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    clock = _clock(monkeypatch, at(32))
-    real = controller_module._stage_json
-
-    def slow(path: Path, value: Any) -> str:
-        staged = real(path, value)
-        clock[0] = clock[0] + timedelta(days=8)  # staging took past the 7 day expiry
-        return staged
-
-    monkeypatch.setattr(controller_module, "_stage_json", slow)
-    outcome = c.submit_acceptance(record)
-    assert (outcome.result, outcome.reason) == ("refused", "acceptance_not_usable")
-    assert head(tmp_path)["generation"] == 0
-    assert not list((tmp_path / "store").glob(".head.json.*.tmp"))  # nothing left over
+    assert _finished(c) == ["cancelled"]
 
 
 # -- the platform authenticator is asked again at the effect -------------------------
@@ -113,28 +93,7 @@ def test_an_authenticator_that_revokes_before_the_spend_stops_the_optimizer(
         controller_module._write_json = real_write
     assert opt.calls == []
     assert report.refused and report.refused[0].endswith(":approver_not_authorized")
-    assert _finished(c) == []  # nothing started: the attempt stays open
-    assert not list((tmp_path / "store" / "attempts").glob("*.json"))
-
-
-def test_an_authenticator_that_revokes_before_the_head_moves_stops_the_release(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    revoked = [False]
-    c.authority = _platform(lambda approver, context: not revoked[0])
-    real = controller_module._append_line
-
-    def append(path: Path, value: Any) -> None:
-        real(path, value)
-        if isinstance(value, dict) and value.get("fact") == "commit_intent":
-            revoked[0] = True  # revoked while the intent was being journaled
-
-    monkeypatch.setattr(controller_module, "_append_line", append)
-    outcome = c.submit_acceptance(record, at(31))
-    assert (outcome.result, outcome.reason) == ("refused", "approver_not_authorized")
-    assert head(tmp_path)["generation"] == 0
+    assert _finished(c) == ["cancelled"]  # nothing started: the attempt is cancelled
 
 
 # -- a granted approval that never got a marker is abandonable -----------------------
@@ -263,14 +222,10 @@ def test_a_fixed_instant_is_refused_on_the_effect_paths_in_production(
 ) -> None:
     opt = FakeOptimizer()
     c = _deploy_awaiting(tmp_path, opt)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
     monkeypatch.setenv("ENVIRONMENT", "production")
     c.authority = _platform(lambda approver, context: True)
     with pytest.raises(TuningError) as err:
         c.step(at(31))
-    assert err.value.code == "E_FIXED_CLOCK_IN_PRODUCTION"
-    with pytest.raises(TuningError) as err:
-        c.submit_acceptance(record, at(31))
     assert err.value.code == "E_FIXED_CLOCK_IN_PRODUCTION"
     assert head(tmp_path)["generation"] == 0
 

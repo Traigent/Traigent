@@ -180,7 +180,7 @@ def test_cli_failing_quality_on_the_holdout_rejects_and_never_deploys(
         sys.modules.pop("agent_e2e3", None)
 
 
-def test_cli_loop_closes_through_observe_over_optimize(
+def test_cli_runs_the_spend_loop_through_observe_over_optimize(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
@@ -209,13 +209,13 @@ def test_cli_loop_closes_through_observe_over_optimize(
         head = json.loads((tmp_path / "store" / "head.json").read_text())
         assert head["config"] == {"model": "anthropic/claude-haiku-4-5"}
         _run(["approve", occ, "--approver", "alice", *ctl])
-        _run(["step", *ctl])  # optimize runs once (mock mode); deploy now awaits
+        _run(["step", *ctl])  # optimize runs once (mock mode); the candidate waits
         status = _json(_run(["status", *ctl]))
         assert status["head"]["generation"] == 0
         assert len(status["pending_deploys"]) == 1
-        text = _run(["status", "--text", *ctl])  # what Accept release shows
+        text = _run(["status", "--text", *ctl])  # the release evidence
         for needle in (
-            "Accept release",
+            "Awaiting platform-signed release",
             "incumbent:  generation 0",
             "candidate:",
             "holdout:    80 rows",
@@ -230,22 +230,21 @@ def test_cli_loop_closes_through_observe_over_optimize(
         (cand,) = finished[0]["candidates"]
         assert cand["legacy_decision"] == "Promote"  # from real holdout counts
         assert list(cand["monitor_verdicts"].values()) == ["MET"]
-        accepted = _json(
-            _run(["accept", occ, "--generation", "0", "--approver", "alice", *ctl])
+        # the accept command refuses and the head stays where it was
+        before = (tmp_path / "store" / "head.json").read_bytes()
+        out = _run(
+            ["accept", occ, "--generation", "0", "--approver", "alice", *ctl], ok=False
         )
-        assert accepted["result"] == "written"
+        assert "E_UNSUPPORTED_IN_RELEASE" in out
         _run(["step", *ctl])
-        status = _json(_run(["status", *ctl]))
-        assert status["head"]["generation"] == 1
-        head = json.loads((tmp_path / "store" / "head.json").read_text())
-        assert head["generation"] == 1
-        assert head["config"]["model"] == "anthropic/claude-haiku-5-5"  # the best
+        assert _json(_run(["status", *ctl]))["head"]["generation"] == 0
+        assert (tmp_path / "store" / "head.json").read_bytes() == before
         # a followed call stamps the closed head metadata only
         import agent_e2e
 
         agent_e2e.classify("level 0 invoice")
         md = agent_e2e.TRACE_CLIENT.start_trace.call_args.kwargs["metadata"]
-        assert md["head_generation"] == 1
+        assert md["head_generation"] == 0
         assert not any(
             "model" in str(k) or "anthropic" in str(v) for k, v in md.items()
         )

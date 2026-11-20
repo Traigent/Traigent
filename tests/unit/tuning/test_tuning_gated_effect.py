@@ -5,7 +5,6 @@ instant; and the actions this release runs."""
 from __future__ import annotations
 
 import contextlib
-import json
 import threading
 import time
 from collections.abc import Iterator
@@ -24,7 +23,6 @@ from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     APPROVERS,
     T0,
     FakeOptimizer,
-    _crash_install,
     _deploy_awaiting,
     _holdout,
     at,
@@ -119,7 +117,6 @@ def test_a_scope_that_ends_while_waiting_for_the_artifact_lock_starts_nothing(
     assert not worker.is_alive()
     assert started == [] and _started(c) == []
     assert reports[0].refused and reports[0].refused[0].endswith(":scope_expired")
-    assert not list((tmp_path / "store" / "attempts").glob("*.json"))
 
 
 def test_a_scope_that_ends_during_the_authenticator_starts_no_injected_optimizer(
@@ -168,102 +165,8 @@ def test_an_approver_revoked_during_the_history_read_does_not_start_the_optimize
     assert report.refused and report.refused[0].endswith(":approver_not_authorized")
 
 
-def test_an_approver_revoked_during_the_release_replay_does_not_move_the_head(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    revoked = [False]
-    c.authority = _platform(lambda approver, context: not revoked[0])
-    real = Controller._prepare_physical
-
-    def revoke_during_replay(self: Controller, doc: Any) -> Any:
-        prepared = real(self, doc)
-        revoked[0] = True
-        return prepared
-
-    monkeypatch.setattr(Controller, "_prepare_physical", revoke_during_replay)
-    outcome = c.submit_acceptance(record, at(31))
-    assert (outcome.result, outcome.reason) == ("refused", "approver_not_authorized")
-    assert head(tmp_path)["generation"] == 0
-
-
 # -- R: the serving code version is read after the final authenticator -----------------
-def test_a_code_version_that_changes_during_the_authenticator_installs_no_head(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    calls = [0]
-
-    def hook(approver: str, context: Any) -> bool:
-        calls[0] += 1
-        if calls[0] == 2:  # the final authenticator call
-            monkeypatch.setenv("TRAIGENT_AGENT_CODE_VERSION", "test-code-v2")
-        return True
-
-    c.authority = _platform(hook)
-    outcome = c.submit_acceptance(record, at(31))
-    assert (outcome.result, outcome.reason) == ("refused", "code_version_mismatch")
-    assert head(tmp_path)["generation"] == 0
-    assert "code_version_mismatch" in _refusals(c)
-    assert not list((tmp_path / "store").glob(".head.json.*.tmp"))
-
-
 # -- R: the instant is the one sampled AFTER the final authenticator -------------------
-def _slow_final_authenticator(
-    c: Controller, clock: list[Any], seconds: int = 90
-) -> None:
-    calls = [0]
-
-    def hook(approver: str, context: Any) -> bool:
-        calls[0] += 1
-        if calls[0] == 2:  # the final authenticator call takes a long time
-            clock[0] = clock[0] + timedelta(seconds=seconds)
-        return True
-
-    c.authority = _platform(hook)
-
-
-def _acceptance_instants(tmp_path: Path) -> list[int]:
-    return [
-        json.loads(ln.partition("\t")[2])["instant"]
-        for ln in (tmp_path / "store" / "history.jsonl").read_text().splitlines()
-        if '"acceptances"' in ln
-    ]
-
-
-def test_the_head_move_is_recorded_at_the_instant_sampled_after_the_authenticator(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    clock = _clock(monkeypatch, at(32))
-    _slow_final_authenticator(c, clock)
-    assert c.submit_acceptance(record).result == "written"
-    effect = _seconds(at(32)) + 90
-    assert _acceptance_instants(tmp_path) == [effect]
-    heads = (tmp_path / "store" / "heads.jsonl").read_text().splitlines()
-    assert json.loads(heads[-1].partition("\t")[2])["instant"] == effect
-
-
-def test_a_recovered_head_move_keeps_the_instant_sampled_after_the_authenticator(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    clock = _clock(monkeypatch, at(32))
-    _slow_final_authenticator(c, clock)
-    real = _crash_install(monkeypatch, after=True)
-    with pytest.raises(RuntimeError):
-        c.submit_acceptance(record)  # head renamed, history not yet written
-    monkeypatch.setattr(Controller, "_install_head", real)
-    restarted = controller(tmp_path, FakeOptimizer())  # recovery runs at start
-    assert head(tmp_path)["generation"] == 1
-    assert _acceptance_instants(tmp_path) == [_seconds(at(32)) + 90]
-    assert restarted._tvl_generation(restarted._derive()) == 1
-
-
 # -- the clock starts at operation entry -----------------------------------------------
 def test_a_lock_wait_advances_the_first_scheduling_read_of_a_fixed_clock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -285,17 +188,15 @@ def test_a_lock_wait_advances_the_first_scheduling_read_of_a_fixed_clock(
     assert tick["instant"] == _seconds(at(10)) + 90
 
 
-@pytest.mark.parametrize("entry", ["step", "submit_acceptance", "record_window"])
+@pytest.mark.parametrize("entry", ["step", "record_window"])
 def test_a_fixed_instant_is_refused_by_every_journal_writing_entry_in_production(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str
 ) -> None:
     c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
     monkeypatch.setenv("ENVIRONMENT", "production")
     c.authority = _platform(lambda approver, context: True)
     calls = {
         "step": lambda: c.step(at(31)),
-        "submit_acceptance": lambda: c.submit_acceptance(record, at(31)),
         "record_window": lambda: c.record_window({}, at(31)),
     }
     before = (tmp_path / "store" / "history.jsonl").read_bytes()
@@ -324,26 +225,6 @@ def test_a_spend_is_refused_when_the_journal_is_ahead_of_the_clock(
     report = c.step()
     assert opt.calls == [] and _started(c) == []
     assert report.refused and report.refused[0].endswith(":persisted_time_ahead")
-
-
-def test_a_release_is_refused_when_the_journal_is_ahead_of_the_clock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    clock = _clock(monkeypatch, at(32))
-    calls = [0]
-
-    def hook(approver: str, context: Any) -> bool:
-        calls[0] += 1
-        if calls[0] == 2:
-            clock[0] = at(5)  # earlier than anything already journaled
-        return True
-
-    c.authority = _platform(hook)
-    outcome = c.submit_acceptance(record)
-    assert (outcome.result, outcome.reason) == ("refused", "persisted_time_ahead")
-    assert head(tmp_path)["generation"] == 0
 
 
 # -- only the actions this release runs ------------------------------------------------

@@ -20,9 +20,7 @@ from traigent.config.context import config_context
 from traigent.observability import observe
 from traigent.tuning.authority import ApproverAuthority
 from traigent.tuning.controller import (
-    E_ACCEPTANCE_CONFLICT,
     E_ATTEMPT_IN_PROGRESS,
-    E_NO_DEPLOY_AWAITING,
     E_STORE_CORRUPT,
     E_STORE_FORMAT,
     Controller,
@@ -210,6 +208,22 @@ def head(tmp_path: Path) -> dict[str, Any]:
     return json.loads((tmp_path / "store" / "head.json").read_text(encoding="utf-8"))
 
 
+def install_platform_head(
+    tmp_path: Path, config: dict[str, Any], generation: int
+) -> None:
+    """What the platform-signed head leaves in the store: a head this controller reads."""
+    (tmp_path / "store" / "head.json").write_text(
+        json.dumps(
+            {
+                "fingerprint": config_fingerprint(config),
+                "config": config,
+                "generation": generation,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def to_deploy_awaiting(c: Controller, ref: str, hour: int) -> None:
     c.approve_optimization(ref, "approver-1", at(hour))
     c.step(at(hour))
@@ -233,28 +247,18 @@ def test_slice_end_to_end(tmp_path: Path) -> None:
     assert [d["occurrence"] for d in status["pending_deploys"]] == [e_ref("E1")]
     assert head(tmp_path)["generation"] == 0  # nothing deployed yet
 
-    # human acceptance at generation 0 -> head generation 1, the new model.
-    outcome = c.accept(e_ref("E1"), "approver-1", 0, now=at(31))
-    assert (outcome.result, outcome.generation) == ("written", 1)
-    assert head(tmp_path)["generation"] == 1
-    assert head(tmp_path)["config"] == NEW
-
-    # redelivered E1 does nothing.
+    # this controller never installs a head: the candidate waits for the release
+    # path, and the head stays where it was
     c.step(at(32))
-    assert len(opt.calls) == 1 and head(tmp_path)["generation"] == 1
-
-    # a stale acceptance (generation 0) for a new deploy is refused; head unchanged.
-    to_deploy_awaiting(c, e_ref("E6"), 40)
-    assert len(opt.calls) == 2
-    stale = c.accept(e_ref("E6"), "approver-1", 0, now=at(41))
-    assert (stale.result, stale.reason) == ("refused", "stale_generation")
-    assert head(tmp_path)["generation"] == 1 and head(tmp_path)["config"] == NEW
+    assert len(opt.calls) == 1 and head(tmp_path)["generation"] == 0
+    assert head(tmp_path)["config"] == OLD
 
     # re-running step with an unchanged history is a no-op.
-    files = ("history.jsonl", "head.json", "heads.jsonl")
+    c.step(at(41))  # a later schedule opens its own attempt, held for approval
+    files = ("history.jsonl", "head.json")
     before = {f: (tmp_path / "store" / f).read_bytes() for f in files}
-    report = c.step(at(41))
-    assert not report.changed and len(opt.calls) == 2
+    report = c.step(at(42))
+    assert not report.changed and len(opt.calls) == 1
     assert before == {f: (tmp_path / "store" / f).read_bytes() for f in files}
 
 
@@ -321,34 +325,17 @@ def test_candidate_without_promotion_evidence_never_deploys(tmp_path: Path) -> N
     to_deploy_awaiting(c, e_ref("E1"), 10)
     assert len(opt.calls) == 1
     assert c.status()["pending_deploys"] == []
-    with pytest.raises(TuningError) as err:
-        c.accept(e_ref("E1"), "approver-1", 0, now=at(31))
-    assert err.value.code == E_NO_DEPLOY_AWAITING
     assert head(tmp_path)["generation"] == 0
     assert any(f.get("reason") == "holdout_missing" for f in c.controller_facts())
 
 
-def test_acceptance_with_wrong_contract_digest_is_refused(tmp_path: Path) -> None:
-    c = controller(tmp_path, FakeOptimizer())
-    to_deploy_awaiting(c, e_ref("E1"), 10)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    record["contract_digest"] = "sha256:" + "d" * 64
-    outcome = c.submit_acceptance(record, at(31))
-    assert (outcome.result, outcome.reason) == ("invalid", "binding_mismatch")
-    assert head(tmp_path)["generation"] == 0
-
-
-def test_unauthorized_approver_is_refused_on_both_decisions(tmp_path: Path) -> None:
+def test_an_unlisted_approver_is_refused_for_a_run_approval(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer(), authorized_approvers={"boss"})
-    with pytest.raises(TuningError) as err:  # Approve run
+    with pytest.raises(TuningError) as err:
         c.approve_optimization(e_ref("E1"), "intern", at(10))
     assert err.value.code == E_APPROVER_NOT_AUTHORIZED
     c.approve_optimization(e_ref("E1"), "boss", at(10))
-    c.step(at(10))
-    outcome = c.accept(e_ref("E1"), "intern", 0, now=at(31))  # Accept release
-    # local-trusted only vouches for listed operators: an unlisted one is unknown
-    assert (outcome.result, outcome.reason) == ("invalid", "unauthenticated")
-    assert head(tmp_path)["generation"] == 0
+    assert c.step(at(10)).started != []
 
 
 def test_platform_authenticated_but_unlisted_approver_is_unauthorized(
@@ -360,11 +347,11 @@ def test_platform_authenticated_but_unlisted_approver_is_unauthorized(
     c = controller(
         tmp_path, FakeOptimizer(), authority=platform, authorized_approvers=None
     )
+    with pytest.raises(TuningError) as err:
+        c.approve_optimization(e_ref("E1"), "intern", at(10))
+    assert err.value.code == E_APPROVER_NOT_AUTHORIZED
     c.approve_optimization(e_ref("E1"), "boss", at(10))
-    c.step(at(10))
-    outcome = c.accept(e_ref("E1"), "intern", 0, now=at(31))
-    assert (outcome.result, outcome.reason) == ("invalid", "unauthorized")
-    assert c.accept(e_ref("E1"), "boss", 0, now=at(32)).result == "written"
+    assert c.step(at(10)).started != []
 
 
 def test_platform_authority_without_an_authenticator_is_refused() -> None:
@@ -403,7 +390,6 @@ def test_every_executing_path_refuses_without_a_validated_policy(
         lambda: c.step(at(1)),
         lambda: c.record_window({}, at(1)),
         lambda: c.approve_optimization(e_ref("E1"), "a", at(1)),
-        lambda: c.accept(e_ref("E1"), "a", 0, now=at(1)),
         lambda: c.status(),
     ):
         with pytest.raises(ValidatorUnavailable):
@@ -433,7 +419,7 @@ def test_observe_follow_head_sees_the_new_config_and_stamps_generation(
     assert stamp()["agent"] == "agent-1" and stamp()["head_generation"] == 0
 
     to_deploy_awaiting(c, e_ref("E1"), 10)
-    c.accept(e_ref("E1"), "approver-1", 0, now=at(31))
+    install_platform_head(tmp_path, NEW, 1)  # the platform-signed head, not ours
 
     classify()
     assert seen[-1] == NEW
@@ -481,23 +467,15 @@ def test_cli_drives_the_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert "schedule" in view["trigger"]
     assert "spend_limit" in view
 
-    # no authority configured: neither human decision can be given
-    for args in (
-        ("approve", e_ref("E1"), "--approver", "approver-1"),
-        ("accept", e_ref("E1"), "--generation", "0", "--approver", "approver-1"),
-    ):
-        refused = run(*args, authority=False)
-        assert refused.exit_code != 0 and E_NO_APPROVER_AUTHORITY in refused.output
+    # no authority configured: the run approval cannot be given
+    refused = run("approve", e_ref("E1"), "--approver", "approver-1", authority=False)
+    assert refused.exit_code != 0 and E_NO_APPROVER_AUTHORITY in refused.output
     unlisted = run("approve", e_ref("E1"), "--approver", "intern")
     assert unlisted.exit_code != 0 and E_APPROVER_NOT_AUTHORIZED in unlisted.output
 
     approve = run("approve", e_ref("E1"), "--approver", "approver-1")
     assert approve.exit_code == 0, approve.output
     assert json.loads(approve.output)["authentication"] == "local-trusted"
-    missing = run(
-        "accept", e_ref("E1"), "--generation", "0", "--approver", "approver-1"
-    )
-    assert missing.exit_code != 0  # no optimize_fn via --tvl: nothing awaits
 
 
 def test_cli_event_command_is_refused_in_this_release(
@@ -570,187 +548,6 @@ def _deploy_awaiting(tmp_path: Path, opt: Any = None, **kw: Any) -> Controller:
     c = controller(tmp_path, opt or FakeOptimizer(), **kw)
     to_deploy_awaiting(c, e_ref("E1"), 10)
     return c
-
-
-def _crash_install(monkeypatch: pytest.MonkeyPatch, *, after: bool = False) -> Any:
-    """Make the head install die (``after``: right after head.json is written)."""
-    real = Controller._install_head
-
-    def crash(
-        self: Controller, head_: Any, staged: Any = None, instant: Any = None
-    ) -> None:
-        if after:
-            real(self, head_, staged, instant)
-        raise RuntimeError("simulated crash at the head install")
-
-    monkeypatch.setattr(Controller, "_install_head", crash)
-    return real
-
-
-def test_conflicting_acceptance_replay_never_changes_the_written_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    real = _crash_install(monkeypatch)
-    with pytest.raises(RuntimeError):
-        c.submit_acceptance(record, at(31))  # intent journalled, head not installed
-    monkeypatch.setattr(Controller, "_install_head", real)
-
-    conflicting = {**record, "candidate_fingerprint": config_fingerprint(OLD)}
-    with pytest.raises(TuningError) as err:
-        c.submit_acceptance(conflicting, at(32))
-    assert err.value.code == E_ACCEPTANCE_CONFLICT
-    lines = (tmp_path / "store" / "history.jsonl").read_text().splitlines()
-    assert not any('"acceptances"' in ln for ln in lines)  # nothing landed twice
-
-    outcome = c.submit_acceptance(record, at(33))  # the exact record, still valid
-    assert (outcome.result, outcome.generation) == ("written", 1)
-    assert head(tmp_path)["config"] == NEW  # the exact record, not the replay
-
-
-def test_physical_writer_checks_expiry_authority_and_generation_at_the_write(
-    tmp_path: Path,
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    current = head(tmp_path)
-    instant = c._instant(at(31))
-    assert c._physical_refusal(record, instant, current) is None
-    week = 7 * 86400
-    assert c._physical_refusal(record, instant + week, current) == (
-        "acceptance_not_usable"  # t >= expires_at
-    )
-    assert c._physical_refusal(record, instant - 3600, current) == (
-        "acceptance_not_usable"  # t < decided_at
-    )
-    assert c._physical_refusal(record, instant, {**current, "generation": 3}) == (
-        "stale_generation"
-    )
-    assert c._physical_refusal(
-        record, instant, {**current, "fingerprint": "f" * 64}
-    ) == ("rollback_target_mismatch")
-    marker = next((tmp_path / "store" / "attempts").glob("*.json"))
-    data = json.loads(marker.read_text())
-    (gate,) = data["gates"].values()
-    gate["incumbent_generation"] = 7  # the gate measured some other incumbent
-    marker.write_text(json.dumps(data), encoding="utf-8")
-    assert c._physical_refusal(record, instant, current) == "gate_incumbent_stale"
-    c.authority = ApproverAuthority(frozenset({"someone-else"}))  # revoked
-    assert c._physical_refusal(record, instant, current) == "approver_not_authorized"
-
-
-def test_write_the_relation_allows_but_the_head_refuses_is_journalled_not_consumed(
-    tmp_path: Path,
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    marker = next((tmp_path / "store" / "attempts").glob("*.json"))
-    data = json.loads(marker.read_text())
-    data["configs"] = {}  # the candidate configuration is no longer retrievable
-    marker.write_text(json.dumps(data), encoding="utf-8")
-    outcome = c.accept(e_ref("E1"), "approver-1", 0, now=at(31))
-    assert (outcome.result, outcome.reason) == ("refused", "candidate_config_missing")
-    assert head(tmp_path)["generation"] == 0
-    lines = (tmp_path / "store" / "history.jsonl").read_text().splitlines()
-    assert not any('"acceptances"' in ln for ln in lines)  # relation never moved
-    assert [f["fact"] for f in c.controller_facts()][-1] == "head_write_refused"
-    c.step(at(32))  # relation and head.json agree: no E_HEAD_DIVERGED
-    assert len(c.status()["pending_deploys"]) == 1  # still awaiting a decision
-
-
-def test_crash_before_install_never_installs_an_expired_acceptance(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    real = _crash_install(monkeypatch)
-    with pytest.raises(RuntimeError):
-        c.submit_acceptance(record, at(31))
-    monkeypatch.setattr(Controller, "_install_head", real)
-
-    restarted = controller(tmp_path, FakeOptimizer())  # eight days later
-    late = at(31) + timedelta(days=8)
-    report = restarted.step(late)
-    assert report.head_written is None
-    assert head(tmp_path)["generation"] == 0 and head(tmp_path)["config"] == OLD
-    assert restarted._tvl_generation(restarted._derive()) == 0  # no divergence
-    outcome = restarted.submit_acceptance(record, late)  # expired: never installed
-    assert (outcome.result, outcome.reason) == ("invalid", "expired")
-    assert head(tmp_path)["generation"] == 0
-    reasons = [f.get("reason") for f in restarted.controller_facts()]
-    assert "interrupted_before_install" in reasons
-
-
-def test_crash_after_install_is_completed_at_the_original_instant(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    real = _crash_install(monkeypatch, after=True)
-    with pytest.raises(RuntimeError):
-        c.submit_acceptance(record, at(31))  # head.json moved, history not yet
-    monkeypatch.setattr(Controller, "_install_head", real)
-    assert head(tmp_path)["generation"] == 1
-
-    restarted = controller(tmp_path, FakeOptimizer())  # recovery runs at start
-    assert restarted._tvl_generation(restarted._derive()) == 1  # same generation
-    assert head(tmp_path)["config"] == NEW
-    acceptances = [
-        json.loads(ln.partition("\t")[2])
-        for ln in (tmp_path / "store" / "history.jsonl").read_text().splitlines()
-        if '"acceptances"' in ln
-    ]
-    assert [a["instant"] for a in acceptances] == [c._instant(at(31))]
-    replay = restarted.submit_acceptance(record, at(40))  # exact redelivery
-    assert (replay.result, replay.generation) == ("written", 1)
-    assert head(tmp_path)["generation"] == 1  # nothing written twice
-
-
-def test_outcome_is_the_committed_result(tmp_path: Path) -> None:
-    c = _deploy_awaiting(tmp_path)
-    outcome = c.accept(e_ref("E1"), "approver-1", 0, now=at(31))
-    assert (outcome.result, outcome.generation) == ("written", 1)
-    assert head(tmp_path)["generation"] == 1 == outcome.generation
-    done = [
-        json.loads(ln.partition("\t")[2])["fact"]
-        for ln in (tmp_path / "store" / "commits.jsonl").read_text().splitlines()
-    ]
-    assert done == ["commit_intent", "commit_effect", "commit_done"]
-
-
-def test_a_reissued_acceptance_after_an_unauthorized_attempt_is_not_a_conflict(
-    tmp_path: Path,
-) -> None:
-    c = _deploy_awaiting(tmp_path, authorized_approvers={"approver-1", "boss"})
-    first = c.accept(e_ref("E1"), "intern", 0, now=at(31))
-    assert (first.result, first.reason) == ("invalid", "unauthenticated")
-    second = c.accept(e_ref("E1"), "boss", 0, now=at(32))  # new approver, new id
-    assert (second.result, second.generation) == ("written", 1)
-
-
-def test_a_reissued_acceptance_after_expiry_is_not_a_conflict(tmp_path: Path) -> None:
-    c = _deploy_awaiting(tmp_path)
-    old = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31), nonce="n1")
-    expired = c.submit_acceptance(old, at(31) + timedelta(days=8))
-    assert (expired.result, expired.reason) == ("invalid", "expired")
-    fresh = c.build_acceptance(
-        e_ref("E1"), "approver-1", 0, now=at(31) + timedelta(days=9), nonce="n2"
-    )
-    assert fresh["acceptance_id"] != old["acceptance_id"]
-    assert c.submit_acceptance(fresh, at(31) + timedelta(days=9)).result == "written"
-
-
-def test_acceptance_id_depends_on_approver_instant_and_nonce(tmp_path: Path) -> None:
-    c = _deploy_awaiting(tmp_path)
-    base = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31), nonce="n")
-    same = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31), nonce="n")
-    assert same["acceptance_id"] == base["acceptance_id"]
-    for other in (
-        c.build_acceptance(e_ref("E1"), "boss", 0, now=at(31), nonce="n"),
-        c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(32), nonce="n"),
-        c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31), nonce="m"),
-    ):
-        assert other["acceptance_id"] != base["acceptance_id"]
 
 
 def test_follow_head_trace_metadata_is_closed(tmp_path: Path) -> None:
@@ -940,7 +737,7 @@ def test_result_after_scope_expiry_is_recorded_never_deployed(
     assert head(tmp_path)["config"] == OLD
 
 
-@pytest.mark.parametrize("failing", ["head.json", "heads.jsonl", "meta.json"])
+@pytest.mark.parametrize("failing", ["head.json", "meta.json"])
 def test_init_crash_is_recoverable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
 ) -> None:
@@ -971,7 +768,6 @@ def test_init_crash_is_recoverable(
         "generation": 0,
     }
     assert c.status()["head"]["generation"] == 0
-    assert len((tmp_path / "store" / "heads.jsonl").read_text().splitlines()) == 1
 
 
 def _two_history_lines(c: Controller) -> None:
@@ -1042,11 +838,11 @@ def test_legacy_plain_json_store_is_refused_untouched(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer())
     _two_history_lines(c)
     store = tmp_path / "store"
-    for name in ("history.jsonl", "heads.jsonl"):
+    for name in ("history.jsonl",):
         path = store / name
         lines = [ln.partition("\t")[2] for ln in path.read_text().splitlines()]
         path.write_text("\n".join(lines))  # old format, even without a final newline
-    before = {n: (store / n).read_bytes() for n in ("history.jsonl", "heads.jsonl")}
+    before = {n: (store / n).read_bytes() for n in ("history.jsonl",)}
     with pytest.raises(TuningError) as err:
         controller(tmp_path, FakeOptimizer())
     assert err.value.code == E_STORE_FORMAT
@@ -1116,34 +912,6 @@ def test_history_instants_are_whole_seconds_after_the_origin(tmp_path: Path) -> 
     assert c.origin == T0  # UTC midnight: windows of 24 h line up with calendar days
 
 
-def test_acceptance_is_recorded_at_the_real_second_never_in_the_future(
-    tmp_path: Path,
-) -> None:
-    c = _deploy_awaiting(tmp_path)
-    moment = at(31) + timedelta(minutes=29, seconds=41)  # not on an hour
-    assert c.accept(e_ref("E1"), "approver-1", 0, now=moment).result == "written"
-    real = int((moment - T0).total_seconds())
-    instants = [ln["instant"] for ln in _history(tmp_path)]
-    assert max(instants) == real  # an hour-ceil clock would say 32 h
-    assert instants == sorted(instants)
-
-
-def test_acceptance_usable_until_the_exact_second_of_expiry(tmp_path: Path) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    expiry = at(31) + timedelta(days=7)
-    just_before = c.submit_acceptance(record, expiry - timedelta(seconds=1))
-    assert just_before.result == "written"  # decided_at <= t < expires_at
-
-
-def test_acceptance_is_expired_at_the_exact_second_of_expiry(tmp_path: Path) -> None:
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    outcome = c.submit_acceptance(record, at(31) + timedelta(days=7))
-    assert (outcome.result, outcome.reason) == ("invalid", "expired")
-    assert head(tmp_path)["generation"] == 0
-
-
 def test_a_window_that_has_not_ended_is_refused_not_moved_forward(
     tmp_path: Path,
 ) -> None:
@@ -1198,17 +966,13 @@ def test_step_adds_a_tick_only_when_time_passing_derives_something(
 # ---------------------------------------------------------------------------------
 # authority: explicit, checked at the effect, never self-declared
 # ---------------------------------------------------------------------------------
-def test_without_an_authority_nobody_can_approve_or_accept(tmp_path: Path) -> None:
+def test_without_an_authority_nobody_can_approve_a_run(tmp_path: Path) -> None:
     c = Controller(
         state(), tmp_path / "store", FakeOptimizer(), initial_config=OLD, now=T0
     )
-    for call in (
-        lambda: c.approve_optimization(e_ref("E1"), "approver-1", at(1)),
-        lambda: c.submit_acceptance({}, at(1)),
-    ):
-        with pytest.raises(TuningError) as err:
-            call()
-        assert err.value.code == E_NO_APPROVER_AUTHORITY
+    with pytest.raises(TuningError) as err:
+        c.approve_optimization(e_ref("E1"), "approver-1", at(1))
+    assert err.value.code == E_NO_APPROVER_AUTHORITY
 
 
 def test_local_trusted_is_labelled_and_refused_in_production(
@@ -1217,9 +981,6 @@ def test_local_trusted_is_labelled_and_refused_in_production(
     c = _deploy_awaiting(tmp_path)
     approvals = json.loads((tmp_path / "store" / "approvals.json").read_text())
     assert approvals[e_ref("E1")]["authentication"] == "local-trusted"
-    c.accept(e_ref("E1"), "approver-1", 0, now=at(31))
-    line = [ln for ln in _history(tmp_path) if ln["category"] == "acceptances"][0]
-    assert line["meta"] == {"authentication": "local-trusted"}
 
     monkeypatch.setenv("ENVIRONMENT", "production")
     with pytest.raises(TuningError) as err:
@@ -1316,7 +1077,7 @@ def test_the_gate_names_the_incumbent_it_measured(tmp_path: Path) -> None:
     (gate,) = json.loads(marker.read_text())["gates"].values()
     assert gate["incumbent_fingerprint"] == config_fingerprint(OLD)
     assert gate["incumbent_generation"] == 0
-    view = c.status()["pending_deploys"][0]["accept_release"]
+    view = c.status()["pending_deploys"][0]["release_evidence"]
     assert view["incumbent"] == {
         "fingerprint": config_fingerprint(OLD),
         "generation": 0,
@@ -1355,19 +1116,23 @@ _GATE_KEYS = {
 }
 
 
-def test_digests_come_from_the_deploys_own_attempt_not_a_fingerprint_scan(
+def test_each_deploy_carries_the_holdout_digest_of_its_own_attempt(
     tmp_path: Path,
 ) -> None:
     """The same configuration measured twice, on two holdouts: each deploy binds ITS own."""
-    c = controller(tmp_path, FakeOptimizer(models=[NEW["model"]]))
+    # the first run proposes the incumbent itself: nothing awaits, so the loop goes on
+    c = controller(tmp_path, FakeOptimizer(models=[OLD["model"], NEW["model"]]))
     to_deploy_awaiting(c, e_ref("E1"), 10)
-    reject = c.accept(e_ref("E1"), "approver-1", 0, "reject", now=at(11))
-    assert reject.result == "reject_recorded"
-    first = json.loads(
-        next((tmp_path / "store" / "attempts").glob("*.json")).read_text()
-    )
-    first_digest = first["finished_record"]["candidates"][0]["holdout_digest"]
 
+    def digests() -> list[str]:
+        return [
+            json.loads(m.read_text())["finished_record"]["candidates"][0][
+                "holdout_digest"
+            ]
+            for m in sorted((tmp_path / "store" / "attempts").glob("*.json"))
+        ]
+
+    (first_digest,) = digests()
     rows = [  # a refreshed holdout: same kind of rows, other content
         {"input": {"x": i}, "output": "billing" if i % 2 == 0 else "support"}
         for i in range(ROWS + 10)
@@ -1376,14 +1141,14 @@ def test_digests_come_from_the_deploys_own_attempt_not_a_fingerprint_scan(
         "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
     )
     to_deploy_awaiting(c, e_ref("E6"), 41)
-    record = c.build_acceptance(e_ref("E6"), "approver-1", 0, now=at(42))
-    assert (
-        record["holdout_digest"] != first_digest
-    )  # the second attempt's, not the first's
-    assert c.submit_acceptance(record, at(42)).result == "written"
+    both = digests()
+    assert len(both) == 2 and len(set(both)) == 2  # the second attempt's own digest
+    assert first_digest in both
 
 
-def test_the_status_shows_both_human_decisions(tmp_path: Path) -> None:
+def test_the_status_shows_the_run_approval_and_the_release_evidence(
+    tmp_path: Path,
+) -> None:
     c = controller(tmp_path, FakeOptimizer())
     c.step(at(10))
     attempt = c.status()["open_attempts"][0]
@@ -1392,7 +1157,7 @@ def test_the_status_shows_both_human_decisions(tmp_path: Path) -> None:
     assert run["spend_limit"] is None  # honest: this controller has no limit set
     assert run["admits"] is None  # no event admits a model in this release
     to_deploy_awaiting(c, e_ref("E1"), 10)
-    release = c.status()["pending_deploys"][0]["accept_release"]  # Accept release
+    release = c.status()["pending_deploys"][0]["release_evidence"]
     assert release["incumbent"]["generation"] == 0
     assert release["candidate"]["fingerprint"] == config_fingerprint(NEW)
     assert release["holdout"]["rows"] == ROWS

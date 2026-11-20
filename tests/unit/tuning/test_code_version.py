@@ -1,5 +1,4 @@
-"""RFC 0012: an acceptance binds the agent code version (measurement == accept ==
-serving); a code change between measurement and accept refuses the write."""
+"""The agent code version: how it is resolved, and that the gate measures and records it."""
 
 from __future__ import annotations
 
@@ -14,6 +13,7 @@ from traigent.tuning.code_version import (
     E_NO_CODE_VERSION,
     resolve_code_version,
 )
+from traigent.tuning.controller import config_fingerprint
 from traigent.tuning.errors import TuningError
 
 from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
@@ -25,61 +25,6 @@ from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     e_ref,
     head,
 )
-
-
-def test_the_acceptance_carries_the_code_version_the_gate_measured(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(CODE_VERSION_ENV, "rev-abc123")
-    c = _deploy_awaiting(tmp_path)
-    (marker,) = (tmp_path / "store" / "attempts").glob("*.json")
-    (gate,) = json.loads(marker.read_text())["gates"].values()
-    assert gate["code_version"] == "rev-abc123"  # recorded at measurement
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    assert record["agent_code_version"] == "rev-abc123"
-    view = c.status()["pending_deploys"][0]["accept_release"]
-    assert view["code_version"] == "rev-abc123"
-    assert c.submit_acceptance(record, at(31)).result == "written"
-    assert (
-        head(tmp_path)["code_version"] == "rev-abc123"
-    )  # the head says what it is for
-    assert head(tmp_path)["config"] == NEW
-
-
-def test_code_changed_between_measurement_and_accept_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(CODE_VERSION_ENV, "rev-measured")
-    c = _deploy_awaiting(tmp_path)
-    monkeypatch.setenv(CODE_VERSION_ENV, "rev-edited-after")  # the code moved on
-    outcome = c.accept(e_ref("E1"), "approver-1", 0, now=at(31))
-    assert (outcome.result, outcome.reason) == ("refused", "code_version_mismatch")
-    assert head(tmp_path)["config"] == OLD  # head unchanged
-    assert head(tmp_path)["generation"] == 0
-    lines = tmp_path / "store" / "commits.jsonl"
-    assert not lines.exists() or "commit_intent" not in lines.read_text()
-    # the relation finished the occurrence as deploy_refused(code_version_mismatch)
-    facts = c._derive()["facts"]
-    assert any(
-        f["fact"] == "outcome"
-        and f["event"] == "deploy_refused"
-        and f["reason"] == "code_version_mismatch"
-        for f in facts
-    )
-    # the journal and history agree after a reload
-    assert c.status()["head"]["generation"] == 0
-
-
-def test_a_record_for_other_code_than_the_gate_measured_does_not_bind(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(CODE_VERSION_ENV, "rev-measured")
-    c = _deploy_awaiting(tmp_path)
-    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
-    record["agent_code_version"] = "rev-other"
-    outcome = c.submit_acceptance(record, at(31))
-    assert (outcome.result, outcome.reason) == ("invalid", "binding_mismatch")
-    assert head(tmp_path)["generation"] == 0
 
 
 def test_the_env_override_wins_over_the_explicit_value_and_the_source_digest() -> None:
@@ -125,16 +70,38 @@ def test_without_a_code_version_no_candidate_has_promotion_evidence(
     )  # never promoted, never awaiting a deploy
 
 
-def test_followed_head_traces_carry_the_code_version_the_head_was_accepted_for(
+def test_the_gate_records_the_code_version_it_measured_and_status_shows_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(CODE_VERSION_ENV, "rev-abc123")
+    c = _deploy_awaiting(tmp_path)
+    (marker,) = (tmp_path / "store" / "attempts").glob("*.json")
+    (gate,) = json.loads(marker.read_text())["gates"].values()
+    assert gate["code_version"] == "rev-abc123"  # recorded at measurement
+    view = c.status()["pending_deploys"][0]["release_evidence"]
+    assert view["code_version"] == "rev-abc123"
+    assert head(tmp_path)["generation"] == 0 and head(tmp_path)["config"] == OLD
+
+
+def test_followed_head_traces_carry_the_code_version_of_a_platform_signed_head(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from unittest.mock import MagicMock
 
     from traigent.observability.decorators import observe
 
-    monkeypatch.setenv(CODE_VERSION_ENV, "rev-abc123")
-    c = _deploy_awaiting(tmp_path)
-    assert c.accept(e_ref("E1"), "approver-1", 0, now=at(31)).result == "written"
+    _deploy_awaiting(tmp_path)
+    (tmp_path / "store" / "head.json").write_text(
+        json.dumps(
+            {
+                "fingerprint": config_fingerprint(NEW),
+                "config": NEW,
+                "generation": 1,
+                "code_version": "rev-abc123",
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv(CODE_VERSION_ENV, "rev-newer")  # serving is NOT blocked
     client = MagicMock()
 

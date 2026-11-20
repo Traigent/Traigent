@@ -1,4 +1,4 @@
-"""A local loop controller: the closed Continuous Tuning loop on the customer side.
+"""A local loop controller: the spend half of the closed Continuous Tuning loop.
 
 TVL defines the semantics (``tvl.runtime_conditions.conditions_trace``); this module
 only *executes* them locally.  Everything the relation consumes is recorded as an
@@ -6,19 +6,20 @@ append-only fact in a durable store; ``Controller.step`` re-derives the full tra
 the whole history and acts ONLY on derived facts:
 
 * ``attempt_opened``: run the optimization, but only after a recorded approval
-  (**Approve run**) by an approver the configured authority allows;
-* ``acceptance ... written``: move the head (generation + 1).  The head move is NOT a
-  reaction to a replayed verdict: ``submit_acceptance`` commits it under the store
-  lock (see "Atomic deploy" below).
+  (**Approve run**) by an approver the configured authority allows.
 
-Store layout (one directory, default ``.traigent/tuning/<agent>/``)::
+This controller runs the spend step only.  It never installs a head: releasing a
+candidate runs through the platform-signed head, and the release entry points
+(``submit_acceptance``, ``accept``, ``build_acceptance``) refuse with
+``E_UNSUPPORTED_IN_RELEASE`` before touching the store.  The head it reads
+(``head.json``, written once when the store is created) is read-only here.
+
+Store layout (one directory, default ``.traigent/tuning/<environment>/<agent>/``)::
 
     meta.json        agent, environment, origin, contract digest, initial head
-    head.json        {fingerprint, config, generation}         (atomic temp+rename)
-    heads.jsonl      every head ever written (config lookup, binding of an acceptance)
-    history.jsonl    recorded facts (checksummed JSONL): windows, approvals, finishes, acceptances
-    controller.jsonl controller facts: refused optimizations and refused head writes
-    commits.jsonl    the head-move journal: intent, then done or abandoned
+    head.json        {fingerprint, config, generation}   (the initial head; read-only)
+    history.jsonl    recorded facts (checksummed JSONL): windows, approvals, finishes
+    controller.jsonl controller facts: refused optimizations
     approvals.json   optimization approvals keyed by occurrence ref
     attempts/        one marker per attempt: in-progress, then the persisted result
 
@@ -26,26 +27,16 @@ All instants are whole seconds after ``meta.origin`` (UTC midnight of the store'
 creation), exactly the reference relation's clock; nothing is rounded to an hour and
 no recorded instant lies in the future.
 
-**Atomic deploy.**  Under the store lock, ``submit_acceptance`` dry-runs the relation;
-only when it derives ``written`` does it check, at that instant, expiry
-(``decided_at <= t < expires_at``), the approver's authority, the physical head
-generation and fingerprint, and the gate's measured incumbent; it then journals an
-intent, installs the head, records the acceptance in the history, and marks the
-intent done.  A refused write never reaches the history (so the relation and
-``head.json`` cannot diverge) and is journalled.  A crash is repaired at the next
-start: an installed head gets its acceptance recorded at the original instant; a head
-that was never installed is abandoned (an expired acceptance is never installed late).
-
-**One gated step for every effect.**  Spending (invoking the optimizer) and releasing
-(installing a head) both go through ``Controller._gated_effect``.  The operation builds
-its clock at entry (a fixed instant is refused in production).  Under the store lock it
-prepares everything: history replay, scope verdict and deadline, argument copies, the
-staged head file, the last persisted instant, and any lock the effect itself needs.
-Then, with no further replay: the platform authenticator is called afresh, the serving
-code version is rechecked (release), the clock is sampled ONCE (a persisted instant
-ahead of it refuses), deadlines are checked against that sample, and that sample is the
-instant recorded for the effect (the start fact, the head move, the head record, and
-crash recovery) just before the effect itself.  Every failure denies.
+**One gated step for the spend.**  Spending (invoking the optimizer) goes through
+``Controller._gated_effect``.  The operation builds its clock at entry (a fixed
+instant is refused in production).  Under the store lock it prepares everything:
+history replay, scope verdict and deadline, argument copies, the repaired journal tail
+and the prepared append, and the last persisted instant.  Then, with no further replay
+and no journal scan: the platform authenticator is called afresh, the clock is sampled
+ONCE (a persisted instant ahead of it refuses), deadlines are checked against that
+sample, and that sample is the instant recorded for the start fact just before the
+optimizer runs.  Every failure denies; an approved attempt the final gate refuses is
+recorded as cancelled, so it never holds a later schedule.
 
 Nothing here decides a promotion: every candidate is measured here, on the customer's
 holdout against the incumbent; supplied verdicts are ignored.  No network is used.
@@ -63,10 +54,10 @@ import json
 import logging
 import os
 import re
-import secrets
 import tempfile
 import threading
 import time
+import weakref
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -78,6 +69,7 @@ from traigent.tuning.errors import (
     E_APPROVER_NOT_AUTHORIZED,
     E_NO_APPROVER_AUTHORITY,
     E_UNSUPPORTED_IN_RELEASE,
+    RELEASE_REFUSAL,
     TuningError,
 )
 from traigent.tuning.state import TuningState
@@ -87,20 +79,17 @@ E_INVALID_RECORD = "E_INVALID_RECORD"
 E_ATTEMPT_IN_PROGRESS = "E_ATTEMPT_IN_PROGRESS"
 E_NO_OPTIMIZER = "E_NO_OPTIMIZER"
 E_NO_DEPLOY_AWAITING = "E_NO_DEPLOY_AWAITING"
-E_UNKNOWN_GENERATION = "E_UNKNOWN_GENERATION"
 E_STORE_MISMATCH = "E_STORE_MISMATCH"
 E_STORE_ENVIRONMENT_MISMATCH = "E_STORE_ENVIRONMENT_MISMATCH"
 E_NOT_AN_OCCURRENCE = "E_NOT_AN_OCCURRENCE"
 E_STORE_CORRUPT = "E_STORE_CORRUPT"
 E_STORE_FORMAT = "E_STORE_FORMAT"
-E_ACCEPTANCE_CONFLICT = "E_ACCEPTANCE_CONFLICT"
 E_NO_CANDIDATE_RUN = "E_NO_CANDIDATE_RUN"
 E_HEAD_DIVERGED = "E_HEAD_DIVERGED"
 E_LOCAL_AUTHORITY_IN_PRODUCTION = "E_LOCAL_AUTHORITY_IN_PRODUCTION"
 E_FIXED_CLOCK_IN_PRODUCTION = "E_FIXED_CLOCK_IN_PRODUCTION"
 
 GATE_FORMAT = "traigent-gate-result/1"
-ACCEPTANCE_FORMAT = "tvl-release-acceptance/1"
 DEFAULT_STORE_ROOT = Path(".traigent") / "tuning"
 _REF = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 # The rule keys this release executes; every other key (``when``, cooldowns,
@@ -394,15 +383,29 @@ def _repair_tail(path: Path) -> None:
 
 
 def _append_line(path: Path, value: Any) -> None:
+    _prepare_append(path)(value)
+
+
+def _prepare_append(path: Path) -> Callable[[Any], None]:
+    """Repair the tail of ``path`` NOW and return the append that only writes.
+
+    The journal scan (checksum of every record) happens here, under the store lock
+    and before the final gate; the returned callable frames one record and appends it
+    without reading the journal again.
+    """
     _mkdir_durable(path.parent)
     _repair_tail(path)
     created = not path.exists()
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(_frame(value) + "\n")
-        fh.flush()
-        os.fsync(fh.fileno())
-    if created:
-        _fsync_dir(path.parent)
+
+    def append(value: Any) -> None:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(_frame(value) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        if created:
+            _fsync_dir(path.parent)
+
+    return append
 
 
 def _read_lines(path: Path) -> list[dict[str, Any]]:
@@ -450,20 +453,18 @@ class StepReport:
     finished: list[str] = field(default_factory=list)
     awaiting_approval: list[str] = field(default_factory=list)  # occurrence refs
     refused: list[str] = field(default_factory=list)  # "<attempt>:<closed reason>"
-    head_written: int | None = None  # generation completed by crash recovery
 
     @property
     def changed(self) -> bool:
-        return bool(self.started or self.approved or self.finished or self.head_written)
+        return bool(self.started or self.approved or self.finished)
 
 
 @dataclass(frozen=True)
 class AcceptanceOutcome:
-    """What one submitted acceptance did: the committed result, never a replay.
+    """The result shape of a release acceptance.
 
-    ``written`` means the head file now serves ``generation``.  A write the relation
-    allowed but the physical head refused is ``refused`` with the physical reason
-    (and nothing was recorded as consumed).
+    This release's local controller never produces one: every release entry point
+    refuses with ``E_UNSUPPORTED_IN_RELEASE`` (the platform-signed head releases).
     """
 
     acceptance_id: str
@@ -534,8 +535,6 @@ class Controller:
             authority = ApproverAuthority(frozenset(authorized_approvers))
         self.authority = authority
         self._init_store(agent or self.dir.name, environment, initial_config, now)
-        with self._locked():  # finish or abandon a head move a crash interrupted
-            self._recover_commits()
 
     def _refuse_unsupported(self) -> None:
         """Refuse a policy that uses a feature this release does not run.
@@ -610,15 +609,13 @@ class Controller:
                 # Init is a recoverable transaction: ``meta.json`` is written LAST,
                 # so a crash earlier leaves the store uninitialized and the next
                 # start clears the partial files and redoes the whole init.
-                for stale in ("head.json", "heads.jsonl"):
-                    with contextlib.suppress(FileNotFoundError):
-                        self._p(stale).unlink()
+                with contextlib.suppress(FileNotFoundError):
+                    self._p("head.json").unlink()
                 origin = _utc(now).replace(hour=0, minute=0, second=0)
                 config = dict(initial_config or {})
                 fingerprint = config_fingerprint(config)
                 head = {"fingerprint": fingerprint, "config": config, "generation": 0}
                 _write_json(self._p("head.json"), head)
-                _append_line(self._p("heads.jsonl"), head)
                 meta = {
                     "agent": agent,
                     "environment": environment,
@@ -635,12 +632,7 @@ class Controller:
                     "store was created for another environment",
                 )
             else:
-                for name in (
-                    "history.jsonl",
-                    "heads.jsonl",
-                    "controller.jsonl",
-                    "commits.jsonl",
-                ):
+                for name in ("history.jsonl", "controller.jsonl"):
                     _repair_tail(self._p(name))
             self.meta: dict[str, Any] = meta
             self.origin = _parse_instant(meta["origin"])
@@ -726,20 +718,19 @@ class Controller:
         record: Callable[[int], None],
         effect: Callable[[Callable[[], int]], _T],
     ) -> tuple[_T | None, str | None, int | None]:
-        """The ONE path every effect takes: spend (invoke the optimizer) and release
-        (install a head).
+        """The ONE path the spend (invoking the optimizer) takes.
 
         The caller has already done ALL preparation under the store lock (history
-        replay, scope verdict, deadline, argument copies, staged files, any lock the
-        effect itself needs) and captured ``last_persisted``.  What runs here, in this
+        replay, scope verdict, deadline, argument copies, the repaired and prepared
+        journal append) and captured ``last_persisted``.  What runs here, in this
         order, and nothing slow after it:
 
         1. the platform authenticator, called afresh (never a cached answer);
-        2. ``recheck``: state that must be re-read after the authenticator returned
-           (the serving agent code version for a release);
+        2. ``recheck``: state that must be re-read after the authenticator returned;
         3. the clock, sampled ONCE: a persisted instant ahead of it refuses;
         4. ``lapse_at(instant)``: deadlines and scope expiry against that sample;
-        5. ``record(instant)``: the one effect instant goes into the journal;
+        5. ``record(instant)``: the one effect instant goes into the journal (an
+           append that scans nothing);
         6. the effect itself.
 
         ``effect`` receives ``final_check``, which runs steps 1-5 and returns the
@@ -789,15 +780,14 @@ class Controller:
     def require_authority(self) -> ApproverAuthority:
         """The configured approver authority, or a closed refusal.
 
-        There is no default: without an explicit authority nobody can approve or
-        accept.  A ``local-trusted`` authority is refused when the environment is
+        There is no default: without an explicit authority nobody can approve a
+        run.  A ``local-trusted`` authority is refused when the environment is
         production (production needs the platform to authenticate the person).
         """
         if self.authority is None:
             raise TuningError(
                 E_NO_APPROVER_AUTHORITY,
-                "no approver authority is configured; approving a run or accepting "
-                "a release needs one",
+                "no approver authority is configured; approving a run needs one",
             )
         if self.authority.mode == LOCAL_TRUSTED:
             from traigent.tuning.authority import local_trusted_refused
@@ -815,8 +805,8 @@ class Controller:
     ) -> bool:
         """Is ``approver`` listed AND authenticated at this instant?
 
-        The same authenticator that decides a release acceptance decides every
-        other authority decision (a run approval): a platform
+        The same authenticator decides every authority decision (a run approval, and
+        its recheck just before the optimizer runs): a platform
         authenticator that answers False refuses.  No authority means no.
         """
         authority = self.authority
@@ -848,7 +838,6 @@ class Controller:
         clock = _effect_clock(now)  # operation entry: refused when fixed in production
         record = copy.deepcopy(dict(report))
         with self._locked():
-            self._recover_commits()  # history must hold a crashed commit first
             instant = self._instant(clock())
             self._append("windows", record, instant)
         return instant
@@ -932,7 +921,6 @@ class Controller:
         clock = _effect_clock(now)
         with self._locked():
             moment = clock()
-            report.head_written = self._recover_commits()
             if self._has_schedule():
                 self._tick(self._instant(moment))
             for _ in range(64):
@@ -1192,8 +1180,9 @@ class Controller:
     ) -> bool:
         """Invoke the optimizer for an approved attempt through the gated effect.
 
-        True when the attempt ran and its outcome was recorded; False when the
-        spend was refused (a controller fact says why and the attempt stays open).
+        True when history will grow: the attempt ran and its outcome was recorded, or
+        the spend was refused and the attempt is cancelled (a controller fact says
+        why).  False when the spend could not be judged (no approval on file).
         """
         if self.optimize_fn is None:
             raise TuningError(E_NO_OPTIMIZER, f"{attempt} needs an optimize_fn")
@@ -1211,13 +1200,15 @@ class Controller:
             occ["response"], occ["rule"], occ["scope_kind"], occ["scope"]
         )
         if not in_scope:
-            self._refuse_spend(report, attempt, "scope_expired")
-            return False
-        accepts_dir = bool(getattr(self.optimize_fn, "accepts_candidate_dir", False))
+            self._cancel_refused(report, attempt, ref, marker_path, "scope_expired")
+            return True
         call_space = copy.deepcopy(space)
         candidate_dir = self._p("candidates") / attempt
         start_recorded = self._start_recorded(attempt)
         last_persisted = self._last_persisted_instant()
+        # The one journal scan the final gate would otherwise need: repair the tail
+        # now, under the lock and before authentication; the gate only appends.
+        append_start = _prepare_append(self._p("history.jsonl"))
         # Journal first (the marker), then the start fact at the effect instant:
         # a crash between the two leaves a marker that abandon_interrupted finds.
         _write_json(
@@ -1225,6 +1216,9 @@ class Controller:
             {"attempt": attempt, "occurrence": ref, "state": "started"},
         )
         optimize_fn = self.optimize_fn
+        # Only the adapter this SDK built may be handed the final check.
+        sdk_adapter = _is_sdk_adapter(optimize_fn)
+        accepts_dir = bool(getattr(optimize_fn, "accepts_candidate_dir", False))
 
         def lapse_at(instant: int, deadline: int | None = deadline) -> str | None:
             if deadline is not None and instant >= deadline:
@@ -1233,13 +1227,12 @@ class Controller:
 
         def record_start(instant: int, attempt: str = attempt) -> None:
             if not start_recorded:
-                _append_line(
-                    self._p("history.jsonl"),
+                append_start(
                     {
                         "instant": instant,
                         "category": "optimizations",
                         "record": {"attempt": attempt, "fact": "started"},
-                    },
+                    }
                 )
 
         def run(
@@ -1254,11 +1247,10 @@ class Controller:
                 return final_check()
 
             try:
-                if accepts_dir:
-                    # the adapter waits for its own lock first and calls the
+                if sdk_adapter:
+                    # the SDK adapter waits for its own lock first and calls the
                     # final check immediately before the optimizer starts
-                    isolated = cast(Callable[..., Any], optimize_fn)
-                    result = isolated(
+                    result = cast(Callable[..., Any], optimize_fn)(
                         call_space,
                         candidate_dir=candidate_dir,
                         admitted_models=admitted,
@@ -1269,8 +1261,17 @@ class Controller:
                             E_NO_CANDIDATE_RUN, "the optimizer skipped the check"
                         )
                 else:
+                    # any other optimizer is never handed the final check: the full
+                    # gate runs here, immediately before it is invoked
                     final_check()
-                    result = optimize_fn(call_space)
+                    if accepts_dir:
+                        result = cast(Callable[..., Any], optimize_fn)(
+                            call_space,
+                            candidate_dir=candidate_dir,
+                            admitted_models=admitted,
+                        )
+                    else:
+                        result = optimize_fn(call_space)
                 return self._map_result(attempt, result)
             except (_GateRefused, _GateFailed):
                 raise
@@ -1287,11 +1288,12 @@ class Controller:
             effect=run,
         )
         if refusal is not None or outcome is None:
-            # nothing started: the marker goes, the attempt stays open
-            with contextlib.suppress(FileNotFoundError):
-                marker_path.unlink()
-            self._refuse_spend(report, attempt, refusal or "gate_refused")
-            return False
+            # nothing started.  A granted human approval already counts as the start
+            # (TVL): cancel the attempt so it never holds a later schedule.
+            self._cancel_refused(
+                report, attempt, ref, marker_path, refusal or "gate_refused"
+            )
+            return True
         completion, candidates, configs, gates = outcome
         report.started.append(attempt)
         record = self._finished_record(attempt, completion, candidates)
@@ -1311,6 +1313,30 @@ class Controller:
         self._append("optimizations", record, self._instant(clock()))
         report.finished.append(attempt)
         return True
+
+    def _cancel_refused(
+        self,
+        report: StepReport,
+        attempt: str,
+        ref: str,
+        marker_path: Path,
+        reason: str,
+    ) -> None:
+        """A spend refused for an approved attempt: say why, and cancel the attempt.
+
+        The cancelled finish is persisted in the marker (the step then records it),
+        so a crash in between loses nothing and the optimizer never ran.
+        """
+        self._refuse_spend(report, attempt, reason)
+        _write_json(
+            marker_path,
+            {
+                "attempt": attempt,
+                "occurrence": ref,
+                "state": "finished",
+                "finished_record": self._finished_record(attempt, "cancelled", []),
+            },
+        )
 
     def _refuse_spend(self, report: StepReport, attempt: str, reason: str) -> None:
         """Journal a refused spend (a closed controller fact) and report it."""
@@ -1574,100 +1600,27 @@ class Controller:
             candidates.append(record)
         return str(completion), candidates, configs, gates
 
-    # -- acceptance -----------------------------------------------------------------
-    def _generation_fingerprint(self, generation: int) -> str:
-        for head in _read_lines(self._p("heads.jsonl")):
-            if head["generation"] == generation:
-                return str(head["fingerprint"])
-        raise TuningError(
-            E_UNKNOWN_GENERATION, "no head was written at that generation"
-        )
+    # -- release (the platform-signed head; not run by this controller) --------------
+    def build_acceptance(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        """Release acceptance is not run by this controller: refused before any I/O."""
+        raise TuningError(E_UNSUPPORTED_IN_RELEASE, RELEASE_REFUSAL)
 
-    def build_acceptance(
+    def submit_acceptance(
+        self, record: Mapping[str, Any], now: datetime | None = None
+    ) -> AcceptanceOutcome:
+        """Release acceptance is not run by this controller: refused before any I/O."""
+        raise TuningError(E_UNSUPPORTED_IN_RELEASE, RELEASE_REFUSAL)
+
+    def accept(
         self,
         deploy_ref: str,
         approver: str,
         expected_head_generation: int,
         decision: str = "accept",
         now: datetime | None = None,
-        *,
-        nonce: str | None = None,
-    ) -> dict[str, Any]:
-        """A validated ``tvl-release-acceptance/1`` record for a deploy awaiting.
-
-        The ``acceptance_id`` covers the approver, the decision instant and a nonce,
-        so a retry after an expiry or an unauthorized attempt is a new record, never
-        a conflict with the earlier one.
-        """
-        from tvl.release_acceptance import validate_acceptance
-
-        self.state.require_validated()
-        if decision not in ("accept", "reject"):
-            raise TuningError(E_INVALID_RECORD, "decision must be accept or reject")
-        occ = parse_occurrence_ref(deploy_ref)
-        deploy = self._deploy_fact(occ)
-        fingerprint = str(deploy["candidate"])
-        candidate = self._candidate_record(deploy)
-        moment = _utc(now)
-        decided_at = _instant_text(moment)
-        nonce = nonce or secrets.token_hex(8)
-        record: dict[str, Any] = {
-            "format": ACCEPTANCE_FORMAT,
-            "acceptance_id": "R-"
-            + hashlib.sha256(
-                "|".join(
-                    (
-                        deploy_ref,
-                        fingerprint,
-                        str(int(expected_head_generation)),
-                        decision,
-                        str(approver),
-                        decided_at,
-                        nonce,
-                    )
-                ).encode()
-            ).hexdigest()[:24],
-            "agent_ref": self.meta["agent"],
-            "environment_ref": self.meta["environment"],
-            "occurrence": {
-                "response_ref": occ["response"],
-                "rule_ref": occ["rule"],
-                "scope_kind": occ["scope_kind"],
-                "scope_ref": occ["scope"],
-                "occurrence": occ["j"],
-            },
-            "candidate_fingerprint": fingerprint,
-            "gate_result_digest": str(candidate["gate_digest"]),
-            "contract_digest": self.meta["contract_digest"],
-            "agent_code_version": str(candidate["code_version"]),
-            "expected_head_generation": int(expected_head_generation),
-            "rollback_target": self._generation_fingerprint(expected_head_generation),
-            "approver_ref": approver,
-            "decision": decision,
-            "decided_at": decided_at,
-            "expires_at": _instant_text(moment + timedelta(days=7)),
-        }
-        holdout = candidate.get("holdout_digest")
-        if holdout:  # RFC 0012: bind the holdout the evidence used
-            record["holdout_digest"] = str(holdout)
-        if occ["scope_kind"] == "episode":  # RFC 0012: repairs the originating episode
-            record["repairs_episode"] = occ["scope"]
-        if validate_acceptance(record):
-            raise TuningError(E_INVALID_RECORD, "acceptance record is not valid")
-        return record
-
-    def _deploy_fact(self, occ: Mapping[str, Any]) -> dict[str, Any]:
-        trace = self._derive()
-        facts = trace["facts"]
-        closed = {f["attempt"] for f in facts if f["fact"] == "attempt_closed"}
-        for fact in facts:
-            if (
-                fact["fact"] == "deploy_awaiting"
-                and fact["attempt"] not in closed
-                and occurrence_ref(fact["occurrence"]) == occurrence_ref(occ)
-            ):
-                return cast(dict[str, Any], fact)
-        raise TuningError(E_NO_DEPLOY_AWAITING, "no deploy awaits that occurrence")
+    ) -> AcceptanceOutcome:
+        """Release acceptance is not run by this controller: refused before any I/O."""
+        raise TuningError(E_UNSUPPORTED_IN_RELEASE, RELEASE_REFUSAL)
 
     def _attempt_marker(self, deploy: Mapping[str, Any]) -> dict[str, Any]:
         """The marker of THE deploy's own attempt (by attempt id, never a scan)."""
@@ -1676,13 +1629,6 @@ class Controller:
         if not isinstance(marker, dict):
             raise TuningError(E_NO_DEPLOY_AWAITING, "candidate evidence not found")
         return marker
-
-    def _candidate_record(self, deploy: Mapping[str, Any]) -> dict[str, Any]:
-        marker = self._attempt_marker(deploy)
-        for cand in marker.get("finished_record", {}).get("candidates", []):
-            if cand.get("fingerprint") == deploy["candidate"]:
-                return dict(cand)
-        raise TuningError(E_NO_DEPLOY_AWAITING, "candidate evidence not found")
 
     def _gate_of(self, deploy: Mapping[str, Any]) -> dict[str, Any]:
         gate = (self._attempt_marker(deploy).get("gates") or {}).get(
@@ -1699,524 +1645,6 @@ class Controller:
             for m in (_read_json(p) for p in sorted(folder.glob("*.json")))
             if isinstance(m, dict)
         ]
-
-    def _acceptance_lines(self) -> list[dict[str, Any]]:
-        return [ln for ln in self._lines() if ln["category"] == "acceptances"]
-
-    def submit_acceptance(
-        self, record: Mapping[str, Any], now: datetime | None = None
-    ) -> AcceptanceOutcome:
-        """**Accept release**: decide an acceptance and, if it deploys, commit it.
-
-        Authentication and authority come from the configured authority, never from
-        the caller.  Under the store lock the relation is dry-run first; only a
-        derived ``written`` proceeds to the physical commit (see the module
-        docstring), and the returned outcome is what was committed.  Only an exact
-        redelivery of a recorded acceptance is deduplicated; the same id with other
-        content is ``E_ACCEPTANCE_CONFLICT``.
-        """
-        self.state.require_validated()
-        # Operation entry: the clock is built before the store lock is awaited, so a
-        # wait behind another writer is part of the time the effect is judged at.
-        authority = self.require_authority()
-        clock = _effect_clock(now)
-        doc = copy.deepcopy(dict(record))
-        approver = doc.get("approver_ref")
-        ident = doc.get("acceptance_id")
-        with self._locked():
-            self._recover_commits()
-            prior = self._acceptance_lines()
-            recorded = [ln["record"]["record"] for ln in prior]
-            if isinstance(ident, str):
-                for position, rec in enumerate(recorded):
-                    if isinstance(rec, dict) and rec.get("acceptance_id") == ident:
-                        if rec != doc:
-                            # One acceptance id, one content.
-                            raise TuningError(
-                                E_ACCEPTANCE_CONFLICT,
-                                "that acceptance id was already submitted with "
-                                "other content",
-                            )
-                        return self._recorded_outcome(position, ident)  # redelivery
-            if isinstance(ident, str):  # a journalled intent is a submission too
-                for intent in _read_lines(self._p("commits.jsonl")):
-                    if (
-                        intent.get("fact") == "commit_intent"
-                        and intent["acceptance"] == ident
-                        and intent["line_record"]["record"] != doc
-                    ):
-                        raise TuningError(
-                            E_ACCEPTANCE_CONFLICT,
-                            "that acceptance id was already submitted with "
-                            "other content",
-                        )
-            position = len(recorded)
-            # Authentication can be slow (a platform call): do it BEFORE the time
-            # and the serving code version are sampled, so neither is stale.
-            authenticated = bool(
-                authority.authenticated(approver, doc, self.meta.get("environment"))
-            )
-            authorized = bool(authority.authorized(approver))
-            meta = {"authentication": authority.mode}
-
-            def decide() -> tuple[dict[str, Any], int, dict[str, Any]]:
-                """The relation's verdict at a freshly read time and code version."""
-                # Undeterminable code version -> refuse, no default.
-                serving = self.code_version()
-                instant = self._instant(clock())
-                line_record = {
-                    "record": doc,
-                    "authenticated": authenticated,
-                    "approver_authorized": authorized,
-                    "serving_code_version": serving,
-                }
-                line = {
-                    "instant": instant,
-                    "category": "acceptances",
-                    "record": line_record,
-                }
-                try:
-                    trace = self._derive([line])
-                except TuningError:
-                    raise
-                except Exception as exc:  # noqa: BLE001 - TVL closed errors; never echo content
-                    raise TuningError(
-                        E_INVALID_RECORD, "acceptances rejected by the TVL relation"
-                    ) from exc
-                verdicts = [f for f in trace["facts"] if f["fact"] == "acceptance"]
-                return line_record, instant, verdicts[position]
-
-            line_record, instant, verdict = decide()
-            if verdict["result"] != "written":
-                self._append("acceptances", line_record, instant, meta)
-                return AcceptanceOutcome(
-                    acceptance_id=str(ident),
-                    result=str(verdict["result"]),
-                    reason=verdict.get("reason"),
-                    generation=verdict.get("generation"),
-                )
-            return self._commit_acceptance(
-                doc, line_record, meta, instant, str(ident), clock
-            )
-
-    def _recorded_outcome(self, position: int, ident: str) -> AcceptanceOutcome:
-        verdicts = [f for f in self._derive()["facts"] if f["fact"] == "acceptance"]
-        last = verdicts[position]
-        return AcceptanceOutcome(
-            acceptance_id=ident,
-            result=str(last["result"]),
-            reason=last.get("reason"),
-            generation=last.get("generation"),
-        )
-
-    def accept(
-        self,
-        deploy_ref: str,
-        approver: str,
-        expected_head_generation: int,
-        decision: str = "accept",
-        now: datetime | None = None,
-    ) -> AcceptanceOutcome:
-        """Accept (or reject) the deploy awaiting ``deploy_ref``."""
-        record = self.build_acceptance(
-            deploy_ref, approver, expected_head_generation, decision, now
-        )
-        return self.submit_acceptance(record, now)
-
-    # -- head -----------------------------------------------------------------------
-    def _prepare_physical(
-        self, doc: Mapping[str, Any]
-    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
-        """``(gate, config, refusal)``: the history replays and candidate lookup the
-        head write needs, done BEFORE the final time check (nothing replays after)."""
-        try:
-            deploy = self._deploy_fact(
-                {
-                    "response": doc["occurrence"]["response_ref"],
-                    "rule": doc["occurrence"]["rule_ref"],
-                    "scope_kind": doc["occurrence"]["scope_kind"],
-                    "scope": doc["occurrence"]["scope_ref"],
-                    "j": doc["occurrence"]["occurrence"],
-                }
-            )
-            gate = self._gate_of(deploy)
-        except (TuningError, KeyError, TypeError):
-            return None, None, "gate_evidence_missing"
-        try:
-            config = self._config_for(str(doc["candidate_fingerprint"]))
-        except (TuningError, KeyError):
-            return gate, None, "candidate_config_missing"
-        return gate, config, None
-
-    def _deadline_lapse(self, doc: Mapping[str, Any], instant: int) -> str | None:
-        """Which clock deadline of this acceptance has passed at ``instant``; None if none.
-
-        Two deadlines apply: the record's own usability window
-        (``decided_at <= t < expires_at``) and the end of the occurrence's scope
-        (a schedule scope ends at its next tick).  Arithmetic only, no replay, so
-        it is safe as the very last check before a head is installed.
-        """
-        at = self.origin + timedelta(seconds=instant)
-        try:
-            decided = _parse_instant(str(doc["decided_at"]))
-            expires = _parse_instant(str(doc["expires_at"]))
-            occ = doc["occurrence"]
-            deadline = self._scope_deadline(
-                str(occ["response_ref"]),
-                str(occ["rule_ref"]),
-                str(occ["scope_kind"]),
-                occ["scope_ref"],
-            )
-        except (KeyError, ValueError, TypeError, TuningError):
-            return "acceptance_not_usable"
-        if not (decided <= at < expires):
-            return "acceptance_not_usable"
-        if deadline is not None and instant >= deadline:
-            return "scope_expired"
-        return None
-
-    def _physical_refusal(
-        self,
-        doc: Mapping[str, Any],
-        instant: int,
-        current: Mapping[str, Any],
-        serving: str | None = None,
-        approver_ok: bool | None = None,
-        prepared: tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]
-        | None = None,
-    ) -> str | None:
-        """Why the physical head must not take this write at ``instant``; None if it may.
-
-        Checked at the instant of the write (RFC 0012 section 2.3): the record is
-        usable (``decided_at <= t < expires_at``), the approver is authorized now, the
-        head is still at the expected generation and fingerprint, the gate measured
-        THIS incumbent, and the candidate's configuration is the one fingerprinted.
-        ``prepared`` carries the replay-derived inputs so no replay happens here.
-        """
-        lapse = self._deadline_lapse(doc, instant)
-        if lapse is not None:
-            return lapse
-        if approver_ok is None:
-            approver_ok = self._on_list_now(doc.get("approver_ref"), doc)
-        if not approver_ok:
-            return "approver_not_authorized"
-        if int(current["generation"]) != doc["expected_head_generation"]:
-            return "stale_generation"
-        if current["fingerprint"] != doc["rollback_target"]:
-            return "rollback_target_mismatch"
-        if serving is None:
-            try:
-                serving = self.code_version()
-            except TuningError:
-                return "code_version_mismatch"
-        if doc.get("agent_code_version") != serving:
-            return "code_version_mismatch"
-        gate, config, refusal = prepared or self._prepare_physical(doc)
-        if refusal == "gate_evidence_missing" or gate is None:
-            return "gate_evidence_missing"
-        if (
-            gate.get("incumbent_generation") != current["generation"]
-            or gate.get("incumbent_fingerprint") != current["fingerprint"]
-        ):
-            return "gate_incumbent_stale"
-        if refusal is not None or config is None:
-            return "candidate_config_missing"
-        if config_fingerprint(config) != doc["candidate_fingerprint"]:
-            return "config_fingerprint_mismatch"
-        return None
-
-    def _commit_acceptance(
-        self,
-        doc: Mapping[str, Any],
-        line_record: Mapping[str, Any],
-        meta: Mapping[str, Any],
-        instant: int,
-        ident: str,
-        clock: Callable[[], datetime],
-    ) -> AcceptanceOutcome:
-        """Move the head and consume the acceptance as ONE commit (store lock held).
-
-        Preparation (replay, non-time refusals, staged head file, journal intent,
-        last persisted instant), then the one gated effect: authenticate, recheck the
-        serving code version, sample the clock once, check deadlines against that
-        sample, journal it as THE effect instant, rename the head, record the
-        acceptance at that instant, journal done.  A refusal records nothing in the
-        history (the relation stays at the serving generation) and is journalled; a
-        crash is repaired by :meth:`_recover_commits` at the journalled instant.
-        """
-        current = read_head(self.dir)
-        if current is None:
-            raise TuningError(E_STORE_CORRUPT, "head.json is missing")
-        prepared = self._prepare_physical(doc)
-        try:
-            serving: str | None = self.code_version()
-        except TuningError:
-            serving = None
-        generation = int(current["generation"]) + 1
-        refusal = self._physical_refusal(
-            doc, instant, current, serving=serving, approver_ok=True, prepared=prepared
-        )
-        if refusal is not None:
-            self._record_controller_fact(
-                {
-                    "fact": "head_write_refused",
-                    "acceptance": ident,
-                    "generation": generation,
-                    "reason": refusal,
-                }
-            )
-            return AcceptanceOutcome(ident, "refused", refusal)
-        fingerprint = str(doc["candidate_fingerprint"])
-        new_head = {
-            "fingerprint": fingerprint,
-            "config": self._config_for(fingerprint),
-            "generation": generation,
-            # the agent code this head was accepted for (RFC 0012 section 2.2)
-            "code_version": str(doc["agent_code_version"]),
-        }
-        commit = secrets.token_hex(8)  # one id per attempt, never the acceptance id
-        _append_line(
-            self._p("commits.jsonl"),
-            {
-                "fact": "commit_intent",
-                "commit": commit,
-                "acceptance": ident,
-                "instant": instant,
-                "from_generation": int(current["generation"]),
-                "to_generation": generation,
-                "fingerprint": fingerprint,
-                "line_record": dict(line_record),
-                "meta": dict(meta),
-            },
-        )
-        staged = _stage_json(self._p("head.json"), new_head)
-        last_persisted = self._last_persisted_instant()
-
-        def serving_matches() -> str | None:
-            try:
-                now_serving = self.code_version()
-            except TuningError:
-                return "code_version_mismatch"
-            if doc.get("agent_code_version") != now_serving:
-                return "code_version_mismatch"
-            return None
-
-        def journal_instant(effect_instant: int) -> None:
-            _append_line(
-                self._p("commits.jsonl"),
-                {"fact": "commit_effect", "commit": commit, "instant": effect_instant},
-            )
-
-        def install(final_check: Callable[[], int]) -> int:
-            effect_instant = final_check()
-            self._install_head(new_head, staged, effect_instant)
-            self._append("acceptances", dict(line_record), effect_instant, meta)
-            _append_line(
-                self._p("commits.jsonl"),
-                {
-                    "fact": "commit_done",
-                    "commit": commit,
-                    "acceptance": ident,
-                    "generation": generation,
-                },
-            )
-            return effect_instant
-
-        _, late, _used = self._gated_effect(
-            clock=clock,
-            last_persisted=last_persisted,
-            authenticate=lambda: self._on_list_now(doc.get("approver_ref"), doc),
-            recheck=serving_matches,
-            lapse_at=lambda at: self._deadline_lapse(doc, at),
-            record=journal_instant,
-            effect=install,
-        )
-        if late is not None:
-            _discard_staged(staged)
-            _append_line(
-                self._p("commits.jsonl"),
-                {"fact": "commit_abandoned", "commit": commit, "acceptance": ident},
-            )
-            self._record_controller_fact(
-                {
-                    "fact": "head_write_refused",
-                    "acceptance": ident,
-                    "generation": generation,
-                    "reason": late,
-                }
-            )
-            return AcceptanceOutcome(ident, "refused", late)
-        return AcceptanceOutcome(ident, "written", None, generation)
-
-    def _install_head(
-        self,
-        head: Mapping[str, Any],
-        staged: str | None = None,
-        instant: int | None = None,
-    ) -> None:
-        """Move ``head.json`` (atomic), then make sure ``heads.jsonl`` names it.
-
-        ``staged`` is a temp file already written and fsynced for exactly this head:
-        only the rename remains.  Without it the head is written here.  ``instant`` is
-        the effect instant: it rides on the ``heads.jsonl`` record of this head.
-        """
-        if staged is None:
-            staged = _stage_json(self._p("head.json"), dict(head))
-        _publish_staged(staged, self._p("head.json"))
-        known = {h["generation"] for h in _read_lines(self._p("heads.jsonl"))}
-        if head["generation"] not in known:
-            entry = dict(head)
-            if instant is not None:
-                entry["instant"] = instant
-            _append_line(self._p("heads.jsonl"), entry)
-
-    def _record_recovered_acceptance(self, intent: Mapping[str, Any]) -> None:
-        """Put a crashed commit's acceptance into history at its ORIGINAL instant.
-
-        The head moved at that instant, so history records the consumption there
-        (never at ``max(original, last)``: a later instant could be past the
-        record's expiry and the relation would then reject what production already
-        did).  Every history-appending entry point recovers first, so normally the
-        line simply lands at the tail.  If history has meanwhile grown past that
-        instant (a writer that did not recover), the line is spliced in at its
-        instant: lines after it stay ordered after it, and the file is rewritten
-        atomically under the store lock.  If the relation still rejects the
-        result, nothing is written, the journal is NOT marked done, and the
-        store is refused with ``E_HEAD_DIVERGED`` (loud, never silently split).
-        """
-        line: dict[str, Any] = {
-            "instant": int(intent["instant"]),
-            "category": "acceptances",
-            "record": intent["line_record"],
-        }
-        if intent.get("meta"):
-            line["meta"] = dict(intent["meta"])
-        lines = self._lines()
-        index = len(lines)
-        while index > 0 and int(lines[index - 1]["instant"]) > line["instant"]:
-            index -= 1
-        merged = [*lines[:index], line, *lines[index:]]
-        try:
-            trace = conditions_trace(self._module, self._history(lines=merged))
-            derived = self._tvl_generation(trace)
-        except Exception:  # noqa: BLE001 - TVL closed errors; never echo content
-            derived = -1
-        if derived != int(intent["to_generation"]):
-            raise TuningError(
-                E_HEAD_DIVERGED,
-                "head.json moved but the relation does not accept the journalled "
-                "acceptance at its original instant; the commit stays open and the "
-                "store is not usable until reconciled",
-            )
-        if index == len(lines):
-            _append_line(self._p("history.jsonl"), line)
-            return
-        text = "".join(_frame(entry) + "\n" for entry in merged)
-        fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".history.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(text)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, self._p("history.jsonl"))
-            _fsync_dir(self.dir)
-        except BaseException:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
-            raise
-
-    def _recover_commits(self) -> int | None:
-        """Finish or abandon a head move a crash interrupted (store lock held).
-
-        * the head was installed: record the acceptance at its ORIGINAL instant (the
-          effect happened then), repair ``heads.jsonl``, mark done;
-        * the head was not installed: abandon, never install late (the acceptance
-          may have expired meanwhile); the deploy stays awaiting.
-
-        Journal entries are keyed by the per-attempt ``commit`` id, never by the
-        acceptance id alone: an identical resubmission after an abandoned attempt
-        is a new attempt and is recovered on its own.  Returns the generation
-        completed, if any.
-        """
-
-        def key(entry: Mapping[str, Any]) -> str:
-            return str(entry.get("commit") or entry["acceptance"])  # legacy: id
-
-        entries = _read_lines(self._p("commits.jsonl"))
-        finished = {
-            key(e)
-            for e in entries
-            if e.get("fact") in ("commit_done", "commit_abandoned")
-        }
-        # the instant the effect was sampled at (journaled before the rename): the
-        # one a recovered head move is recorded at, never the earlier intent instant
-        effects = {
-            key(e): int(e["instant"])
-            for e in entries
-            if e.get("fact") == "commit_effect"
-        }
-        completed: int | None = None
-        for intent in entries:
-            if intent.get("fact") != "commit_intent" or key(intent) in finished:
-                continue
-            if key(intent) in effects:
-                intent = {**intent, "instant": effects[key(intent)]}
-            ident = str(intent["acceptance"])
-            commit = intent.get("commit")
-            head = read_head(self.dir)
-            if head is None:
-                raise TuningError(E_STORE_CORRUPT, "head.json is missing")
-            if (
-                int(head["generation"]) == intent["to_generation"]
-                and head["fingerprint"] == intent["fingerprint"]
-            ):
-                # heads.jsonl may be missing its line
-                self._install_head(head, None, int(intent["instant"]))
-                recorded = any(
-                    ln["record"]["record"].get("acceptance_id") == ident
-                    for ln in self._acceptance_lines()
-                )
-                if not recorded:
-                    self._record_recovered_acceptance(intent)
-                _append_line(
-                    self._p("commits.jsonl"),
-                    {
-                        "fact": "commit_done",
-                        "commit": commit,
-                        "acceptance": ident,
-                        "generation": intent["to_generation"],
-                        "recovered": True,
-                    },
-                )
-                completed = int(intent["to_generation"])
-            elif int(head["generation"]) == intent["from_generation"]:
-                _append_line(
-                    self._p("commits.jsonl"),
-                    {"fact": "commit_abandoned", "commit": commit, "acceptance": ident},
-                )
-                self._record_controller_fact(
-                    {
-                        "fact": "head_write_refused",
-                        "acceptance": ident,
-                        "generation": intent["to_generation"],
-                        "reason": "interrupted_before_install",
-                    }
-                )
-            else:
-                raise TuningError(
-                    E_HEAD_DIVERGED,
-                    "head.json matches neither side of a journalled move",
-                )
-        return completed
-
-    def _config_for(self, fingerprint: str) -> dict[str, Any]:
-        for marker in self._markers():
-            if fingerprint in marker.get("configs", {}):
-                return dict(marker["configs"][fingerprint])
-        for head in _read_lines(self._p("heads.jsonl")):
-            if head["fingerprint"] == fingerprint:
-                return dict(head["config"])
-        raise TuningError(E_UNKNOWN_GENERATION, "configuration for the head not found")
 
     # -- status ---------------------------------------------------------------------
     def _trigger_view(self, occ: Mapping[str, Any]) -> dict[str, Any]:
@@ -2244,7 +1672,8 @@ class Controller:
 
         Each attempt awaiting approval carries ``approve_run`` (what the human
         decision **Approve run** spends and why); each pending deploy carries
-        ``accept_release`` (what **Accept release** puts into production).
+        ``release_evidence`` (the candidate evidence the platform-signed head releases
+        from; this controller never installs it).
         """
         self.state.require_validated()
         facts = self._derive()["facts"]
@@ -2297,7 +1726,7 @@ class Controller:
                     "attempt": f["attempt"],
                     "occurrence": occurrence_ref(f["occurrence"]),
                     "candidate": f["candidate"],
-                    "accept_release": {
+                    "release_evidence": {
                         "incumbent": {
                             "fingerprint": gate.get("incumbent_fingerprint"),
                             "generation": gate.get("incumbent_generation"),
@@ -2445,6 +1874,19 @@ def _isolated_artifacts(root: Path) -> Iterator[None]:
                     os.environ[name] = value
 
 
+# The adapters this SDK built.  Only these may be handed the controller's final check:
+# membership is by object identity, so an attribute a caller sets on its own optimizer
+# cannot claim it.
+_SDK_ADAPTERS: weakref.WeakSet[Callable[..., Any]] = weakref.WeakSet()
+
+
+def _is_sdk_adapter(candidate: Any) -> bool:
+    try:
+        return candidate in _SDK_ADAPTERS
+    except TypeError:  # unhashable: certainly not ours
+        return False
+
+
 def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
     """Adapt a ``@traigent.optimize`` function: run it on the search space.
 
@@ -2452,7 +1894,7 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
     live function's configuration is never changed, and every artifact it writes
     (including best-config files) lands in ``candidate_dir`` -- inside the tuning
     store -- never where a live wrapper's best-config loaders look.  A deploy only
-    follows a recorded human acceptance.
+    follows the platform-signed head, never this adapter.
     """
 
     def run(
@@ -2495,6 +1937,7 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
             )
         return OptimizerRun(result, frozenset(loaded) if loaded else None)
 
+    _SDK_ADAPTERS.add(run)
     run.accepts_candidate_dir = True  # type: ignore[attr-defined]
     limits = {
         key: kwargs.get(key, getattr(fn, key, None))
