@@ -150,7 +150,6 @@ from traigent.utils.env_config import (
 from traigent.utils.env_config import is_backend_offline as is_backend_offline
 from traigent.utils.env_config import is_mock_llm, skip_provider_validation
 from traigent.utils.example_consistency import (
-    EXAMPLE_CONSISTENCY_METADATA_KEY,
     ExampleIdCollisionError,
     build_consistency_report,
     summarize_example_outcomes,
@@ -5655,10 +5654,10 @@ class OptimizationOrchestrator:
     def _record_example_consistency(self, result: OptimizationResult) -> None:
         """Store per-example consistency counts for the winner's reruns.
 
-        Kept under its own ``result.metadata`` key, outside the
-        ``winner_stability`` block: it carries example ids and is local-only
-        (never sent to the backend). Nothing is stored unless at least one
-        example has two or more known reruns.
+        Kept in the dedicated ``result.example_consistency_report`` attribute,
+        not in ``result.metadata``: it carries example ids and is local-only,
+        and nothing that serializes metadata ever sees it. Nothing is stored
+        unless at least one example has two or more known reruns.
         """
         if getattr(self, "_winner_stability_example_collision", False):
             return
@@ -5666,7 +5665,7 @@ class OptimizationOrchestrator:
         examples = summarize_example_outcomes(per_rerun)
         if not examples:
             return
-        result.metadata[EXAMPLE_CONSISTENCY_METADATA_KEY] = build_consistency_report(
+        result.example_consistency_report = build_consistency_report(
             examples,
             reps=len(per_rerun),
             config_hash=self._get_config_hash(result.best_config),

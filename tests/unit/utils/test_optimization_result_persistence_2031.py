@@ -89,8 +89,8 @@ def test_manifest_covers_every_optimization_result_field() -> None:
         "A field cannot be both restored and reset; the manifest contradicts "
         f"itself for: {sorted(RESULT_RESTORE & RESULT_RESET)}"
     )
-    assert len(declared) == 31, (
-        f"OptimizationResult now declares {len(declared)} fields, not 31. If you "
+    assert len(declared) == 32, (
+        f"OptimizationResult now declares {len(declared)} fields, not 32. If you "
         f"added one, updating this number is the LAST step, not the first: a "
         f"restorable field also needs a _SENTINELS entry, a bumped "
         f"RESULT_SCHEMA_VERSION, a FIELD_INTRODUCED_IN entry at that bumped "
@@ -621,8 +621,21 @@ _GOLDEN_V2: dict = {
     "ranking_eligible_trial_ids": ["golden-trial-0"],
 }
 
+#: Version 3: adds `example_consistency_report`, the winner's per-example repeat
+#: outcomes (local result store only).
+_GOLDEN_V3: dict = {
+    **{k: v for k, v in _GOLDEN_V2.items() if k != SCHEMA_VERSION_KEY},
+    "_schema_version": 3,
+    "example_consistency_report": {
+        "counts": {"all_pass": 1, "all_fail": 0, "mixed": 0, "errored": 0},
+        "examples": {"golden-ex-0": {"label": "all_pass", "attempted": 3}},
+        "reps": 3,
+        "config_hash": "golden-hash",
+    },
+}
+
 #: One frozen payload per schema version this build claims to read.
-_GOLDEN_ARTIFACTS: dict[int, dict] = {1: _GOLDEN_V1, 2: _GOLDEN_V2}
+_GOLDEN_ARTIFACTS: dict[int, dict] = {1: _GOLDEN_V1, 2: _GOLDEN_V2, 3: _GOLDEN_V3}
 
 
 def test_a_golden_artifact_is_frozen_for_every_readable_schema_version() -> None:
@@ -1261,3 +1274,21 @@ def test_missing_required_field_raises_a_named_error_not_attribute_error() -> No
 
     with pytest.raises(TypeError, match=r"_PartialResult.*'optimization_id'"):
         encode_result_fields(partial)
+
+
+def test_a_v2_artifact_without_the_consistency_report_still_loads() -> None:
+    """Results saved before the report existed load with no report (not corrupt)."""
+    restored = decode_result(
+        copy.deepcopy(_GOLDEN_V2), trials=[], artifact_name="golden-v2.json"
+    )
+
+    assert restored.example_consistency_report is None
+    assert restored.example_consistency()["examples"] == {}
+
+
+def test_the_consistency_report_round_trips_through_the_encoder() -> None:
+    restored = decode_result(_encoded(), trials=[], artifact_name="sentinel.json")
+
+    assert (
+        restored.example_consistency_report == _SENTINELS["example_consistency_report"]
+    )

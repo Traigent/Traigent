@@ -1051,6 +1051,8 @@ class OptimizationResult:
         algorithm: Name of the optimization algorithm used.
         timestamp: When the optimization completed.
         metadata: Additional metadata from the optimization run.
+        example_consistency_report: Per-example repeat outcomes of the winner
+            (read it through ``example_consistency()``); local only.
         preset_selection: Advisory preset-selection record restored from a result
             persisted by an older SDK build. No code path in this build can
             populate this on a live run; it exists for backward-compatible
@@ -1269,6 +1271,13 @@ class OptimizationResult:
     snapshot_ref: Any = field(default=None, repr=False)
     client_evidence_path: str | None = field(default=None, repr=False)
 
+    # Per-example consistency counts for the winner's reruns (see
+    # ``example_consistency()``). A dedicated attribute rather than a
+    # ``metadata`` key on purpose: it carries example ids, and code that
+    # serializes ``metadata`` (trackers, exporters, MCP responses) never walks
+    # it. Saved and loaded explicitly by the local persistence layer.
+    example_consistency_report: dict[str, Any] | None = field(default=None, repr=False)
+
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )
@@ -1383,18 +1392,18 @@ class OptimizationResult:
             ``{"counts": {label: n}, "examples": {id: {"label", "passes",
             "fails", "unknowns"}}, "reps": int, "config_hash": str | None}``.
             ``examples`` is empty (counts all zero) when no labels were
-            recorded. Labels are stored locally and never uploaded.
-        """
-        from traigent.utils.example_consistency import (
-            EXAMPLE_CONSISTENCY_METADATA_KEY,
-            build_consistency_report,
-        )
+            recorded.
 
-        stored = (
-            self.metadata.get(EXAMPLE_CONSISTENCY_METADATA_KEY)
-            if isinstance(self.metadata, dict)
-            else None
-        )
+        The report lives in a dedicated attribute that the SDK's uploads,
+        trackers and exports never read, and it is saved only to the local
+        result store. It is not a privacy boundary against your own code: a
+        completion callback receives this whole result object by design, and
+        whatever it does with the object runs on your machine under your
+        control.
+        """
+        from traigent.utils.example_consistency import build_consistency_report
+
+        stored = self.example_consistency_report
         if not isinstance(stored, Mapping):
             return build_consistency_report(None)
         examples = stored.get("examples")

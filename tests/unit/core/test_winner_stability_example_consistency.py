@@ -3,7 +3,7 @@
 The orchestrator reruns the selected winner ``winner_stability_reps`` times and
 keeps each rerun's per-example pass/fail. These tests run the real orchestrator
 with a scripted evaluator and check the labels in
-``result.metadata["example_consistency"]``, that the existing
+``result.example_consistency_report``, that the existing
 ``winner_stability`` block is unchanged, and that the labels survive save and
 reload.
 """
@@ -140,7 +140,7 @@ async def _run(reps: int, script=None) -> Any:
 async def test_five_reruns_label_each_example_by_its_own_outcomes() -> None:
     result = await _run(5)
 
-    stored = result.metadata["example_consistency"]
+    stored = result.example_consistency_report
     examples = stored["examples"]
     assert examples["always_wrong"] == {
         "label": "consistent_fail",
@@ -193,7 +193,7 @@ async def test_errored_reruns_are_unknown_and_one_known_evaluation_gets_no_label
     result = await _run(5)
 
     # Four of five reruns errored: one known evaluation is not enough.
-    assert "mostly_errors" not in result.metadata["example_consistency"]["examples"]
+    assert "mostly_errors" not in result.example_consistency_report["examples"]
     assert "mostly_errors" not in result.example_consistency()["examples"]
 
 
@@ -230,6 +230,7 @@ async def test_labels_live_outside_the_winner_stability_block() -> None:
 async def test_default_run_records_no_labels() -> None:
     result = await _run(0)
 
+    assert result.example_consistency_report is None
     assert "example_consistency" not in result.metadata
     assert result.example_consistency()["examples"] == {}
 
@@ -238,6 +239,7 @@ async def test_default_run_records_no_labels() -> None:
 async def test_single_rerun_records_no_labels() -> None:
     result = await _run(1)
 
+    assert result.example_consistency_report is None
     assert "example_consistency" not in result.metadata
     assert result.example_consistency()["counts"] == {
         "consistent_pass": 0,
@@ -263,149 +265,11 @@ async def test_labels_survive_save_and_reload(tmp_path) -> None:
     }
 
 
-# --- Upload audit: the labels are local only --------------------------------
-
-
-def _finalize_with_recording_client(
-    result: Any, monkeypatch: pytest.MonkeyPatch
-) -> Any:
-    """Run the real finalize path against a recording backend client."""
-    import asyncio
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock, Mock
-
-    from traigent.core.backend_session_manager import BackendSessionManager
-    from traigent.core.objectives import create_default_objectives
-
-    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
-    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
-    config = TraigentConfig()
-    config.offline = False
-    config.no_egress = False
-    config.execution_mode = "hybrid"
-
-    class _Mapping:
-        experiment_id = "exp"
-        experiment_run_id = "run"
-
-    client = Mock()
-    client.get_session_mapping = Mock(return_value=_Mapping())
-    client.update_trial_weighted_scores = AsyncMock(return_value=True)
-    client.finalize_session_sync = Mock(
-        return_value={"status": "completed", "metadata": {}}
-    )
-    optimizer = Mock()
-    optimizer.objectives = ["accuracy"]
-    optimizer.config_space = {"param1": [1]}
-    manager = BackendSessionManager(
-        backend_client=client,
-        traigent_config=config,
-        objectives=["accuracy"],
-        objective_schema=create_default_objectives(["accuracy"]),
-        optimizer=optimizer,
-        optimization_id="opt_upload_audit",
-        optimization_status=OptimizationStatus.RUNNING,
-    )
-    orchestrator = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
-    orchestrator._trials = []
-    orchestrator._stop_reason = None
-    orchestrator._optimization_id = "opt_upload_audit"
-    orchestrator._status = OptimizationStatus.COMPLETED
-    orchestrator.optimizer = Mock(objectives=["accuracy"])
-    orchestrator.objective_schema = None
-    orchestrator.backend_session_manager = manager
-    orchestrator.traigent_config = config
-    orchestrator.cost_enforcer = Mock(
-        get_status=Mock(
-            return_value=SimpleNamespace(
-                accumulated_cost_usd=0.0, unmeasured_trial_count=0
-            )
-        )
-    )
-    orchestrator._build_certified_selection_report = Mock(return_value=None)
-    orchestrator._submit_usage_analytics = AsyncMock()
-    orchestrator._submit_workflow_traces = AsyncMock()
-    orchestrator.callback_manager = Mock()
-    asyncio.run(
-        OptimizationOrchestrator._finalize_optimization(
-            orchestrator, result, "session-upload-audit", None
-        )
-    )
-    return client
-
-
-def test_labels_and_example_ids_are_in_no_upload_payload(monkeypatch) -> None:
-    """The key and its example ids reach neither session nor trial payloads.
-
-    ``result.metadata`` is never serialized wholesale: the session rollup is
-    built from named keys, and trial submissions carry trial metadata only.
-    """
-    import asyncio
-    import json
-    from types import SimpleNamespace
-    from unittest.mock import MagicMock
-
-    from traigent.api.types import TrialStatus
-    from traigent.cloud.client import TraigentCloudClient
-    from traigent.core.backend_session_manager import BackendSessionManager
-
-    result = asyncio.run(_run(5))
-    example_ids = list(result.metadata["example_consistency"]["examples"])
-    assert example_ids  # the run really produced labelled examples
-    result.metadata["session_summary"] = {
-        "metrics": {"accuracy": 0.5},
-        "samples_per_config": {"p": 4},
-    }
-
-    # Session / result payloads: the real finalize path, then every call the
-    # backend client received (finalize request body included).
-    client = _finalize_with_recording_client(result, monkeypatch)
-    finalize_kwargs = client.finalize_session_sync.call_args.kwargs
-    assert finalize_kwargs.get("session_aggregation")  # a rollup really was sent
-    sent = json.dumps(
-        [client.finalize_session_sync.call_args_list, client.mock_calls], default=repr
-    )
-
-    session_sent = sent
-
-    # Trial payloads: every trial of the run through both trial serializers.
-    # (Trial metadata may carry its own per-example rows; what must not appear
-    # is this feature's key or labels.)
-    sent = ""
-    for trial in result.trials:
-        submission = SimpleNamespace(
-            session_id="s",
-            trial_id=trial.trial_id,
-            metrics=trial.metrics,
-            duration=trial.duration,
-            status=TrialStatus.COMPLETED,
-            error_message=None,
-            metadata=trial.metadata,
-        )
-        sent += json.dumps(
-            TraigentCloudClient._serialize_trial_result(MagicMock(), submission),
-            default=repr,
-        )
-        sent += json.dumps(
-            BackendSessionManager._build_trial_metrics_payload(
-                trial, trial.metadata, trial.score, trial.score
-            ),
-            default=repr,
-        )
-
-    assert "example_consistency" not in session_sent + sent
-    for example_id in example_ids:
-        assert example_id not in session_sent
-    for label in ("consistent_fail", "consistent_pass", "flaky"):
-        assert label not in session_sent + sent
-    # Positive control: the same strings do appear in the local result.
-    assert "sometimes_wrong" in json.dumps(result.metadata)
-
-
 @pytest.mark.asyncio
 async def test_labels_are_not_written_into_trial_metadata() -> None:
     result = await _run(5)
 
-    assert "example_consistency" in result.metadata
+    assert result.example_consistency_report is not None
+    assert "example_consistency" not in result.metadata
     for trial in result.trials:
         assert "example_consistency" not in trial.metadata

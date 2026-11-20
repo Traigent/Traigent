@@ -44,7 +44,6 @@ from ...utils.discrete_domains import (
     discrete_cardinality_for_config_param,
     discrete_values_for_config_param,
 )
-from ...utils.example_consistency import without_local_only_metadata
 from ...utils.logging import get_logger
 from ._offline_guard import offline_guarded
 
@@ -372,10 +371,9 @@ class TraigentWandBTracker:
             self._add_trial_statistics(summary_data, result)
 
         # Log metadata
-        # Local-only keys (per-example labels) never leave the machine.
-        shareable_metadata = without_local_only_metadata(result.metadata)
-        for key, value in shareable_metadata.items():
-            summary_data[f"metadata/{key}"] = value
+        if result.metadata:
+            for key, value in result.metadata.items():
+                summary_data[f"metadata/{key}"] = value
 
         # Log summary
         wandb.log(summary_data)
@@ -387,7 +385,7 @@ class TraigentWandBTracker:
             "total_trials": len(result.trials),
             "duration": result.duration,
             "status": result.status.value,
-            "metadata": shareable_metadata,
+            "metadata": result.metadata,
             "trial_summary": [
                 {
                     "trial_id": t.trial_id,

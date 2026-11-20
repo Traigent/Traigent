@@ -124,7 +124,6 @@ from traigent.api.types import OptimizationResult, TrialResult
 from traigent.integrations.observability._offline_guard import offline_guarded
 from traigent.utils.callbacks import OptimizationCallback
 
-from ...utils.example_consistency import without_local_only_metadata
 from ...utils.logging import get_logger
 from ...utils.secure_path import safe_write_text
 
@@ -438,10 +437,8 @@ class TraigentMLflowTracker:
             self._log_trial_statistics(result)
 
         # Log metadata if available
-        # Local-only keys (per-example labels) never leave the machine.
-        shareable_metadata = without_local_only_metadata(result.metadata)
-        if shareable_metadata:
-            self._log_result_metadata(shareable_metadata)
+        if result.metadata:
+            self._log_result_metadata(result.metadata)
 
         # Log complete result as artifact
         result_data = {
@@ -450,7 +447,7 @@ class TraigentMLflowTracker:
             "total_trials": len(result.trials),
             "duration": result.duration,
             "status": result.status.value,
-            "metadata": shareable_metadata,
+            "metadata": result.metadata,
         }
 
         mlflow.log_dict(result_data, "optimization_result.json")
