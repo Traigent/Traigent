@@ -24,6 +24,7 @@ from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.regression_dataset import (
     UnresolvedExampleIdError,
     select_examples_by_id,
+    select_examples_with_run_ids,
 )
 
 Row = tuple[Any, Any, dict[str, Any] | None]
@@ -348,3 +349,29 @@ class TestJsonlSourcedDatasets:
             ({"q": "a"}, "A", {"example_id": "row-a"}),
             ({"q": "b"}, "B", {"example_id": "row-b"}),
         ]
+
+
+class TestSelectWithRunIds:
+    def test_two_ids_for_one_row_are_refused_not_truncated(self) -> None:
+        """Extra ids cannot be dropped: ids sharing a row are reported ambiguous."""
+        rows: list[Row] = [({"q": "a"}, "A", None), ({"q": "b"}, "B", None)]
+        run = _run(
+            [
+                _record("first", {"q": "a"}, "A"),
+                _record("second", {"q": "a"}, "A"),
+            ]
+        )
+        with pytest.raises(UnresolvedExampleIdError) as info:
+            select_examples_with_run_ids(_dataset(rows), ["first", "second"], run)
+        assert info.value.ambiguous == ["first", "second"]
+
+    def test_each_row_carries_the_id_the_run_recorded(self) -> None:
+        rows: list[Row] = [
+            ({"q": "a"}, "A", {"example_id": ""}),
+            ({"q": "b"}, "B", None),
+        ]
+        run = _run(
+            [_record("rec-a", {"q": "a"}, "A"), _record("rec-b", {"q": "b"}, "B")]
+        )
+        selected = select_examples_with_run_ids(_dataset(rows), ["rec-a", "rec-b"], run)
+        assert [ex.metadata["example_id"] for ex in selected] == ["rec-a", "rec-b"]
