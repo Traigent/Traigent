@@ -96,6 +96,27 @@ def _flush(stream: object) -> None:
             pass
 
 
+def _flush_c_stdio() -> None:
+    """Flush the C library's stdio buffers (``printf`` in an extension)."""
+    try:
+        import ctypes
+
+        ctypes.CDLL(None).fflush(None)
+    except Exception:  # noqa: BLE001 - no libc through ctypes on this platform
+        pass
+
+
+def _flush_everything() -> None:
+    """Flush every writer that could still hold captured bytes.
+
+    Called while descriptors 1 and 2 still point at the capture file, so
+    buffered text lands in it and not on the real output after the window.
+    """
+    for stream in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__):
+        _flush(stream)
+    _flush_c_stdio()
+
+
 @contextmanager
 def capture_output() -> Iterator[CapturedOutput]:
     """Collect all output of the ``with`` block; restore everything on exit."""
@@ -111,8 +132,7 @@ def capture_output() -> Iterator[CapturedOutput]:
     saved_streams = (sys.stdout, sys.stderr)
     fd_state: tuple[int, int, IO[bytes]] | None = None
 
-    for stream in saved_streams:
-        _flush(stream)
+    _flush_everything()  # earlier output must not land in the capture file
     try:
         fd_state = _redirect_descriptors()
     except OSError:
@@ -145,6 +165,7 @@ def capture_output() -> Iterator[CapturedOutput]:
         ]
         captured.log_lines = collector.lines
         if fd_state is not None:
+            _flush_everything()
             captured.fd_text = _restore_descriptors(fd_state)
 
 
