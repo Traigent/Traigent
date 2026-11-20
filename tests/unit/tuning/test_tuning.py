@@ -32,11 +32,6 @@ GOLDEN = sorted((FIXTURES / "golden").glob("*.json"))
 SLICE_CASE = FIXTURES / "external-slice-trace.yml"
 BODY = ("requirements", "monitors", "responses", "tvl_version")
 
-pytestmark = pytest.mark.skipif(
-    not validator.validator_available(),
-    reason="TVL toolchain with 1.7 support not installed",
-)
-
 
 def _golden(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))

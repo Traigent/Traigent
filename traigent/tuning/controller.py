@@ -13,7 +13,9 @@ Store layout (one directory, default ``.traigent/tuning/<agent>/``)::
     meta.json        agent, environment, origin, contract digest, initial head
     head.json        {fingerprint, config, generation}         (atomic temp+rename)
     heads.jsonl      every head ever written (rollback targets, config lookup)
-    history.jsonl    recorded facts: events, windows, approvals, finishes, acceptances
+    history.jsonl    recorded facts (checksummed JSONL): events, windows, approvals, finishes, acceptances
+    grants.json      standing grants (closed records, with their consumed uses)
+    controller.jsonl controller facts: refused optimizations and head writes
     approvals.json   optimization approvals keyed by occurrence ref
     consumed.json    acceptance ids already consumed
     attempts/        one marker per attempt: in-progress, then the persisted result
@@ -30,6 +32,7 @@ import copy
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
@@ -50,6 +53,10 @@ E_NO_DEPLOY_AWAITING = "E_NO_DEPLOY_AWAITING"
 E_UNKNOWN_GENERATION = "E_UNKNOWN_GENERATION"
 E_STORE_MISMATCH = "E_STORE_MISMATCH"
 E_NOT_AN_OCCURRENCE = "E_NOT_AN_OCCURRENCE"
+E_STORE_CORRUPT = "E_STORE_CORRUPT"
+E_ACCEPTANCE_CONFLICT = "E_ACCEPTANCE_CONFLICT"
+E_INVALID_GRANT = "E_INVALID_GRANT"
+E_NO_CANDIDATE_RUN = "E_NO_CANDIDATE_RUN"
 
 GATE_FORMAT = "traigent-gate-result/1"
 ACCEPTANCE_FORMAT = "tvl-release-acceptance/1"
@@ -58,6 +65,8 @@ _REF = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _LEGACY = {"Promote", "Reject", "NoDecision"}
 _COMPLETIONS = {"normal", "error", "cancelled", "cost_limit"}
 OptimizeFn = Callable[[dict[str, Any]], Any]
+MAX_GRANT_DAYS = 30  # RFC 0003 section 7.3: a standing grant expires within 30 days
+logger = logging.getLogger(__name__)
 
 
 def default_store_dir(agent: str) -> Path:
@@ -161,20 +170,85 @@ def _read_json(path: Path, default: Any = None) -> Any:
         return default
 
 
+def _frame(value: Any) -> str:
+    """One JSONL record: ``<sha256[:16] of the JSON>\t<canonical JSON>``."""
+    body = json.dumps(value, sort_keys=True)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16] + "\t" + body
+
+
+def _unframe(line: str) -> Any:
+    """The value of a framed line; ``ValueError`` when torn or tampered."""
+    check, sep, body = line.partition("\t")
+    if not sep or hashlib.sha256(body.encode("utf-8")).hexdigest()[:16] != check:
+        raise ValueError("checksum mismatch")
+    return json.loads(body)
+
+
+def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
+    """``(values, valid_byte_length, torn)`` of a framed JSONL file.
+
+    A bad FINAL line is a torn append (crash mid-write): it is reported, not
+    returned.  A bad line anywhere else is corruption and raises.
+    """
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return [], 0, False
+    values: list[Any] = []
+    valid = 0
+    pieces = raw.split(b"\n")
+    for index, piece in enumerate(pieces):
+        last = index == len(pieces) - 1
+        if not piece:
+            if last:
+                break
+            valid += 1  # blank line
+            continue
+        try:
+            values.append(_unframe(piece.decode("utf-8")))
+        except (ValueError, UnicodeDecodeError):
+            if not any(pieces[index + 1 :]):
+                return values, valid, True
+            raise TuningError(
+                E_STORE_CORRUPT, f"{path.name} has a damaged record before its end"
+            ) from None
+        valid += len(piece) + (0 if last else 1)
+    return values, valid, False
+
+
+def _repair_tail(path: Path) -> None:
+    """Truncate a torn final line (logged) so the next append starts clean."""
+    _, valid, torn = _scan_lines(path)
+    if torn:
+        logger.warning("truncating a torn final record of %s", path.name)
+        with open(path, "r+b") as fh:
+            fh.truncate(valid)
+            fh.flush()
+            os.fsync(fh.fileno())
+    elif path.exists():
+        with open(path, "rb") as fh:
+            data = fh.read()
+        if data and not data.endswith(b"\n"):
+            with open(path, "ab") as out:
+                out.write(b"\n")
+                out.flush()
+                os.fsync(out.fileno())
+
+
 def _append_line(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    _repair_tail(path)
     with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(value, sort_keys=True) + "\n")
+        fh.write(_frame(value) + "\n")
         fh.flush()
         os.fsync(fh.fileno())
 
 
 def _read_lines(path: Path) -> list[dict[str, Any]]:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return []
-    return [json.loads(line) for line in text.splitlines() if line.strip()]
+    values, _, torn = _scan_lines(path)
+    if torn:
+        logger.warning("ignoring a torn final record of %s", path.name)
+    return cast(list[dict[str, Any]], values)
 
 
 def read_head(store_dir: Path | str) -> dict[str, Any] | None:
@@ -195,6 +269,7 @@ class StepReport:
     approved: list[str] = field(default_factory=list)
     finished: list[str] = field(default_factory=list)
     awaiting_approval: list[str] = field(default_factory=list)  # occurrence refs
+    refused: list[str] = field(default_factory=list)  # "<attempt>:<closed reason>"
     head_written: int | None = None  # new generation, when the head moved
 
     @property
@@ -272,9 +347,18 @@ class Controller:
         with self._locked():
             meta = _read_json(self._p("meta.json"))
             if meta is None:
+                # Init is a recoverable transaction: ``meta.json`` is written LAST,
+                # so a crash earlier leaves the store uninitialized and the next
+                # start clears the partial files and redoes the whole init.
+                for stale in ("head.json", "heads.jsonl"):
+                    with contextlib.suppress(FileNotFoundError):
+                        self._p(stale).unlink()
                 origin = _utc(now).replace(minute=0, second=0)
                 config = dict(initial_config or {})
                 fingerprint = config_fingerprint(config)
+                head = {"fingerprint": fingerprint, "config": config, "generation": 0}
+                _write_json(self._p("head.json"), head)
+                _append_line(self._p("heads.jsonl"), head)
                 meta = {
                     "agent": agent,
                     "environment": environment,
@@ -283,11 +367,11 @@ class Controller:
                     "initial_head": {"fingerprint": fingerprint, "generation": 0},
                 }
                 _write_json(self._p("meta.json"), meta)
-                head = {"fingerprint": fingerprint, "config": config, "generation": 0}
-                _write_json(self._p("head.json"), head)
-                _append_line(self._p("heads.jsonl"), head)
             elif meta["contract_digest"] != digest or meta["agent"] != agent:
                 raise TuningError(E_STORE_MISMATCH, "store belongs to another policy")
+            else:
+                for name in ("history.jsonl", "heads.jsonl", "controller.jsonl"):
+                    _repair_tail(self._p(name))
             self.meta: dict[str, Any] = meta
             self.origin = _parse_instant(meta["origin"])
 
@@ -396,6 +480,99 @@ class Controller:
             )
             _write_json(self._p("approvals.json"), approvals)
 
+    def record_standing_grant(
+        self,
+        grant_id: str,
+        rule_ref: str,
+        max_occurrences: int,
+        expires_at: datetime,
+        issuer: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Record a standing grant for an ``approval: standing`` optimize rule.
+
+        RFC 0003 section 7.3: a closed, owner-issued record bound to this agent and
+        contract, naming the rule (``response/rule``), a maximum occurrence count and
+        an expiry (exclusive) at most 30 days after issue.  Each occurrence consumes
+        one use; a retry of the same occurrence does not.
+        """
+        self.state.require_validated()
+        issued = _utc(now)
+        expires = _utc(expires_at)
+        rule_ok = False
+        parts = rule_ref.split("/") if isinstance(rule_ref, str) else []
+        if len(parts) == 2:
+            for response in self.module.get("responses", []):
+                for rule in response["rules"]:
+                    if (response["name"], rule["id"]) == tuple(parts):
+                        rule_ok = (
+                            rule.get("do") == "optimize"
+                            and rule.get("approval") == "standing"
+                        )
+        if not (
+            isinstance(grant_id, str)
+            and _REF.match(grant_id)
+            and isinstance(issuer, str)
+            and _REF.match(issuer)
+            and rule_ok
+            and isinstance(max_occurrences, int)
+            and not isinstance(max_occurrences, bool)
+            and 1 <= max_occurrences <= 10_000
+            and issued < expires <= issued + timedelta(days=MAX_GRANT_DAYS)
+        ):
+            raise TuningError(E_INVALID_GRANT, "standing grant is not a valid record")
+        grant = {
+            "grant_id": grant_id,
+            "rule_ref": rule_ref,
+            "agent_ref": self.meta["agent"],
+            "contract_digest": self.meta["contract_digest"],
+            "issuer": issuer,
+            "issued_at": _instant_text(issued),
+            "expires_at": _instant_text(expires),
+            "max_occurrences": max_occurrences,
+            "used": [],
+        }
+        with self._locked():
+            grants = _read_json(self._p("grants.json"), {})
+            if grant_id in grants:
+                raise TuningError(E_INVALID_GRANT, "grant id already recorded")
+            grants[grant_id] = grant
+            _write_json(self._p("grants.json"), grants)
+        return copy.deepcopy(grant)
+
+    def _consume_grant(
+        self, occ: Mapping[str, Any], ref: str, moment: datetime
+    ) -> bool:
+        """Consume one use of a matching standing grant (idempotent per occurrence)."""
+        rule_ref = f"{occ['response']}/{occ['rule']}"
+        grants = _read_json(self._p("grants.json"), {})
+        for grant_id in sorted(grants):
+            grant = grants[grant_id]
+            if (
+                grant["rule_ref"] != rule_ref
+                or grant["agent_ref"] != self.meta["agent"]
+                or grant["contract_digest"] != self.meta["contract_digest"]
+            ):
+                continue
+            if ref in grant["used"]:
+                return True  # a retry of one occurrence does not consume again
+            if moment >= _parse_instant(grant["expires_at"]) or len(
+                grant["used"]
+            ) >= int(grant["max_occurrences"]):
+                continue
+            grant["used"].append(ref)
+            _write_json(self._p("grants.json"), grants)
+            return True
+        return False
+
+    def controller_facts(self) -> list[dict[str, Any]]:
+        """Closed facts the controller itself recorded (refusals); TVL never sees them."""
+        return _read_lines(self._p("controller.jsonl"))
+
+    def _record_controller_fact(self, fact: dict[str, Any]) -> None:
+        if fact not in self.controller_facts():
+            _append_line(self._p("controller.jsonl"), fact)
+
     # -- the step -------------------------------------------------------------------
     def step(
         self, now: datetime | None = None, *, abandon_interrupted: bool = False
@@ -459,6 +636,34 @@ class Controller:
             for ln in self._lines()
         )
 
+    def _authorized_now(
+        self, occ: Mapping[str, Any], ref: str, moment: datetime
+    ) -> bool:
+        """A recorded authorization for THIS occurrence, whatever the rule's mode.
+
+        ``standing`` consumes a recorded standing grant; every other mode (``human``
+        and any mode the controller does not know) needs ``approve_optimization``.
+        """
+        if self._rule(occ).get("approval", "human") == "standing":
+            return self._consume_grant(occ, ref, moment)
+        return ref in _read_json(self._p("approvals.json"), {})
+
+    def _scope_requires_intervention(self, attempt: str, ref: str, hour: int) -> bool:
+        """Ask the relation, run to ``hour``, whether the occurrence's scope still counts."""
+        from tvl.runtime_conditions import _Run
+
+        history = self._history([{"instant": hour, "category": "tick"}])
+        run = _Run(self.module, history)
+        facts = run.run()["facts"]
+        if any(
+            f["fact"] == "attempt_closed" and f["attempt"] == attempt for f in facts
+        ):
+            return False
+        for occ in run.occurrences.values():
+            if occurrence_ref(run.occ_ref(occ)) == ref:
+                return bool(run.scope_active(occ))
+        return False
+
     def _marker_path(self, attempt: str, ref: str) -> Path:
         key = hashlib.sha256(f"{attempt}|{ref}".encode()).hexdigest()[:24]
         return self._p("attempts") / f"{attempt}-{key}.json"
@@ -479,11 +684,25 @@ class Controller:
             attempt, occ = opened["attempt"], opened["occurrence"]
             ref = occurrence_ref(occ)
             hour = self._hour(moment)
-            if self._rule(occ).get("approval", "human") == "human" and not (
-                self._approval_recorded(attempt)
+            marker_path = self._marker_path(attempt, ref)
+            marker = _read_json(marker_path)
+            # Immediately before any authorization is used or the optimizer is
+            # invoked: the relation, over the history up to now, must still show
+            # this occurrence's scope as requiring intervention.
+            if marker is None and not self._scope_requires_intervention(
+                attempt, ref, hour
             ):
-                approvals = _read_json(self._p("approvals.json"), {})
-                if ref not in approvals:
+                self._record_controller_fact(
+                    {
+                        "fact": "optimize_refused",
+                        "attempt": attempt,
+                        "reason": "scope_expired",
+                    }
+                )
+                report.refused.append(f"{attempt}:scope_expired")
+                continue
+            if not self._approval_recorded(attempt):
+                if not self._authorized_now(occ, ref, moment):
                     if ref not in report.awaiting_approval:
                         report.awaiting_approval.append(ref)
                     continue
@@ -494,8 +713,6 @@ class Controller:
                 )
                 report.approved.append(attempt)
                 return True
-            marker_path = self._marker_path(attempt, ref)
-            marker = _read_json(marker_path)
             if marker is not None and "finished_record" in marker:
                 self._append("optimizations", marker["finished_record"], hour)
                 report.finished.append(attempt)
@@ -746,7 +963,25 @@ class Controller:
                 or approver in self.authorized_approvers
             )
         moment = _utc(now)
+        ident = doc.get("acceptance_id")
         with self._locked():
+            prior = [
+                ln["record"]["record"]
+                for ln in self._lines()
+                if ln["category"] == "acceptances"
+            ]
+            if isinstance(ident, str) and any(
+                isinstance(rec, dict)
+                and rec.get("acceptance_id") == ident
+                and rec != doc
+                for rec in prior
+            ):
+                # One acceptance id, one content: a conflicting replay never lands.
+                raise TuningError(
+                    E_ACCEPTANCE_CONFLICT,
+                    "that acceptance id was already submitted with other content",
+                )
+            position = len(prior)
             instant = self._hour(moment, ceil=True)
             self._append(
                 "acceptances",
@@ -758,13 +993,10 @@ class Controller:
                 instant,
             )
         self.step(moment)
-        ident = doc.get("acceptance_id")
-        verdicts = [
-            f
-            for f in self._derive()["facts"]
-            if f["fact"] == "acceptance" and f.get("acceptance") == ident
-        ]
-        last = verdicts[-1]
+        # The relation emits exactly one ``acceptance`` fact per acceptance record,
+        # in order: the verdict on THIS record is the fact at its position.
+        verdicts = [f for f in self._derive()["facts"] if f["fact"] == "acceptance"]
+        last = verdicts[position]
         return AcceptanceOutcome(
             acceptance_id=str(ident),
             result=str(last["result"]),
@@ -788,37 +1020,78 @@ class Controller:
 
     # -- head -----------------------------------------------------------------------
     def _write_head(self, trace: dict[str, Any]) -> int | None:
-        """Write the head the derived facts call for; only ever moves forward."""
+        """Write the head(s) the derived facts call for; only ever moves forward.
+
+        Each derived write is bound to the exact acceptance record that produced it
+        (the relation emits one ``acceptance`` fact per record, in history order),
+        and its approver must be authorized NOW, at effect time (RFC 0012 section 2.3).
+        """
         current = read_head(self.dir) or {"generation": 0}
-        target: tuple[int, str] | None = None
-        accepted: dict[str, str] = {}
-        for ln in self._lines():
-            if ln["category"] == "acceptances":
-                rec = ln["record"]["record"]
-                if isinstance(rec, dict) and "acceptance_id" in rec:
-                    accepted[rec["acceptance_id"]] = rec.get(
-                        "candidate_fingerprint", ""
-                    )
+        records = [
+            ln["record"]["record"]
+            for ln in self._lines()
+            if ln["category"] == "acceptances"
+        ]
+        verdicts = [f for f in trace["facts"] if f["fact"] == "acceptance"]
+        if len(verdicts) != len(records):
+            raise TuningError(E_STORE_CORRUPT, "history and derived facts disagree")
+        position = 0
         consumed: list[str] = []
+        writes: list[tuple[int, str, str | None, str | None]] = []
         for fact in trace["facts"]:
-            if fact["fact"] == "acceptance" and fact["result"] in (
-                "written",
-                "reject_recorded",
-            ):
-                consumed.append(str(fact["acceptance"]))
-            if fact["fact"] == "acceptance" and fact["result"] == "written":
-                target = (int(fact["generation"]), accepted[fact["acceptance"]])
+            if fact["fact"] == "acceptance":
+                rec = records[position]
+                position += 1
+                if fact["result"] in ("written", "reject_recorded"):
+                    consumed.append(str(fact["acceptance"]))
+                if fact["result"] == "written":
+                    writes.append(
+                        (
+                            int(fact["generation"]),
+                            str(rec["candidate_fingerprint"]),
+                            str(fact["acceptance"]),
+                            str(rec.get("approver_ref")),
+                        )
+                    )
             elif fact["fact"] == "rollback" and fact["result"] == "written":
-                target = (int(fact["generation"]), str(fact["fingerprint"]))
+                writes.append(
+                    (int(fact["generation"]), str(fact["fingerprint"]), None, None)
+                )
         _write_json(self._p("consumed.json"), sorted(set(consumed)))
-        if target is None or target[0] <= int(current["generation"]):
-            return None
-        generation, fingerprint = target
-        config = self._config_for(fingerprint)
-        head = {"fingerprint": fingerprint, "config": config, "generation": generation}
-        _append_line(self._p("heads.jsonl"), head)
-        _write_json(self._p("head.json"), head)
-        return generation
+        written: int | None = None
+        for generation, fingerprint, acceptance, approver in writes:
+            if generation <= int(current["generation"]):
+                continue
+            if acceptance is not None and not self._approver_authorized_now(approver):
+                self._record_controller_fact(
+                    {
+                        "fact": "head_write_refused",
+                        "acceptance": acceptance,
+                        "generation": generation,
+                        "reason": "approver_not_authorized",
+                    }
+                )
+                break  # a later generation never skips an unwritten one
+            config = self._config_for(fingerprint)
+            head = {
+                "fingerprint": fingerprint,
+                "config": config,
+                "generation": generation,
+            }
+            if not any(
+                h["generation"] == generation
+                for h in _read_lines(self._p("heads.jsonl"))
+            ):
+                _append_line(self._p("heads.jsonl"), head)
+            _write_json(self._p("head.json"), head)
+            current = head
+            written = generation
+        return written
+
+    def _approver_authorized_now(self, approver: str | None) -> bool:
+        return (
+            self.authorized_approvers is None or approver in self.authorized_approvers
+        )
 
     def _config_for(self, fingerprint: str) -> dict[str, Any]:
         for marker in self._markers():
@@ -841,7 +1114,10 @@ class Controller:
             ref = occurrence_ref(opened["occurrence"])
             if opened["finished"]:
                 state = "deploy_awaiting"
-            elif ref in approvals or self._approval_recorded(opened["attempt"]):
+            elif self._approval_recorded(opened["attempt"]) or (
+                self._rule(opened["occurrence"]).get("approval", "human") != "standing"
+                and ref in approvals
+            ):
                 marker = _read_json(self._marker_path(opened["attempt"], ref))
                 state = (
                     "interrupted"
@@ -873,17 +1149,38 @@ class Controller:
         }
 
 
-def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
-    """Adapt a ``@traigent.optimize`` function: run ``fn.optimize`` on the search space.
+def _candidate_copy(fn: Any) -> Any:
+    """A throwaway copy of an optimized function with its OWN config state.
 
-    The configuration is *not* applied (``apply=False``); a deploy only follows a
-    recorded human acceptance.
+    ``optimize(apply=False)`` is withdrawn in the SDK, and ``optimize(apply=True)``
+    applies the winner to the wrapper it ran on.  Running it on a copy that owns a
+    fresh state manager returns the result while the live function keeps serving
+    exactly what it served before.
+    """
+    init = getattr(fn, "_initialize_state_and_wrapper", None)
+    if not callable(init) or not hasattr(fn, "_csm"):
+        raise TuningError(
+            E_NO_CANDIDATE_RUN, "the function cannot run an isolated optimization"
+        )
+    clone = copy.copy(fn)
+    clone.__dict__["_exclusive_slot"] = None
+    clone._initialize_state_and_wrapper()
+    if clone._csm is fn._csm:
+        raise TuningError(E_NO_CANDIDATE_RUN, "candidate run is not isolated")
+    return clone
+
+
+def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
+    """Adapt a ``@traigent.optimize`` function: run it on the search space.
+
+    The optimization runs on an isolated copy (see :func:`_candidate_copy`), so the
+    live function's configuration is never changed; a deploy only follows a recorded
+    human acceptance.
     """
 
     def run(search_space: dict[str, Any]) -> Any:
-        return asyncio.run(
-            fn.optimize(configuration_space=search_space, apply=False, **kwargs)
-        )
+        clone = _candidate_copy(fn)
+        return asyncio.run(clone.optimize(configuration_space=search_space, **kwargs))
 
     return run
 

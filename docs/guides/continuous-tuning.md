@@ -70,6 +70,39 @@ and the policy is marked `validated=False`; `fn.tuning.require_validated()`, `tr
 and `traigent tune simulate` refuse with `E_TVL_VALIDATOR_UNAVAILABLE`. There is no
 schema-only fallback.
 
+### CI: do not lose the TVL tests silently
+
+`tests/unit/tuning` needs the TVL 1.7 toolchain. Collection never imports TVL; without it the
+tests skip. A CI job that must keep this coverage sets `TRAIGENT_TVL_REQUIRED=1`
+(`1`, `true` or `yes`): a missing or too-old TVL then **fails** every test in the directory
+instead of skipping it.
+
+```bash
+TRAIGENT_TVL_REQUIRED=1 python -m pytest -q tests/unit/tuning
+```
+
+## Local controller guarantees
+
+* **Every optimization needs a recorded authorization.** `approval: human` rules wait for
+  `approve_optimization`; `approval: standing` rules wait for a recorded standing grant
+  (`Controller.record_standing_grant`: grant id, `response/rule`, max occurrences, expiry at most
+  30 days, RFC 0003 section 7.3). Each occurrence consumes one use; a retry of the same occurrence
+  does not. No record, no optimize.
+* **Scope is re-checked** with the TVL relation immediately before the optimizer runs; an expired
+  scope is refused and recorded as a controller fact (`optimize_refused`).
+* **The head moves only on a TVL-derived acceptance write**, bound to the exact acceptance record
+  that produced it. A second record with the same `acceptance_id` and other content is rejected
+  (`E_ACCEPTANCE_CONFLICT`). The approver is checked against the controller's current
+  `authorized_approvers` when the head is written, including recovery replays; a refusal is
+  recorded (`head_write_refused`) and the head file does not move.
+* **The optimization runs on an isolated copy** of the `@traigent.optimize` function, so the live
+  function keeps serving its head.
+* **Store durability.** `meta.json` is written last (an interrupted init is redone on the next
+  start). History, heads and controller facts are checksummed JSONL: a torn final line is
+  truncated and logged on load; a damaged earlier line raises `E_STORE_CORRUPT`.
+* **Followed-head traces** (`observe(follow="head")`) carry only `agent`, `head_generation` and
+  `head_fingerprint`; the head configuration is never copied into trace metadata.
+
 ## Budget
 
 Per-occurrence spend belongs to TVL `run_budget` (RFC 0010). Until the TVL schema accepts it, a

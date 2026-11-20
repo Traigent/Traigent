@@ -139,6 +139,11 @@ def _sanitize_trial_context(raw_trial_context: Any) -> dict[str, Any]:
 
 
 def _build_observe_enrichment_metadata() -> dict[str, Any]:
+    if _followed_head.get() is not None:
+        # A followed head's configuration may carry prompt text: trace metadata
+        # gets only the closed stamps of ``_call_metadata`` (agent ref, head
+        # generation, head fingerprint), never the config or trial context.
+        return {}
     raw_applied_config = applied_config_context.get(None)
     raw_active_config = config_context.get(None)
     active_config, active_config_source = _active_observe_config(
@@ -573,7 +578,11 @@ class _ObserveFactory:
                 return None, None
             return (
                 _followed_head.set(
-                    {"agent": self.agent, "generation": int(head["generation"])}
+                    {
+                        "agent": self.agent,
+                        "generation": int(head["generation"]),
+                        "fingerprint": str(head.get("fingerprint", "")),
+                    }
                 ),
                 config_context.set(dict(head["config"])),
             )
@@ -614,6 +623,8 @@ class _ObserveFactory:
         if stamp["agent"] is not None:
             merged["agent"] = str(stamp["agent"])
         merged["head_generation"] = int(stamp["generation"])
+        if stamp.get("fingerprint"):
+            merged["head_fingerprint"] = str(stamp["fingerprint"])
         return merged
 
     def _wrap(self, func: Callable[..., Any]):

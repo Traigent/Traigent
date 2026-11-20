@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -17,23 +18,21 @@ import traigent
 from traigent.cli.main import cli
 from traigent.config.context import config_context
 from traigent.observability import observe
-from traigent.tuning import validator
 from traigent.tuning.controller import (
+    E_ACCEPTANCE_CONFLICT,
     E_ATTEMPT_IN_PROGRESS,
+    E_INVALID_GRANT,
     E_NO_DEPLOY_AWAITING,
+    E_STORE_CORRUPT,
     Controller,
     HeadLoader,
     config_fingerprint,
     occurrence_ref,
+    traigent_optimize_fn,
 )
 from traigent.tuning.errors import TuningError, ValidatorUnavailable
 from traigent.tuning.policy import Tuning
 from traigent.tuning.state import TuningState
-
-pytestmark = pytest.mark.skipif(
-    not validator.validator_available(),
-    reason="TVL toolchain with 1.7 support not installed",
-)
 
 SLICE = (
     Path(__file__).resolve().parents[2]
@@ -59,8 +58,10 @@ def _ref(event_id: str) -> str:
     )
 
 
-E1_REF = _ref("E1")
-E6_REF = _ref("E6")
+@functools.cache
+def e_ref(event_id: str) -> str:
+    """Resolved lazily: TVL is only imported once a test runs (and was not skipped)."""
+    return _ref(event_id)
 
 
 def at(hours: int) -> datetime:
@@ -140,19 +141,19 @@ def test_slice_end_to_end(tmp_path: Path) -> None:
     # E1 -> attempt opened, but nothing runs without a recorded approval.
     c.record_event(event("E1", NEW["model"], 9), at(10))
     report = c.step(at(10))
-    assert report.awaiting_approval == [E1_REF]
+    assert report.awaiting_approval == [e_ref("E1")]
     assert opt.calls == []
 
     # approval -> optimize runs once with the admitted search domain.
-    to_deploy_awaiting(c, E1_REF, 10)
+    to_deploy_awaiting(c, e_ref("E1"), 10)
     assert len(opt.calls) == 1
     assert NEW["model"] in opt.calls[0]["model"]
     status = c.status()
-    assert [d["occurrence"] for d in status["pending_deploys"]] == [E1_REF]
+    assert [d["occurrence"] for d in status["pending_deploys"]] == [e_ref("E1")]
     assert head(tmp_path)["generation"] == 0  # nothing deployed yet
 
     # human acceptance at generation 0 -> head generation 1, the new model.
-    outcome = c.accept(E1_REF, "approver-1", 0, now=at(31))
+    outcome = c.accept(e_ref("E1"), "approver-1", 0, now=at(31))
     assert (outcome.result, outcome.generation) == ("written", 1)
     assert head(tmp_path)["generation"] == 1
     assert head(tmp_path)["config"] == NEW
@@ -164,9 +165,9 @@ def test_slice_end_to_end(tmp_path: Path) -> None:
 
     # a stale acceptance (generation 0) for a new deploy is refused; head unchanged.
     c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
-    to_deploy_awaiting(c, E6_REF, 40)
+    to_deploy_awaiting(c, e_ref("E6"), 40)
     assert len(opt.calls) == 2
-    stale = c.accept(E6_REF, "approver-1", 0, now=at(41))
+    stale = c.accept(e_ref("E6"), "approver-1", 0, now=at(41))
     assert (stale.result, stale.reason) == ("refused", "stale_generation")
     assert head(tmp_path)["generation"] == 1 and head(tmp_path)["config"] == NEW
 
@@ -184,7 +185,7 @@ def test_crash_between_optimize_and_record_never_reruns(
     opt = FakeOptimizer()
     c = controller(tmp_path, opt)
     c.record_event(event("E1", NEW["model"], 9), at(10))
-    c.approve_optimization(E1_REF, "approver-1", at(10))
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
 
     real = Controller._append
 
@@ -202,14 +203,16 @@ def test_crash_between_optimize_and_record_never_reruns(
     restarted = controller(tmp_path, opt)  # a new process over the same store
     restarted.step(at(11))
     assert len(opt.calls) == 1
-    assert [d["occurrence"] for d in restarted.status()["pending_deploys"]] == [E1_REF]
+    assert [d["occurrence"] for d in restarted.status()["pending_deploys"]] == [
+        e_ref("E1")
+    ]
 
 
 def test_interrupted_attempt_is_not_started_twice(tmp_path: Path) -> None:
     opt = FakeOptimizer()
     c = controller(tmp_path, opt)
     c.record_event(event("E1", NEW["model"], 9), at(10))
-    c.approve_optimization(E1_REF, "approver-1", at(10))
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     marker_dir = tmp_path / "store" / "attempts"
     c.step(at(10))  # runs and finishes
     marker = next(marker_dir.glob("*.json"))
@@ -217,7 +220,7 @@ def test_interrupted_attempt_is_not_started_twice(tmp_path: Path) -> None:
     # A store holding only an in-progress marker (crash mid-optimize): refuse.
     c2 = Controller(state(), tmp_path / "other", opt, initial_config=OLD, now=T0)
     c2.record_event(event("E1", NEW["model"], 9), at(10))
-    c2.approve_optimization(E1_REF, "approver-1", at(10))
+    c2.approve_optimization(e_ref("E1"), "approver-1", at(10))
     (tmp_path / "other" / "attempts").mkdir()
     (tmp_path / "other" / "attempts" / marker.name).write_text(
         json.dumps(
@@ -237,11 +240,11 @@ def test_candidate_without_promotion_evidence_never_deploys(tmp_path: Path) -> N
     opt = FakeOptimizer(result={"best_config": NEW})  # a bare result, no gate evidence
     c = controller(tmp_path, opt)
     c.record_event(event("E1", NEW["model"], 9), at(10))
-    to_deploy_awaiting(c, E1_REF, 10)
+    to_deploy_awaiting(c, e_ref("E1"), 10)
     assert len(opt.calls) == 1
     assert c.status()["pending_deploys"] == []
     with pytest.raises(TuningError) as err:
-        c.accept(E1_REF, "approver-1", 0, now=at(31))
+        c.accept(e_ref("E1"), "approver-1", 0, now=at(31))
     assert err.value.code == E_NO_DEPLOY_AWAITING
     assert head(tmp_path)["generation"] == 0
 
@@ -249,8 +252,8 @@ def test_candidate_without_promotion_evidence_never_deploys(tmp_path: Path) -> N
 def test_acceptance_with_wrong_contract_digest_is_refused(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer())
     c.record_event(event("E1", NEW["model"], 9), at(10))
-    to_deploy_awaiting(c, E1_REF, 10)
-    record = c.build_acceptance(E1_REF, "approver-1", 0, now=at(31))
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
     record["contract_digest"] = "sha256:" + "d" * 64
     outcome = c.submit_acceptance(record, at(31))
     assert (outcome.result, outcome.reason) == ("invalid", "binding_mismatch")
@@ -260,8 +263,8 @@ def test_acceptance_with_wrong_contract_digest_is_refused(tmp_path: Path) -> Non
 def test_unauthorized_approver_is_refused(tmp_path: Path) -> None:
     c = controller(tmp_path, FakeOptimizer(), authorized_approvers={"boss"})
     c.record_event(event("E1", NEW["model"], 9), at(10))
-    to_deploy_awaiting(c, E1_REF, 10)
-    outcome = c.accept(E1_REF, "intern", 0, now=at(31))
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+    outcome = c.accept(e_ref("E1"), "intern", 0, now=at(31))
     assert (outcome.result, outcome.reason) == ("invalid", "unauthorized")
     assert head(tmp_path)["generation"] == 0
 
@@ -284,8 +287,8 @@ def test_every_executing_path_refuses_without_a_validated_policy(
         lambda: c.step(at(1)),
         lambda: c.record_event(event("E1", "m", 0), at(1)),
         lambda: c.record_window({}, at(1)),
-        lambda: c.approve_optimization(E1_REF, "a", at(1)),
-        lambda: c.accept(E1_REF, "a", 0, now=at(1)),
+        lambda: c.approve_optimization(e_ref("E1"), "a", at(1)),
+        lambda: c.accept(e_ref("E1"), "a", 0, now=at(1)),
         lambda: c.status(),
     ):
         with pytest.raises(ValidatorUnavailable):
@@ -315,8 +318,8 @@ def test_observe_follow_head_sees_the_new_config_and_stamps_generation(
     assert stamp()["agent"] == "agent-1" and stamp()["head_generation"] == 0
 
     c.record_event(event("E1", NEW["model"], 9), at(10))
-    to_deploy_awaiting(c, E1_REF, 10)
-    c.accept(E1_REF, "approver-1", 0, now=at(31))
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+    c.accept(e_ref("E1"), "approver-1", 0, now=at(31))
 
     classify()
     assert seen[-1] == NEW
@@ -343,10 +346,281 @@ def test_cli_drives_the_loop(tmp_path: Path) -> None:
     first = run("event", str(ev), "--now", "2026-11-20T10:00:00Z")
     assert first.exit_code == 0, first.output
     step = run("step", "--now", "2026-11-20T10:00:00Z")
-    assert json.loads(step.output)["awaiting_approval"] == [E1_REF]
+    assert json.loads(step.output)["awaiting_approval"] == [e_ref("E1")]
     status = run("status")
     assert json.loads(status.output)["open_attempts"][0]["state"] == "awaiting_approval"
-    approve = run("approve", E1_REF, "--approver", "approver-1")
+    approve = run("approve", e_ref("E1"), "--approver", "approver-1")
     assert approve.exit_code == 0, approve.output
-    missing = run("accept", E1_REF, "--generation", "0", "--approver", "approver-1")
+    missing = run(
+        "accept", e_ref("E1"), "--generation", "0", "--approver", "approver-1"
+    )
     assert missing.exit_code != 0  # no optimize_fn via --tvl: the step cannot run
+
+
+# ---------------------------------------------------------------------------------
+# second-model review fixes
+# ---------------------------------------------------------------------------------
+SENTINEL = "SENTINEL-PROMPT-TEXT-7f3a"
+
+
+def _deploy_awaiting(tmp_path: Path, opt: Any = None, **kw: Any) -> Controller:
+    c = controller(tmp_path, opt or FakeOptimizer(), **kw)
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+    return c
+
+
+def test_conflicting_acceptance_replay_never_changes_the_written_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _deploy_awaiting(tmp_path)
+    record = c.build_acceptance(e_ref("E1"), "approver-1", 0, now=at(31))
+    real = Controller._write_head
+
+    def crash(self: Controller, trace: Any) -> Any:
+        raise RuntimeError("simulated crash before the head write")
+
+    monkeypatch.setattr(Controller, "_write_head", crash)
+    with pytest.raises(RuntimeError):
+        c.submit_acceptance(record, at(31))  # recorded, head not yet written
+    monkeypatch.setattr(Controller, "_write_head", real)
+
+    conflicting = {**record, "candidate_fingerprint": config_fingerprint(OLD)}
+    with pytest.raises(TuningError) as err:
+        c.submit_acceptance(conflicting, at(32))
+    assert err.value.code == E_ACCEPTANCE_CONFLICT
+    lines = (tmp_path / "store" / "history.jsonl").read_text().splitlines()
+    assert sum('"acceptances"' in ln for ln in lines) == 1  # the replay never landed
+
+    restarted = controller(tmp_path, FakeOptimizer())
+    assert restarted.step(at(33)).head_written == 1
+    assert head(tmp_path)["config"] == NEW  # the exact record, not the replay
+
+
+def test_follow_head_trace_metadata_is_closed(tmp_path: Path) -> None:
+    secret = {"model": "m", "prompt": SENTINEL}
+    Controller(state(), tmp_path / "store", None, initial_config=secret, now=T0)
+    client = MagicMock()
+    seen: list[Any] = []
+
+    @observe(
+        "classify",
+        client=client,
+        agent="agent-1",
+        follow="head",
+        tuning_store=tmp_path / "store",
+    )
+    def classify() -> str:
+        seen.append(dict(traigent.get_config()))
+        return "ok"
+
+    classify()
+    assert seen == [secret]  # the call itself still runs on the head config
+    emitted = json.dumps(client.mock_calls, default=repr)
+    assert SENTINEL not in emitted
+    metadata = client.start_trace.call_args.kwargs["metadata"]
+    assert metadata["agent"] == "agent-1" and metadata["head_generation"] == 0
+    assert metadata["head_fingerprint"] == config_fingerprint(secret)
+    assert "traigent_active_config" not in metadata
+
+
+def _standing_state() -> TuningState:
+    doc = module()
+    for response in doc["responses"]:
+        for rule in response["rules"]:
+            if rule["id"] == "on_new_model":
+                rule["approval"] = "standing"
+    # the policy builder only knows human approval; the controller reads ``tvl``
+    return TuningState(
+        agent="agent-1", policy=Tuning.from_tvl(module()), tvl=doc, validated=True
+    )
+
+
+def _standing(tmp_path: Path, opt: Any) -> Controller:
+    return Controller(
+        _standing_state(), tmp_path / "store", opt, initial_config=OLD, now=T0
+    )
+
+
+def test_standing_rule_optimizes_only_under_a_recorded_grant(tmp_path: Path) -> None:
+    opt = FakeOptimizer()
+    c = _standing(tmp_path, opt)
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    report = c.step(at(10))
+    assert opt.calls == [] and report.awaiting_approval == [e_ref("E1")]
+
+    with pytest.raises(TuningError) as err:  # expiry beyond 30 days
+        c.record_standing_grant(
+            "G0", "tuning/on_new_model", 1, at(10) + timedelta(days=31), "owner", at(10)
+        )
+    assert err.value.code == E_INVALID_GRANT
+
+    c.record_standing_grant(
+        "G1", "tuning/on_new_model", 1, at(10) + timedelta(days=30), "owner", at(10)
+    )
+    c.step(at(10))
+    c.step(at(10))  # a retry of the same occurrence does not consume again
+    assert len(opt.calls) == 1
+    assert c.accept(e_ref("E1"), "approver-1", 0, now=at(31)).result == "written"
+
+    c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
+    report = c.step(at(40))  # the grant allowed one occurrence
+    assert len(opt.calls) == 1 and report.awaiting_approval == [e_ref("E6")]
+
+
+def test_expired_standing_grant_does_not_authorize(tmp_path: Path) -> None:
+    opt = FakeOptimizer()
+    c = _standing(tmp_path, opt)
+    c.record_standing_grant(
+        "G1", "tuning/on_new_model", 5, at(10) + timedelta(hours=2), "owner", at(10)
+    )
+    c.record_event(event("E1", NEW["model"], 19), at(20))
+    c.step(at(20))
+    assert opt.calls == []
+
+
+class _Live:
+    """A real mock-mode ``@traigent.optimize`` function and what it serves."""
+
+    @staticmethod
+    def build() -> Any:
+        @traigent.optimize(
+            configuration_space={"model": [OLD["model"], NEW["model"]]},
+            objectives=["accuracy"],
+            eval_dataset=[{"input": {"q": "a"}, "output": "a"}],
+            offline=True,
+            max_trials=2,
+            default_config=dict(OLD),
+        )
+        def live(q: str) -> str:
+            return "a"
+
+        return live
+
+
+def test_real_adapter_runs_optimization_without_changing_the_live_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    live = _Live.build()
+    before = (dict(live.current_config), live.get_best_config(), live._state)
+    result = traigent_optimize_fn(live, algorithm="grid", max_trials=2)(
+        {"model": [OLD["model"], NEW["model"]]}
+    )
+    assert result.trials  # the optimization really ran
+    assert (dict(live.current_config), live.get_best_config(), live._state) == before
+    assert len(live._optimization_history) == 0
+
+
+def test_head_write_rechecks_the_approver_at_effect_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _deploy_awaiting(tmp_path, authorized_approvers={"boss"})
+    real = Controller._write_head
+
+    def crash(self: Controller, trace: Any) -> Any:
+        raise RuntimeError("simulated crash before the head write")
+
+    monkeypatch.setattr(Controller, "_write_head", crash)
+    with pytest.raises(RuntimeError):
+        c.accept(e_ref("E1"), "boss", 0, now=at(31))  # derived, not yet written
+    monkeypatch.setattr(Controller, "_write_head", real)
+
+    revoked = controller(tmp_path, FakeOptimizer(), authorized_approvers={"other"})
+    assert revoked.step(at(32)).head_written is None
+    assert head(tmp_path)["generation"] == 0  # the head file never moved
+    assert [f["fact"] for f in revoked.controller_facts()] == ["head_write_refused"]
+
+    restored = controller(tmp_path, FakeOptimizer(), authorized_approvers={"boss"})
+    assert restored.step(at(33)).head_written == 1
+    assert head(tmp_path)["config"] == NEW
+
+
+def test_expired_scope_blocks_a_late_approved_optimization(tmp_path: Path) -> None:
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt)
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    late = at(10) + timedelta(days=31)
+    c.approve_optimization(e_ref("E1"), "approver-1", late)
+    report = c.step(late)
+    assert opt.calls == [] and report.started == []
+    assert report.refused and report.refused[0].endswith(":scope_expired")
+    assert [f["reason"] for f in c.controller_facts()] == ["scope_expired"]
+    assert not list((tmp_path / "store" / "attempts").glob("*.json"))
+
+
+@pytest.mark.parametrize("failing", ["head.json", "heads.jsonl", "meta.json"])
+def test_init_crash_is_recoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    from traigent.tuning import controller as module_
+
+    real_write, real_append = module_._write_json, module_._append_line
+
+    def write(path: Path, value: Any) -> None:
+        if path.name == failing:
+            raise RuntimeError("simulated crash during init")
+        real_write(path, value)
+
+    def append(path: Path, value: Any) -> None:
+        if path.name == failing:
+            raise RuntimeError("simulated crash during init")
+        real_append(path, value)
+
+    monkeypatch.setattr(module_, "_write_json", write)
+    monkeypatch.setattr(module_, "_append_line", append)
+    with pytest.raises(RuntimeError):
+        controller(tmp_path, FakeOptimizer())
+    monkeypatch.undo()
+
+    c = controller(tmp_path, FakeOptimizer())  # the next start finishes the init
+    assert head(tmp_path) == {
+        "config": OLD,
+        "fingerprint": config_fingerprint(OLD),
+        "generation": 0,
+    }
+    assert c.status()["head"]["generation"] == 0
+    assert len((tmp_path / "store" / "heads.jsonl").read_text().splitlines()) == 1
+
+
+def test_torn_history_tail_is_truncated_and_earlier_lines_verified(
+    tmp_path: Path,
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
+    path = tmp_path / "store" / "history.jsonl"
+    data = path.read_bytes()
+    path.write_bytes(data[: len(data) - 25])  # a crash mid-append of the last line
+
+    restarted = controller(tmp_path, FakeOptimizer())
+    assert len(path.read_text().splitlines()) == 1  # torn tail truncated
+    assert len(restarted.status()["open_attempts"]) == 1  # E1 survives
+    restarted.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
+    assert len(path.read_text().splitlines()) == 2
+
+
+def test_damaged_earlier_line_is_corruption_not_a_torn_tail(tmp_path: Path) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c.record_event(event("E6", "anthropic/claude-haiku-5-6", 39), at(40))
+    path = tmp_path / "store" / "history.jsonl"
+    first, second = path.read_text().splitlines()
+    path.write_text(first.replace("E1", "EX") + "\n" + second + "\n")
+    with pytest.raises(TuningError) as err:
+        controller(tmp_path, FakeOptimizer())
+    assert err.value.code == E_STORE_CORRUPT
+
+
+def test_required_env_makes_a_missing_toolchain_fail_not_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.unit.tuning import conftest
+
+    monkeypatch.setattr(conftest.validator, "validator_available", lambda: False)
+    monkeypatch.delenv(conftest.REQUIRED_ENV, raising=False)
+    with pytest.raises(pytest.skip.Exception):
+        conftest.check_toolchain()
+    monkeypatch.setenv(conftest.REQUIRED_ENV, "1")
+    with pytest.raises(pytest.fail.Exception):
+        conftest.check_toolchain()
