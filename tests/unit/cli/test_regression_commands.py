@@ -471,3 +471,23 @@ def test_zero_failures_leaves_an_existing_file_untouched(ws: Path) -> None:
     )
     assert _add(ws, "run_clean").exit_code == 0
     assert (path.read_bytes(), path.stat().st_mtime_ns) == (before, mtime)
+
+
+def test_dataset_option_accepts_json_as_its_help_says(ws: Path) -> None:
+    (ws / "data.json").write_text(json.dumps(ROWS), encoding="utf-8")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "regression",
+            "add",
+            "run_a",
+            "--dataset",
+            str(ws / "data.json"),
+            "--dir",
+            str(ws / "reg"),
+            "--storage-dir",
+            str(ws / "results"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert sorted(_by_id(ws)) == ["example_1", "example_2"]

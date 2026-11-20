@@ -646,3 +646,44 @@ def test_a_third_content_still_conflicts_after_keep_both(tmp_path: Path) -> None
     _merge(tmp_path, _ds(("q0", "B")), "r2", on_id_conflict="keep-both")
     with pytest.raises(IdConflictError):
         _merge(tmp_path, _ds(("q0", "C")), "r3")
+
+
+# ------------------------------------------- duplicate ids inside one merge
+
+
+def _with_duplicate_id(first: tuple[str, str], second: tuple[str, str]) -> Dataset:
+    """A dataset whose list was extended past the constructor's id check."""
+    ds = _ds(first)
+    ds.examples.append(
+        EvaluationExample(
+            input_data={"q": second[0]},
+            expected_output=second[1],
+            metadata={"example_id": 0},
+        )
+    )
+    return ds
+
+
+def test_same_id_same_content_twice_in_one_call_is_one_row(tmp_path: Path) -> None:
+    report = _merge(tmp_path, _with_duplicate_id(("q0", "a0"), ("q0", "a0")))
+    assert report.rows_added == 1
+    assert len((tmp_path / "regression.jsonl").read_text().splitlines()) == 1
+
+
+def test_same_id_different_content_twice_in_one_call_is_a_conflict(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(IdConflictError) as err:
+        _merge(tmp_path, _with_duplicate_id(("q0", "a0"), ("q0", "OTHER")))
+    assert err.value.example_ids == ["0"]
+    assert not (tmp_path / "regression.jsonl").exists()
+    keep = _merge(
+        tmp_path,
+        _with_duplicate_id(("q0", "a0"), ("q0", "OTHER")),
+        on_id_conflict="keep-both",
+    )
+    ids = [
+        json.loads(line)["metadata"]["example_id"]
+        for line in (tmp_path / "regression.jsonl").read_text().splitlines()
+    ]
+    assert len(ids) == len(set(ids)) == 2 and keep.rows_added == 2
