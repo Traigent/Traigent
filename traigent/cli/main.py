@@ -24,6 +24,7 @@ from traigent.cli.auth_commands import auth
 from traigent.cli.certify_commands import certify
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_local_commands
+from traigent.cli.regression_commands import register_regression_commands
 from traigent.cli.sync_commands import register_sync_command
 from traigent.cli.validation_types import ValidationResult
 from traigent.config.types import accepted_algorithm_values
@@ -3197,6 +3198,8 @@ def check(
 register_local_commands(cli)
 # Top-level `traigent sync`.
 register_sync_command(cli)
+# `traigent regression ...`.
+register_regression_commands(cli)
 
 cli.add_command(auth)
 cli.add_command(certify)
