@@ -1,0 +1,1167 @@
+"""The local loop controller drives the SLICE scenario end to end (fake optimizer)."""
+
+from __future__ import annotations
+
+import copy
+import functools
+import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+import yaml
+from click.testing import CliRunner
+
+import traigent
+from traigent.cli.main import cli
+from traigent.config.context import config_context
+from traigent.observability import observe
+from traigent.tuning.authority import ApproverAuthority
+from traigent.tuning.controller import (
+    E_ATTEMPT_IN_PROGRESS,
+    E_STORE_CORRUPT,
+    E_STORE_FORMAT,
+    Controller,
+    HeadLoader,
+    config_fingerprint,
+    occurrence_ref,
+    traigent_optimize_fn,
+)
+from traigent.tuning.errors import (
+    E_APPROVER_NOT_AUTHORIZED,
+    E_NO_APPROVER_AUTHORITY,
+    E_UNSUPPORTED_IN_RELEASE,
+    TuningError,
+    ValidatorUnavailable,
+)
+from traigent.tuning.policy import Tuning
+from traigent.tuning.state import TuningState
+
+SLICE = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "tuning"
+    / "external-slice-trace.yml"
+)
+T0 = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
+OLD = {"model": "anthropic/claude-haiku-4-5"}
+NEW = {"model": "anthropic/claude-haiku-5-5"}
+NEWER = {"model": "anthropic/claude-haiku-5-6"}
+CANDIDATES = [NEW["model"], NEWER["model"], "anthropic/claude-haiku-5-7"]
+# the hour (after T0) each named occurrence's schedule first ticks
+OCCURRENCE_HOURS = {"E1": 9, "E6": 39, "E7": 40}
+APPROVERS = frozenset({"approver-1", "issuer-1", "boss"})
+ROWS = 1000
+KIT: dict[str, Any] = {}
+
+
+def _skill_agent(x: int) -> str:
+    """A synthetic ticket router: each model gets a different share of rows wrong."""
+    from traigent.config.context import config_context
+
+    model = (config_context.get() or {}).get("model")
+    right = "billing" if x % 2 == 0 else "support"
+    wrong = {
+        OLD["model"]: x % 4 >= 2,  # half
+        NEW["model"]: x % 34 == 33,  # about 3%
+    }.get(model, False)
+    return ("support" if right == "billing" else "billing") if wrong else right
+
+
+def _route_check(example: Any, output: Any) -> str:
+    return "pass" if output == example["output"] else "fail"
+
+
+@pytest.fixture(autouse=True)
+def _holdout(tmp_path: Path) -> None:
+    path = tmp_path / "kit-holdout.jsonl"
+    rows = [
+        {"input": {"x": i}, "output": "billing" if i % 2 == 0 else "support"}
+        for i in range(ROWS)
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    KIT["holdout"] = path
+
+
+def _ref(name: str) -> str:
+    """The reference of a schedule occurrence, scope_ref from TVL itself."""
+    return occurrence_ref(
+        {
+            "response": "tuning",
+            "rule": f"on_{name}",
+            "scope_kind": "schedule",
+            "scope": "0",
+            "j": 0,
+        }
+    )
+
+
+@functools.cache
+def e_ref(name: str) -> str:
+    """Resolved lazily: TVL is only imported once a test runs (and was not skipped)."""
+    return _ref(name)
+
+
+def at(hours: int) -> datetime:
+    return T0 + timedelta(hours=hours)
+
+
+def module() -> dict[str, Any]:
+    case = yaml.safe_load(SLICE.read_text(encoding="utf-8"))
+    doc = copy.deepcopy(case["module"])
+    # the local evidence measures accuracy (exact match on the holdout)
+    doc["objectives"] = [{"name": "accuracy", "direction": "maximize"}]
+    doc["promotion_policy"]["min_effect"] = {"accuracy": 0.02}
+    doc["tvars"][0]["domain"] = [
+        OLD["model"],
+        "anthropic/claude-sonnet-4-6",
+        *CANDIDATES,
+    ]
+    # the occurrences are schedules (the pilot's trigger): each ticks once, at
+    # its own anchor, and its scope lasts thirty days
+    breach = [r for r in doc["responses"][0]["rules"] if r["id"] == "on_breach"]
+    scheduled = [
+        {
+            "id": f"on_{name}",
+            "trigger": {
+                "schedule": {
+                    "every_days": 30,
+                    "anchor": (T0 + timedelta(hours=hour)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                }
+            },
+            "do": "optimize",
+            "approval": "human",
+            "deploy": "if_promoted",
+            "protects": ["quality_floor"],
+        }
+        for name, hour in OCCURRENCE_HOURS.items()
+    ]
+    doc["responses"][0]["rules"] = [*scheduled, *breach]
+    return doc
+
+
+def kit(policy: Tuning) -> Tuning:
+    """Wire the customer-side promotion evidence: checker, labels, holdout."""
+    policy.checkers = {"customer:ticket_route_check": _route_check}
+    policy.checker_labels = {"customer:ticket_route_check": ("pass", "fail")}
+    policy.holdout = KIT["holdout"]
+    return policy
+
+
+def state(doc: dict[str, Any] | None = None, *, validated: bool = True) -> TuningState:
+    doc = doc or module()
+    st = TuningState(
+        agent="agent-1",
+        policy=kit(Tuning.from_tvl(doc)),
+        tvl=doc,
+        validated=validated,
+    )
+    st.optimized = _skill_agent
+    return st
+
+
+class FakeOptimizer:
+    """Stands in for ``fn.optimize``; records every call."""
+
+    def __init__(self, result: Any = None, models: list[str] | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.result = result
+        self.models = models or CANDIDATES
+
+    def __call__(self, space: dict[str, Any]) -> Any:
+        self.calls.append(space)
+        if self.result is not None:
+            return self.result
+        return {
+            "loaded_dataset_digests": [],  # this fake run loaded no dataset
+            "candidates": [
+                {
+                    # the optimizer proposes a config; the controller measures it
+                    "config": {
+                        "model": self.models[min(len(self.calls), len(self.models)) - 1]
+                    },
+                }
+            ],
+        }
+
+
+def make(st: TuningState, store: Path, optimize: Any, **kw: Any) -> Controller:
+    """A controller with the test authority configured."""
+    kw.setdefault("authorized_approvers", APPROVERS)
+    kw.setdefault("initial_config", OLD)
+    kw.setdefault("now", T0)
+    kw.setdefault(
+        "environment", "development"
+    )  # local-trusted needs a non-production store
+    return Controller(st, store, optimize, **kw)
+
+
+def controller(tmp_path: Path, optimize: Any, **kw: Any) -> Controller:
+    return make(state(), tmp_path / "store", optimize, **kw)
+
+
+def head(tmp_path: Path) -> dict[str, Any]:
+    return json.loads((tmp_path / "store" / "head.json").read_text(encoding="utf-8"))
+
+
+def install_platform_head(
+    tmp_path: Path, config: dict[str, Any], generation: int
+) -> None:
+    """What the platform-signed head leaves in the store: a head this controller reads."""
+    (tmp_path / "store" / "head.json").write_text(
+        json.dumps(
+            {
+                "fingerprint": config_fingerprint(config),
+                "config": config,
+                "generation": generation,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def to_deploy_awaiting(c: Controller, ref: str, hour: int) -> None:
+    c.approve_optimization(ref, "approver-1", at(hour))
+    c.step(at(hour))
+
+
+def test_slice_end_to_end(tmp_path: Path) -> None:
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt)
+    assert head(tmp_path)["generation"] == 0
+
+    # E1 -> attempt opened, but nothing runs without a recorded approval.
+    report = c.step(at(10))
+    assert report.awaiting_approval == [e_ref("E1")]
+    assert opt.calls == []
+
+    # approval -> optimize runs once with the admitted search domain.
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+    assert len(opt.calls) == 1
+    assert NEW["model"] in opt.calls[0]["model"]
+    status = c.status()
+    assert [d["occurrence"] for d in status["pending_deploys"]] == [e_ref("E1")]
+    assert head(tmp_path)["generation"] == 0  # nothing deployed yet
+
+    # this controller never installs a head: the candidate waits for the release
+    # path, and the head stays where it was
+    c.step(at(32))
+    assert len(opt.calls) == 1 and head(tmp_path)["generation"] == 0
+    assert head(tmp_path)["config"] == OLD
+
+    # re-running step with an unchanged history is a no-op.
+    c.step(at(41))  # a later schedule opens its own attempt, held for approval
+    files = ("history.jsonl", "head.json")
+    before = {f: (tmp_path / "store" / f).read_bytes() for f in files}
+    report = c.step(at(42))
+    assert not report.changed and len(opt.calls) == 1
+    assert before == {f: (tmp_path / "store" / f).read_bytes() for f in files}
+
+
+def test_crash_between_optimize_and_record_never_reruns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt)
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+
+    real = Controller._append
+
+    def crash(self: Controller, category: str, record: Any, instant: int) -> None:
+        if record and record.get("fact") == "finished":
+            raise RuntimeError("simulated crash before recording")
+        real(self, category, record, instant)
+
+    monkeypatch.setattr(Controller, "_append", crash)
+    with pytest.raises(RuntimeError):
+        c.step(at(10))
+    monkeypatch.undo()
+    assert len(opt.calls) == 1
+
+    restarted = controller(tmp_path, opt)  # a new process over the same store
+    restarted.step(at(11))
+    assert len(opt.calls) == 1
+    assert [d["occurrence"] for d in restarted.status()["pending_deploys"]] == [
+        e_ref("E1")
+    ]
+
+
+def test_interrupted_attempt_is_not_started_twice(tmp_path: Path) -> None:
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt)
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    marker_dir = tmp_path / "store" / "attempts"
+    c.step(at(10))  # runs and finishes
+    marker = next(marker_dir.glob("*.json"))
+    data = json.loads(marker.read_text(encoding="utf-8"))
+    # A store holding only an in-progress marker (crash mid-optimize): refuse.
+    c2 = make(state(), tmp_path / "other", opt)
+    c2.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    (tmp_path / "other" / "attempts").mkdir()
+    (tmp_path / "other" / "attempts" / marker.name).write_text(
+        json.dumps(
+            {"attempt": "A1", "occurrence": data["occurrence"], "state": "started"}
+        ),
+        encoding="utf-8",
+    )
+    calls = len(opt.calls)
+    with pytest.raises(TuningError) as err:
+        c2.step(at(10))
+    assert err.value.code == E_ATTEMPT_IN_PROGRESS and len(opt.calls) == calls
+    report = c2.step(at(11), abandon_interrupted=True)
+    assert report.finished == ["A1"] and len(opt.calls) == calls
+
+
+def test_candidate_without_promotion_evidence_never_deploys(tmp_path: Path) -> None:
+    opt = FakeOptimizer(
+        result={"best_config": NEW, "loaded_dataset_digests": []}
+    )  # a bare result
+    c = controller(tmp_path, opt)
+    c.state.policy.holdout = None  # no holdout: nothing to measure the candidate on
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+    assert len(opt.calls) == 1
+    assert c.status()["pending_deploys"] == []
+    assert head(tmp_path)["generation"] == 0
+    assert any(f.get("reason") == "holdout_missing" for f in c.controller_facts())
+
+
+def test_an_unlisted_approver_is_refused_for_a_run_approval(tmp_path: Path) -> None:
+    c = controller(tmp_path, FakeOptimizer(), authorized_approvers={"boss"})
+    with pytest.raises(TuningError) as err:
+        c.approve_optimization(e_ref("E1"), "intern", at(10))
+    assert err.value.code == E_APPROVER_NOT_AUTHORIZED
+    c.approve_optimization(e_ref("E1"), "boss", at(10))
+    assert c.step(at(10)).started != []
+
+
+def test_platform_authenticated_but_unlisted_approver_is_unauthorized(
+    tmp_path: Path,
+) -> None:
+    platform = ApproverAuthority(
+        frozenset({"boss"}), mode="platform", authenticator=lambda who, _ctx: True
+    )
+    c = controller(
+        tmp_path, FakeOptimizer(), authority=platform, authorized_approvers=None
+    )
+    with pytest.raises(TuningError) as err:
+        c.approve_optimization(e_ref("E1"), "intern", at(10))
+    assert err.value.code == E_APPROVER_NOT_AUTHORIZED
+    c.approve_optimization(e_ref("E1"), "boss", at(10))
+    assert c.step(at(10)).started != []
+
+
+def test_platform_authority_without_an_authenticator_is_refused() -> None:
+    with pytest.raises(TuningError):
+        ApproverAuthority(frozenset({"boss"}), mode="platform")
+
+
+def test_authenticator_failure_never_authenticates(tmp_path: Path) -> None:
+    def broken(_who: str, _ctx: Any) -> bool:
+        raise RuntimeError("platform unreachable")
+
+    platform = ApproverAuthority(
+        frozenset({"boss"}), mode="platform", authenticator=broken
+    )
+    assert platform.authenticated("boss", {}) is False
+
+
+def test_recording_an_external_event_is_refused_in_this_release(
+    tmp_path: Path,
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    with pytest.raises(TuningError) as err:
+        c.record_event({"kind": "model_released"}, at(10))
+    assert err.value.code == E_UNSUPPORTED_IN_RELEASE
+    assert not (tmp_path / "store" / "history.jsonl").exists()
+
+
+def test_every_executing_path_refuses_without_a_validated_policy(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValidatorUnavailable):
+        Controller(state(validated=False), tmp_path / "s", None)
+    c = controller(tmp_path, FakeOptimizer())
+    c.state.validated = False
+    for call in (
+        lambda: c.step(at(1)),
+        lambda: c.record_window({}, at(1)),
+        lambda: c.approve_optimization(e_ref("E1"), "a", at(1)),
+        lambda: c.status(),
+    ):
+        with pytest.raises(ValidatorUnavailable):
+            call()
+
+
+def test_observe_follow_head_sees_the_new_config_and_stamps_generation(
+    tmp_path: Path,
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    store = tmp_path / "store"
+    client = MagicMock()
+    seen: list[Any] = []
+
+    @observe(
+        "classify", client=client, agent="agent-1", follow="head", tuning_store=store
+    )
+    def classify() -> str:
+        seen.append(dict(traigent.get_config()))
+        return "ok"
+
+    def stamp() -> dict[str, Any]:
+        return client.start_trace.call_args.kwargs["metadata"]
+
+    classify()
+    assert seen[-1] == OLD
+    assert stamp()["agent"] == "agent-1" and stamp()["head_generation"] == 0
+
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+    install_platform_head(tmp_path, NEW, 1)  # the platform-signed head, not ours
+
+    classify()
+    assert seen[-1] == NEW
+    assert stamp()["head_generation"] == 1
+    assert HeadLoader(store).generation() == 1
+    assert config_context.get() != NEW  # scoped to the call
+
+
+def test_fingerprint_is_the_tvl_canonical_digest() -> None:
+    assert len(config_fingerprint(OLD)) == 64
+
+
+def _cli_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Any, list[str]]:
+    doc = tmp_path / "module.yml"
+    doc.write_text(yaml.safe_dump(module()), encoding="utf-8")
+    auth = tmp_path / "authority.yml"
+    auth.write_text(
+        yaml.safe_dump(
+            {
+                "mode": "local-trusted",
+                "approvers": ["approver-1"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    common = ["--tvl", str(doc), "--agent", "agent-1", "--store", str(tmp_path / "s")]
+    return auth, common
+
+
+def test_cli_drives_the_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = CliRunner()
+    auth, common = _cli_fixture(tmp_path, monkeypatch)
+
+    def run(*args: str, authority: bool = True) -> Any:
+        extra = ["--authority", str(auth)] if authority else []
+        return runner.invoke(cli, ["tune", *args, *common, *extra])
+
+    step = run("step", "--now", "2026-11-20T10:00:00Z")
+    assert json.loads(step.output)["awaiting_approval"] == [e_ref("E1")]
+    status = json.loads(run("status").output)
+    assert status["open_attempts"][0]["state"] == "awaiting_approval"
+    view = status["open_attempts"][0]["approve_run"]  # what Approve run shows
+    assert "schedule" in view["trigger"]
+    assert "spend_limit" in view
+
+    # no authority configured: the run approval cannot be given
+    refused = run("approve", e_ref("E1"), "--approver", "approver-1", authority=False)
+    assert refused.exit_code != 0 and E_NO_APPROVER_AUTHORITY in refused.output
+    unlisted = run("approve", e_ref("E1"), "--approver", "intern")
+    assert unlisted.exit_code != 0 and E_APPROVER_NOT_AUTHORIZED in unlisted.output
+
+    approve = run("approve", e_ref("E1"), "--approver", "approver-1")
+    assert approve.exit_code == 0, approve.output
+    assert json.loads(approve.output)["authentication"] == "local-trusted"
+
+
+def test_cli_event_command_is_refused_in_this_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = CliRunner()
+    auth, common = _cli_fixture(tmp_path, monkeypatch)
+    path = tmp_path / "event.json"
+    path.write_text(json.dumps({"kind": "model_released"}), encoding="utf-8")
+    for extra in (["--authority", str(auth)], []):
+        result = runner.invoke(
+            cli,
+            [
+                "tune",
+                "event",
+                str(path),
+                *common,
+                *extra,
+                "--now",
+                "2026-11-20T10:00:00Z",
+            ],
+        )
+        assert result.exit_code != 0
+        assert E_UNSUPPORTED_IN_RELEASE in result.output
+    assert not (tmp_path / "s" / "history.jsonl").exists()
+
+
+def test_cli_surfaces_the_tvl_diagnostic_for_release_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Release rollback is deferred out of TVL 1.7: the TVL code is shown unchanged."""
+    auth, common = _cli_fixture(tmp_path, monkeypatch)
+    doc = module()
+    doc["responses"][0]["rules"].append(
+        {
+            "id": "undo",
+            "trigger": {"monitor": "quality_prod", "event": "recovery_overdue"},
+            "do": "rollback",
+            "target": "release_rollback_target",
+            "approval": "human",
+        }
+    )
+    path = tmp_path / "rollback.yml"
+    path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "tune",
+            "step",
+            "--tvl",
+            str(path),
+            "--agent",
+            "agent-1",
+            "--store",
+            str(tmp_path / "r"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "release_rollback_deferred" in result.output
+    assert "E_TVL_VALIDATION_FAILED" in result.output
+
+
+# ---------------------------------------------------------------------------------
+# hardening: untrusted output, evidence and refusal paths
+# ---------------------------------------------------------------------------------
+SENTINEL = "SENTINEL-PROMPT-TEXT-7f3a"
+
+
+def _deploy_awaiting(tmp_path: Path, opt: Any = None, **kw: Any) -> Controller:
+    c = controller(tmp_path, opt or FakeOptimizer(), **kw)
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+    return c
+
+
+def test_follow_head_trace_metadata_is_closed(tmp_path: Path) -> None:
+    secret = {"model": "m", "prompt": SENTINEL}
+    make(state(), tmp_path / "store", None, initial_config=secret)
+    client = MagicMock()
+    seen: list[Any] = []
+
+    @observe(
+        "classify",
+        client=client,
+        agent="agent-1",
+        follow="head",
+        tuning_store=tmp_path / "store",
+    )
+    def classify() -> str:
+        seen.append(dict(traigent.get_config()))
+        return "ok"
+
+    classify()
+    assert seen == [secret]  # the call itself still runs on the head config
+    emitted = json.dumps(client.mock_calls, default=repr)
+    assert SENTINEL not in emitted
+    metadata = client.start_trace.call_args.kwargs["metadata"]
+    assert metadata["agent"] == "agent-1" and metadata["head_generation"] == 0
+    assert metadata["head_fingerprint"] == config_fingerprint(secret)
+    assert "traigent_active_config" not in metadata
+
+
+def _standing_state() -> TuningState:
+    doc = module()
+    for response in doc["responses"]:
+        for rule in response["rules"]:
+            if rule["id"] == "on_E1":
+                rule["approval"] = "standing"
+                rule["deploy"] = "never"
+    # the policy builder only knows human approval; the controller reads ``tvl``
+    st = state()
+    st.tvl = doc
+    return st
+
+
+def test_standing_approval_is_refused_when_the_controller_is_built(
+    tmp_path: Path,
+) -> None:
+    for deploy in ("never", "if_promoted"):
+        st = _standing_state()
+        st.tvl["responses"][0]["rules"][0]["deploy"] = deploy
+        with pytest.raises(TuningError) as err:
+            make(st, tmp_path / f"store-{deploy}", FakeOptimizer())
+        assert err.value.code == E_UNSUPPORTED_IN_RELEASE
+        assert "standing" in err.value.detail
+
+
+def test_standing_grants_cannot_be_recorded_and_no_grant_file_is_read(
+    tmp_path: Path,
+) -> None:
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt)
+    with pytest.raises(TuningError) as err:
+        c.record_standing_grant(
+            "G1", "tuning/on_E1", 1, at(10) + timedelta(days=1), "issuer-1", at(10)
+        )
+    assert err.value.code == E_UNSUPPORTED_IN_RELEASE
+    # a grants file dropped into the store authorizes nothing
+    (tmp_path / "store" / "grants.json").write_text(
+        json.dumps(
+            {
+                "G1": {
+                    "grant_id": "G1",
+                    "rule_ref": "tuning/on_E1",
+                    "agent_ref": "agent-1",
+                    "contract_digest": c.meta["contract_digest"],
+                    "covers": "optimize",
+                    "issuer": "issuer-1",
+                    "expires_at": "2027-01-01T00:00:00Z",
+                    "max_occurrences": 5,
+                    "used": [],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = c.step(at(10))
+    assert opt.calls == [] and report.awaiting_approval == [e_ref("E1")]
+
+
+class _Live:
+    """A real mock-mode ``@traigent.optimize`` function and what it serves."""
+
+    @staticmethod
+    def build(**extra: Any) -> Any:
+        @traigent.optimize(
+            configuration_space={"model": [OLD["model"], NEW["model"]]},
+            objectives=["accuracy"],
+            eval_dataset=[{"input": {"q": "a"}, "output": "a"}],
+            offline=True,
+            max_trials=2,
+            default_config=dict(OLD),
+            **extra,
+        )
+        def live(q: str) -> str:
+            return "a"
+
+        return live
+
+
+def test_real_adapter_runs_optimization_without_changing_the_live_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    live = _Live.build()
+    before = (dict(live.current_config), live.get_best_config(), live._state)
+    result = traigent_optimize_fn(live, algorithm="grid", max_trials=2)(
+        {"model": [OLD["model"], NEW["model"]]}
+    )
+    assert result.trials  # the optimization really ran
+    assert (dict(live.current_config), live.get_best_config(), live._state) == before
+    assert len(live._optimization_history) == 0
+
+
+def test_expired_scope_blocks_a_late_approved_optimization(tmp_path: Path) -> None:
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt)
+    c.step(at(10))  # the schedule ticks: the attempt opens
+    late = at(10) + timedelta(days=31)
+    c.approve_optimization(e_ref("E1"), "approver-1", late)
+    report = c.step(late)
+    assert opt.calls == [] and report.started == []
+    assert any(
+        f["fact"] == "attempt_closed" and f["reason"] == "scope_expired"
+        for f in report.facts
+    )
+    assert not list((tmp_path / "store" / "attempts").glob("*.json"))
+
+
+def test_result_after_scope_expiry_is_recorded_never_deployed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A late result or approval for a scope-expired attempt is recorded, never acted on.
+
+    The relation closes the attempt (``scope_expired``) and answers the late record with
+    an ``attempt_fact`` (``ignored(scope_closed)``); the controller must not crash on it,
+    must not re-run the optimizer, and must not offer or write the candidate.
+    """
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt)
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    real = Controller._append
+
+    def crash(self: Controller, category: str, record: Any, instant: int) -> None:
+        if record and record.get("fact") == "finished":
+            raise RuntimeError("simulated crash before recording")
+        real(self, category, record, instant)
+
+    monkeypatch.setattr(Controller, "_append", crash)
+    with pytest.raises(RuntimeError):
+        c.step(at(10))
+    monkeypatch.undo()
+
+    late = at(10) + timedelta(days=31)
+    restarted = controller(tmp_path, opt)
+    restarted.step(late)
+    assert len(opt.calls) == 1
+    assert restarted.status()["pending_deploys"] == []
+    assert head(tmp_path)["config"] == OLD
+
+    restarted._append(
+        "optimizations",
+        {"attempt": "A1", "fact": "approval", "state": "granted"},
+        int((late - T0).total_seconds()),
+    )
+    restarted.step(late)
+    facts = restarted._derive()["facts"]
+    assert any(
+        f["fact"] == "attempt_closed"
+        and f["attempt"] == "A1"
+        and f["reason"] == "scope_expired"
+        for f in facts
+    )
+    assert any(
+        f["fact"] == "attempt_fact" and f["result"] == "ignored(scope_closed)"
+        for f in facts
+    )
+    assert len(opt.calls) == 1
+    assert restarted.status()["pending_deploys"] == []
+    assert head(tmp_path)["config"] == OLD
+
+
+@pytest.mark.parametrize("failing", ["head.json", "meta.json"])
+def test_init_crash_is_recoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    from traigent.tuning import controller as module_
+
+    real_write, real_append = module_._write_json, module_._append_line
+
+    def write(path: Path, value: Any) -> None:
+        if path.name == failing:
+            raise RuntimeError("simulated crash during init")
+        real_write(path, value)
+
+    def append(path: Path, value: Any) -> None:
+        if path.name == failing:
+            raise RuntimeError("simulated crash during init")
+        real_append(path, value)
+
+    monkeypatch.setattr(module_, "_write_json", write)
+    monkeypatch.setattr(module_, "_append_line", append)
+    with pytest.raises(RuntimeError):
+        controller(tmp_path, FakeOptimizer())
+    monkeypatch.undo()
+
+    c = controller(tmp_path, FakeOptimizer())  # the next start finishes the init
+    assert head(tmp_path) == {
+        "config": OLD,
+        "fingerprint": config_fingerprint(OLD),
+        "generation": 0,
+    }
+    assert c.status()["head"]["generation"] == 0
+
+
+def _two_history_lines(c: Controller) -> None:
+    """Two recorded facts: each schedule's first tick lands one line of history."""
+    c.step(at(10))
+    c.step(at(40))
+
+
+def test_torn_history_tail_is_truncated_and_earlier_lines_verified(
+    tmp_path: Path,
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    _two_history_lines(c)
+    path = tmp_path / "store" / "history.jsonl"
+    data = path.read_bytes()
+    path.write_bytes(data[: len(data) - 25])  # a crash mid-append of the last line
+
+    restarted = controller(tmp_path, FakeOptimizer())
+    assert len(path.read_text().splitlines()) == 1  # torn tail truncated
+    assert len(restarted.status()["open_attempts"]) == 1  # E1 survives
+    restarted.step(at(40))
+    assert len(path.read_text().splitlines()) == 2
+
+
+def test_damaged_earlier_line_is_corruption_not_a_torn_tail(tmp_path: Path) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    _two_history_lines(c)
+    path = tmp_path / "store" / "history.jsonl"
+    first, second = path.read_text().splitlines()
+    path.write_text(first.replace("instant", "instanx") + "\n" + second + "\n")
+    with pytest.raises(TuningError) as err:
+        controller(tmp_path, FakeOptimizer())
+    assert err.value.code == E_STORE_CORRUPT
+
+
+def test_required_env_makes_a_missing_toolchain_fail_not_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.unit.tuning import conftest
+
+    monkeypatch.setattr(conftest.validator, "validator_available", lambda: False)
+    monkeypatch.delenv(conftest.REQUIRED_ENV, raising=False)
+    with pytest.raises(pytest.skip.Exception):
+        conftest.check_toolchain()
+    monkeypatch.setenv(conftest.REQUIRED_ENV, "1")
+    with pytest.raises(pytest.fail.Exception):
+        conftest.check_toolchain()
+
+
+def test_newline_terminated_bad_record_is_corruption_never_truncated(
+    tmp_path: Path,
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    _two_history_lines(c)
+    path = tmp_path / "store" / "history.jsonl"
+    first, second = path.read_text().splitlines()
+    path.write_text(
+        first + "\n" + second.replace("instant", "instanx") + "\n"
+    )  # committed
+    before = path.read_bytes()
+    with pytest.raises(TuningError) as err:
+        controller(tmp_path, FakeOptimizer())
+    assert err.value.code == E_STORE_CORRUPT
+    assert path.read_bytes() == before
+
+
+def test_legacy_plain_json_store_is_refused_untouched(tmp_path: Path) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    _two_history_lines(c)
+    store = tmp_path / "store"
+    for name in ("history.jsonl",):
+        path = store / name
+        lines = [ln.partition("\t")[2] for ln in path.read_text().splitlines()]
+        path.write_text("\n".join(lines))  # old format, even without a final newline
+    before = {n: (store / n).read_bytes() for n in ("history.jsonl",)}
+    with pytest.raises(TuningError) as err:
+        controller(tmp_path, FakeOptimizer())
+    assert err.value.code == E_STORE_FORMAT
+    assert str(store) in str(err.value) and "re-initialize" in str(err.value)
+    assert before == {n: (store / n).read_bytes() for n in before}
+
+
+def test_candidate_run_never_leaks_into_the_live_best_config_loaders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    monkeypatch.delenv("TRAIGENT_RESULTS_FOLDER", raising=False)
+    monkeypatch.delenv("TRAIGENT_OPTIMIZATION_LOG_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(tmp_path)
+    live = _Live.build()
+    candidate_dir = tmp_path / "store" / "candidates" / "attempt-1"
+    result = traigent_optimize_fn(live, algorithm="grid", max_trials=2)(
+        {"model": [OLD["model"], NEW["model"]]}, candidate_dir=candidate_dir
+    )
+    assert result.trials
+    # the candidate's artifacts exist, inside the store
+    assert list(candidate_dir.rglob("best_config*.json"))
+    # nothing landed where a live wrapper looks (cwd, home, results folder)
+    assert not list(tmp_path.glob(".traigent/**/best_config*.json"))
+    assert not list((tmp_path / "home").rglob("best_config*.json"))
+    assert "TRAIGENT_RESULTS_FOLDER" not in __import__("os").environ
+    # a fresh live wrapper does not pick the candidate up
+    fresh = _Live.build(auto_load_best=True)
+    assert dict(fresh.current_config) == OLD
+
+
+def test_candidate_config_mutated_during_evaluation_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+
+    def mutating(_attempt: str, config: Any, _incumbent: Any) -> None:
+        config["opts"]["threshold"] = 2  # the fingerprint was taken at threshold 1
+        return None
+
+    monkeypatch.setattr(c, "_measure_candidate", mutating)
+    original = {"model": NEW["model"], "opts": {"threshold": 1}}
+    completion, candidates, configs, gates = c._map_result(
+        "a1", {"best_config": original}
+    )
+    assert candidates == [{"evidence_valid": False}]
+    assert configs == {} and gates == {}
+    assert original["opts"]["threshold"] == 1  # the caller's object is untouched
+
+
+# ---------------------------------------------------------------------------------
+# clock: whole seconds, the relation's own, never in the future
+# ---------------------------------------------------------------------------------
+def _history(tmp_path: Path) -> list[dict[str, Any]]:
+    return [
+        json.loads(ln.partition("\t")[2])
+        for ln in (tmp_path / "store" / "history.jsonl").read_text().splitlines()
+    ]
+
+
+def test_history_instants_are_whole_seconds_after_the_origin(tmp_path: Path) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    moment = T0 + timedelta(hours=10, minutes=37, seconds=12)
+    c.step(moment)
+    assert [ln["instant"] for ln in _history(tmp_path)] == [10 * 3600 + 37 * 60 + 12]
+    assert c.origin == T0  # UTC midnight: windows of 24 h line up with calendar days
+
+
+def test_a_window_that_has_not_ended_is_refused_not_moved_forward(
+    tmp_path: Path,
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    window = {
+        "monitor": "quality_prod",
+        "start": 0,
+        "end": 86400,
+        "verdict": "MET",
+        "head_generation": 0,
+    }
+    with pytest.raises(TuningError):
+        c.record_window(window, at(10))  # ends at hour 24
+    assert not (tmp_path / "store" / "history.jsonl").exists()
+    assert c.record_window(window, at(25)) == 25 * 3600
+
+
+def test_a_later_clock_never_moves_recorded_time_backwards(tmp_path: Path) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    c.step(at(10))
+    c.approve_optimization(e_ref("E1"), "approver-1", at(9))
+    c.step(at(9))  # clock set back
+    instants = [ln["instant"] for ln in _history(tmp_path)]
+    assert instants == sorted(instants) and instants[-1] >= 10 * 3600
+
+
+def test_step_adds_a_tick_only_when_time_passing_derives_something(
+    tmp_path: Path,
+) -> None:
+    doc = module()
+    doc["responses"][0]["rules"].append(
+        {
+            "id": "weekly",
+            "trigger": {
+                "schedule": {"every_days": 7, "anchor": "2026-11-21T00:00:00Z"}
+            },
+            "do": "notify",
+        }
+    )
+    st = state()
+    st.tvl = doc  # the policy builder only knows the builder shape
+    c = make(st, tmp_path / "store", FakeOptimizer())
+    c.step(at(1))
+    c.step(at(2))
+    assert not (tmp_path / "store" / "history.jsonl").exists()  # nothing fired
+    c.step(at(30))  # past the anchor: the first tick fires
+    assert [ln["category"] for ln in _history(tmp_path)] == ["tick"]
+    c.step(at(31))
+    assert len(_history(tmp_path)) == 1
+
+
+# ---------------------------------------------------------------------------------
+# authority: explicit, checked at the effect, never self-declared
+# ---------------------------------------------------------------------------------
+def test_without_an_authority_nobody_can_approve_a_run(tmp_path: Path) -> None:
+    c = Controller(
+        state(), tmp_path / "store", FakeOptimizer(), initial_config=OLD, now=T0
+    )
+    with pytest.raises(TuningError) as err:
+        c.approve_optimization(e_ref("E1"), "approver-1", at(1))
+    assert err.value.code == E_NO_APPROVER_AUTHORITY
+
+
+def test_local_trusted_is_labelled_and_refused_in_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = _deploy_awaiting(tmp_path)
+    approvals = json.loads((tmp_path / "store" / "approvals.json").read_text())
+    assert approvals[e_ref("E1")]["authentication"] == "local-trusted"
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    with pytest.raises(TuningError) as err:
+        c.approve_optimization(e_ref("E6"), "approver-1", at(32))
+    assert err.value.code == "E_LOCAL_AUTHORITY_IN_PRODUCTION"
+
+
+def test_a_policy_with_an_external_trigger_is_refused_when_the_controller_is_built(
+    tmp_path: Path,
+) -> None:
+    doc = module()
+    doc["responses"][0]["rules"].append(
+        {
+            "id": "on_new_model",
+            "trigger": {"external": "model_released"},
+            "do": "optimize",
+            "approval": "human",
+            "deploy": "if_promoted",
+            "protects": ["quality_floor"],
+        }
+    )
+    st = state()
+    st.tvl = doc  # the policy still compiles to TVL; only the controller refuses
+    with pytest.raises(TuningError) as err:
+        make(st, tmp_path / "store", FakeOptimizer())
+    assert err.value.code == E_UNSUPPORTED_IN_RELEASE
+    assert "external" in err.value.detail
+
+
+def test_a_revoked_approver_cannot_start_a_run_that_was_approved(
+    tmp_path: Path,
+) -> None:
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt)
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    c.authority = ApproverAuthority(frozenset({"someone-else"}))  # authority changed
+    report = c.step(at(10))
+    assert opt.calls == [] and report.awaiting_approval == [e_ref("E1")]
+    c.authority = ApproverAuthority(APPROVERS)
+    c.step(at(10))
+    assert len(opt.calls) == 1
+
+
+# ---------------------------------------------------------------------------------
+# no holdout bypass: every promotion path is measured here
+# ---------------------------------------------------------------------------------
+def test_supplied_verdicts_are_ignored_the_candidate_is_measured(
+    tmp_path: Path,
+) -> None:
+    """An optimizer returning its own Promote/MET for a config that is no better."""
+    liar = FakeOptimizer(
+        result={
+            "candidates": [
+                {
+                    "config": dict(OLD),  # the incumbent itself
+                    "legacy_decision": "Promote",
+                    "monitor_verdicts": {"quality_gate": "MET"},
+                }
+            ]
+        }
+    )
+    c = controller(tmp_path, liar)
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+    assert c.status()["pending_deploys"] == []  # measured: not better than itself
+    assert any(f["fact"] == "external_verdicts_ignored" for f in c.controller_facts())
+    (marker,) = (tmp_path / "store" / "attempts").glob("*.json")
+    (cand,) = json.loads(marker.read_text())["finished_record"]["candidates"]
+    assert cand["legacy_decision"] == "NoDecision"
+
+
+def test_supplied_verdicts_without_a_holdout_never_promote(tmp_path: Path) -> None:
+    liar = FakeOptimizer(
+        result={
+            "loaded_dataset_digests": [],
+            "candidates": [
+                {
+                    "config": dict(NEW),
+                    "legacy_decision": "Promote",
+                    "monitor_verdicts": {"quality_gate": "MET"},
+                }
+            ],
+        }
+    )
+    c = controller(tmp_path, liar)
+    c.state.policy.holdout = None
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+    assert c.status()["pending_deploys"] == []
+    assert any(f.get("reason") == "holdout_missing" for f in c.controller_facts())
+
+
+def test_the_gate_names_the_incumbent_it_measured(tmp_path: Path) -> None:
+    c = _deploy_awaiting(tmp_path)
+    (marker,) = (tmp_path / "store" / "attempts").glob("*.json")
+    (gate,) = json.loads(marker.read_text())["gates"].values()
+    assert gate["incumbent_fingerprint"] == config_fingerprint(OLD)
+    assert gate["incumbent_generation"] == 0
+    view = c.status()["pending_deploys"][0]["release_evidence"]
+    assert view["incumbent"] == {
+        "fingerprint": config_fingerprint(OLD),
+        "generation": 0,
+    }
+    assert view["gate_incumbent_current"] is True
+    # a different incumbent changes the gate digest (it is part of what was signed)
+    other = dict(gate)
+    other["incumbent_generation"] = 1
+    other.pop("gate_digest")
+    from traigent.tuning.controller import _digest
+
+    assert (
+        "sha256:" + _digest({k: gate[k] for k in gate if k in _GATE_KEYS})
+        == gate["gate_digest"]
+    )
+    assert (
+        "sha256:"
+        + _digest(
+            {**{k: gate[k] for k in gate if k in _GATE_KEYS}, "incumbent_generation": 1}
+        )
+        != gate["gate_digest"]
+    )
+
+
+_GATE_KEYS = {
+    "format",
+    "contract_digest",
+    "code_version",
+    "fingerprint",
+    "incumbent_fingerprint",
+    "incumbent_generation",
+    "legacy_decision",
+    "monitors",
+    "decision",
+    "holdout_digest",
+}
+
+
+def test_each_deploy_carries_the_holdout_digest_of_its_own_attempt(
+    tmp_path: Path,
+) -> None:
+    """The same configuration measured twice, on two holdouts: each deploy binds ITS own."""
+    # the first run proposes the incumbent itself: nothing awaits, so the loop goes on
+    c = controller(tmp_path, FakeOptimizer(models=[OLD["model"], NEW["model"]]))
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+
+    def digests() -> list[str]:
+        return [
+            json.loads(m.read_text())["finished_record"]["candidates"][0][
+                "holdout_digest"
+            ]
+            for m in sorted((tmp_path / "store" / "attempts").glob("*.json"))
+        ]
+
+    (first_digest,) = digests()
+    rows = [  # a refreshed holdout: same kind of rows, other content
+        {"input": {"x": i}, "output": "billing" if i % 2 == 0 else "support"}
+        for i in range(ROWS + 10)
+    ]
+    KIT["holdout"].write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+    to_deploy_awaiting(c, e_ref("E6"), 41)
+    both = digests()
+    assert len(both) == 2 and len(set(both)) == 2  # the second attempt's own digest
+    assert first_digest in both
+
+
+def test_the_status_shows_the_run_approval_and_the_release_evidence(
+    tmp_path: Path,
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    c.step(at(10))
+    attempt = c.status()["open_attempts"][0]
+    run = attempt["approve_run"]  # Approve run
+    assert run["trigger"]["schedule"]["every_days"] == 30
+    assert run["spend_limit"] is None  # honest: this controller has no limit set
+    assert run["admits"] is None  # no event admits a model in this release
+    to_deploy_awaiting(c, e_ref("E1"), 10)
+    release = c.status()["pending_deploys"][0]["release_evidence"]
+    assert release["incumbent"]["generation"] == 0
+    assert release["candidate"]["fingerprint"] == config_fingerprint(NEW)
+    assert release["holdout"]["rows"] == ROWS
+    assert release["holdout"]["counts"]["quality_gate"]["n"] == ROWS
+    assert release["holdout"]["prior_uses"] == 0
+    assert release["gate"]["decision"] == "Promote"
+    assert release["observed_generation"] == 0
