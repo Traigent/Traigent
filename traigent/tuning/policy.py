@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 import inspect
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -240,6 +240,12 @@ class Tuning:
 
     ``Tuning(keep=[...], audit=..., on=[...], fix=..., recover=...)`` or the
     alternative ``Tuning(tvl="policy.tvl.yml")`` (a TVL fragment; exclusive).
+
+    ``checkers`` maps a checker name (``"customer:doc_label_check"``) to a local
+    ``(example, output) -> label`` function, and ``holdout`` is a JSONL file of
+    ``{"input": {...}, "output": expected}`` examples.  Together they give the
+    promotion monitors real evidence; both stay in the process (only counts, verdicts
+    and a digest of the holdout file are recorded).  They are not part of the TVL.
     """
 
     def __init__(
@@ -252,6 +258,8 @@ class Tuning:
         *,
         tvl: str | Path | None = None,
         module_context: Mapping[str, Any] | None = None,
+        checkers: Mapping[str, Callable[[Any, Any], str]] | None = None,
+        holdout: str | Path | None = None,
     ) -> None:
         caller_file = None
         frame = inspect.currentframe()
@@ -263,6 +271,11 @@ class Tuning:
         self.on = tuple(on)
         self.fix = fix
         self.recover = recover
+        # Customer-side promotion evidence: never compiled into TVL, never sent anywhere.
+        self.checkers: dict[str, Callable[[Any, Any], str]] = dict(checkers or {})
+        self.holdout: Path | None = (
+            _resolve_fragment(holdout, caller_file) if holdout is not None else None
+        )
         self.tvl_path: Path | None = None
         self._fragment: dict[str, Any] | None = None
         self.module_context: dict[str, Any] | None = (

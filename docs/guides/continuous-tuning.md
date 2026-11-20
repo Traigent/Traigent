@@ -46,6 +46,34 @@ Rates are decimal strings or `decimal.Decimal`. Floats are rejected with `E_FLOA
 The module context (tvars, objectives, evaluation set, environment) comes from the
 `@traigent.optimize` function. For tests pass `Tuning(..., module_context={...})`.
 
+## Promotion evidence: checkers and a holdout
+
+A candidate deploys only on real evidence. Give the policy local checkers and a holdout:
+
+```python
+def doc_label_check(example, output):      # a label from the requirement's closed list
+    return "fail" if not output else "pass"
+
+Tuning(keep=[FailureRate("customer:doc_label_check", at_most="0.08")], ...,
+       checkers={"customer:doc_label_check": doc_label_check},
+       holdout="holdout.jsonl")            # {"input": {...}, "output": expected} per line
+```
+
+After the optimizer returns, the controller freezes one candidate (the optimizer's best
+config), runs your function with that config and with the current head config on every
+holdout example (paired), applies each checker, and records counts `{n, k, u, pl, complete}`
+(`k` = examples labelled in the requirement's `label_in`, `u` = checker or agent errors).
+TVL computes the verdicts (`evaluate_promotion_monitor`) and the comparison with the head
+(`epsilon_pareto_gate` on the `accuracy` objective, exact match against `output`); the
+SDK computes neither. The candidate record carries the verdicts, its fingerprint, the gate
+digest and `holdout_digest` (`sha256:` of the holdout file), and an acceptance binds that
+digest. Checkers, holdout content and agent outputs never leave the process.
+
+No holdout, no checker for a promotion monitor, an unreadable holdout, or an objective other
+than `accuracy` records an `E_NO_PROMOTION_EVIDENCE` controller fact (`controller_facts()`,
+with a closed `reason`) and the candidate stays `NoDecision`: absence never promotes.
+Checkers that raise count as unresolved, and unresolved counts never yield `MET`.
+
 ## Validate, compile, simulate
 
 ```python

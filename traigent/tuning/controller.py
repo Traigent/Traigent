@@ -846,6 +846,42 @@ class Controller:
             if m.get("phase") == "promotion"
         )
 
+    def _measure_candidate(self, attempt: str, config: Mapping[str, Any]) -> Any:
+        """Promotion evidence for the frozen candidate, or None (-> ``NoDecision``).
+
+        The agent function runs with the candidate config (and the current head, paired)
+        on the customer's holdout; the customer's checkers label the outputs.  A missing
+        holdout or checker, or anything not computable, records an
+        ``E_NO_PROMOTION_EVIDENCE`` controller fact and the candidate stays undecided.
+        """
+        from traigent.tuning.evidence import (
+            E_NO_PROMOTION_EVIDENCE,
+            EvidenceUnavailable,
+            build_promotion_evidence,
+        )
+
+        policy = self.state.policy
+        head = read_head(self.dir) or {}
+        try:
+            return build_promotion_evidence(
+                self.module,
+                fn=getattr(self.state, "optimized", None),
+                checkers=getattr(policy, "checkers", None),
+                holdout=getattr(policy, "holdout", None),
+                candidate_config=config,
+                incumbent_config=head.get("config") or {},
+            )
+        except EvidenceUnavailable as exc:
+            self._record_controller_fact(
+                {
+                    "fact": "no_promotion_evidence",
+                    "code": E_NO_PROMOTION_EVIDENCE,
+                    "attempt": attempt,
+                    "reason": exc.reason,
+                }
+            )
+            return None
+
     def _map_result(
         self, attempt: str, result: Any
     ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
@@ -868,9 +904,11 @@ class Controller:
         if completion not in _COMPLETIONS:
             completion = "normal"
         raw = pick("candidates")
+        measure = False  # a bare best config is measured on the customer's holdout
         if raw is None:
             best = pick("best_config")
             raw = [{"config": best}] if best else []
+            measure = True
         monitors = self._promotion_monitors()
         candidates: list[dict[str, Any]] = []
         configs: dict[str, Any] = {}
@@ -882,9 +920,16 @@ class Controller:
                     raise ValueError("no config")
                 fingerprint = config_fingerprint(config)
                 legacy = item.get("legacy_decision", "NoDecision")
+                given = item.get("monitor_verdicts") or {}
+                holdout_digest: str | None = None
+                if measure:
+                    evidence = self._measure_candidate(attempt, config)
+                    if evidence is not None:
+                        legacy = evidence.legacy_decision
+                        given = evidence.monitor_verdicts
+                        holdout_digest = evidence.holdout_digest
                 if legacy not in _LEGACY:
                     legacy = "NoDecision"
-                given = item.get("monitor_verdicts") or {}
                 verdicts = {
                     n: str(given.get(n, "UNKNOWN(insufficient)")) for n in monitors
                 }
@@ -894,26 +939,28 @@ class Controller:
             except Exception:  # noqa: BLE001 - unusable evidence is invalid, never guessed
                 candidates.append({"evidence_valid": False})
                 continue
-            gate_digest = "sha256:" + _digest(
-                {
-                    "format": GATE_FORMAT,
-                    "contract_digest": self.meta["contract_digest"],
-                    "fingerprint": fingerprint,
-                    "legacy_decision": legacy,
-                    "monitors": verdicts,
-                    "decision": str(joined),
-                }
-            )
+            gate_input: dict[str, Any] = {
+                "format": GATE_FORMAT,
+                "contract_digest": self.meta["contract_digest"],
+                "fingerprint": fingerprint,
+                "legacy_decision": legacy,
+                "monitors": verdicts,
+                "decision": str(joined),
+            }
+            if holdout_digest is not None:
+                gate_input["holdout_digest"] = holdout_digest
+            gate_digest = "sha256:" + _digest(gate_input)
             configs[fingerprint] = dict(config)
-            candidates.append(
-                {
-                    "evidence_valid": True,
-                    "fingerprint": fingerprint,
-                    "gate_digest": gate_digest,
-                    "legacy_decision": legacy,
-                    "monitor_verdicts": verdicts,
-                }
-            )
+            record: dict[str, Any] = {
+                "evidence_valid": True,
+                "fingerprint": fingerprint,
+                "gate_digest": gate_digest,
+                "legacy_decision": legacy,
+                "monitor_verdicts": verdicts,
+            }
+            if holdout_digest is not None:
+                record["holdout_digest"] = holdout_digest
+            candidates.append(record)
         return str(completion), candidates, configs
 
     # -- acceptance -----------------------------------------------------------------
@@ -969,6 +1016,9 @@ class Controller:
             "decided_at": _instant_text(moment),
             "expires_at": _instant_text(moment + timedelta(days=7)),
         }
+        holdout = self._holdout_digest(fingerprint)
+        if holdout is not None:  # RFC 0012: bind the holdout the evidence used
+            record["holdout_digest"] = holdout
         if occ["scope_kind"] == "episode":  # RFC 0012: repairs the originating episode
             record["repairs_episode"] = occ["scope"]
         if validate_acceptance(record):
@@ -987,6 +1037,14 @@ class Controller:
             ):
                 return cast(dict[str, Any], fact)
         raise TuningError(E_NO_DEPLOY_AWAITING, "no deploy awaits that occurrence")
+
+    def _holdout_digest(self, fingerprint: str) -> str | None:
+        for marker in self._markers():
+            for cand in marker.get("finished_record", {}).get("candidates", []):
+                if cand.get("fingerprint") == fingerprint:
+                    value = cand.get("holdout_digest")
+                    return str(value) if value else None
+        return None
 
     def _gate_digest(self, fingerprint: str) -> str:
         for marker in self._markers():
