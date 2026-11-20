@@ -1,0 +1,389 @@
+"""A committed, growing regression set built from the examples a run got wrong.
+
+# Traceability: CONC-Layer-Data FUNC-STORAGE FUNC-ANALYTICS
+
+The set lives in ``<dir>/regression.jsonl`` (default dir ``tests/regression``),
+one JSON object per line::
+
+    {"input": {...}, "output": "...",
+     "metadata": {"example_id": "ex12", "content_digest": "sha256:...",
+                  "regression": {"label": "seen_once", "fails": null,
+                                 "reps": null,
+                                 "provenance": [{"run": "...", "date": "...",
+                                                 "config_digest": "...",
+                                                 "metric": "..."}]}}}
+
+Rows reload through ``Dataset.from_jsonl`` (``output`` is one of its
+expected-output aliases) and through :func:`load_regression_dataset`.
+
+The file holds the user's example content (SDK pattern redaction only) and is
+meant to be committed to the user's own repository. Nothing here touches the
+network.
+
+**Dedupe is by example id, guarded by a content digest.** SDK example ids can
+be positional (``example_<i>``), so the same id may name different content in
+different runs. A merge whose id matches an existing row but whose content
+digest differs is refused and writes nothing, unless the caller names a policy:
+``replace`` swaps the stored row for the new content, ``keep-both`` stores the
+new content under a distinct id.
+
+Error messages name ids and fields, never example content.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import secrets
+import stat
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal
+
+from traigent.evaluators.base import Dataset, EvaluationExample
+
+REGRESSION_FILENAME = "regression.jsonl"
+DEFAULT_REGRESSION_DIR = "tests/regression"
+LABEL_SEEN_ONCE = "seen_once"
+
+OnIdConflict = Literal["refuse", "replace", "keep-both"]
+ON_ID_CONFLICT_CHOICES: tuple[str, ...] = ("refuse", "replace", "keep-both")
+
+
+class RegressionSetError(ValueError):
+    """The regression file is missing, unreadable or malformed."""
+
+
+class IdConflictError(RegressionSetError):
+    """Ids already stored name different content than the incoming rows.
+
+    Attributes:
+        example_ids: The conflicting ids (never their content).
+    """
+
+    def __init__(self, example_ids: Sequence[str]) -> None:
+        self.example_ids = list(example_ids)
+        super().__init__(
+            f"{len(self.example_ids)} example id(s) already in the regression set "
+            f"name different content (content_digest differs): {self.example_ids}. "
+            "Example ids can be positional, so the dataset may have changed. "
+            "Nothing was written; pass --on-id-conflict replace or keep-both to "
+            "choose."
+        )
+
+
+@dataclass
+class MergeReport:
+    """What a merge did."""
+
+    path: Path
+    rows_added: int = 0
+    provenance_added: int = 0
+    rows_replaced: int = 0
+    added_ids: list[str] = field(default_factory=list)
+
+
+def regression_file(directory: str | os.PathLike[str]) -> Path:
+    """The regression file inside ``directory``."""
+    return Path(directory) / REGRESSION_FILENAME
+
+
+def content_digest(input_data: Any, expected_output: Any) -> str:
+    """``sha256:<hex>`` over the canonical JSON of an example's content."""
+    text = json.dumps(
+        [input_data, expected_output],
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def config_digest(config: Any) -> str | None:
+    """Short digest naming a configuration, or ``None`` when there is none."""
+    if config is None:
+        return None
+    text = json.dumps(config, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+# --------------------------------------------------------------------- reading
+
+
+def _bad(path: Path, line_no: int, problem: str) -> RegressionSetError:
+    return RegressionSetError(
+        f"Regression file {path} is not valid (line {line_no}): {problem}. "
+        "Fix or remove the file; it was not modified."
+    )
+
+
+def _validate_row(path: Path, line_no: int, row: Any) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        raise _bad(path, line_no, "row is not a JSON object")
+    if "input" not in row or "output" not in row:
+        raise _bad(path, line_no, "row lacks the 'input' or 'output' field")
+    metadata = row.get("metadata")
+    if not isinstance(metadata, dict):
+        raise _bad(path, line_no, "'metadata' is missing or not an object")
+    if not isinstance(metadata.get("example_id"), str):
+        raise _bad(path, line_no, "'metadata.example_id' is missing or not a string")
+    if not isinstance(metadata.get("content_digest"), str):
+        raise _bad(
+            path, line_no, "'metadata.content_digest' is missing or not a string"
+        )
+    regression = metadata.get("regression")
+    if not isinstance(regression, dict):
+        raise _bad(path, line_no, "'metadata.regression' is missing or not an object")
+    if not isinstance(regression.get("label"), str):
+        raise _bad(path, line_no, "'metadata.regression.label' is not a string")
+    if not isinstance(regression.get("provenance"), list):
+        raise _bad(path, line_no, "'metadata.regression.provenance' is not a list")
+    return row
+
+
+def read_regression_rows(path: Path) -> list[dict[str, Any]]:
+    """Parse and validate an existing regression file.
+
+    Raises:
+        RegressionSetError: When the file is missing, empty, or any line is not
+            a well-formed regression row (or ids repeat).
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise RegressionSetError(
+            f"Regression file {path} does not exist; create it with "
+            "'traigent regression add'"
+        ) from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RegressionSetError(
+            f"Cannot read regression file {path}: {type(exc).__name__}"
+        ) from exc
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise _bad(path, line_no, "line is not valid JSON") from exc
+        row = _validate_row(path, line_no, parsed)
+        example_id = row["metadata"]["example_id"]
+        if example_id in seen:
+            raise _bad(path, line_no, "example_id repeats an earlier row")
+        seen.add(example_id)
+        rows.append(row)
+    if not rows:
+        raise RegressionSetError(
+            f"Regression file {path} holds no rows; it was not modified"
+        )
+    return rows
+
+
+# --------------------------------------------------------------------- writing
+
+
+def _atomic_write(path: Path, rows: Iterable[dict[str, Any]]) -> None:
+    """Write ``rows`` as JSONL via a temp sibling and an atomic rename."""
+    lines = [
+        json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n" for row in rows
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    try:
+        existing_mode: int | None = stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        existing_mode = None
+    fd = os.open(
+        tmp_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o666 if existing_mode is None else 0o600,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            if existing_mode is not None and hasattr(os, "fchmod"):
+                os.fchmod(fd, existing_mode)
+            handle.writelines(lines)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+# ---------------------------------------------------------------------- merge
+
+
+def _new_row(
+    example: EvaluationExample,
+    example_id: str,
+    digest: str,
+    provenance: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = dict(example.metadata or {})
+    metadata.update(
+        {
+            "example_id": example_id,
+            "content_digest": digest,
+            "regression": {
+                "label": LABEL_SEEN_ONCE,
+                "fails": None,
+                "reps": None,
+                "provenance": [provenance],
+            },
+        }
+    )
+    return {
+        "input": example.input_data,
+        "output": example.expected_output,
+        "metadata": metadata,
+    }
+
+
+def _incoming_id(example: EvaluationExample, position: int) -> str:
+    example_id = (example.metadata or {}).get("example_id")
+    return str(example_id) if example_id is not None else f"example_{position}"
+
+
+def _plan_row(
+    example: EvaluationExample,
+    example_id: str,
+    digest: str,
+    provenance: dict[str, Any],
+    by_id: dict[str, int],
+    rows: list[dict[str, Any]],
+    on_conflict: str,
+    report: MergeReport,
+    conflicts: list[str],
+) -> None:
+    index = by_id.get(example_id)
+    if index is None:
+        rows.append(_new_row(example, example_id, digest, provenance))
+        by_id[example_id] = len(rows) - 1
+        report.rows_added += 1
+        report.added_ids.append(example_id)
+        return
+    stored = rows[index]["metadata"]
+    if stored["content_digest"] == digest:
+        entries = stored["regression"]["provenance"]
+        if provenance not in entries:
+            entries.append(provenance)
+            report.provenance_added += 1
+        return
+    if on_conflict == "replace":
+        rows[index] = _new_row(example, example_id, digest, provenance)
+        report.rows_replaced += 1
+        return
+    if on_conflict == "keep-both":
+        alias = f"{example_id}~{digest.split(':', 1)[1][:8]}"
+        _plan_row(
+            example, alias, digest, provenance, by_id, rows, "refuse", report, conflicts
+        )
+        return
+    conflicts.append(example_id)
+
+
+def merge_failures(
+    directory: str | os.PathLike[str],
+    examples: Dataset,
+    *,
+    run: str,
+    date: str,
+    config: Any,
+    metric: str,
+    on_id_conflict: OnIdConflict = "refuse",
+) -> MergeReport:
+    """Merge failing examples into ``<directory>/regression.jsonl``.
+
+    A new id becomes a row labelled ``seen_once``; a repeat of a stored id with
+    the same content digest gains a provenance entry (an identical entry is not
+    added twice); an id whose content digest differs is handled per
+    ``on_id_conflict``. Nothing is written unless the whole merge succeeds.
+
+    Raises:
+        RegressionSetError: The existing file is unparseable, or the policy is
+            unknown.
+        IdConflictError: Ids clash and ``on_id_conflict`` is ``refuse``.
+    """
+    if on_id_conflict not in ON_ID_CONFLICT_CHOICES:
+        raise RegressionSetError(
+            f"on_id_conflict must be one of {list(ON_ID_CONFLICT_CHOICES)}"
+        )
+    path = regression_file(directory)
+    rows = read_regression_rows(path) if path.exists() else []
+    by_id = {row["metadata"]["example_id"]: i for i, row in enumerate(rows)}
+    report = MergeReport(path=path)
+    conflicts: list[str] = []
+    provenance = {
+        "run": run,
+        "date": date,
+        "config_digest": config_digest(config),
+        "metric": metric,
+    }
+    for position, example in enumerate(examples.examples):
+        digest = content_digest(example.input_data, example.expected_output)
+        _plan_row(
+            example,
+            _incoming_id(example, position),
+            digest,
+            provenance,
+            by_id,
+            rows,
+            on_id_conflict,
+            report,
+            conflicts,
+        )
+    if conflicts:
+        raise IdConflictError(conflicts)
+    if report.rows_added or report.provenance_added or report.rows_replaced:
+        _atomic_write(path, rows)
+    return report
+
+
+# --------------------------------------------------------------------- loading
+
+
+def load_regression_dataset(
+    directory: str | os.PathLike[str] = DEFAULT_REGRESSION_DIR,
+    labels: Sequence[str] = (LABEL_SEEN_ONCE, "reliable", "intermittent"),
+) -> Dataset:
+    """Load the regression set as a :class:`Dataset`, keeping only ``labels``.
+
+    Raises:
+        RegressionSetError: The file is missing or unparseable, or no row has
+            one of the requested labels (an empty dataset is never returned).
+    """
+    if isinstance(labels, str):
+        raise TypeError("labels must be a sequence of label strings, not one string")
+    path = regression_file(directory)
+    rows = read_regression_rows(path)
+    wanted = set(labels)
+    kept = [r for r in rows if r["metadata"]["regression"]["label"] in wanted]
+    if not kept:
+        raise RegressionSetError(
+            f"Regression file {path} has no rows with label in {sorted(wanted)}"
+        )
+    try:
+        full = Dataset.from_jsonl(path)
+    except Exception as exc:
+        raise RegressionSetError(
+            f"Regression file {path} does not load as a dataset: {type(exc).__name__}"
+        ) from exc
+    keep_ids = {r["metadata"]["example_id"] for r in kept}
+    examples = [
+        ex for ex in full.examples if (ex.metadata or {}).get("example_id") in keep_ids
+    ]
+    return Dataset(
+        examples=examples,
+        name="regression_set",
+        description=f"Regression set from {path}",
+        metadata=dict(full.metadata or {}),
+    )
