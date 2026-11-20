@@ -46,6 +46,8 @@ def test_repeats_label_every_example_for_each_config() -> None:
     labels = {eid: row["label"] for eid, row in wobbly["examples"].items()}
     assert sorted(labels.values()) == ["all_fail", "all_pass", "mixed"]
     assert wobbly["reps"] == 4
+    assert wobbly["metric"] in {"score", "accuracy", "score_or_accuracy"}
+    assert wobbly["threshold"] == 0.5
     assert wobbly["counts"] == {
         "all_pass": 1,
         "all_fail": 1,

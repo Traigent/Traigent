@@ -11,6 +11,8 @@ from traigent.utils.example_consistency import (
     cell_outcome,
     classify_consistency,
     format_consistency_line,
+    normalize_stored_report,
+    scoring_metric,
     summarize_example_outcomes,
     trial_example_outcomes,
     wilson_interval,
@@ -251,3 +253,60 @@ def test_the_same_id_twice_is_not_a_collision() -> None:
         }
 
     assert trial_example_outcomes(_Trial()) == {"7": "pass"}
+
+
+def _trial_with(*cells: dict):
+    rows = [
+        ExampleResult(f"e{i}", {}, "x", "x", cell, 0.1, True).to_dict()
+        for i, cell in enumerate(cells)
+    ]
+
+    class _Trial:
+        metadata = {"example_results": rows}
+
+    return _Trial()
+
+
+def test_scoring_metric_records_which_field_decided() -> None:
+    by_score = trial_example_outcomes(_trial_with({"score": 1.0, "accuracy": 0.0}))
+    by_accuracy = trial_example_outcomes(_trial_with({"accuracy": 1.0}))
+    nothing = trial_example_outcomes(_trial_with({}))
+
+    assert scoring_metric([by_score, by_score]) == "score"
+    assert scoring_metric([by_accuracy]) == "accuracy"
+    assert scoring_metric([by_score, by_accuracy]) == "score_or_accuracy"
+    # An attempt that scored nothing says nothing about the metric.
+    assert scoring_metric([nothing, None]) is None
+
+
+def test_report_records_the_metric_and_threshold_that_decided() -> None:
+    outcomes = trial_example_outcomes(_trial_with({"score": 0.9}, {"score": 0.1}))
+    report = build_consistency_report(
+        summarize_example_outcomes([outcomes, outcomes]),
+        reps=2,
+        metric=scoring_metric([outcomes, outcomes]),
+        threshold=0.5,
+    )
+
+    assert report["metric"] == "score"
+    assert report["threshold"] == 0.5
+    assert normalize_stored_report(report) == report
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"metric": "latency"}, {"metric": 3}, {"threshold": "0.5"}, {"threshold": True}],
+)
+def test_a_stored_report_with_a_bad_metric_or_threshold_is_unreadable(
+    overrides,
+) -> None:
+    outcomes = {"a": "pass"}
+    report = build_consistency_report(
+        summarize_example_outcomes([outcomes, outcomes]),
+        reps=2,
+        metric="score",
+        threshold=0.5,
+    )
+    report.update(overrides)
+
+    assert normalize_stored_report(report) is None

@@ -30,6 +30,14 @@ label: it is counted under ``errored`` instead, so a mostly-errored example is
 never reported as a clean pass. An example attempted fewer than twice gets
 nothing.
 
+What counts as a pass: a cell passes when its per-example ``score`` (else
+``accuracy``) is at least ``DEFAULT_PASS_THRESHOLD`` (0.5). That cut-off is only
+meaningful for a higher-is-better score in ``[0, 1]``. The rule does not know a
+metric's direction, so for a lower-is-better or differently scaled metric the
+pass/fail reading is not meaningful. The report therefore records ``metric``
+(which field decided: ``score``, ``accuracy`` or ``score_or_accuracy``) and
+``threshold``, so a reader can see what "pass" meant.
+
 The score rule is the one :meth:`OptimizationResult.failing_examples` uses
 (``outcome_matrix._classify_cell`` at threshold 0.5), with one deliberate
 difference: ``failing_examples`` counts an errored cell as failing, while this
@@ -66,6 +74,12 @@ ERRORED = "errored"
 PASS = "pass"
 FAIL = "fail"
 UNKNOWN = "unknown"
+
+#: ``metric`` values: the per-example field that decided pass or fail.
+METRIC_SCORE = "score"
+METRIC_ACCURACY = "accuracy"
+METRIC_SCORE_OR_ACCURACY = "score_or_accuracy"
+_METRICS = frozenset({METRIC_SCORE, METRIC_ACCURACY, METRIC_SCORE_OR_ACCURACY})
 
 
 def wilson_interval(passes: int, scored: int, z: float = Z_95) -> tuple[float, float]:
@@ -125,6 +139,33 @@ def classify_consistency(outcomes: Iterable[bool | None]) -> str | None:
     return MIXED
 
 
+class TrialOutcomes(dict[str, str]):
+    """Per-example outcomes of one trial, plus which fields decided them."""
+
+    metrics_used: frozenset[str] = frozenset()
+
+
+def _cell_metric(cell: Any) -> str | None:
+    """The field ``_classify_cell`` read the score from, or ``None``."""
+    if not isinstance(cell, Mapping):
+        return None
+    if cell.get("score") is not None:
+        return METRIC_SCORE
+    if cell.get("accuracy") is not None:
+        return METRIC_ACCURACY
+    return None
+
+
+def scoring_metric(per_attempt: Iterable[Mapping[str, str] | None]) -> str | None:
+    """Which per-example field decided the pass/fail outcomes, across attempts."""
+    used: set[str] = set()
+    for outcomes in per_attempt:
+        used.update(getattr(outcomes, "metrics_used", ()))
+    if not used:
+        return None
+    return next(iter(used)) if len(used) == 1 else METRIC_SCORE_OR_ACCURACY
+
+
 class ExampleIdCollisionError(ValueError):
     """Two distinct example ids have the same text form (e.g. ``1`` and ``"1"``).
 
@@ -154,7 +195,8 @@ def trial_example_outcomes(
     rows = metadata.get("example_results") if isinstance(metadata, Mapping) else None
     if not isinstance(rows, list):
         return None
-    outcomes: dict[str, str] = {}
+    outcomes = TrialOutcomes()
+    metrics: set[str] = set()
     originals: dict[str, Any] = {}
     for row in rows:
         example_id = _get(row, "example_id")
@@ -169,7 +211,12 @@ def trial_example_outcomes(
                 "kept apart. Give every example an id that is distinct as text."
             )
         originals[key] = example_id
-        outcomes[key] = cell_outcome(_extract_cell(row), threshold)
+        cell = _extract_cell(row)
+        outcomes[key] = cell_outcome(cell, threshold)
+        metric = _cell_metric(cell)
+        if outcomes[key] != UNKNOWN and metric is not None:
+            metrics.add(metric)
+    outcomes.metrics_used = frozenset(metrics)
     return outcomes
 
 
@@ -228,8 +275,13 @@ def build_consistency_report(
     *,
     reps: int = 0,
     config_hash: str | None = None,
+    metric: str | None = None,
+    threshold: float | None = None,
 ) -> dict[str, Any]:
-    """Shape examples as ``{"counts", "examples", "reps", "config_hash"}``.
+    """Shape examples as the stored report dictionary.
+
+    Keys: ``counts``, ``examples``, ``reps``, ``config_hash``, ``metric`` and
+    ``threshold`` (what decided pass or fail; see the module docstring).
 
     ``counts`` has one entry per label plus ``errored`` (examples with no label
     because errored attempts were at least half of their attempts).
@@ -258,11 +310,21 @@ def build_consistency_report(
         "examples": kept,
         "reps": int(reps) if kept else 0,
         "config_hash": config_hash if kept else None,
+        "metric": metric if kept else None,
+        "threshold": threshold if kept else None,
     }
 
 
 def _is_count(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_finite_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 def _is_rate(value: Any) -> bool:
@@ -301,15 +363,25 @@ def normalize_stored_report(stored: Any) -> dict[str, Any] | None:
     examples = stored.get("examples")
     reps = stored.get("reps")
     config_hash = stored.get("config_hash")
+    metric = stored.get("metric")
+    threshold = stored.get("threshold")
     if (
         not isinstance(examples, Mapping)
         or not isinstance(reps, int)
         or not _is_count(reps)
         or not (config_hash is None or isinstance(config_hash, str))
+        or not (metric is None or metric in _METRICS)
+        or not (threshold is None or _is_finite_number(threshold))
         or not all(_is_readable_entry(key, entry) for key, entry in examples.items())
     ):
         return None
-    return build_consistency_report(examples, reps=reps, config_hash=config_hash)
+    return build_consistency_report(
+        examples,
+        reps=reps,
+        config_hash=config_hash,
+        metric=metric,
+        threshold=None if threshold is None else float(threshold),
+    )
 
 
 def format_consistency_line(report: Mapping[str, Any], scope: str) -> str | None:

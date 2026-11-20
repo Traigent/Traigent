@@ -184,6 +184,9 @@ async def test_five_reruns_label_each_example_by_its_own_outcomes() -> None:
         "pass_rate_high": 1.0,
     }
     assert stored["reps"] == 5
+    # What "pass" meant: the per-example score, cut at 0.5.
+    assert stored["metric"] == "score"
+    assert stored["threshold"] == 0.5
     assert stored["config_hash"] == result.metadata["winner_stability"]["config_hash"]
 
 

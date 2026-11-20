@@ -1392,10 +1392,16 @@ class OptimizationResult:
         Returns:
             ``{"counts": {label: n, "errored": n}, "examples": {id: {"label",
             "attempted", "passes", "fails", "errored", "pass_rate_low",
-            "pass_rate_high"}}, "reps": int, "config_hash": str | None}``.
+            "pass_rate_high"}}, "reps": int, "config_hash": str | None,
+            "metric": str | None, "threshold": float | None}``.
             ``label`` is ``None`` for an example whose errored attempts were at
             least half of its attempts. The pass-rate bounds are a 95% Wilson
-            interval over the scored attempts.
+            interval over the scored attempts. ``metric`` and ``threshold``
+            say what decided pass or fail: a cell passes when its per-example
+            ``score`` (else ``accuracy``) is at least ``threshold`` (0.5). That
+            reads correctly only for a higher-is-better score in ``[0, 1]``; for
+            a lower-is-better or differently scaled metric the labels are not
+            meaningful.
             ``examples`` is empty (counts all zero) when no labels were
             recorded.
 

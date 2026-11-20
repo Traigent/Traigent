@@ -305,7 +305,9 @@ class ConfigComparison:
         the in-memory trials only.
         """
         from traigent.utils.example_consistency import (
+            DEFAULT_PASS_THRESHOLD,
             build_consistency_report,
+            scoring_metric,
             summarize_example_outcomes,
             trial_example_outcomes,
         )
@@ -321,6 +323,8 @@ class ConfigComparison:
             summarize_example_outcomes(per_repeat),
             reps=len(per_repeat),
             config_hash=generate_config_hash(self.config),
+            metric=scoring_metric(per_repeat),
+            threshold=DEFAULT_PASS_THRESHOLD,
         )
 
 

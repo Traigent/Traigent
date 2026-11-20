@@ -150,8 +150,10 @@ from traigent.utils.env_config import (
 from traigent.utils.env_config import is_backend_offline as is_backend_offline
 from traigent.utils.env_config import is_mock_llm, skip_provider_validation
 from traigent.utils.example_consistency import (
+    DEFAULT_PASS_THRESHOLD,
     ExampleIdCollisionError,
     build_consistency_report,
+    scoring_metric,
     summarize_example_outcomes,
     trial_example_outcomes,
 )
@@ -5674,6 +5676,8 @@ class OptimizationOrchestrator:
             examples,
             reps=len(per_rerun),
             config_hash=self._get_config_hash(result.best_config),
+            metric=scoring_metric(per_rerun),
+            threshold=DEFAULT_PASS_THRESHOLD,
         )
 
     def _build_winner_stability_block(
