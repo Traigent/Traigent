@@ -209,6 +209,17 @@ class TestPrivacyCompliance:
             # value, not just the key.
             "snapshot_g1_required",
             "snapshot_g1_deadline_days",
+            # Crew declaration (customer content: crew/role keys). The dataclass always
+            # lists the field; it is None here and is never serialized into any body in
+            # privacy mode. On the wire it exists only as `metadata.crew_declaration` of
+            # the standard typed create, added by `crew_declaration_to_wire`
+            # (traigent/utils/crew_declaration.py) and removed by
+            # `without_crew_declaration` (traigent/cloud/api_operations.py) for
+            # content-less / optimization_only / legacy. The privacy-mode create
+            # (OptimizationOrchestrator.create_session) never forwards it. Asserted below
+            # on the value, and end to end in
+            # test_crew_declaration_not_forwarded_by_privacy_session_create.
+            "crew_declaration",
         }
 
         for req in dummy_server.received_data:
@@ -217,6 +228,59 @@ class TestPrivacyCompliance:
                 assert req["content_identity_sent"] is False
                 assert req["evaluator_code_digest_sent"] is False
                 assert req["snapshot_g1_sent"] is False
+                assert req["crew_declaration_sent"] is False
+
+    @pytest.mark.filterwarnings("ignore::UserWarning", "ignore::DeprecationWarning")
+    @pytest.mark.asyncio
+    async def test_crew_declaration_not_forwarded_by_privacy_session_create(
+        self, privacy_optimizer, dummy_server, caplog, tmp_path, monkeypatch
+    ):
+        """A run declaring crew/role under privacy mode sends neither key anywhere."""
+        import logging
+        from unittest.mock import MagicMock
+
+        from traigent.api.decorators import optimize
+        from traigent.config.types import TraigentConfig
+        from traigent.core.orchestrator import OptimizationOrchestrator
+        from traigent.evaluators.base import BaseEvaluator
+        from traigent.utils.crew_declaration import CrewDeclaration
+
+        crew_key, role_key = "crew-canary-7f3a", "role-canary-7f3a"
+        monkeypatch.setenv("TRAIGENT_OPTIMIZATION_LOG_DIR", str(tmp_path / "logs"))
+        caplog.set_level(logging.DEBUG)
+        monkeypatch.setattr(
+            "traigent.core.execution_policy_runtime.is_backend_offline", lambda: False
+        )
+
+        # The decorator accepts the declaration and keeps it on the function.
+        @optimize(
+            configuration_space={"temperature": [0.1, 0.9]},
+            objectives=["accuracy"],
+            crew=crew_key,
+            role=role_key,
+        )
+        def declared(x: str) -> str:
+            return x
+
+        declared_value = getattr(declared, "crew_declaration", None)
+        assert declared_value is not None, "premise: the declaration must exist"
+
+        # 1. Privacy-mode session create through the orchestrator, declaration set.
+        backend = MagicMock()
+        backend.create_session.return_value = "privacy-session-1"
+        orchestrator = OptimizationOrchestrator(
+            optimizer=privacy_optimizer,
+            evaluator=MagicMock(spec=BaseEvaluator),
+            max_trials=3,
+            config=TraigentConfig(privacy_enabled=True),
+        )
+        orchestrator.backend_client = backend
+        orchestrator.crew_declaration = CrewDeclaration(crew_key, role_key)
+        await orchestrator.create_session("process_sensitive_data", "ds")
+        assert backend.create_session.called, "premise: a session create was made"
+        for call in backend.create_session.call_args_list:
+            assert "crew_declaration" not in call.kwargs
+            assert crew_key not in repr(call) and role_key not in repr(call)
 
     @pytest.mark.asyncio
     async def test_only_indices_in_suggestions(self, privacy_optimizer, dummy_server):

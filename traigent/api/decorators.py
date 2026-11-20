@@ -116,6 +116,7 @@ from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.tvl.spec_loader import TVLSpecArtifact, load_tvl_spec
+from traigent.utils.crew_declaration import validate_crew_declaration
 from traigent.utils.exceptions import (
     ConfigurationError,
     TraigentWarning,
@@ -3337,12 +3338,28 @@ def _attach_optimized_function_extras(
             optimized_func._surrogate_evaluator_name = surrogate_evaluator_name
 
 
+def _validate_crew_declaration_args(crew: Any, role: Any, agents: Any) -> Any:
+    """Validate ``crew`` / ``role`` (both or neither, backend key rules, no ``agents=``).
+
+    Errors are fixed strings: the supplied keys are content and are never echoed.
+    """
+    declaration = validate_crew_declaration(crew, role)
+    if declaration is not None and agents:
+        raise ValueError(
+            "crew and role cannot be combined with agents=; declare the crew on "
+            "single-agent functions only."
+        )
+    return declaration
+
+
 def optimize(  # NOSONAR(S107)
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
     experiment_name: str | None = None,
     agent_name: str | None = None,
+    crew: str | None = None,
+    role: str | None = None,
     run_title: str | None = None,
     run_description: str | None = None,
     content_less: bool | None = None,
@@ -3422,6 +3439,17 @@ def optimize(  # NOSONAR(S107)
             the function name, objectives, and knobs. Note the derived default
             changes when knobs or objectives change, so set this explicitly to hold
             one history across a changing search space.
+        crew: Name of the crew this agent belongs to (1-128 characters from
+            ``A-Z a-z 0-9 _ -``). Declare it together with ``role``; either alone raises
+            ``ValueError``, as does an invalid key. Not allowed with ``agents=``. The crew
+            and role keys are sent only as session metadata ``crew_declaration`` when the
+            session is created; they are never written to spans, logs, telemetry or local
+            result files. The backend confirms the membership only when the portal already
+            agrees, otherwise it records a proposal for a portal editor. After a connected
+            run, ``func.crew_binding`` holds the closed result (``status`` in ``bound``,
+            ``pending_portal``, ``conflict``, ``disabled``, ``unknown``, plus ids, never
+            names). Offline runs and older backends report ``unknown``.
+        role: The role this agent plays in ``crew`` (1-128 characters). See ``crew``.
         run_title: Optional title for THIS run, stating what it is testing — e.g.
             ``"Check best router model"``. Free to differ on every run; it never
             affects agent identity, cohorting, scoring, or recommendations. Trimmed
@@ -3708,6 +3736,8 @@ def optimize(  # NOSONAR(S107)
         logger.debug("Traigent disabled via TRAIGENT_DISABLED env var, returning no-op")
 
         return _passthrough_decorator
+
+    crew_declaration_value = _validate_crew_declaration_args(crew, role, agents)
 
     legacy_args = _parse_legacy_args(legacy)
     max_trials_explicit = _is_max_trials_explicit(runtime_overrides, legacy_args)
@@ -4278,6 +4308,8 @@ def optimize(  # NOSONAR(S107)
             **optimized_function_kwargs,
             **_explicit_runtime_override_kwargs(combined_runtime_overrides),
         )
+        if crew_declaration_value is not None:
+            optimized_func.crew_declaration = crew_declaration_value
         _attach_optimized_function_extras(
             optimized_func,
             func,
