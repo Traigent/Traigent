@@ -41,23 +41,52 @@ def regression() -> None:
     """
 
 
-def _run_identity(run_result: Any) -> str:
+def _outcome_state(cell: Any) -> str:
+    """``pass``, ``fail`` or ``error`` for one outcome-matrix cell."""
+    if not isinstance(cell, dict):
+        return "unknown"
+    if cell.get("error") is not None:
+        return "error"
+    return "pass" if cell.get("success") is True else "fail"
+
+
+def _run_identity(run_result: Any, run_name: str) -> str:
     """A stable id for the saved run, independent of its name and import date.
 
-    The run's optimization id when it was persisted; otherwise (results saved
-    before ids were persisted) a digest of the run's outcome matrix.
+    The run's optimization id when it was persisted. A result saved before ids
+    were persisted has none, so its identity is built only from what the saved
+    artifact keeps: the saved result's name plus a digest, in a canonical
+    order, of each trial's config hash and its per-example pass/fail/error
+    cells. Nothing time-dependent or object-dependent goes in (the matrix's
+    ``created_at`` is the time it was rebuilt, so it is left out).
+
+    Residual: two different saved results cannot share one name, so name plus
+    outcome digest is unique per saved artifact and importing the same artifact
+    again adds nothing. The same run re-saved under another name has a new name
+    and counts as new evidence.
     """
     optimization_id = getattr(run_result, "optimization_id", None)
-    if (
-        isinstance(optimization_id, str)
-        and optimization_id
-        and not optimization_id.startswith(UNRESTORED_OPTIMIZATION_ID_PREFIX)
-    ):
-        return optimization_id
+    saved_name = run_name
+    if isinstance(optimization_id, str) and optimization_id:
+        if not optimization_id.startswith(UNRESTORED_OPTIMIZATION_ID_PREFIX):
+            return optimization_id
+        saved_name = optimization_id[len(UNRESTORED_OPTIMIZATION_ID_PREFIX) :]
+    matrix = run_result.example_matrix
+    examples = matrix.get("examples") or []
+    columns = []
+    for trial in matrix.get("trials") or []:
+        trial_id = trial.get("trial_id")
+        cells = sorted(
+            (str(row["example_id"]), _outcome_state(row["cells"].get(trial_id)))
+            for row in examples
+            if trial_id in row["cells"]
+        )
+        columns.append([trial.get("config_hash"), cells])
+    columns.sort(key=lambda column: json.dumps(column, sort_keys=True))
     text = json.dumps(
-        run_result.example_matrix, sort_keys=True, default=str, separators=(",", ":")
+        [saved_name, columns], sort_keys=True, ensure_ascii=False, separators=(",", ":")
     )
-    return "matrix-sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    return "legacy-sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 def _failure_basis(
@@ -188,7 +217,7 @@ def regression_add(
 
     try:
         evidence = RunEvidence(
-            run_id=_run_identity(run_result),
+            run_id=_run_identity(run_result, run),
             run_name=run,
             imported=datetime.now(UTC).date().isoformat(),
             mode=mode,

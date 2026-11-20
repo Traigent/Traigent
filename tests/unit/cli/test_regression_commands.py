@@ -405,6 +405,80 @@ def test_same_saved_run_under_another_name_adds_no_provenance(ws: Path) -> None:
     assert (ws / "reg" / "regression.jsonl").read_bytes() == before
 
 
+def _write_legacy_run(ws: Path, name: str, failing: set[int]) -> None:
+    """A result saved before optimization ids were persisted (no id on disk)."""
+    import gzip
+
+    result_dir = ws / "results" / name
+    result_dir.mkdir(parents=True)
+    (result_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "function_identifier": "f",
+                "function_name": "f",
+                "algorithm": "grid_search",
+                "objectives": ["accuracy"],
+                "configuration_space": {"model": ["a"]},
+                "best_score": 0.5,
+                "best_config": {"model": "a"},
+                "preset_selection": None,
+                "success_rate": 1.0,
+                "duration": 1.0,
+                "convergence_info": {},
+                "created_at": "2026-01-02T03:04:05+00:00",
+                "total_trials": 1,
+                "successful_trials": 1,
+                "session_summary": {"winning_trial_ids": ["t0"]},
+            }
+        )
+    )
+    results = [
+        _example(i, 0.0 if i in failing else 1.0, ROWS) for i in range(len(ROWS))
+    ]
+    with gzip.open(result_dir / "trials.json.gz", "wt") as handle:
+        json.dump(
+            [
+                {
+                    "trial_id": "t0",
+                    "config": {"model": "a"},
+                    "metrics": {"accuracy": 0.5},
+                    "duration": 1.0,
+                    "status": "completed",
+                    "timestamp": "2026-01-02T03:04:00+00:00",
+                    "metadata": {"example_results": results},
+                }
+            ],
+            handle,
+        )
+
+
+def test_a_legacy_artifact_added_again_is_the_same_evidence_even_as_time_passes(
+    ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import traigent.utils.outcome_matrix as outcome_matrix
+
+    class _Ticking:
+        ticks = 0
+
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:
+            cls.ticks += 1
+            return datetime(2030, 1, 1, tzinfo=UTC).replace(second=cls.ticks % 60)
+
+    monkeypatch.setattr(outcome_matrix, "datetime", _Ticking)
+    _write_legacy_run(ws, "old_a", {1, 2})
+    _write_legacy_run(ws, "old_b", {1, 3})
+    for _ in range(3):
+        result = _add(ws, "old_a")
+        assert result.exit_code == 0, result.output
+    assert _Ticking.ticks >= 3  # the rebuilt matrix really did see a new time
+    assert len(_prov(ws, "example_1")) == 1
+    assert _add(ws, "old_b").exit_code == 0  # a different artifact: new evidence
+    assert len(_prov(ws, "example_1")) == 2
+    ids = {e["run_id"] for e in _prov(ws, "example_1")}
+    assert all(i.startswith("legacy-sha256:") for i in ids) and len(ids) == 2
+
+
 def test_all_configs_mode_records_null_config_digest_and_mode(ws: Path) -> None:
     assert _add(ws, "run_a", "--mode", "all_configs").exit_code == 0
     (prov,) = _prov(ws, "example_1")
