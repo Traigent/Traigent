@@ -551,6 +551,61 @@ def test_expired_scope_blocks_a_late_approved_optimization(tmp_path: Path) -> No
     assert not list((tmp_path / "store" / "attempts").glob("*.json"))
 
 
+def test_result_after_scope_expiry_is_recorded_never_deployed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A late result or approval for a scope-expired attempt is recorded, never acted on.
+
+    The relation closes the attempt (``scope_expired``) and answers the late record with
+    an ``attempt_fact`` (``ignored(scope_closed)``); the controller must not crash on it,
+    must not re-run the optimizer, and must not offer or write the candidate.
+    """
+    opt = FakeOptimizer()
+    c = controller(tmp_path, opt)
+    c.record_event(event("E1", NEW["model"], 9), at(10))
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    real = Controller._append
+
+    def crash(self: Controller, category: str, record: Any, instant: int) -> None:
+        if record and record.get("fact") == "finished":
+            raise RuntimeError("simulated crash before recording")
+        real(self, category, record, instant)
+
+    monkeypatch.setattr(Controller, "_append", crash)
+    with pytest.raises(RuntimeError):
+        c.step(at(10))
+    monkeypatch.undo()
+
+    late = at(10) + timedelta(days=31)
+    restarted = controller(tmp_path, opt)
+    restarted.step(late)
+    assert len(opt.calls) == 1
+    assert restarted.status()["pending_deploys"] == []
+    assert head(tmp_path)["config"] == OLD
+
+    hour = (late - T0).total_seconds() // 3600
+    restarted._append(
+        "optimizations",
+        {"attempt": "A1", "fact": "approval", "state": "granted"},
+        int(hour),
+    )
+    restarted.step(late)
+    facts = restarted._derive()["facts"]
+    assert any(
+        f["fact"] == "attempt_closed"
+        and f["attempt"] == "A1"
+        and f["reason"] == "scope_expired"
+        for f in facts
+    )
+    assert any(
+        f["fact"] == "attempt_fact" and f["result"] == "ignored(scope_closed)"
+        for f in facts
+    )
+    assert len(opt.calls) == 1
+    assert restarted.status()["pending_deploys"] == []
+    assert head(tmp_path)["config"] == OLD
+
+
 @pytest.mark.parametrize("failing", ["head.json", "heads.jsonl", "meta.json"])
 def test_init_crash_is_recoverable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str

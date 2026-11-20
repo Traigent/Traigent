@@ -110,13 +110,13 @@ def scope_ref(occ: Mapping[str, Any]) -> str:
     Facts render an external scope as ``{issuer, event_id}``; TVL's reference
     ``scope_ref`` takes the raw ``(issuer, event_id)`` identity.
     """
-    from tvl.runtime_conditions import _Run
+    from tvl.runtime_conditions import scope_ref as tvl_scope_ref
 
     scope = occ["scope"]
     if not isinstance(scope, Mapping):
         return str(scope)  # already a reference (parsed from a deploy ref)
     raw = (scope["issuer"], scope["event_id"])
-    return str(_Run.scope_ref({"scope_kind": occ["scope_kind"], "scope": raw}))
+    return str(tvl_scope_ref(occ["scope_kind"], raw))
 
 
 def occurrence_ref(occ: Mapping[str, Any]) -> str:
@@ -700,21 +700,19 @@ class Controller:
             return None
         return "approval_missing"
 
-    def _scope_requires_intervention(self, attempt: str, ref: str, hour: int) -> bool:
-        """Ask the relation, run to ``hour``, whether the occurrence's scope still counts."""
-        from tvl.runtime_conditions import _Run
+    def _scope_requires_intervention(self, occ: Mapping[str, Any], hour: int) -> bool:
+        """Ask the relation, run to ``hour``, whether the occurrence's scope still counts.
+
+        An attempt the relation has closed (any reason, ``scope_expired`` included)
+        is final: it never counts as requiring intervention.
+        """
+        from tvl.runtime_conditions import occurrence_status
 
         history = self._history([{"instant": hour, "category": "tick"}])
-        run = _Run(self.module, history)
-        facts = run.run()["facts"]
-        if any(
-            f["fact"] == "attempt_closed" and f["attempt"] == attempt for f in facts
-        ):
+        status = occurrence_status(self.module, history, dict(occ))
+        if status["phase"] == "closed":
             return False
-        for occ in run.occurrences.values():
-            if occurrence_ref(run.occ_ref(occ)) == ref:
-                return bool(run.scope_active(occ))
-        return False
+        return bool(status["scope_active"])
 
     def _marker_path(self, attempt: str, ref: str) -> Path:
         key = hashlib.sha256(f"{attempt}|{ref}".encode()).hexdigest()[:24]
@@ -741,9 +739,7 @@ class Controller:
             # Immediately before any authorization is used or the optimizer is
             # invoked: the relation, over the history up to now, must still show
             # this occurrence's scope as requiring intervention.
-            if marker is None and not self._scope_requires_intervention(
-                attempt, ref, hour
-            ):
+            if marker is None and not self._scope_requires_intervention(occ, hour):
                 self._record_controller_fact(
                     {
                         "fact": "optimize_refused",
