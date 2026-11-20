@@ -310,9 +310,7 @@ def _assert_reloads_with_failed_rows(ws: Path, expected: dict[str, str]) -> None
 
 
 def test_custom_example_ids_are_stored_as_the_run_recorded_them(ws: Path) -> None:
-    rows = [
-        {**r, "metadata": {"example_id": f"case-{i}"}} for i, r in enumerate(ROWS)
-    ]
+    rows = [{**r, "metadata": {"example_id": f"case-{i}"}} for i, r in enumerate(ROWS)]
     _custom_run(ws, rows, [f"case-{i}" for i in range(4)])
     result = _add(ws, "run_ids")
     assert result.exit_code == 0, result.output
