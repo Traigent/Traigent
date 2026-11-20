@@ -183,7 +183,9 @@ def _validate_row(path: Path, line_no: int, row: Any) -> dict[str, Any]:
 def _read_numbered_rows(path: Path) -> list[tuple[int, dict[str, Any]]]:
     """Parse and structurally validate the file; rows come with line numbers."""
     try:
-        text = path.read_text(encoding="utf-8")
+        # Bytes, not read_text(): text mode would translate a bare "\r" into a
+        # line break, and the file's records are separated by "\n" only.
+        text = path.read_bytes().decode("utf-8-sig")
     except FileNotFoundError as exc:
         raise RegressionSetError(
             f"Regression file {path} does not exist; create it with "
@@ -195,7 +197,10 @@ def _read_numbered_rows(path: Path) -> list[tuple[int, dict[str, Any]]]:
         ) from exc
     rows: list[tuple[int, dict[str, Any]]] = []
     seen: set[str] = set()
-    for line_no, line in enumerate(text.splitlines(), start=1):
+    # JSONL semantics: records end at "\n" only. str.splitlines() would also
+    # break at U+2028, U+2029, U+0085, "\x0b", "\x0c" and others, which may sit
+    # inside a JSON string.
+    for line_no, line in enumerate(text.split("\n"), start=1):
         if not line.strip():
             continue
         try:
@@ -249,11 +254,28 @@ def read_regression_rows(path: Path) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------- writing
 
 
+#: Characters that other tools treat as line breaks although JSON allows them
+#: raw inside a string (``json.dumps(ensure_ascii=False)`` leaves them as is).
+#: The writer escapes them, so a record is always exactly one "\n"-terminated
+#: line for every reader, including ones that split on Unicode line breaks.
+_LINE_BREAK_ESCAPES = {
+    "\u0085": "\\u0085",
+    "\u2028": "\\u2028",
+    "\u2029": "\\u2029",
+}
+
+
+def _dump_line(row: dict[str, Any]) -> str:
+    """One JSONL record: readable UTF-8, with Unicode line breaks escaped."""
+    text = json.dumps(row, ensure_ascii=False, allow_nan=False)
+    for raw, escaped in _LINE_BREAK_ESCAPES.items():
+        text = text.replace(raw, escaped)
+    return text + "\n"
+
+
 def _atomic_write(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     """Write ``rows`` as JSONL via a temp sibling and an atomic rename."""
-    lines = [
-        json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n" for row in rows
-    ]
+    lines = [_dump_line(row) for row in rows]
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
     try:

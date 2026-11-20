@@ -19,6 +19,7 @@ from traigent.utils.regression_set import (
     content_digest,
     load_regression_dataset,
     merge_failures,
+    read_regression_rows,
 )
 
 
@@ -288,3 +289,70 @@ def test_load_refuses_row_edited_by_hand(
     _hand_edit_first_row(tmp_path / "regression.jsonl")
     with pytest.raises(StaleDigestError, match=r"line 1"):
         load_regression_dataset(tmp_path)
+
+
+# ------------------------------------------------- unicode line separators
+
+LINE_BREAKS = "a\u2028b\u2029c\u0085d\re\x0bf\x0cg\x1ch\x1di\x1ej\nk"
+
+
+def test_unicode_line_breaks_round_trip_everywhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+    ds = Dataset(
+        examples=[
+            EvaluationExample(
+                input_data={"q": LINE_BREAKS},
+                expected_output=LINE_BREAKS,
+                metadata={"example_id": "x"},
+            ),
+            EvaluationExample(
+                input_data={"q": "plain"},
+                expected_output="plain",
+                metadata={"example_id": "y"},
+            ),
+        ]
+    )
+    _merge(tmp_path, ds)
+    # a second add reads the file back under the lock
+    assert _merge(tmp_path, ds, "r2").provenance_added == 2
+    path = tmp_path / "regression.jsonl"
+    raw = path.read_text(encoding="utf-8")
+    # one record per "\n"-terminated line, and no raw Unicode line break left
+    assert raw.count("\n") == 2
+    for char in ("\u2028", "\u2029", "\u0085", "\r", "\x0b", "\x0c"):
+        assert char not in raw
+    assert len(raw.split("\n")[0].splitlines()) == 1
+    for rows in (
+        read_regression_rows(path),
+        [
+            {"input": e.input_data, "output": e.expected_output}
+            for e in load_regression_dataset(tmp_path).examples
+        ],
+        [
+            {"input": e.input_data, "output": e.expected_output}
+            for e in Dataset.from_jsonl(path).examples
+        ],
+    ):
+        assert rows[0]["input"] == {"q": LINE_BREAKS}
+        assert rows[0]["output"] == LINE_BREAKS
+        assert len(rows) == 2
+
+
+def test_reader_splits_on_newline_only_for_a_raw_separator_in_a_string(
+    tmp_path: Path,
+) -> None:
+    """A file written by another tool may hold a raw U+2028 inside a string."""
+    row = {
+        "input": {"q": "a\u2028b"},
+        "output": "o\u0085p",
+        "metadata": {
+            "example_id": "x",
+            "content_digest": content_digest({"q": "a\u2028b"}, "o\u0085p"),
+            "regression": {"label": "seen_once", "provenance": []},
+        },
+    }
+    path = tmp_path / "regression.jsonl"
+    path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert read_regression_rows(path)[0]["input"] == {"q": "a\u2028b"}
