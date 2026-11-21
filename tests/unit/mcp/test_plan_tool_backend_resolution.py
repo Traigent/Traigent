@@ -125,12 +125,12 @@ async def test_nothing_configured_equals_cli_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_api_url_with_path_is_passed_through_like_cli(
+async def test_api_url_with_path_is_reduced_to_its_origin_like_cli(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The CLI hands the raw env value to the client; the tool does the same."""
+    """The client appends ``/api/v1/...`` itself, so both entries pass the origin."""
     monkeypatch.setenv("TRAIGENT_API_URL", "https://api.example.test/api/v1")
-    assert (await _call()).backend_url == "https://api.example.test/api/v1"
+    assert (await _call()).backend_url == "https://api.example.test"
 
 
 @pytest.mark.parametrize(

@@ -38,10 +38,17 @@ def resolve_backend_url(explicit: str | None) -> tuple[str, bool]:
     We fall back to ``DEFAULT_LOCAL_URL`` rather than the prod cloud so an
     unconfigured local-dev user keeps hitting localhost as before.
 
+    The result is always a backend ORIGIN: ``OptimizationPlanClient`` appends its own
+    ``/api/v1/optimization/plan``, so an explicit value or env var that carries the
+    API path (``https://host/api/v1``, a normal ``TRAIGENT_API_URL``) is reduced with
+    :meth:`BackendConfig.normalize_backend_origin`, the same normalization the env /
+    stored-credential branch already gets. A value that cannot be normalized is
+    passed on unchanged and refused by the client's own URL validation.
+
     Returns (resolved_url, used_explicit_source).
     """
     if explicit:
-        return explicit, True
+        return BackendConfig.normalize_backend_origin(explicit) or explicit, True
     configured = BackendConfig.get_configured_backend_url()
     if not configured and is_strict_endpoint_mode():
         # Strict (self-hosted) mode: no implicit localhost fallback either.
