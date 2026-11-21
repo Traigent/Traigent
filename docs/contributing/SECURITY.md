@@ -209,9 +209,10 @@ store.rotate_credential("DATABASE_PASSWORD", "<NEW_DATABASE_PASSWORD>")
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.10.x  | :white_check_mark: |
-| 0.9.x   | :white_check_mark: |
-| < 0.9   | :x:                |
+| 0.32.x (latest) | :white_check_mark: |
+| < 0.32  | :x:                |
+
+Traigent is pre-1.0: security fixes are released for the latest 0.x minor release.
 
 ## Reporting Security Issues
 

@@ -7,8 +7,8 @@ Traigent is in a pre-1.0 line (0.x). Security fixes are released for the latest
 
 | Version          | Supported |
 |------------------|-----------|
-| 0.30.x (latest)  | ✅ Yes    |
-| < 0.30           | ❌ No     |
+| 0.32.x (latest)  | ✅ Yes    |
+| < 0.32           | ❌ No     |
 
 ## Reporting a Vulnerability
 
