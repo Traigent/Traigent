@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from tests.unit.egress.egress_relay_helpers import break_log, send, wait_lines
-from traigent.egress.log import RelayLog, iter_lines
+from traigent.egress.log import RelayLog
 from traigent.egress.relay import EgressRelay, RelayConfigError, parse_upstream
 
 CANARY = "CANARY-7f3a9c-do-not-log"
@@ -159,27 +159,47 @@ def test_concurrent_requests_get_unique_increasing_seq(relay, upstream, log_path
     assert responses == list(range(1, 21))
 
 
-def test_request_line_is_durable_before_forwarding(upstream, log_path):
-    """At the moment the upstream receives the request, its log line already exists."""
-    log = RelayLog(log_path)
-    instance = EgressRelay(upstream.url, log)
-    seen_at_upstream: list[int] = []
-    original = upstream.seen
+def test_request_line_is_fsynced_before_upstream_sees_a_byte(
+    upstream, log_path, monkeypatch
+):
+    """fsync of the request line has completed when the relay first connects."""
+    import traigent.egress.log as log_module
 
-    class Spy(list):
-        def append(self, item):  # noqa: ANN001
-            seen_at_upstream.append(
-                sum(1 for e in iter_lines(log_path) if e["kind"] == "request")
-            )
-            super().append(item)
+    completed: list[int] = []
+    real_fsync = os.fsync
 
-    upstream.seen = Spy(original)
+    def recording_fsync(fd: int) -> None:
+        real_fsync(fd)
+        completed.append(fd)
+
+    monkeypatch.setattr(log_module.os, "fsync", recording_fsync)
+    instance = EgressRelay(upstream.url, RelayLog(log_path))
+    at_connect: list[int] = []
+    original = instance._server.connect
+
+    def spy():  # noqa: ANN202
+        at_connect.append(len(completed))  # before any byte goes upstream
+        return original()
+
+    instance._server.connect = spy  # type: ignore[method-assign]
     instance.start()
     try:
         send(instance, "POST", "/x", b"1")
     finally:
         instance.stop()
-    assert seen_at_upstream == [1]
+    assert at_connect == [1]
+
+
+def test_fsync_failure_returns_502_and_forwards_nothing(relay, upstream, monkeypatch):
+    import traigent.egress.log as log_module
+
+    def failing_fsync(fd: int) -> None:
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(log_module.os, "fsync", failing_fsync)
+    status, _, payload = send(relay, "POST", "/x", b"1")
+    assert status == 502 and b"not forwarded" in payload
+    assert upstream.seen == []
 
 
 def test_bind_is_loopback_and_wider_bind_refused(upstream, log_path):
