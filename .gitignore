@@ -149,6 +149,7 @@ celerybeat.pid
 !.env.example
 !.env.*.template
 .venv
+.venv-tvl/
 env/
 venv/
 ENV/

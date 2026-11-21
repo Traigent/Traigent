@@ -120,6 +120,12 @@ jobs:
           pytest tests/ -q --timeout=120 --timeout-method=thread \
             --cov=traigent --cov-report=xml:reports/coverage.xml \
             --junitxml=reports/junit.xml
+          # tests/unit/tuning skips without a TVL 1.7 toolchain; install the pin after
+          # the full run (tests/unit/runtime asserts tvl-spec 1.4.0) and append its coverage.
+          pip install --quiet -r scripts/ci/tvl-pin.txt
+          TRAIGENT_TVL_REQUIRED=1 PYTHONPATH=. python -m pytest tests/unit/tuning -q \
+            --timeout=120 --timeout-method=thread \
+            --cov=traigent --cov-append --cov-report=xml:reports/coverage.xml
 
       - name: Analyze and enforce quality gate
         run: |

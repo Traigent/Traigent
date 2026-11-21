@@ -1499,6 +1499,27 @@ class Controller:
             getattr(self.state, "source", None),
         )
 
+    def code_version_label(self) -> str | None:
+        """The readable code version, for local display only (None if undeterminable)."""
+        from traigent.tuning.code_version import resolve_code_version_label
+
+        try:
+            return resolve_code_version_label(
+                getattr(self.state.policy, "code_version", None),
+                getattr(self.state, "source", None),
+            )
+        except TuningError:
+            return None
+
+    def _label_for(self, digest: Any) -> str | None:
+        """The readable label, only while it still names the digest that was measured."""
+        from traigent.tuning.code_version import to_wire_digest
+
+        label = self.code_version_label()
+        if label is not None and digest is not None and to_wire_digest(label) == digest:
+            return label
+        return None
+
     def _holdout_prior_uses(self, digest: str) -> int:
         """How many earlier gate results were measured on this very holdout."""
         return sum(
@@ -1777,6 +1798,7 @@ class Controller:
                         },
                         "candidate": {"fingerprint": f["candidate"]},
                         "code_version": gate.get("code_version"),
+                        "code_version_label": self._label_for(gate.get("code_version")),
                         "holdout": {
                             "digest": gate.get("holdout_digest"),
                             "rows": gate.get("holdout_rows"),
