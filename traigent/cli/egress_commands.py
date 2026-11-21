@@ -107,7 +107,10 @@ def relay_command(
             f"egress relay listening on {origin}; log: {log_path}\n"
             f"export TRAIGENT_BACKEND_URL={origin}\n"
             f"export {RELAY_ENV_VAR}=1\n"
-            f"export NO_PROXY={_with_relay_host(os.environ.get('NO_PROXY'))}",
+            + "\n".join(
+                f"export {name}={_with_relay_host(os.environ.get(name))}"
+                for name in NO_PROXY_ENV_VARS
+            ),
         )
         try:
             relay.serve_forever()

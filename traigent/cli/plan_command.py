@@ -119,6 +119,9 @@ def plan(
         resolved_backend_url, backend_url_explicit = _resolve_backend_url(backend_url)
     except EndpointNotConfiguredError as exc:
         raise click.ClickException(str(exc)) from exc
+    except ValueError as exc:
+        # The message names the kind of problem and never echoes the value.
+        raise click.ClickException(str(exc)) from None
     resolved_api_key = _resolve_api_key(api_key)
 
     if not output_json and not backend_url_explicit:
