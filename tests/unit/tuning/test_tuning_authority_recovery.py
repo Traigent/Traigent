@@ -25,6 +25,7 @@ from traigent.tuning.errors import (
 from traigent.tuning.policy import Every
 from traigent.tuning.state import attach_tuning
 
+from .conftest import tvl_free
 from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     APPROVERS,
     NEW,
@@ -74,6 +75,7 @@ def test_authentication_is_rechecked_when_an_approved_run_is_about_to_start(
 
 
 # -- 6. standing mode is not part of this release ---------------------------------------
+@tvl_free
 def test_standing_on_a_rule_that_deploys_if_promoted_is_refused(tmp_path: Path) -> None:
     st = state()
     for response in st.tvl["responses"]:
@@ -133,6 +135,7 @@ def test_an_approver_with_a_trailing_newline_is_refused(tmp_path: Path) -> None:
     assert err.value.code == E_INVALID_RECORD
 
 
+@tvl_free
 def test_an_agent_or_environment_with_a_trailing_newline_is_refused() -> None:
     from traigent.tuning.controller import E_INVALID_RECORD, default_store_dir
 
