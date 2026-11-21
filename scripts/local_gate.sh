@@ -311,9 +311,44 @@ if ! python3 scripts/ci/spine_preflight.py; then FAIL=1; fi
 # uncovered. Develop-bound pushes never reach this step and keep the cheap
 # smoke tier above (docs/ci-policy.md). The 80% new-code threshold is unchanged.
 # Workers default to 4 (LOCAL_GATE_COVERAGE_WORKERS=0 forces a serial run).
+# ── TVL tuning lane (coverage input) ──────────────────────────────────────
+# tests/unit/tuning needs the pinned TVL toolchain (scripts/ci/tvl-pin.txt), which
+# conflicts with tests/unit/runtime (asserts tvl-spec 1.4.0), so it cannot live in
+# the main venv. pr-gate.yml runs it as a separate step; its coverage must reach the
+# Sonar input too, or traigent/tuning/* reads as mostly uncovered locally.
+# This builds (and caches) .venv-tvl from the same locked set as the main venv plus
+# the schema and TVL pins. Cache key = hash of the recipe inputs; any build failure
+# is returned as a failure (never a silent skip).
+tvl_venv_prepare() {
+  local key stamp=".venv-tvl/.recipe-stamp" req
+  if [[ -z "$PYTEST_PY" ]] || ! command -v uv >/dev/null 2>&1; then
+    echo "  ❌ the TVL lane needs uv and a repo .venv python to build .venv-tvl (install uv: https://docs.astral.sh/uv/)"; return 1
+  fi
+  key="$(cat uv.lock scripts/ci/schema-pin.txt scripts/ci/tvl-pin.txt 2>/dev/null | sha256sum | cut -c1-16)-$("$PYTEST_PY" -c 'import sys;print("%d.%d"%sys.version_info[:2])')"
+  if [[ -x .venv-tvl/bin/python && "$(cat "$stamp" 2>/dev/null)" == "$key" ]]; then
+    echo "  • reusing cached .venv-tvl ($key)"; return 0
+  fi
+  echo "  • building .venv-tvl ($key); first build takes a few minutes"
+  rm -rf .venv-tvl
+  req="$(mktemp "${TMPDIR:-/tmp}/lg-tvlreq.XXXXXX")"
+  if uv venv -q --python "$PYTEST_PY" .venv-tvl \
+     && uv export -q --frozen --no-hashes --no-emit-project \
+          --extra dev --extra analytics --extra test --extra mcp --extra observability \
+          --extra integrations --extra bayesian --extra security -o "$req" >/dev/null \
+     && uv pip install -q --python .venv-tvl/bin/python -r "$req" \
+     && uv pip install -q --python .venv-tvl/bin/python -r scripts/ci/schema-pin.txt \
+          opentelemetry-exporter-otlp-proto-http==1.45.1 \
+     && uv pip install -q --python .venv-tvl/bin/python -r scripts/ci/tvl-pin.txt; then
+    rm -f "$req"; printf '%s' "$key" >"$stamp"; return 0
+  fi
+  rm -f "$req"; rm -rf .venv-tvl
+  echo "  ❌ could not build .venv-tvl (TVL lane toolchain); the coverage input would miss tests/unit/tuning"
+  return 1
+}
+
 sonar_prepare_coverage() {
-  rm -f coverage.xml
-  local rc=0 workers="${LOCAL_GATE_COVERAGE_WORKERS:-4}" home_dir rcfile
+  rm -f coverage.xml .coverage.main .coverage.tvl
+  local rc=0 tvl_rc=0 workers="${LOCAL_GATE_COVERAGE_WORKERS:-4}" home_dir rcfile
   if [[ "${#PYTEST[@]}" -eq 0 ]]; then
     echo "  ❌ pytest unavailable: cannot measure coverage for the main-bound scan"; FAIL=1; return 0
   fi
@@ -341,15 +376,30 @@ sonar_prepare_coverage() {
   # Background + wait so an interrupt reaches the trap immediately and the
   # whole run (timeout -> pytest) is stopped and reaped before cleanup.
   TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true HOME="$home_dir" PYTHONPATH=. \
+    COVERAGE_FILE="$PWD/.coverage.main" \
     "${GIT_ENV_CLEAR[@]}" timeout -k 60 "${LOCAL_GATE_COVERAGE_TIMEOUT:-3600}" "${PYTEST[@]}" -p no:asyncio-cooperative -p no:cacheprovider -q --tb=short \
     "${par[@]}" --timeout=30 \
     --cov=traigent --cov-config="$rcfile" --cov-report=xml:coverage.xml tests/unit/ &
   pid=$!
   wait "$pid" || rc=$?
   pid=""
-  rm -f "$rcfile"; rm -rf "$home_dir"; trap - INT TERM
-  if [[ ! -s coverage.xml ]]; then
-    echo "  ❌ coverage.xml was not produced (pytest rc=$rc): coverage NOT MEASURED"; FAIL=1; return 0
+  # TVL tuning lane: same coverage options, separate data file, fail closed.
+  if tvl_venv_prepare; then
+    echo "  • coverage with tests/unit/tuning under the pinned TVL toolchain (.venv-tvl)"
+    TRAIGENT_TVL_REQUIRED=1 TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true HOME="$home_dir" PYTHONPATH=. \
+      COVERAGE_FILE="$PWD/.coverage.tvl" \
+      "${GIT_ENV_CLEAR[@]}" timeout -k 60 "${LOCAL_GATE_COVERAGE_TIMEOUT:-3600}" .venv-tvl/bin/pytest -p no:asyncio-cooperative -p no:cacheprovider -q --tb=short \
+      "${par[@]}" --timeout=30 \
+      --cov=traigent --cov-config="$rcfile" --cov-report= tests/unit/tuning &
+    pid=$!
+    wait "$pid" || tvl_rc=$?
+    pid=""
+  else
+    tvl_rc=1
+  fi
+  rm -rf "$home_dir"; trap - INT TERM
+  if [[ ! -s coverage.xml || ! -s .coverage.main ]]; then
+    echo "  ❌ coverage.xml was not produced (pytest rc=$rc): coverage NOT MEASURED"; FAIL=1; rm -f "$rcfile"; return 0
   fi
   # pyproject sets no coverage fail-under, so a nonzero pytest rc is a real
   # test failure (or collection error): fail the gate rather than scan a
@@ -357,9 +407,26 @@ sonar_prepare_coverage() {
   if [[ "$rc" -ne 0 ]]; then
     echo "  ❌ unit suite FAILED (pytest rc=$rc): fix it; coverage.xml is PARTIAL"
     FAIL=1
-  else
-    echo "  ✅ coverage.xml written ($(wc -c <coverage.xml) bytes)"
   fi
+  if [[ "$tvl_rc" -ne 0 ]]; then
+    echo "  ❌ TVL tuning lane FAILED (rc=$tvl_rc): fix it; the coverage input would lack tests/unit/tuning"
+    FAIL=1
+  fi
+  # Merge the main and TVL data files into the one coverage.xml Sonar reads
+  # (relative_files in the rcfile keeps the paths identical across both).
+  if [[ "$tvl_rc" -eq 0 && -s .coverage.tvl ]]; then
+    local cov_py="$PYTEST_PY"
+    if "$cov_py" -m coverage combine --rcfile="$rcfile" --keep .coverage.main .coverage.tvl >/dev/null \
+       && "$cov_py" -m coverage xml --rcfile="$rcfile" -o coverage.xml >/dev/null; then
+      echo "  • combined main + TVL coverage into coverage.xml"
+    else
+      echo "  ❌ coverage combine failed: coverage.xml lacks the TVL lane"; FAIL=1
+    fi
+  elif [[ "$tvl_rc" -eq 0 ]]; then
+    echo "  ❌ TVL lane produced no coverage data (.coverage.tvl)"; FAIL=1
+  fi
+  rm -f "$rcfile" .coverage .coverage.main .coverage.tvl
+  [[ "$FAIL" == "1" ]] || echo "  ✅ coverage.xml written ($(wc -c <coverage.xml) bytes)"
 }
 
 # ── 4. SonarQube quality gate (main-bound only) ──────────────────────────
