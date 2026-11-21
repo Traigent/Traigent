@@ -234,6 +234,157 @@ class TestSensitiveMetadataKeyUnion:
 # --- Shared always-blocked checks (metadata / link-local / plaintext) ----------
 
 
+_STORED_BACKEND_LOOKUP = (
+    "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url"
+)
+
+
+@pytest.fixture
+def clean_backend_env(monkeypatch):
+    """No configured backend anywhere: no env vars, no stored credentials."""
+    for name in (
+        "TRAIGENT_BACKEND_URL",
+        "TRAIGENT_API_URL",
+        "TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT",
+        "TRAIGENT_DEPLOYMENT_PROFILE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    with patch(_STORED_BACKEND_LOOKUP, return_value=None) as lookup:
+        yield lookup
+
+
+class TestDefaultFollowsConfiguredBackend:
+    """Outside strict mode the default is the configured backend, not the vendor."""
+
+    def test_backend_url_env_is_used(self, monkeypatch, clean_backend_env):
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://backend.example.test")
+        converter = DatasetConverter()
+        assert converter.backend_base_url == "https://backend.example.test"
+        assert converter._resolved_from_vendor_default is False
+
+    def test_api_url_env_is_used_when_backend_url_unset(
+        self, monkeypatch, clean_backend_env
+    ):
+        from traigent.config.backend_config import BackendConfig
+
+        monkeypatch.setenv("TRAIGENT_API_URL", "https://api.example.test/api/v1")
+        converter = DatasetConverter()
+        assert converter.backend_base_url == BackendConfig.get_cloud_backend_url()
+        assert converter.backend_base_url == "https://api.example.test"
+        assert converter._resolved_from_vendor_default is False
+
+    def test_stored_credentials_backend_is_used(self, clean_backend_env):
+        clean_backend_env.return_value = "https://stored.example.test"
+        converter = DatasetConverter()
+        assert converter.backend_base_url == "https://stored.example.test"
+        assert converter._resolved_from_vendor_default is False
+
+    def test_nothing_configured_uses_vendor_default(self, clean_backend_env):
+        converter = DatasetConverter()
+        assert converter.backend_base_url == DEFAULT_CLOUD_URL
+        assert converter._resolved_from_vendor_default is True
+
+    def test_explicit_argument_wins_over_configuration(
+        self, monkeypatch, clean_backend_env
+    ):
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://backend.example.test")
+        converter = DatasetConverter(backend_base_url="https://explicit.example.test")
+        assert converter.backend_base_url == "https://explicit.example.test"
+
+    def test_strict_mode_uses_configured_backend(self, monkeypatch, clean_backend_env):
+        monkeypatch.setenv("TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT", "1")
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://backend.example.test")
+        converter = DatasetConverter()
+        assert converter.backend_base_url == "https://backend.example.test"
+        assert converter._resolved_from_vendor_default is False
+
+    def test_strict_mode_unconfigured_raises_lazily(
+        self, monkeypatch, clean_backend_env
+    ):
+        monkeypatch.setenv("TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT", "1")
+        converter = DatasetConverter()  # construction must not raise
+        with pytest.raises(EndpointNotConfiguredError):
+            _ = converter.backend_base_url
+
+    def test_vendor_default_cache_is_dropped_when_strict_mode_switches_on(
+        self, monkeypatch, clean_backend_env
+    ):
+        converter = DatasetConverter()
+        assert converter.backend_base_url == DEFAULT_CLOUD_URL
+        assert converter._resolved_from_vendor_default is True
+        monkeypatch.setenv("TRAIGENT_REQUIRE_EXPLICIT_ENDPOINT", "1")
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://backend.example.test")
+        assert converter.backend_base_url == "https://backend.example.test"
+        assert converter._resolved_from_vendor_default is False
+
+    def test_configured_value_stays_cached_when_env_changes_later(
+        self, monkeypatch, clean_backend_env
+    ):
+        # Caching semantics are unchanged: a resolved value is kept for the
+        # converter's lifetime (only a vendor default is re-resolved, and only
+        # on a switch into strict mode).
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://backend.example.test")
+        converter = DatasetConverter()
+        assert converter.backend_base_url == "https://backend.example.test"
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://other.example.test")
+        assert converter.backend_base_url == "https://backend.example.test"
+
+    def test_unsafe_configured_url_is_refused_in_process_when_used(
+        self, monkeypatch, clean_backend_env
+    ):
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "http://169.254.169.254")
+        converter = DatasetConverter()  # resolution is lazy: no error yet
+        with pytest.raises(ValueError, match="metadata service|link-local"):
+            _ = converter.backend_base_url
+
+    def test_plain_http_configured_url_is_refused_in_production(
+        self, clean_backend_env
+    ):
+        env = {"TRAIGENT_BACKEND_URL": "http://backend.example.test"}
+        with patch.dict("os.environ", env, clear=True):
+            converter = DatasetConverter()
+            with pytest.raises(ValueError, match="must use https in production"):
+                _ = converter.backend_base_url
+
+    def test_private_configured_host_policy_is_unchanged(self, clean_backend_env):
+        # Private ranges stay allowed for this converter (see
+        # test_dataset_converter_private_host_policy_unchanged); only the
+        # always-blocked rules apply to a configured URL, exactly as to an
+        # explicit one.
+        env = {"TRAIGENT_BACKEND_URL": "https://10.20.30.40:8443"}
+        with patch.dict("os.environ", env, clear=True):
+            converter = DatasetConverter()
+            assert converter.backend_base_url == "https://10.20.30.40:8443"
+
+    def test_import_with_unsafe_backend_url_does_not_raise(self) -> None:
+        code = textwrap.dedent(
+            """
+            import traigent.cloud.dataset_converter as m
+            print("IMPORT_OK")
+            try:
+                m.converter.backend_base_url
+            except ValueError as exc:
+                print("REFUSED:" + str(exc))
+            """
+        )
+        env = {
+            key: os.environ[key]
+            for key in ("PATH", "HOME", "LANG")
+            if key in os.environ
+        }
+        env["TRAIGENT_BACKEND_URL"] = "http://169.254.169.254"
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=240,
+        )
+        assert result.returncode == 0, result.stderr[-2000:]
+        assert "IMPORT_OK" in result.stdout
+        assert "REFUSED:" in result.stdout
+
+
 @pytest.mark.parametrize(
     "url",
     [
