@@ -33,6 +33,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **The bundled `traigent-tracing` add-on is gated at send time (0.1.2); the SDK now requires it.** The add-on built its own OTLP exporter, so a credential latched `optimization_only` after a tracer was handed out could still be sent. It now builds the SDK's gated exporter (frozen headers, per-request check) and fails closed if that is unavailable; add-ons older than 0.1.2 are ignored in favour of the built-in tracing. Public `traigent.observability.otel.init` also never sends a key that was absent when the egress gate ran.
 - **Sync writes send the explicit project (#3321).** `SyncManager` now puts the project on session writes, which fixes the HTTP 422 against backend #6114.
 - The dataset converter and the MCP plan tool now follow the configured backend URL (#3318, #3316).
+- **Continuous Tuning: the agent code version reaches the backend only as a digest.** A git commit id, a sha256, `src:<sha256>` or `tag:<sha256>` is sent as is; any other valid version (1-128 characters of `[A-Za-z0-9_.:+-]`, for example `v1.2.3`) is sent as `tag:` plus the sha256 of the value, and the readable value stays local (`code_version_label()`, the `tune` CLI). Invalid values are refused with `E_INVALID_CODE_VERSION` without echoing the value (#3325).
 
 ### Known issues
 
