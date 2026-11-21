@@ -165,8 +165,6 @@ def test_an_approver_revoked_during_the_history_read_does_not_start_the_optimize
     assert report.refused and report.refused[0].endswith(":approver_not_authorized")
 
 
-# -- R: the serving code version is read after the final authenticator -----------------
-# -- R: the instant is the one sampled AFTER the final authenticator -------------------
 # -- the clock starts at operation entry -----------------------------------------------
 def test_a_lock_wait_advances_the_first_scheduling_read_of_a_fixed_clock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

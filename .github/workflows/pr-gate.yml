@@ -509,6 +509,20 @@ jobs:
           TRAIGENT_REQUIRE_ECONOMICS_SCHEMA: "1"
         # pyproject addopts already include -n auto --dist loadgroup (xdist).
         run: pytest tests/unit -q --tb=short
+      - name: Run Continuous Tuning tests against the pinned TVL toolchain
+        # tests/unit/tuning needs a TVL toolchain that understands TVL 1.7. The PyPI
+        # tvl-spec of the runtime-tvl extra (==1.4.0) does not, and this job installs no
+        # tvl-spec, so the step above SKIPS those tests (tests/unit/tuning/conftest.py).
+        # Install the merged public commit from scripts/ci/tvl-pin.txt (single source
+        # of truth) only NOW, after the full run: tests/unit/runtime asserts the 1.4.0
+        # toolchain and must not see this build. TRAIGENT_TVL_REQUIRED=1 turns a missing
+        # or too-old toolchain into a failure instead of a skip.
+        env:
+          PYTHONPATH: .
+          TRAIGENT_TVL_REQUIRED: "1"
+        run: |
+          pip install -r scripts/ci/tvl-pin.txt
+          pytest tests/unit/tuning -q --tb=short
       - name: Run live Redis session test
         env:
           PYTHONPATH: .

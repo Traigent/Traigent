@@ -48,7 +48,6 @@ import asyncio
 import contextlib
 import copy
 import dataclasses
-import fcntl
 import hashlib
 import json
 import logging
@@ -89,10 +88,12 @@ E_NO_CANDIDATE_RUN = "E_NO_CANDIDATE_RUN"
 E_HEAD_DIVERGED = "E_HEAD_DIVERGED"
 E_LOCAL_AUTHORITY_IN_PRODUCTION = "E_LOCAL_AUTHORITY_IN_PRODUCTION"
 E_FIXED_CLOCK_IN_PRODUCTION = "E_FIXED_CLOCK_IN_PRODUCTION"
+E_LOCK_UNSUPPORTED_PLATFORM = "E_LOCK_UNSUPPORTED_PLATFORM"
+E_CONNECTED_TUNING_REFUSED = "E_CONNECTED_TUNING_REFUSED"
 
 GATE_FORMAT = "traigent-gate-result/1"
 DEFAULT_STORE_ROOT = Path(".traigent") / "tuning"
-_REF = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+_REF = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 # The rule keys this release executes; every other key (``when``, cooldowns,
 # ``only_while`` / ``unless`` conditions, repeat limits, ...) is refused at construction.
 _SUPPORTED_RULE_KEYS = frozenset(
@@ -116,10 +117,10 @@ def default_store_dir(agent: str, environment: str | None = None) -> Path:
     The environment is part of the path so a staging store and a production store
     of the same agent are never the same directory.
     """
-    if not _REF.match(agent) or agent in {".", ".."}:
+    if not _REF.fullmatch(agent) or agent in {".", ".."}:
         raise TuningError(E_INVALID_RECORD, "agent must be an opaque reference")
     env = environment or DEFAULT_ENVIRONMENT
-    if not _REF.match(env) or env in {".", ".."}:
+    if not _REF.fullmatch(env) or env in {".", ".."}:
         raise TuningError(E_INVALID_RECORD, "environment must be an opaque reference")
     return DEFAULT_STORE_ROOT / env / agent
 
@@ -247,12 +248,8 @@ def _mkdir_durable(directory: Path) -> None:
         _fsync_dir(created.parent)
 
 
-def _stage_json(path: Path, value: Any) -> str:
-    """Write ``value`` to a durable temp file beside ``path``; return its name.
-
-    Nothing is visible at ``path`` until :func:`_publish_staged` renames it, so a
-    caller can do every slow step first and decide at the last instant.
-    """
+def _write_json(path: Path, value: Any) -> None:
+    """Write JSON atomically: temp file in the same directory, fsync, rename."""
     _mkdir_durable(path.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
@@ -260,31 +257,12 @@ def _stage_json(path: Path, value: Any) -> str:
             json.dump(value, fh, sort_keys=True, indent=2)
             fh.flush()
             os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        _fsync_dir(path.parent)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
-    return tmp
-
-
-def _discard_staged(tmp: str) -> None:
-    with contextlib.suppress(OSError):
-        os.unlink(tmp)
-
-
-def _publish_staged(tmp: str, path: Path) -> None:
-    """Atomically rename a staged file into place, then make the rename durable."""
-    try:
-        os.replace(tmp, path)
-        _fsync_dir(path.parent)
-    except BaseException:
-        _discard_staged(tmp)
-        raise
-
-
-def _write_json(path: Path, value: Any) -> None:
-    """Write JSON atomically: temp file in the same directory, fsync, rename."""
-    _publish_staged(_stage_json(path, value), path)
 
 
 def _read_json(path: Path, default: Any = None) -> Any:
@@ -542,8 +520,8 @@ class Controller:
 
         TVL specifies standing approval, external-event triggers, conditions on a
         rule (``only_while``, ``unless``, cooldowns and repeat limits) and more; this
-        release runs a schedule or a monitor-breach trigger that starts an
-        optimization with human approval, and nothing else.  The rule keys and
+        release runs a schedule trigger that starts an optimization with human
+        approval, and nothing else.  The rule keys and
         trigger shapes it executes are allow-listed: anything else is refused here
         rather than silently ignored.  The policy may still be compiled and checked;
         it is never run.
@@ -561,7 +539,7 @@ class Controller:
                     raise TuningError(
                         E_UNSUPPORTED_IN_RELEASE,
                         "external-event triggers (ModelReleased) are not supported "
-                        "in this release; use a schedule or a monitor breach",
+                        "in this release; use a schedule",
                     )
                 unsupported = sorted(set(rule) - _SUPPORTED_RULE_KEYS)
                 if unsupported:
@@ -578,8 +556,7 @@ class Controller:
                 if not _supported_trigger(trigger):
                     raise TuningError(
                         E_UNSUPPORTED_IN_RELEASE,
-                        "only a schedule or a monitor-breach trigger is supported "
-                        "in this release",
+                        "only a schedule trigger is supported in this release",
                     )
 
     # -- store ----------------------------------------------------------------------
@@ -589,6 +566,13 @@ class Controller:
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
         _mkdir_durable(self.dir)
+        try:
+            import fcntl  # POSIX only: imported when tuning is used, never at CLI start
+        except ImportError:
+            raise TuningError(
+                E_LOCK_UNSUPPORTED_PLATFORM,
+                "the tuning store lock needs a POSIX platform (fcntl is unavailable)",
+            ) from None
         with open(self._p(".lock"), "a+") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
             try:
@@ -714,7 +698,6 @@ class Controller:
         clock: Callable[[], datetime],
         last_persisted: int,
         authenticate: Callable[[], bool],
-        recheck: Callable[[], str | None],
         lapse_at: Callable[[int], str | None],
         record: Callable[[int], None],
         effect: Callable[[Callable[[], int]], _T],
@@ -727,14 +710,13 @@ class Controller:
         order, and nothing slow after it:
 
         1. the platform authenticator, called afresh (never a cached answer);
-        2. ``recheck``: state that must be re-read after the authenticator returned;
-        3. the clock, sampled ONCE: a persisted instant ahead of it refuses;
-        4. ``lapse_at(instant)``: deadlines and scope expiry against that sample;
-        5. ``record(instant)``: the one effect instant goes into the journal (an
+        2. the clock, sampled ONCE: a persisted instant ahead of it refuses;
+        3. ``lapse_at(instant)``: deadlines and scope expiry against that sample;
+        4. ``record(instant)``: the one effect instant goes into the journal (an
            append that scans nothing);
-        6. the effect itself.
+        5. the effect itself.
 
-        ``effect`` receives ``final_check``, which runs steps 1-5 and returns the
+        ``effect`` receives ``final_check``, which runs steps 1-4 and returns the
         instant; the effect calls it immediately before it acts (an adapter that waits
         for a lock calls it after the wait).  Every failure denies.  Returns
         ``(value, refusal, instant)``.
@@ -751,9 +733,6 @@ class Controller:
             if not authenticated:
                 raise _GateRefused("approver_not_authorized")
             try:
-                reason = recheck()
-                if reason is not None:
-                    raise _GateRefused(reason)
                 sample = _utc(clock())
                 instant = int((sample - self.origin).total_seconds())
                 if instant < last_persisted:
@@ -807,7 +786,7 @@ class Controller:
         """Is ``approver`` listed AND authenticated at this instant?
 
         The same authenticator decides every authority decision (a run approval, and
-        its recheck just before the optimizer runs): a platform
+        its re-check just before the optimizer runs): a platform
         authenticator that answers False refuses.  No authority means no.
         """
         authority = self.authority
@@ -861,7 +840,7 @@ class Controller:
             else occurrence_ref(occurrence_ref_)
         )
         parse_occurrence_ref(ref)
-        if not _REF.match(approver):
+        if not _REF.fullmatch(approver):
             raise TuningError(E_INVALID_RECORD, "approver must be an opaque reference")
         authority = self.require_authority()
         if not authority.authorized(approver):
@@ -1300,7 +1279,6 @@ class Controller:
             clock=clock,
             last_persisted=last_persisted,
             authenticate=lambda: self._on_list_now(approver, _approve_context(ref)),
-            recheck=lambda: None,
             lapse_at=lapse_at,
             record=record_start,
             effect=run,
@@ -1787,13 +1765,11 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _supported_trigger(trigger: Any) -> bool:
-    """A schedule (``every_days`` + ``anchor``) or a monitor ``episode_opened`` breach."""
-    if not isinstance(trigger, Mapping):
+    """A schedule (``every_days`` + ``anchor``): the pilot's only trigger."""
+    if not isinstance(trigger, Mapping) or set(trigger) != {"schedule"}:
         return False
-    if set(trigger) == {"schedule"}:
-        spec = trigger["schedule"]
-        return isinstance(spec, Mapping) and set(spec) == {"every_days", "anchor"}
-    return set(trigger) == {"monitor", "event"} and trigger["event"] == "episode_opened"
+    spec = trigger["schedule"]
+    return isinstance(spec, Mapping) and set(spec) == {"every_days", "anchor"}
 
 
 def _well_formed_digests(loaded: Any) -> bool:
@@ -1867,6 +1843,56 @@ def _candidate_copy(fn: Any) -> Any:
     return clone
 
 
+def _pin_local_offline(clone: Any, requested_algorithm: Any = None) -> None:
+    """Make the candidate copy run fully local: no backend call, no search-space values out.
+
+    A connected ``optimize()`` sends the raw search space (prompt text included) to
+    the backend; the pilot keeps configuration VALUES on the customer side, so the
+    copy is pinned to the SDK's offline execution policy.  A function that cannot run
+    local (a smart algorithm, a hybrid-API evaluator) is refused, never run connected.
+    """
+    from traigent.config.types import (
+        ExecutionIntent,
+        ExecutionMode,
+        ResolvedExecutionPolicy,
+        is_smart_algorithm,
+        resolve_execution_policy,
+    )
+
+    refuse = TuningError(
+        E_CONNECTED_TUNING_REFUSED,
+        "tuning runs only locally: this function is configured for a connected run "
+        "(smart algorithm or hybrid-API evaluator), which would send configuration "
+        "values to the backend",
+    )
+    if isinstance(requested_algorithm, str) and is_smart_algorithm(requested_algorithm):
+        raise refuse
+    if getattr(clone, "external_service_evaluator", None) is not None:
+        raise refuse
+    if getattr(clone, "execution_mode", None) == ExecutionMode.HYBRID_API.value:
+        raise refuse
+    policy = getattr(clone, "execution_policy", None)
+    if not isinstance(policy, ResolvedExecutionPolicy):
+        if hasattr(clone, "execution_policy"):
+            raise refuse  # an SDK function whose policy cannot be read: fail closed
+        return  # not an SDK function: it has no backend path to pin
+    if (
+        policy.require_cloud
+        or policy.intent is ExecutionIntent.CLOUD_REQUIRED
+        or policy.legacy_execution_mode is ExecutionMode.HYBRID_API
+    ):
+        raise refuse
+    clone.execution_policy = resolve_execution_policy(
+        algorithm=policy.algorithm,
+        offline=True,
+        require_cloud=False,
+        source_hint="tuning_local_only",
+    )
+    clone.offline = True
+    clone.execution_mode = ExecutionMode.LOCAL.value
+    clone._effective_execution_mode = ExecutionMode.LOCAL
+
+
 # The SDK resolves its artifact roots from the process environment; these are the
 # knobs that route the optimization log (best-config artifacts included) and local
 # storage.  They are swapped for the duration of one candidate run.
@@ -1913,8 +1939,9 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
     The optimization runs on an isolated copy (see :func:`_candidate_copy`), so the
     live function's configuration is never changed, and every artifact it writes
     (including best-config files) lands in ``candidate_dir`` -- inside the tuning
-    store -- never where a live wrapper's best-config loaders look.  A deploy only
-    follows the local head file, never this adapter.
+    store -- never where a live wrapper's best-config loaders look.  The adapter only
+    produces isolated candidates: serving keeps its in-code configuration, and
+    release is not implemented in this version.
     """
 
     def run(
@@ -1930,6 +1957,7 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
             else Path(tempfile.mkdtemp(prefix="traigent-candidate-"))
         )
         clone = _candidate_copy(fn)
+        _pin_local_offline(clone, kwargs.get("algorithm"))
         # Record the identity of every dataset the run ACTUALLY loads (a per-call
         # dataset or a generated override included), for the holdout-disjointness
         # check at promotion.

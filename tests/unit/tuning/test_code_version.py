@@ -83,7 +83,7 @@ def test_the_gate_records_the_code_version_it_measured_and_status_shows_it(
     assert head(tmp_path)["generation"] == 0 and head(tmp_path)["config"] == OLD
 
 
-def test_followed_head_traces_carry_the_code_version_of_a_platform_signed_head(
+def test_followed_head_traces_stamp_no_code_version_until_a_signed_head_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from unittest.mock import MagicMock
@@ -117,4 +117,5 @@ def test_followed_head_traces_carry_the_code_version_of_a_platform_signed_head(
 
     assert classify() == "ok"
     metadata = client.start_trace.call_args.kwargs["metadata"]
-    assert metadata["head_code_version"] == "rev-abc123"
+    assert "head_code_version" not in metadata  # a head file is not a signed release
+    assert metadata["head_state"] == "unreleased"
