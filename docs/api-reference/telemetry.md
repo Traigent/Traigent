@@ -4,7 +4,7 @@ This document describes what telemetry data Traigent SDK collects, how it's used
 
 ## Overview
 
-Traigent SDK collects telemetry data to improve the optimization experience and help diagnose issues. In the open-source build, telemetry stays local unless you opt into managed services. Telemetry can be completely disabled.
+Traigent SDK collects telemetry data to improve the optimization experience and help diagnose issues. In offline mode (`offline=True`) nothing is sent to the Traigent backend. In portal-backed (connected) mode, session and trial data is sent to the backend. `TRAIGENT_DISABLE_TELEMETRY` turns off the SDK's observability trace delivery, OpenTelemetry export to the backend and usage analytics; it does not turn off portal-backed session and trial egress (see *Opting Out of Telemetry*).
 
 ## What Data is Collected
 
@@ -340,7 +340,15 @@ paraphrase it.
 
 ### Complete Opt-Out
 
-To completely disable all telemetry collection, set the environment variable:
+`TRAIGENT_DISABLE_TELEMETRY` stops these SDK emissions:
+
+- observability trace delivery (the `ObservabilityClient` goes offline)
+- OpenTelemetry export to the backend
+- usage analytics (see *Usage Analytics* below)
+
+It does **not** stop portal-backed session and trial egress in connected mode: tuned config-space values, configuration IDs/schema and numeric metrics are still sent to the Traigent backend. To send nothing to the Traigent backend, use `offline=True` (or `TRAIGENT_OFFLINE_MODE=true`).
+
+To disable these emissions, set the environment variable:
 
 ```bash
 export TRAIGENT_DISABLE_TELEMETRY=true
@@ -499,7 +507,7 @@ For HIPAA compliance or handling sensitive data:
    )
    ```
 
-2. **Disable Telemetry**:
+2. **Optionally also set `TRAIGENT_DISABLE_TELEMETRY`**: this stops observability trace delivery, OpenTelemetry export and usage analytics, but does not stop portal-backed session and trial egress, so it is not a substitute for `offline=True`:
    ```bash
    export TRAIGENT_DISABLE_TELEMETRY=true
    ```
