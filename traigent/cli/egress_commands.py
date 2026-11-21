@@ -92,7 +92,7 @@ def relay_command(
         try:
             relay.serve_forever()
         except KeyboardInterrupt:
-            pass
+            click.echo("egress relay stopped", err=True)
         finally:
             relay.stop()
         return
