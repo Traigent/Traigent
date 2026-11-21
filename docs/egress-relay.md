@@ -52,7 +52,9 @@ stops when the child exits and returns the child's exit code. The log is
   port) equals the origin of `TRAIGENT_BACKEND_URL` (no fallback to `TRAIGENT_API_URL`
   or stored credentials); the host is a loopback IP literal (`127.0.0.0/8` or `::1`;
   never `localhost` or another name, and no DNS lookup is involved); the URL names an
-  explicit port; and the transport gate is not `TRAIGENT_TRANSPORT_GATE=off` (redirects
+  explicit port other than `80` or `0` (a relay on port 80 is never needed, and some HTTP
+  libraries drop a default port from the URL they print); the URL has no userinfo
+  (not even an empty `@`), no backslash, no query or fragment; and the transport gate is not `TRAIGENT_TRANSPORT_GATE=off` (redirects
   are refused for that origin). For that one origin it also allows the loopback
   destination, as `TRAIGENT_ALLOW_PRIVATE_BACKEND` would, without needing that switch.
   It relaxes nothing else: metadata and link-local blocking, path, whitespace and

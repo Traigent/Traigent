@@ -319,3 +319,82 @@ def test_transport_gate_refuses_redirects_for_the_relay_origin() -> None:
     with _env(**_relay_env()):
         assert _refuses_redirects(client, _V4) is True
         assert _refuses_redirects(client, f"http://127.0.0.1:{_PORT + 1}") is False
+
+
+# --- review round 2: userinfo, default port, path guards -----------------------
+
+_USERINFO_URLS = [
+    f"http://@127.0.0.1:{_PORT}",
+    f"http://:@127.0.0.1:{_PORT}",
+    f"http://user@127.0.0.1:{_PORT}",
+    f"http://user:pw@127.0.0.1:{_PORT}",  # pragma: allowlist secret
+]
+
+
+@pytest.mark.parametrize("validator", _VALIDATORS)
+@pytest.mark.parametrize("url", _USERINFO_URLS)
+def test_any_userinfo_including_empty_is_refused(validator, url: str) -> None:
+    with _env(**_relay_env()):
+        with pytest.raises(ValueError):
+            validator(url)
+
+
+@pytest.mark.parametrize("validator", _VALIDATORS)
+@pytest.mark.parametrize("port", ["80", "0"])
+def test_default_and_zero_port_refused_even_when_pinned(validator, port: str) -> None:
+    url = f"http://127.0.0.1:{port}"
+    with _env(**_relay_env(url)):
+        with pytest.raises(ValueError):
+            validator(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [_V4, f"{_V4}/", f"{_V4}/api/v1/x?y=1"],
+)
+def test_redirect_helper_matches_the_pinned_origin_however_it_is_printed(
+    url: str,
+) -> None:
+    with _env(**_relay_env()):
+        assert private_backend_opt_in_covers(url) is True
+
+
+def test_redirect_helper_matches_normalized_default_port_origin() -> None:
+    # httpx prints http://127.0.0.1:80 without the port; the helper still recognizes
+    # the pinned origin although admission itself refuses port 80.
+    with _env(**_relay_env("http://127.0.0.1:80")):
+        assert private_backend_opt_in_covers("http://127.0.0.1/api/v1/x") is True
+        with pytest.raises(ValueError):
+            validate_cloud_base_url("http://127.0.0.1:80")
+
+
+@pytest.mark.parametrize("validator", _VALIDATORS)
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "/%2e%2e/x",
+        "/..%2fx",
+        "/a b",
+        "/a\tb",
+        "/a\nb",
+        "/%2E%2E/",
+        "/a\\b",
+        "/%252e%252e/x",
+    ],
+)
+def test_relay_exception_keeps_whitespace_and_traversal_guards(
+    validator, suffix: str
+) -> None:
+    with _env(**_relay_env()):
+        with pytest.raises(ValueError):
+            validator(f"{_V4}{suffix}")
+
+
+@pytest.mark.parametrize("suffix", ["/%2e%2e/x", "/a b", "/a\\b", "/a\tb"])
+def test_always_blocked_https_with_these_paths_is_unchanged(suffix: str) -> None:
+    # Characterized on 432cf89cc: https URLs with these paths were accepted by
+    # validate_always_blocked_cloud_url before this change, and still are.
+    with _env(**_relay_env()):
+        validate_always_blocked_cloud_url(
+            f"https://127.0.0.1:{_PORT}{suffix}", resolve=False
+        )

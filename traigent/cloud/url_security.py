@@ -404,21 +404,41 @@ def _is_loopback_ip_literal(hostname: str | None) -> bool:
     return host_ip == ipaddress.IPv6Address("::1")
 
 
-def _egress_relay_origin_matches(candidate: str) -> bool:
-    """True when the relay rule covers ``candidate`` (gate mode not considered).
+def _egress_relay_origin_covers(url: str) -> bool:
+    """True when ``url`` is at the origin the relay rule pins (gate mode ignored).
 
-    All of: ``TRAIGENT_EGRESS_RELAY`` is exactly ``1``/``true``; the scheme is
-    ``http``; the host is a loopback IP literal; an explicit port is present; there
-    is no userinfo; and the origin equals the origin of ``TRAIGENT_BACKEND_URL``.
+    Used for redirect refusal, so it compares NORMALIZED origins: a request URL equal
+    to the pinned relay origin is recognized however the HTTP library prints it
+    (``httpx`` drops a default port). Needs the switch on, ``http``, a loopback IP
+    literal, and the origin of ``TRAIGENT_BACKEND_URL``.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "http" or not _is_loopback_ip_literal(parsed.hostname):
+        return False
+    return _switch_origin_matches(_EGRESS_RELAY_ENV, url)
+
+
+def _egress_relay_origin_matches(candidate: str) -> bool:
+    """True when the relay rule may ADMIT ``candidate`` (gate mode not considered).
+
+    Everything :func:`_egress_relay_origin_covers` needs, plus: an explicit port that
+    is neither ``0`` nor the scheme default ``80`` (a relay on port 80 is never
+    needed, and a default port is dropped by some HTTP libraries); no userinfo of any
+    kind (``@`` anywhere in the netloc, even empty); no backslash; and no params,
+    query or fragment.
     """
     parsed = urlparse(candidate)
     if parsed.scheme != "http" or not _is_loopback_ip_literal(parsed.hostname):
         return False
-    if _has_invalid_port(parsed) or parsed.port is None:
+    if "\\" in candidate or "@" in parsed.netloc:
         return False
-    if parsed.username or parsed.password:
+    if parsed.username is not None or parsed.password is not None:
         return False
-    return _switch_origin_matches(_EGRESS_RELAY_ENV, candidate)
+    if parsed.params or parsed.query or parsed.fragment:
+        return False
+    if _has_invalid_port(parsed) or parsed.port in (None, 80):
+        return False
+    return _egress_relay_origin_covers(candidate)
 
 
 def _egress_relay_decision(candidate: str) -> bool:
@@ -504,13 +524,13 @@ def private_backend_opt_in_covers(url: str) -> bool:
 
     True when ``TRAIGENT_ALLOW_PRIVATE_BACKEND`` is on and ``url`` has exactly the
     origin of ``TRAIGENT_BACKEND_URL``, or when the egress-relay rule
-    (``TRAIGENT_EGRESS_RELAY``, see :func:`_egress_relay_origin_matches`) covers
+    (``TRAIGENT_EGRESS_RELAY``, see :func:`_egress_relay_origin_covers`) covers
     ``url``. Callers that send credentials to that origin refuse redirects while
     this is True.
     """
     if _private_backend_opt_in(url):
         return True
-    return _egress_relay_origin_matches(url) and not _transport_gate_is_off()
+    return _egress_relay_origin_covers(url) and not _transport_gate_is_off()
 
 
 def _reject_unsafe_hostname(
@@ -621,8 +641,7 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = _CLOUD_REQUEST) -> 
     if not candidate:
         raise ValueError(f"{purpose} base URL cannot be empty") from None
 
-    if any(ord(ch) < 32 or ch.isspace() for ch in candidate):
-        raise ValueError(f"{purpose} base URL contains unsafe whitespace") from None
+    _reject_unsafe_whitespace(candidate, purpose=purpose)
 
     parsed = urlparse(candidate)
     hostname = _validate_cloud_url_parts(parsed, purpose=purpose)
@@ -656,6 +675,11 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = _CLOUD_REQUEST) -> 
     return urlunparse(
         parsed._replace(path=clean_path, params="", query="", fragment="")
     )
+
+
+def _reject_unsafe_whitespace(candidate: str, *, purpose: str) -> None:
+    if any(ord(ch) < 32 or ch.isspace() for ch in candidate):
+        raise ValueError(f"{purpose} base URL contains unsafe whitespace") from None
 
 
 def _validate_cloud_url_parts(parsed: ParseResult, *, purpose: str) -> str:
@@ -721,15 +745,16 @@ def validate_always_blocked_cloud_url(
     parsed = urlparse(candidate)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError(f"{purpose} base URL must be http(s) with a host") from None
-    if (
-        parsed.scheme != "https"
-        and not _is_development_environment()
-        and not _egress_relay_decision(candidate)
-    ):
-        raise ValueError(
-            f"{purpose} base URL must use https in production: "
-            f"{_production_assumed_hint(relay_hint=_is_loopback_ip_literal(parsed.hostname))}"
-        ) from None
+    if parsed.scheme != "https" and not _is_development_environment():
+        if not _egress_relay_decision(candidate):
+            raise ValueError(
+                f"{purpose} base URL must use https in production: "
+                f"{_production_assumed_hint(relay_hint=_is_loopback_ip_literal(parsed.hostname))}"
+            ) from None
+        # The relay exception must not skip checks that used to run for this URL:
+        # the production http refusal stopped whitespace and traversal paths here.
+        _reject_unsafe_whitespace(candidate, purpose=purpose)
+        _reject_cloud_path_traversal(parsed.path, purpose=purpose)
 
     normalized = _normalize_hostname(parsed.hostname)
     if normalized in _METADATA_HOSTNAMES:
