@@ -95,6 +95,5 @@ def resolve_api_key(explicit: str | None) -> str | None:
     """Resolve the API key: explicit value, ``TRAIGENT_API_KEY``, then stored
     CLI credentials from ``traigent auth login`` (Traigent#1721)."""
     if explicit:
-        _check_raw_backend_url(explicit)
         return explicit
     return BackendConfig.get_api_key()
