@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-21
+
 ### Breaking
 
 - **Agent decision calls moved to the project-level agent paths.** `BackendAnalyticsClient.agent_decision_ensure`, `agent_decision_latest` and `agent_decision_answer` (and the analytics MCP tools of the same names) now call `/api/v1/projects/{project_id}/agents/{agent_ref}/decisions/ensure`, `.../latest` and `.../{decision_id}/answer` (previously `/api/v1beta/agent-decisions/{agent_id}/...` and `/api/v1beta/agent-decisions/{decision_id}/answer`). The project is `project_id` or `TRAIGENT_PROJECT_ID` and is required (it is in the path, never an `X-Project-Id` header); without one the call fails closed before any request. `agent_decision_answer` and the `agent_decision_answer` MCP tool now take the agent id as their first argument because the route carries it. The SDK has no caller of the agent-lifecycle routes or of the removed public `agents/admin/stats` route; the lifecycle field rename (`agent_ref` to `lifecycle_agent_ref`) needs no SDK change.
@@ -18,12 +20,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Continuous Tuning (Python SDK).** New `traigent.tuning` package (`Tuning`, `FailureRate`, `RandomAudit`, `ModelReleased`, `OnBreach`, `Every`, `ProposeFix`) that compiles to a TVL 1.7 module (`to_tvl`) and validates it with the TVL reference linter (`validate`, diagnostics unchanged); `traigent.observe(agent=..., tune=Tuning(...))` attaches the compiled policy as `fn.tuning`; new `traigent tune compile|check|simulate` commands, and a local controller that runs the spend step only (a person approves a run; releasing a candidate is planned, not built: a platform-signed release does not exist yet, `follow="head"` serves the function's in-code default configuration until a platform-signed release exists (a `head.json` configuration is never applied; traces carry `head_state`, not a generation), and the local release entry points refuse with `E_UNSUPPORTED_IN_RELEASE`). The pilot trigger is a schedule: monitor-breach, episode and external triggers are refused at construction. Tuning runs are pinned to local (offline) execution so no configuration values reach the backend (a connected configuration is refused with `E_CONNECTED_TUNING_REFUSED`), and `fcntl` is imported only when the store lock is used, so the CLI starts on Windows. Without a `tvl` release that supports 1.7, decoration still succeeds but the policy is unvalidated and executing paths refuse with `E_TVL_VALIDATOR_UNAVAILABLE` (no schema-only fallback). Guide: `docs/guides/continuous-tuning.md`.
 
+- **`traigent egress relay` and `TRAIGENT_EGRESS_RELAY` (#3313, #3315, #3322).** A local relay logs what the SDK sends to the backend. A production-configured SDK can use it through `TRAIGENT_EGRESS_RELAY`; the opt-in refuses under an env proxy, the log keeps allowlisted route words, and the plan URL no longer doubles `/api/v1`.
+- **Regression sets (#3309, #3311).** A committed regression set with `traigent regression add`, plus `traigent regression confirm` and `check`.
+- **Per-example repeat outcomes with a 95% interval (#3308).**
+- **`X-Project-Id` is sent on backend writes when a project is configured (#3298).**
+
 ### Fixed
 
 - **Continuous Tuning: a failed optimization is diagnosable.** An approved run whose optimizer raises is recorded with a closed reason (`cost_preflight_refused`, `unpriced_model`, `connected_tuning_refused`, `optimizer_raised`; fact `optimize_failed` in the controller journal, never the exception text), the full exception goes to the local log only, `StepReport.errors` and the `tune step` JSON list it, and `tune step` exits non-zero. The guide documents the `runtime_liveness_missing` check warning (the builder does not emit a liveness requirement in the pilot) and the schedule anchor versus the store origin day.
 - The deprecated `TRAIGENT_OBSERVABILITY_PRIVACY_MODE` variable (the JS SDK's name) is now honoured by the Python SDK (`true` restricts to `metadata`, `false` has no opinion); if it disagrees with `TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT`, content capture is off and a deprecation warning names the variables (#3269).
 - **Trace egress to Traigent now needs an explicit `optimization_only: false` from key validation, and the async workflow client no longer follows redirects.** A `/keys/validate` answer with the flag absent or non-boolean is refused (retried after 60 s) instead of cached as unrestricted. The OTel init reads the offline state once, and the exporter re-checks the key gate before every POST. `WorkflowTracesClient.ingest_traces_async` sends with `allow_redirects=False` and treats a 3xx as a failed send.
 - **The bundled `traigent-tracing` add-on is gated at send time (0.1.2); the SDK now requires it.** The add-on built its own OTLP exporter, so a credential latched `optimization_only` after a tracer was handed out could still be sent. It now builds the SDK's gated exporter (frozen headers, per-request check) and fails closed if that is unavailable; add-ons older than 0.1.2 are ignored in favour of the built-in tracing. Public `traigent.observability.otel.init` also never sends a key that was absent when the egress gate ran.
+- **Sync writes send the explicit project (#3321).** `SyncManager` now puts the project on session writes, which fixes the HTTP 422 against backend #6114.
+- The dataset converter and the MCP plan tool now follow the configured backend URL (#3318, #3316).
 
 ## [0.33.0] - 2026-11-06
 
