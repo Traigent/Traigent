@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -10,8 +11,10 @@ import pytest
 from traigent.tuning import Tuning
 from traigent.tuning.code_version import (
     CODE_VERSION_ENV,
+    E_INVALID_CODE_VERSION,
     E_NO_CODE_VERSION,
     resolve_code_version,
+    resolve_code_version_label,
 )
 from traigent.tuning.controller import config_fingerprint
 from traigent.tuning.errors import TuningError
@@ -28,6 +31,10 @@ from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
 )
 
 
+def _tag(value: str) -> str:
+    return "tag:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 @tvl_free
 def test_the_env_override_wins_over_the_explicit_value_and_the_source_digest() -> None:
     import os
@@ -36,15 +43,69 @@ def test_the_env_override_wins_over_the_explicit_value_and_the_source_digest() -
 
     old = os.environ.pop(CODE_VERSION_ENV, None)
     try:
-        assert resolve_code_version("explicit-1", fn) == "explicit-1"
+        assert resolve_code_version("explicit-1", fn) == _tag("explicit-1")
         derived = resolve_code_version(None, fn)
         assert derived.startswith("src:") and len(derived) == 4 + 64
         os.environ[CODE_VERSION_ENV] = "from-env"
-        assert resolve_code_version("explicit-1", fn) == "from-env"
+        assert resolve_code_version("explicit-1", fn) == _tag("from-env")
     finally:
         os.environ.pop(CODE_VERSION_ENV, None)
         if old is not None:
             os.environ[CODE_VERSION_ENV] = old
+
+
+@tvl_free
+def test_a_typed_tag_is_sent_as_the_sha256_digest_of_its_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(CODE_VERSION_ENV, raising=False)
+    expected = "tag:" + hashlib.sha256(b"v1.2.3").hexdigest()
+    assert resolve_code_version("v1.2.3", None) == expected
+    assert resolve_code_version("v1.2.3", None) == expected  # deterministic
+    assert resolve_code_version("v1.2.4", None) != expected
+    assert resolve_code_version_label("v1.2.3", None) == "v1.2.3"  # local only
+
+
+@tvl_free
+@pytest.mark.parametrize(
+    "digest",
+    ["a" * 40, "b" * 64, "src:" + "c" * 64, "tag:" + "d" * 64],
+)
+def test_a_closed_digest_passes_through_unchanged(
+    digest: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(CODE_VERSION_ENV, raising=False)
+    assert resolve_code_version(digest, None) == digest
+    monkeypatch.setenv(CODE_VERSION_ENV, digest)
+    assert resolve_code_version(None, None) == digest
+
+
+@tvl_free
+def test_the_source_digest_passes_through_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(CODE_VERSION_ENV, raising=False)
+
+    def fn() -> None: ...
+
+    derived = resolve_code_version(None, fn)
+    assert derived.startswith("src:") and len(derived) == 68
+
+
+@tvl_free
+def test_an_invalid_code_version_is_refused_without_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(CODE_VERSION_ENV, raising=False)
+    typed = "Alice has diabetes!"
+    with pytest.raises(TuningError) as err:
+        resolve_code_version(typed, None)
+    assert err.value.code == E_INVALID_CODE_VERSION
+    assert typed not in str(err.value) and "Alice" not in str(err.value)
+    monkeypatch.setenv(CODE_VERSION_ENV, typed)
+    with pytest.raises(TuningError) as err2:
+        resolve_code_version(None, None)
+    assert "Alice" not in str(err2.value)
 
 
 @tvl_free
@@ -80,9 +141,12 @@ def test_the_gate_records_the_code_version_it_measured_and_status_shows_it(
     c = _deploy_awaiting(tmp_path)
     (marker,) = (tmp_path / "store" / "attempts").glob("*.json")
     (gate,) = json.loads(marker.read_text())["gates"].values()
-    assert gate["code_version"] == "rev-abc123"  # recorded at measurement
+    assert gate["code_version"] == _tag(
+        "rev-abc123"
+    )  # the digest, recorded at measurement
     view = c.status()["pending_deploys"][0]["release_evidence"]
-    assert view["code_version"] == "rev-abc123"
+    assert view["code_version"] == _tag("rev-abc123")
+    assert view["code_version_label"] == "rev-abc123"
     assert head(tmp_path)["generation"] == 0 and head(tmp_path)["config"] == OLD
 
 

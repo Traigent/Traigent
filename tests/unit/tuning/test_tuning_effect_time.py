@@ -3,6 +3,7 @@ draining attempts and path components."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -66,7 +67,9 @@ def test_generated_functions_without_source_do_not_share_the_module_digest(
         with pytest.raises(TuningError) as err:
             resolve_code_version(None, fn)
         assert err.value.code == "E_NO_CODE_VERSION"
-    assert resolve_code_version("explicit-1", namespace["one"]) == "explicit-1"
+    assert resolve_code_version("explicit-1", namespace["one"]) == (
+        "tag:" + hashlib.sha256(b"explicit-1").hexdigest()
+    )
 
 
 # -- effect-time checks come AFTER authentication and replay ------------------------
