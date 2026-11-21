@@ -40,6 +40,8 @@ from traigent.tuning.errors import (
 from traigent.tuning.policy import Tuning
 from traigent.tuning.state import TuningState
 
+from .conftest import tvl_free
+
 SLICE = (
     Path(__file__).resolve().parents[2]
     / "fixtures"
@@ -355,11 +357,13 @@ def test_platform_authenticated_but_unlisted_approver_is_unauthorized(
     assert c.step(at(10)).started != []
 
 
+@tvl_free
 def test_platform_authority_without_an_authenticator_is_refused() -> None:
     with pytest.raises(TuningError):
         ApproverAuthority(frozenset({"boss"}), mode="platform")
 
 
+@tvl_free
 def test_authenticator_failure_never_authenticates(tmp_path: Path) -> None:
     def broken(_who: str, _ctx: Any) -> bool:
         raise RuntimeError("platform unreachable")
@@ -522,6 +526,7 @@ def test_cli_drives_the_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert json.loads(approve.output)["authentication"] == "local-trusted"
 
 
+@tvl_free
 def test_cli_event_command_is_refused_in_this_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -634,6 +639,7 @@ def _standing_state() -> TuningState:
     return st
 
 
+@tvl_free
 def test_standing_approval_is_refused_when_the_controller_is_built(
     tmp_path: Path,
 ) -> None:
@@ -699,6 +705,7 @@ class _Live:
         return live
 
 
+@tvl_free
 def test_real_adapter_runs_optimization_without_changing_the_live_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -894,6 +901,7 @@ def test_legacy_plain_json_store_is_refused_untouched(tmp_path: Path) -> None:
     assert before == {n: (store / n).read_bytes() for n in before}
 
 
+@tvl_free
 def test_candidate_run_never_leaks_into_the_live_best_config_loaders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1032,6 +1040,7 @@ def test_local_trusted_is_labelled_and_refused_in_production(
     assert err.value.code == "E_LOCAL_AUTHORITY_IN_PRODUCTION"
 
 
+@tvl_free
 def test_a_policy_with_an_external_trigger_is_refused_when_the_controller_is_built(
     tmp_path: Path,
 ) -> None:

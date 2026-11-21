@@ -19,6 +19,7 @@ from traigent.tuning.code_version import CODE_VERSION_ENV, resolve_code_version
 from traigent.tuning.controller import Controller
 from traigent.tuning.errors import TuningError
 
+from .conftest import tvl_free
 from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     APPROVERS,
     KIT,
@@ -53,6 +54,7 @@ def _clock(monkeypatch: pytest.MonkeyPatch, start: Any) -> list[Any]:
 
 
 # -- the resolved callable itself needs readable source -----------------------------
+@tvl_free
 def test_generated_functions_without_source_do_not_share_the_module_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -179,6 +181,7 @@ def test_a_per_call_dataset_equal_to_the_holdout_is_refused(tmp_path: Path) -> N
     )
 
 
+@tvl_free
 def test_the_real_adapter_records_the_digest_of_every_dataset_it_loaded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -211,6 +214,7 @@ def test_the_real_adapter_records_the_digest_of_every_dataset_it_loaded(
 
 
 # -- a newly created directory entry is durable before the optimizer starts ---------
+@tvl_free
 def test_a_new_directory_is_fsynced_into_its_parent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -258,6 +262,7 @@ def test_a_closed_attempt_with_a_saved_finish_marker_is_recorded(
 
 # -- reserved path components -----------------------------------------------------
 @pytest.mark.parametrize("bad", [".", "..", ""])
+@tvl_free
 def test_dot_components_are_refused_in_the_default_store_path(bad: str) -> None:
     from traigent.tuning.controller import default_store_dir
 

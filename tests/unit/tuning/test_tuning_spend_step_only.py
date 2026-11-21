@@ -27,6 +27,7 @@ from traigent.tuning.errors import (
     TuningError,
 )
 
+from .conftest import tvl_free
 from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     APPROVERS,
     FakeOptimizer,
@@ -107,6 +108,7 @@ def test_the_cli_accept_command_refuses_and_creates_no_store(
     assert not store.exists()  # nothing was read, nothing was created
 
 
+@tvl_free
 def test_the_cli_accept_command_refuses_first_whatever_its_options_name(
     tmp_path: Path,
 ) -> None:

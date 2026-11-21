@@ -19,6 +19,7 @@ from traigent.tuning.code_version import (
 from traigent.tuning.controller import config_fingerprint
 from traigent.tuning.errors import TuningError
 
+from .conftest import tvl_free
 from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     NEW,
     OLD,
@@ -34,6 +35,7 @@ def _tag(value: str) -> str:
     return "tag:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+@tvl_free
 def test_the_env_override_wins_over_the_explicit_value_and_the_source_digest() -> None:
     import os
 
@@ -52,6 +54,7 @@ def test_the_env_override_wins_over_the_explicit_value_and_the_source_digest() -
             os.environ[CODE_VERSION_ENV] = old
 
 
+@tvl_free
 def test_a_typed_tag_is_sent_as_the_sha256_digest_of_its_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -63,6 +66,7 @@ def test_a_typed_tag_is_sent_as_the_sha256_digest_of_its_text(
     assert resolve_code_version_label("v1.2.3", None) == "v1.2.3"  # local only
 
 
+@tvl_free
 @pytest.mark.parametrize(
     "digest",
     ["a" * 40, "b" * 64, "src:" + "c" * 64, "tag:" + "d" * 64],
@@ -76,6 +80,7 @@ def test_a_closed_digest_passes_through_unchanged(
     assert resolve_code_version(None, None) == digest
 
 
+@tvl_free
 def test_the_source_digest_passes_through_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -87,6 +92,7 @@ def test_the_source_digest_passes_through_unchanged(
     assert derived.startswith("src:") and len(derived) == 68
 
 
+@tvl_free
 def test_an_invalid_code_version_is_refused_without_echo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -102,6 +108,7 @@ def test_an_invalid_code_version_is_refused_without_echo(
     assert "Alice" not in str(err2.value)
 
 
+@tvl_free
 def test_no_code_version_is_refused_with_a_clear_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

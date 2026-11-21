@@ -16,6 +16,7 @@ from traigent.tuning.authority import ApproverAuthority
 from traigent.tuning.code_version import CODE_VERSION_ENV, resolve_code_version
 from traigent.tuning.errors import TuningError
 
+from .conftest import tvl_free
 from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     APPROVERS,
     KIT,
@@ -52,6 +53,7 @@ def _agent_module(tmp_path: Path, body: str) -> Any:
     return module
 
 
+@tvl_free
 def test_default_code_version_hashes_the_agent_under_the_sdk_wrapper(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -78,6 +80,7 @@ def test_default_code_version_hashes_the_agent_under_the_sdk_wrapper(
     assert traigent is not None
 
 
+@tvl_free
 def test_a_functools_wrapper_does_not_hide_the_agent_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -91,6 +94,7 @@ def test_a_functools_wrapper_does_not_hide_the_agent_source(
     assert resolve_code_version(None, wrapper) == resolve_code_version(None, mod.agent)
 
 
+@tvl_free
 def test_unreadable_agent_source_is_refused_even_if_a_wrapper_has_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -114,6 +118,7 @@ def _hook(authority_hook: Any) -> ApproverAuthority:
     )
 
 
+@tvl_free
 def test_only_a_literal_true_from_a_synchronous_hook_authenticates() -> None:
     async def async_false(approver: str, context: Any) -> bool:
         return False
@@ -195,6 +200,7 @@ def test_cli_tvl_file_outside_the_builder_shape_runs_without_a_traceback(
 
 
 # -- the store is per environment -----------------------------------------------------
+@tvl_free
 def test_default_store_path_includes_the_environment() -> None:
     from traigent.tuning.controller import default_store_dir
 
@@ -220,6 +226,7 @@ def test_reopening_a_store_for_another_environment_is_refused(tmp_path: Path) ->
 
 
 # -- holdout identity for every supported eval_dataset form ---------------------------
+@tvl_free
 def test_eval_set_identity_covers_every_supported_form(tmp_path: Path) -> None:
     from traigent.evaluators.base import Dataset, EvaluationExample
     from traigent.tuning.evidence import (
@@ -288,6 +295,7 @@ def test_a_set_domain_is_normalized_before_computing_admitted_models(
     assert c._admitted_values({"tvar": "model", "domain": declared}) == []
 
 
+@tvl_free
 def test_explicit_strict_cost_accounting_beats_the_unpriced_model_exemption(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -319,6 +327,7 @@ def test_explicit_strict_cost_accounting_beats_the_unpriced_model_exemption(
         agent._preflight_model_cost_coverage(space)
 
 
+@tvl_free
 def test_an_unreadable_price_table_means_unpriced_never_priced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -334,6 +343,7 @@ def test_an_unreadable_price_table_means_unpriced_never_priced(
 
 
 # -- journal durability: the directory entry is fsynced -------------------------------
+@tvl_free
 def test_creating_and_renaming_journal_files_fsyncs_the_parent_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
