@@ -15,6 +15,8 @@ from traigent.tuning.evidence import (
     monitor_counts,
 )
 
+from .conftest import tvl_free
+
 MODULE: dict[str, Any] = {
     "objectives": [{"name": "accuracy", "direction": "maximize"}],
     "promotion_policy": {"alpha": 0.05, "min_effect": {"accuracy": 0.02}},
@@ -75,6 +77,7 @@ def _build(tmp_path: Path, **over: Any) -> Any:
     return build_promotion_evidence(MODULE, **args)
 
 
+@tvl_free
 def test_counts_from_checker_labels_errors_are_unresolved() -> None:
     examples = [{"input": {}}] * 4
     runs = [(True, "a"), (True, "b"), (False, None), (True, "c")]
@@ -121,6 +124,7 @@ def test_checker_errors_make_the_verdict_unknown_never_met(tmp_path: Path) -> No
         ({"fn": None}, "agent_function_missing"),
     ],
 )
+@tvl_free
 def test_missing_inputs_raise_a_closed_reason(
     tmp_path: Path, over: dict[str, Any], reason: str
 ) -> None:
@@ -157,6 +161,7 @@ def test_parameter_injection_sees_the_candidate_config(tmp_path: Path) -> None:
     assert seen.count("B") == 60 and seen.count("A") == 60
 
 
+@tvl_free
 def test_among_requirements_are_refused_not_counted(tmp_path: Path) -> None:
     module = json.loads(json.dumps(MODULE))
     module["requirements"][0]["among"] = {"checker": "customer:pop", "label_in": ["in"]}
@@ -208,6 +213,7 @@ def test_each_invocation_and_checker_call_gets_independent_copies(
     assert set(seen) == {3}
 
 
+@tvl_free
 def test_digest_and_examples_come_from_one_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -296,6 +302,7 @@ def test_a_checker_answer_outside_the_declared_labels_is_unresolved(
     assert E_CHECKER_LABEL_OUT_OF_SET in evidence.errors
 
 
+@tvl_free
 def test_labels_must_be_declared_and_cover_the_violating_ones(tmp_path: Path) -> None:
     with pytest.raises(EvidenceUnavailable) as err:
         _build(tmp_path, checker_labels=None)
@@ -305,6 +312,7 @@ def test_labels_must_be_declared_and_cover_the_violating_ones(tmp_path: Path) ->
     assert err.value.reason == "checker_labels_inconsistent"
 
 
+@tvl_free
 def test_a_holdout_row_without_an_expected_output_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "bad.jsonl"
     rows = [{"input": {"x": i}} for i in range(60)]  # no "output"

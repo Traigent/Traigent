@@ -18,6 +18,7 @@ from traigent.tuning.controller import (
 )
 from traigent.tuning.errors import E_UNSUPPORTED_IN_RELEASE, TuningError
 
+from .conftest import tvl_free
 from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     NEW,
     OLD,
@@ -76,6 +77,7 @@ def backend_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 # -- (c) privacy: tuning never runs connected ---------------------------------------
+@tvl_free
 def test_a_tuning_run_makes_no_backend_call_carrying_search_space_values(
     backend_calls: list[str],
 ) -> None:
@@ -85,6 +87,7 @@ def test_a_tuning_run_makes_no_backend_call_carrying_search_space_values(
     assert backend_calls == []
 
 
+@tvl_free
 def test_the_default_algorithm_is_pinned_local_too(backend_calls: list[str]) -> None:
     live = _connected_function()
     result = traigent_optimize_fn(live, max_trials=2)(SPACE)  # no algorithm: "auto"
@@ -92,6 +95,7 @@ def test_the_default_algorithm_is_pinned_local_too(backend_calls: list[str]) -> 
     assert backend_calls == []
 
 
+@tvl_free
 def test_a_smart_algorithm_would_run_connected_so_it_is_refused(
     backend_calls: list[str],
 ) -> None:
@@ -106,6 +110,7 @@ def test_a_smart_algorithm_would_run_connected_so_it_is_refused(
     assert backend_calls == []
 
 
+@tvl_free
 def test_a_cloud_required_function_is_refused_not_pinned_offline(
     backend_calls: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -119,6 +124,7 @@ def test_a_cloud_required_function_is_refused_not_pinned_offline(
     assert backend_calls == []
 
 
+@tvl_free
 def test_a_hybrid_api_function_is_refused(backend_calls: list[str]) -> None:
     live = _connected_function()
     live.external_service_evaluator = object()  # an external (connected) evaluator
@@ -128,6 +134,7 @@ def test_a_hybrid_api_function_is_refused(backend_calls: list[str]) -> None:
     assert backend_calls == []
 
 
+@tvl_free
 def test_the_live_function_keeps_its_own_execution_policy(
     backend_calls: list[str],
 ) -> None:
@@ -147,6 +154,7 @@ def test_the_live_function_keeps_its_own_execution_policy(
         {"schedule": {"every_days": 30}},
     ],
 )
+@tvl_free
 def test_every_non_schedule_trigger_is_refused_at_construction(
     tmp_path: Path, trigger: dict[str, Any]
 ) -> None:
@@ -189,6 +197,7 @@ _NO_FCNTL = textwrap.dedent(
 )
 
 
+@tvl_free
 def test_cli_and_tuning_import_without_fcntl_and_the_lock_refuses_cleanly(
     tmp_path: Path,
 ) -> None:
