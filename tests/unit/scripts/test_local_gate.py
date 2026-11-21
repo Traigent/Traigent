@@ -67,6 +67,7 @@ def _make_gate_repo(tmp_path: Path) -> tuple[Path, Path]:
         'if [[ " $* " == *" --help "* ]]; then echo "  --dist=DISTMODE --timeout=T --cov=SOURCE"; exit 0; fi\n'
         'for a in "$@"; do\n'
         '  [[ "$a" == --cov-report=xml:* ]] && echo "<coverage/>" > "${a#--cov-report=xml:}"\n'
+        '  [[ "$a" == --cov=* && -n "${COVERAGE_FILE:-}" ]] && echo data > "$COVERAGE_FILE"\n'
         "done\n"
         'if [[ " $* " == *" --collect-only "* ]]; then\n'
         '  exit "${FAKE_COLLECTION_RC:-0}"\n'
@@ -352,9 +353,11 @@ def test_local_gate_hotfix_strict_freshness_still_fails_behind_develop(
 
 
 def _link_system_tools(
-    dest: Path, sysdirs: tuple[str, ...] = ("/usr/bin", "/bin")
+    dest: Path,
+    sysdirs: tuple[str, ...] = ("/usr/bin", "/bin"),
+    exclude_prefixes: tuple[str, ...] = ("docker",),
 ) -> None:
-    """Symlink every system tool into ``dest`` except docker*.
+    """Symlink every system tool into ``dest`` except docker* (or the given prefixes).
 
     ``is_symlink`` is checked too: ``exists`` follows links, so a dangling
     link left by an earlier sysdir would look absent and collide.
@@ -362,7 +365,11 @@ def _link_system_tools(
     for sysdir in sysdirs:
         for tool in Path(sysdir).iterdir():
             link = dest / tool.name
-            if tool.name.startswith("docker") or link.exists() or link.is_symlink():
+            if (
+                tool.name.startswith(exclude_prefixes)
+                or link.exists()
+                or link.is_symlink()
+            ):
                 continue
             link.symlink_to(tool)
 
@@ -383,6 +390,57 @@ def test_link_system_tools_tolerates_dangling_symlink_from_earlier_sysdir(
     assert (dest / "grub-ntldr-img").is_symlink()
 
 
+def _install_tvl_toolchain(repo: Path, fake_bin: Path, *, with_uv: bool = True) -> None:
+    """Stub the TVL lane toolchain the Sonar coverage path needs.
+
+    The gate builds ``.venv-tvl`` with ``uv`` from a repo ``.venv`` python, runs
+    ``tests/unit/tuning`` there, then ``coverage combine`` + ``coverage xml``.
+    Every stub delegates pytest to ``fake_bin/pytest`` (resolved at run time),
+    so a test that swaps that stub observes the TVL invocation too.
+    """
+    venv_bin = repo / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    delegate = f'#!/usr/bin/env bash\nexec "{fake_bin}/pytest" "$@"\n'
+    (venv_bin / "pytest").write_text(delegate, encoding="utf-8")
+    (venv_bin / "python").write_text(_FAKE_PYTHON, encoding="utf-8")
+    (venv_bin / "pytest").chmod(0o755)
+    (venv_bin / "python").chmod(0o755)
+    if not with_uv:
+        return
+    (fake_bin / "uv").write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "$1" == venv ]]; then\n'
+        '  dest="${!#}"; mkdir -p "$dest/bin"\n'
+        f"  printf '%s' '{delegate}' > \"$dest/bin/pytest\"\n"
+        "  printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$dest/bin/python\"\n"
+        '  chmod +x "$dest/bin/pytest" "$dest/bin/python"\n'
+        "fi\n"
+        'if [[ "$1" == export ]]; then\n'
+        '  while [[ $# -gt 0 ]]; do [[ "$1" == -o ]] && : > "$2"; shift; done\n'
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "uv").chmod(0o755)
+
+
+# Stub repo python: reports a version and fakes `coverage combine` / `coverage xml`.
+_FAKE_PYTHON = (
+    "#!/usr/bin/env bash\n"
+    'if [[ "$1" == -c ]]; then echo 3.12; exit 0; fi\n'
+    'if [[ "$1" == -m && "$2" == coverage ]]; then\n'
+    '  if [[ "$3" == combine ]]; then echo data > .coverage; exit 0; fi\n'
+    '  if [[ "$3" == xml ]]; then\n'
+    "    while [[ $# -gt 0 ]]; do\n"
+    '      [[ "$1" == -o ]] && echo "<coverage/>" > "$2"; shift\n'
+    "    done\n"
+    "    exit 0\n"
+    "  fi\n"
+    "fi\n"
+    "exit 0\n"
+)
+
+
 def _run_sonar_gate(
     tmp_path: Path,
     *,
@@ -396,6 +454,7 @@ def _run_sonar_gate(
         wt = tmp_path / "linked-worktree"
         _run_git(repo, "worktree", "add", "-q", "--detach", str(wt))
         repo = wt
+    _install_tvl_toolchain(repo, fake_bin)
     (repo / "pyproject.toml").write_text(
         f'[build-system]\nrequires = []\n\n[project]\nname = "x"\n{version_line}\n'
         '\n[tool.other]\nversion = "0.0.1"\n',
@@ -523,6 +582,7 @@ def test_local_gate_pytest_steps_clear_git_hook_environment(tmp_path: Path) -> N
         'echo "run:$*" >> "$FAKE_GIT_ENV_LOG"\n'
         'for a in "$@"; do\n'
         '  [[ "$a" == --cov-report=xml:* ]] && echo "<coverage/>" > "${a#--cov-report=xml:}"\n'
+        '  [[ "$a" == --cov=* && -n "${COVERAGE_FILE:-}" ]] && echo data > "$COVERAGE_FILE"\n'
         "done\n"
         "for v in $(git rev-parse --local-env-vars); do\n"
         '  if [[ -n "${!v+x}" ]]; then echo "LEAK:$v" >> "$FAKE_GIT_ENV_LOG"; fi\n'
@@ -531,6 +591,7 @@ def test_local_gate_pytest_steps_clear_git_hook_environment(tmp_path: Path) -> N
     )
     repo, fake_bin = _make_gate_repo(tmp_path)
     (fake_bin / "pytest").write_text(probe, encoding="utf-8")
+    _install_tvl_toolchain(repo, fake_bin)
     (repo / "pyproject.toml").write_text(
         '[project]\nname = "x"\nversion = "1.0.0"\n', encoding="utf-8"
     )
@@ -570,6 +631,11 @@ def test_local_gate_pytest_steps_clear_git_hook_environment(tmp_path: Path) -> N
     log = env_log.read_text(encoding="utf-8").splitlines()
     assert any("--cov=traigent" in line for line in log), log
     assert any(line.startswith("run:") and "--cov" not in line for line in log), log
+    # Both coverage lanes ran, and the TVL pytest is covered by the leak check.
+    assert any("--cov=traigent" in ln and ln.endswith("tests/unit/") for ln in log), log
+    assert any(
+        "--cov=traigent" in ln and ln.endswith("tests/unit/tuning") for ln in log
+    ), log
     assert [line for line in log if line.startswith("LEAK:")] == []
 
 
@@ -577,8 +643,14 @@ def test_local_gate_main_bound_coverage_runs_full_unit_suite(tmp_path: Path) -> 
     """Main-bound coverage must measure the whole unit suite, not a subset."""
     _, _, _ = _run_sonar_gate(tmp_path, with_docker=True)
     log = (tmp_path / "pytest.log").read_text(encoding="utf-8").splitlines()
-    cov = [line for line in log if "--cov=traigent" in line]
+    cov = [
+        line
+        for line in log
+        if "--cov=traigent" in line and not line.endswith("tests/unit/tuning")
+    ]
     assert len(cov) == 1, log
+    # The TVL lane adds its own run, limited to tests/unit/tuning.
+    assert sum(line.endswith("tests/unit/tuning") for line in log) == 1, log
     assert "tests/unit/" in cov[0]
     assert "test_changed.py" not in cov[0]
     assert "--timeout=30" in cov[0]
@@ -624,3 +696,44 @@ def test_local_gate_main_bound_coverage_fails_closed_without_timeout_plugin(
     )
     assert result.returncode == 1, result.stdout
     assert "pytest-timeout" in result.stdout
+
+
+def test_local_gate_sonar_fails_closed_when_uv_is_absent(tmp_path: Path) -> None:
+    """No uv means no TVL lane: the gate must fail, not scan partial coverage."""
+    repo, fake_bin = _make_gate_repo(tmp_path)
+    _install_tvl_toolchain(repo, fake_bin, with_uv=False)
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "1.0.0"\n', encoding="utf-8"
+    )
+    scanner_log = tmp_path / "scanner.log"
+    (fake_bin / "sonar-scanner").write_text(
+        "#!/usr/bin/env bash\nexit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "sonar-scanner").chmod(0o755)
+    nouv = tmp_path / "nouv-bin"
+    nouv.mkdir()
+    _link_system_tools(nouv, exclude_prefixes=("docker", "uv"))
+    env = scrubbed_git_env()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{nouv}",
+            "LOCAL_GATE_SKIP": "schema-types",
+            "LOCAL_GATE_SONAR": "1",
+            "SONAR_TOKEN": "dummy",
+            "SONAR_HOST_URL": "https://sonar.example.invalid",
+            "FAKE_PYTEST_LOG": str(tmp_path / "pytest.log"),
+            "FAKE_SCANNER_LOG": str(scanner_log),
+        }
+    )
+    result = subprocess.run(
+        ["bash", "scripts/local_gate.sh"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "the TVL lane needs uv" in result.stdout
+    assert "TVL tuning lane FAILED" in result.stdout
