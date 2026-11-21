@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 
@@ -30,8 +31,24 @@ def check_toolchain() -> None:
     pytest.skip(reason)
 
 
+def tvl_free(fn: Any) -> Any:
+    """Mark a test that exercises no TVL toolchain call, so it runs without one.
+
+    Such a test (compile, store, evidence and guard logic) is real behaviour on
+    its own; skipping it with the toolchain absent left that code unmeasured in
+    the default unit lane.  The ``TRAIGENT_TVL_REQUIRED=1`` lane runs it too.
+    Put it directly above ``def`` (or on a whole test class).  A test that does reach TVL must NOT carry it.
+    """
+    fn._tvl_free = True  # type: ignore[attr-defined]
+    return fn
+
+
 @pytest.fixture(autouse=True)
-def _tvl_toolchain() -> None:
+def _tvl_toolchain(request: pytest.FixtureRequest) -> None:
+    if getattr(request.function, "_tvl_free", False) or getattr(
+        request.cls, "_tvl_free", False
+    ):
+        return
     check_toolchain()
 
 

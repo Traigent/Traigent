@@ -16,6 +16,7 @@ from traigent.tuning.code_version import (
 from traigent.tuning.controller import config_fingerprint
 from traigent.tuning.errors import TuningError
 
+from .conftest import tvl_free
 from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     NEW,
     OLD,
@@ -27,6 +28,7 @@ from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
 )
 
 
+@tvl_free
 def test_the_env_override_wins_over_the_explicit_value_and_the_source_digest() -> None:
     import os
 
@@ -45,6 +47,7 @@ def test_the_env_override_wins_over_the_explicit_value_and_the_source_digest() -
             os.environ[CODE_VERSION_ENV] = old
 
 
+@tvl_free
 def test_no_code_version_is_refused_with_a_clear_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

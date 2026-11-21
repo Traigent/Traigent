@@ -27,6 +27,8 @@ from traigent.tuning import (
     validator,
 )
 
+from .conftest import tvl_free
+
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tuning"
 GOLDEN = sorted((FIXTURES / "golden").glob("*.json"))
 SLICE_CASE = FIXTURES / "external-slice-trace.yml"
@@ -38,6 +40,7 @@ def _golden(path: Path) -> dict:
 
 
 @pytest.mark.parametrize("path", GOLDEN, ids=lambda p: p.stem)
+@tvl_free
 def test_sugar_compiles_to_golden(path: Path) -> None:
     g = _golden(path)
     doc = Tuning.from_sugar(g["sugar"]).to_tvl(g["module_context"])
@@ -45,6 +48,7 @@ def test_sugar_compiles_to_golden(path: Path) -> None:
 
 
 @pytest.mark.parametrize("path", GOLDEN, ids=lambda p: p.stem)
+@tvl_free
 def test_sugar_round_trip(path: Path) -> None:
     g = _golden(path)
     assert Tuning.from_sugar(g["sugar"]).to_sugar() == g["sugar"]
@@ -65,12 +69,14 @@ def test_golden_lint(path: Path) -> None:
 
 
 @pytest.mark.parametrize("path", GOLDEN, ids=lambda p: p.stem)
+@tvl_free
 def test_from_tvl_round_trip(path: Path) -> None:
     doc = _golden(path)["expected_tvl"]
     rebuilt = Tuning.from_tvl(doc)
     assert rebuilt.to_tvl() == doc
 
 
+@tvl_free
 def test_slice_matches_tvl_slice_case_module() -> None:
     case = yaml.safe_load(SLICE_CASE.read_text(encoding="utf-8"))
     g = _golden(FIXTURES / "golden" / "slice.json")
@@ -78,6 +84,7 @@ def test_slice_matches_tvl_slice_case_module() -> None:
 
 
 @pytest.mark.parametrize("bad", [0.08, True])
+@tvl_free
 def test_floats_rejected(bad: object) -> None:
     with pytest.raises(TuningError) as err:
         FailureRate("customer:c", at_most=bad)  # type: ignore[arg-type]
@@ -87,16 +94,19 @@ def test_floats_rejected(bad: object) -> None:
     assert err.value.code == E_FLOAT_RATE
 
 
+@tvl_free
 def test_decimal_accepted() -> None:
     k = FailureRate("customer:c", at_most=Decimal("0.08"), name="q")
     assert Tuning(keep=[k]).to_tvl()["requirements"][0]["max_rate"] == 0.08
 
 
+@tvl_free
 def test_approval_none_rejected() -> None:
     with pytest.raises(TuningError):
         ProposeFix(approval="none")
 
 
+@tvl_free
 def test_tvl_fragment_exclusive_with_kwargs(tmp_path: Path) -> None:
     frag = tmp_path / "p.tvl.yml"
     frag.write_text(yaml.safe_dump({"responses": []}))
@@ -104,6 +114,7 @@ def test_tvl_fragment_exclusive_with_kwargs(tmp_path: Path) -> None:
         Tuning(keep=[FailureRate("customer:c", "0.1")], tvl=frag)
 
 
+@tvl_free
 def test_tvl_fragment_compiles(tmp_path: Path) -> None:
     g = _golden(FIXTURES / "golden" / "slice.json")
     frag = tmp_path / "p.tvl.yml"
@@ -113,6 +124,7 @@ def test_tvl_fragment_compiles(tmp_path: Path) -> None:
     assert doc == g["expected_tvl"]
 
 
+@tvl_free
 def test_multiple_keeps_get_one_breach_rule_each() -> None:
     t = Tuning(
         keep=[
@@ -160,6 +172,7 @@ def test_observe_attaches_tuning_state(tmp_path: Path) -> None:
     assert state.tvl["tvl_version"] == "1.7"
 
 
+@tvl_free
 def test_observe_without_tune_is_unchanged() -> None:
     @traigent.observe()
     def plain(x: int) -> int:
@@ -169,6 +182,7 @@ def test_observe_without_tune_is_unchanged() -> None:
     assert plain(1) == 2
 
 
+@tvl_free
 def test_observe_decoration_survives_missing_validator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -202,6 +216,7 @@ def _reset_cache():
     validator.reset_validator_cache()
 
 
+@tvl_free
 def test_unavailable_refuses_validate(monkeypatch: pytest.MonkeyPatch) -> None:
     _hide_tvl(monkeypatch)
     with pytest.raises(ValidatorUnavailable) as err:
@@ -209,6 +224,7 @@ def test_unavailable_refuses_validate(monkeypatch: pytest.MonkeyPatch) -> None:
     assert err.value.code == E_TVL_VALIDATOR_UNAVAILABLE
 
 
+@tvl_free
 def test_cli_check_and_simulate_refuse_when_unavailable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

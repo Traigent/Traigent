@@ -21,6 +21,8 @@ from traigent.tuning.evidence import (
     build_promotion_evidence,
 )
 
+from .conftest import tvl_free
+
 PRICED = "anthropic/claude-haiku-4-5"
 ADMITTED = "anthropic/claude-haiku-9-9"  # released after the price table
 OTHER_UNPRICED = "newvendor/model-x"
@@ -52,12 +54,14 @@ def _live() -> Any:
     return live
 
 
+@tvl_free
 def test_an_unpriced_model_still_fails_the_preflight_by_default() -> None:
     live = _live()
     with pytest.raises(UnknownModelError):
         live._preflight_model_cost_coverage({"model": [PRICED, ADMITTED]})
 
 
+@tvl_free
 def test_only_the_admitted_model_may_run_unpriced() -> None:
     live = _live()
     live._unpriced_models_allowed = frozenset({ADMITTED})
@@ -69,6 +73,7 @@ def test_only_the_admitted_model_may_run_unpriced() -> None:
     assert OTHER_UNPRICED in str(err.value) and ADMITTED not in str(err.value)
 
 
+@tvl_free
 def test_the_adapter_runs_an_admitted_unpriced_model_instead_of_aborting() -> None:
     live = _live()
     run = traigent_optimize_fn(live, algorithm="grid", max_trials=2)
@@ -136,6 +141,7 @@ def _evidence(tmp_path: Path, module: dict[str, Any]) -> Any:
     )
 
 
+@tvl_free
 def test_unknown_cost_is_never_scored_as_free(tmp_path: Path) -> None:
     module = json.loads(json.dumps(MODULE))
     module["objectives"].append({"name": "cost", "direction": "minimize"})

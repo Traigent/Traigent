@@ -16,6 +16,7 @@ from traigent.tuning.authority import ApproverAuthority
 from traigent.tuning.controller import Controller
 from traigent.tuning.errors import E_UNSUPPORTED_IN_RELEASE, TuningError
 
+from .conftest import tvl_free
 from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     APPROVERS,
     FakeOptimizer,
@@ -168,6 +169,7 @@ def test_abandoning_does_not_cancel_an_attempt_approved_in_the_same_step(
         {"some_future_key": 1},
     ],
 )
+@tvl_free
 def test_a_rule_condition_this_release_does_not_run_is_refused(
     tmp_path: Path, extra: dict[str, Any]
 ) -> None:
@@ -180,6 +182,7 @@ def test_a_rule_condition_this_release_does_not_run_is_refused(
     assert err.value.code == E_UNSUPPORTED_IN_RELEASE
 
 
+@tvl_free
 def test_a_trigger_shape_this_release_does_not_run_is_refused(tmp_path: Path) -> None:
     doc = module()
     doc["responses"][0]["rules"][0]["trigger"]["schedule"]["jitter_hours"] = 1
@@ -230,6 +233,7 @@ def test_a_fixed_instant_is_refused_on_the_effect_paths_in_production(
     assert head(tmp_path)["generation"] == 0
 
 
+@tvl_free
 def test_an_unset_environment_counts_as_production_for_a_fixed_instant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -238,6 +242,7 @@ def test_an_unset_environment_counts_as_production_for_a_fixed_instant(
         controller_module._effect_clock(at(1))
 
 
+@tvl_free
 def test_a_fixed_instant_outside_production_keeps_advancing_with_real_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -249,6 +254,7 @@ def test_a_fixed_instant_outside_production_keeps_advancing_with_real_time(
     assert clock() == at(1) + timedelta(seconds=90)
 
 
+@tvl_free
 def test_the_live_clock_is_read_afresh_when_no_instant_is_given(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
