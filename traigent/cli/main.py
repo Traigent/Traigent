@@ -22,6 +22,7 @@ from traigent import get_version_info
 from traigent.api.types import PresetSelection
 from traigent.cli.auth_commands import auth
 from traigent.cli.certify_commands import certify
+from traigent.cli.egress_commands import register_egress_commands
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_local_commands
 from traigent.cli.regression_commands import register_regression_commands
@@ -3232,6 +3233,8 @@ register_local_commands(cli)
 register_sync_command(cli)
 # `traigent regression ...`.
 register_regression_commands(cli)
+# `traigent egress ...`.
+register_egress_commands(cli)
 
 cli.add_command(auth)
 cli.add_command(certify)

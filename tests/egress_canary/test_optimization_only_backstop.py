@@ -49,6 +49,10 @@ BYPASS_REGISTER: dict[tuple[str, str], str] = {
     ("utils/diagnostics.py", "socket"): (
         "TCP reachability probe for the diagnose command: connects and sends no bytes"
     ),
+    ("egress/relay.py", "http-connection"): (
+        "the egress relay's upstream leg: it forwards, byte for byte, a request an SDK "
+        "client already sent through its own gate, and logs it before forwarding"
+    ),
 }
 
 
