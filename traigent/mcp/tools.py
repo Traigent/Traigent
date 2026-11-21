@@ -692,7 +692,11 @@ async def get_optimization_plan_tool(
 ) -> dict[str, Any]:
     """Fetch a backend-provided optimization plan without local planning."""
     # Same resolution as ``traigent plan``: env, stored CLI credentials, default.
-    backend_url, _ = resolve_backend_url(backend_url_from_env())
+    try:
+        backend_url, _ = resolve_backend_url(backend_url_from_env())
+    except ValueError as exc:
+        # The message names the kind of problem and never echoes the value.
+        return _failure(str(exc))
     api_key = resolve_api_key(None)
     async with OptimizationPlanClient(
         backend_url=backend_url, api_key=api_key

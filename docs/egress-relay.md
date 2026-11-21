@@ -13,7 +13,7 @@ traigent egress show 1
 
 Without `--exec` the relay prints its address and the line to export
 (`TRAIGENT_BACKEND_URL=http://127.0.0.1:PORT`, `TRAIGENT_EGRESS_RELAY=1` and
-`NO_PROXY=...,127.0.0.1`, see below), then serves
+`NO_PROXY=...,127.0.0.1` and `no_proxy=...,127.0.0.1`, each computed from its own current value, see below), then serves
 until interrupted. With `--exec` it sets `TRAIGENT_BACKEND_URL`, `TRAIGENT_API_URL` and
 `TRAIGENT_EGRESS_RELAY=1` for the child only, and appends `127.0.0.1` to the child's
 `NO_PROXY` and `no_proxy` (existing values are kept),
