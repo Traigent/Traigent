@@ -127,6 +127,8 @@ modes are:
 - `redacted`: send `{"redacted": true}` placeholders for input and output
 - `record`: send captured input and output content
 
+In `record` mode the SDK transmits the content off your machine. For the OpenTelemetry export path, the current receiver discards content attributes in every mode, so `record` sends content that is then dropped server-side (see [OpenTelemetry observability](../observability/otel.md)). That discard happens on the server; do not rely on it as a client-side control. Use `metadata` unless you accept the content leaving your environment.
+
 `redact_input=True` and `redact_output=True` force redaction placeholders for the
 corresponding side even when `content_mode="record"`. The transport still applies
 pattern-based secret scrubbing before send, but that scrubber is a final safety
