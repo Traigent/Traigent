@@ -25,6 +25,7 @@ import http.client
 import http.server
 import io
 import ipaddress
+import socket
 import socketserver
 import ssl
 import sys
@@ -39,10 +40,18 @@ BIND_HOST = "127.0.0.1"
 _CHUNK = 64 * 1024
 _SPOOL_MEMORY = 1024 * 1024
 _UPSTREAM_TIMEOUT_S = 60.0
+#: stop() lets running exchanges finish for this long, then cuts their sockets.
+_STOP_DRAIN_S = 3.0
+_STOP_JOIN_S = 2.0
+_MAX_INTERIM = 8
 
 MSG_LOG_FAILED = b"egress relay: request not forwarded because it could not be logged\n"
 MSG_UPSTREAM_FAILED = b"egress relay: upstream unreachable\n"
 MSG_BAD_REQUEST = b"egress relay: malformed request\n"
+MSG_UNSUPPORTED_ENCODING = (
+    b"egress relay: only a single chunked Transfer-Encoding is supported\n"
+)
+MSG_UPGRADE_UNSUPPORTED = b"egress relay: protocol upgrades are not supported\n"
 STDERR_LOG_INCOMPLETE = (
     "egress relay: the log can no longer be written; refusing further requests"
 )
@@ -99,6 +108,22 @@ def parse_upstream(url: str) -> tuple[str, str, int]:
     return parts.scheme, host, port or (443 if parts.scheme == "https" else 80)
 
 
+class _FinalResponse(http.client.HTTPResponse):
+    """Skip every interim (1xx) response; a 101 is returned for the caller to refuse.
+
+    ``http.client`` itself skips only ``100 Continue``; a ``103 Early Hints`` would
+    otherwise be delivered as if it were the final answer.
+    """
+
+    def begin(self) -> None:
+        for _ in range(_MAX_INTERIM):
+            super().begin()
+            if self.status == 101 or not 100 <= self.status < 200:
+                return
+            self.headers = None  # type: ignore[assignment]  # let begin() read on
+        raise http.client.HTTPException("too many interim responses")
+
+
 class _BadBody(Exception):
     pass
 
@@ -148,6 +173,30 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     timeout = 30  # an idle or stalled client cannot pin a handler thread
     server: _Server
 
+    cut = False  # set by stop() when this exchange is ended by force
+    _upstream_sock: socket.socket | None = None
+
+    def setup(self) -> None:
+        super().setup()
+        self.server.register(self)
+
+    def finish(self) -> None:
+        try:
+            super().finish()
+        finally:
+            self.server.unregister(self)
+
+    def cut_sockets(self) -> None:
+        self.cut = True
+        socks = [self.connection]
+        socks.append(self._upstream_sock)
+        for sock in socks:
+            try:
+                if sock is not None:
+                    sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         return  # never write request lines (paths, queries) to stderr
 
@@ -181,10 +230,20 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if not self.path.startswith("/"):
             self._reply(400, MSG_BAD_REQUEST)
             return
+        encodings = self.headers.get_all("Transfer-Encoding", [])
+        lengths = self.headers.get_all("Content-Length", [])
+        if len(lengths) > 1 or (encodings and lengths):
+            self._reply(400, MSG_BAD_REQUEST)  # smuggling hygiene: one framing only
+            return
+        if encodings and (
+            len(encodings) != 1 or encodings[0].strip().lower() != "chunked"
+        ):
+            self._reply(501, MSG_UNSUPPORTED_ENCODING)  # a coding we would lose
+            return
         digest = hashlib.sha256()
         with tempfile.SpooledTemporaryFile(max_size=_SPOOL_MEMORY) as body:
             try:
-                if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+                if encodings:
                     size = _read_chunked(self.rfile, body, digest)
                 else:
                     raw = self.headers.get("Content-Length")
@@ -218,12 +277,20 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 for key, value in headers:
                     conn.putheader(key, value)
                 conn.endheaders(body if size > 0 else None)
+                # Kept apart: http.client drops conn.sock once a close-delimited
+                # response starts, but stop() must still be able to cut it.
+                self._upstream_sock = conn.sock
                 upstream = conn.getresponse()
             except (OSError, http.client.HTTPException, ValueError):
                 self._reply(502, MSG_UPSTREAM_FAILED)
                 return
             status = upstream.status
             outcome = None
+            if status == 101:
+                outcome = "upstream_unsupported"
+                status = 502
+                self._reply(502, MSG_UPGRADE_UNSUPPORTED)
+                return
             try:
                 self.send_response_only(status, upstream.reason)
                 named = {
@@ -243,7 +310,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                     and status not in (204, 304)
                 ):
                     while True:
-                        data = upstream.read(_CHUNK)
+                        data = upstream.read1(_CHUNK)
                         if not data:
                             break
                         self.wfile.write(data)
@@ -253,18 +320,23 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 outcome = "upstream_error"
         finally:
             conn.close()
+            if self.cut:
+                outcome = "relay_stopped"
             try:
                 self.server.log.log_response(seq, status, count, outcome)
             except RelayLogError:
+                if self.cut:
+                    return
                 # The request line is durable and the response is delivered; the log
                 # is now incomplete, so the next request is refused (RelayLog.failed).
                 self.server.report_log_incomplete()
 
 
 class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    # Handler threads are joined by server_close(), so stop() waits for in-flight
-    # exchanges and their response lines are written before the log is closed.
-    daemon_threads = False
+    # Handler threads are daemons and tracked by hand: stop() drains for a bounded
+    # time, then cuts the sockets of what is left, so it can never hang on a
+    # trickling client or an endless upstream stream.
+    daemon_threads = True
     allow_reuse_address = False
 
     def __init__(self, port: int, log: RelayLog, upstream: tuple[str, str, int]):
@@ -272,7 +344,36 @@ class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.upstream = upstream
         self._reported = False
         self._report_lock = threading.Lock()
+        self._active: set[_Handler] = set()
+        self._active_lock = threading.Lock()
+        self._active_empty = threading.Condition(self._active_lock)
+        self._stopping = False
         super().__init__((BIND_HOST, port), _Handler)
+
+    def register(self, handler: _Handler) -> None:
+        with self._active_lock:
+            self._active.add(handler)
+            late = self._stopping
+        if late:  # accepted while stopping
+            handler.cut_sockets()
+
+    def unregister(self, handler: _Handler) -> None:
+        with self._active_empty:
+            self._active.discard(handler)
+            if not self._active:
+                self._active_empty.notify_all()
+
+    def drain(self, drain_s: float, join_s: float) -> None:
+        """Wait for running exchanges; cut what is left; wait briefly again."""
+        with self._active_empty:
+            self._stopping = True
+            self._active_empty.wait_for(lambda: not self._active, timeout=drain_s)
+            left = list(self._active)
+        for handler in left:
+            handler.cut_sockets()
+        if left:
+            with self._active_empty:
+                self._active_empty.wait_for(lambda: not self._active, timeout=join_s)
 
     def report_log_incomplete(self) -> None:
         """Print the fixed stderr line, once."""
@@ -287,14 +388,18 @@ class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
     def connect(self) -> http.client.HTTPConnection:
         scheme, host, port = self.upstream
+        conn: http.client.HTTPConnection
         if scheme == "https":
-            return http.client.HTTPSConnection(
+            conn = http.client.HTTPSConnection(
                 host,
                 port,
                 timeout=_UPSTREAM_TIMEOUT_S,
                 context=ssl.create_default_context(),
             )
-        return http.client.HTTPConnection(host, port, timeout=_UPSTREAM_TIMEOUT_S)
+        else:
+            conn = http.client.HTTPConnection(host, port, timeout=_UPSTREAM_TIMEOUT_S)
+        conn.response_class = _FinalResponse
+        return conn
 
 
 def _do(self: _Handler) -> None:
@@ -339,9 +444,13 @@ class EgressRelay:
     def serve_forever(self) -> None:
         self._server.serve_forever()
 
-    def stop(self) -> None:
+    def stop(self, drain_s: float | None = None) -> None:
+        """Stop accepting, let running exchanges finish for ``drain_s`` seconds
+        (default 3), then end the rest by force; their response lines carry
+        ``outcome: relay_stopped``. Always returns within a few seconds."""
         if self._thread is not None:
             self._server.shutdown()
             self._thread.join(timeout=5)
-        self._server.server_close()
+        self._server.server_close()  # closes the listening socket only
+        self._server.drain(_STOP_DRAIN_S if drain_s is None else drain_s, _STOP_JOIN_S)
         self._log.close()

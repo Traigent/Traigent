@@ -25,6 +25,19 @@ stops when the child exits and returns the child's exit code. The log is
 - The request line is written and fsynced before the first byte is forwarded. If it
   cannot be written the relay answers 502 and forwards nothing.
 - Request and response bytes pass through unchanged. Redirects are never followed.
+  Interim `1xx` responses (such as `103 Early Hints`) are consumed, not forwarded; a
+  `101 Switching Protocols` is refused with 502 (upgrades are unsupported) and logged
+  with `outcome: upstream_unsupported`. Response bodies are passed on as they arrive.
+- Request framing is never rewritten. A request with a `Transfer-Encoding` other than
+  exactly `chunked` is refused with 501, and one that carries both `Transfer-Encoding`
+  and `Content-Length` (or two `Content-Length` headers) with 400. A refused request is
+  not forwarded, so it gets no log line.
+- A log file that ends with an incomplete line is refused at start (move or repair it);
+  appending would glue a new record onto the torn one.
+- Stopping the relay (child exit, Ctrl-C) waits about 3 seconds for running exchanges,
+  then cuts the rest; their response lines carry `outcome: relay_stopped`.
+- If a response line cannot be written after the exchange, the response is still
+  delivered, one fixed line goes to stderr, and every further request gets 502.
 - Route shape is a heuristic: path segments that are not lowercase words (or `v1`-style
   version markers) become `{}`. A lowercase word in a path is logged as written.
 
