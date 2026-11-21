@@ -11,7 +11,7 @@ TVL 1.7 is the source of truth. `traigent.tuning` is sugar that emits a TVL 1.7 
 (requirements, monitors, responses); the TVL reference toolchain validates it. The sugar can
 express nothing TVL cannot, and `Tuning(tvl="policy.tvl.yml")` accepts any valid TVL fragment.
 
-A support-ticket router that re-tunes itself on a schedule, serves the head configuration from the local head file, and proves a candidate on a held-aside set before anyone is asked:
+A support-ticket router that re-tunes itself on a schedule, serves its in-code default until a signed release exists, and proves a candidate on a held-aside set before anyone is asked:
 
 ```python
 import traigent
@@ -129,7 +129,7 @@ counts** per promotion monitor (`n`, `k` violations, `u` unresolved), the rows l
 paired comparison, how often this holdout was used before, the **gate result** (TVL's
 comparison, each monitor verdict, the joined decision, and any closed warning such as an
 unknown cost), the **code version** the candidate and incumbent were measured on, and the
-**observed generation** of the serving head. The code version is the
+**observed generation** of the stored baseline. The code version is the
 `TRAIGENT_AGENT_CODE_VERSION` environment variable if set, else `Tuning(code_version=...)`, else
 `src:` plus a sha256 of the decorated function's module source; if none can be determined, no
 candidate gets promotion evidence (`E_NO_CODE_VERSION`), there is no default. The local head file is never applied to a serving call (see below), so traces carry no head code version.

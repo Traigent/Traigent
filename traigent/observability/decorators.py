@@ -564,7 +564,7 @@ class _ObserveFactory:
         return wrapped
 
     def _follow_head(self, inner: Callable[..., Any]):
-        """Run ``inner`` with the store's head config active (loaded per call)."""
+        """Run ``inner`` on its in-code default and stamp the trace with the head state."""
         from pathlib import Path
 
         from traigent.tuning.controller import (
@@ -798,10 +798,11 @@ def observe(
     the TVL toolchain when available, and attaches the result as ``fn.tuning``.
     Calls are unaffected and nothing is sent anywhere.
 
-    ``follow="head"`` makes each call load the head configuration from the local
-    tuning store (``tuning_store`` or ``.traigent/tuning/<agent>/``), expose it
-    through ``traigent.get_config()``, and stamp the call's trace with ``agent`` and
-    ``head_generation`` (a reference and an integer, nothing else).
+    ``follow="head"`` serves the function's in-code default until a signed release
+    exists (no stored configuration is applied), and stamps the call's trace with
+    ``agent`` and ``head_state`` (``unreleased`` or ``unreadable``; a reference and
+    a closed state, nothing else). The store is ``tuning_store`` or
+    ``.traigent/tuning/<agent>/``.
     """
 
     if callable(name):

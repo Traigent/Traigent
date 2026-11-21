@@ -1877,7 +1877,8 @@ def _pin_local_offline(clone: Any, requested_algorithm: Any = None) -> None:
             raise refuse  # an SDK function whose policy cannot be read: fail closed
         return  # not an SDK function: it has no backend path to pin
     if (
-        policy.intent is ExecutionIntent.CLOUD_REQUIRED
+        policy.require_cloud
+        or policy.intent is ExecutionIntent.CLOUD_REQUIRED
         or policy.legacy_execution_mode is ExecutionMode.HYBRID_API
     ):
         raise refuse

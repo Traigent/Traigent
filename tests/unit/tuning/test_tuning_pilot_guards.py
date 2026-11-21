@@ -18,7 +18,15 @@ from traigent.tuning.controller import (
 )
 from traigent.tuning.errors import E_UNSUPPORTED_IN_RELEASE, TuningError
 
-from .test_controller import NEW, OLD, FakeOptimizer, make, module, state
+from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
+    NEW,
+    OLD,
+    FakeOptimizer,
+    _holdout,
+    make,
+    module,
+    state,
+)
 
 SPACE = {"model": [OLD["model"], NEW["model"]]}
 
@@ -95,6 +103,19 @@ def test_a_smart_algorithm_would_run_connected_so_it_is_refused(
     with pytest.raises(TuningError) as err:
         traigent_optimize_fn(live_smart, max_trials=2)(SPACE)
     assert err.value.code == E_CONNECTED_TUNING_REFUSED
+    assert backend_calls == []
+
+
+def test_a_cloud_required_function_is_refused_not_pinned_offline(
+    backend_calls: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_REQUIRE_CLOUD", "1")  # resolves require_cloud=True
+    live = _connected_function()
+    assert live.execution_policy.require_cloud
+    for kwargs in ({}, {"algorithm": "auto"}, {"algorithm": "grid"}):
+        with pytest.raises(TuningError) as err:
+            traigent_optimize_fn(live, max_trials=2, **kwargs)(SPACE)
+        assert err.value.code == E_CONNECTED_TUNING_REFUSED
     assert backend_calls == []
 
 
