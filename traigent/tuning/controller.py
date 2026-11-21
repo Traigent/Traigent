@@ -48,7 +48,6 @@ import asyncio
 import contextlib
 import copy
 import dataclasses
-import fcntl
 import hashlib
 import json
 import logging
@@ -89,6 +88,8 @@ E_NO_CANDIDATE_RUN = "E_NO_CANDIDATE_RUN"
 E_HEAD_DIVERGED = "E_HEAD_DIVERGED"
 E_LOCAL_AUTHORITY_IN_PRODUCTION = "E_LOCAL_AUTHORITY_IN_PRODUCTION"
 E_FIXED_CLOCK_IN_PRODUCTION = "E_FIXED_CLOCK_IN_PRODUCTION"
+E_LOCK_UNSUPPORTED_PLATFORM = "E_LOCK_UNSUPPORTED_PLATFORM"
+E_CONNECTED_TUNING_REFUSED = "E_CONNECTED_TUNING_REFUSED"
 
 GATE_FORMAT = "traigent-gate-result/1"
 DEFAULT_STORE_ROOT = Path(".traigent") / "tuning"
@@ -519,8 +520,8 @@ class Controller:
 
         TVL specifies standing approval, external-event triggers, conditions on a
         rule (``only_while``, ``unless``, cooldowns and repeat limits) and more; this
-        release runs a schedule or a monitor-breach trigger that starts an
-        optimization with human approval, and nothing else.  The rule keys and
+        release runs a schedule trigger that starts an optimization with human
+        approval, and nothing else.  The rule keys and
         trigger shapes it executes are allow-listed: anything else is refused here
         rather than silently ignored.  The policy may still be compiled and checked;
         it is never run.
@@ -538,7 +539,7 @@ class Controller:
                     raise TuningError(
                         E_UNSUPPORTED_IN_RELEASE,
                         "external-event triggers (ModelReleased) are not supported "
-                        "in this release; use a schedule or a monitor breach",
+                        "in this release; use a schedule",
                     )
                 unsupported = sorted(set(rule) - _SUPPORTED_RULE_KEYS)
                 if unsupported:
@@ -555,8 +556,7 @@ class Controller:
                 if not _supported_trigger(trigger):
                     raise TuningError(
                         E_UNSUPPORTED_IN_RELEASE,
-                        "only a schedule or a monitor-breach trigger is supported "
-                        "in this release",
+                        "only a schedule trigger is supported in this release",
                     )
 
     # -- store ----------------------------------------------------------------------
@@ -566,6 +566,13 @@ class Controller:
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
         _mkdir_durable(self.dir)
+        try:
+            import fcntl  # POSIX only: imported when tuning is used, never at CLI start
+        except ImportError:
+            raise TuningError(
+                E_LOCK_UNSUPPORTED_PLATFORM,
+                "the tuning store lock needs a POSIX platform (fcntl is unavailable)",
+            ) from None
         with open(self._p(".lock"), "a+") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
             try:
@@ -1758,13 +1765,11 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _supported_trigger(trigger: Any) -> bool:
-    """A schedule (``every_days`` + ``anchor``) or a monitor ``episode_opened`` breach."""
-    if not isinstance(trigger, Mapping):
+    """A schedule (``every_days`` + ``anchor``): the pilot's only trigger."""
+    if not isinstance(trigger, Mapping) or set(trigger) != {"schedule"}:
         return False
-    if set(trigger) == {"schedule"}:
-        spec = trigger["schedule"]
-        return isinstance(spec, Mapping) and set(spec) == {"every_days", "anchor"}
-    return set(trigger) == {"monitor", "event"} and trigger["event"] == "episode_opened"
+    spec = trigger["schedule"]
+    return isinstance(spec, Mapping) and set(spec) == {"every_days", "anchor"}
 
 
 def _well_formed_digests(loaded: Any) -> bool:
@@ -1838,6 +1843,56 @@ def _candidate_copy(fn: Any) -> Any:
     return clone
 
 
+def _pin_local_offline(clone: Any, requested_algorithm: Any = None) -> None:
+    """Make the candidate copy run fully local: no backend call, no search-space values out.
+
+    A connected ``optimize()`` sends the raw search space (prompt text included) to
+    the backend; the pilot keeps configuration VALUES on the customer side, so the
+    copy is pinned to the SDK's offline execution policy.  A function that cannot run
+    local (a smart algorithm, a hybrid-API evaluator) is refused, never run connected.
+    """
+    from traigent.config.types import (
+        ExecutionIntent,
+        ExecutionMode,
+        ResolvedExecutionPolicy,
+        is_smart_algorithm,
+        resolve_execution_policy,
+    )
+
+    refuse = TuningError(
+        E_CONNECTED_TUNING_REFUSED,
+        "tuning runs only locally: this function is configured for a connected run "
+        "(smart algorithm or hybrid-API evaluator), which would send configuration "
+        "values to the backend",
+    )
+    if isinstance(requested_algorithm, str) and is_smart_algorithm(requested_algorithm):
+        raise refuse
+    if getattr(clone, "external_service_evaluator", None) is not None:
+        raise refuse
+    if getattr(clone, "execution_mode", None) == ExecutionMode.HYBRID_API.value:
+        raise refuse
+    policy = getattr(clone, "execution_policy", None)
+    if not isinstance(policy, ResolvedExecutionPolicy):
+        if hasattr(clone, "execution_policy"):
+            raise refuse  # an SDK function whose policy cannot be read: fail closed
+        return  # not an SDK function: it has no backend path to pin
+    if (
+        policy.require_cloud
+        or policy.intent is ExecutionIntent.CLOUD_REQUIRED
+        or policy.legacy_execution_mode is ExecutionMode.HYBRID_API
+    ):
+        raise refuse
+    clone.execution_policy = resolve_execution_policy(
+        algorithm=policy.algorithm,
+        offline=True,
+        require_cloud=False,
+        source_hint="tuning_local_only",
+    )
+    clone.offline = True
+    clone.execution_mode = ExecutionMode.LOCAL.value
+    clone._effective_execution_mode = ExecutionMode.LOCAL
+
+
 # The SDK resolves its artifact roots from the process environment; these are the
 # knobs that route the optimization log (best-config artifacts included) and local
 # storage.  They are swapped for the duration of one candidate run.
@@ -1884,8 +1939,9 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
     The optimization runs on an isolated copy (see :func:`_candidate_copy`), so the
     live function's configuration is never changed, and every artifact it writes
     (including best-config files) lands in ``candidate_dir`` -- inside the tuning
-    store -- never where a live wrapper's best-config loaders look.  A deploy only
-    follows the local head file, never this adapter.
+    store -- never where a live wrapper's best-config loaders look.  The adapter only
+    produces isolated candidates: serving keeps its in-code configuration, and
+    release is not implemented in this version.
     """
 
     def run(
@@ -1901,6 +1957,7 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
             else Path(tempfile.mkdtemp(prefix="traigent-candidate-"))
         )
         clone = _candidate_copy(fn)
+        _pin_local_offline(clone, kwargs.get("algorithm"))
         # Record the identity of every dataset the run ACTUALLY loads (a per-call
         # dataset or a generated override included), for the holdout-disjointness
         # check at promotion.

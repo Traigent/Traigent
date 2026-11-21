@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextvars
-import copy
 import functools
 import inspect
 import itertools
@@ -141,9 +140,9 @@ def _sanitize_trial_context(raw_trial_context: Any) -> dict[str, Any]:
 
 def _build_observe_enrichment_metadata() -> dict[str, Any]:
     if _followed_head.get() is not None:
-        # A followed head's configuration may carry prompt text: trace metadata
+        # A followed agent's configuration may carry prompt text: trace metadata
         # gets only the closed stamps of ``_call_metadata`` (agent ref, head
-        # generation, head fingerprint), never the config or trial context.
+        # state), never the config or trial context.
         return {}
     raw_applied_config = applied_config_context.get(None)
     raw_active_config = config_context.get(None)
@@ -565,7 +564,7 @@ class _ObserveFactory:
         return wrapped
 
     def _follow_head(self, inner: Callable[..., Any]):
-        """Run ``inner`` with the store's head config active (loaded per call)."""
+        """Run ``inner`` on its in-code default and stamp the trace with the head state."""
         from pathlib import Path
 
         from traigent.tuning.controller import (
@@ -589,26 +588,28 @@ class _ObserveFactory:
         )
         loader = HeadLoader(store, environment)
 
-        def _enter() -> tuple[Any, Any]:
-            head = loader.head()
-            if head is None:
-                return None, None
-            return (
-                _followed_head.set(
-                    {
-                        "agent": self.agent,
-                        "generation": int(head["generation"]),
-                        "fingerprint": str(head.get("fingerprint", "")),
-                        "code_version": str(head.get("code_version") or ""),
-                    }
-                ),
-                config_context.set(copy.deepcopy(dict(head["config"]))),
-            )
+        warned: list[bool] = []
 
-        def _exit(tokens: tuple[Any, Any]) -> None:
-            if tokens[0] is not None:
-                config_context.reset(tokens[1])
-                _followed_head.reset(tokens[0])
+        def _enter() -> tuple[Any, None]:
+            # No head.json configuration is servable until a platform-signed head
+            # exists: the call runs on the function's own in-code configuration and
+            # the trace says so.  The head is only inspected, never applied, and a
+            # failure to read it never reaches the agent call.
+            state = "unreleased"
+            try:
+                loader.head()
+            except Exception as exc:  # noqa: BLE001 - never crash the agent call
+                state = "unreadable"
+                if not warned:
+                    warned.append(True)
+                    logger.warning(
+                        "tuning head is unreadable (%s); serving the in-code default",
+                        type(exc).__name__,
+                    )
+            return _followed_head.set({"agent": self.agent, "head_state": state}), None
+
+        def _exit(tokens: tuple[Any, None]) -> None:
+            _followed_head.reset(tokens[0])
 
         if _is_async_callable(inner):
 
@@ -640,13 +641,7 @@ class _ObserveFactory:
         merged = dict(self.metadata or {})
         if stamp["agent"] is not None:
             merged["agent"] = str(stamp["agent"])
-        merged["head_generation"] = int(stamp["generation"])
-        if stamp.get("fingerprint"):
-            merged["head_fingerprint"] = str(stamp["fingerprint"])
-        if stamp.get(
-            "code_version"
-        ):  # the code this head was accepted for; never blocks serving
-            merged["head_code_version"] = str(stamp["code_version"])
+        merged["head_state"] = str(stamp["head_state"])  # closed: unreleased|unreadable
         return merged
 
     def _wrap(self, func: Callable[..., Any]):
@@ -803,10 +798,11 @@ def observe(
     the TVL toolchain when available, and attaches the result as ``fn.tuning``.
     Calls are unaffected and nothing is sent anywhere.
 
-    ``follow="head"`` makes each call load the head configuration from the local
-    tuning store (``tuning_store`` or ``.traigent/tuning/<agent>/``), expose it
-    through ``traigent.get_config()``, and stamp the call's trace with ``agent`` and
-    ``head_generation`` (a reference and an integer, nothing else).
+    ``follow="head"`` serves the function's in-code default until a signed release
+    exists (no stored configuration is applied), and stamps the call's trace with
+    ``agent`` and ``head_state`` (``unreleased`` or ``unreadable``; a reference and
+    a closed state, nothing else). The store is ``tuning_store`` or
+    ``.traigent/tuning/<agent>/``.
     """
 
     if callable(name):
