@@ -526,7 +526,8 @@ def _status_text(status: dict[str, Any]) -> str:
             f"    incumbent:  generation {inc['generation']} ({inc['fingerprint']})"
         )
         lines.append(f"    candidate:  {view['candidate']['fingerprint']}")
-        lines.append(f"    code version: {view.get('code_version')}")
+        shown = view.get("code_version_label") or view.get("code_version")
+        lines.append(f"    code version: {shown}")
         hold = view["holdout"]
         lines.append(
             f"    holdout:    {hold['rows']} rows, {hold['unresolved_rows']} unresolved, "
