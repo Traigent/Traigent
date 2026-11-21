@@ -69,14 +69,23 @@ stops when the child exits and returns the child's exit code. The log is
 - An environment proxy must not carry traffic meant for the relay. The SDK's HTTP
   clients honour `HTTP_PROXY`, `http_proxy` and `ALL_PROXY`; with one set (an `http` or
   `all` entry as `urllib.request.getproxies()` reports it; `HTTPS_PROXY` alone never
-  carries plain http), the switch is refused with a fixed message unless every non-empty
-  `NO_PROXY` / `no_proxy` value is `*` or lists the relay host as a bare literal
-  (`127.0.0.1`, or `::1` for IPv6). `host:port`, `[::1]`, CIDR ranges and suffix tokens
-  are not accepted, because requests, aiohttp, httpx and urllib disagree on them. Add
+  carries plain http), the switch is refused with a fixed message unless at least one of `NO_PROXY` /
+  `no_proxy` is set, every one that is set (an empty one counts, because the lower-case
+  spelling wins in urllib, aiohttp and httpx and an empty value removes the bypass) is
+  `*` or lists the relay host as a bare IPv4 literal (`127.0.0.1`), and the effective
+  value `getproxies()` reports agrees. For an IPv6 relay address only the whole value
+  `*` is accepted (urllib compares `[::1]`, requests and aiohttp compare `::1`); the
+  relay itself binds `127.0.0.1` only, so the IPv4 address is the supported relay
+  address. `host:port`, CIDR ranges and suffix tokens are not accepted, because
+  requests, aiohttp, httpx and urllib disagree on them. Add
   the relay host to `NO_PROXY` (`--exec` does it for the child). The check runs each time
   the SDK validates its backend URL (when a client or config is constructed, and before
   credential-bearing requests that re-validate); a proxy variable set after a client
   validated its URL is not re-checked.
+- The route allowlist cannot tell a customer-chosen segment that equals an allowlisted
+  route word (an agent named `billing`, say) from the route word itself: it is logged as
+  that word, because the log has no per-route templates yet. Contract-derived route
+  templates will replace the allowlist.
 - The relay sees only traffic sent to it. Anything the SDK sends to another host is not
   covered.
 - A response line is missing if the log could not be written after the exchange.

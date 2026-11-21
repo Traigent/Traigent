@@ -58,7 +58,7 @@ OUTCOMES = frozenset(
     {"upstream_unreachable", "upstream_error", "relay_stopped", "upstream_unsupported"}
 )
 
-_VERSION_SEGMENT = re.compile(r"^v\d+[a-z]*$")
+_VERSION_SEGMENT = re.compile(r"^v\d+((alpha|beta)\d*)?$")
 _MAX_ROUTE_LEN = 512
 
 
@@ -87,7 +87,11 @@ def route_shape(path: str) -> str:
     target = path.split("?", 1)[0].split("#", 1)[0]
     shaped: list[str] = []
     for segment in target.split("/"):
-        if segment == "" or _VERSION_SEGMENT.match(segment) or segment in ROUTE_WORDS:
+        if (
+            segment == ""
+            or _VERSION_SEGMENT.fullmatch(segment)
+            or segment in ROUTE_WORDS
+        ):
             shaped.append(segment)
         else:
             shaped.append("{}")

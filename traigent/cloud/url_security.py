@@ -445,21 +445,25 @@ def _egress_relay_origin_matches(candidate: str) -> bool:
 _RELAY_PROXY_MESSAGE = (
     f"{_EGRESS_RELAY_ENV} refused: an environment proxy "
     "(HTTP_PROXY, http_proxy or ALL_PROXY) would carry traffic meant for the relay; "
-    "add the relay host to NO_PROXY"
+    "add the relay host to NO_PROXY (for an IPv6 relay address use 127.0.0.1 for "
+    "the relay, or NO_PROXY=*)"
 )
 
 
 def _no_proxy_covers_host(no_proxy: str, host: str) -> bool:
     """True when a ``NO_PROXY`` value provably bypasses the proxy for ``host``.
 
-    Deliberately narrower than the HTTP libraries: only the whole value ``*`` or a
-    token equal to the bare host literal counts. ``host:port`` tokens are not honoured
-    for IP literals by requests or aiohttp (they compare the host alone), ``[::1]`` is
-    not matched by urllib/aiohttp, CIDR ranges are ignored by httpx, and suffix tokens
-    differ per library, so each of those is treated as "not bypassed".
+    Deliberately narrower than the HTTP libraries: only the whole value ``*`` or, for
+    an IPv4 host, a token equal to the bare address counts. ``host:port`` tokens are
+    not honoured for IP literals by requests or aiohttp (they compare the host alone),
+    CIDR ranges are ignored by httpx, suffix tokens differ per library, and an IPv6
+    host is compared bare by requests and aiohttp but bracketed by urllib, so no token
+    form is safe for it: only ``*`` is. Each of those is "not bypassed".
     """
     if no_proxy == "*":
         return True
+    if ":" in host:  # IPv6 literal
+        return False
     return any(token.strip().lower() == host for token in no_proxy.split(","))
 
 
@@ -468,18 +472,25 @@ def _env_proxy_would_divert(host: str) -> bool:
 
     A proxy applies when ``getproxies()`` (what requests, httpx, aiohttp and urllib
     read) has an ``http`` or ``all`` entry (``https`` alone never carries http
-    traffic). It is bypassed only when every non-empty ``NO_PROXY`` / ``no_proxy``
-    value covers the host (libraries differ on which spelling wins, so both must).
+    traffic). It is bypassed only when at least one of ``NO_PROXY`` / ``no_proxy`` is
+    present, EVERY present one (even an empty one: urllib, aiohttp and httpx let the
+    lower-case spelling win, so an empty ``no_proxy`` removes the bypass) covers the
+    host, and the effective value ``getproxies()["no"]`` covers it too.
     """
     from urllib.request import getproxies
 
     proxies = getproxies()
     if not (proxies.get("http") or proxies.get("all")):
         return False
-    values = [os.environ.get(name, "") for name in ("NO_PROXY", "no_proxy")]
-    values = [value for value in values if value.strip()]
+    present = [os.environ[n] for n in ("NO_PROXY", "no_proxy") if n in os.environ]
     bare = host.strip("[]").lower()
-    return not (values and all(_no_proxy_covers_host(v, bare) for v in values))
+    effective = proxies.get("no", "")
+    covered = (
+        bool(present)
+        and all(_no_proxy_covers_host(v, bare) for v in present)
+        and _no_proxy_covers_host(effective, bare)
+    )
+    return not covered
 
 
 def _egress_relay_decision(candidate: str) -> bool:

@@ -118,3 +118,26 @@ def test_allowlist_is_a_frozenset_of_plain_words():
 
     assert isinstance(ROUTE_WORDS, frozenset)
     assert all(re.fullmatch(r"[a-z_-]+", w) for w in ROUTE_WORDS)
+
+
+@pytest.mark.parametrize("segment", ["v1", "v2", "v1beta", "v1beta1", "v1alpha2"])
+def test_version_markers_are_kept(segment):
+    assert route_shape(f"/api/{segment}/projects") == f"/api/{segment}/projects"
+
+
+@pytest.mark.parametrize(
+    "segment", ["v1alicehasdiabetes", "v1x", "v", "v1_beta", "v1betax", "v1alpha_2"]
+)
+def test_customer_text_that_looks_like_a_version_is_not_kept(segment):
+    assert route_shape(f"/api/{segment}/projects") == "/api/{}/projects"
+
+
+def test_version_lookalike_canary_is_never_logged(tmp_path):
+    from traigent.egress.log import RelayLog
+
+    log = RelayLog(tmp_path / "relay.jsonl")
+    try:
+        log.log_request("GET", "/api/v1alicehasdiabetes/projects", 0, "0" * 64)
+    finally:
+        log.close()
+    assert "alicehasdiabetes" not in (tmp_path / "relay.jsonl").read_text()

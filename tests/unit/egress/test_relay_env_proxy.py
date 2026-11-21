@@ -28,7 +28,8 @@ _PROXY = "http://proxy.invalid:3128"
 _MESSAGE = (
     "TRAIGENT_EGRESS_RELAY refused: an environment proxy "
     "(HTTP_PROXY, http_proxy or ALL_PROXY) would carry traffic meant for the relay; "
-    "add the relay host to NO_PROXY"
+    "add the relay host to NO_PROXY (for an IPv6 relay address use 127.0.0.1 for "
+    "the relay, or NO_PROXY=*)"
 )
 _VALIDATORS = [
     pytest.param(validate_cloud_base_url, id="validate_cloud_base_url"),
@@ -55,6 +56,8 @@ def _env(backend: str = _V4, **extra: str):
         {"HTTP_PROXY": _PROXY, "NO_PROXY": "127.0.0.1", "no_proxy": "example.com"},
         {"HTTP_PROXY": _PROXY, "NO_PROXY": "127.0.0.0/8"},
         {"HTTP_PROXY": _PROXY, "NO_PROXY": "a,*"},
+        {"HTTP_PROXY": _PROXY, "NO_PROXY": "127.0.0.1", "no_proxy": ""},
+        {"HTTP_PROXY": _PROXY, "NO_PROXY": "", "no_proxy": "127.0.0.1"},
     ],
 )
 @pytest.mark.parametrize("url", [_V4, _V6], ids=["v4", "v6"])
@@ -72,7 +75,6 @@ def test_proxy_not_bypassed_is_refused(validator, proxy_env, url) -> None:
         (_V4, "127.0.0.1"),
         (_V4, " example.com , 127.0.0.1 "),
         (_V4, "*"),
-        (_V6, "::1"),
         (_V6, "*"),
         ("http://127.9.9.9:54321", "127.9.9.9"),
     ],
@@ -93,10 +95,35 @@ def test_https_only_proxy_is_accepted(validator, url) -> None:
 
 
 @pytest.mark.parametrize("validator", _VALIDATORS)
-def test_bracketed_ipv6_no_proxy_token_is_refused(validator) -> None:
-    # aiohttp and requests compare the bare "::1"; "[::1]" would not bypass there.
-    with _env(_V6, HTTP_PROXY=_PROXY, NO_PROXY="[::1]"), pytest.raises(ValueError):
+@pytest.mark.parametrize("token", ["::1", "[::1]", "::1,127.0.0.1", "*,::1"])
+def test_ipv6_relay_host_needs_the_whole_value_star(validator, token) -> None:
+    # urllib compares the bracketed host, requests/aiohttp the bare one: no token
+    # form is safe in every library, so only the whole value "*" is accepted.
+    with _env(_V6, HTTP_PROXY=_PROXY, NO_PROXY=token) as _:
+        with pytest.raises(ValueError) as excinfo:
+            validator(_V6)
+    assert str(excinfo.value) == _MESSAGE
+
+
+@pytest.mark.parametrize("validator", _VALIDATORS)
+def test_ipv6_relay_host_with_no_proxy_configured_is_accepted(validator) -> None:
+    with _env(_V6):
         validator(_V6)
+
+
+@pytest.mark.parametrize("validator", _VALIDATORS)
+def test_ipv6_star_must_hold_in_both_spellings(validator) -> None:
+    with _env(_V6, HTTP_PROXY=_PROXY, NO_PROXY="*", no_proxy="x"):
+        with pytest.raises(ValueError):
+            validator(_V6)
+    with _env(_V6, HTTP_PROXY=_PROXY, NO_PROXY="*", no_proxy="*"):
+        validator(_V6)
+
+
+@pytest.mark.parametrize("validator", _VALIDATORS)
+def test_both_spellings_set_and_covering_are_accepted(validator) -> None:
+    with _env(HTTP_PROXY=_PROXY, NO_PROXY="127.0.0.1", no_proxy="x, 127.0.0.1"):
+        validator(_V4)
 
 
 @pytest.mark.parametrize("validator", _VALIDATORS)
