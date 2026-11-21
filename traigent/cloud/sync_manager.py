@@ -225,8 +225,10 @@ class SyncManager:
         """
         # A project header already on the shared session wins over the env value:
         # requests would otherwise let the per-request header override it.
-        session_headers = getattr(self._http_session, "headers", None) or {}
-        if any(str(k).lower() == PROJECT_HEADER.lower() for k in session_headers):
+        session_headers = getattr(self._http_session, "headers", None)
+        if isinstance(session_headers, Mapping) and any(
+            str(k).lower() == PROJECT_HEADER.lower() for k in session_headers
+        ):
             return {}
         headers: dict[str, str] = {}
         apply_project_header(headers)
