@@ -4,12 +4,12 @@ The local controller never decides on its own whether a person is who they say t
 are, and never trusts a flag in a file.  Two things are configured explicitly:
 
 * an :class:`ApproverAuthority`: the approver references allowed to approve a run
-  (**Approve run**), checked again at the instant of the effect (release acceptance
-  is planned, not built, and not done here);
-* an :class:`EventVerifier`: the issuers whose external events count, each with a
-  shared secret.  An event is authenticated only when its ``signature`` is the
-  HMAC-SHA256 of the envelope under its issuer's secret; the envelope's own
-  ``authenticated`` field is never read.
+  (**Approve run**), checked again at the instant of the effect.  Release
+  acceptance is planned via a platform-signed head and is not built here;
+* an :class:`EventVerifier`: external events are refused in this release, and this
+  release's controller does not use it.  It is kept as-is: an event would count only
+  when its ``signature`` is the HMAC-SHA256 of the envelope under its issuer's
+  secret (the envelope's own ``authenticated`` field is never read).
 
 ``local-trusted`` is what a configured local operator list gives: the approver
 reference is in the configured list and the operator is trusted to be that person.
@@ -63,7 +63,7 @@ def local_trusted_refused(store_environment: str | None) -> bool:
 
 @dataclass(frozen=True)
 class ApproverAuthority:
-    """The approvers allowed to give the two human decisions, and how they are known."""
+    """The approvers allowed to approve a run, and how they are known."""
 
     approvers: frozenset[str]
     mode: str = LOCAL_TRUSTED

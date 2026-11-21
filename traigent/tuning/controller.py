@@ -92,7 +92,7 @@ E_FIXED_CLOCK_IN_PRODUCTION = "E_FIXED_CLOCK_IN_PRODUCTION"
 
 GATE_FORMAT = "traigent-gate-result/1"
 DEFAULT_STORE_ROOT = Path(".traigent") / "tuning"
-_REF = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+_REF = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 # The rule keys this release executes; every other key (``when``, cooldowns,
 # ``only_while`` / ``unless`` conditions, repeat limits, ...) is refused at construction.
 _SUPPORTED_RULE_KEYS = frozenset(
@@ -116,10 +116,10 @@ def default_store_dir(agent: str, environment: str | None = None) -> Path:
     The environment is part of the path so a staging store and a production store
     of the same agent are never the same directory.
     """
-    if not _REF.match(agent) or agent in {".", ".."}:
+    if not _REF.fullmatch(agent) or agent in {".", ".."}:
         raise TuningError(E_INVALID_RECORD, "agent must be an opaque reference")
     env = environment or DEFAULT_ENVIRONMENT
-    if not _REF.match(env) or env in {".", ".."}:
+    if not _REF.fullmatch(env) or env in {".", ".."}:
         raise TuningError(E_INVALID_RECORD, "environment must be an opaque reference")
     return DEFAULT_STORE_ROOT / env / agent
 
@@ -247,12 +247,8 @@ def _mkdir_durable(directory: Path) -> None:
         _fsync_dir(created.parent)
 
 
-def _stage_json(path: Path, value: Any) -> str:
-    """Write ``value`` to a durable temp file beside ``path``; return its name.
-
-    Nothing is visible at ``path`` until :func:`_publish_staged` renames it, so a
-    caller can do every slow step first and decide at the last instant.
-    """
+def _write_json(path: Path, value: Any) -> None:
+    """Write JSON atomically: temp file in the same directory, fsync, rename."""
     _mkdir_durable(path.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
@@ -260,31 +256,12 @@ def _stage_json(path: Path, value: Any) -> str:
             json.dump(value, fh, sort_keys=True, indent=2)
             fh.flush()
             os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        _fsync_dir(path.parent)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
-    return tmp
-
-
-def _discard_staged(tmp: str) -> None:
-    with contextlib.suppress(OSError):
-        os.unlink(tmp)
-
-
-def _publish_staged(tmp: str, path: Path) -> None:
-    """Atomically rename a staged file into place, then make the rename durable."""
-    try:
-        os.replace(tmp, path)
-        _fsync_dir(path.parent)
-    except BaseException:
-        _discard_staged(tmp)
-        raise
-
-
-def _write_json(path: Path, value: Any) -> None:
-    """Write JSON atomically: temp file in the same directory, fsync, rename."""
-    _publish_staged(_stage_json(path, value), path)
 
 
 def _read_json(path: Path, default: Any = None) -> Any:
@@ -714,7 +691,6 @@ class Controller:
         clock: Callable[[], datetime],
         last_persisted: int,
         authenticate: Callable[[], bool],
-        recheck: Callable[[], str | None],
         lapse_at: Callable[[int], str | None],
         record: Callable[[int], None],
         effect: Callable[[Callable[[], int]], _T],
@@ -727,14 +703,13 @@ class Controller:
         order, and nothing slow after it:
 
         1. the platform authenticator, called afresh (never a cached answer);
-        2. ``recheck``: state that must be re-read after the authenticator returned;
-        3. the clock, sampled ONCE: a persisted instant ahead of it refuses;
-        4. ``lapse_at(instant)``: deadlines and scope expiry against that sample;
-        5. ``record(instant)``: the one effect instant goes into the journal (an
+        2. the clock, sampled ONCE: a persisted instant ahead of it refuses;
+        3. ``lapse_at(instant)``: deadlines and scope expiry against that sample;
+        4. ``record(instant)``: the one effect instant goes into the journal (an
            append that scans nothing);
-        6. the effect itself.
+        5. the effect itself.
 
-        ``effect`` receives ``final_check``, which runs steps 1-5 and returns the
+        ``effect`` receives ``final_check``, which runs steps 1-4 and returns the
         instant; the effect calls it immediately before it acts (an adapter that waits
         for a lock calls it after the wait).  Every failure denies.  Returns
         ``(value, refusal, instant)``.
@@ -751,9 +726,6 @@ class Controller:
             if not authenticated:
                 raise _GateRefused("approver_not_authorized")
             try:
-                reason = recheck()
-                if reason is not None:
-                    raise _GateRefused(reason)
                 sample = _utc(clock())
                 instant = int((sample - self.origin).total_seconds())
                 if instant < last_persisted:
@@ -807,7 +779,7 @@ class Controller:
         """Is ``approver`` listed AND authenticated at this instant?
 
         The same authenticator decides every authority decision (a run approval, and
-        its recheck just before the optimizer runs): a platform
+        its re-check just before the optimizer runs): a platform
         authenticator that answers False refuses.  No authority means no.
         """
         authority = self.authority
@@ -861,7 +833,7 @@ class Controller:
             else occurrence_ref(occurrence_ref_)
         )
         parse_occurrence_ref(ref)
-        if not _REF.match(approver):
+        if not _REF.fullmatch(approver):
             raise TuningError(E_INVALID_RECORD, "approver must be an opaque reference")
         authority = self.require_authority()
         if not authority.authorized(approver):
@@ -1300,7 +1272,6 @@ class Controller:
             clock=clock,
             last_persisted=last_persisted,
             authenticate=lambda: self._on_list_now(approver, _approve_context(ref)),
-            recheck=lambda: None,
             lapse_at=lapse_at,
             record=record_start,
             effect=run,
