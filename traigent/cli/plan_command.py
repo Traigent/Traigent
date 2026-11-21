@@ -15,45 +15,25 @@ from rich.console import Console
 from rich.table import Table
 
 from traigent.analytics.optimization_plan import OptimizationPlanClient
-from traigent.config.backend_config import (
-    DEFAULT_LOCAL_URL,
-    BackendConfig,
-    EndpointNotConfiguredError,
-    _endpoint_required_error,
-    is_strict_endpoint_mode,
+from traigent.config.backend_config import BackendConfig, EndpointNotConfiguredError
+from traigent.config.plan_endpoint import (
+    PLAN_BACKEND_URL_ENV_VARS,
+    resolve_api_key,
+    resolve_backend_url,
 )
+
+# BackendConfig stays importable here: existing tests patch
+# ``traigent.cli.plan_command.BackendConfig`` (the class is shared, so the
+# patch also reaches the shared resolver in traigent.config.plan_endpoint).
+__all__ = ["BackendConfig", "plan"]
 
 _STYLE_BOLD_MAGENTA = "bold magenta"
 
 console = Console(width=120)
 
 
-def _resolve_backend_url(explicit: str | None) -> tuple[str, bool]:
-    """Resolve the backend URL.
-
-    Precedence: explicit flag/env value, then env-var / stored-CLI-credential
-    configuration (previously ignored; Traigent#1721), then the local default.
-    We fall back to ``DEFAULT_LOCAL_URL`` rather than the prod cloud so an
-    unconfigured local-dev user keeps hitting localhost as before.
-
-    Returns (resolved_url, used_explicit_source).
-    """
-    if explicit:
-        return explicit, True
-    configured = BackendConfig.get_configured_backend_url()
-    if not configured and is_strict_endpoint_mode():
-        # Strict (self-hosted) mode: no implicit localhost fallback either.
-        raise _endpoint_required_error()
-    return (configured or DEFAULT_LOCAL_URL), False
-
-
-def _resolve_api_key(explicit: str | None) -> str | None:
-    """Resolve the API key the same way other authenticated commands do:
-    ``TRAIGENT_API_KEY`` env var, then stored CLI credentials from
-    ``traigent auth login`` (Traigent#1721)."""
-    if explicit:
-        return explicit
-    return BackendConfig.get_api_key()
+_resolve_backend_url = resolve_backend_url
+_resolve_api_key = resolve_api_key
 
 
 @click.command("plan")
@@ -109,7 +89,7 @@ def _resolve_api_key(explicit: str | None) -> str | None:
 @click.option(
     "--backend-url",
     default=None,
-    envvar=["TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL"],
+    envvar=list(PLAN_BACKEND_URL_ENV_VARS),
     help=(
         "Backend API base URL. Requires the optimization plan endpoint. "
         "Defaults to the backend URL stored by `traigent auth login`, then "
