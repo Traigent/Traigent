@@ -269,6 +269,23 @@ jobs:
           compose exec -T backend rm -f /tmp/ci_api_key
           printf '%s=%s\n' "TRAIGENT_API_KEY" "$key" >> "$GITHUB_ENV"
 
+      - name: Resolve live-contract project id
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          set -euo pipefail
+          # The minted key is not project-bound and the mint script creates no
+          # project; backend writes answer 422 PROJECT_CONTEXT_REQUIRED without an
+          # explicit one. Use the tenant's deterministic default project id (the
+          # backend materializes that row on the first authenticated request).
+          project_id="$(docker compose -p "$COMPOSE_PROJECT_NAME" \
+            -f docker/docker-compose.dev.yml exec -T backend python -c \
+            'from src.security.project_context import default_project_id_for_tenant as f; from src.security.tenant_context import DEFAULT_TENANT_ID as t; print(f(t))')"
+          if [ -z "$project_id" ]; then
+            echo "::error::Could not resolve the live-contract project id." >&2
+            exit 1
+          fi
+          printf '%s=%s\n' "TRAIGENT_PROJECT_ID" "$project_id" >> "$GITHUB_ENV"
+
       - name: Clean container-owned build artifacts from the SDK checkout
         working-directory: ${{ env.SDK_DIR }}
         run: |

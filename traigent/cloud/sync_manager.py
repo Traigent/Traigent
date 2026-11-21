@@ -25,6 +25,7 @@ from traigent.cloud.models import (
     dataset_identity_from_record,
 )
 from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.config.project import PROJECT_HEADER, apply_project_header
 from traigent.core.session_types import (
     normalize_next_trial_payload,
     safe_http_error_summary,
@@ -215,6 +216,21 @@ class SyncManager:
     def session(self):
         """Public access to the HTTP session for testing."""
         return self._session
+
+    def _project_request_kwargs(self) -> dict[str, Any]:
+        """Per-request ``headers`` carrying ``X-Project-Id`` when a project is set.
+
+        Resolved on every call (``TRAIGENT_PROJECT_ID``) like the other backend
+        clients; empty when no project is configured so behaviour is unchanged.
+        """
+        # A project header already on the shared session wins over the env value:
+        # requests would otherwise let the per-request header override it.
+        session_headers = getattr(self._http_session, "headers", None) or {}
+        if any(str(k).lower() == PROJECT_HEADER.lower() for k in session_headers):
+            return {}
+        headers: dict[str, str] = {}
+        apply_project_header(headers)
+        return {"headers": headers} if headers else {}
 
     def _optimization_only_policy(self) -> oo_egress.Policy:
         """Policy for this sync client's credential (its API key header)."""
@@ -1528,6 +1544,7 @@ class SyncManager:
                 f"{self.base_url}/sessions",
                 json=session_create,
                 timeout=self._request_timeout,
+                **self._project_request_kwargs(),
             )
             if response.status_code not in (200, 201):
                 return {
@@ -1640,6 +1657,7 @@ class SyncManager:
                     session_id=session_id,
                 ),
                 timeout=self._request_timeout,
+                **self._project_request_kwargs(),
             )
         except Exception as exc:
             return {"success": False, "error": str(exc)}
@@ -1732,6 +1750,7 @@ class SyncManager:
                     f"{self.base_url}/sessions/{session_id}/results",
                     json=result_payload,
                     timeout=self._request_timeout,
+                    **self._project_request_kwargs(),
                 )
             except Exception as exc:
                 errors.append(f"trial {ordinal}: {exc}")
@@ -1834,6 +1853,7 @@ class SyncManager:
                 f"{self.base_url}/sessions/{session_id}/finalize",
                 json=finalize_body,
                 timeout=self._request_timeout,
+                **self._project_request_kwargs(),
             )
             if response.status_code in (200, 201):
                 return {"success": True, "classification": "completed"}
