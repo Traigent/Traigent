@@ -415,8 +415,17 @@ def step_command(
             "started": report.started,
             "finished": report.finished,
             "awaiting_approval": report.awaiting_approval,
+            "errors": report.errors,
         }
     )
+    if report.errors:
+        # an approved run that ended in error is a failed step, not a quiet success;
+        # the exception itself is in the local log (stderr), never in the store
+        _die(
+            "optimization_failed: "
+            + ", ".join(report.errors)
+            + " (the full exception is in the log above)"
+        )
 
 
 @tune.command("approve")

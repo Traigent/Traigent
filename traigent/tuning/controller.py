@@ -104,6 +104,35 @@ _SUPPORTED_RULE_KEYS = frozenset(
 _SUPPORTED_ACTIONS = frozenset({"optimize", "notify"})
 _LEGACY = {"Promote", "Reject", "NoDecision"}
 _COMPLETIONS = {"normal", "error", "cancelled", "cost_limit"}
+# The closed reasons an optimizer failure is recorded under.  The reason is chosen from
+# the exception's class names only, never its message: a message may carry customer
+# content, so it goes to the local log (customer side) and into no stored record.
+ERROR_REASONS = frozenset(
+    {
+        "cost_preflight_refused",
+        "unpriced_model",
+        "connected_tuning_refused",
+        "optimizer_raised",
+    }
+)
+_ERROR_REASON_BY_CLASS = {
+    "UnknownModelError": "unpriced_model",
+    "CostLimitExceeded": "cost_preflight_refused",
+    "CostTrackingRequiredError": "cost_preflight_refused",
+}
+
+
+def _error_reason(exc: BaseException) -> str:
+    """The closed reason for an optimizer exception (class names only)."""
+    if isinstance(exc, TuningError) and exc.code == E_CONNECTED_TUNING_REFUSED:
+        return "connected_tuning_refused"
+    for klass in type(exc).__mro__:
+        reason = _ERROR_REASON_BY_CLASS.get(klass.__name__)
+        if reason is not None:
+            return reason
+    return "optimizer_raised"
+
+
 OptimizeFn = Callable[[dict[str, Any]], Any]
 logger = logging.getLogger(__name__)
 
@@ -432,6 +461,7 @@ class StepReport:
     finished: list[str] = field(default_factory=list)
     awaiting_approval: list[str] = field(default_factory=list)  # occurrence refs
     refused: list[str] = field(default_factory=list)  # "<attempt>:<closed reason>"
+    errors: list[str] = field(default_factory=list)  # "<attempt>:<closed error reason>"
 
     @property
     def changed(self) -> bool:
@@ -1232,12 +1262,15 @@ class Controller:
                     }
                 )
 
+        failure: list[str] = []
+
         def run(
             final_check: Callable[[], int],
             attempt: str = attempt,
             call_space: dict[str, Any] = call_space,
         ) -> tuple[str, list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
             ran: list[int] = []
+            failure.clear()
 
             def checked() -> int:
                 ran.append(1)
@@ -1272,7 +1305,16 @@ class Controller:
                 return self._map_result(attempt, result)
             except (_GateRefused, _GateFailed):
                 raise
-            except Exception:  # noqa: BLE001 - a failed run is recorded, content never echoed
+            except Exception as exc:  # noqa: BLE001 - a failed run is recorded by closed reason
+                # The full exception (message and traceback) stays on this machine, in
+                # the local log; the stored record carries only the closed reason.
+                logger.error(
+                    "optimization %s failed (%s)",
+                    attempt,
+                    type(exc).__name__,
+                    exc_info=True,
+                )
+                failure.append(_error_reason(exc))
                 return "error", [], {}, {}
 
         outcome, refusal, _instant_used = self._gated_effect(
@@ -1293,6 +1335,12 @@ class Controller:
         completion, candidates, configs, gates = outcome
         report.started.append(attempt)
         record = self._finished_record(attempt, completion, candidates)
+        if completion == "error":
+            reason = failure[0] if failure else "optimizer_raised"
+            self._record_controller_fact(
+                {"fact": "optimize_failed", "attempt": attempt, "reason": reason}
+            )
+            report.errors.append(f"{attempt}:{reason}")
         # Persist the outcome BEFORE recording it: a crash in between must
         # never re-run a finished optimization.
         _write_json(
