@@ -51,10 +51,22 @@ def _check_raw_backend_url(raw: str) -> None:
         raise ValueError(
             "backend URL contains control characters or whitespace"
         ) from None
+    if not all("\x21" <= ch <= "\x7e" for ch in raw):
+        raise ValueError(
+            "backend URL must contain only printable ASCII characters; "
+            "use the punycode form for an international host name"
+        )
     if "\\" in raw:
         raise ValueError("backend URL must not contain a backslash")
+    if "?" in raw or "#" in raw:
+        raise ValueError("backend URL must not include a query or fragment")
     candidate = raw if "://" in raw else f"https://{raw}"
-    parsed = urlparse(candidate)
+    try:
+        parsed = urlparse(candidate)
+        # Reading the port and hostname can also raise; never let the value out.
+        _ = parsed.port, parsed.hostname
+    except ValueError:
+        raise ValueError("backend URL is not a valid URL") from None
     _validate_cloud_url_parts(parsed, purpose=_PURPOSE)
     _reject_cloud_path_traversal(parsed.path, purpose=_PURPOSE)
 

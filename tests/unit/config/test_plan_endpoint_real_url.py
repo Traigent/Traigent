@@ -237,3 +237,73 @@ def test_mcp_plan_tool_returns_closed_error_without_echoing_url(
     assert result["ok"] is False
     assert result["code"] == "invalid_input"
     assert _NO_ECHO not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        f"https://{_NO_ECHO}\uff20trusted.example/api/v1",
+        f"https://{_NO_ECHO}.example[",
+        "https://[::1",
+        "https://trusted.example/api/\x7fv1",
+        "https://trusted.example\x7f.evil.test",
+        "https://trusted.example\u200b.evil.test",
+        "https://trusted.example\x85.evil.test",
+        "https://t\u00e9st.example/api/v1",
+        "https://trusted.example?",
+        "https://trusted.example#",
+        "https://trusted.example/api/v1?",
+        "https://trusted.example/api/v1#",
+    ],
+    ids=[
+        "fullwidth-at-echo",
+        "bad-bracket-echo",
+        "unclosed-ipv6",
+        "del-in-path",
+        "del-in-host",
+        "zero-width-space",
+        "nel-x85",
+        "non-ascii-host",
+        "empty-query-host",
+        "empty-fragment-host",
+        "empty-query-path",
+        "empty-fragment-path",
+    ],
+)
+def test_resolve_refuses_odd_raw_values_with_fixed_messages(raw: str) -> None:
+    from traigent.config.plan_endpoint import resolve_backend_url
+
+    with pytest.raises(ValueError) as excinfo:
+        resolve_backend_url(raw)
+    message = str(excinfo.value)
+    assert _NO_ECHO not in message
+    assert "trusted" not in message and "evil" not in message
+    assert "NFKC" not in message and "::1" not in message
+
+
+def test_cli_plan_error_does_not_echo_non_ascii_value() -> None:
+    result = _invoke_plan(f"https://{_NO_ECHO}\uff20trusted.example/api/v1")
+    assert result.exit_code != 0
+    assert isinstance(result.exception, SystemExit)
+    assert "Error:" in result.output
+    assert _NO_ECHO not in result.output
+
+
+def test_mcp_plan_tool_does_not_echo_non_ascii_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "TRAIGENT_BACKEND_URL", f"https://{_NO_ECHO}\uff20trusted.example/api/v1"
+    )
+    result = asyncio.run(
+        tools.get_optimization_plan_tool(
+            task_description="t",
+            dataset_size=10,
+            dataset_has_holdout=True,
+            objectives=["accuracy"],
+            max_trials=5,
+            cost_limit_usd=1.0,
+        )
+    )
+    assert result["ok"] is False
+    assert _NO_ECHO not in json.dumps(result)
