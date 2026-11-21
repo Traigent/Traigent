@@ -2950,8 +2950,28 @@ class TestStopReasonInResult:
             config=TraigentConfig.edge_analytics_mode(),
         )
 
+        # The run clock starts at the top of optimize(), before session and
+        # logger setup. On a cold process that setup alone can exceed the 0.05s
+        # budget, so the first between-batch check saw the timeout already
+        # elapsed and no trial ever ran. Restart the clock at the first stop
+        # check (the moment the trial loop begins) so the test measures the loop
+        # timing it targets: the first batch runs (0.08s > 0.05s), then the
+        # next check reports the timeout.
+        real_should_stop = orchestrator._should_stop
+        loop_clock_started = False
+
+        def should_stop_with_loop_clock(*args, **kwargs):
+            nonlocal loop_clock_started
+            if not loop_clock_started:
+                loop_clock_started = True
+                orchestrator._start_time = time.time()
+            return real_should_stop(*args, **kwargs)
+
+        orchestrator._should_stop = should_stop_with_loop_clock
+
         result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
 
+        assert loop_clock_started
         assert result.stop_reason == "timeout"
         assert orchestrator._stop_reason == "timeout"
         assert 1 <= len(result.trials) <= parallel_trials
