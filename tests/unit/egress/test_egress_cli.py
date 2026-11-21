@@ -151,3 +151,27 @@ def test_ctrl_c_during_exec_stops_the_relay_and_exits_130(
     from traigent.egress.log import RelayLog
 
     RelayLog(log_path).close()  # the lock is released: the relay stopped
+
+
+def test_exec_child_sees_the_relay_switch(upstream, log_path, tmp_path, monkeypatch):
+    monkeypatch.delenv("TRAIGENT_EGRESS_RELAY", raising=False)
+    out = tmp_path / "switch.txt"
+    script_file = tmp_path / "child_switch.py"
+    script_file.write_text(
+        "import os;"
+        f"open({str(out)!r},'w').write(os.environ.get('TRAIGENT_EGRESS_RELAY','unset'))"
+    )
+    result = CliRunner().invoke(
+        egress,
+        [
+            "relay",
+            "--upstream",
+            upstream.url,
+            "--log",
+            str(log_path),
+            "--exec",
+            f"{sys.executable} {script_file}",
+        ],
+    )
+    assert result.exit_code == 0
+    assert out.read_text() == "1"

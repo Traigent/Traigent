@@ -106,12 +106,20 @@ def _is_development_environment() -> bool:
     return all(name in development_env_names for name in declared)
 
 
-def _production_assumed_hint() -> str:
+def _production_assumed_hint(*, relay_hint: bool = False) -> str:
     """Explain why plain-http/local hosts were refused and how to change it.
 
     The gate fails closed when no environment is declared, so the message must
     say production was *assumed* and name the variable that changes it (#2503).
+    ``relay_hint`` adds one clause naming the egress-relay switch; callers pass it
+    only for a plain-http loopback IP literal URL.
     """
+    return _production_assumed_hint_base() + (
+        _EGRESS_RELAY_HINT_CLAUSE if relay_hint else ""
+    )
+
+
+def _production_assumed_hint_base() -> str:
     from traigent.utils.env_config import _ENVIRONMENT_KEYS, _normalize_str
 
     declared = [
@@ -343,7 +351,15 @@ def _opt_in_origin_matches(candidate: str) -> bool:
 
     Independent of the transport-gate mode; see :func:`_private_backend_opt_in`.
     """
-    raw = os.getenv(_PRIVATE_BACKEND_OPT_IN_ENV, "")
+    return _switch_origin_matches(_PRIVATE_BACKEND_OPT_IN_ENV, candidate)
+
+
+def _switch_origin_matches(env_name: str, candidate: str) -> bool:
+    """True when ``env_name`` is exactly ``1``/``true`` and the origin is pinned.
+
+    The pin is the normalized origin of ``TRAIGENT_BACKEND_URL`` only.
+    """
+    raw = os.getenv(env_name, "")
     if raw.lower() not in _PRIVATE_BACKEND_OPT_IN_VALUES:
         return False
     # Lazy import: backend_config is a foundational module and may import cloud code.
@@ -355,10 +371,88 @@ def _opt_in_origin_matches(candidate: str) -> bool:
     if _has_invalid_port(urlparse(configured)):
         raise ValueError(
             "TRAIGENT_BACKEND_URL has an invalid port (must be 1-65535); "
-            f"{_PRIVATE_BACKEND_OPT_IN_ENV} cannot be honoured"
+            f"{env_name} cannot be honoured"
         ) from None
     configured_key = _origin_key(configured)
     return configured_key is not None and configured_key == _origin_key(candidate)
+
+
+_EGRESS_RELAY_ENV = "TRAIGENT_EGRESS_RELAY"
+_EGRESS_RELAY_HINT_CLAUSE = (
+    f"; to use `traigent egress relay` on a loopback IP, set {_EGRESS_RELAY_ENV}=1"
+)
+_RELAY_GATE_OFF_MESSAGE = (
+    f"{_EGRESS_RELAY_ENV} requires the transport gate; "
+    "unset TRAIGENT_TRANSPORT_GATE=off"
+)
+
+
+def _is_loopback_ip_literal(hostname: str | None) -> bool:
+    """True only for an IPv4 127.0.0.0/8 or IPv6 ``::1`` literal.
+
+    Parses the literal as written, with no unwrapping of IPv4-mapped or other
+    embedded forms, and never resolves a name.
+    """
+    if not hostname:
+        return False
+    try:
+        host_ip = ipaddress.ip_address(hostname.strip("[]"))
+    # silent-ok: not an IP literal is the refusing answer (fail closed)
+    except ValueError:
+        return False
+    if isinstance(host_ip, ipaddress.IPv4Address):
+        return host_ip in ipaddress.ip_network("127.0.0.0/8")
+    return host_ip == ipaddress.IPv6Address("::1")
+
+
+def _egress_relay_origin_covers(url: str) -> bool:
+    """True when ``url`` is at the origin the relay rule pins (gate mode ignored).
+
+    Used for redirect refusal, so it compares NORMALIZED origins: a request URL equal
+    to the pinned relay origin is recognized however the HTTP library prints it
+    (``httpx`` drops a default port). Needs the switch on, ``http``, a loopback IP
+    literal, and the origin of ``TRAIGENT_BACKEND_URL``.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "http" or not _is_loopback_ip_literal(parsed.hostname):
+        return False
+    return _switch_origin_matches(_EGRESS_RELAY_ENV, url)
+
+
+def _egress_relay_origin_matches(candidate: str) -> bool:
+    """True when the relay rule may ADMIT ``candidate`` (gate mode not considered).
+
+    Everything :func:`_egress_relay_origin_covers` needs, plus: an explicit port that
+    is neither ``0`` nor the scheme default ``80`` (a relay on port 80 is never
+    needed, and a default port is dropped by some HTTP libraries); no userinfo of any
+    kind (``@`` anywhere in the netloc, even empty); no backslash; and no params,
+    query or fragment.
+    """
+    parsed = urlparse(candidate)
+    if parsed.scheme != "http" or not _is_loopback_ip_literal(parsed.hostname):
+        return False
+    if "\\" in candidate or "@" in parsed.netloc:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if parsed.params or parsed.query or parsed.fragment:
+        return False
+    if _has_invalid_port(parsed) or parsed.port in (None, 80):
+        return False
+    return _egress_relay_origin_covers(candidate)
+
+
+def _egress_relay_decision(candidate: str) -> bool:
+    """Return True when plain http to ``candidate`` is allowed for the relay.
+
+    Raises the fixed gate-off message when the rule would apply but the transport
+    gate is off (redirect refusal lives in the gate).
+    """
+    if not _egress_relay_origin_matches(candidate):
+        return False
+    if _transport_gate_is_off():
+        raise ValueError(_RELAY_GATE_OFF_MESSAGE) from None
+    return True
 
 
 def _transport_gate_is_off() -> bool:
@@ -430,10 +524,14 @@ def private_backend_opt_in_covers(url: str) -> bool:
     """Public form of the opt-in check, used by the transport gate.
 
     True when ``TRAIGENT_ALLOW_PRIVATE_BACKEND`` is on and ``url`` has exactly the
-    origin of ``TRAIGENT_BACKEND_URL``. Callers that send credentials to that origin
-    refuse redirects while this is True.
+    origin of ``TRAIGENT_BACKEND_URL``, or when the egress-relay rule
+    (``TRAIGENT_EGRESS_RELAY``, see :func:`_egress_relay_origin_covers`) covers
+    ``url``. Callers that send credentials to that origin refuse redirects while
+    this is True.
     """
-    return _private_backend_opt_in(url)
+    if _private_backend_opt_in(url):
+        return True
+    return _egress_relay_origin_covers(url) and not _transport_gate_is_off()
 
 
 def _reject_unsafe_hostname(
@@ -544,23 +642,25 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = _CLOUD_REQUEST) -> 
     if not candidate:
         raise ValueError(f"{purpose} base URL cannot be empty") from None
 
-    if any(ord(ch) < 32 or ch.isspace() for ch in candidate):
-        raise ValueError(f"{purpose} base URL contains unsafe whitespace") from None
+    _reject_unsafe_whitespace(candidate, purpose=purpose)
 
     parsed = urlparse(candidate)
     hostname = _validate_cloud_url_parts(parsed, purpose=purpose)
     _reject_always_blocked_hostname(hostname, purpose=purpose)
 
     allow_local = _is_development_environment()
+    relay_allowed = False
     if not allow_local and parsed.scheme != "https":
-        raise ValueError(
-            f"{purpose} base URL must use https in production: "
-            f"{_production_assumed_hint()}"
-        ) from None
+        relay_allowed = _egress_relay_decision(candidate)
+        if not relay_allowed:
+            raise ValueError(
+                f"{purpose} base URL must use https in production: "
+                f"{_production_assumed_hint(relay_hint=_is_loopback_ip_literal(hostname))}"
+            ) from None
 
     _reject_cloud_path_traversal(parsed.path, purpose=purpose)
 
-    allow_private = allow_local or _private_backend_opt_in(candidate)
+    allow_private = allow_local or relay_allowed or _private_backend_opt_in(candidate)
     try:
         _reject_unsafe_hostname(
             hostname, allow_local=allow_local, allow_private=allow_private
@@ -576,6 +676,11 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = _CLOUD_REQUEST) -> 
     return urlunparse(
         parsed._replace(path=clean_path, params="", query="", fragment="")
     )
+
+
+def _reject_unsafe_whitespace(candidate: str, *, purpose: str) -> None:
+    if any(ord(ch) < 32 or ch.isspace() for ch in candidate):
+        raise ValueError(f"{purpose} base URL contains unsafe whitespace") from None
 
 
 def _validate_cloud_url_parts(parsed: ParseResult, *, purpose: str) -> str:
@@ -637,14 +742,20 @@ def validate_always_blocked_cloud_url(
     use it so importing the SDK never resolves a host. Egress callers keep the default
     and resolve immediately before the credential-bearing request.
     """
-    parsed = urlparse((base_url or "").strip().rstrip("/"))
+    candidate = (base_url or "").strip().rstrip("/")
+    parsed = urlparse(candidate)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError(f"{purpose} base URL must be http(s) with a host") from None
     if parsed.scheme != "https" and not _is_development_environment():
-        raise ValueError(
-            f"{purpose} base URL must use https in production: "
-            f"{_production_assumed_hint()}"
-        ) from None
+        if not _egress_relay_decision(candidate):
+            raise ValueError(
+                f"{purpose} base URL must use https in production: "
+                f"{_production_assumed_hint(relay_hint=_is_loopback_ip_literal(parsed.hostname))}"
+            ) from None
+        # The relay exception must not skip checks that used to run for this URL:
+        # the production http refusal stopped whitespace and traversal paths here.
+        _reject_unsafe_whitespace(candidate, purpose=purpose)
+        _reject_cloud_path_traversal(parsed.path, purpose=purpose)
 
     normalized = _normalize_hostname(parsed.hostname)
     if normalized in _METADATA_HOSTNAMES:
