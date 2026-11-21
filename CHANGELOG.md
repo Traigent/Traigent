@@ -34,6 +34,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Sync writes send the explicit project (#3321).** `SyncManager` now puts the project on session writes, which fixes the HTTP 422 against backend #6114.
 - The dataset converter and the MCP plan tool now follow the configured backend URL (#3318, #3316).
 
+### Known issues
+
+- `traigent egress relay` without a command prints `export NO_PROXY=...` and `export no_proxy=...` lines with the value unquoted. Pasting them into a shell where the value contains shell metacharacters can fail to set the variable; the relay then is not bypassed and requests fail closed rather than leaking. Fix planned for 0.34.1.
+- When the optimization-only next-trial request fails before it is sent (for example an invalid `TRAIGENT_PROJECT_ID`), the sync client's error result can include the configured project id text. Fix planned for 0.34.1.
+
 ## [0.33.0] - 2026-11-06
 
 ### Added
