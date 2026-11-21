@@ -1,7 +1,15 @@
 """The agent code version an acceptance binds (RFC 0012 section 2.2, 2.3).
 
-A code identifier, never customer content: an explicit string, or a digest of the
-decorated function's module source.  Resolution order (first hit wins):
+The value that crosses the wire is ALWAYS a closed digest, never user-typed text:
+
+* a 40-hex lowercase git commit id, a bare 64-hex sha256, ``src:<64 hex>`` or
+  ``tag:<64 hex>`` is sent as it is;
+* any other readable identifier (``[A-Za-z0-9_.:+-]{1,128}``, e.g. ``v1.2.3``) is sent
+  as ``"tag:" + sha256(value)``, so the same tag always gives the same digest;
+* anything else is refused with ``E_INVALID_CODE_VERSION``, without echoing it.
+
+The readable value stays local (``resolve_code_version_label``), for display only.
+Resolution order (first hit wins):
 
 1. the ``TRAIGENT_AGENT_CODE_VERSION`` environment variable (the deployment states
    which code it really runs, with no source edit),
@@ -26,8 +34,10 @@ from traigent.tuning.errors import TuningError
 E_NO_CODE_VERSION = "E_NO_CODE_VERSION"
 E_INVALID_CODE_VERSION = "E_INVALID_CODE_VERSION"
 CODE_VERSION_ENV = "TRAIGENT_AGENT_CODE_VERSION"
-# Same shape as the CodeVersion definition of tvl-release-acceptance.schema.json.
+# The local rule for a readable identifier a user may type.
 _CODE_VERSION = re.compile(r"[A-Za-z0-9_.:+-]{1,128}")
+# The closed wire form (backend AgentCodeVersion): git commit id or sha256 digest.
+_WIRE_DIGEST = re.compile(r"(?:(?:src|tag):)?[0-9a-f]{64}|[0-9a-f]{40}")
 
 
 def check_code_version(value: Any, origin: str) -> str:
@@ -38,6 +48,13 @@ def check_code_version(value: Any, origin: str) -> str:
             f"{origin} must be 1-128 characters of [A-Za-z0-9_.:+-]",
         )
     return value
+
+
+def to_wire_digest(value: str) -> str:
+    """The closed digest form of a legal code identifier (never user-typed text)."""
+    if _WIRE_DIGEST.fullmatch(value):
+        return value
+    return "tag:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 _MAX_UNWRAP = 32
@@ -102,8 +119,11 @@ def source_digest(source: Any) -> str | None:
     return "src:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def resolve_code_version(explicit: str | None, source: Any) -> str:
-    """The code version now in effect; ``TuningError`` when it cannot be determined."""
+def resolve_code_version_label(explicit: str | None, source: Any) -> str:
+    """The readable code version in effect (LOCAL display only; never sent).
+
+    ``TuningError`` when it cannot be determined or is not a legal identifier.
+    """
     env = os.environ.get(CODE_VERSION_ENV, "").strip()
     if env:
         return check_code_version(env, CODE_VERSION_ENV)
@@ -119,11 +139,18 @@ def resolve_code_version(explicit: str | None, source: Any) -> str:
     return digest
 
 
+def resolve_code_version(explicit: str | None, source: Any) -> str:
+    """The code version to send: always a closed digest (see the module docstring)."""
+    return to_wire_digest(resolve_code_version_label(explicit, source))
+
+
 __all__ = [
     "CODE_VERSION_ENV",
     "E_INVALID_CODE_VERSION",
     "E_NO_CODE_VERSION",
     "check_code_version",
     "resolve_code_version",
+    "resolve_code_version_label",
     "source_digest",
+    "to_wire_digest",
 ]
