@@ -21,7 +21,8 @@ Required scope context:
 Headers commonly used:
 - `Authorization: Bearer <token>`
 - `X-API-Key: <key>`
-- `X-Tenant-Id: <tenant_id>` when tenant selection is needed in browser/API flows
+
+The tenant comes from your authenticated credential and the deployment. Do not send a tenant header: the backend does not use one to select a tenant.
 
 Canonical path shape:
 
