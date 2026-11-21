@@ -12,8 +12,9 @@ traigent egress show 1
 ```
 
 Without `--exec` the relay prints its address and the line to export
-(`TRAIGENT_BACKEND_URL=http://127.0.0.1:PORT`), then serves until interrupted. With
-`--exec` it sets `TRAIGENT_BACKEND_URL` and `TRAIGENT_API_URL` for the child only,
+(`TRAIGENT_BACKEND_URL=http://127.0.0.1:PORT` and `TRAIGENT_EGRESS_RELAY=1`), then serves
+until interrupted. With `--exec` it sets `TRAIGENT_BACKEND_URL`, `TRAIGENT_API_URL` and
+`TRAIGENT_EGRESS_RELAY=1` for the child only,
 stops when the child exits and returns the child's exit code. The log is
 `.traigent/egress/relay.jsonl` (mode 0600) unless `--log` says otherwise.
 
@@ -44,8 +45,20 @@ stops when the child exits and returns the child's exit code. The log is
 ## Limits
 
 - The SDK refuses plain `http://` backends outside development and test environments
-  (`validate_cloud_base_url`), so pointing a production-configured SDK at the relay
-  (which speaks plain HTTP on loopback) is refused by the SDK today.
+  (`validate_cloud_base_url`). `TRAIGENT_EGRESS_RELAY` adds one narrow exception, so a
+  production-configured SDK can use the relay without switching to dev mode. The switch
+  is on only when its value is exactly `1` or `true` (case-insensitive). It admits a
+  plain-`http` backend URL only when all of these hold: the URL's origin (scheme, host,
+  port) equals the origin of `TRAIGENT_BACKEND_URL` (no fallback to `TRAIGENT_API_URL`
+  or stored credentials); the host is a loopback IP literal (`127.0.0.0/8` or `::1`;
+  never `localhost` or another name, and no DNS lookup is involved); the URL names an
+  explicit port; and the transport gate is not `TRAIGENT_TRANSPORT_GATE=off` (redirects
+  are refused for that origin). For that one origin it also allows the loopback
+  destination, as `TRAIGENT_ALLOW_PRIVATE_BACKEND` would, without needing that switch.
+  It relaxes nothing else: metadata and link-local blocking, path, whitespace and
+  userinfo checks, redirect refusal, and the https requirement for every other origin
+  (including other loopback ports) are unchanged, and `https://` URLs and dev/test
+  environments behave as before.
 - The relay sees only traffic sent to it. Anything the SDK sends to another host is not
   covered.
 - A response line is missing if the log could not be written after the exchange.

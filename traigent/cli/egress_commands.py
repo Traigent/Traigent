@@ -25,6 +25,10 @@ from typing import Any
 import click
 
 BACKEND_ENV_VARS = ("TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL")
+# Tells the SDK's URL gate that the pinned loopback http origin is the relay; see
+# ``traigent.cloud.url_security`` (an explicit port and a loopback IP literal are
+# required there, which the relay's own origin always satisfies).
+RELAY_ENV_VAR = "TRAIGENT_EGRESS_RELAY"
 _DEFAULT_LOG = Path(".traigent") / "egress" / "relay.jsonl"
 
 _log_option = click.option(
@@ -44,6 +48,7 @@ def _run_child(command: str, origin: str) -> int:
     env = dict(os.environ)
     for name in BACKEND_ENV_VARS:
         env[name] = origin
+    env[RELAY_ENV_VAR] = "1"
     try:
         completed = subprocess.run(argv, env=env, check=False)  # nosec B603
     except KeyboardInterrupt:
@@ -87,7 +92,8 @@ def relay_command(
     if command is None:
         click.echo(
             f"egress relay listening on {origin}; log: {log_path}\n"
-            f"export TRAIGENT_BACKEND_URL={origin}",
+            f"export TRAIGENT_BACKEND_URL={origin}\n"
+            f"export {RELAY_ENV_VAR}=1",
         )
         try:
             relay.serve_forever()
