@@ -2147,9 +2147,10 @@ def device_login(
 def logout() -> None:
     """Logout and clear stored credentials.
 
-    This command will:
-    1. Clear locally stored credentials
-    2. Optionally revoke API keys on the backend
+    This command clears locally stored credentials.
+
+    Logout does NOT revoke the API key on the backend (no revocation endpoint
+    exists yet), so the key stays valid until you revoke it elsewhere.
 
     Examples:
         traigent auth logout
