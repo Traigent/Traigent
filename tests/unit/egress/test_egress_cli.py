@@ -78,7 +78,7 @@ def test_list_and_show_read_the_log(upstream, log_path, tmp_path):
     script = tmp_path / "call.py"
     script.write_text(
         "import os,urllib.request;"
-        "urllib.request.urlopen(os.environ['TRAIGENT_BACKEND_URL']+'/api/v1/things/42?k=v')"
+        "urllib.request.urlopen(os.environ['TRAIGENT_BACKEND_URL']+'/api/v1/projects/42?k=v')"
         ".read()"
     )
     runner = CliRunner()
@@ -96,7 +96,7 @@ def test_list_and_show_read_the_log(upstream, log_path, tmp_path):
     )
     listed = runner.invoke(egress, ["list", "--log", str(log_path)])
     assert listed.exit_code == 0
-    assert "/api/v1/things/{}" in listed.output
+    assert "/api/v1/projects/{}" in listed.output
     assert "200" in listed.output
     assert "k=v" not in listed.output
     shown = runner.invoke(egress, ["show", "1", "--log", str(log_path)])

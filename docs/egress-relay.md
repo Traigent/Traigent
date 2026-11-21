@@ -41,8 +41,11 @@ stops when the child exits and returns the child's exit code. The log is
   then cuts the rest; their response lines carry `outcome: relay_stopped`.
 - If a response line cannot be written after the exchange, the response is still
   delivered, one fixed line goes to stderr, and every further request gets 502.
-- Route shape is a heuristic: path segments that are not lowercase words (or `v1`-style
-  version markers) become `{}`. A lowercase word in a path is logged as written.
+- Route shape keeps a path segment only when it is a word from a fixed allowlist (the
+  static route words the SDK itself uses, plus `v1`-style version markers); every other
+  segment, including a lowercase id or name you chose, becomes `{}`. Request lines say
+  `route_source: "allowlist"` (logs from the first version say `"heuristic"` and still
+  read fine with `list` and `show`).
 
 ## Limits
 

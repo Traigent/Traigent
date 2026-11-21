@@ -6,6 +6,10 @@ Request line::
 
     seq, ts (UTC ISO), kind="request", method, route, route_source, bytes, sha256
 
+``route_source`` is ``"allowlist"``: the route keeps only words from a fixed list (logs
+written by the first version say ``"heuristic"``; readers do not use the field, so both
+stay readable and ``schema_version`` is still 1).
+
 Response line (same ``seq``)::
 
     seq, ts, kind="response", status, bytes   [, outcome]
@@ -38,13 +42,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from traigent.egress.route_words import ROUTE_WORDS
+
 try:  # POSIX
     import fcntl
 except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
 SCHEMA_VERSION = 1
-ROUTE_SOURCE_HEURISTIC = "heuristic"
+ROUTE_SOURCE_ALLOWLIST = "allowlist"
 DEFAULT_LOG_PATH = Path(".traigent") / "egress" / "relay.jsonl"
 METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 OTHER_METHOD = "OTHER"
@@ -52,10 +58,7 @@ OUTCOMES = frozenset(
     {"upstream_unreachable", "upstream_error", "relay_stopped", "upstream_unsupported"}
 )
 
-_LITERAL_SEGMENT = re.compile(r"^[a-z_-]+$")
 _VERSION_SEGMENT = re.compile(r"^v\d+[a-z]*$")
-#: A literal-looking segment longer than this is more likely a token than a word.
-_MAX_LITERAL_LEN = 32
 _MAX_ROUTE_LEN = 512
 
 
@@ -76,19 +79,15 @@ class RelayLogLockedError(RelayLogError):
 def route_shape(path: str) -> str:
     """Return the route shape of a request target.
 
-    The query string and fragment are dropped. Every path segment that is not
-    purely lowercase ASCII letters, ``_`` or ``-`` (at most 32 characters), and not
-    a version marker such as ``v1`` or ``v1beta``, becomes ``{}``. This is a
-    heuristic: a contract-derived route table can replace this one function.
+    The query string and fragment are dropped. A path segment is kept only when it is
+    in the fixed allowlist :data:`traigent.egress.route_words.ROUTE_WORDS` or is a
+    version marker such as ``v1`` or ``v1beta``; every other segment becomes ``{}``,
+    including a lowercase word the customer chose (an id or a name).
     """
     target = path.split("?", 1)[0].split("#", 1)[0]
     shaped: list[str] = []
     for segment in target.split("/"):
-        if (
-            segment == ""
-            or _VERSION_SEGMENT.match(segment)
-            or (len(segment) <= _MAX_LITERAL_LEN and _LITERAL_SEGMENT.match(segment))
-        ):
+        if segment == "" or _VERSION_SEGMENT.match(segment) or segment in ROUTE_WORDS:
             shaped.append(segment)
         else:
             shaped.append("{}")
@@ -186,7 +185,7 @@ class RelayLog:
                     "kind": "request",
                     "method": method if method in METHODS else OTHER_METHOD,
                     "route": route_shape(target),
-                    "route_source": ROUTE_SOURCE_HEURISTIC,
+                    "route_source": ROUTE_SOURCE_ALLOWLIST,
                     "bytes": size,
                     "sha256": sha256,
                 }
