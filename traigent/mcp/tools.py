@@ -18,6 +18,11 @@ from urllib.parse import urlsplit, urlunsplit
 from traigent.analytics.optimization_plan import OptimizationPlanClient
 from traigent.cloud.credential_manager import CredentialManager
 from traigent.config.backend_config import BackendConfig
+from traigent.config.plan_endpoint import (
+    backend_url_from_env,
+    resolve_api_key,
+    resolve_backend_url,
+)
 from traigent.config.project import read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, read_optional_env
 from traigent.evaluators.base import DATASET_ROOT_ENV, _resolve_dataset_source
@@ -686,7 +691,12 @@ async def get_optimization_plan_tool(
     offline: bool | None = None,
 ) -> dict[str, Any]:
     """Fetch a backend-provided optimization plan without local planning."""
-    async with OptimizationPlanClient() as client:
+    # Same resolution as ``traigent plan``: env, stored CLI credentials, default.
+    backend_url, _ = resolve_backend_url(backend_url_from_env())
+    api_key = resolve_api_key(None)
+    async with OptimizationPlanClient(
+        backend_url=backend_url, api_key=api_key
+    ) as client:
         return await client.get_optimization_plan(
             task_description=task_description,
             dataset_size=dataset_size,

@@ -185,6 +185,45 @@ Monitor
 windows must be aligned to `3600 * tumbling_hours` seconds after the origin. A clock set back
 never moves recorded time backwards.
 
+### Schedule anchors and the origin day
+
+A schedule's first tick is its `anchor`, measured in whole seconds from the store's origin.
+The simplest, tested setup puts the anchor at the origin day itself: the UTC midnight of the
+day the store is first created (the `tune step` that creates it, or the `now` it is given).
+An anchor before the origin day fires on the first step; one that is more than `days` days
+before it has its first scopes already expired, so the first occurrence you see is a later
+tick (for example `.../1/0`, not `.../0/0`); an anchor after the origin day does not fire
+until it is reached, and `tune step` prints an empty `awaiting_approval` until then. The SDK
+does not yet refuse a differing anchor with a dedicated error (measured 2026-11-21, see the
+PR that added this section): check `tune status` for the occurrence you expect.
+
+## Diagnosing a failed run
+
+When an approved run ends in an error, `tune step` exits non-zero, prints
+`optimization_failed: <attempt>:<reason>`, and lists the same under `errors` in its JSON.
+The stored record (`controller.jsonl`, fact `optimize_failed`) carries only a closed reason:
+
+| Reason | Meaning |
+|--------|---------|
+| `cost_preflight_refused` | the pre-run cost check refused the run (estimate above the limit, or cost tracking required) |
+| `unpriced_model` | a model in the search space has no price entry (price it with `TRAIGENT_CUSTOM_MODEL_PRICING_JSON`, or use a priced model) |
+| `connected_tuning_refused` | the function is configured for a connected run, which tuning refuses |
+| `optimizer_raised` | any other exception from the optimizer |
+
+The exception message and traceback are written to the local log (standard error) only: they
+can carry your content, so they never enter the store or any record the SDK sends.
+
+## `tune check` warning `runtime_liveness_missing`
+
+`traigent tune check` on a compiled policy warns `runtime_liveness_missing`: TVL (section 5.5)
+recommends that every primary runtime monitor be covered by an `evidence_liveness` requirement
+(a count of how many windows may pass without evidence). The builder does not emit one in this
+release, on purpose: the pilot runs schedule triggers only and receives no runtime window
+facts, so a liveness requirement would declare a staleness rule that nothing feeds. The
+warning is accurate, not a false positive, and it is left visible; it is a warning, so the
+policy still checks and runs. Emitting a liveness requirement is a contract change (new
+monitor, new policy field) held for the release that runs runtime monitoring.
+
 ## Promotion evidence: checkers and a holdout
 
 A candidate deploys only on real evidence, measured locally on **every** path: the controller

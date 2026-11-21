@@ -35,7 +35,7 @@ def _lines(path: Path) -> list[dict]:
     ids=["json", "binary", "empty", "5MB"],
 )
 def test_body_forwarded_identically_and_hash_matches(relay, upstream, log_path, body):
-    status, _, _ = send(relay, "POST", "/api/v1/things", body)
+    status, _, _ = send(relay, "POST", "/api/v1/projects", body)
     assert status == 200
     assert upstream.seen[0].body == body
     request = _lines(log_path)[0]
@@ -46,7 +46,7 @@ def test_body_forwarded_identically_and_hash_matches(relay, upstream, log_path, 
 @pytest.mark.parametrize("method", ["GET", "POST", "PUT", "PATCH", "DELETE"])
 def test_methods_forwarded_and_logged(relay, upstream, log_path, method):
     body = b"x" if method in ("POST", "PUT", "PATCH") else None
-    status, _, payload = send(relay, method, "/api/v1/things", body)
+    status, _, payload = send(relay, method, "/api/v1/projects", body)
     assert (status, payload) == (200, upstream.response_body)
     assert upstream.seen[0].method == method
     lines = wait_lines(log_path, 2)
@@ -58,17 +58,17 @@ def test_methods_forwarded_and_logged(relay, upstream, log_path, method):
 
 
 def test_query_forwarded_but_not_logged(relay, upstream, log_path):
-    send(relay, "GET", f"/api/v1/things?token={CANARY}&page=2")
-    assert upstream.seen[0].path == f"/api/v1/things?token={CANARY}&page=2"
+    send(relay, "GET", f"/api/v1/projects?token={CANARY}&page=2")
+    assert upstream.seen[0].path == f"/api/v1/projects?token={CANARY}&page=2"
     assert CANARY not in log_path.read_text()
-    assert _lines(log_path)[0]["route"] == "/api/v1/things"
+    assert _lines(log_path)[0]["route"] == "/api/v1/projects"
 
 
 def test_canary_in_header_query_path_and_body_never_logged(relay, upstream, log_path):
     send(
         relay,
         "POST",
-        f"/api/v1/projects/{CANARY}/things?q={CANARY}",
+        f"/api/v1/projects/{CANARY}/projects?q={CANARY}",
         json.dumps({CANARY: CANARY}).encode(),
         {"X-Custom": CANARY, "Authorization": f"Bearer {CANARY}"},
     )
@@ -76,13 +76,15 @@ def test_canary_in_header_query_path_and_body_never_logged(relay, upstream, log_
     text = log_path.read_text()
     assert CANARY not in text
     assert CANARY.lower() not in text.lower()
-    assert _lines(log_path)[0]["route"] == "/api/v1/projects/{}/things"
+    assert _lines(log_path)[0]["route"] == "/api/v1/projects/{}/projects"
 
 
 def test_authorization_header_reaches_upstream_and_is_not_logged(
     relay, upstream, log_path
 ):
-    send(relay, "GET", "/api/v1/things", headers={"Authorization": "Bearer s3cr3t-tok"})
+    send(
+        relay, "GET", "/api/v1/projects", headers={"Authorization": "Bearer s3cr3t-tok"}
+    )
     assert upstream.seen[0].headers["Authorization"] == "Bearer s3cr3t-tok"
     text = log_path.read_text()
     assert "s3cr3t-tok" not in text and "uthorization" not in text
@@ -95,7 +97,7 @@ def test_host_header_is_the_upstream_host(relay, upstream):
 
 def test_unwritable_log_returns_502_and_forwards_nothing(relay, upstream):
     break_log(relay._log)  # the log can no longer be written
-    status, _, payload = send(relay, "POST", "/api/v1/things", b"body")
+    status, _, payload = send(relay, "POST", "/api/v1/projects", b"body")
     assert status == 502
     assert b"not forwarded" in payload
     assert upstream.seen == []
@@ -106,7 +108,7 @@ def test_upstream_down_returns_502_and_is_logged(log_path):
     instance = EgressRelay("http://127.0.0.1:9", log)  # nothing listens on 9
     instance.start()
     try:
-        status, _, _ = send(instance, "GET", "/api/v1/things")
+        status, _, _ = send(instance, "GET", "/api/v1/projects")
     finally:
         instance.stop()
     assert status == 502
@@ -120,7 +122,7 @@ def test_redirect_passed_through_not_followed(relay, upstream):
     upstream.status = 302
     upstream.extra_headers = [("Location", "http://127.0.0.1:1/elsewhere")]
     upstream.response_body = b""
-    status, headers, _ = send(relay, "GET", "/api/v1/things")
+    status, headers, _ = send(relay, "GET", "/api/v1/projects")
     assert status == 302
     assert headers["Location"] == "http://127.0.0.1:1/elsewhere"
     assert len(upstream.seen) == 1
@@ -141,7 +143,7 @@ def test_concurrent_requests_get_unique_increasing_seq(relay, upstream, log_path
     results: list[int] = []
 
     def one(i: int) -> None:
-        results.append(send(relay, "POST", "/api/v1/things", f"b{i}".encode())[0])
+        results.append(send(relay, "POST", "/api/v1/projects", f"b{i}".encode())[0])
 
     threads = [threading.Thread(target=one, args=(i,)) for i in range(20)]
     for t in threads:
@@ -297,13 +299,13 @@ def test_response_log_failure_still_delivers_then_refuses_everything(
             break_log(relay._log)  # the request line is out; the response line fails
 
     upstream.seen = Breaker(upstream.seen)
-    status, _, payload = send(relay, "POST", "/api/v1/things", b"one")
+    status, _, payload = send(relay, "POST", "/api/v1/projects", b"one")
     assert (status, payload) == (200, upstream.response_body)  # still delivered
     deadline = time.monotonic() + 10
     while not relay._log.failed and time.monotonic() < deadline:
         time.sleep(0.02)
     for _ in range(2):
-        status, _, payload = send(relay, "GET", "/api/v1/things")
+        status, _, payload = send(relay, "GET", "/api/v1/projects")
         assert status == 502 and b"not forwarded" in payload
     assert len(upstream.seen) == 1  # nothing further was forwarded
     err = capsys.readouterr().err
@@ -332,7 +334,7 @@ def test_existing_loose_log_file_is_tightened_to_0600(tmp_path):
 def test_responses_without_a_body(relay, upstream, log_path, method, status):
     upstream.status = status
     upstream.response_body = b"" if status != 200 else b"ignored-for-head"
-    code, _, payload = send(relay, method, "/api/v1/things")
+    code, _, payload = send(relay, method, "/api/v1/projects")
     assert code == status and payload == b""
     assert wait_lines(log_path, 2)[1]["bytes"] == 0
 

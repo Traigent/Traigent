@@ -133,6 +133,10 @@ async def test_get_optimization_plan_delegates_to_backend_client(
     calls: list[dict[str, Any]] = []
 
     class FakeOptimizationPlanClient:
+        def __init__(self, backend_url: str, api_key: str | None = None) -> None:
+            self.backend_url = backend_url
+            self.api_key = api_key
+
         async def __aenter__(self) -> FakeOptimizationPlanClient:
             return self
 
