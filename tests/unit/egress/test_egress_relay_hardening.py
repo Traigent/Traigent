@@ -282,3 +282,118 @@ def test_chunked_in_any_case_is_still_accepted(relay, upstream):
     )
     assert _raw_status(relay.port, head) == 200
     assert upstream.seen[0].body == b"a"
+
+
+# 6. stop() during a blocked upload, and stop() before the upstream is reached --------
+
+
+def _listener() -> socket.socket:
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(8)
+    return server
+
+
+def _wait_until(predicate: Callable[[], bool], timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+def test_stop_cuts_an_upstream_that_stopped_reading_during_a_large_upload(log_path):
+    upstream = _listener()
+    upstream.settimeout(10)
+    instance = EgressRelay(
+        f"http://127.0.0.1:{upstream.getsockname()[1]}", RelayLog(log_path)
+    )
+    instance.start()
+    total = 48 * 1024 * 1024  # generated, never stored; far above the socket buffers
+
+    def upload() -> None:
+        try:
+            raw = socket.create_connection(("127.0.0.1", instance.port), timeout=30)
+            raw.sendall(
+                b"POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: %d\r\n\r\n" % total
+            )
+            block = b"\0" * (1024 * 1024)
+            for _ in range(total // len(block)):
+                raw.sendall(block)
+            raw.close()
+        except OSError:
+            pass
+
+    threading.Thread(target=upload, daemon=True).start()
+    peer, _ = upstream.accept()  # accepts, then never reads
+    try:
+        time.sleep(1.0)  # let the relay fill the socket buffers and block in send
+        started = time.monotonic()
+        instance.stop(drain_s=0.3)
+        assert time.monotonic() - started < 4
+        assert _wait_until(lambda: not instance._server._active, 3), "handler alive"
+        peer.settimeout(5)
+        closed = False
+        try:
+            while (
+                True
+            ):  # buffered bytes, then EOF or reset: the upstream side saw a close
+                if not peer.recv(1 << 20):
+                    closed = True
+                    break
+        except ConnectionResetError:
+            closed = True
+        assert closed
+        peer.settimeout(0.5)  # and nothing more arrives afterwards
+        try:
+            assert peer.recv(1) == b""
+        except (ConnectionResetError, TimeoutError):
+            pass
+    finally:
+        peer.close()
+        upstream.close()
+    assert lines_are_whole(log_path)
+
+
+def lines_are_whole(path: Path) -> bool:
+    text = path.read_text()
+    return all(json.loads(x) for x in text.splitlines())
+
+
+def test_exchange_that_has_not_connected_when_stop_begins_never_connects(log_path):
+    upstream = _listener()
+    upstream.settimeout(1.0)
+    instance = EgressRelay(
+        f"http://127.0.0.1:{upstream.getsockname()[1]}", RelayLog(log_path)
+    )
+    instance.start()
+    entered = threading.Event()
+    release = threading.Event()
+    original = instance._server.connect
+
+    def gated():  # noqa: ANN202
+        entered.set()
+        release.wait(10)  # the handler is past the log line, not yet connected
+        return original()
+
+    instance._server.connect = gated  # type: ignore[method-assign]
+    outcome: list[int] = []
+
+    def client() -> None:
+        try:
+            outcome.append(send(instance, "POST", "/x", b"body")[0])
+        except OSError:
+            outcome.append(-1)
+
+    thread = threading.Thread(target=client, daemon=True)
+    thread.start()
+    assert entered.wait(10)
+    instance.stop(drain_s=0.2)
+    release.set()
+    assert _wait_until(lambda: not instance._server._active, 3)
+    thread.join(10)
+    with pytest.raises(TimeoutError):
+        upstream.accept()  # the relay never connected
+    upstream.close()
+    assert outcome and outcome[0] != 200

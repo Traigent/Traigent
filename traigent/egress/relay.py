@@ -124,6 +124,10 @@ class _FinalResponse(http.client.HTTPResponse):
         raise http.client.HTTPException("too many interim responses")
 
 
+class _Stopped(Exception):
+    """stop() began before this exchange could safely reach the upstream."""
+
+
 class _BadBody(Exception):
     pass
 
@@ -273,14 +277,24 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         conn = self.server.connect()
         try:
             try:
+                if not self.server.may_connect(self):
+                    raise _Stopped
+                conn.connect()
+                # Registered before any header or body byte is sent, so stop() can
+                # cut it even while a large upload is blocked. Kept apart from
+                # conn.sock: http.client drops that once a close-delimited
+                # response starts.
+                if not self.server.attach_upstream(self, conn.sock):
+                    raise _Stopped
                 conn.putrequest(self.command, self.path, skip_accept_encoding=True)
                 for key, value in headers:
                     conn.putheader(key, value)
                 conn.endheaders(body if size > 0 else None)
-                # Kept apart: http.client drops conn.sock once a close-delimited
-                # response starts, but stop() must still be able to cut it.
-                self._upstream_sock = conn.sock
                 upstream = conn.getresponse()
+            except _Stopped:
+                self.cut = True
+                self._reply(502, MSG_UPSTREAM_FAILED)
+                return
             except (OSError, http.client.HTTPException, ValueError):
                 self._reply(502, MSG_UPSTREAM_FAILED)
                 return
@@ -356,6 +370,23 @@ class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
             late = self._stopping
         if late:  # accepted while stopping
             handler.cut_sockets()
+
+    def may_connect(self, handler: _Handler) -> bool:
+        with self._active_lock:
+            return not (self._stopping or handler.cut)
+
+    def attach_upstream(self, handler: _Handler, sock: socket.socket | None) -> bool:
+        """Track the upstream socket, unless stop() has begun (then close it)."""
+        with self._active_lock:
+            if sock is not None and not (self._stopping or handler.cut):
+                handler._upstream_sock = sock
+                return True
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        return False
 
     def unregister(self, handler: _Handler) -> None:
         with self._active_empty:

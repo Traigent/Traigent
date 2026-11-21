@@ -109,6 +109,7 @@ class RelayLog:
         self.path = Path(path)
         self._lock = threading.Lock()
         self._failed = False
+        self._closed = False
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             self._fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
@@ -160,6 +161,8 @@ class RelayLog:
 
     def _append(self, entry: dict[str, Any]) -> None:
         line = (json.dumps(entry, separators=(",", ":")) + "\n").encode("utf-8")
+        if self._closed:  # never write to a closed (and possibly reused) descriptor
+            raise RelayLogError("the egress relay log is closed")
         try:
             written = os.write(self._fd, line)
             if written != len(line):  # pragma: no cover - O_APPEND regular file
@@ -210,6 +213,9 @@ class RelayLog:
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
+            self._closed = True
             try:
                 os.close(self._fd)
             except OSError:
