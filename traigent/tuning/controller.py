@@ -709,7 +709,7 @@ class Controller:
            append that scans nothing);
         5. the effect itself.
 
-        ``effect`` receives ``final_check``, which runs steps 1-5 and returns the
+        ``effect`` receives ``final_check``, which runs steps 1-4 and returns the
         instant; the effect calls it immediately before it acts (an adapter that waits
         for a lock calls it after the wait).  Every failure denies.  Returns
         ``(value, refusal, instant)``.
