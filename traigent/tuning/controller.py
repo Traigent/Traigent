@@ -1939,8 +1939,9 @@ def traigent_optimize_fn(fn: Any, **kwargs: Any) -> OptimizeFn:
     The optimization runs on an isolated copy (see :func:`_candidate_copy`), so the
     live function's configuration is never changed, and every artifact it writes
     (including best-config files) lands in ``candidate_dir`` -- inside the tuning
-    store -- never where a live wrapper's best-config loaders look.  A deploy only
-    follows the local head file, never this adapter.
+    store -- never where a live wrapper's best-config loaders look.  The adapter only
+    produces isolated candidates: serving keeps its in-code configuration, and
+    release is not implemented in this version.
     """
 
     def run(
