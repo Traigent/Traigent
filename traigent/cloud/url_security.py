@@ -397,6 +397,7 @@ def _is_loopback_ip_literal(hostname: str | None) -> bool:
         return False
     try:
         host_ip = ipaddress.ip_address(hostname.strip("[]"))
+    # silent-ok: not an IP literal is the refusing answer (fail closed)
     except ValueError:
         return False
     if isinstance(host_ip, ipaddress.IPv4Address):
