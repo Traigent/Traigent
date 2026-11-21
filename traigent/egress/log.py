@@ -12,8 +12,12 @@ Response line (same ``seq``)::
 
 ``route`` is a shape, never a raw path (see :func:`route_shape`). Query strings,
 header names or values, body content and JSON key names are never logged.
-``outcome`` appears only when the relay itself ended the exchange
-(``upstream_unreachable`` or ``upstream_error``).
+``outcome`` appears only when the relay itself ended the exchange:
+``upstream_unreachable``, ``upstream_error``, ``upstream_unsupported`` (the upstream
+answered 101 Switching Protocols, which the relay does not support) or
+``relay_stopped`` (the relay was stopped while the exchange was still running).
+A request the relay refuses before forwarding (malformed, unsupported
+Transfer-Encoding) gets no log line: nothing was sent upstream.
 
 The file is created with mode 0600. Writes are single ``write`` calls under a lock,
 followed by ``fsync``, so lines are never interleaved and ``seq`` is strictly
@@ -44,13 +48,21 @@ ROUTE_SOURCE_HEURISTIC = "heuristic"
 DEFAULT_LOG_PATH = Path(".traigent") / "egress" / "relay.jsonl"
 METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 OTHER_METHOD = "OTHER"
-OUTCOMES = frozenset({"upstream_unreachable", "upstream_error"})
+OUTCOMES = frozenset(
+    {"upstream_unreachable", "upstream_error", "relay_stopped", "upstream_unsupported"}
+)
 
 _LITERAL_SEGMENT = re.compile(r"^[a-z_-]+$")
 _VERSION_SEGMENT = re.compile(r"^v\d+[a-z]*$")
 #: A literal-looking segment longer than this is more likely a token than a word.
 _MAX_LITERAL_LEN = 32
 _MAX_ROUTE_LEN = 512
+
+
+MSG_TORN_LOG = (
+    "the egress relay log ends with an incomplete line; move the file aside "
+    "or repair it before starting the relay"
+)
 
 
 class RelayLogError(RuntimeError):
@@ -117,10 +129,29 @@ class RelayLog:
                     raise RelayLogError(
                         "the egress relay log cannot be opened"
                     ) from None
+            self._require_clean_tail()
             self._seq = max((e["seq"] for e in iter_lines(self.path)), default=0)
         except BaseException:
             os.close(self._fd)
             raise
+
+    def _require_clean_tail(self) -> None:
+        """Refuse a log whose last line is torn (no final newline).
+
+        Appending to it would glue the next record onto the torn bytes and produce an
+        invalid line for a request that was forwarded.
+        """
+        try:
+            with open(self.path, "rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                if handle.tell() == 0:
+                    return
+                handle.seek(-1, os.SEEK_END)
+                last = handle.read(1)
+        except OSError:
+            raise RelayLogError("the egress relay log cannot be opened") from None
+        if last != b"\n":
+            raise RelayLogError(MSG_TORN_LOG)
 
     @property
     def failed(self) -> bool:
