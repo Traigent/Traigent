@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import traigent
 from traigent.observability import observe
-from traigent.tuning.policy import Every, FailureRate, ModelReleased, OnBreach, ProposeFix, Tuning
+from traigent.tuning.policy import Every, FailureRate, ModelReleased, ProposeFix, Tuning
 
 # synthetic: a newer model answers harder documents ("level N" needs skill >= N)
 SKILL = {"anthropic/claude-haiku-4-5": 0, "anthropic/claude-sonnet-4-6": 1,
@@ -34,7 +34,7 @@ def ticket_route_check(example, output):
 
 policy = Tuning(
     keep=[FailureRate(checker="customer:ticket_route_check", at_most="0.08")],
-    on=[TRIGGER, OnBreach()],
+    on=[TRIGGER],
     fix=ProposeFix(approval="human", deploy="if_promoted"),
     recover="since_head_move",
     checkers={"customer:ticket_route_check": ticket_route_check},
@@ -90,7 +90,7 @@ def _write_agent(
     )
     (tmp_path / f"{name}.py").write_text(
         WITNESS.replace("HOLDOUT_ARG", arg)
-        .replace("TRIGGER,", f"{trigger},")
+        .replace("TRIGGER", trigger)
         .replace(
             'return "fail" if not output else "pass"',
             "return 'fail'" if all_fail else 'return "fail" if not output else "pass"',
@@ -244,7 +244,8 @@ def test_cli_runs_the_spend_loop_through_observe_over_optimize(
 
         agent_e2e.classify("level 0 invoice")
         md = agent_e2e.TRACE_CLIENT.start_trace.call_args.kwargs["metadata"]
-        assert md["head_generation"] == 0
+        # no head.json configuration is servable yet: the call ran on the in-code default
+        assert md["head_state"] == "unreleased" and "head_generation" not in md
         assert not any(
             "model" in str(k) or "anthropic" in str(v) for k, v in md.items()
         )

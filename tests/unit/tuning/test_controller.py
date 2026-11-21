@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import functools
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -121,7 +122,6 @@ def module() -> dict[str, Any]:
     ]
     # the occurrences are schedules (the pilot's trigger): each ticks once, at
     # its own anchor, and its scope lasts thirty days
-    breach = [r for r in doc["responses"][0]["rules"] if r["id"] == "on_breach"]
     scheduled = [
         {
             "id": f"on_{name}",
@@ -140,7 +140,8 @@ def module() -> dict[str, Any]:
         }
         for name, hour in OCCURRENCE_HOURS.items()
     ]
-    doc["responses"][0]["rules"] = [*scheduled, *breach]
+    # the monitor-breach rule of the slice is not a pilot trigger (refused): dropped
+    doc["responses"][0]["rules"] = scheduled
     return doc
 
 
@@ -396,36 +397,79 @@ def test_every_executing_path_refuses_without_a_validated_policy(
             call()
 
 
-def test_observe_follow_head_sees_the_new_config_and_stamps_generation(
+_CLOSED_STAMP = {"agent": "agent-1", "head_state": "unreleased", "source": "observe"}
+
+
+def test_observe_follow_head_serves_the_in_code_default_never_the_head_file(
     tmp_path: Path,
 ) -> None:
+    """No head.json configuration is servable until a platform-signed head exists."""
     c = controller(tmp_path, FakeOptimizer())
     store = tmp_path / "store"
     client = MagicMock()
     seen: list[Any] = []
+    ambient = config_context.get(None)
 
     @observe(
         "classify", client=client, agent="agent-1", follow="head", tuning_store=store
     )
     def classify() -> str:
-        seen.append(dict(traigent.get_config()))
+        seen.append(config_context.get(None))
         return "ok"
 
     def stamp() -> dict[str, Any]:
         return client.start_trace.call_args.kwargs["metadata"]
 
     classify()
-    assert seen[-1] == OLD
-    assert stamp()["agent"] == "agent-1" and stamp()["head_generation"] == 0
+    assert seen[-1] == ambient  # the head's initial config is NOT applied
+    assert stamp() == {**_CLOSED_STAMP}
 
     to_deploy_awaiting(c, e_ref("E1"), 10)
-    install_platform_head(tmp_path, NEW, 1)  # the platform-signed head, not ours
+    install_platform_head(tmp_path, NEW, 1)  # a head file carrying a config dict
 
     classify()
-    assert seen[-1] == NEW
-    assert stamp()["head_generation"] == 1
-    assert HeadLoader(store).generation() == 1
-    assert config_context.get() != NEW  # scoped to the call
+    assert seen[-1] == ambient  # still the in-code default, not the head file's NEW
+    assert NEW["model"] not in repr(seen[-1])
+    assert stamp() == {**_CLOSED_STAMP}
+    assert HeadLoader(store).generation() == 1  # inspection still reads it
+    assert config_context.get() != NEW
+
+
+@pytest.mark.parametrize("damage", ["missing", "truncated", "unreadable"])
+def test_observe_follow_head_never_crashes_the_agent_call_on_a_bad_head(
+    tmp_path: Path, damage: str
+) -> None:
+    controller(tmp_path, FakeOptimizer())
+    head_file = tmp_path / "store" / "head.json"
+    client = MagicMock()
+
+    @observe(
+        "classify",
+        client=client,
+        agent="agent-1",
+        follow="head",
+        tuning_store=tmp_path / "store",
+    )
+    def classify() -> str:
+        return "ok"
+
+    if damage != "unreadable":
+        assert classify() == "ok"  # a good head first
+    if damage == "missing":
+        head_file.unlink()
+    elif damage == "truncated":
+        head_file.write_text('{"fingerprint": "abc", "conf', encoding="utf-8")
+    else:
+        head_file.chmod(0)
+    try:
+        if damage == "unreadable" and os.access(head_file, os.R_OK):
+            pytest.skip("permissions are not enforced for this user")
+        assert classify() == "ok" and classify() == "ok"
+    finally:
+        if head_file.exists():
+            head_file.chmod(0o600)
+    state_stamp = client.start_trace.call_args.kwargs["metadata"]["head_state"]
+    assert state_stamp == ("unreleased" if damage == "missing" else "unreadable")
 
 
 def test_fingerprint_is_the_tvl_canonical_digest() -> None:
@@ -555,6 +599,7 @@ def test_follow_head_trace_metadata_is_closed(tmp_path: Path) -> None:
     make(state(), tmp_path / "store", None, initial_config=secret)
     client = MagicMock()
     seen: list[Any] = []
+    ambient = config_context.get(None)
 
     @observe(
         "classify",
@@ -564,16 +609,15 @@ def test_follow_head_trace_metadata_is_closed(tmp_path: Path) -> None:
         tuning_store=tmp_path / "store",
     )
     def classify() -> str:
-        seen.append(dict(traigent.get_config()))
+        seen.append(config_context.get(None))
         return "ok"
 
     classify()
-    assert seen == [secret]  # the call itself still runs on the head config
+    assert seen == [ambient]  # the in-code default, never the head config
     emitted = json.dumps(client.mock_calls, default=repr)
     assert SENTINEL not in emitted
     metadata = client.start_trace.call_args.kwargs["metadata"]
-    assert metadata["agent"] == "agent-1" and metadata["head_generation"] == 0
-    assert metadata["head_fingerprint"] == config_fingerprint(secret)
+    assert metadata == {**_CLOSED_STAMP}
     assert "traigent_active_config" not in metadata
 
 

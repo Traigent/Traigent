@@ -1,0 +1,14 @@
+# Pinned TVL toolchain for the `unit` lane of .github/workflows/pr-gate.yml.
+#
+# tests/unit/tuning (Continuous Tuning) needs a TVL that understands TVL 1.7. The
+# PyPI release pinned by the `runtime-tvl` extra (tvl-spec==1.4.0) does not, and the
+# `unit` job installs no tvl-spec otherwise, so those tests used to skip silently.
+# The job installs this file AFTER its full run (tests/unit/runtime asserts tvl-spec 1.4.0)
+# and re-runs tests/unit/tuning with TRAIGENT_TVL_REQUIRED=1.
+# This commit is the merged TVL main (Traigent/tvl PR 282, public repository: no
+# credentials are needed). Bump it by restamping the SHA below only; it must never
+# be referenced from pyproject.toml (PyPI rejects direct-URL requirements, see
+# scripts/ci/schema-pin.txt).
+#
+#   pip install -r scripts/ci/tvl-pin.txt
+tvl-spec @ git+https://github.com/Traigent/tvl.git@442a2c8e5c9614eddad4bbb2f9198b34ced0c55f

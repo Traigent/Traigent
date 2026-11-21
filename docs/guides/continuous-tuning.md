@@ -2,7 +2,7 @@
 
 Continuous Tuning keeps a deployed agent inside a quality bound and re-optimizes it when
 something changes: a breach is observed or a schedule ticks. This release is a pilot: it runs
-schedule and breach triggers with human approval of each run only. The local controller
+schedule triggers with human approval of each run only (a monitor-breach trigger compiles but the controller refuses it). The local controller
 runs the **spend step** (it invokes the optimizer once a person has approved); releasing a
 candidate is planned, not built (a platform-signed release does not exist yet), and this controller never does it (see
 [Supported in this release](#supported-in-this-release)).
@@ -15,18 +15,18 @@ A support-ticket router that re-tunes itself on a schedule, serves the head conf
 
 ```python
 import traigent
-from traigent.tuning import Tuning, FailureRate, RandomAudit, Every, OnBreach, ProposeFix
+from traigent.tuning import Tuning, FailureRate, RandomAudit, Every, ProposeFix
 
 def ticket_route_check(example, output):          # answers with a label declared below
     return "pass" if output == example["output"] else "fail"
 
 @traigent.observe(
     agent="ticket-router",
-    follow="head",                                # every call reads the local head file (generation 0 until a release mechanism exists)
+    follow="head",                                # serves the function's in-code default until a platform-signed release exists
     tune=Tuning(
         keep=[FailureRate("customer:ticket_route_check", at_most="0.08", window="24h", name="quality_floor")],
         audit=RandomAudit(rate="0.02"),
-        on=[Every(30, "2026-12-01T00:00:00Z"), OnBreach()],
+        on=[Every(30, "2026-12-01T00:00:00Z")],
         fix=ProposeFix(approval="human", deploy="if_promoted"),
         recover="since_head_move",
         # promotion evidence: customer-side checker, its full label set, and a holdout
@@ -60,12 +60,12 @@ it with `E_UNSUPPORTED_IN_RELEASE`, naming the feature.
 | Supported in this release | Notes |
 | --- | --- |
 | Schedule triggers (`Every`) | a schedule scope lasts until the next tick; the end is carried out of the history replay and checked against a fresh clock before the optimizer starts |
-| Monitor-breach triggers (`OnBreach`) | driven by the window reports you hand to `record_window`; no external event is needed |
 | Human approval of each run (**Approve run**) | by an approver on the configured authority list, checked again at the effect |
 | Holdout promotion evidence, reading the head, local store | as described below |
 
 | Specified in TVL, not supported by the SDK yet | What the SDK does |
 | --- | --- |
+| Monitor-breach triggers (`OnBreach`) | compile and check, but a policy with a breach (episode) trigger is refused with `E_UNSUPPORTED_IN_RELEASE` when the controller is built: the pilot trigger is a schedule |
 | Standing approval (`approval: standing`) and standing grants | a policy with a standing rule is refused when the controller is built; recording a grant refuses; nothing reads a grants file |
 | External events (`ModelReleased`, `record_event`, `traigent tune event`) | a policy with an external trigger is refused when the controller is built; recording an event refuses |
 | RFC 0011 Part B (`when`, cooldown, `silent_for`, `fired_count`) | not implemented by the reference relation |
@@ -105,7 +105,7 @@ Rates are decimal strings or `decimal.Decimal`. Floats are rejected with `E_FLOA
 | `FailureRate(checker, at_most, window)` | a `rate_bound` requirement, one `phase: runtime` monitor (customer side, `clopper_pearson_rational_v2`) and one `phase: promotion` monitor on the evaluation set. `window` is `6h`, `12h` or `24h`. |
 | `RandomAudit(rate)` | `hash_bernoulli_committed_v1` sampling on the runtime monitors (rate strictly between 0 and 1). |
 | `ModelReleased(family, tier, admit)` | rule `on_new_model`: external trigger `model_released`, `admit: {tvar}`, `protects` all kept requirements. Compiles and checks, but the controller does not run it in this release. |
-| `OnBreach()` | rule `on_breach` (or `on_breach_<name>` with several kept rates): monitor trigger `episode_opened`. |
+| `OnBreach()` | rule `on_breach` (or `on_breach_<name>` with several kept rates): monitor trigger `episode_opened`. Compiles and checks, but the controller does not run it in this release. |
 | `Every(days, anchor)` | schedule trigger with `protects`. With no explicit `module_context` snapshot, the TVL `environment.snapshot_id` is the earliest `Every` anchor (TVL requires every anchor within one year after the snapshot); set `module_context={"environment": {"snapshot_id": ...}}` to choose it. |
 | `ProposeFix(approval, deploy)` | `approval` and `deploy` on every rule; `approval="none"` is rejected. |
 
@@ -132,8 +132,7 @@ unknown cost), the **code version** the candidate and incumbent were measured on
 **observed generation** of the serving head. The code version is the
 `TRAIGENT_AGENT_CODE_VERSION` environment variable if set, else `Tuning(code_version=...)`, else
 `src:` plus a sha256 of the decorated function's module source; if none can be determined, no
-candidate gets promotion evidence (`E_NO_CODE_VERSION`), there is no default. The SDK adds `head_code_version` from the head file when its `code_version` is
-nonempty; the local generation-0 head has no code version. The local head file is read without signature verification.
+candidate gets promotion evidence (`E_NO_CODE_VERSION`), there is no default. The local head file is never applied to a serving call (see below), so traces carry no head code version.
 
 ```bash
 traigent tune status --text   --store .traigent/tuning/production/ticket-router --target agent.py:classify
@@ -301,7 +300,14 @@ TRAIGENT_TVL_REQUIRED=1 python -m pytest -q tests/unit/tuning
   `E_UNSUPPORTED_IN_RELEASE` before any I/O. `step` raises `E_HEAD_DIVERGED` if `head.json` names
   a generation the relation does not.
 * **The optimization runs on an isolated copy** of the `@traigent.optimize` function, so the live
-  function keeps serving its head.
+  function keeps serving its own configuration. The copy is pinned to the SDK's offline (local-only)
+  execution: a tuning run sends no configuration values (prompts, models, search-space values) to the
+  Traigent backend, and a function configured for a connected run (a smart algorithm such as
+  `bayesian`, or a hybrid-API evaluator) is refused with `E_CONNECTED_TUNING_REFUSED`. Use `grid`
+  or `random`.
+* **The tuning store lock needs a POSIX platform.** `fcntl` is imported only when the store is
+  locked; the CLI starts without it, and tuning on a platform without it fails with
+  `E_LOCK_UNSUPPORTED_PLATFORM`.
 * **Store durability.** `meta.json` is written last (an interrupted init is redone on the next
   start). History and controller facts are checksummed JSONL: a torn
   final line is truncated and logged on load; a damaged earlier line raises `E_STORE_CORRUPT`.
@@ -311,8 +317,14 @@ TRAIGENT_TVL_REQUIRED=1 python -m pytest -q tests/unit/tuning
   from `--target`, head generation 0 holds the optimized function's `default_config` (else the first
   value of each configuration-space dimension); if none can be determined the head starts `{}` and the
   CLI prints a warning.
-* **Followed-head traces** (`observe(follow="head")`) carry only `agent`, `head_generation`,
-  `head_fingerprint` and `head_code_version`; the head configuration is never copied into trace metadata.
+* **`follow="head"` serves the in-code default.** No configuration in `head.json` is servable until a
+  platform-signed release exists: every call runs on the function's own in-code configuration, whatever
+  `head.json` holds. `read_head` and `HeadLoader` remain for status and inspection only. A damaged,
+  missing or unreadable head never reaches the agent call (it is logged once and the call runs the
+  in-code default).
+* **Followed-head traces** (`observe(follow="head")`) carry only `agent` and `head_state`
+  (`unreleased`, or `unreadable` when the head file could not be read); no generation, fingerprint or
+  configuration is stamped, and the configuration is never copied into trace metadata.
 
 ## Known limits
 
