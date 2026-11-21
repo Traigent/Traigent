@@ -126,3 +126,184 @@ def test_mcp_tool_requests_the_real_plan_url(monkeypatch, sent_urls, env, stored
         )
     )
     assert sent_urls == [_WANT]
+
+
+# --- the RAW explicit value is checked before it is reduced to an origin -----
+
+_NO_ECHO = "SECRET-MARKER"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "https://trusted.example\n.evil.test/api/v1",
+        "https://trusted.example\t.evil.test/api/v1",
+        "https://trusted.example/api/v1\r",
+        "https://trusted.example/api/v1 ",
+        " https://trusted.example/api/v1",
+        "https://h.example/api/v1?x=1",
+        "https://h.example/api/v1#f",
+        "https://h.example/a/../api/v1",
+        "https://h.example/a/%2e%2e/api/v1",
+        "https://h.example/a/%2E%2E/api/v1",
+        "https://h.example/a/%252e%252e/api/v1",
+        "https://user@h.example/api/v1",
+        "https://user:pw@h.example/api/v1",  # pragma: allowlist secret
+        "https://h.example\\@evil.test/api/v1",
+        "https://h.example/api\\v1",
+    ],
+    ids=[
+        "newline-in-host",
+        "tab-in-host",
+        "trailing-cr",
+        "trailing-space",
+        "leading-space",
+        "query",
+        "fragment",
+        "dotdot",
+        "encoded-dotdot",
+        "encoded-dotdot-upper",
+        "double-encoded-dotdot",
+        "userinfo",
+        "userinfo-password",
+        "backslash-host",
+        "backslash-path",
+    ],
+)
+def test_resolve_refuses_raw_value_before_normalizing(raw: str) -> None:
+    from traigent.config.plan_endpoint import resolve_backend_url
+
+    with pytest.raises(ValueError) as excinfo:
+        resolve_backend_url(raw)
+    message = str(excinfo.value)
+    assert "evil" not in message and "h.example" not in message
+    assert "trusted" not in message
+
+
+@pytest.mark.parametrize(
+    ("raw", "origin"),
+    [
+        ("https://host.example/api/v1", "https://host.example"),
+        ("https://host.example/api/v1/", "https://host.example"),
+        ("https://host.example", "https://host.example"),
+        ("http://127.0.0.1:8123", "http://127.0.0.1:8123"),
+        ("http://localhost:5000", "http://localhost:5000"),
+    ],
+)
+def test_resolve_keeps_legit_values_working(raw: str, origin: str) -> None:
+    from traigent.config.plan_endpoint import resolve_backend_url
+
+    assert resolve_backend_url(raw) == (origin, True)
+
+
+def _invoke_plan(url: str):
+    return CliRunner().invoke(
+        plan_command,
+        [
+            "--task-description", "t",
+            "--dataset-size", "10",
+            "--objective", "accuracy",
+            "--max-trials", "5",
+            "--cost-limit", "1",
+            "--backend-url", url,
+            "--json",
+        ],
+    )  # fmt: skip
+
+
+def test_cli_plan_gives_a_click_error_not_a_traceback() -> None:
+    result = _invoke_plan(f"https://h.example/api/v1?{_NO_ECHO}=1")
+    assert result.exit_code != 0
+    assert isinstance(result.exception, SystemExit)
+    assert "Error:" in result.output
+    assert "query" in result.output
+    assert _NO_ECHO not in result.output
+
+
+def test_mcp_plan_tool_returns_closed_error_without_echoing_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_BACKEND_URL", f"https://h.example/api/v1#{_NO_ECHO}")
+    result = asyncio.run(
+        tools.get_optimization_plan_tool(
+            task_description="t",
+            dataset_size=10,
+            dataset_has_holdout=True,
+            objectives=["accuracy"],
+            max_trials=5,
+            cost_limit_usd=1.0,
+        )
+    )
+    assert result["ok"] is False
+    assert result["code"] == "invalid_input"
+    assert _NO_ECHO not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        f"https://{_NO_ECHO}\uff20trusted.example/api/v1",
+        f"https://{_NO_ECHO}.example[",
+        "https://[::1",
+        "https://trusted.example/api/\x7fv1",
+        "https://trusted.example\x7f.evil.test",
+        "https://trusted.example\u200b.evil.test",
+        "https://trusted.example\x85.evil.test",
+        "https://t\u00e9st.example/api/v1",
+        "https://trusted.example?",
+        "https://trusted.example#",
+        "https://trusted.example/api/v1?",
+        "https://trusted.example/api/v1#",
+    ],
+    ids=[
+        "fullwidth-at-echo",
+        "bad-bracket-echo",
+        "unclosed-ipv6",
+        "del-in-path",
+        "del-in-host",
+        "zero-width-space",
+        "nel-x85",
+        "non-ascii-host",
+        "empty-query-host",
+        "empty-fragment-host",
+        "empty-query-path",
+        "empty-fragment-path",
+    ],
+)
+def test_resolve_refuses_odd_raw_values_with_fixed_messages(raw: str) -> None:
+    from traigent.config.plan_endpoint import resolve_backend_url
+
+    with pytest.raises(ValueError) as excinfo:
+        resolve_backend_url(raw)
+    message = str(excinfo.value)
+    assert _NO_ECHO not in message
+    assert "trusted" not in message and "evil" not in message
+    assert "NFKC" not in message and "::1" not in message
+
+
+def test_cli_plan_error_does_not_echo_non_ascii_value() -> None:
+    result = _invoke_plan(f"https://{_NO_ECHO}\uff20trusted.example/api/v1")
+    assert result.exit_code != 0
+    assert isinstance(result.exception, SystemExit)
+    assert "Error:" in result.output
+    assert _NO_ECHO not in result.output
+
+
+def test_mcp_plan_tool_does_not_echo_non_ascii_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "TRAIGENT_BACKEND_URL", f"https://{_NO_ECHO}\uff20trusted.example/api/v1"
+    )
+    result = asyncio.run(
+        tools.get_optimization_plan_tool(
+            task_description="t",
+            dataset_size=10,
+            dataset_has_holdout=True,
+            objectives=["accuracy"],
+            max_trials=5,
+            cost_limit_usd=1.0,
+        )
+    )
+    assert result["ok"] is False
+    assert _NO_ECHO not in json.dumps(result)

@@ -19,6 +19,7 @@ from traigent.tuning.authority import ApproverAuthority
 from traigent.tuning.controller import Controller, traigent_optimize_fn
 from traigent.tuning.errors import E_UNSUPPORTED_IN_RELEASE, TuningError
 
+from .conftest import tvl_free
 from .test_controller import (  # noqa: F401  (_holdout is an autouse fixture)
     APPROVERS,
     T0,
@@ -226,6 +227,7 @@ def test_a_spend_is_refused_when_the_journal_is_ahead_of_the_clock(
 
 
 # -- only the actions this release runs ------------------------------------------------
+@tvl_free
 def test_a_rule_with_an_action_this_release_does_not_run_is_refused_at_construction(
     tmp_path: Path,
 ) -> None:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 
@@ -30,8 +31,24 @@ def check_toolchain() -> None:
     pytest.skip(reason)
 
 
+def tvl_free(fn: Any) -> Any:
+    """Mark a test that exercises no TVL toolchain call, so it runs without one.
+
+    Such a test (compile, store, evidence and guard logic) is real behaviour on
+    its own; skipping it with the toolchain absent left that code unmeasured in
+    the default unit lane.  The ``TRAIGENT_TVL_REQUIRED=1`` lane runs it too.
+    Put it directly above ``def`` (or on a whole test class).  A test that does reach TVL must NOT carry it.
+    """
+    fn._tvl_free = True  # type: ignore[attr-defined]
+    return fn
+
+
 @pytest.fixture(autouse=True)
-def _tvl_toolchain() -> None:
+def _tvl_toolchain(request: pytest.FixtureRequest) -> None:
+    if getattr(request.function, "_tvl_free", False) or getattr(
+        request.cls, "_tvl_free", False
+    ):
+        return
     check_toolchain()
 
 
@@ -67,3 +84,34 @@ def _explicit_non_production_environment() -> Iterator[None]:
         yield
     finally:
         patcher.undo()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_litellm_model_info_cache() -> Iterator[None]:
+    """Leave no litellm pricing cache behind for tests outside this directory.
+
+    The loop prices candidate models and litellm caches model info per id. A
+    cached real entry (for example claude-haiku-5-5 with its above-100K tier)
+    survives a later test that swaps ``litellm.model_cost`` and makes price
+    tests order dependent. Clear it on the way in and out.
+    """
+    try:
+        import litellm
+        from litellm import utils as litellm_utils
+    except ImportError:  # litellm absent: nothing is cached
+        yield
+        return
+
+    def _drop() -> None:
+        invalidate = getattr(
+            litellm_utils, "_invalidate_model_cost_lowercase_map", None
+        )
+        if invalidate is not None:
+            invalidate()
+        litellm.get_model_info.cache_clear()
+
+    _drop()
+    try:
+        yield
+    finally:
+        _drop()

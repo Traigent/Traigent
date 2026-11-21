@@ -233,3 +233,43 @@ def test_no_exec_mode_prints_the_no_proxy_export(upstream, log_path, monkeypatch
     )
     assert result.exit_code == 0
     assert "export NO_PROXY=127.0.0.1" in result.output
+
+
+def _manual_output(upstream, log_path, monkeypatch, upper, lower):
+    from traigent.egress import relay as relay_module
+
+    for name, value in (("NO_PROXY", upper), ("no_proxy", lower)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    monkeypatch.setattr(relay_module.EgressRelay, "serve_forever", lambda self: None)
+    result = CliRunner().invoke(
+        egress, ["relay", "--upstream", upstream.url, "--log", str(log_path)]
+    )
+    assert result.exit_code == 0
+    return result.output.splitlines()
+
+
+def test_no_exec_mode_prints_both_no_proxy_spellings_when_unset(
+    upstream, log_path, monkeypatch
+):
+    lines = _manual_output(upstream, log_path, monkeypatch, None, None)
+    assert "export NO_PROXY=127.0.0.1" in lines
+    assert "export no_proxy=127.0.0.1" in lines
+
+
+def test_no_exec_mode_fixes_an_empty_lowercase_no_proxy(
+    upstream, log_path, monkeypatch
+):
+    lines = _manual_output(upstream, log_path, monkeypatch, "corp.example", "")
+    assert "export NO_PROXY=corp.example,127.0.0.1" in lines
+    assert "export no_proxy=127.0.0.1" in lines
+
+
+def test_no_exec_mode_computes_each_spelling_from_its_own_value(
+    upstream, log_path, monkeypatch
+):
+    lines = _manual_output(upstream, log_path, monkeypatch, "a.example", "b.example")
+    assert "export NO_PROXY=a.example,127.0.0.1" in lines
+    assert "export no_proxy=b.example,127.0.0.1" in lines
