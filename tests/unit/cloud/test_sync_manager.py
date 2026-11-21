@@ -1450,6 +1450,35 @@ class TestSyncManager:
         assert result["synced"] == 0
         assert result["errors"] == ["trial 1: HTTP 500 | unknown"]
 
+    def test_invalid_project_header_error_does_not_echo_the_value(
+        self, sync_manager: SyncManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """requests quotes the bad header value; the surfaced error must not."""
+        bad = "proj\nSECRET-VALUE"
+        monkeypatch.setenv("TRAIGENT_PROJECT_ID", bad)
+        sync_manager._session.post.side_effect = requests.exceptions.InvalidHeader(
+            f"Invalid return character or leading space in header: X-Project-Id={bad!r}"
+        )
+
+        result = sync_manager._sync_next_trial("sess-1")
+
+        assert result["success"] is False
+        assert "TRAIGENT_PROJECT_ID" in result["error"]
+        assert "SECRET-VALUE" not in result["error"]
+        assert bad not in result["error"]
+
+    def test_invalid_api_key_header_error_does_not_echo_the_value(
+        self, sync_manager: SyncManager
+    ) -> None:
+        sync_manager._session.post.side_effect = requests.exceptions.InvalidHeader(
+            f"Invalid return character or leading space in header: {'sk-test' + chr(10) + 'LEAK'!r}"
+        )
+
+        result = sync_manager._sync_next_trial("sess-1")
+
+        assert "LEAK" not in result["error"]
+        assert "sk-test" not in result["error"]
+
     def test_sync_session_results_next_trial_failure(
         self, sync_manager: SyncManager
     ) -> None:
