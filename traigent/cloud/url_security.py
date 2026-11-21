@@ -442,16 +442,59 @@ def _egress_relay_origin_matches(candidate: str) -> bool:
     return _egress_relay_origin_covers(candidate)
 
 
+_RELAY_PROXY_MESSAGE = (
+    f"{_EGRESS_RELAY_ENV} refused: an environment proxy "
+    "(HTTP_PROXY, http_proxy or ALL_PROXY) would carry traffic meant for the relay; "
+    "add the relay host to NO_PROXY"
+)
+
+
+def _no_proxy_covers_host(no_proxy: str, host: str) -> bool:
+    """True when a ``NO_PROXY`` value provably bypasses the proxy for ``host``.
+
+    Deliberately narrower than the HTTP libraries: only the whole value ``*`` or a
+    token equal to the bare host literal counts. ``host:port`` tokens are not honoured
+    for IP literals by requests or aiohttp (they compare the host alone), ``[::1]`` is
+    not matched by urllib/aiohttp, CIDR ranges are ignored by httpx, and suffix tokens
+    differ per library, so each of those is treated as "not bypassed".
+    """
+    if no_proxy == "*":
+        return True
+    return any(token.strip().lower() == host for token in no_proxy.split(","))
+
+
+def _env_proxy_would_divert(host: str) -> bool:
+    """True when an environment proxy could carry plain http to ``host``.
+
+    A proxy applies when ``getproxies()`` (what requests, httpx, aiohttp and urllib
+    read) has an ``http`` or ``all`` entry (``https`` alone never carries http
+    traffic). It is bypassed only when every non-empty ``NO_PROXY`` / ``no_proxy``
+    value covers the host (libraries differ on which spelling wins, so both must).
+    """
+    from urllib.request import getproxies
+
+    proxies = getproxies()
+    if not (proxies.get("http") or proxies.get("all")):
+        return False
+    values = [os.environ.get(name, "") for name in ("NO_PROXY", "no_proxy")]
+    values = [value for value in values if value.strip()]
+    bare = host.strip("[]").lower()
+    return not (values and all(_no_proxy_covers_host(v, bare) for v in values))
+
+
 def _egress_relay_decision(candidate: str) -> bool:
     """Return True when plain http to ``candidate`` is allowed for the relay.
 
     Raises the fixed gate-off message when the rule would apply but the transport
-    gate is off (redirect refusal lives in the gate).
+    gate is off (redirect refusal lives in the gate), and the fixed proxy message
+    when an environment proxy would carry the request instead of the relay.
     """
     if not _egress_relay_origin_matches(candidate):
         return False
     if _transport_gate_is_off():
         raise ValueError(_RELAY_GATE_OFF_MESSAGE) from None
+    if _env_proxy_would_divert(urlparse(candidate).hostname or ""):
+        raise ValueError(_RELAY_PROXY_MESSAGE) from None
     return True
 
 

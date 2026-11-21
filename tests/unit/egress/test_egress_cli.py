@@ -175,3 +175,61 @@ def test_exec_child_sees_the_relay_switch(upstream, log_path, tmp_path, monkeypa
     )
     assert result.exit_code == 0
     assert out.read_text() == "1"
+
+
+def _child_no_proxy(tmp_path, monkeypatch, upstream, log_path, existing):
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    if existing is not None:
+        monkeypatch.setenv("NO_PROXY", existing)
+        monkeypatch.setenv("no_proxy", existing)
+    out = tmp_path / "np.txt"
+    script_file = tmp_path / "np.py"
+    script_file.write_text(
+        "import os;"
+        f"open({str(out)!r},'w').write(repr((os.environ.get('NO_PROXY'),"
+        "os.environ.get('no_proxy'))))"
+    )
+    result = CliRunner().invoke(
+        egress,
+        [
+            "relay",
+            "--upstream",
+            upstream.url,
+            "--log",
+            str(log_path),
+            "--exec",
+            f"{sys.executable} {script_file}",
+        ],
+    )
+    assert result.exit_code == 0
+    return eval(out.read_text())  # noqa: S307 - our own repr of two strings
+
+
+def test_exec_child_gets_the_relay_host_in_no_proxy(
+    upstream, log_path, tmp_path, monkeypatch
+):
+    upper, lower = _child_no_proxy(tmp_path, monkeypatch, upstream, log_path, None)
+    assert upper == "127.0.0.1" and lower == "127.0.0.1"
+
+
+def test_exec_child_keeps_an_existing_no_proxy_value(
+    upstream, log_path, tmp_path, monkeypatch
+):
+    upper, lower = _child_no_proxy(
+        tmp_path, monkeypatch, upstream, log_path, "corp.example.com,10.0.0.0/8"
+    )
+    for value in (upper, lower):
+        assert value.split(",") == ["corp.example.com", "10.0.0.0/8", "127.0.0.1"]
+
+
+def test_no_exec_mode_prints_the_no_proxy_export(upstream, log_path, monkeypatch):
+
+    from traigent.egress import relay as relay_module
+
+    monkeypatch.setattr(relay_module.EgressRelay, "serve_forever", lambda self: None)
+    result = CliRunner().invoke(
+        egress, ["relay", "--upstream", upstream.url, "--log", str(log_path)]
+    )
+    assert result.exit_code == 0
+    assert "export NO_PROXY=127.0.0.1" in result.output

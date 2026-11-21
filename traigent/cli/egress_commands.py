@@ -29,6 +29,8 @@ BACKEND_ENV_VARS = ("TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL")
 # ``traigent.cloud.url_security`` (an explicit port and a loopback IP literal are
 # required there, which the relay's own origin always satisfies).
 RELAY_ENV_VAR = "TRAIGENT_EGRESS_RELAY"
+NO_PROXY_ENV_VARS = ("NO_PROXY", "no_proxy")
+RELAY_HOST = "127.0.0.1"  # the relay binds this address only
 _DEFAULT_LOG = Path(".traigent") / "egress" / "relay.jsonl"
 
 _log_option = click.option(
@@ -41,6 +43,14 @@ _log_option = click.option(
 )
 
 
+def _with_relay_host(existing: str | None) -> str:
+    """Append the relay host to a ``NO_PROXY`` value, keeping what is there."""
+    tokens = [t for t in (existing or "").split(",") if t.strip()]
+    if RELAY_HOST not in (t.strip() for t in tokens):
+        tokens.append(RELAY_HOST)
+    return ",".join(tokens)
+
+
 def _run_child(command: str, origin: str) -> int:
     argv = shlex.split(command)
     if not argv:
@@ -49,6 +59,9 @@ def _run_child(command: str, origin: str) -> int:
     for name in BACKEND_ENV_VARS:
         env[name] = origin
     env[RELAY_ENV_VAR] = "1"
+    # The SDK refuses the relay when an environment proxy would carry its traffic.
+    for name in NO_PROXY_ENV_VARS:
+        env[name] = _with_relay_host(env.get(name))
     try:
         completed = subprocess.run(argv, env=env, check=False)  # nosec B603
     except KeyboardInterrupt:
@@ -93,7 +106,8 @@ def relay_command(
         click.echo(
             f"egress relay listening on {origin}; log: {log_path}\n"
             f"export TRAIGENT_BACKEND_URL={origin}\n"
-            f"export {RELAY_ENV_VAR}=1",
+            f"export {RELAY_ENV_VAR}=1\n"
+            f"export NO_PROXY={_with_relay_host(os.environ.get('NO_PROXY'))}",
         )
         try:
             relay.serve_forever()
