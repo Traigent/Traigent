@@ -127,6 +127,34 @@ jobs:
           TRAIGENT_MOCK_LLM: "true"
           TRAIGENT_OFFLINE_MODE: "true"
 
+      - name: Run TVL tuning coverage append
+        run: |
+          # tests/unit/tuning (Continuous Tuning) skips without a TVL 1.7 toolchain,
+          # so the unit run above leaves traigent/tuning uncovered. Install the pinned
+          # toolchain only NOW, after every run that needs tvl-spec 1.4.0
+          # (tests/unit/runtime), and append the tuning coverage. Same non-fatal but
+          # never silent treatment as the steps above.
+          pip install -r scripts/ci/tvl-pin.txt
+          set +e
+          python -m pytest tests/unit/tuning \
+            --cov=traigent \
+            --cov-append \
+            --cov-report=xml \
+            --cov-report=term \
+            -q \
+            --timeout=30
+          pytest_rc=$?
+          set -e
+          if [ "$pytest_rc" -ne 0 ]; then
+            echo "::error title=TVL tuning coverage append was not clean::pytest exited ${pytest_rc}; the appended coverage is partial."
+          fi
+        timeout-minutes: 5
+        env:
+          PYTHONPATH: .
+          TRAIGENT_TVL_REQUIRED: "1"
+          TRAIGENT_MOCK_LLM: "true"
+          TRAIGENT_OFFLINE_MODE: "true"
+
       - name: SonarCloud Scan
         if: ${{ env.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602  # v6
