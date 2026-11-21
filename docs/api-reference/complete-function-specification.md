@@ -285,11 +285,59 @@ def set_config(config: dict[str, Any]) -> None
 ```
 
 #### `.apply_best_config()`
-**Apply best configuration from optimization**
+**Developer shortcut: apply the best configuration in this process. No gate, no acceptance, not a release.**
 
 ```python
 def apply_best_config(results: OptimizationResult | None = None) -> bool
 ```
+
+It changes only what this wrapper serves, in this process. It never moves an agent
+head and no person has decided anything. The same is true of the default
+`optimize(apply=True)`: it is an in-process apply, not a release. To put a
+configuration in front of other processes, a person accepts it and you call
+`.release()`.
+
+#### `.release()`
+**Release a configuration a person accepted: move the agent head**
+
+```python
+def release(
+    *,
+    acceptance_id: str,
+    expected_head_generation: int | None = None,
+    agent_ref: str | None = None,          # default TRAIGENT_AGENT_REF
+    project_id: str | None = None,         # default TRAIGENT_PROJECT_ID
+    environment: str | None = None,
+    agent_code_version: str | None = None,
+    configuration_space_digest: str | None = None,
+    gate_result_digest: str | None = None,  # default "no_gate_run"
+) -> ReleaseReceipt
+```
+
+Every release needs a recorded human acceptance. A refusal raises
+`ReleaseRefused` whose `.code` is closed, for example `acceptance_required`,
+`acceptance_expired`, `acceptance_consumed`, `acceptance_revoked`,
+`acceptance_binding_mismatch` or `head_generation_stale`; the head is not moved.
+`agent_code_version` must use only `[A-Za-z0-9_-]` (set `TRAIGENT_AGENT_CODE_VERSION`).
+CLI: `traigent release ACCEPTANCE_ID`.
+
+#### `.rollback_release()`
+**Undo a release: move the head back to an earlier generation**
+
+```python
+def rollback_release(
+    *,
+    target_generation: int,
+    expected_head_generation: int,
+    agent_ref: str | None = None,
+    project_id: str | None = None,
+    environment: str | None = None,
+) -> ReleaseReceipt
+```
+
+A person may return to any earlier generation; an API key only to one that was
+accepted or released (`rollback_target_not_accepted` otherwise). Needs a backend
+that has the rollback route. CLI: `traigent release rollback GENERATION`.
 
 ### Results & Analysis
 
