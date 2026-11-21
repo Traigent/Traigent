@@ -571,3 +571,44 @@ class TestConstantsImportedCorrectly:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestUsageHistoryOrdering:
+    """add_usage_data keeps history ordered exactly like append + stable sort."""
+
+    @staticmethod
+    def _metric(ts: datetime, tag: int):
+        from traigent.analytics.predictive import UsageMetric
+
+        return UsageMetric(
+            timestamp=ts,
+            optimizations_count=tag,
+            total_trials=tag,
+            total_duration_seconds=1.0,
+            compute_cost=1.0,
+            storage_cost=1.0,
+            api_calls=tag,
+            active_users=1,
+        )
+
+    def test_matches_append_and_stable_sort(self):
+        from traigent.analytics.predictive import CostForecaster
+
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        # Out-of-order inserts plus several equal timestamps.
+        offsets = [5, 1, 3, 1, 5, 0, 3, 1, 9, 5, 0]
+        metrics = [
+            self._metric(base + timedelta(hours=o), i) for i, o in enumerate(offsets)
+        ]
+
+        forecaster = CostForecaster()
+        reference: list = []
+        for metric in metrics:
+            forecaster.add_usage_data(metric)
+            reference.append(metric)
+            reference.sort(key=lambda x: x.timestamp)
+
+        assert [id(m) for m in forecaster.usage_history] == [id(m) for m in reference]
+        assert [m.api_calls for m in forecaster.usage_history] == [
+            m.api_calls for m in reference
+        ]
