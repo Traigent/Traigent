@@ -1747,7 +1747,10 @@ class Controller:
             except Exception:  # noqa: BLE001 - unusable evidence is invalid, never guessed
                 candidates.append({"evidence_valid": False})
                 continue
-            fingerprint, config, gate, record = judged
+            # outside the evidence boundary: a failure here escapes, as it always did
+            fingerprint, config, gate, record = self._gate_and_record(
+                code_version, incumbent, judged
+            )
             configs[fingerprint] = copy.deepcopy(config)
             gates[fingerprint] = gate
             candidates.append(record)
@@ -1762,10 +1765,12 @@ class Controller:
         loaded: Collection[str] | None,
         monitors: Iterable[str],
         join_promotion_decisions: Callable[[str, list[str]], Any],
-    ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]:
-        """Measure one candidate; ``(fingerprint, config, gate, record)``.
+    ) -> tuple[str, dict[str, Any], str, dict[str, str], Any, str | None, Any]:
+        """Measure one candidate; ``(fingerprint, config, legacy, verdicts, joined,
+        holdout_digest, evidence)``.
 
-        Raises on any unusable evidence (the caller records it as invalid).
+        Raises on any unusable evidence (the caller records it as invalid).  Only
+        this measuring step sits inside that boundary.
         """
         if code_version is None:
             raise ValueError("no code version")
@@ -1794,6 +1799,19 @@ class Controller:
             legacy = "NoDecision"
         verdicts = {n: str(given.get(n, "UNKNOWN(insufficient)")) for n in monitors}
         joined = join_promotion_decisions(legacy, [verdicts[n] for n in monitors])
+        return fingerprint, config, legacy, verdicts, joined, holdout_digest, evidence
+
+    def _gate_and_record(
+        self,
+        code_version: str | None,
+        incumbent: Mapping[str, Any],
+        judged: tuple[str, dict[str, Any], str, dict[str, str], Any, str | None, Any],
+    ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """``(fingerprint, config, gate, record)`` of a measured candidate.
+
+        Not wrapped as invalid evidence: an error here escapes ``_map_result``.
+        """
+        fingerprint, config, legacy, verdicts, joined, holdout_digest, evidence = judged
         gate_input: dict[str, Any] = {
             "format": GATE_FORMAT,
             "contract_digest": self.meta["contract_digest"],

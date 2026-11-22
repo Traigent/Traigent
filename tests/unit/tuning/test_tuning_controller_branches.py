@@ -200,3 +200,56 @@ def test_a_spend_that_cannot_be_judged_leaves_the_loop_without_progress(
     monkeypatch.setattr(c, "_scope_requires_intervention", lambda occ, instant: True)
     monkeypatch.setattr("traigent.tuning.controller.occurrence_ref", lambda occ: "r")
     assert c._advance(c._derive(), lambda: at(10), StepReport(), False) is False
+
+
+# -- the evidence boundary: only measuring is "invalid evidence" -----------------------
+def test_a_failure_building_the_gate_escapes_map_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    monkeypatch.delitem(c.meta, "contract_digest")  # gate construction fails
+    with pytest.raises(KeyError):
+        c._map_result("a1", {"best_config": {"model": NEW["model"]}})
+
+
+def test_a_failure_counting_holdout_uses_escapes_map_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+
+    class _Evidence:
+        legacy_decision = "NoDecision"
+        monitor_verdicts: dict[str, str] = {}
+        holdout_digest = "sha256:h"
+        n = 1
+        unresolved_rows = 0
+        counts: dict[str, int] = {}
+        errors: list[str] = []
+
+    def boom(_digest: Any) -> int:
+        raise OSError("marker unreadable")
+
+    monkeypatch.setattr(c, "_measure_candidate", lambda *a, **k: _Evidence())
+    monkeypatch.setattr(c, "_holdout_prior_uses", boom)
+    with pytest.raises(OSError):
+        c._map_result("a1", {"best_config": {"model": NEW["model"]}})
+
+
+def test_a_gate_failure_records_an_error_outcome_for_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clock(monkeypatch, at(10))
+    c = controller(tmp_path, FakeOptimizer(), now=at(0))
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+
+    def boom(_digest: Any) -> int:
+        raise OSError("marker unreadable")
+
+    monkeypatch.setattr(c, "_holdout_prior_uses", boom)
+    c.step()
+    finished = [
+        ln["record"]
+        for ln in c._lines()
+        if ln["category"] == "optimizations" and ln["record"].get("fact") == "finished"
+    ]
+    assert finished and all(r.get("completion") == "error" for r in finished)
