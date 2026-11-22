@@ -17,7 +17,7 @@ import os
 import re
 import threading
 import warnings
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -175,6 +175,79 @@ _BUNDLED_FIRST_PARTY_PRICES_PER_MTOK: dict[str, tuple[float, float, float | None
 _bundled_price_merge_lock = threading.Lock()
 
 
+def _merge_bundled_litellm_entries(bundled: Mapping[Any, Any], current: Any) -> int:
+    """Add litellm's bundled fallback-prefix entries missing from ``current``."""
+    added = 0
+    for key, value in bundled.items():
+        if (
+            isinstance(key, str)
+            and key.startswith(_BUNDLED_FALLBACK_PRICE_PREFIXES)
+            and isinstance(value, dict)
+            and key not in current
+        ):
+            current[key] = value
+            added += 1
+    return added
+
+
+def _merge_sdk_openrouter_entries(current: Any) -> int:
+    """Add the SDK's OpenRouter snapshot entries missing from ``current``."""
+    added = 0
+    for key, value in _load_sdk_openrouter_snapshot().items():
+        if (
+            key.startswith(_BUNDLED_FALLBACK_PRICE_PREFIXES)
+            and isinstance(value, dict)
+            and key not in current
+        ):
+            current[key] = value
+            _sdk_snapshot_supplied[key] = _pricing_fields(value)
+            added += 1
+    return added
+
+
+def _seed_sdk_retired_entries(current: Any) -> int:
+    """Seed retired non-OpenRouter ids exactly like litellm's own bundled map.
+
+    No ``register_model`` (its alias resolution mutates unrelated entries); the
+    seeded ids are then folded into litellm's provider model sets so provider
+    routing still resolves them.
+    """
+    added = 0
+    seeded: dict[str, Any] = {}
+    for key, value in _load_sdk_retired_snapshot().items():
+        if isinstance(value, dict) and key not in current:
+            current[key] = dict(value)
+            _sdk_snapshot_supplied[key] = _pricing_fields(value)
+            seeded[key] = current[key]
+            added += 1
+    if seeded and hasattr(litellm, "add_known_models"):
+        litellm.add_known_models(seeded)
+    return added
+
+
+def _merge_first_party_entries(current: Any) -> int:
+    """Add bundled first-party per-MTok prices missing from ``current``."""
+    added = 0
+    for model, (
+        input_mtok,
+        output_mtok,
+        cache_mtok,
+    ) in _BUNDLED_FIRST_PARTY_PRICES_PER_MTOK.items():
+        if model in current:
+            continue
+        entry: dict[str, Any] = {
+            "input_cost_per_token": input_mtok / 1_000_000,
+            "output_cost_per_token": output_mtok / 1_000_000,
+            "litellm_provider": "anthropic",
+            "mode": "chat",
+        }
+        if cache_mtok is not None:
+            entry["cache_read_input_token_cost"] = cache_mtok / 1_000_000
+        current[model] = entry
+        added += 1
+    return added
+
+
 def ensure_bundled_provider_prices() -> int:
     """Merge missing bundled provider price entries into ``litellm.model_cost``.
 
@@ -194,55 +267,10 @@ def ensure_bundled_provider_prices() -> int:
         with _bundled_price_merge_lock:
             bundled = GetModelCostMap.load_local_model_cost_map()
             current = litellm.model_cost
-            added = 0
-            for key, value in bundled.items():
-                if (
-                    isinstance(key, str)
-                    and key.startswith(_BUNDLED_FALLBACK_PRICE_PREFIXES)
-                    and isinstance(value, dict)
-                    and key not in current
-                ):
-                    current[key] = value
-                    added += 1
-            for key, value in _load_sdk_openrouter_snapshot().items():
-                if (
-                    key.startswith(_BUNDLED_FALLBACK_PRICE_PREFIXES)
-                    and isinstance(value, dict)
-                    and key not in current
-                ):
-                    current[key] = value
-                    _sdk_snapshot_supplied[key] = _pricing_fields(value)
-                    added += 1
-            # Retired non-OpenRouter ids: seeded exactly like litellm's own
-            # bundled map (no register_model, whose alias resolution mutates
-            # unrelated entries), then folded into litellm's provider model
-            # sets so provider routing still resolves them.
-            seeded: dict[str, Any] = {}
-            for key, value in _load_sdk_retired_snapshot().items():
-                if isinstance(value, dict) and key not in current:
-                    current[key] = dict(value)
-                    _sdk_snapshot_supplied[key] = _pricing_fields(value)
-                    seeded[key] = current[key]
-                    added += 1
-            if seeded and hasattr(litellm, "add_known_models"):
-                litellm.add_known_models(seeded)
-            for model, (
-                input_mtok,
-                output_mtok,
-                cache_mtok,
-            ) in _BUNDLED_FIRST_PARTY_PRICES_PER_MTOK.items():
-                if model in current:
-                    continue
-                entry: dict[str, Any] = {
-                    "input_cost_per_token": input_mtok / 1_000_000,
-                    "output_cost_per_token": output_mtok / 1_000_000,
-                    "litellm_provider": "anthropic",
-                    "mode": "chat",
-                }
-                if cache_mtok is not None:
-                    entry["cache_read_input_token_cost"] = cache_mtok / 1_000_000
-                current[model] = entry
-                added += 1
+            added = _merge_bundled_litellm_entries(bundled, current)
+            added += _merge_sdk_openrouter_entries(current)
+            added += _seed_sdk_retired_entries(current)
+            added += _merge_first_party_entries(current)
             return added
     except Exception as exc:  # silent-ok: pricing stays "unknown", never $0
         logger.debug("bundled provider price merge skipped: %s", type(exc).__name__)
