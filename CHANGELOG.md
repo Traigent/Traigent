@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.34.1] - 2026-11-23
+
+0.34.0 was tagged but never published to PyPI: its publish job failed unit tests under the newest pyotp, litellm and openai. 0.34.1 is the first 0.34 release on PyPI and contains everything listed under 0.34.0.
+
+### Fixed
+
+- The mock-mode transport guard error now also subclasses httpx `RequestError`, so httpx-based retry and except paths catch it.
+- Examples, docs and presets move off OpenAI models with announced shutdown dates to `gpt-5.4-mini` (small tier) and `gpt-5.2` (large tier); the `model` range preset is now `["gpt-5.4-mini", "gpt-5.2"]`.
+- Test fixtures updated for pyotp 2.12 (longer TOTP secret) and the litellm 1.110 price table.
+
 ## [0.34.0] - 2026-11-21
 
 ### Breaking
