@@ -203,9 +203,9 @@ max_retries -> max_retries
 ```
 
 **Supported Models**:
-- gpt-5.2 (all variants: 0314, 0613, 32k, turbo, 1106)
-- gpt-5.2, gpt-5.4-mini
-- gpt-5.2, gpt-5.4-mini (legacy)
+- gpt-5.2 and its dated variants
+- gpt-5.4-mini
+- Older OpenAI chat models served through the same client (legacy)
 - text-davinci-003, text-davinci-002
 
 **Methods Overridden**:

@@ -49,7 +49,7 @@ from traigent.generation import BackendGuidanceProvider
 
 # 1. Your own LLM — any callable fn(prompt) -> str, or a client with .complete()
 def my_llm(prompt: str) -> str:
-    return openai_client.responses.create(model="gpt-4o", input=prompt).output_text
+    return openai_client.responses.create(model="gpt-5.2", input=prompt).output_text
 
 # 2. A provider bound to your Traigent session (async client bridged to sync)
 provider = BackendGuidanceProvider.from_async_post(session_id, my_authed_post)

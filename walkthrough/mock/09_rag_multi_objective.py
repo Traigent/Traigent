@@ -62,16 +62,15 @@ CONFIG_SPACE = {
     "max_tokens": [50, 100, 200],
 }
 
-# Accuracy values from a real run of walkthrough/real/09_rag_multi_objective.py
-# (algorithm=random, seed=42, 18 trials). Keyed by (model, prompt, temperature,
-# instructions, max_tokens). Trials 17-18 were not captured, so they fall back
-# to the formula below.
-# Mock calibration data, re-keyed from the retired models of the original run
-# (mini tier and legacy cheap tier -> gpt-5.4-mini, flagship -> gpt-5.4;
-# originals: `git show origin/develop:walkthrough/mock/09_rag_multi_objective.py`).
-# Rows of the retired nano-tier model (2 rows, base 0.03) are dropped: its shutdown is announced
-# and no undated nano-tier model remains. Other rows keep their values. These values are NOT measurements
-# of the new models.
+# Mock calibration data. The original rows came from one real run of an earlier
+# model set (algorithm=random, seed=42, 18 trials; trials 17-18 were not
+# captured, so they fall back to the formula below). The rows are re-keyed to
+# the current models (mini tier and legacy cheap tier -> gpt-5.4-mini,
+# flagship -> gpt-5.4), keyed by (model, prompt, temperature, instructions,
+# max_tokens). Rows of the retired nano-tier model (2 rows, base 0.03) are
+# dropped because its shutdown is announced and no undated nano-tier model
+# remains. Other rows keep their values. These values are NOT measurements of
+# the current models.
 _REAL_ACCURACY: dict[tuple, float] = {
     ("gpt-5.2", "minimal", 0.0, "direct", 50): 0.180,
     ("gpt-5.4-mini", "minimal", 0.1, "CoT", 200): 0.771,  # orig row: mini tier
