@@ -1182,95 +1182,157 @@ class Controller:
         for opened in self._open_attempts(facts):
             if opened["finished"]:
                 continue
-            attempt, occ = opened["attempt"], opened["occurrence"]
-            ref = occurrence_ref(occ)
-            moment = clock()  # fresh before each decision that can spend
-            instant = self._instant(moment)  # whole seconds
-            marker_path = self._marker_path(attempt, ref)
-            marker = _read_json(marker_path)
-            if (
-                abandon_interrupted
-                and marker is None
-                and attempt not in report.approved
-                and self._approval_recorded(attempt)
-            ):
-                # A granted human approval already counts as the start (TVL), but the
-                # process stopped before the attempt marker existed: nothing else would
-                # ever finish it and every later schedule would stay held.  Explicit
-                # abandonment records it as cancelled.
-                record = self._finished_record(attempt, "cancelled", [])
-                _write_json(
-                    marker_path,
-                    {
-                        "attempt": attempt,
-                        "occurrence": ref,
-                        "state": "finished",
-                        "finished_record": record,
-                    },
-                )
-                return True
-            if opened["closed"] and marker is None:
-                if self._approval_recorded(attempt):
-                    # a recorded grant already counts as the start (TVL): record the
-                    # cancellation so the attempt never holds a later schedule.
-                    self._cancel_refused(
-                        report, attempt, ref, marker_path, "attempt_closed"
-                    )
-                    return True
-                continue  # closed and never started: nothing to finish, nothing blocks
-            # Immediately before any authorization is used or the optimizer is
-            # invoked: the relation, over the history up to now, must still show
-            # this occurrence's scope as requiring intervention.
-            if marker is None and not self._scope_requires_intervention(occ, instant):
-                if self._approval_recorded(attempt):
-                    # granted, then the scope lapsed before any start: a granted
-                    # approval counts as the start, so cancel rather than hold.
-                    self._cancel_refused(
-                        report, attempt, ref, marker_path, "scope_expired"
-                    )
-                    return True
-                self._record_controller_fact(
-                    {
-                        "fact": "optimize_refused",
-                        "attempt": attempt,
-                        "reason": "scope_expired",
-                    }
-                )
-                report.refused.append(f"{attempt}:scope_expired")
-                continue
-            if not self._approval_recorded(attempt):
-                if not self._authorized_now(occ, ref):
-                    if ref not in report.awaiting_approval:
-                        report.awaiting_approval.append(ref)
-                    continue
-                self._append(
-                    "optimizations",
-                    {"attempt": attempt, "fact": "approval", "state": "granted"},
-                    instant,
-                )
-                report.approved.append(attempt)
-                return True
-            if marker is not None and "finished_record" in marker:
-                if self._finish_recorded(attempt):
-                    continue  # delivered once already (a closed attempt may ignore it)
-                self._append("optimizations", marker["finished_record"], instant)
-                report.finished.append(attempt)
-                return True
-            if marker is not None:
-                if not abandon_interrupted:
-                    raise TuningError(
-                        E_ATTEMPT_IN_PROGRESS,
-                        f"{attempt} was interrupted; it is not started twice",
-                    )
-                record = self._finished_record(attempt, "cancelled", [])
-                _write_json(marker_path, {**marker, "finished_record": record})
-                return True
-            if self._spend(
-                report, attempt, occ, ref, domains.get(attempt), marker_path, clock
+            if self._advance_attempt(
+                opened, domains, clock, report, abandon_interrupted
             ):
                 return True
-            continue
         return False
+
+    def _advance_attempt(
+        self,
+        opened: Mapping[str, Any],
+        domains: Mapping[str, Mapping[str, Any]],
+        clock: Callable[[], datetime],
+        report: StepReport,
+        abandon_interrupted: bool,
+    ) -> bool:
+        """Do at most one thing for one open attempt; True when history grew."""
+        attempt, occ = opened["attempt"], opened["occurrence"]
+        ref = occurrence_ref(occ)
+        moment = clock()  # fresh before each decision that can spend
+        instant = self._instant(moment)  # whole seconds
+        marker_path = self._marker_path(attempt, ref)
+        marker = _read_json(marker_path)
+        if marker is None:
+            settled = self._settle_unstarted(
+                report,
+                opened,
+                ref,
+                marker_path,
+                instant,
+                abandon_interrupted,
+            )
+            if settled is not None:
+                return settled
+        if not self._approval_recorded(attempt):
+            return self._seek_approval(report, attempt, occ, ref, instant)
+        if marker is not None:
+            return self._resume_started(
+                report, attempt, marker, marker_path, instant, abandon_interrupted
+            )
+        return self._spend(
+            report, attempt, occ, ref, domains.get(attempt), marker_path, clock
+        )
+
+    def _settle_unstarted(
+        self,
+        report: StepReport,
+        opened: Mapping[str, Any],
+        ref: str,
+        marker_path: Path,
+        instant: int,
+        abandon_interrupted: bool,
+    ) -> bool | None:
+        """An attempt with no marker that must not start: the answer, else ``None``.
+
+        ``True`` when history will grow, ``False`` when nothing is done and the next
+        attempt is looked at, ``None`` when the attempt may go on towards approval.
+        """
+        attempt, occ = opened["attempt"], opened["occurrence"]
+        if (
+            abandon_interrupted
+            and attempt not in report.approved
+            and self._approval_recorded(attempt)
+        ):
+            # A granted human approval already counts as the start (TVL), but the
+            # process stopped before the attempt marker existed: nothing else would
+            # ever finish it and every later schedule would stay held.  Explicit
+            # abandonment records it as cancelled.
+            record = self._finished_record(attempt, "cancelled", [])
+            _write_json(
+                marker_path,
+                {
+                    "attempt": attempt,
+                    "occurrence": ref,
+                    "state": "finished",
+                    "finished_record": record,
+                },
+            )
+            return True
+        if opened["closed"]:
+            if self._approval_recorded(attempt):
+                # a recorded grant already counts as the start (TVL): record the
+                # cancellation so the attempt never holds a later schedule.
+                self._cancel_refused(
+                    report, attempt, ref, marker_path, "attempt_closed"
+                )
+                return True
+            return False  # closed and never started: nothing to finish, nothing blocks
+        # Immediately before any authorization is used or the optimizer is
+        # invoked: the relation, over the history up to now, must still show
+        # this occurrence's scope as requiring intervention.
+        if not self._scope_requires_intervention(occ, instant):
+            if self._approval_recorded(attempt):
+                # granted, then the scope lapsed before any start: a granted
+                # approval counts as the start, so cancel rather than hold.
+                self._cancel_refused(report, attempt, ref, marker_path, "scope_expired")
+                return True
+            self._record_controller_fact(
+                {
+                    "fact": "optimize_refused",
+                    "attempt": attempt,
+                    "reason": "scope_expired",
+                }
+            )
+            report.refused.append(f"{attempt}:scope_expired")
+            return False
+        return None
+
+    def _seek_approval(
+        self,
+        report: StepReport,
+        attempt: str,
+        occ: Mapping[str, Any],
+        ref: str,
+        instant: int,
+    ) -> bool:
+        """No approval on record: grant it when authorized now, else wait for it."""
+        if not self._authorized_now(occ, ref):
+            if ref not in report.awaiting_approval:
+                report.awaiting_approval.append(ref)
+            return False
+        self._append(
+            "optimizations",
+            {"attempt": attempt, "fact": "approval", "state": "granted"},
+            instant,
+        )
+        report.approved.append(attempt)
+        return True
+
+    def _resume_started(
+        self,
+        report: StepReport,
+        attempt: str,
+        marker: Mapping[str, Any],
+        marker_path: Path,
+        instant: int,
+        abandon_interrupted: bool,
+    ) -> bool:
+        """An approved attempt whose marker exists: deliver, refuse or abandon it."""
+        if "finished_record" in marker:
+            if self._finish_recorded(attempt):
+                return False  # delivered once already (a closed attempt may ignore it)
+            self._append("optimizations", marker["finished_record"], instant)
+            report.finished.append(attempt)
+            return True
+        if not abandon_interrupted:
+            raise TuningError(
+                E_ATTEMPT_IN_PROGRESS,
+                f"{attempt} was interrupted; it is not started twice",
+            )
+        record = self._finished_record(attempt, "cancelled", [])
+        _write_json(marker_path, {**marker, "finished_record": record})
+        return True
 
     def _spend(
         self,
