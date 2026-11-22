@@ -47,6 +47,8 @@ def _arm(root: Path) -> None:
     assert done.returncode == 0, done.stderr[-500:]
 
 
+# run_cli spawns a fresh CLI subprocess bounded by its own timeout=180; match it.
+@pytest.mark.timeout(180)
 def test_python_buffered_write_to_the_real_stdout_does_not_escape(
     tmp_path: Path,
 ) -> None:
@@ -61,6 +63,8 @@ def test_python_buffered_write_to_the_real_stdout_does_not_escape(
     assert json.loads(as_json.stdout)["verdict"] == "pass"  # exactly one object
 
 
+# run_cli spawns a fresh CLI subprocess bounded by its own timeout=180; match it.
+@pytest.mark.timeout(180)
 @pytest.mark.skipif(not _LIBC_OK, reason="needs libc stdio through ctypes")
 def test_c_stdio_buffered_write_does_not_escape(tmp_path: Path) -> None:
     make_workspace(tmp_path, BUFFERED_C)
@@ -74,6 +78,8 @@ def test_c_stdio_buffered_write_does_not_escape(tmp_path: Path) -> None:
     assert json.loads(as_json.stdout)["verdict"] == "pass"
 
 
+# run_cli spawns a fresh CLI subprocess bounded by its own timeout=180; match it.
+@pytest.mark.timeout(180)
 def test_show_output_still_reaches_stderr_only(tmp_path: Path) -> None:
     make_workspace(tmp_path, BUFFERED_PY)
     _arm(tmp_path)
@@ -125,6 +131,8 @@ HAZARDS = {
 }
 
 
+# run_cli spawns a fresh CLI subprocess bounded by its own timeout=180; match it.
+@pytest.mark.timeout(180)
 @pytest.mark.parametrize("hazard", sorted(HAZARDS))
 def test_a_failing_formatter_or_flush_cannot_skip_the_restore(
     tmp_path: Path, hazard: str
@@ -144,6 +152,8 @@ def test_a_failing_formatter_or_flush_cannot_skip_the_restore(
         assert secret not in as_json.stderr
 
 
+# run_cli spawns a fresh CLI subprocess bounded by its own timeout=180; match it.
+@pytest.mark.timeout(180)
 @pytest.mark.parametrize("hazard", sorted(HAZARDS))
 def test_a_failing_check_exit_code_survives_the_hazard(
     tmp_path: Path, hazard: str
@@ -217,6 +227,8 @@ def _files(root: Path) -> dict[str, bytes]:
     }
 
 
+# run_cli spawns a fresh CLI subprocess bounded by its own timeout=180; match it.
+@pytest.mark.timeout(180)
 def test_check_writes_no_file_anywhere_in_the_workspace(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir()
