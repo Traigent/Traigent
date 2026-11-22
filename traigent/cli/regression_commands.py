@@ -414,6 +414,8 @@ def _load_function(spec: str) -> Any:
     except KeyboardInterrupt:
         raise
     except BaseException as exc:  # noqa: BLE001 - user module code, even SystemExit
+        if not isinstance(exc, SystemExit):
+            raise
         # Closed message: a loader or user-module error may quote content. A
         # module that exits at import (sys.exit(0) included) never evaluated
         # anything, so it is an unusable function, never a success.
@@ -720,6 +722,8 @@ def _confirm_run(
     except KeyboardInterrupt:
         raise
     except BaseException as exc:  # noqa: BLE001 - e.g. the function calls sys.exit
+        if not isinstance(exc, SystemExit):
+            raise
         raise _Stop(
             CONFIRM_BAD_INPUT,
             "run_failed",
@@ -993,6 +997,8 @@ def _check_run(
         except KeyboardInterrupt:
             raise
         except BaseException as exc:  # noqa: BLE001 - e.g. the function calls sys.exit
+            if not isinstance(exc, SystemExit):
+                raise
             raise _Stop(
                 CHECK_INCONCLUSIVE,
                 "run_failed",
