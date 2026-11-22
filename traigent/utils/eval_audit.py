@@ -182,6 +182,20 @@ _FAMILY_PREFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("xai", ("grok",)),
 )
 
+#: Leading region segments of Bedrock inference-profile ids
+#: (``us.anthropic.claude-…``), stripped before prefix matching.
+_REGION_SEGMENTS: tuple[str, ...] = ("us", "eu", "apac", "global", "us-gov", "jp", "au")
+
+#: Leading vendor segments of Bedrock model ids (``anthropic.claude-…``),
+#: stripped before prefix matching.
+_VENDOR_SEGMENTS: tuple[str, ...] = (
+    "anthropic",
+    "meta",
+    "mistral",
+    "cohere",
+    "amazon",
+)
+
 #: Family assigned when no prefix matches. Never anchors D7 consensus (D7 needs
 #: >=2 *known, distinct* families).
 UNKNOWN_FAMILY = "unknown"
@@ -202,6 +216,12 @@ UNKNOWN_FAMILY = "unknown"
 #   * ``instability``   = config-disagreement rate = ``min(n_correct, n_wrong) /
 #                          n_outcomes`` in [0, 0.5]; 0 when configs are unanimous,
 #                          0.5 when evenly split (models can't agree → ambiguous).
+#   * ``consensus_wrong`` = 1.0 when the cross-family consensus-on-wrong detector
+#                          (D7) fires for the item (>=2 unrelated families agree on
+#                          the same non-gold answer), else 0.0 — the strongest
+#                          "the gold label is wrong" evidence, so it lifts such
+#                          items above never-correct items whose models merely
+#                          disagree with each other (genuinely hard rows).
 #
 # These are ILLUSTRATIVE DEFAULT coefficients — ROUND, hand-chosen values picked
 # only so the score gives a sensible *ordering* (never-correct > mixed >
@@ -239,11 +259,21 @@ _DEFECT_SCORE_WEIGHTS: dict[str, float] = {
     "mean_wrong": 6.0,
     "never_correct": 1.5,
     "instability": 1.0,
+    "consensus_wrong": 2.0,
 }
 
 #: The ordered feature vector the score consumes. Fixing the order keeps the
 #: logit sum and the ``contributing_signals`` output deterministic.
-_DEFECT_SCORE_FEATURES: tuple[str, ...] = ("mean_wrong", "never_correct", "instability")
+_DEFECT_SCORE_FEATURES: tuple[str, ...] = (
+    "mean_wrong",
+    "never_correct",
+    "instability",
+    "consensus_wrong",
+)
+
+#: Feature whose firing is named as the ``primary_reason`` whenever it raised
+#: suspicion, even when ``mean_wrong`` has a larger raw contribution.
+_CONSENSUS_FEATURE = "consensus_wrong"
 
 #: Tiny ABSOLUTE floor used only to drop true-zero-value features (a feature that
 #: simply didn't fire) from ``contributing_signals``. It is deliberately far below
@@ -276,13 +306,31 @@ def model_family(model: Any) -> str:
     # let a recognized provider prefix decide (e.g. "openai/…", "anthropic/…").
     provider = name.split("/", 1)[0] if "/" in name else ""
     tail = name.split("/", 1)[1] if "/" in name else name
+    # Bedrock-style ids add a region and/or vendor segment after the provider
+    # ("bedrock/us.anthropic.claude-…", "eu.meta.llama3-…"): strip those too.
+    bare = _strip_region_vendor(tail.rsplit("/", 1)[-1])
     for family, prefixes in _FAMILY_PREFIXES:
         if provider == family:
             return family
         for prefix in prefixes:
             if tail.startswith(prefix) or name.startswith(prefix):
                 return family
+            if bare.startswith(prefix):
+                return family
     return UNKNOWN_FAMILY
+
+
+def _strip_region_vendor(name: str) -> str:
+    """Drop leading Bedrock region and vendor segments (``us.anthropic.``)."""
+    changed = True
+    while changed:
+        changed = False
+        for segment in (*_REGION_SEGMENTS, *_VENDOR_SEGMENTS):
+            lead = segment + "."
+            if name.startswith(lead) and len(name) > len(lead):
+                name = name[len(lead) :]
+                changed = True
+    return name
 
 
 def _config_model(config: Any) -> Any:
@@ -383,7 +431,9 @@ def _item_defect_features(outcomes: list[bool]) -> dict[str, float]:
     items are excluded from scoring rather than scored on one column.
 
     Returns ``mean_wrong`` (1 − mean correctness), ``never_correct`` (1.0 iff wrong
-    everywhere), and ``instability`` (minority-outcome fraction in [0, 0.5]).
+    everywhere) and ``instability`` (minority-outcome fraction in [0, 0.5]).
+    The ``consensus_wrong`` feature is added by :func:`_compute_defect_scores`,
+    which has the per-cell answers and families this function does not see.
     """
     n = len(outcomes)
     n_correct = sum(1 for o in outcomes if o)
@@ -450,6 +500,9 @@ def _compute_defect_scores(
     if not examples:
         return []
 
+    trial_family, known_families = _collect_trial_families(matrix.get("trials") or [])
+    d7_active = len(known_families) >= 2
+
     raw: list[tuple[str, float, dict[str, float]]] = []  # (id, score, features)
     for example in examples:
         example_id = str(example.get("example_id"))
@@ -462,6 +515,13 @@ def _compute_defect_scores(
         if len(outcomes) < 2:
             continue  # features undefined on a single column -> excluded
         features = _item_defect_features(outcomes)
+        features["consensus_wrong"] = 0.0
+        if d7_active:
+            _, _, wrong_families, wrong_values = _example_outcomes(
+                cells, trial_family, success_threshold
+            )
+            if _consensus_on_wrong_flag(example_id, wrong_families, wrong_values):
+                features["consensus_wrong"] = 1.0
         z = intercept + sum(
             coeffs.get(name, 0.0) * features[name] for name in _DEFECT_SCORE_FEATURES
         )
@@ -560,6 +620,8 @@ def _primary_reason(signals: list[_Signal]) -> str | None:
     raising = [s for s in signals if s.contribution > 0]
     if not raising:
         return None
+    if any(s.feature == _CONSENSUS_FEATURE for s in raising):
+        return _CONSENSUS_FEATURE
     return max(raising, key=lambda s: s.contribution).feature
 
 
@@ -883,7 +945,7 @@ def compute_eval_audit(
             scorer. ``None`` (default) uses the shipped value.
         defect_score_weights: Optional per-feature weight overrides for the
             internal scorer, keyed by ``"mean_wrong"`` / ``"never_correct"`` /
-            ``"instability"``. ``None`` (default) uses the shipped values. Pass a
+            ``"instability"`` / ``"consensus_wrong"``. ``None`` (default) uses the shipped values. Pass a
             dict fitted on your own labeled subset to calibrate the ranking to
             your data. The defaults are not published: they are illustrative, not
             a calibrated model, so reading them would invite treating the output

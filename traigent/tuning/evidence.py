@@ -72,6 +72,19 @@ def _digest_of(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+def _is_synthetic(item: dict[str, Any]) -> bool:
+    """Whether a row carries the ``synthetic`` tag ExampleSynthesizer writes.
+
+    The tag lands at ``metadata.synthetic`` in a JSONL row (a top-level
+    ``synthetic`` is checked too). Generated rows are not customer-labelled, so
+    they cannot serve as a holdout. Never echoes row content.
+    """
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("synthetic") is True:
+        return True
+    return item.get("synthetic") is True
+
+
 def _parse_holdout(data: bytes) -> list[dict[str, Any]]:
     try:
         text = data.decode("utf-8")
@@ -89,6 +102,8 @@ def _parse_holdout(data: bytes) -> list[dict[str, Any]]:
             raise EvidenceUnavailable("holdout_invalid")
         if item.get("output") is None:  # exact-match scoring needs an expected output
             raise EvidenceUnavailable("holdout_missing_expected_output")
+        if _is_synthetic(item):
+            raise EvidenceUnavailable("holdout_synthetic_rows")
         examples.append(item)
     if not examples:
         raise EvidenceUnavailable("holdout_empty")

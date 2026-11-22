@@ -95,7 +95,8 @@ Cell fields record only what the run actually produced — no fabricated values:
   placeholder, not a measurement.
 * ``predicted`` is the model's actual answer for the cell (``actual_output``
   verbatim). It is recorded **only on non-correct cells** (``success is not
-  True`` — the wrong and indeterminate cells) and is ``null`` otherwise. That is
+  True``, or a finite ``score``/``accuracy`` below the audit's success threshold
+  — the wrong and indeterminate cells) and is ``null`` otherwise. That is
   exactly the subset the #1880 cross-family consensus detector (D7) reads to tell
   whether models from different families agreed on the *same* wrong answer;
   clearly-correct cells never anchor consensus, so their (potentially large)
@@ -249,13 +250,18 @@ def _extract_cell(ex: Any) -> dict[str, Any]:
     # The model's actual answer for this cell, recorded verbatim (no coercion) so
     # the #1880 cross-family consensus detector (D7) can compare answers across
     # configs/families straight from the persisted matrix. Stored ONLY when the
-    # cell is not clearly correct (``success is not True`` — the wrong and
-    # indeterminate cells), which is exactly the subset D7 reads: a clearly-correct
-    # cell never anchors consensus, so keeping its full model output would only
-    # bloat the persisted matrix (examples x configs x output length) with data no
-    # detector reads. ``None`` for clearly-correct cells and when the run captured
-    # no output (e.g. a failed example).
-    predicted = _get(ex, "actual_output") if success is not True else None
+    # cell is not clearly correct: ``success is not True`` (the wrong and
+    # indeterminate cells) OR the scoring signal says wrong (``score`` /
+    # ``accuracy`` below ``eval_audit.DEFAULT_SUCCESS_THRESHOLD``). The second
+    # clause matters because ``ExampleResult.success`` only means "executed
+    # without error", so a wrong-but-executed answer has ``success=True``.
+    # That is exactly the subset D7 reads: a clearly-correct cell never anchors
+    # consensus, so keeping its full model output would only bloat the persisted
+    # matrix (examples x configs x output length) with data no detector reads.
+    # ``None`` for clearly-correct cells and when the run captured no output
+    # (e.g. a failed example).
+    keep_predicted = success is not True or _is_wrong_by_score(score, accuracy)
+    predicted = _get(ex, "actual_output") if keep_predicted else None
 
     cell: dict[str, Any] = {
         "score": score,
@@ -270,6 +276,21 @@ def _extract_cell(ex: Any) -> dict[str, Any]:
         "error": error,
     }
     return cell
+
+
+def _is_wrong_by_score(score: Any, accuracy: Any) -> bool:
+    """Whether the cell's scoring signal is finite and below the audit threshold.
+
+    Mirrors ``eval_audit.cell_is_correct``: ``score`` decides first, then
+    ``accuracy``; the threshold is ``eval_audit.DEFAULT_SUCCESS_THRESHOLD``.
+    """
+    from traigent.utils.eval_audit import DEFAULT_SUCCESS_THRESHOLD
+
+    for signal in (score, accuracy):
+        if isinstance(signal, (int, float)) and not isinstance(signal, bool):
+            value = float(signal)
+            return math.isfinite(value) and value < DEFAULT_SUCCESS_THRESHOLD
+    return False
 
 
 def _config_hash(config: Any) -> str:

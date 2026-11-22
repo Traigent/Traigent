@@ -567,3 +567,116 @@ def test_eval_audit_property_none_single_config() -> None:
         timestamp=datetime(2024, 1, 1, tzinfo=UTC),
     )
     assert result.eval_audit is None
+
+
+# ---------------------------------------------------------------------------
+# Provider-prefixed / Bedrock inference-profile ids
+# ---------------------------------------------------------------------------
+
+
+def test_model_family_provider_prefixed_ids() -> None:
+    assert model_family("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0") == (
+        "anthropic"
+    )
+    assert model_family("bedrock/eu.anthropic.claude-3-5-sonnet-20240620-v1:0") == (
+        "anthropic"
+    )
+    assert model_family("bedrock/meta.llama3-70b-instruct-v1:0") == "meta"
+    assert model_family("bedrock/us.meta.llama3-2-3b-instruct-v1:0") == "meta"
+    assert model_family("vertex_ai/gemini-2.5-flash-lite") == "google"
+    assert model_family("azure/gpt-4o") == "openai"
+    assert model_family("claude-haiku-4-5") == "anthropic"
+    assert model_family("bedrock/us.unknownvendor.model-1") == UNKNOWN_FAMILY
+    assert model_family("bedrock/us.") == UNKNOWN_FAMILY
+
+
+# ---------------------------------------------------------------------------
+# Consensus raises the ranked worklist; wrong-by-score cells keep `predicted`
+# ---------------------------------------------------------------------------
+
+
+def test_consensus_item_outranks_hard_never_correct_item() -> None:
+    cols = [_column("t0", "gpt-4o"), _column("t1", "claude-3-opus")]
+    examples = [
+        {
+            "example_id": "a-hard",  # sorts before the consensus ids on ties
+            "cells": {
+                "t0": _cell(correct=False, predicted="X"),
+                "t1": _cell(correct=False, predicted="Y"),
+            },
+        },
+        {
+            "example_id": "z-consensus",
+            "cells": {
+                "t0": _cell(correct=False, predicted="B"),
+                "t1": _cell(correct=False, predicted="B"),
+            },
+        },
+        {
+            "example_id": "ok",
+            "cells": {"t0": _cell(correct=True), "t1": _cell(correct=True)},
+        },
+    ]
+    audit = compute_eval_audit(_matrix(cols, examples))
+    assert audit is not None
+    assert [s.example_id for s in audit.scored] == ["z-consensus", "a-hard", "ok"]
+    assert audit.scored[0].primary_reason == "consensus_wrong"
+    assert audit.scored[1].primary_reason == "mean_wrong"
+
+
+def test_no_consensus_boost_for_single_family() -> None:
+    cols = [_column("t0", "gpt-4o"), _column("t1", "gpt-4o-mini")]
+    examples = [
+        {
+            "example_id": "a",
+            "cells": {
+                "t0": _cell(correct=False, predicted="B"),
+                "t1": _cell(correct=False, predicted="B"),
+            },
+        }
+    ]
+    audit = compute_eval_audit(_matrix(cols, examples))
+    assert audit is not None
+    assert audit.scored[0].primary_reason == "mean_wrong"
+
+
+def test_predicted_kept_when_success_true_but_score_wrong() -> None:
+    """``ExampleResult.success`` only means "executed"; a wrong score must keep
+    ``predicted`` so D7 can see it, while a correct score still prunes it."""
+    wrong = ExampleResult(
+        example_id="w",
+        input_data={},
+        expected_output="GOLD",
+        actual_output="B",
+        metrics={"score": 0.0, "accuracy": 0.0},
+        execution_time=0.1,
+        success=True,
+        error_message=None,
+    ).to_dict()
+    right = ExampleResult(
+        example_id="r",
+        input_data={},
+        expected_output="GOLD",
+        actual_output="GOLD",
+        metrics={"score": 1.0, "accuracy": 1.0},
+        execution_time=0.1,
+        success=True,
+        error_message=None,
+    ).to_dict()
+    result = OptimizationResult(
+        trials=[_trial("t0", "gpt-4o", [wrong, right])],
+        best_config={"model": "gpt-4o"},
+        best_score=0.5,
+        optimization_id="opt-wrong-by-score",
+        duration=1.0,
+        convergence_info={},
+        status=OptimizationStatus.COMPLETED,
+        objectives=["accuracy"],
+        algorithm="GridSearchOptimizer",
+        timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    cells = {
+        e["example_id"]: e["cells"] for e in build_outcome_matrix(result)["examples"]
+    }
+    assert cells["w"]["t0"]["predicted"] == "B"
+    assert cells["r"]["t0"]["predicted"] is None
