@@ -27,8 +27,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -66,7 +66,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "media_eval.jsonl")
     max_trials=10,
 )
 def shotlist(topic: str) -> str:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.6)
+    llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0.6)
     p = f"Create a 3-step shot list for a short video about: {topic}"
     return llm.invoke([HumanMessage(content=p)]).content.strip()
 

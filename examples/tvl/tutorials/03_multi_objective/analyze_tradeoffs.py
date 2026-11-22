@@ -27,16 +27,16 @@ def simulate_evaluation(config: dict) -> dict:
     """Simulate metric evaluation for a configuration."""
     # Base metrics depend on model choice
     model_quality = {
-        "gpt-4.1": 0.92,
-        "gpt-4.1-mini": 0.85,
+        "gpt-5.2": 0.92,
+        "gpt-5.4-mini": 0.85,
     }
     model_cost = {
-        "gpt-4.1": 0.005,
-        "gpt-4.1-mini": 0.00015,
+        "gpt-5.2": 0.005,
+        "gpt-5.4-mini": 0.00015,
     }
     model_latency = {
-        "gpt-4.1": 2000,
-        "gpt-4.1-mini": 500,
+        "gpt-5.2": 2000,
+        "gpt-5.4-mini": 500,
     }
 
     model = config["model"]
@@ -144,35 +144,35 @@ def main():
 
     configs = [
         {
-            "model": "gpt-4.1",
+            "model": "gpt-5.2",
             "temperature": 0.3,
             "max_tokens": 1024,
             "retrieval_k": 7,
             "use_cot": True,
         },
         {
-            "model": "gpt-4.1",
+            "model": "gpt-5.2",
             "temperature": 0.7,
             "max_tokens": 512,
             "retrieval_k": 5,
             "use_cot": True,
         },
         {
-            "model": "gpt-4.1-mini",
+            "model": "gpt-5.4-mini",
             "temperature": 0.5,
             "max_tokens": 512,
             "retrieval_k": 5,
             "use_cot": False,
         },
         {
-            "model": "gpt-4.1-mini",
+            "model": "gpt-5.4-mini",
             "temperature": 0.7,
             "max_tokens": 768,
             "retrieval_k": 6,
             "use_cot": False,
         },
         {
-            "model": "gpt-4.1-mini",
+            "model": "gpt-5.4-mini",
             "temperature": 0.3,
             "max_tokens": 1024,
             "retrieval_k": 8,

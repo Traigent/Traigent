@@ -7,7 +7,7 @@ back to a runtime shim when no assignments can be rewritten.
 ## How It Works
 
 1. **AST rewrite first**: Traigent replaces literal assignments that match
-   configuration keys (for example `model = "gpt-4.1"`).
+   configuration keys (for example `model = "gpt-5.2"`).
 2. **Runtime shim fallback**: If nothing is rewritten and the configuration
    overlaps the function signature, Traigent injects values at call time.
 
@@ -17,8 +17,8 @@ parameters or defaults.
 ## Supported Patterns
 
 - Variable assignments inside the function body
-- Signature defaults (`def fn(model="gpt-4.1")`)
-- Keyword-only defaults (`def fn(*, model="gpt-4.1")`)
+- Signature defaults (`def fn(model="gpt-5.2")`)
+- Keyword-only defaults (`def fn(*, model="gpt-5.2")`)
 - Required parameters when callers omit them (shim fills from config)
 
 ## Known Limitations
@@ -52,11 +52,11 @@ fail closed.
 @traigent.optimize(
     injection_mode="seamless",
     configuration_space={
-        "model": ["gpt-4o", "gpt-4o-mini"],
+        "model": ["gpt-5.2", "gpt-5.4-mini"],
         "temperature": [0.1, 0.5, 0.9],
     },
 )
-def answer(question: str, *, model: str = "gpt-4o", temperature: float = 0.7) -> str:
+def answer(question: str, *, model: str = "gpt-5.2", temperature: float = 0.7) -> str:
     # The runtime shim updates defaults when AST rewrite has nothing to change.
     return call_llm(question, model=model, temperature=temperature)
 ```

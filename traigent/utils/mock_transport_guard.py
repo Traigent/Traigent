@@ -164,7 +164,27 @@ MOCK_SCOPE_SUMMARY = (
 GUARDED_TRANSPORTS = "httpx, aiohttp, requests, botocore (boto3) and gRPC channels"
 
 
-class MockModeTransportBlockedError(RuntimeError):
+def _http_request_error_bases() -> tuple[type[Exception], ...]:
+    """``RequestError`` classes of the installed httpx / httpx2 packages.
+
+    Vendor SDKs (openai >= 3, anthropic) only translate transport failures
+    that derive from their HTTP library's ``RequestError`` into their own
+    connection error; anything else escapes unwrapped. The guard error must
+    look like a transport failure to them, as it did when those SDKs caught
+    every exception, so a blocked call surfaces the same way for every vendor
+    (the block is still logged with the mock-mode explanation).
+    """
+    bases: list[type[Exception]] = []
+    for name in ("httpx", "httpx2"):
+        try:
+            module = __import__(name)
+        except ImportError:
+            continue
+        bases.append(module.RequestError)
+    return tuple(bases)
+
+
+class MockModeTransportBlockedError(RuntimeError, *_http_request_error_bases()):  # type: ignore[misc]
     """A request to a known LLM provider host was blocked under mock mode."""
 
 

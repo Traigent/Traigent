@@ -11,14 +11,14 @@ import traigent
 @traigent.optimize(
     eval_dataset="dev.jsonl",
     objectives=["accuracy"],
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": (0.0, 1.0)},
+    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"], "temperature": (0.0, 1.0)},
 )
 def answer(question: str) -> str: ...
 
 result = answer.compare(
     [
-        {"model": "gpt-4o", "temperature": 0.0},        # winner
-        {"model": "gpt-4o-mini", "temperature": 0.5},   # current default
+        {"model": "gpt-5.2", "temperature": 0.0},        # winner
+        {"model": "gpt-5.4-mini", "temperature": 0.5},   # current default
     ],
     eval_dataset="holdout.jsonl",   # optional; default is the decorated dataset
     repeats=3,

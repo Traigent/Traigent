@@ -89,10 +89,10 @@ object with structured constraints.
 from traigent import Choices, ConfigSpace, Range, implies
 
 temp = Range(0.0, 2.0, name="temperature")
-model = Choices(["gpt-4.1", "gpt-4.1-mini"], name="model")
+model = Choices(["gpt-5.2", "gpt-5.4-mini"], name="model")
 space = ConfigSpace(
     tvars={"temperature": temp, "model": model},
-    constraints=[implies(model.equals("gpt-4.1"), temp.lte(0.7))],
+    constraints=[implies(model.equals("gpt-5.2"), temp.lte(0.7))],
 )
 
 @traigent.optimize(configuration_space=space)
@@ -173,7 +173,7 @@ Later scopes override earlier ones field-by-field. The runtime resolution logs t
 @traigent.optimize(
     objectives=["accuracy", "cost"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": (0.0, 1.0)
     },
     evaluation={"eval_dataset": "evals.jsonl"},  # Grouped option bundle
@@ -394,7 +394,7 @@ This unified accessor works both during optimization trials and after applying t
 **Example:**
 ```python
 @traigent.optimize(
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4.1"], "temperature": (0.0, 1.0)}
+    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"], "temperature": (0.0, 1.0)}
 )
 def my_agent(query: str) -> str:
     config = traigent.get_config()  # Works during optimization AND after apply_best_config()
@@ -730,7 +730,7 @@ import traigent
     evaluation={"eval_dataset": "qa_dataset.jsonl"},
     objectives=["accuracy"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.1, 0.3, 0.7]
     }
 )
@@ -752,7 +752,7 @@ best_config = answer_question.get_best_config()
     evaluation={"eval_dataset": "support_tickets.jsonl"},
     objectives=["accuracy", "cost", "latency"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4.1", "claude-3-haiku"],
+        "model": ["gpt-5.4-mini", "gpt-5.2", "claude-3-haiku"],
         "temperature": (0.0, 1.0),
         "max_tokens": [100, 500, 1000]
     }
@@ -772,7 +772,7 @@ temp_guard = temperature_constraint(0.1, 0.7)
     evaluation={"eval_dataset": "support_tickets.jsonl"},
     objectives=["accuracy", "cost"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": (0.0, 1.0),
         "max_tokens": [100, 500, 1000],
     },

@@ -42,7 +42,7 @@ import traigent
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.0, 0.5],
     },
     objectives=["accuracy"],

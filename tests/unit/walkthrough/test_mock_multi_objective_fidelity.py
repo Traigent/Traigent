@@ -419,10 +419,10 @@ def test_example_04_smoke(offline_mock_env: dict[str, str]) -> None:
     assert completed.returncode == 0, combined
     assert "simulated from the static mock pricing/latency tables" in completed.stdout
     assert "uniformly constant" not in combined
-    assert "Model: gpt-4.1-mini" in completed.stdout
+    assert "Model: gpt-5.4-mini" in completed.stdout
     # The user-visible #2003 symptom was "Latency:  0ms" under every model.
-    assert "Latency:  200ms (simulated, per call)" in completed.stdout
-    assert "Cost:     $0.00096 (simulated, 20 examples)" in completed.stdout
+    assert "Latency:  400ms (simulated, per call)" in completed.stdout
+    assert "Cost:     $0.00200 (simulated, 20 examples)" in completed.stdout
     assert re.search(r"Latency:\s+0ms", completed.stdout) is None
 
     rows = _parse_results_table(completed.stdout)
@@ -452,9 +452,9 @@ def test_example_09_smoke(offline_mock_env: dict[str, str]) -> None:
     assert completed.returncode == 0, combined
     assert "simulated from the static mock pricing/latency tables" in completed.stdout
     assert "uniformly constant" not in combined
-    assert "Model:        gpt-4.1-mini" in completed.stdout
-    assert "Latency:  675ms (simulated)" in completed.stdout
-    assert "Cost:     $0.012480 (simulated)" in completed.stdout
+    assert "Model:        gpt-5.4-mini" in completed.stdout
+    assert "Latency:  1350ms (simulated)" in completed.stdout
+    assert "Cost:     $0.028600 (simulated)" in completed.stdout
     assert re.search(r"Latency:\s+0ms", completed.stdout) is None
 
     rows = _parse_results_table(completed.stdout)

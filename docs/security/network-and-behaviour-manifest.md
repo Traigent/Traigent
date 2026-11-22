@@ -119,7 +119,7 @@ No file was made executable and no `.py` file was written in any workload [R].
 ## Code generation, explained plainly
 
 `injection_mode="seamless"` (opt-in; the default is `"context"`) lets the SDK
-change a hard-coded value such as `model = "gpt-4o-mini"` inside your function
+change a hard-coded value such as `model = "gpt-5.4-mini"` inside your function
 for each trial. It does this entirely in memory:
 
 1. `inspect.getsource(func)` reads your function's source (`traigent/config/providers.py:804`);

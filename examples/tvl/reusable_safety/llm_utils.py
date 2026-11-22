@@ -72,7 +72,7 @@ def call_llm(
 
     Supports any model that LiteLLM supports:
     - Groq: "groq/llama-3.3-70b-versatile", "groq/llama-3.1-8b-instant"
-    - OpenAI: "gpt-4.1", "gpt-4.1-mini"
+    - OpenAI: "gpt-5.2", "gpt-5.4-mini"
     - Anthropic: "claude-sonnet-4-6", "claude-haiku-4-5-20251001"
 
     Args:

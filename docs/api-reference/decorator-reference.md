@@ -193,7 +193,7 @@ Banded objectives use TOST (Two One-Sided Tests) to statistically verify that th
 
 ```python
 configuration_space={
-    "model": ["gpt-4o-mini", "gpt-4.1", "claude-3-haiku"],
+    "model": ["gpt-5.4-mini", "gpt-5.2", "claude-3-haiku"],
     "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
 }
 ```
@@ -211,7 +211,7 @@ configuration_space={
 
 ```python
 configuration_space={
-    "model": ["gpt-4o-mini", "gpt-4.1"],
+    "model": ["gpt-5.4-mini", "gpt-5.2"],
     "temperature": (0.0, 1.0),
     "max_tokens": [100, 500, 1000, 2000],
 }
@@ -224,7 +224,7 @@ from traigent import Choices, Range
 
 @traigent.optimize(
     configuration_space={
-        "model": Choices(["gpt-4.1", "gpt-4.1-mini"]),
+        "model": Choices(["gpt-5.2", "gpt-5.4-mini"]),
         "temperature": Range(0.0, 2.0),
     },
 )
@@ -242,8 +242,8 @@ You can also pass a `ConfigSpace` object when you want to bundle `tvars` and str
 
 ```python
 @traigent.optimize(
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4.1"], "temperature": (0.0, 1.0)},
-    default_config={"model": "gpt-4o-mini", "temperature": 0.7},
+    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"], "temperature": (0.0, 1.0)},
+    default_config={"model": "gpt-5.4-mini", "temperature": 0.7},
     ...
 )
 ```
@@ -260,7 +260,7 @@ Constraint objects and callables can be mixed; Traigent normalizes them to a com
 
 ```python
 def max_tokens_constraint(config):
-    if config["model"] == "gpt-4.1" and config["max_tokens"] > 2000:
+    if config["model"] == "gpt-5.2" and config["max_tokens"] > 2000:
         return False
     return True
 
@@ -291,12 +291,12 @@ def cost_constraint(config, metrics=None):
 ```python
 from traigent import Choices, Range, implies
 
-model = Choices(["gpt-4.1", "gpt-4.1-mini"], name="model")
+model = Choices(["gpt-5.2", "gpt-5.4-mini"], name="model")
 temp = Range(0.0, 2.0, name="temperature")
 
 @traigent.optimize(
     configuration_space={"model": model, "temperature": temp},
-    constraints=[implies(model.equals("gpt-4.1"), temp.lte(0.7))],
+    constraints=[implies(model.equals("gpt-5.2"), temp.lte(0.7))],
 )
 def my_agent(prompt: str) -> str:
     return run(prompt)
@@ -593,7 +593,7 @@ import traigent
 @traigent.optimize(
     objectives=["accuracy"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.1, 0.5, 0.9],
     },
     evaluation={"eval_dataset": "qa_test.jsonl"},
@@ -609,12 +609,12 @@ def answer_question(question: str) -> str:
 @traigent.optimize(
     objectives=["accuracy", "cost", "latency"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4.1", "claude-3-haiku"],
+        "model": ["gpt-5.4-mini", "gpt-5.2", "claude-3-haiku"],
         "temperature": (0.0, 1.0),
         "max_tokens": [100, 500, 1000],
     },
     constraints=[
-        lambda cfg: cfg["max_tokens"] <= 500 if cfg["model"] == "gpt-4.1" else True,
+        lambda cfg: cfg["max_tokens"] <= 500 if cfg["model"] == "gpt-5.2" else True,
         lambda cfg, metrics: (
             not metrics
             or (metrics.get("cost") is not None and metrics["cost"] <= 0.10)
@@ -640,7 +640,7 @@ safety_objectives = ObjectiveSchema.from_objectives([
 @traigent.optimize(
     objectives=safety_objectives,
     configuration_space={
-        "model": ["gpt-4.1", "claude-3-sonnet"],
+        "model": ["gpt-5.2", "claude-3-sonnet"],
         "temperature": [0.1, 0.3, 0.5],
     },
     evaluation={"eval_dataset": "medical_qa.jsonl"},
@@ -667,7 +667,7 @@ from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
         ]
     ),
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": (0.0, 1.0),
     },
     evaluation={"eval_dataset": "dataset.jsonl"},

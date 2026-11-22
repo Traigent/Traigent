@@ -13,7 +13,7 @@ metadata:
 tvars:
   - name: model
     type: enum[str]
-    domain: ["gpt-4.1-mini", "gpt-4.1", "claude-haiku-4-5-20251001"]
+    domain: ["gpt-5.4-mini", "gpt-5.2", "claude-haiku-4-5-20251001"]
 
   - name: temperature
     type: float
@@ -67,7 +67,7 @@ exploration:
 
 constraints:
   structural:
-    - when: 'params.model == "gpt-4.1"'
+    - when: 'params.model == "gpt-5.2"'
       then: 'params.max_tokens <= 512'
       id: premium-limit
       error_message: "Limit tokens for premium models"

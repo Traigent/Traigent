@@ -32,7 +32,7 @@ traigent.initialize(minimal_logging=True)
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
 CONFIG_SPACE = {
-    "model": ["gpt-4.1-mini", "gpt-4.1"],
+    "model": ["gpt-5.4-mini", "gpt-5.2"],
     "prompt": ["v1", "v2"],
     "temperature": [0.0, 0.3],
     "instructions": ["CoT", "direct"],

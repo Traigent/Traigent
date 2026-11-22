@@ -42,7 +42,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 @traigent.optimize(
     objectives=["accuracy", "latency"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.1, 0.5, 0.9],
     },
     evaluation={"eval_dataset": "documents.jsonl"},
@@ -94,7 +94,7 @@ import time
 @traigent.optimize(
     objectives=["accuracy", "cost", "latency"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "batch_size": [10, 20, 50],
         "temperature": (0.0, 1.0),
     },
@@ -156,9 +156,9 @@ from concurrent.futures import ThreadPoolExecutor
 @traigent.optimize(
     objectives=["accuracy", "latency"],
     configuration_space={
-        "researcher_model": ["gpt-4o-mini", "gpt-4.1"],
-        "writer_model": ["gpt-4o-mini", "gpt-4.1"],
-        "editor_model": ["gpt-4o-mini", "gpt-4.1"],
+        "researcher_model": ["gpt-5.4-mini", "gpt-5.2"],
+        "writer_model": ["gpt-5.4-mini", "gpt-5.2"],
+        "editor_model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.1, 0.5, 0.9],
     },
     evaluation={"eval_dataset": "articles.jsonl"},
@@ -226,8 +226,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 @traigent.optimize(
     objectives=["accuracy", "cost"],
     configuration_space={
-        "mapper_model": ["gpt-4o-mini", "gpt-4.1"],
-        "reducer_model": ["gpt-4o-mini", "gpt-4.1"],
+        "mapper_model": ["gpt-5.4-mini", "gpt-5.2"],
+        "reducer_model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.1, 0.5, 0.9],
     },
     evaluation={"eval_dataset": "large_documents.jsonl"},

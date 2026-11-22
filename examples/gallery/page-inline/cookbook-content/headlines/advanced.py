@@ -27,8 +27,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -57,7 +57,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "headlines_eval.jsonl")
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.2, 0.6, 0.9],
         "style": ["neutral", "punchy", "formal"],
         "max_words": [8, 12],
@@ -79,7 +79,7 @@ def generate_headline(topic: str) -> str:
     }[cfg.get("style", "neutral")]
 
     llm = ChatOpenAI(
-        model=cfg.get("model", "gpt-4.1-mini"), temperature=cfg.get("temperature", 0.6)
+        model=cfg.get("model", "gpt-5.4-mini"), temperature=cfg.get("temperature", 0.6)
     )
     prompt = (
         f"Write a {style_hint} headline about: {topic}\n"

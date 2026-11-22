@@ -70,12 +70,12 @@ def _config_value(config, key: str, default):
 
 
 def _mock_answer_for_config(question: str, config) -> str:
-    model = str(_config_value(config, "model", "gpt-4.1-mini"))
+    model = str(_config_value(config, "model", "gpt-5.4-mini"))
     temperature = float(_config_value(config, "temperature", 0.5) or 0.5)
 
     answer_limit = {
-        "gpt-4.1-mini": 5,
-        "gpt-4.1": len(MOCK_QA_ANSWERS),
+        "gpt-5.4-mini": 5,
+        "gpt-5.2": len(MOCK_QA_ANSWERS),
     }.get(model, 3)
 
     if temperature <= 0.2:
@@ -91,7 +91,7 @@ def _mock_answer_for_config(question: str, config) -> str:
 # Valid model names: https://models.litellm.ai/
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4.1"],  # Tuned Variable #1
+        "model": ["gpt-5.4-mini", "gpt-5.2"],  # Tuned Variable #1
         "temperature": [0.1, 0.5, 0.9],  # Tuned Variable #2
     },
     objectives=["accuracy", "cost"],  # What to optimize for
@@ -111,7 +111,7 @@ def simple_qa_agent(question: str) -> str | dict:
         # Report simulated usage so the `cost` objective is real data (an
         # unpriced call is refused by honest cost accounting); priced at the
         # tuned model's list price. The SDK treats it like real spend.
-        model = str(_config_value(config, "model", "gpt-4.1-mini"))
+        model = str(_config_value(config, "model", "gpt-5.4-mini"))
         input_tokens = max(1, len(question) // 4)
         output_tokens = max(1, len(answer) // 4)
         input_cost, output_cost = cost_from_tokens(input_tokens, output_tokens, model)
@@ -126,7 +126,7 @@ def simple_qa_agent(question: str) -> str | dict:
 
     config = traigent.get_config()
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-4.1-mini"),
+        model=config.get("model", "gpt-5.4-mini"),
         temperature=config.get("temperature", 0.7),
     )
     response = llm.invoke(f"Question: {question}\nAnswer:")
