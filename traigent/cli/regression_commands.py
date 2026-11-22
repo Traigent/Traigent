@@ -4,12 +4,12 @@
 
 Everything runs locally; no command here makes a network call.
 
-``confirm`` and ``check`` import and run the user's module in this process. A
-``SystemExit`` that escapes it (a module or function calling ``sys.exit(0)``,
-say) ends the command as the closed inconclusive result, never as a success:
-success comes only from the verdict logic at the end of ``check``. Any other
-``BaseException`` (``KeyboardInterrupt``, ``GeneratorExit``, a user subclass)
-is re-raised, not converted. Limit: a process that ends itself with
+``confirm`` and ``check`` import and run the user's module in this process. Any
+``Exception`` or ``SystemExit`` that escapes it (a module or function calling
+``sys.exit(0)``, say) ends the command as a closed, content-free result, never
+as a success: success comes only from the verdict logic at the end of ``check``.
+Any other ``BaseException`` (``KeyboardInterrupt``, ``GeneratorExit``, a user
+subclass) is re-raised, not converted. Limit: a process that ends itself with
 ``os._exit`` (or is killed) cannot be caught.
 """
 
@@ -415,7 +415,7 @@ def _load_function(spec: str) -> Any:
     except KeyboardInterrupt:
         raise
     except BaseException as exc:  # noqa: BLE001 - user module code, even SystemExit
-        if not isinstance(exc, SystemExit):
+        if not isinstance(exc, (Exception, SystemExit)):
             raise
         # Closed message: a loader or user-module error may quote content. A
         # module that exits at import (sys.exit(0) included) never evaluated

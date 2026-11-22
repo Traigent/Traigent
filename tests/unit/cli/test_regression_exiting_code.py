@@ -130,3 +130,33 @@ def test_systemexit_is_still_closed_while_a_baseexception_is_not(ws: Path) -> No
     _swap_module(ws, _raising_module("import"))
     with pytest.raises(BaseException, match="boom-sentinel"):
         invoke(ws, "check", "--json")
+
+
+_LEAK_MARKER = "customer-content-marker"
+
+
+@pytest.mark.parametrize("command", ["confirm", "check"])
+@pytest.mark.parametrize("kind", ["import", "function"])
+def test_an_ordinary_exception_gives_a_sanitized_closed_exit_2(
+    ws: Path, command: str, kind: str
+) -> None:
+    raising = f"raise ValueError({_LEAK_MARKER!r})"
+    if kind == "import":
+        source = MODULE_SOURCE.replace("import sys", "import sys\n" + raising)
+    else:
+        source = MODULE_SOURCE.replace(
+            'return "ok" if q.startswith("pass") else "wrong"', raising
+        )
+    _swap_module(ws, source)
+    before = (ws / "reg" / "regression.jsonl").read_bytes()
+    args = ["--repeats", "2"] if command == "confirm" else []
+    result = invoke(ws, command, *args)
+    assert _LEAK_MARKER not in result.output
+    assert "Traceback" not in result.output
+    if kind == "import":
+        assert (ws / "reg" / "regression.jsonl").read_bytes() == before
+        # the loader is the closed boundary: exit 2 with the type name only
+        assert result.exit_code == 2, result.output
+        assert "ValueError" in result.output
+    elif command == "check":
+        assert result.exit_code == 2, result.output  # inconclusive, never a pass
