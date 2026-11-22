@@ -680,3 +680,28 @@ def test_predicted_kept_when_success_true_but_score_wrong() -> None:
     }
     assert cells["w"]["t0"]["predicted"] == "B"
     assert cells["r"]["t0"]["predicted"] is None
+
+
+def test_wrong_by_score_agrees_with_cell_is_correct_on_nonfinite() -> None:
+    from traigent.utils.eval_audit import DEFAULT_SUCCESS_THRESHOLD, cell_is_correct
+    from traigent.utils.outcome_matrix import _is_wrong_by_score
+
+    nan, inf = float("nan"), float("inf")
+    for score, acc in [
+        (nan, None),
+        (-inf, None),
+        (inf, None),
+        (None, nan),
+        (0.2, None),
+        (0.9, None),
+        (None, 0.1),
+        (True, None),
+        (None, None),
+    ]:
+        expected = (
+            cell_is_correct(
+                {"score": score, "accuracy": acc}, DEFAULT_SUCCESS_THRESHOLD
+            )
+            is False
+        )
+        assert _is_wrong_by_score(score, acc) is expected

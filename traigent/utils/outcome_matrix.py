@@ -279,18 +279,16 @@ def _extract_cell(ex: Any) -> dict[str, Any]:
 
 
 def _is_wrong_by_score(score: Any, accuracy: Any) -> bool:
-    """Whether the cell's scoring signal is finite and below the audit threshold.
+    """Whether the audit would count this cell's scoring signal as wrong.
 
-    Mirrors ``eval_audit.cell_is_correct``: ``score`` decides first, then
-    ``accuracy``; the threshold is ``eval_audit.DEFAULT_SUCCESS_THRESHOLD``.
+    Delegates to ``eval_audit.cell_is_correct`` (same threshold, same
+    score-then-accuracy order, same NaN/inf handling) on a signal-only cell, so
+    the two can never disagree.
     """
-    from traigent.utils.eval_audit import DEFAULT_SUCCESS_THRESHOLD
+    from traigent.utils.eval_audit import DEFAULT_SUCCESS_THRESHOLD, cell_is_correct
 
-    for signal in (score, accuracy):
-        if isinstance(signal, (int, float)) and not isinstance(signal, bool):
-            value = float(signal)
-            return math.isfinite(value) and value < DEFAULT_SUCCESS_THRESHOLD
-    return False
+    cell = {"score": score, "accuracy": accuracy}
+    return cell_is_correct(cell, DEFAULT_SUCCESS_THRESHOLD) is False
 
 
 def _config_hash(config: Any) -> str:
