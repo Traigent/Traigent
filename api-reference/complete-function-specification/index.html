@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1496,6 +1496,34 @@
     
   
     Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/continuous-tuning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Continuous Tuning
   
 
     
@@ -5432,6 +5460,7 @@ This is additive qualification only: it never changes which config wins.</p>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
 </code></pre></div>
 <ul>
+<li><code>default_storage_backend</code> and <code>cache_policy</code> are deprecated and have no effect: nothing in the SDK reads them, so passing either emits a <code>DeprecationWarning</code> and the value is ignored (an invalid legacy <code>cache_policy</code> value still raises <code>ValueError</code> first). Set the run cache policy per run with <code>.optimize(cache_policy=...)</code>.</li>
 <li><code>objectives</code>: Optional global default applied when decorators omit the parameter. Accepts a list of objective names or an <code>ObjectiveSchema</code>.</li>
 </ul>
 <h3 id="traigentget_version_info"><code>traigent.get_version_info()</code><a class="headerlink" href="#traigentget_version_info" title="Permanent link">&para;</a></h3>
@@ -5854,7 +5883,7 @@ the aggregate toward the heavier objective. (Issues #1682, #1846.)</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

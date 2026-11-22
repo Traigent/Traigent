@@ -1,0 +1,4394 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://traigent.github.io/Traigent/guides/continuous-tuning/">
+      
+      
+        <link rel="prev" href="../local-guards/">
+      
+      
+        <link rel="next" href="../js-bridge/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>Continuous Tuning - Traigent</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#continuous-tuning" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Traigent" class="md-header__button md-logo" aria-label="Traigent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Traigent
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Continuous Tuning
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/Traigent/Traigent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/configuration-spaces/" class="md-tabs__link">
+          
+  
+  
+  Concepts
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../features/" class="md-tabs__link">
+          
+  
+  
+  Features
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../execution-modes/" class="md-tabs__link">
+          
+  
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api-reference/complete-function-specification/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../examples/" class="md-tabs__link">
+          
+  
+  
+  Examples
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../security/trust_model/" class="md-tabs__link">
+          
+  
+  
+  Security & Trust
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/ARCHITECTURE/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../contributing/" class="md-tabs__link">
+          
+  
+  
+  Contributing
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Traigent" class="md-nav__button md-logo" aria-label="Traigent" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Traigent
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/Traigent/Traigent" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/GETTING_STARTED/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/minimal-integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Minimal Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/configuration-spaces/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Spaces
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tvl/CONSTRAINT_EXPRESSIONS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraint Expressions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/dataflow-detection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataflow Detection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent-skill/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Skill
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/constraint-dsl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraint DSL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/framework_override_enhanced_features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Framework Override
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/prompt_management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompt Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/seamless_injection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Seamless Injection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/strict_metrics_nulls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strict Metrics Nulls
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local MCP Server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/safety-gates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Safety Gates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/observability-spans/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Observability Spans
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hybrid-mode-api-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid Mode API Contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hybrid-mode-client-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid Mode Client Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../walkthrough/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Walkthrough
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_1" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_1_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../execution-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../local-guards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Continuous Tuning
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Continuous Tuning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#supported-in-this-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported in this release
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Supported in this release">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-release-witness-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the release witness checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rates-are-exact-decimals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rates are exact decimals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-each-builder-emits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What each builder emits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-human-decision-this-controller-takes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The human decision this controller takes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#who-may-decide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who may decide
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Time
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Time">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#schedule-anchors-and-the-origin-day" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schedule anchors and the origin day
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#diagnosing-a-failed-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Diagnosing a failed run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tune-check-warning-runtime_liveness_missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tune check warning runtime_liveness_missing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#promotion-evidence-checkers-and-a-holdout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Promotion evidence: checkers and a holdout
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Promotion evidence: checkers and a holdout">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-model-with-no-price-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A model with no price yet
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validate-compile-simulate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validate, compile, simulate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-the-tvl-toolchain-is-missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When the TVL toolchain is missing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="When the TVL toolchain is missing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ci-do-not-lose-the-tvl-tests-silently" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CI: do not lose the TVL tests silently
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#local-controller-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local controller guarantees
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Budget
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../js-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JS Bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm_plugin_migration_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Plugin Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parallel-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets_management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Secrets Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../VSCODE_RESTART_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VS Code Restart Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/agent_optimization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/execution-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Modes (local / cloud / hybrid_api)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/choosing_optimization_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an Optimization Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/evaluation_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/cost_capture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Token and Cost Capture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/execution-snapshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storing the Execution Snapshot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/injection_modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injection Modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/interactive_optimization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/tuned_variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tuned Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/compare_configs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comparing Fixed Configurations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/azure_openai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Azure OpenAI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/bedrock/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Bedrock
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/google_gemini/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Google Gemini
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/complete-function-specification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Complete Function Specification
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/decorator-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decorator Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/enterprise-beta-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Enterprise Beta API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/interactive_optimizer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Optimizer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/telemetry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Telemetry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/thread-pool-examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thread Pool Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/START_HERE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Start Here
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/API_PATTERNS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Patterns
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/LEARNING_ROADMAP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Learning Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/QUICK_REFERENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/TROUBLESHOOTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_7" id="__nav_7_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demos
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Demos
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../demos/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../demos/DEMO_VIDEO_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demo Video Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security & Trust
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Security & Trust
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/trust_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trust Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/SECURITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/project-structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/plugin_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/integrations-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/stop_conditions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stop Conditions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Contributing
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/CONTRIBUTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/ADDING_NEW_INTEGRATIONS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adding New Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/test-quality-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Quality Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/CODE_OF_CONDUCT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code of Conduct
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/EXAMPLE_TEMPLATE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Example Template
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#supported-in-this-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported in this release
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Supported in this release">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-release-witness-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the release witness checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rates-are-exact-decimals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rates are exact decimals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-each-builder-emits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What each builder emits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-human-decision-this-controller-takes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The human decision this controller takes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#who-may-decide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who may decide
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Time
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Time">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#schedule-anchors-and-the-origin-day" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schedule anchors and the origin day
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#diagnosing-a-failed-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Diagnosing a failed run
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tune-check-warning-runtime_liveness_missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tune check warning runtime_liveness_missing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#promotion-evidence-checkers-and-a-holdout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Promotion evidence: checkers and a holdout
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Promotion evidence: checkers and a holdout">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-model-with-no-price-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A model with no price yet
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validate-compile-simulate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validate, compile, simulate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-the-tvl-toolchain-is-missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When the TVL toolchain is missing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="When the TVL toolchain is missing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ci-do-not-lose-the-tvl-tests-silently" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CI: do not lose the TVL tests silently
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#local-controller-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local controller guarantees
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Budget
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="continuous-tuning">Continuous Tuning<a class="headerlink" href="#continuous-tuning" title="Permanent link">&para;</a></h1>
+<p>Continuous Tuning keeps a deployed agent inside a quality bound and re-optimizes it when
+something changes: a breach is observed or a schedule ticks. This release is a pilot: it runs
+schedule triggers with human approval of each run only (a monitor-breach trigger compiles but the controller refuses it). The local controller
+runs the <strong>spend step</strong> (it invokes the optimizer once a person has approved); releasing a
+candidate is planned, not built (a platform-signed release does not exist yet), and this controller never does it (see
+<a href="#supported-in-this-release">Supported in this release</a>).</p>
+<p>TVL 1.7 is the source of truth. <code>traigent.tuning</code> is sugar that emits a TVL 1.7 module
+(requirements, monitors, responses); the TVL reference toolchain validates it. The sugar can
+express nothing TVL cannot, and <code>Tuning(tvl="policy.tvl.yml")</code> accepts any valid TVL fragment.</p>
+<p>A support-ticket router that re-tunes itself on a schedule, serves its in-code default until a signed release exists, and proves a candidate on a held-aside set before anyone is asked:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.tuning</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tuning</span><span class="p">,</span> <span class="n">FailureRate</span><span class="p">,</span> <span class="n">RandomAudit</span><span class="p">,</span> <span class="n">Every</span><span class="p">,</span> <span class="n">ProposeFix</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">ticket_route_check</span><span class="p">(</span><span class="n">example</span><span class="p">,</span> <span class="n">output</span><span class="p">):</span>          <span class="c1"># answers with a label declared below</span>
+    <span class="k">return</span> <span class="s2">"pass"</span> <span class="k">if</span> <span class="n">output</span> <span class="o">==</span> <span class="n">example</span><span class="p">[</span><span class="s2">"output"</span><span class="p">]</span> <span class="k">else</span> <span class="s2">"fail"</span>
+
+<span class="nd">@traigent</span><span class="o">.</span><span class="n">observe</span><span class="p">(</span>
+    <span class="n">agent</span><span class="o">=</span><span class="s2">"ticket-router"</span><span class="p">,</span>
+    <span class="n">follow</span><span class="o">=</span><span class="s2">"head"</span><span class="p">,</span>                                <span class="c1"># serves the function's in-code default until a platform-signed release exists</span>
+    <span class="n">tune</span><span class="o">=</span><span class="n">Tuning</span><span class="p">(</span>
+        <span class="n">keep</span><span class="o">=</span><span class="p">[</span><span class="n">FailureRate</span><span class="p">(</span><span class="s2">"customer:ticket_route_check"</span><span class="p">,</span> <span class="n">at_most</span><span class="o">=</span><span class="s2">"0.08"</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="s2">"24h"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"quality_floor"</span><span class="p">)],</span>
+        <span class="n">audit</span><span class="o">=</span><span class="n">RandomAudit</span><span class="p">(</span><span class="n">rate</span><span class="o">=</span><span class="s2">"0.02"</span><span class="p">),</span>
+        <span class="n">on</span><span class="o">=</span><span class="p">[</span><span class="n">Every</span><span class="p">(</span><span class="mi">30</span><span class="p">,</span> <span class="s2">"2026-12-01T00:00:00Z"</span><span class="p">)],</span>
+        <span class="n">fix</span><span class="o">=</span><span class="n">ProposeFix</span><span class="p">(</span><span class="n">approval</span><span class="o">=</span><span class="s2">"human"</span><span class="p">,</span> <span class="n">deploy</span><span class="o">=</span><span class="s2">"if_promoted"</span><span class="p">),</span>
+        <span class="n">recover</span><span class="o">=</span><span class="s2">"since_head_move"</span><span class="p">,</span>
+        <span class="c1"># promotion evidence: customer-side checker, its full label set, and a holdout</span>
+        <span class="n">checkers</span><span class="o">=</span><span class="p">{</span><span class="s2">"customer:ticket_route_check"</span><span class="p">:</span> <span class="n">ticket_route_check</span><span class="p">},</span>
+        <span class="n">checker_labels</span><span class="o">=</span><span class="p">{</span><span class="s2">"customer:ticket_route_check"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"pass"</span><span class="p">,</span> <span class="s2">"fail"</span><span class="p">]},</span>
+        <span class="n">holdout</span><span class="o">=</span><span class="s2">"holdout.jsonl"</span><span class="p">,</span>                  <span class="c1"># {"input": {...}, "output": expected} per line</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"anthropic/claude-haiku-4-5"</span><span class="p">,</span> <span class="s2">"anthropic/claude-sonnet-4-6"</span><span class="p">,</span>
+                                    <span class="s2">"anthropic/claude-haiku-5-5"</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"eval.jsonl"</span><span class="p">,</span>                    <span class="c1"># the optimizer's own data, never the holdout</span>
+    <span class="n">default_config</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"anthropic/claude-haiku-4-5"</span><span class="p">},</span>
+<span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">classify</span><span class="p">(</span><span class="n">ticket</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p>Decoration compiles and validates the policy locally (no network) and attaches the result as
+<code>classify.tuning</code> (<code>.tvl</code>, <code>.diagnostics</code>, <code>.validated</code>). Calls are unchanged. <code>.validated</code> is
+true only when the TVL linter ran and reported no error-severity diagnostic; otherwise every
+executing path refuses with <code>E_TVL_VALIDATION_FAILED</code>, carrying the TVL codes unchanged (for
+example <code>release_rollback_deferred</code>).</p>
+<h2 id="supported-in-this-release">Supported in this release<a class="headerlink" href="#supported-in-this-release" title="Permanent link">&para;</a></h2>
+<p>The SDK compiles and validates every TVL 1.7 policy, but the local controller runs a pilot
+subset. A policy outside it still compiles, checks and simulates; the controller refuses to run
+it with <code>E_UNSUPPORTED_IN_RELEASE</code>, naming the feature.</p>
+<table>
+<thead>
+<tr>
+<th>Supported in this release</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Schedule triggers (<code>Every</code>)</td>
+<td>a schedule scope lasts until the next tick; the end is carried out of the history replay and checked against a fresh clock before the optimizer starts</td>
+</tr>
+<tr>
+<td>Human approval of each run (<strong>Approve run</strong>)</td>
+<td>by an approver on the configured authority list, checked again at the effect</td>
+</tr>
+<tr>
+<td>Holdout promotion evidence, reading the head, local store</td>
+<td>as described below</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Specified in TVL, not supported by the SDK yet</th>
+<th>What the SDK does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Monitor-breach triggers (<code>OnBreach</code>)</td>
+<td>compile and check, but a policy with a breach (episode) trigger is refused with <code>E_UNSUPPORTED_IN_RELEASE</code> when the controller is built: the pilot trigger is a schedule</td>
+</tr>
+<tr>
+<td>Standing approval (<code>approval: standing</code>) and standing grants</td>
+<td>a policy with a standing rule is refused when the controller is built; recording a grant refuses; nothing reads a grants file</td>
+</tr>
+<tr>
+<td>External events (<code>ModelReleased</code>, <code>record_event</code>, <code>traigent tune event</code>)</td>
+<td>a policy with an external trigger is refused when the controller is built; recording an event refuses</td>
+</tr>
+<tr>
+<td>RFC 0011 Part B (<code>when</code>, cooldown, <code>silent_for</code>, <code>fired_count</code>)</td>
+<td>not implemented by the reference relation</td>
+</tr>
+<tr>
+<td>Releasing a candidate (<code>submit_acceptance</code>, <code>accept</code>, <code>traigent tune accept</code>)</td>
+<td>is planned, not built (a platform-signed release does not exist yet); every release entry point refuses with <code>E_UNSUPPORTED_IN_RELEASE</code> before it touches the store, and this controller never moves <code>head.json</code></td>
+</tr>
+<tr>
+<td>Release rollback (<code>target: release_rollback_target</code>)</td>
+<td>deferred out of TVL 1.7; the linter reports <code>release_rollback_deferred</code></td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Python SDK</th>
+<th>JavaScript SDK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compile policy to a TVL 1.7 module</td>
+<td>yes</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>Validate with the TVL linter (<code>validated</code> only on a clean lint)</td>
+<td>yes</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>Run the loop locally (the pilot subset above)</td>
+<td>yes</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<h3 id="what-the-release-witness-checks">What the release witness checks<a class="headerlink" href="#what-the-release-witness-checks" title="Permanent link">&para;</a></h3>
+<p>A release witness (an end-to-end run against the real CLI) should observe:</p>
+<ul>
+<li>a schedule policy runs from <code>step</code> to a human approval and an optimizer run that leaves a
+  candidate pending, and the head does not move;</li>
+<li><code>traigent tune accept ...</code> exits non-zero with <code>E_UNSUPPORTED_IN_RELEASE</code> and creates or
+  changes nothing in the store;</li>
+<li>a policy with a <code>ModelReleased</code> trigger compiles and checks, and <code>traigent tune step</code> on it
+  exits non-zero with <code>E_UNSUPPORTED_IN_RELEASE</code>;</li>
+<li><code>traigent tune event FILE</code> exits non-zero with <code>E_UNSUPPORTED_IN_RELEASE</code> and writes nothing;</li>
+<li>a rule with <code>approval: standing</code> is refused with <code>E_UNSUPPORTED_IN_RELEASE</code> when the
+  controller is built, and a grants file placed in the store authorizes nothing.</li>
+</ul>
+<p>RFC 0011 and RFC 0012 are TVL drafts; this guide follows the reference relation as it stands.</p>
+<h2 id="rates-are-exact-decimals">Rates are exact decimals<a class="headerlink" href="#rates-are-exact-decimals" title="Permanent link">&para;</a></h2>
+<p>Rates are decimal strings or <code>decimal.Decimal</code>. Floats are rejected with <code>E_FLOAT_RATE</code>.</p>
+<h2 id="what-each-builder-emits">What each builder emits<a class="headerlink" href="#what-each-builder-emits" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Builder</th>
+<th>TVL</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FailureRate(checker, at_most, window)</code></td>
+<td>a <code>rate_bound</code> requirement, one <code>phase: runtime</code> monitor (customer side, <code>clopper_pearson_rational_v2</code>) and one <code>phase: promotion</code> monitor on the evaluation set. <code>window</code> is <code>6h</code>, <code>12h</code> or <code>24h</code>.</td>
+</tr>
+<tr>
+<td><code>RandomAudit(rate)</code></td>
+<td><code>hash_bernoulli_committed_v1</code> sampling on the runtime monitors (rate strictly between 0 and 1).</td>
+</tr>
+<tr>
+<td><code>ModelReleased(family, tier, admit)</code></td>
+<td>rule <code>on_new_model</code>: external trigger <code>model_released</code>, <code>admit: {tvar}</code>, <code>protects</code> all kept requirements. Compiles and checks, but the controller does not run it in this release.</td>
+</tr>
+<tr>
+<td><code>OnBreach()</code></td>
+<td>rule <code>on_breach</code> (or <code>on_breach_&lt;name&gt;</code> with several kept rates): monitor trigger <code>episode_opened</code>. Compiles and checks, but the controller does not run it in this release.</td>
+</tr>
+<tr>
+<td><code>Every(days, anchor)</code></td>
+<td>schedule trigger with <code>protects</code>. With no explicit <code>module_context</code> snapshot, the TVL <code>environment.snapshot_id</code> is the earliest <code>Every</code> anchor (TVL requires every anchor within one year after the snapshot); set <code>module_context={"environment": {"snapshot_id": ...}}</code> to choose it.</td>
+</tr>
+<tr>
+<td><code>ProposeFix(approval, deploy)</code></td>
+<td><code>approval</code> and <code>deploy</code> on every rule; <code>approval="none"</code> is rejected.</td>
+</tr>
+</tbody>
+</table>
+<p>The module context (tvars, objectives, evaluation set, environment) comes from the
+<code>@traigent.optimize</code> function. For tests pass <code>Tuning(..., module_context={...})</code>.</p>
+<h2 id="the-human-decision-this-controller-takes">The human decision this controller takes<a class="headerlink" href="#the-human-decision-this-controller-takes" title="Permanent link">&para;</a></h2>
+<p>The local loop asks a person once, and <code>traigent tune status</code> (or <code>status --text</code>) shows what
+the decision is about.</p>
+<p><strong>Approve run</strong> allows one optimization to spend. Before you approve, <code>status</code> prints, per
+attempt awaiting approval (<code>approve_run</code>): the trigger that fired (the rule's TVL trigger and
+its approval mode) and the <strong>spend limit</strong> the optimizer will run under (<code>max_trials</code>,
+<code>cost_limit</code>, <code>timeout</code> of the optimized function; <code>none configured</code> when there is none).</p>
+<p><strong>Release</strong> is not decided here. A measured candidate waits for a release mechanism that is planned, not built;
+<code>status</code> prints, per pending deploy (<code>release_evidence</code>, read-only): the <strong>incumbent</strong> (the head
+the gate measured: fingerprint and generation), the <strong>candidate</strong> fingerprint, the <strong>holdout
+counts</strong> per promotion monitor (<code>n</code>, <code>k</code> violations, <code>u</code> unresolved), the rows left out of the
+paired comparison, how often this holdout was used before, the <strong>gate result</strong> (TVL's
+comparison, each monitor verdict, the joined decision, and any closed warning such as an
+unknown cost), the <strong>code version</strong> the candidate and incumbent were measured on, and the
+<strong>observed generation</strong> of the stored baseline. The code version is the
+<code>TRAIGENT_AGENT_CODE_VERSION</code> environment variable if set, else <code>Tuning(code_version=...)</code>, else
+<code>src:</code> plus a sha256 of the decorated function's module source; if none can be determined, no
+candidate gets promotion evidence (<code>E_NO_CODE_VERSION</code>), there is no default. The local head file is never applied to a serving call (see below), so traces carry no head code version.</p>
+<div class="highlight"><pre><span></span><code>traigent<span class="w"> </span>tune<span class="w"> </span>status<span class="w"> </span>--text<span class="w">   </span>--store<span class="w"> </span>.traigent/tuning/production/ticket-router<span class="w"> </span>--target<span class="w"> </span>agent.py:classify
+traigent<span class="w"> </span>tune<span class="w"> </span>approve<span class="w"> </span>&lt;occurrence&gt;<span class="w">  </span>--approver<span class="w"> </span>alice<span class="w"> </span>--authority<span class="w"> </span>authority.yml<span class="w"> </span>...
+</code></pre></div>
+<p><code>traigent tune accept</code> still exists so existing scripts get a clear answer: it exits non-zero
+with <code>E_UNSUPPORTED_IN_RELEASE</code> before it reads or creates anything.</p>
+<h2 id="who-may-decide">Who may decide<a class="headerlink" href="#who-may-decide" title="Permanent link">&para;</a></h2>
+<p>Nothing is allowed by default.</p>
+<ul>
+<li><strong>Authority.</strong> <code>Controller(..., authority=ApproverAuthority(...))</code> (or <code>authorized_approvers=</code>)
+  names who may approve a run. Without one, <code>approve_optimization</code> refuses with
+  <code>E_NO_APPROVER_AUTHORITY</code>, and so does <code>traigent tune approve</code> unless <code>--authority FILE</code> (or
+  <code>TRAIGENT_TUNING_AUTHORITY</code>) names a config. An approver not on the list is refused
+  (<code>E_APPROVER_NOT_AUTHORIZED</code>). The list is checked again at the effect, just before the
+  optimizer runs.</li>
+<li><strong>Local mode is <code>local-trusted</code>.</strong> The config file lists approvers:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local-trusted</span>
+<span class="nt">approvers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">alice</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">bob</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p><code>local-trusted</code> means: the operator running the command is trusted to be a listed approver. No
+  credential is checked, so it proves nothing about who they are. Every approval
+  made this way is labelled <code>local-trusted</code> in the store, and the CLI prints it.
+  <strong>Production needs the platform (portal) to authenticate the person</strong>: pass
+  <code>ApproverAuthority(approvers, mode="platform", authenticator=callable)</code>, where the callable
+  asks the platform. A <code>local-trusted</code> authority is refused unless the process environment is
+  explicitly non-production (<code>dev</code>, <code>development</code>, <code>local</code>, <code>test</code>, <code>testing</code>, <code>stage</code>,
+  <code>staging</code>; an unset or unrecognised <code>ENVIRONMENT</code> counts as production) AND the store's
+  recorded environment is a recognised non-production name (a missing or unknown name is
+  refused): a production store never trusts a local
+  operator, whatever the process says (<code>E_LOCAL_AUTHORITY_IN_PRODUCTION</code>). The check is made
+  again at every use of a saved approval. The CLI and <code>observe</code> open the
+  store of the declared environment, else the process environment, else <code>production</code>. An authenticator that raises never authenticates.
+* <strong>Every authority decision uses the same authenticator.</strong> Approve run is checked against the
+  list and, in <code>platform</code> mode, against your authenticator; one that answers False (or raises)
+  refuses, at the decision and again just before the effect.</p>
+<h2 id="time">Time<a class="headerlink" href="#time" title="Permanent link">&para;</a></h2>
+<p>Every recorded instant is a whole number of seconds after the store's origin (UTC midnight of
+the day it was created), exactly the TVL relation's clock. Nothing is rounded to an hour and
+nothing is recorded in the future: a window report for a window that has not ended is refused.
+Monitor
+windows must be aligned to <code>3600 * tumbling_hours</code> seconds after the origin. A clock set back
+never moves recorded time backwards.</p>
+<h3 id="schedule-anchors-and-the-origin-day">Schedule anchors and the origin day<a class="headerlink" href="#schedule-anchors-and-the-origin-day" title="Permanent link">&para;</a></h3>
+<p>A schedule's first tick is its <code>anchor</code>, measured in whole seconds from the store's origin.
+The simplest, tested setup puts the anchor at the origin day itself: the UTC midnight of the
+day the store is first created (the <code>tune step</code> that creates it, or the <code>now</code> it is given).
+An anchor before the origin day fires on the first step; one that is more than <code>days</code> days
+before it has its first scopes already expired, so the first occurrence you see is a later
+tick (for example <code>.../1/0</code>, not <code>.../0/0</code>); an anchor after the origin day does not fire
+until it is reached, and <code>tune step</code> prints an empty <code>awaiting_approval</code> until then. The SDK
+does not yet refuse a differing anchor with a dedicated error (measured 2026-11-21, see the
+PR that added this section): check <code>tune status</code> for the occurrence you expect.</p>
+<h2 id="diagnosing-a-failed-run">Diagnosing a failed run<a class="headerlink" href="#diagnosing-a-failed-run" title="Permanent link">&para;</a></h2>
+<p>When an approved run ends in an error, <code>tune step</code> exits non-zero, prints
+<code>optimization_failed: &lt;attempt&gt;:&lt;reason&gt;</code>, and lists the same under <code>errors</code> in its JSON.
+The stored record (<code>controller.jsonl</code>, fact <code>optimize_failed</code>) carries only a closed reason:</p>
+<table>
+<thead>
+<tr>
+<th>Reason</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cost_preflight_refused</code></td>
+<td>the pre-run cost check refused the run (estimate above the limit, or cost tracking required)</td>
+</tr>
+<tr>
+<td><code>unpriced_model</code></td>
+<td>a model in the search space has no price entry (price it with <code>TRAIGENT_CUSTOM_MODEL_PRICING_JSON</code>, or use a priced model)</td>
+</tr>
+<tr>
+<td><code>connected_tuning_refused</code></td>
+<td>the function is configured for a connected run, which tuning refuses</td>
+</tr>
+<tr>
+<td><code>optimizer_raised</code></td>
+<td>any other exception from the optimizer</td>
+</tr>
+</tbody>
+</table>
+<p>The exception message and traceback are written to the local log (standard error) only: they
+can carry your content, so they never enter the store or any record the SDK sends.</p>
+<h2 id="tune-check-warning-runtime_liveness_missing"><code>tune check</code> warning <code>runtime_liveness_missing</code><a class="headerlink" href="#tune-check-warning-runtime_liveness_missing" title="Permanent link">&para;</a></h2>
+<p><code>traigent tune check</code> on a compiled policy warns <code>runtime_liveness_missing</code>: TVL (section 5.5)
+recommends that every primary runtime monitor be covered by an <code>evidence_liveness</code> requirement
+(a count of how many windows may pass without evidence). The builder does not emit one in this
+release, on purpose: the pilot runs schedule triggers only and receives no runtime window
+facts, so a liveness requirement would declare a staleness rule that nothing feeds. The
+warning is accurate, not a false positive, and it is left visible; it is a warning, so the
+policy still checks and runs. Emitting a liveness requirement is a contract change (new
+monitor, new policy field) held for the release that runs runtime monitoring.</p>
+<h2 id="promotion-evidence-checkers-and-a-holdout">Promotion evidence: checkers and a holdout<a class="headerlink" href="#promotion-evidence-checkers-and-a-holdout" title="Permanent link">&para;</a></h2>
+<p>A candidate deploys only on real evidence, measured locally on <strong>every</strong> path: the controller
+ignores any <code>legacy_decision</code> or <code>monitor_verdicts</code> an optimizer supplies (recorded as
+<code>external_verdicts_ignored</code>).</p>
+<p>After the optimizer returns, the controller freezes each candidate config, runs your function
+with that config and with the current head config on every holdout example (the two are
+interleaved per row, and the order alternates, so provider drift hits both alike), applies each
+checker, and records counts <code>{n, k, u, pl, complete}</code> (<code>k</code> = examples labelled in the
+requirement's <code>label_in</code>, <code>u</code> = unresolved). TVL computes the verdicts
+(<code>evaluate_promotion_monitor</code>) and the comparison with the head (<code>epsilon_pareto_gate</code> on the
+<code>accuracy</code> objective, exact match against <code>output</code>); the SDK computes neither.</p>
+<p>Soundness rules:</p>
+<ul>
+<li>A call that raised is <strong>unresolved</strong>, never a score of 0.0. It counts toward
+  <code>max_unresolved_fraction</code> (the monitor's, else 5 percent); a row either side could not resolve
+  leaves the pair, and too many leave no evidence (<code>too_many_unresolved</code>).</li>
+<li>A checker answer must be in the checker's declared label set (<code>checker_labels</code>, the TVL
+  checker registry) and that set must contain the requirement's <code>label_in</code>. An answer outside it
+  is unresolved and reported as <code>E_CHECKER_LABEL_OUT_OF_SET</code>, so a typo cannot pass as "no
+  violation".</li>
+<li>Every holdout row needs an expected <code>output</code>; a row without one refuses the holdout
+  (<code>holdout_missing_expected_output</code>).</li>
+<li>A holdout whose bytes or content equal the optimized function's <code>eval_dataset</code> is refused
+  (<code>holdout_is_optimization_eval_set</code>).</li>
+<li>The gate result names the incumbent it measured (fingerprint and generation), and carries the
+  gate digest and the holdout digest of <strong>that deploy's own attempt</strong>, never one found by
+  scanning for a fingerprint.</li>
+</ul>
+<p><strong>Holdout reuse risk.</strong> The digest check refuses a holdout whose file bytes or content are
+identical to the optimizer's <code>eval_dataset</code>. It does not prove the two sets are disjoint, nor
+that the holdout is independent of anything else; rows that overlap partially, or near
+duplicates, pass. Reuse is counted, not prevented: every scheduled or breach-triggered run that
+selects against the same holdout makes a lucky pass more likely, and the gate has no
+multiple-testing correction. The
+holdout digest ties a decision to a file, and <code>status</code> shows how many earlier gates used the
+same holdout (<code>prior_uses</code>). Refresh the holdout with fresh cases on a cadence you can defend,
+and treat a high <code>prior_uses</code> as a reason to refuse.</p>
+<p>No holdout, no checker or label set for a promotion monitor, an unreadable holdout, or an
+objective other than <code>accuracy</code> records an <code>E_NO_PROMOTION_EVIDENCE</code> controller fact
+(<code>controller_facts()</code>, with a closed <code>reason</code>) and the candidate stays <code>NoDecision</code>: absence
+never promotes.</p>
+<h3 id="a-model-with-no-price-yet">A model with no price yet<a class="headerlink" href="#a-model-with-no-price-yet" title="Permanent link">&para;</a></h3>
+<p>The cost preflight refuses unpriced models. Unknown is never zero: if cost is an objective
+the candidate cannot be promoted (<code>cost_unknown_unpriced_model</code>), and otherwise the gate carries
+<code>COST_UNKNOWN_UNPRICED_MODEL</code> for the person accepting.</p>
+<h2 id="validate-compile-simulate">Validate, compile, simulate<a class="headerlink" href="#validate-compile-simulate" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="n">policy</span><span class="o">.</span><span class="n">to_tvl</span><span class="p">(</span><span class="n">module_context</span><span class="p">)</span>     <span class="c1"># the TVL 1.7 module as a dict</span>
+<span class="n">policy</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">module_context</span><span class="p">)</span>   <span class="c1"># TVL diagnostics, unchanged (code, severity, path, message)</span>
+<span class="n">Tuning</span><span class="o">.</span><span class="n">from_tvl</span><span class="p">(</span><span class="n">doc</span><span class="p">)</span>              <span class="c1"># inverse of to_tvl for documents in builder shape</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>traigent<span class="w"> </span>tune<span class="w"> </span>compile<span class="w"> </span>agent.py:classify<span class="w"> </span>-o<span class="w"> </span>policy.tvl.yml
+traigent<span class="w"> </span>tune<span class="w"> </span>check<span class="w"> </span>policy.tvl.yml<span class="w">          </span><span class="c1"># exit 1 on errors</span>
+traigent<span class="w"> </span>tune<span class="w"> </span>simulate<span class="w"> </span>policy.tvl.yml<span class="w"> </span>--history<span class="w"> </span>history.yml<span class="w"> </span><span class="o">[</span>--format<span class="w"> </span>json<span class="o">]</span>
+</code></pre></div>
+<p><code>simulate</code> runs the TVL reference relation over a recorded history and prints the derived facts.
+<code>--tvl FILE</code> on the controller commands lints the file first and shows TVL's error codes.</p>
+<h2 id="when-the-tvl-toolchain-is-missing">When the TVL toolchain is missing<a class="headerlink" href="#when-the-tvl-toolchain-is-missing" title="Permanent link">&para;</a></h2>
+<p>Validation uses the <code>tvl</code> package (<code>tvl.lints.lint_module</code>, <code>tvl.runtime_conditions</code>) and needs a
+release that supports TVL 1.7. If it is not importable or too old, decoration still succeeds
+and the policy is marked <code>validated=False</code>; <code>fn.tuning.require_validated()</code>, <code>traigent tune check</code>
+and <code>traigent tune simulate</code> refuse with <code>E_TVL_VALIDATOR_UNAVAILABLE</code>. There is no
+schema-only fallback.</p>
+<h3 id="ci-do-not-lose-the-tvl-tests-silently">CI: do not lose the TVL tests silently<a class="headerlink" href="#ci-do-not-lose-the-tvl-tests-silently" title="Permanent link">&para;</a></h3>
+<p><code>tests/unit/tuning</code> needs the TVL 1.7 toolchain. Collection never imports TVL; without it the
+tests skip. A CI job that must keep this coverage sets <code>TRAIGENT_TVL_REQUIRED=1</code>
+(<code>1</code>, <code>true</code> or <code>yes</code>): a missing or too-old TVL then <strong>fails</strong> every test in the directory
+instead of skipping it.</p>
+<div class="highlight"><pre><span></span><code><span class="nv">TRAIGENT_TVL_REQUIRED</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>-q<span class="w"> </span>tests/unit/tuning
+</code></pre></div>
+<h2 id="local-controller-guarantees">Local controller guarantees<a class="headerlink" href="#local-controller-guarantees" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Every optimization needs a recorded approval</strong> by a listed approver, and it is re-checked
+  immediately before the optimizer runs. No record, no optimize.</li>
+<li><strong>Deadlines are re-checked at the effect, against a fresh clock.</strong> The scope is replayed once
+  (the TVL relation); its own end (a schedule scope ends at the next tick) is carried out of that
+  replay. Before authentication, under the store lock, the controller repairs the journal tail and
+  prepares the start-fact append. The very last step before the optimizer is invoked is then the
+  authenticator, one clock sample and an append that reads no journal: nothing scans or repairs a
+  journal after the clock is sampled, and a replay that takes longer than a second never defers a
+  valid run. An approved attempt the final gate refuses (the scope ended, the approver was
+  revoked, or the journal is ahead of the clock) finishes <code>cancelled</code>, so a human grant that
+  never spent does not hold a later schedule; the refusal is recorded as a controller fact
+  (<code>optimize_refused</code>).</li>
+<li><strong>Only the SDK's own adapter is handed the final check.</strong> <code>traigent_optimize_fn</code> calls it
+  inside its artifact lock, immediately before the optimization starts. Every other injected
+  optimizer, including one that advertises <code>accepts_candidate_dir</code>, is gated by the controller
+  immediately before it is invoked and never receives the check.</li>
+<li><strong>The loaded dataset must be named well.</strong> An optimizer reports the digests of the datasets it
+  loaded as a list of <code>sha256:&lt;64 hex&gt;</code> strings; anything else (a bare string, nothing, a
+  malformed entry) means the identity is unknown and the candidate has no promotion evidence
+  (<code>eval_set_identity_unknown</code>).</li>
+<li><strong>The head never moves here.</strong> <code>head.json</code> is written once, when the store is created
+  (generation 0), and only read afterwards. Release acceptance is planned, not built (a platform-signed release does not exist yet); <code>submit_acceptance</code>, <code>accept</code>, <code>build_acceptance</code> and <code>traigent tune accept</code> refuse with
+  <code>E_UNSUPPORTED_IN_RELEASE</code> before any I/O. <code>step</code> raises <code>E_HEAD_DIVERGED</code> if <code>head.json</code> names
+  a generation the relation does not.</li>
+<li><strong>The optimization runs on an isolated copy</strong> of the <code>@traigent.optimize</code> function, so the live
+  function keeps serving its own configuration. The copy is pinned to the SDK's offline (local-only)
+  execution: a tuning run sends no configuration values (prompts, models, search-space values) to the
+  Traigent backend, and a function configured for a connected run (a smart algorithm such as
+  <code>bayesian</code>, or a hybrid-API evaluator) is refused with <code>E_CONNECTED_TUNING_REFUSED</code>. Use <code>grid</code>
+  or <code>random</code>.</li>
+<li><strong>The tuning store lock needs a POSIX platform.</strong> <code>fcntl</code> is imported only when the store is
+  locked; the CLI starts without it, and tuning on a platform without it fails with
+  <code>E_LOCK_UNSUPPORTED_PLATFORM</code>.</li>
+<li><strong>Store durability.</strong> <code>meta.json</code> is written last (an interrupted init is redone on the next
+  start). History and controller facts are checksummed JSONL: a torn
+  final line is truncated and logged on load; a damaged earlier line raises <code>E_STORE_CORRUPT</code>.</li>
+<li><strong>The CLI finds the optimizer and seeds the head.</strong> With the order above, <code>observe</code> returns a plain
+  function; the inner <code>@traigent.optimize</code> function is exposed as <code>fn.tuning.optimized</code>, and
+  <code>traigent tune ... --target</code> uses it (walking <code>__wrapped__</code> as a fallback). When a store is created
+  from <code>--target</code>, head generation 0 holds the optimized function's <code>default_config</code> (else the first
+  value of each configuration-space dimension); if none can be determined the head starts <code>{}</code> and the
+  CLI prints a warning.</li>
+<li><strong><code>follow="head"</code> serves the in-code default.</strong> No configuration in <code>head.json</code> is servable until a
+  platform-signed release exists: every call runs on the function's own in-code configuration, whatever
+  <code>head.json</code> holds. <code>read_head</code> and <code>HeadLoader</code> remain for status and inspection only. A damaged,
+  missing or unreadable head never reaches the agent call (it is logged once and the call runs the
+  in-code default).</li>
+<li><strong>Followed-head traces</strong> (<code>observe(follow="head")</code>) carry only <code>agent</code> and <code>head_state</code>
+  (<code>unreleased</code>, or <code>unreadable</code> when the head file could not be read); no generation, fingerprint or
+  configuration is stamped, and the configuration is never copied into trace metadata.</li>
+</ul>
+<h2 id="known-limits">Known limits<a class="headerlink" href="#known-limits" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The controller runs the optimizer with <code>asyncio.run</code>, so it must not be called from inside a
+  running event loop (an async framework, a notebook cell): run it from a script or a worker.</li>
+<li>The store lock uses <code>fcntl</code>, so the local controller is POSIX only.</li>
+<li>The optimizer's artifact folders are routed through process-wide environment variables for the
+  duration of one candidate run (guarded by a lock): two controllers in one process, or other
+  code reading those variables meanwhile, can interfere.</li>
+<li>Local evidence measures <code>accuracy</code> (exact match) only. Cost, latency and other objectives make
+  the candidate <code>NoDecision</code> (<code>objective_not_measurable</code>).</li>
+<li>Spend per run is bounded by the optimized function's own <code>max_trials</code> and <code>cost_limit</code>.</li>
+<li>The window aggregation is yours to run: the controller records what you hand it
+  (<code>record_window</code>) and acts on <code>step</code>.</li>
+<li>Release rollback and RFC 0011 Part B are not implemented (see the support table).</li>
+</ul>
+<h2 id="budget">Budget<a class="headerlink" href="#budget" title="Permanent link">&para;</a></h2>
+<p>Per-occurrence spend belongs to TVL <code>run_budget</code> (RFC 0010). Until the TVL schema accepts it, a
+fix budget stays execution metadata (<code>max_fix_cost_usd</code> on <code>@traigent.requirement</code>) and is not part of the
+emitted module.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

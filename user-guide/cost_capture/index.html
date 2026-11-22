@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1506,6 +1506,34 @@
     
   
     Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/continuous-tuning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Continuous Tuning
   
 
     
@@ -3608,6 +3636,11 @@ not know, and what a trial reports when nothing was captured.</p>
 <td>non-streaming calls that return <code>usage</code>. Responses API <code>input_tokens</code>/<code>output_tokens</code> are counted as prompt/completion tokens. Your code still receives the normal return value; a <code>with_raw_response</code> result is parsed once and the parsed object is cached, so your own <code>.parse()</code> returns it</td>
 </tr>
 <tr>
+<td>Raw Anthropic SDK, sync and async: <code>messages.create</code>, and <code>messages.stream</code> (usage is read from the final message when the <code>with</code> block exits)</td>
+<td>the Anthropic override is active (<code>framework_targets=["anthropic.Anthropic", "anthropic.AsyncAnthropic"]</code> or <code>override_anthropic()</code>)</td>
+<td><code>usage.input_tokens</code>/<code>output_tokens</code> (<a href="https://github.com/Traigent/Traigent/issues/3250">#3250</a>). <code>create(stream=True)</code> and a <code>messages.stream</code> abandoned before its final event report no usage and stay unmeasured, never estimated from text length. Cache read/write tokens, which Anthropic reports beside <code>input_tokens</code>, are not priced separately yet (same as <code>ChatAnthropic</code>), so a prompt-cached call's cost is a lower bound</td>
+</tr>
+<tr>
 <td>Direct <code>google.genai</code> calls (Gemini API or Vertex AI client)</td>
 <td>never</td>
 <td>Traigent does not patch this client, so these calls are outside cost tracking. A trial can show a cost of 0.0, and a run with a cost cap can stop with an unmeasured-cost error. Calling Gemini through <code>litellm.completion</code> gets its usage captured.</td>
@@ -3853,7 +3886,7 @@ parameters at <code>chat.completions.create</code>, not into the client construc
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

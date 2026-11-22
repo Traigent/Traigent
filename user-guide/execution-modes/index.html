@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1526,6 +1526,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../guides/continuous-tuning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Continuous Tuning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../guides/js-bridge/" class="md-nav__link">
         
   
@@ -1851,6 +1879,17 @@
     <span class="md-ellipsis">
       
         Code examples
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-algorithmauto-falls-back-to-a-local-search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When algorithm="auto" falls back to a local search
       
     </span>
   </a>
@@ -3440,6 +3479,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#when-algorithmauto-falls-back-to-a-local-search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When algorithm="auto" falls back to a local search
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#removed-and-deprecated-names" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3555,6 +3605,27 @@ objectives), left out here.</p>
 </code></pre></div>
 <p>See <a href="../../guides/execution-modes/">Execution Modes / Optimization Routing</a> for
 the full <code>algorithm</code> / <code>offline</code> routing reference within <code>local</code> and <code>cloud</code>.</p>
+<h2 id="when-algorithmauto-falls-back-to-a-local-search">When <code>algorithm="auto"</code> falls back to a local search<a class="headerlink" href="#when-algorithmauto-falls-back-to-a-local-search" title="Permanent link">&para;</a></h2>
+<p><code>algorithm="auto"</code> asks the Traigent backend to pick configurations. When the
+backend session cannot be created, the run falls back to a <strong>local random
+search</strong> on your machine, but only for these failures: no API key; an
+unreachable or unavailable backend (for example timeouts and 408, 500, 502, 503
+or 504 responses); or an <code>auto</code> run where cloud is not required and both the
+typed and the legacy session-creation requests were answered with HTTP 400.
+Definitive authentication rejections, quota
+refusals, closed backend refusals and other client errors (for example 401,
+402, 403, 404, 409, 422 or 429) raise instead. Set <code>TRAIGENT_REQUIRE_CLOUD=1</code>
+to fail instead of falling back.</p>
+<p>The session-creation request may already have been sent to Traigent before the
+failure, so a fallback run is not guaranteed to have sent nothing. After the
+fallback, the search and trials run locally.</p>
+<p>Traigent logs a warning when this happens, naming the reason. You can also
+check the result:</p>
+<ul>
+<li><code>result.metadata["source"] == "local_fallback"</code> (a managed run reports
+  <code>"cloud_brain"</code>), with the reason in <code>result.metadata["fallback_reason"]</code>.</li>
+<li><code>result.cloud_url</code> is not set, because no backend experiment exists.</li>
+</ul>
 <h2 id="removed-and-deprecated-names">Removed and deprecated names<a class="headerlink" href="#removed-and-deprecated-names" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3669,7 +3740,7 @@ the full <code>algorithm</code> / <code>offline</code> routing reference within 
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

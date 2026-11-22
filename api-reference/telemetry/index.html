@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1516,6 +1516,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../guides/continuous-tuning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Continuous Tuning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../guides/js-bridge/" class="md-nav__link">
         
   
@@ -2555,6 +2583,17 @@
     <span class="md-ellipsis">
       
         Complete Opt-Out
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usage-analytics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage Analytics
       
     </span>
   </a>
@@ -3960,6 +3999,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#usage-analytics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage Analytics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#accepted-values" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4318,7 +4368,9 @@ never leave.</p>
 </code></pre></div>
 <p>No-egress runs keep Traigent optimization metadata local while still allowing your
 own function to call LLM providers or other services.</p>
-<p><code>offline=True</code> also disables OpenTelemetry export, the langfuse client and the
+<p><code>offline=True</code> also disables OpenTelemetry export, the langfuse client, the
+MLflow and W&amp;B trackers (they raise <code>OfflineModeError</code> instead of sending run
+names, tags or tuned values to the tracking server) and the
 standalone API clients while the run is in flight, even if
 <code>TRAIGENT_TRACE_ENABLED</code> and <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> are set. Outside an
 <code>offline=True</code> run, the observability lanes (<code>@observe</code>,
@@ -4369,6 +4421,15 @@ is used as-is — the normal, documented way to opt one call into
 <code>record</code>/<code>redacted</code> capture. A trace_id this client process never locally
 tracked (created elsewhere, or already closed) resolves purely against the
 client-level policy, same as a bare <code>start_trace()</code>.</p>
+<p>Deprecated boolean variables (use <code>TRAIGENT_OBSERVABILITY_CONTENT</code> instead).
+Two spellings exist, one per SDK. The Python SDK honours both; the JS SDK
+currently honours only <code>TRAIGENT_OBSERVABILITY_PRIVACY_MODE</code>:
+<code>TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT</code> (<code>true</code> = <code>record</code>, <code>false</code> =
+<code>metadata</code>) and <code>TRAIGENT_OBSERVABILITY_PRIVACY_MODE</code> (<code>true</code> = <code>metadata</code>,
+<code>false</code> = no opinion). The most restrictive explicit setting wins; if the two
+disagree, content capture is off (<code>metadata</code>) and one deprecation warning
+names the variables (never their values). This setting controls content
+capture only; it is not a privacy guarantee for observability data.</p>
 <p><strong>Bound the promise:</strong> <code>metadata</code> mode withholds content fields (function
 arguments, return values, explicit <code>input_data</code>/<code>output_data</code>); arbitrary
 metadata you attach is sent after secret scrubbing and is NOT content-free.
@@ -4524,6 +4585,20 @@ paraphrase it.</p>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
 </code></pre></div>
+<h3 id="usage-analytics">Usage Analytics<a class="headerlink" href="#usage-analytics" title="Permanent link">&para;</a></h3>
+<p>Usage analytics is a separate, default-on lane: when a backend API key is set,
+local runs and <code>traigent sessions list</code> can send one anonymous-id session of
+aggregate statistics (session and trial totals, average config-space size and
+improvement, recent-session count, days since first use, SDK version) to the
+Traigent backend. It carries no prompts, outputs, dataset content or
+configuration values. Every one of these stops it, on all three send paths (post-run
+orchestrator, the incentive/hint manager, and the CLI):</p>
+<ul>
+<li><code>TRAIGENT_DISABLE_TELEMETRY=true</code> (same accepted values as below)</li>
+<li><code>TRAIGENT_OFFLINE_MODE=true</code> or <code>offline=True</code> on the decorator or config</li>
+<li><code>TraigentConfig(no_egress=True)</code></li>
+<li><code>TraigentConfig(enable_usage_analytics=False)</code>; the default stays <code>True</code></li>
+</ul>
 <h3 id="accepted-values">Accepted Values<a class="headerlink" href="#accepted-values" title="Permanent link">&para;</a></h3>
 <p>The following values are recognized as "opt-out" (case-insensitive):
 - <code>"true"</code>
@@ -4784,7 +4859,7 @@ will be opt-in and documented here.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

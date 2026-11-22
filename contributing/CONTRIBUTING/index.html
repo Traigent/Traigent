@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1496,6 +1496,34 @@
     
   
     Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/continuous-tuning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Continuous Tuning
   
 
     
@@ -3799,7 +3827,7 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 <li>
 <p><strong>Make your changes</strong> and ensure:</p>
 </li>
-<li>Code follows our style guidelines (Black + isort for formatting, Ruff for linting)</li>
+<li>Code follows our style guidelines (ruff format + isort for formatting, Ruff for linting)</li>
 <li>All tests pass</li>
 <li>New features include tests</li>
 <li>Documentation is updated</li>
@@ -3847,8 +3875,8 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 </ol>
 <h2 id="code-style">Code Style<a class="headerlink" href="#code-style" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Formatting: Black (line length 88) + isort (profile "black")</li>
-<li>Linting: Ruff (lint only)</li>
+<li>Formatting: <code>ruff format</code> (line length 88) + isort (profile "black")</li>
+<li>Linting: Ruff</li>
 <li>Use type hints for all public APIs</li>
 <li>Add docstrings to all public functions and classes</li>
 </ul>
@@ -3858,9 +3886,9 @@ make<span class="w"> </span>lint
 </code></pre></div></p>
 <p>Or manually:
 <div class="highlight"><pre><span></span><code>isort<span class="w"> </span>traigent/<span class="w"> </span>tests/<span class="w"> </span>examples/
-black<span class="w"> </span>traigent/<span class="w"> </span>tests/<span class="w"> </span>examples/
+ruff<span class="w"> </span>format<span class="w"> </span>traigent/<span class="w"> </span>tests/<span class="w"> </span>examples/
 ruff<span class="w"> </span>check<span class="w"> </span>traigent/<span class="w"> </span>--fix
-black<span class="w"> </span>--check<span class="w"> </span>traigent/
+ruff<span class="w"> </span>format<span class="w"> </span>--check<span class="w"> </span>traigent/
 isort<span class="w"> </span>--check-only<span class="w"> </span>traigent/
 </code></pre></div></p>
 <h2 id="testing">Testing<a class="headerlink" href="#testing" title="Permanent link">&para;</a></h2>
@@ -4020,7 +4048,7 @@ repository root.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

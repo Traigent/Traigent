@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1106,6 +1106,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#projects-pagination-and-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Projects, pagination and errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#playground-api" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1592,6 +1603,34 @@
     
   
     Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/continuous-tuning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Continuous Tuning
   
 
     
@@ -3438,6 +3477,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#projects-pagination-and-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Projects, pagination and errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#playground-api" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3513,6 +3563,72 @@ needed for prompt registry workflows:</p>
 <li>prompt label updates</li>
 <li>prompt playground execution and preview</li>
 </ul>
+<h2 id="projects-pagination-and-errors">Projects, pagination and errors<a class="headerlink" href="#projects-pagination-and-errors" title="Permanent link">&para;</a></h2>
+<p>Prompts belong to a project, and the project id is part of every request path
+(<code>/api/v1/projects/{project_id}/prompts</code>). Pass it explicitly or set
+<code>TRAIGENT_PROJECT_ID</code>; there is no default project.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.prompts</span><span class="w"> </span><span class="kn">import</span> <span class="n">PromptManagementClient</span><span class="p">,</span> <span class="n">PromptManagementConfig</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">PromptManagementClient</span><span class="p">(</span><span class="n">PromptManagementConfig</span><span class="p">(</span><span class="n">project_id</span><span class="o">=</span><span class="s2">"my-project"</span><span class="p">))</span>
+
+<span class="n">page</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">list_prompts</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">prompt_type</span><span class="o">=</span><span class="s2">"text"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">page</span><span class="o">.</span><span class="n">pagination</span><span class="o">.</span><span class="n">has_more</span><span class="p">,</span> <span class="n">page</span><span class="o">.</span><span class="n">pagination</span><span class="o">.</span><span class="n">next_cursor</span><span class="p">)</span>
+
+<span class="c1"># Walk every page; the cursor is followed for you and filters are kept.</span>
+<span class="k">for</span> <span class="n">prompt</span> <span class="ow">in</span> <span class="n">client</span><span class="o">.</span><span class="n">iter_prompts</span><span class="p">(</span><span class="n">prompt_type</span><span class="o">=</span><span class="s2">"text"</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">prompt</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+
+<span class="c1"># Filter by name, text or label with POST search (a substring match).</span>
+<span class="k">for</span> <span class="n">prompt</span> <span class="ow">in</span> <span class="n">client</span><span class="o">.</span><span class="n">iter_search_prompts</span><span class="p">(</span><span class="n">search</span><span class="o">=</span><span class="s2">"welcome"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"production"</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">prompt</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+
+<span class="c1"># Prompts are addressed by their server-issued ref (the prompt id), not the name.</span>
+<span class="c1"># Look the ref up from an exact name once, then use it for every call.</span>
+<span class="n">ref</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_prompt_ref</span><span class="p">(</span><span class="s2">"support/welcome"</span><span class="p">)</span>
+<span class="n">detail</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_prompt</span><span class="p">(</span><span class="n">ref</span><span class="p">)</span>
+<span class="n">resolved</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">resolve_prompt</span><span class="p">(</span><span class="n">ref</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"production"</span><span class="p">)</span>
+<span class="n">analytics</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_prompt_analytics</span><span class="p">(</span><span class="n">ref</span><span class="p">,</span> <span class="n">limit</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>  <span class="c1"># page with next_cursor</span>
+</code></pre></div>
+<p>Lists are newest first and have no total count. A cursor only works with the
+project and filters it was issued for.</p>
+<p>Errors from the prompts service raise <code>PromptApiError</code> subclasses with <code>code</code>,
+<code>status_code</code> and <code>problem_id</code> attributes:</p>
+<table>
+<thead>
+<tr>
+<th>Exception</th>
+<th>Codes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PromptNotFoundError</code></td>
+<td><code>not_found</code> (missing, or not visible to you; the two look the same)</td>
+</tr>
+<tr>
+<td><code>PromptInvalidRequestError</code></td>
+<td><code>invalid_page_size</code>, <code>invalid_cursor</code>, <code>validation_failed</code></td>
+</tr>
+<tr>
+<td><code>PromptConflictError</code></td>
+<td><code>prompt_already_exists</code>, <code>prompt_version_conflict</code></td>
+</tr>
+<tr>
+<td><code>PromptNotPermittedError</code></td>
+<td><code>feature_not_entitled</code>, <code>provider_not_allowed</code></td>
+</tr>
+<tr>
+<td><code>PromptPaymentRequiredError</code></td>
+<td><code>insufficient_balance</code>, <code>spend_blocked</code></td>
+</tr>
+<tr>
+<td><code>PromptUpstreamError</code></td>
+<td><code>upstream_failed</code></td>
+</tr>
+</tbody>
+</table>
+<p>Authentication failures raise <code>AuthenticationError</code>, rate limits raise
+<code>RateLimitError</code> and temporary unavailability raises <code>ServiceUnavailableError</code>.</p>
 <h2 id="playground-api">Playground API<a class="headerlink" href="#playground-api" title="Permanent link">&para;</a></h2>
 <p>Use <code>PromptManagementClient.run_playground(...)</code> to preview or execute a stored
 prompt version.</p>
@@ -3633,7 +3749,7 @@ prompt version.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

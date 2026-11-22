@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1496,6 +1496,34 @@
     
   
     Local Guards (Block Destructive Tool Calls)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/continuous-tuning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Continuous Tuning
   
 
     
@@ -3679,7 +3707,7 @@ combined freely:</p>
 </tr>
 <tr>
 <td><code>PlateauAfterNStopCondition</code></td>
-<td>Stops when the best weighted score changes by at most <code>epsilon</code> for <code>window_size</code> successive trials.</td>
+<td>Stops when the last <code>window_size</code> running-best values (including the one after the trial just completed; <code>window_size - 1</code> comparisons) span at most <code>epsilon</code>. <code>plateau_window</code> must be a positive integer; N=1 stops after the first trial.</td>
 <td><code>plateau_window</code>, <code>plateau_epsilon</code>.</td>
 </tr>
 <tr>
@@ -3975,7 +4003,7 @@ without requiring changes to optimizers or evaluators.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "search.suggest", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>
