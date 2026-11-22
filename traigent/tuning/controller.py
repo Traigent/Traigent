@@ -58,7 +58,14 @@ import threading
 import time
 import types
 import weakref
-from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -569,6 +576,22 @@ class _GateFailed(Exception):
     def __init__(self, original: Exception) -> None:
         super().__init__(str(original))
         self.original = original
+
+
+def _unwrap_result(result: Any) -> tuple[Collection[str] | None, Any]:
+    """``(loaded dataset digests, bare result)`` of one optimizer return value."""
+    if isinstance(result, OptimizerRun):
+        return result.loaded_dataset_digests, result.result
+    if isinstance(result, Mapping):
+        return result.get("loaded_dataset_digests"), result
+    return None, result
+
+
+def _result_field(result: Any, name: str, default: Any = None) -> Any:
+    """A field of a mapping or attribute result."""
+    if isinstance(result, Mapping):
+        return result.get(name, default)
+    return getattr(result, name, default)
 
 
 class Controller:
@@ -1618,23 +1641,13 @@ class Controller:
         """
         from tvl.promotion_join import join_promotion_decisions
 
-        loaded: Collection[str] | None = None
-        if isinstance(result, OptimizerRun):
-            loaded, result = result.loaded_dataset_digests, result.result
-        elif isinstance(result, Mapping):
-            loaded = result.get("loaded_dataset_digests")
-
-        def pick(name: str, default: Any = None) -> Any:
-            if isinstance(result, Mapping):
-                return result.get(name, default)
-            return getattr(result, name, default)
-
-        completion = pick("completion", "normal")
+        loaded, result = _unwrap_result(result)
+        completion = _result_field(result, "completion", "normal")
         if completion not in _COMPLETIONS:
             completion = "normal"
-        raw = pick("candidates")
+        raw = _result_field(result, "candidates")
         if raw is None:
-            best = pick("best_config")
+            best = _result_field(result, "best_config")
             raw = [{"config": best}] if best else []
         if any(
             isinstance(i, Mapping)
@@ -1659,84 +1672,106 @@ class Controller:
         gates: dict[str, Any] = {}
         for item in raw:
             item = item if isinstance(item, Mapping) else {"config": item}
-            config = item.get("config")
             try:
-                if code_version is None:
-                    raise ValueError("no code version")
-                if not isinstance(config, Mapping) or not config:
-                    raise ValueError("no config")
-                config = copy.deepcopy(dict(config))  # frozen snapshot at selection
-                fingerprint = config_fingerprint(config)
-                legacy = "NoDecision"
-                given: Mapping[str, str] = {}
-                holdout_digest: str | None = None
-                evidence = self._measure_candidate(attempt, config, incumbent, loaded)
-                if evidence is not None:
-                    legacy = evidence.legacy_decision
-                    given = evidence.monitor_verdicts
-                    holdout_digest = evidence.holdout_digest
-                if config_fingerprint(config) != fingerprint:
-                    self._record_controller_fact(
-                        {
-                            "fact": "candidate_config_changed",
-                            "attempt": attempt,
-                            "fingerprint": fingerprint,
-                        }
-                    )
-                    raise ValueError("config changed during evaluation")
-                if legacy not in _LEGACY:
-                    legacy = "NoDecision"
-                verdicts = {
-                    n: str(given.get(n, "UNKNOWN(insufficient)")) for n in monitors
-                }
-                joined = join_promotion_decisions(
-                    legacy, [verdicts[n] for n in monitors]
+                judged = self._judge_candidate(
+                    attempt,
+                    item.get("config"),
+                    code_version,
+                    incumbent,
+                    loaded,
+                    monitors,
+                    join_promotion_decisions,
                 )
             except Exception:  # noqa: BLE001 - unusable evidence is invalid, never guessed
                 candidates.append({"evidence_valid": False})
                 continue
-            gate_input: dict[str, Any] = {
-                "format": GATE_FORMAT,
-                "contract_digest": self.meta["contract_digest"],
-                "code_version": code_version,
-                "fingerprint": fingerprint,
-                "incumbent_fingerprint": incumbent.get("fingerprint"),
-                "incumbent_generation": incumbent.get("generation"),
-                "legacy_decision": legacy,
-                "monitors": verdicts,
-                "decision": str(joined),
-            }
-            if holdout_digest is not None:
-                gate_input["holdout_digest"] = holdout_digest
-            gate_digest = "sha256:" + _digest(gate_input)
+            fingerprint, config, gate, record = judged
             configs[fingerprint] = copy.deepcopy(config)
-            gates[fingerprint] = {
-                **gate_input,
-                "gate_digest": gate_digest,
-                **(
-                    {
-                        "holdout_rows": evidence.n,
-                        "holdout_unresolved_rows": evidence.unresolved_rows,
-                        "holdout_counts": evidence.counts,
-                        "holdout_prior_uses": self._holdout_prior_uses(holdout_digest),
-                        "errors": list(evidence.errors),
-                    }
-                    if evidence is not None and holdout_digest is not None
-                    else {}
-                ),
-            }
-            record: dict[str, Any] = {
-                "evidence_valid": True,
-                "fingerprint": fingerprint,
-                "gate_digest": gate_digest,
-                "code_version": code_version,
-                "legacy_decision": legacy,
-                "monitor_verdicts": verdicts,
-            }
-            if holdout_digest is not None:
-                record["holdout_digest"] = holdout_digest
+            gates[fingerprint] = gate
             candidates.append(record)
         return str(completion), candidates, configs, gates
+
+    def _judge_candidate(
+        self,
+        attempt: str,
+        config: Any,
+        code_version: str | None,
+        incumbent: Mapping[str, Any],
+        loaded: Collection[str] | None,
+        monitors: Iterable[str],
+        join_promotion_decisions: Callable[[str, list[str]], Any],
+    ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """Measure one candidate; ``(fingerprint, config, gate, record)``.
+
+        Raises on any unusable evidence (the caller records it as invalid).
+        """
+        if code_version is None:
+            raise ValueError("no code version")
+        if not isinstance(config, Mapping) or not config:
+            raise ValueError("no config")
+        config = copy.deepcopy(dict(config))  # frozen snapshot at selection
+        fingerprint = config_fingerprint(config)
+        legacy = "NoDecision"
+        given: Mapping[str, str] = {}
+        holdout_digest: str | None = None
+        evidence = self._measure_candidate(attempt, config, incumbent, loaded)
+        if evidence is not None:
+            legacy = evidence.legacy_decision
+            given = evidence.monitor_verdicts
+            holdout_digest = evidence.holdout_digest
+        if config_fingerprint(config) != fingerprint:
+            self._record_controller_fact(
+                {
+                    "fact": "candidate_config_changed",
+                    "attempt": attempt,
+                    "fingerprint": fingerprint,
+                }
+            )
+            raise ValueError("config changed during evaluation")
+        if legacy not in _LEGACY:
+            legacy = "NoDecision"
+        verdicts = {n: str(given.get(n, "UNKNOWN(insufficient)")) for n in monitors}
+        joined = join_promotion_decisions(legacy, [verdicts[n] for n in monitors])
+        gate_input: dict[str, Any] = {
+            "format": GATE_FORMAT,
+            "contract_digest": self.meta["contract_digest"],
+            "code_version": code_version,
+            "fingerprint": fingerprint,
+            "incumbent_fingerprint": incumbent.get("fingerprint"),
+            "incumbent_generation": incumbent.get("generation"),
+            "legacy_decision": legacy,
+            "monitors": verdicts,
+            "decision": str(joined),
+        }
+        if holdout_digest is not None:
+            gate_input["holdout_digest"] = holdout_digest
+        gate_digest = "sha256:" + _digest(gate_input)
+        gate = {
+            **gate_input,
+            "gate_digest": gate_digest,
+            **(
+                {
+                    "holdout_rows": evidence.n,
+                    "holdout_unresolved_rows": evidence.unresolved_rows,
+                    "holdout_counts": evidence.counts,
+                    "holdout_prior_uses": self._holdout_prior_uses(holdout_digest),
+                    "errors": list(evidence.errors),
+                }
+                if evidence is not None and holdout_digest is not None
+                else {}
+            ),
+        }
+        record: dict[str, Any] = {
+            "evidence_valid": True,
+            "fingerprint": fingerprint,
+            "gate_digest": gate_digest,
+            "code_version": code_version,
+            "legacy_decision": legacy,
+            "monitor_verdicts": verdicts,
+        }
+        if holdout_digest is not None:
+            record["holdout_digest"] = holdout_digest
+        return fingerprint, config, gate, record
 
     # -- release (planned, not built; not run by this controller) --------------
     def build_acceptance(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
