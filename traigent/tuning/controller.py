@@ -333,6 +333,50 @@ def _is_legacy_line(piece: bytes) -> bool:
         return False
 
 
+def _refuse_unsupported_rule(rule: Mapping[str, Any]) -> None:
+    """Raise ``E_UNSUPPORTED_IN_RELEASE`` for a rule feature this release does not run."""
+    if rule.get("approval") == "standing":
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "standing approval is not supported in this release; use human approval",
+        )
+    trigger = rule.get("trigger")
+    if isinstance(trigger, Mapping) and "external" in trigger:
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "external-event triggers (ModelReleased) are not supported "
+            "in this release; use a schedule",
+        )
+    unsupported = sorted(set(rule) - _SUPPORTED_RULE_KEYS)
+    if unsupported:
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "rule condition(s) not supported in this release: "
+            + ", ".join(str(k) for k in unsupported),
+        )
+    if rule.get("do") not in _SUPPORTED_ACTIONS:
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "only the optimize and notify actions are supported in this release",
+        )
+    if not _supported_trigger(trigger):
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "only a schedule trigger is supported in this release",
+        )
+
+
+def _refuse_legacy_format(path: Path, present: list[bytes]) -> None:
+    """Raise ``E_STORE_FORMAT`` when every non-blank line is pre-checksum JSON."""
+    if present and all(_is_legacy_line(p) for p in present):
+        raise TuningError(
+            E_STORE_FORMAT,
+            f"the tuning store at {path.parent} was written in an older format "
+            "without checksums and cannot be read; re-initialize the store "
+            "(remove the directory and start again). Its files were not modified.",
+        )
+
+
 def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
     """``(values, valid_byte_length, torn)`` of a framed JSONL file.
 
@@ -347,14 +391,7 @@ def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
     except FileNotFoundError:
         return [], 0, False
     pieces = raw.split(b"\n")
-    present = [p for p in pieces if p]
-    if present and all(_is_legacy_line(p) for p in present):
-        raise TuningError(
-            E_STORE_FORMAT,
-            f"the tuning store at {path.parent} was written in an older format "
-            "without checksums and cannot be read; re-initialize the store "
-            "(remove the directory and start again). Its files were not modified.",
-        )
+    _refuse_legacy_format(path, [p for p in pieces if p])
     values: list[Any] = []
     valid = 0
     for index, piece in enumerate(pieces):
@@ -587,36 +624,7 @@ class Controller:
         """
         for response in self._module.get("responses", []):
             for rule in response.get("rules", []):
-                if rule.get("approval") == "standing":
-                    raise TuningError(
-                        E_UNSUPPORTED_IN_RELEASE,
-                        "standing approval is not supported in this release; "
-                        "use human approval",
-                    )
-                trigger = rule.get("trigger")
-                if isinstance(trigger, Mapping) and "external" in trigger:
-                    raise TuningError(
-                        E_UNSUPPORTED_IN_RELEASE,
-                        "external-event triggers (ModelReleased) are not supported "
-                        "in this release; use a schedule",
-                    )
-                unsupported = sorted(set(rule) - _SUPPORTED_RULE_KEYS)
-                if unsupported:
-                    raise TuningError(
-                        E_UNSUPPORTED_IN_RELEASE,
-                        "rule condition(s) not supported in this release: "
-                        + ", ".join(str(k) for k in unsupported),
-                    )
-                if rule.get("do") not in _SUPPORTED_ACTIONS:
-                    raise TuningError(
-                        E_UNSUPPORTED_IN_RELEASE,
-                        "only the optimize and notify actions are supported in this release",
-                    )
-                if not _supported_trigger(trigger):
-                    raise TuningError(
-                        E_UNSUPPORTED_IN_RELEASE,
-                        "only a schedule trigger is supported in this release",
-                    )
+                _refuse_unsupported_rule(rule)
 
     # -- store ----------------------------------------------------------------------
     def _p(self, name: str) -> Path:
@@ -1779,6 +1787,83 @@ class Controller:
         approval = _read_json(self._p(_APPROVALS_FILE), {}).get(ref) or {}
         return f"approved by {approval.get('approver', 'an approver')}"
 
+    def _attempt_entry(
+        self,
+        opened: dict[str, Any],
+        approvals: dict[str, Any],
+        domains: dict[str, Any],
+    ) -> dict[str, Any]:
+        """One open attempt as ``status`` reports it."""
+        ref = occurrence_ref(opened["occurrence"])
+        if opened["finished"]:
+            state = "deploy_awaiting"
+        elif self._approval_recorded(opened["attempt"]) or ref in approvals:
+            marker = _read_json(self._marker_path(opened["attempt"], ref))
+            state = (
+                "interrupted"
+                if marker and "finished_record" not in marker
+                else "approved"
+            )
+        else:
+            state = "awaiting_approval"
+        entry: dict[str, Any] = {
+            "attempt": opened["attempt"],
+            "occurrence": ref,
+            "state": state,
+        }
+        if state in ("approved", "interrupted"):
+            entry["approval"] = self._approval_text(ref)
+        if state == "awaiting_approval":
+            domain = domains.get(opened["attempt"])
+            entry["approve_run"] = {
+                **self._trigger_view(opened["occurrence"]),
+                "spend_limit": self.spend_limit(),
+                "admits": (
+                    {"tvar": domain["tvar"], "domain": list(domain["domain"])}
+                    if domain
+                    else None
+                ),
+            }
+        return entry
+
+    def _pending_deploy_entry(
+        self, f: dict[str, Any], head: dict[str, Any]
+    ) -> dict[str, Any]:
+        """One attempt awaiting a deploy, with its release evidence."""
+        gate = self._gate_of(f)
+        return {
+            "attempt": f["attempt"],
+            "occurrence": occurrence_ref(f["occurrence"]),
+            "candidate": f["candidate"],
+            "release_evidence": {
+                "incumbent": {
+                    "fingerprint": gate.get("incumbent_fingerprint"),
+                    "generation": gate.get("incumbent_generation"),
+                },
+                "candidate": {"fingerprint": f["candidate"]},
+                "code_version": gate.get("code_version"),
+                "code_version_label": self._label_for(gate.get("code_version")),
+                "holdout": {
+                    "digest": gate.get("holdout_digest"),
+                    "rows": gate.get("holdout_rows"),
+                    "unresolved_rows": gate.get("holdout_unresolved_rows"),
+                    "counts": gate.get("holdout_counts"),
+                    "prior_uses": gate.get("holdout_prior_uses"),
+                },
+                "gate": {
+                    "legacy_decision": gate.get("legacy_decision"),
+                    "monitors": gate.get("monitors"),
+                    "decision": gate.get("decision"),
+                    "errors": gate.get("errors", []),
+                },
+                "observed_generation": head.get("generation"),
+                "gate_incumbent_current": (
+                    gate.get("incumbent_generation") == head.get("generation")
+                    and gate.get("incumbent_fingerprint") == head.get("fingerprint")
+                ),
+            },
+        }
+
     def status(self) -> dict[str, Any]:
         """Head, open attempts and pending deploys (derived, read-only).
 
@@ -1796,78 +1881,13 @@ class Controller:
         for opened in self._open_attempts(facts):
             if opened["closed"]:
                 continue  # draining attempts exist for recovery, not as open work
-            ref = occurrence_ref(opened["occurrence"])
-            if opened["finished"]:
-                state = "deploy_awaiting"
-            elif self._approval_recorded(opened["attempt"]) or ref in approvals:
-                marker = _read_json(self._marker_path(opened["attempt"], ref))
-                state = (
-                    "interrupted"
-                    if marker and "finished_record" not in marker
-                    else "approved"
-                )
-            else:
-                state = "awaiting_approval"
-            entry: dict[str, Any] = {
-                "attempt": opened["attempt"],
-                "occurrence": ref,
-                "state": state,
-            }
-            if state in ("approved", "interrupted"):
-                entry["approval"] = self._approval_text(ref)
-            if state == "awaiting_approval":
-                domain = domains.get(opened["attempt"])
-                entry["approve_run"] = {
-                    **self._trigger_view(opened["occurrence"]),
-                    "spend_limit": self.spend_limit(),
-                    "admits": (
-                        {"tvar": domain["tvar"], "domain": list(domain["domain"])}
-                        if domain
-                        else None
-                    ),
-                }
-            attempts.append(entry)
+            attempts.append(self._attempt_entry(opened, approvals, domains))
         head = read_head(self.dir) or {}
-        deploys = []
-        for f in facts:
-            if f["fact"] != "deploy_awaiting" or f["attempt"] in closed:
-                continue
-            gate = self._gate_of(f)
-            deploys.append(
-                {
-                    "attempt": f["attempt"],
-                    "occurrence": occurrence_ref(f["occurrence"]),
-                    "candidate": f["candidate"],
-                    "release_evidence": {
-                        "incumbent": {
-                            "fingerprint": gate.get("incumbent_fingerprint"),
-                            "generation": gate.get("incumbent_generation"),
-                        },
-                        "candidate": {"fingerprint": f["candidate"]},
-                        "code_version": gate.get("code_version"),
-                        "code_version_label": self._label_for(gate.get("code_version")),
-                        "holdout": {
-                            "digest": gate.get("holdout_digest"),
-                            "rows": gate.get("holdout_rows"),
-                            "unresolved_rows": gate.get("holdout_unresolved_rows"),
-                            "counts": gate.get("holdout_counts"),
-                            "prior_uses": gate.get("holdout_prior_uses"),
-                        },
-                        "gate": {
-                            "legacy_decision": gate.get("legacy_decision"),
-                            "monitors": gate.get("monitors"),
-                            "decision": gate.get("decision"),
-                            "errors": gate.get("errors", []),
-                        },
-                        "observed_generation": head.get("generation"),
-                        "gate_incumbent_current": (
-                            gate.get("incumbent_generation") == head.get("generation")
-                            and gate.get("incumbent_fingerprint")
-                            == head.get("fingerprint")
-                        ),
-                    },
-                }
-            )
+        deploys = [
+            self._pending_deploy_entry(f, head)
+            for f in facts
+            if f["fact"] == "deploy_awaiting" and f["attempt"] not in closed
+        ]
         return {
             "head": {
                 "generation": head.get("generation"),
