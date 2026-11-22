@@ -339,11 +339,23 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             try:
                 self.server.log.log_response(seq, status, count, outcome)
             except RelayLogError:
-                if self.cut:
-                    return
                 # The request line is durable and the response is delivered; the log
                 # is now incomplete, so the next request is refused (RelayLog.failed).
-                self.server.report_log_incomplete()
+                # A cut exchange stays silent.
+                if not self.cut:
+                    self.server.report_log_incomplete()
+
+
+def _upstream_tls_context() -> ssl.SSLContext:
+    """TLS context for the upstream hop: system CAs, certificate and hostname checks on.
+
+    There is deliberately no insecure mode: verification cannot be turned off.
+    """
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.verify_mode = ssl.CERT_REQUIRED
+    context.check_hostname = True
+    return context
 
 
 class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -425,7 +437,7 @@ class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
                 host,
                 port,
                 timeout=_UPSTREAM_TIMEOUT_S,
-                context=ssl.create_default_context(),
+                context=_upstream_tls_context(),
             )
         else:
             conn = http.client.HTTPConnection(host, port, timeout=_UPSTREAM_TIMEOUT_S)
