@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -678,29 +678,15 @@ def _confirm(
         output.report()
 
 
-def _confirm_run(
-    module_spec: str,
-    config_path: str,
-    directory: str,
+def _run_confirm(
+    output: _UserOutput,
+    function: Any,
+    config: Mapping[str, Any],
+    selected: list[tuple[str, Any]],
     repeats: int,
     max_cost: float | None,
-    only_ids: list[str],
-    output: _UserOutput,
-) -> None:
-    _, rows = _read_rows(directory, CONFIRM_BAD_FILE)
-    entries = [(example_id_of(row, i), row) for i, row in enumerate(rows)]
-    known = {eid for eid, _ in entries}
-    unknown = [eid for eid in only_ids if eid not in known]
-    if unknown:
-        raise click.UsageError(f"--only-id names no row: {unknown}")
-    selected = [(e, r) for e, r in entries if not only_ids or e in only_ids]
-    with output.window():
-        function = _load_function(module_spec)
-    config = _load_config(config_path)
-    digest_of_config = generate_config_hash(config)
-    before = {eid: row_status(row) for eid, row in selected}
-    content = {eid: row["metadata"]["content_digest"] for eid, row in selected}
-
+) -> Any:
+    """Run the selected rows; every failure becomes a closed stop or CLI error."""
     try:
         with output.window():
             run = run_rows(
@@ -730,7 +716,16 @@ def _confirm_run(
             f"The run was ended from inside the function ({type(exc).__name__}). "
             "Nothing was written.",
         ) from exc
+    return run
 
+
+def _confirm_observations(
+    run: Any,
+    selected: list[tuple[str, Any]],
+    config: Mapping[str, Any],
+    content: Mapping[str, str],
+) -> dict[str, Any]:
+    """The observation each row earned (rows whose results could not be tied excluded)."""
     observations = {}
     for eid, _row in selected:
         if eid in run.unresolved:
@@ -738,33 +733,42 @@ def _confirm_run(
         tallied = tally(run.per_attempt, eid)
         if tallied.outcome is not None:
             observations[eid] = observation_for(tallied, config, content[eid])
+    return observations
 
-    def apply(current: list[dict[str, Any]]) -> tuple[dict[str, str], list[str]]:
-        # Re-read under the lock: merge by row, so rows another process added
-        # or changed while the model calls ran are neither lost nor touched.
-        by_id = {example_id_of(row, i): row for i, row in enumerate(current)}
-        changed: dict[str, str] = {}
-        skipped: list[str] = []
-        for eid, observation in observations.items():
-            row = by_id.get(eid)
-            if row is None or row["metadata"]["content_digest"] != content[eid]:
-                skipped.append(eid)
-                continue
-            _, new = append_observation(
-                row["metadata"]["regression"], observation, CONFIRMED_SCHEMA_VERSION
-            )
-            changed[eid] = new
-        return changed, skipped
 
-    wrote = bool(observations)
-    changed_to: dict[str, str] = {}
+def _merge_observations(
+    current: list[dict[str, Any]],
+    observations: Mapping[str, Any],
+    content: Mapping[str, str],
+) -> tuple[dict[str, str], list[str]]:
+    # Re-read under the lock: merge by row, so rows another process added
+    # or changed while the model calls ran are neither lost nor touched.
+    by_id = {example_id_of(row, i): row for i, row in enumerate(current)}
+    changed: dict[str, str] = {}
     skipped: list[str] = []
-    if wrote:
-        try:
-            changed_to, skipped = update_rows_locked(_regression_dir(directory), apply)
-        except RegressionSetError as exc:
-            raise _Stop(CONFIRM_BAD_FILE, "file_invalid", str(exc)) from exc
+    for eid, observation in observations.items():
+        row = by_id.get(eid)
+        if row is None or row["metadata"]["content_digest"] != content[eid]:
+            skipped.append(eid)
+            continue
+        _, new = append_observation(
+            row["metadata"]["regression"], observation, CONFIRMED_SCHEMA_VERSION
+        )
+        changed[eid] = new
+    return changed, skipped
 
+
+def _report_confirm(
+    run: Any,
+    selected: list[tuple[str, Any]],
+    before: Mapping[str, str],
+    changed_to: Mapping[str, str],
+    skipped: list[str],
+    digest_of_config: str,
+    repeats: int,
+    wrote: bool,
+) -> None:
+    """Print the confirm summary; exit non-zero when the run stopped early."""
     after = {eid: changed_to.get(eid, before[eid]) for eid, _ in selected}
     cost = "unmeasured" if run.total_cost is None else f"${run.total_cost:.4f}"
     click.echo(
@@ -800,6 +804,49 @@ def _confirm_run(
             err=True,
         )
         raise SystemExit(CONFIRM_STOPPED_EARLY)
+
+
+def _confirm_run(
+    module_spec: str,
+    config_path: str,
+    directory: str,
+    repeats: int,
+    max_cost: float | None,
+    only_ids: list[str],
+    output: _UserOutput,
+) -> None:
+    _, rows = _read_rows(directory, CONFIRM_BAD_FILE)
+    entries = [(example_id_of(row, i), row) for i, row in enumerate(rows)]
+    known = {eid for eid, _ in entries}
+    unknown = [eid for eid in only_ids if eid not in known]
+    if unknown:
+        raise click.UsageError(f"--only-id names no row: {unknown}")
+    selected = [(e, r) for e, r in entries if not only_ids or e in only_ids]
+    with output.window():
+        function = _load_function(module_spec)
+    config = _load_config(config_path)
+    digest_of_config = generate_config_hash(config)
+    before = {eid: row_status(row) for eid, row in selected}
+    content = {eid: row["metadata"]["content_digest"] for eid, row in selected}
+
+    run = _run_confirm(output, function, config, selected, repeats, max_cost)
+    observations = _confirm_observations(run, selected, config, content)
+
+    def apply(current: list[dict[str, Any]]) -> tuple[dict[str, str], list[str]]:
+        return _merge_observations(current, observations, content)
+
+    wrote = bool(observations)
+    changed_to: dict[str, str] = {}
+    skipped: list[str] = []
+    if wrote:
+        try:
+            changed_to, skipped = update_rows_locked(_regression_dir(directory), apply)
+        except RegressionSetError as exc:
+            raise _Stop(CONFIRM_BAD_FILE, "file_invalid", str(exc)) from exc
+
+    _report_confirm(
+        run, selected, before, changed_to, skipped, digest_of_config, repeats, wrote
+    )
 
 
 @regression.command("check")
@@ -934,6 +981,116 @@ def _check(
         output.report()
 
 
+def _not_gated_rows(
+    entries: list[tuple[str, Any]], gated_statuses: set[str]
+) -> dict[str, list[str]]:
+    """Row ids grouped by why they are not gated (content-changed rows apart)."""
+    # A row that was gated when last measured but whose content has changed
+    # since no longer gates: say so, instead of letting it fall silently into
+    # "unconfirmed".
+    changed = [
+        e
+        for e, r in entries
+        if status_when_last_measured(r["metadata"]["regression"]) in gated_statuses
+        and content_changed_since_measured(
+            r["metadata"]["regression"], r["metadata"]["content_digest"]
+        )
+    ]
+    not_gated = {
+        status: [e for e, r in entries if row_status(r) == status and e not in changed]
+        for status in (STATUS_KNOWN_FAILURE, STATUS_INTERMITTENT, STATUS_UNCONFIRMED)
+        if status not in gated_statuses
+    }
+    not_gated[CONTENT_CHANGED] = changed
+    return not_gated
+
+
+def _run_check(
+    output: _UserOutput,
+    function: Any,
+    config: Mapping[str, Any],
+    gated: list[tuple[str, Any]],
+    repeats: int,
+) -> Any:
+    """Run the gated rows; every failure becomes a closed inconclusive stop."""
+    try:
+        with output.window():
+            run = run_rows(function, config, gated, repeats=repeats)
+    except IdsNotAssignableError as exc:
+        raise _Stop(CHECK_INCONCLUSIVE, "ids_not_assignable", str(exc)) from exc
+    except ValueError as exc:
+        raise _Stop(
+            CHECK_INCONCLUSIVE,
+            "config_invalid",
+            f"The run was refused ({type(exc).__name__}); is the config "
+            "complete and inside the function's configuration space?",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - user code and SDK policy errors
+        raise _Stop(
+            CHECK_INCONCLUSIVE,
+            "run_failed",
+            f"The run failed ({type(exc).__name__})",
+        ) from exc
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:  # noqa: BLE001 - e.g. the function calls sys.exit
+        if not isinstance(exc, SystemExit):
+            raise
+        raise _Stop(
+            CHECK_INCONCLUSIVE,
+            "run_failed",
+            f"The run was ended from inside the function ({type(exc).__name__})",
+        ) from exc
+    return run
+
+
+def _classify_check_rows(
+    run: Any, gated: list[tuple[str, Any]]
+) -> tuple[list[tuple[str, Any]], list[tuple[str, Any]], list[str], dict[str, str]]:
+    """``(regressions, inconclusive, passed, unresolved)`` for the gated rows."""
+    regressions: list[tuple[str, Any]] = []
+    inconclusive: list[tuple[str, Any]] = []
+    passed: list[str] = []
+    unresolved: dict[str, str] = {}
+    for eid, _row in gated:
+        if eid in run.unresolved:
+            unresolved[eid] = run.unresolved[eid]
+            inconclusive.append(
+                (eid, Tally(len(run.per_attempt), 0, 0, 0, None, None, None))
+            )
+            continue
+        tallied = tally(run.per_attempt, eid)
+        if tallied.scored == 0:
+            inconclusive.append((eid, tallied))
+        elif tallied.regressed:
+            regressions.append((eid, tallied))
+        elif tallied.tied:
+            inconclusive.append((eid, tallied))
+            unresolved[eid] = REASON_TIE
+        elif tallied.passed_strictly:
+            passed.append(eid)
+        else:  # unreachable: scored attempts are a pass, a fail or a tie
+            inconclusive.append((eid, tallied))
+    return regressions, inconclusive, passed, unresolved
+
+
+def _check_shape(
+    item: tuple[str, Any], unresolved: Mapping[str, str]
+) -> dict[str, Any]:
+    eid, t = item
+    reason = {"reason": unresolved[eid]} if eid in unresolved else {}
+    return {
+        **reason,
+        "id": eid,
+        "attempts": t.attempts,
+        "passes": t.passes,
+        "fails": t.fails,
+        "errored": t.errored,
+        "pass_rate_low": t.pass_rate_low,
+        "pass_rate_high": t.pass_rate_high,
+    }
+
+
 def _check_run(
     module_spec: str,
     config_path: str,
@@ -952,23 +1109,7 @@ def _check_run(
         gated_statuses.add(STATUS_INTERMITTENT)
     entries = [(example_id_of(row, i), row) for i, row in enumerate(rows)]
     gated = [(e, r) for e, r in entries if row_status(r) in gated_statuses]
-    # A row that was gated when last measured but whose content has changed
-    # since no longer gates: say so, instead of letting it fall silently into
-    # "unconfirmed".
-    changed = [
-        e
-        for e, r in entries
-        if status_when_last_measured(r["metadata"]["regression"]) in gated_statuses
-        and content_changed_since_measured(
-            r["metadata"]["regression"], r["metadata"]["content_digest"]
-        )
-    ]
-    not_gated = {
-        status: [e for e, r in entries if row_status(r) == status and e not in changed]
-        for status in (STATUS_KNOWN_FAILURE, STATUS_INTERMITTENT, STATUS_UNCONFIRMED)
-        if status not in gated_statuses
-    }
-    not_gated[CONTENT_CHANGED] = changed
+    not_gated = _not_gated_rows(entries, gated_statuses)
 
     regressions: list[tuple[str, Any]] = []
     inconclusive: list[tuple[str, Any]] = []
@@ -976,54 +1117,9 @@ def _check_run(
     unresolved: dict[str, str] = {}
     run_complete = True
     if gated:
-        try:
-            with output.window():
-                run = run_rows(function, config, gated, repeats=repeats)
-        except IdsNotAssignableError as exc:
-            raise _Stop(CHECK_INCONCLUSIVE, "ids_not_assignable", str(exc)) from exc
-        except ValueError as exc:
-            raise _Stop(
-                CHECK_INCONCLUSIVE,
-                "config_invalid",
-                f"The run was refused ({type(exc).__name__}); is the config "
-                "complete and inside the function's configuration space?",
-            ) from exc
-        except Exception as exc:  # noqa: BLE001 - user code and SDK policy errors
-            raise _Stop(
-                CHECK_INCONCLUSIVE,
-                "run_failed",
-                f"The run failed ({type(exc).__name__})",
-            ) from exc
-        except KeyboardInterrupt:
-            raise
-        except BaseException as exc:  # noqa: BLE001 - e.g. the function calls sys.exit
-            if not isinstance(exc, SystemExit):
-                raise
-            raise _Stop(
-                CHECK_INCONCLUSIVE,
-                "run_failed",
-                f"The run was ended from inside the function ({type(exc).__name__})",
-            ) from exc
+        run = _run_check(output, function, config, gated, repeats)
         run_complete = run.completed
-        for eid, _row in gated:
-            if eid in run.unresolved:
-                unresolved[eid] = run.unresolved[eid]
-                inconclusive.append(
-                    (eid, Tally(len(run.per_attempt), 0, 0, 0, None, None, None))
-                )
-                continue
-            tallied = tally(run.per_attempt, eid)
-            if tallied.scored == 0:
-                inconclusive.append((eid, tallied))
-            elif tallied.regressed:
-                regressions.append((eid, tallied))
-            elif tallied.tied:
-                inconclusive.append((eid, tallied))
-                unresolved[eid] = REASON_TIE
-            elif tallied.passed_strictly:
-                passed.append(eid)
-            else:  # unreachable: scored attempts are a pass, a fail or a tie
-                inconclusive.append((eid, tallied))
+        regressions, inconclusive, passed, unresolved = _classify_check_rows(run, gated)
     if regressions:
         code, verdict = CHECK_REGRESSION, "regression"
     elif inconclusive or not run_complete or len(passed) != len(gated):
@@ -1032,18 +1128,7 @@ def _check_run(
         code, verdict = CHECK_OK, "pass"
 
     def shape(item: tuple[str, Any]) -> dict[str, Any]:
-        eid, t = item
-        reason = {"reason": unresolved[eid]} if eid in unresolved else {}
-        return {
-            **reason,
-            "id": eid,
-            "attempts": t.attempts,
-            "passes": t.passes,
-            "fails": t.fails,
-            "errored": t.errored,
-            "pass_rate_low": t.pass_rate_low,
-            "pass_rate_high": t.pass_rate_high,
-        }
+        return _check_shape(item, unresolved)
 
     if as_json:
         click.echo(
@@ -1077,6 +1162,37 @@ def _check_run(
     raise SystemExit(code)
 
 
+def _echo_inconclusive(eid: str, t: Any, unresolved: Mapping[str, str]) -> None:
+    if unresolved.get(eid) == REASON_TIE:
+        click.echo(
+            f"INCONCLUSIVE {eid}: tie: attempts={t.attempts} passes={t.passes} "
+            f"fails={t.fails} errored={t.errored} (as many passes as fails)"
+        )
+    elif eid in unresolved:
+        click.echo(
+            f"INCONCLUSIVE {eid}: results could not be tied to the row "
+            f"({unresolved[eid]})"
+        )
+    else:
+        click.echo(
+            f"INCONCLUSIVE {eid}: attempts={t.attempts} passes={t.passes} "
+            f"fails={t.fails} errored={t.errored} (no scored attempt)"
+        )
+
+
+def _echo_not_gated(not_gated: Mapping[str, list[str]]) -> None:
+    for status, ids in not_gated.items():
+        if not ids:
+            continue
+        if status == CONTENT_CHANGED:
+            click.echo(
+                "not gated (content changed since it was confirmed): "
+                f"{len(ids)} row(s): {', '.join(ids)}"
+            )
+        else:
+            click.echo(f"not gated ({status}): {', '.join(ids)}")
+
+
 def _print_check(
     gated: list[Any],
     passed: list[str],
@@ -1105,34 +1221,10 @@ def _print_check(
             f"fails={t.fails} errored={t.errored} pass_rate_95={_interval(t)}"
         )
     for eid, t in inconclusive:
-        if unresolved.get(eid) == REASON_TIE:
-            click.echo(
-                f"INCONCLUSIVE {eid}: tie: attempts={t.attempts} passes={t.passes} "
-                f"fails={t.fails} errored={t.errored} (as many passes as fails)"
-            )
-            continue
-        if eid in unresolved:
-            click.echo(
-                f"INCONCLUSIVE {eid}: results could not be tied to the row "
-                f"({unresolved[eid]})"
-            )
-            continue
-        click.echo(
-            f"INCONCLUSIVE {eid}: attempts={t.attempts} passes={t.passes} "
-            f"fails={t.fails} errored={t.errored} (no scored attempt)"
-        )
+        _echo_inconclusive(eid, t, unresolved)
     if not run_complete:
         click.echo("The run stopped before every repeat finished.")
-    for status, ids in not_gated.items():
-        if not ids:
-            continue
-        if status == CONTENT_CHANGED:
-            click.echo(
-                "not gated (content changed since it was confirmed): "
-                f"{len(ids)} row(s): {', '.join(ids)}"
-            )
-        else:
-            click.echo(f"not gated ({status}): {', '.join(ids)}")
+    _echo_not_gated(not_gated)
 
 
 def register_regression_commands(cli: click.Group) -> None:
