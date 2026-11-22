@@ -4,11 +4,12 @@
 
 Everything runs locally; no command here makes a network call.
 
-``confirm`` and ``check`` import and run the user's module in this process. Any
-``BaseException`` that escapes it other than ``KeyboardInterrupt`` (a module
-or function calling ``sys.exit(0)``, say) ends the command as the closed
-inconclusive result, never as a success: success comes only from the verdict
-logic at the end of ``check``. Limit: a process that ends itself with
+``confirm`` and ``check`` import and run the user's module in this process. A
+``SystemExit`` that escapes it (a module or function calling ``sys.exit(0)``,
+say) ends the command as the closed inconclusive result, never as a success:
+success comes only from the verdict logic at the end of ``check``. Any other
+``BaseException`` (``KeyboardInterrupt``, ``GeneratorExit``, a user subclass)
+is re-raised, not converted. Limit: a process that ends itself with
 ``os._exit`` (or is killed) cannot be caught.
 """
 

@@ -92,3 +92,41 @@ def test_success_comes_only_from_the_verdict_logic(ws: Path) -> None:
     result = invoke(ws, "check", "--json")
     assert result.exit_code == 0
     assert json.loads(result.stdout)["verdict"] == "pass"
+
+
+# A BaseException that is not SystemExit (or KeyboardInterrupt) is not a user
+# "exit": it propagates instead of being folded into the closed inconclusive result.
+_RAISE_AT_IMPORT = (
+    "class _Boom(BaseException):\n    pass\n\nraise _Boom('boom-sentinel')\n"
+)
+_RAISE_IN_FUNCTION = "class _Boom(BaseException):\n    pass\n\ndef _raise():\n    raise _Boom('boom-sentinel')\n"
+
+
+def _raising_module(kind: str) -> str:
+    if kind == "import":
+        return MODULE_SOURCE.replace("import sys", "import sys\n" + _RAISE_AT_IMPORT)
+    return MODULE_SOURCE.replace(
+        "import sys", "import sys\n" + _RAISE_IN_FUNCTION
+    ).replace('return "ok" if q.startswith("pass") else "wrong"', "_raise()")
+
+
+@pytest.mark.parametrize("command", ["confirm", "check"])
+@pytest.mark.parametrize("kind", ["import", "function"])
+def test_a_non_systemexit_baseexception_propagates(
+    ws: Path, command: str, kind: str
+) -> None:
+    before = (ws / "reg" / "regression.jsonl").read_bytes()
+    _swap_module(ws, _raising_module(kind))
+    args = ["--repeats", "2"] if command == "confirm" else ["--json"]
+    with pytest.raises(BaseException, match="boom-sentinel") as raised:
+        invoke(ws, command, *args)
+    assert type(raised.value).__name__ == "_Boom"
+    assert (ws / "reg" / "regression.jsonl").read_bytes() == before
+
+
+def test_systemexit_is_still_closed_while_a_baseexception_is_not(ws: Path) -> None:
+    _swap_module(ws, EXIT_AT_IMPORT)
+    assert invoke(ws, "check", "--json").exit_code == 2
+    _swap_module(ws, _raising_module("import"))
+    with pytest.raises(BaseException, match="boom-sentinel"):
+        invoke(ws, "check", "--json")
