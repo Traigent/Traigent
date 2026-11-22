@@ -13,7 +13,7 @@ This applies to both:
 
 Examples:
 
-- `params.model == "gpt-4o"`
+- `params.model == "gpt-5.2"`
 - `metrics.token_cost_usd <= 0.05`
 
 ## Derived constraints are per-trial only
@@ -77,4 +77,3 @@ Conditional constraints use implication semantics:
 
 - Spec form: `when: A`, `then: B`
 - Equivalent expression: `not (A) or (B)`
-

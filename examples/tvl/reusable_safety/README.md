@@ -185,7 +185,7 @@ def qa_agent(question: str, **kwargs):
 
    tvars:
      - name: model
-       domain: ["gpt-4o-mini"]
+       domain: ["gpt-5.4-mini"]
 
    objectives:
      - name: your_metric

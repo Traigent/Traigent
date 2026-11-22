@@ -13,7 +13,7 @@ import pyotp  # noqa: E402
 from traigent.security.auth import totp as totp_module  # noqa: E402
 from traigent.security.auth.totp import TOTPAuthProvider  # noqa: E402
 
-SECRET = "JBSWY3DPEHPK3PXP"  # pragma: allowlist secret
+SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"  # pragma: allowlist secret
 
 
 class _RecordingLogger:

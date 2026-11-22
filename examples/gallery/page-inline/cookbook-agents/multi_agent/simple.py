@@ -27,8 +27,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -61,7 +61,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "multi_agent_eval.jsonl")
     max_trials=10,
 )
 def route(task: str) -> str:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
+    llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0.0)
     prompt = (
         "Classify who should handle the task: planner or executor.\n"
         f"Task: {task}\nReturn one label only."

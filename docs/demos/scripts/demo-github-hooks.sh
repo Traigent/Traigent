@@ -73,8 +73,8 @@ echo -e "  ${GREEN}max_latency_ms${RESET}: ${CYAN}500${RESET}            ${DIM}#
 echo ""
 echo -e "  ${DIM}# Model constraints${RESET}"
 echo -e "  ${GREEN}allowed_models${RESET}:"
-echo -e "    - gpt-4o-mini"
-echo -e "    - gpt-4o"
+echo -e "    - gpt-5.4-mini"
+echo -e "    - gpt-5.2"
 echo -e "    - claude-3-haiku"
 echo -e "  ${RED}blocked_models${RESET}:"
 echo -e "    - gpt-4-32k                ${DIM}# Too expensive${RESET}"
@@ -89,12 +89,12 @@ sleep 0.5
 
 echo -e "${CYAN}@traigent.optimize${RESET}("
 echo -e "    configuration_space={"
-echo -e "        ${GREEN}\"model\"${RESET}: [\"gpt-4o-mini\"],      ${DIM}# Allowed model ✓${RESET}"
+echo -e "        ${GREEN}\"model\"${RESET}: [\"gpt-5.4-mini\"],      ${DIM}# Allowed model ✓${RESET}"
 echo -e "        ${GREEN}\"temperature\"${RESET}: [0.1, 0.3]"
 echo -e "    }"
 echo -e ")"
 echo -e "${BLUE}def${RESET} ${YELLOW}support_agent${RESET}(query: str) -> str:"
-echo -e "    llm = ChatOpenAI(model=${GREEN}\"gpt-4o-mini\"${RESET}, temperature=${CYAN}0.1${RESET})"
+echo -e "    llm = ChatOpenAI(model=${GREEN}\"gpt-5.4-mini\"${RESET}, temperature=${CYAN}0.1${RESET})"
 echo -e "    ${MAGENTA}return${RESET} llm.invoke(query).content"
 sleep 2
 
@@ -110,7 +110,7 @@ sleep 0.3
 
 echo -e "[${CYAN}traigent-validate${RESET}] Checking agent configurations..."
 echo -e "  Found 1 decorated function: ${BOLD}support_agent${RESET}"
-echo -e "  Model: gpt-4o-mini ............. ${GREEN}✓ ALLOWED${RESET}"
+echo -e "  Model: gpt-5.4-mini ............. ${GREEN}✓ ALLOWED${RESET}"
 echo -e "  Est. cost: \$0.008/query ........ ${GREEN}✓ WITHIN BUDGET${RESET}"
 sleep 0.5
 echo ""
@@ -171,7 +171,7 @@ echo ""
 echo -e "${DIM}To bypass (not recommended): git push --no-verify${RESET}"
 echo ""
 echo -e "${BOLD}To fix:${RESET}"
-echo -e "  1. Use an allowed model: ${GREEN}gpt-4o-mini${RESET}, ${GREEN}gpt-4o${RESET}, ${GREEN}claude-3-haiku${RESET}"
+echo -e "  1. Use an allowed model: ${GREEN}gpt-5.4-mini${RESET}, ${GREEN}gpt-5.2${RESET}, ${GREEN}claude-3-haiku${RESET}"
 echo -e "  2. Or request budget increase in traigent.yml"
 sleep 3
 
@@ -184,7 +184,7 @@ sleep 0.5
 
 echo -e "${CYAN}@traigent.optimize${RESET}("
 echo -e "    configuration_space={"
-echo -e "        ${GREEN}\"model\"${RESET}: [\"gpt-4o-mini\", \"gpt-4o\"],  ${DIM}# Fixed!${RESET}"
+echo -e "        ${GREEN}\"model\"${RESET}: [\"gpt-5.4-mini\", \"gpt-5.2\"],  ${DIM}# Fixed!${RESET}"
 echo -e "        ${GREEN}\"temperature\"${RESET}: [0.1, 0.5]"
 echo -e "    }"
 echo -e ")"
@@ -197,8 +197,8 @@ echo ""
 sleep 0.5
 
 echo -e "[${CYAN}traigent-validate${RESET}] Checking agent configurations..."
-echo -e "  Model: gpt-4o-mini ............. ${GREEN}✓ ALLOWED${RESET}"
-echo -e "  Model: gpt-4o .................. ${GREEN}✓ ALLOWED${RESET}"
+echo -e "  Model: gpt-5.4-mini ............. ${GREEN}✓ ALLOWED${RESET}"
+echo -e "  Model: gpt-5.2 .................. ${GREEN}✓ ALLOWED${RESET}"
 echo -e "  Est. cost: \$0.008/query ........ ${GREEN}✓ WITHIN BUDGET${RESET}"
 echo ""
 echo -e "${GREEN}${BOLD}✓ All Traigent hooks passed!${RESET}"

@@ -50,7 +50,7 @@ import traigent
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.0, 0.7, 1.0],
     },
     objectives=["accuracy"],
@@ -97,7 +97,7 @@ print(f"Best score:  {result.best_score:.2%}")
 @traigent.optimize(
     objectives=["accuracy", "cost", "latency"],
     eval_dataset="data.jsonl",
-    configuration_space={"temperature": (0.0, 1.0), "model": ["gpt-4o-mini", "gpt-4o"]},
+    configuration_space={"temperature": (0.0, 1.0), "model": ["gpt-5.4-mini", "gpt-5.2"]},
 )
 def classify(text: str) -> str: ...
 ```
@@ -134,7 +134,7 @@ from litellm import completion
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4o-mini", "claude-haiku-4-5-20251001", "gemini/gemini-3.8-flash"],
+        "model": ["gpt-5.4-mini", "claude-haiku-4-5-20251001", "gemini/gemini-3.8-flash"],
     },
     objectives=["accuracy"],
     eval_dataset="data/qa_samples.jsonl",

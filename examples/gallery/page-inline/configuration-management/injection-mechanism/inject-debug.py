@@ -48,21 +48,21 @@ traigent.configure(logging_level="DEBUG")
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.1, 0.5, 0.9],
     },
 )
 def debug_example(prompt: str) -> str:
     print("Original parameters in code:")
-    print("- model: gpt-4.1-mini")
+    print("- model: gpt-5.4-mini")
     print("- temperature: 0.7")
 
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0.7)
 
     # Debug output will show:
     # [Traigent] Intercepted ChatOpenAI constructor
-    # [Traigent] Original: model=gpt-4.1-mini, temperature=0.7
-    # [Traigent] Optimized: model=gpt-4.1-mini, temperature=0.1
+    # [Traigent] Original: model=gpt-5.4-mini, temperature=0.7
+    # [Traigent] Optimized: model=gpt-5.4-mini, temperature=0.1
     # [Traigent] Injecting optimized parameters
 
     response = llm.invoke(prompt)

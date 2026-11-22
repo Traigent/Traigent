@@ -27,8 +27,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -81,7 +81,7 @@ def _calc_accuracy(
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.0, 0.2],
     },
     eval_dataset=DATASET,
@@ -91,7 +91,7 @@ def _calc_accuracy(
     max_trials=10,
 )
 def calculate(expression: str) -> str:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
+    llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0.0)
     prompt = f"""
 You are a calculator. Compute the exact numeric result of the expression.
 Return a JSON object with keys: formula (string), result (number), explanation (string).

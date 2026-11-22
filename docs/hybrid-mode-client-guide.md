@@ -144,7 +144,7 @@ app = TraigentService(tunable_id="my_agent")
 @app.tunables
 def config_space():
     return {
-        "model": {"type": "enum", "values": ["gpt-4.1", "claude-3"]},
+        "model": {"type": "enum", "values": ["gpt-5.2", "claude-3"]},
         "temperature": {"type": "float", "range": [0.0, 1.0]},
     }
 
@@ -177,7 +177,7 @@ async def score_output(
 ) -> dict:
     accuracy = compute_accuracy(output, target)
     if kwargs.get("strict_mode") and context.execution_config:
-        if context.execution_config.get("model") == "gpt-4.1":
+        if context.execution_config.get("model") == "gpt-5.2":
             accuracy = min(accuracy, 0.95)
     return {
         "accuracy": accuracy,
@@ -207,8 +207,8 @@ Use for model selection, prompt templates, or discrete options:
 {
   "name": "model",
   "type": "enum",
-  "domain": {"values": ["gpt-4o", "claude-3-sonnet", "llama-70b"]},
-  "default": "gpt-4o"
+  "domain": {"values": ["gpt-5.2", "claude-3-sonnet", "llama-70b"]},
+  "default": "gpt-5.2"
 }
 ```
 
@@ -265,13 +265,13 @@ For services with multiple agents, use the `agent` field:
     {
       "name": "model",
       "type": "enum",
-      "domain": {"values": ["gpt-4o", "claude-3"]},
+      "domain": {"values": ["gpt-5.2", "claude-3"]},
       "agent": "planner"
     },
     {
       "name": "model",
       "type": "enum",
-      "domain": {"values": ["gpt-4o-mini", "claude-3-haiku"]},
+      "domain": {"values": ["gpt-5.4-mini", "claude-3-haiku"]},
       "agent": "executor"
     }
   ]

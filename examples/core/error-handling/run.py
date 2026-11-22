@@ -113,7 +113,7 @@ def _mock_answer(text: str) -> str:
     eval_dataset=DATASET,
     objectives=["accuracy"],
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.0, 0.7],
     },
     injection_mode="seamless",
@@ -254,7 +254,7 @@ async def demo_graceful_fallback():
     """Scenario 5: Graceful fallback - use default config on any failure."""
     print_scenario(5, "Graceful Fallback to Default Config")
 
-    default_config = {"model": "gpt-4.1-mini", "temperature": 0.0}
+    default_config = {"model": "gpt-5.4-mini", "temperature": 0.0}
 
     try:
         result = await explain_concept.optimize(max_trials=3)
