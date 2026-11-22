@@ -759,6 +759,40 @@ class Controller:
         lines = self._lines()
         return int(lines[-1]["instant"]) if lines else 0
 
+    @staticmethod
+    def _authenticated_afresh(authenticate: Callable[[], bool]) -> bool:
+        """The platform authenticator's answer; one that fails never authenticates."""
+        try:
+            return bool(authenticate())
+        except Exception:  # noqa: BLE001 - an authenticator that fails never authenticates
+            return False
+
+    def _sample_and_record(
+        self,
+        clock: Callable[[], datetime],
+        last_persisted: int,
+        lapse_at: Callable[[int], str | None],
+        record: Callable[[int], None],
+    ) -> int:
+        """Steps 2-4 of the gate: ONE clock sample, the lapse checks, the journal append.
+
+        A refusal passes through; any other failure is wrapped as ``_GateFailed``.
+        """
+        try:
+            sample = _utc(clock())
+            instant = int((sample - self.origin).total_seconds())
+            if instant < last_persisted:
+                raise _GateRefused("persisted_time_ahead")
+            reason = lapse_at(instant)
+            if reason is not None:
+                raise _GateRefused(reason)
+            record(instant)
+        except _GateRefused:
+            raise
+        except Exception as exc:
+            raise _GateFailed(exc) from exc
+        return instant
+
     def _gated_effect(
         self,
         *,
@@ -793,25 +827,9 @@ class Controller:
         def final_check() -> int:
             if gated:
                 raise TuningError(E_INVALID_RECORD, "the final check runs once")
-            try:
-                authenticated = bool(authenticate())
-            except Exception:  # noqa: BLE001 - an authenticator that fails never authenticates
-                authenticated = False
-            if not authenticated:
+            if not self._authenticated_afresh(authenticate):
                 raise _GateRefused("approver_not_authorized")
-            try:
-                sample = _utc(clock())
-                instant = int((sample - self.origin).total_seconds())
-                if instant < last_persisted:
-                    raise _GateRefused("persisted_time_ahead")
-                reason = lapse_at(instant)
-                if reason is not None:
-                    raise _GateRefused(reason)
-                record(instant)
-            except _GateRefused:
-                raise
-            except Exception as exc:
-                raise _GateFailed(exc) from exc
+            instant = self._sample_and_record(clock, last_persisted, lapse_at, record)
             gated.append(instant)
             return instant
 
