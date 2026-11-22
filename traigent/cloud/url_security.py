@@ -820,6 +820,11 @@ def validate_always_blocked_cloud_url(
         return
     if not resolve:
         return
+    _reject_always_blocked_resolved_hosts(normalized, purpose=purpose)
+
+
+def _reject_always_blocked_resolved_hosts(normalized: str, *, purpose: str) -> None:
+    """Resolve ``normalized`` and refuse any always-blocked answer."""
     try:
         addr_infos = socket.getaddrinfo(normalized, None)
     except socket.gaierror:

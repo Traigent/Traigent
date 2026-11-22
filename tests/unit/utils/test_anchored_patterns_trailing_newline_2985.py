@@ -97,3 +97,16 @@ def test_user_model_rejects_username_with_trailing_newline() -> None:
             roles=[],
             metadata={},
         )
+
+
+@pytest.mark.parametrize("key", ["café", "ключ", "a٣", "1abc", ""])
+def test_example_metric_key_rejects_non_ascii_and_bad_starts(key: str) -> None:
+    from traigent.cloud.sync_manager import _EXAMPLE_METRIC_KEY_RE
+
+    assert not _EXAMPLE_METRIC_KEY_RE.match(key)
+
+
+def test_example_metric_key_accepts_ascii_identifier() -> None:
+    from traigent.cloud.sync_manager import _EXAMPLE_METRIC_KEY_RE
+
+    assert _EXAMPLE_METRIC_KEY_RE.match("a_1")
