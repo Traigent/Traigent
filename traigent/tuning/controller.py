@@ -489,6 +489,30 @@ class AcceptanceOutcome:
 _T = TypeVar("_T")
 
 
+def _scope_lapse(instant: int, deadline: int | None) -> str | None:
+    """The refusal reason when ``instant`` is at or past the scope deadline."""
+    if deadline is not None and instant >= deadline:
+        return "scope_expired"
+    return None
+
+
+def _record_start_fact(
+    append_start: Callable[[Any], None],
+    start_recorded: bool,
+    attempt: str,
+    instant: int,
+) -> None:
+    """Append the optimization start fact unless the journal already holds it."""
+    if not start_recorded:
+        append_start(
+            {
+                "instant": instant,
+                "category": "optimizations",
+                "record": {"attempt": attempt, "fact": "started"},
+            }
+        )
+
+
 class _GateRefused(Exception):
     """The final gate of an effect refused: nothing was spent or installed."""
 
@@ -1247,82 +1271,31 @@ class Controller:
             {"attempt": attempt, "occurrence": ref, "state": "started"},
         )
 
-        def lapse_at(instant: int, deadline: int | None = deadline) -> str | None:
-            if deadline is not None and instant >= deadline:
-                return "scope_expired"
-            return None
-
-        def record_start(instant: int, attempt: str = attempt) -> None:
-            if not start_recorded:
-                append_start(
-                    {
-                        "instant": instant,
-                        "category": "optimizations",
-                        "record": {"attempt": attempt, "fact": "started"},
-                    }
-                )
-
         failure: list[str] = []
 
         def run(
             final_check: Callable[[], int],
-            attempt: str = attempt,
-            call_space: dict[str, Any] = call_space,
         ) -> tuple[str, list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
-            ran: list[int] = []
-            failure.clear()
-
-            def checked() -> int:
-                ran.append(1)
-                return final_check()
-
-            try:
-                if sdk_adapter:
-                    # the SDK adapter waits for its own lock first and calls the
-                    # final check immediately before the optimizer starts
-                    result = cast(Callable[..., Any], optimize_fn)(
-                        call_space,
-                        candidate_dir=candidate_dir,
-                        admitted_models=admitted,
-                        final_check=checked,
-                    )
-                    if not ran:
-                        raise TuningError(
-                            E_NO_CANDIDATE_RUN, "the optimizer skipped the check"
-                        )
-                else:
-                    # any other optimizer is never handed the final check: the full
-                    # gate runs here, immediately before it is invoked
-                    final_check()
-                    if accepts_dir:
-                        result = cast(Callable[..., Any], optimize_fn)(
-                            call_space,
-                            candidate_dir=candidate_dir,
-                            admitted_models=admitted,
-                        )
-                    else:
-                        result = optimize_fn(call_space)
-                return self._map_result(attempt, result)
-            except (_GateRefused, _GateFailed):
-                raise
-            except Exception as exc:  # noqa: BLE001 - a failed run is recorded by closed reason
-                # The full exception (message and traceback) stays on this machine, in
-                # the local log; the stored record carries only the closed reason.
-                logger.error(
-                    "optimization %s failed (%s)",
-                    attempt,
-                    type(exc).__name__,
-                    exc_info=True,
-                )
-                failure.append(_error_reason(exc))
-                return "error", [], {}, {}
+            return self._run_optimizer(
+                attempt,
+                optimize_fn,
+                sdk_adapter,
+                accepts_dir,
+                call_space,
+                candidate_dir,
+                admitted,
+                final_check,
+                failure,
+            )
 
         outcome, refusal, _instant_used = self._gated_effect(
             clock=clock,
             last_persisted=last_persisted,
             authenticate=lambda: self._on_list_now(approver, _approve_context(ref)),
-            lapse_at=lapse_at,
-            record=record_start,
+            lapse_at=lambda instant: _scope_lapse(instant, deadline),
+            record=lambda instant: _record_start_fact(
+                append_start, start_recorded, attempt, instant
+            ),
             effect=run,
         )
         if refusal is not None or outcome is None:
@@ -1332,6 +1305,76 @@ class Controller:
                 report, attempt, ref, marker_path, refusal or "gate_refused"
             )
             return True
+        self._finish_spend(report, attempt, ref, marker_path, clock, outcome, failure)
+        return True
+
+    def _run_optimizer(
+        self,
+        attempt: str,
+        optimize_fn: Callable[..., Any],
+        sdk_adapter: bool,
+        accepts_dir: bool,
+        call_space: dict[str, Any],
+        candidate_dir: Path,
+        admitted: Any,
+        final_check: Callable[[], int],
+        failure: list[str],
+    ) -> tuple[str, list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+        """Run the optimizer inside the gated effect; a failed run is a closed reason."""
+        ran: list[int] = []
+        failure.clear()
+
+        def checked() -> int:
+            ran.append(1)
+            return final_check()
+
+        try:
+            if sdk_adapter:
+                # the SDK adapter waits for its own lock first and calls the
+                # final check immediately before the optimizer starts
+                result = cast(Callable[..., Any], optimize_fn)(
+                    call_space,
+                    candidate_dir=candidate_dir,
+                    admitted_models=admitted,
+                    final_check=checked,
+                )
+                if not ran:
+                    raise TuningError(
+                        E_NO_CANDIDATE_RUN, "the optimizer skipped the check"
+                    )
+            else:
+                # any other optimizer is never handed the final check: the full
+                # gate runs here, immediately before it is invoked
+                final_check()
+                if accepts_dir:
+                    result = cast(Callable[..., Any], optimize_fn)(
+                        call_space,
+                        candidate_dir=candidate_dir,
+                        admitted_models=admitted,
+                    )
+                else:
+                    result = optimize_fn(call_space)
+            return self._map_result(attempt, result)
+        except (_GateRefused, _GateFailed):
+            raise
+        except Exception as exc:  # noqa: BLE001 - a failed run is recorded by closed reason
+            # The full exception (message and traceback) stays on this machine, in
+            # the local log; the stored record carries only the closed reason.
+            logger.exception("optimization %s failed (%s)", attempt, type(exc).__name__)
+            failure.append(_error_reason(exc))
+            return "error", [], {}, {}
+
+    def _finish_spend(
+        self,
+        report: StepReport,
+        attempt: str,
+        ref: str,
+        marker_path: Path,
+        clock: Callable[[], datetime],
+        outcome: Any,
+        failure: list[str],
+    ) -> None:
+        """Record a finished (or failed) optimization: marker first, then history."""
         completion, candidates, configs, gates = outcome
         report.started.append(attempt)
         record = self._finished_record(attempt, completion, candidates)
@@ -1356,7 +1399,6 @@ class Controller:
         )
         self._append("optimizations", record, self._instant(clock()))
         report.finished.append(attempt)
-        return True
 
     def _cancel_refused(
         self,
