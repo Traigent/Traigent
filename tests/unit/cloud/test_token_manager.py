@@ -874,10 +874,11 @@ class TestOAuth2RefreshHardening:
             client_id="client-id",
             client_secret="client-secret",  # pragma: allowlist secret
         )
+        set_creds = MagicMock()
         tm = TokenManager(config)
         tm.set_callbacks(
             get_credentials=lambda: credentials,
-            set_credentials=MagicMock(),
+            set_credentials=set_creds,
             cache_credentials=AsyncMock(),
             auth_lock=asyncio.Lock(),
         )
@@ -907,6 +908,9 @@ class TestOAuth2RefreshHardening:
         # Response body must never propagate upstream content into the
         # error message — that's how internal errors leak to callers.
         assert "upstream noise" not in result.error_message
+        # 5xx is ambiguous (the token may be rotated): refresh state is cleared
+        # while the AuthResult contract is kept.
+        set_creds.assert_called_once_with(None, AuthStatus.INVALID)
 
     @pytest.mark.asyncio
     async def test_refresh_oauth2_returns_authresult_on_network_error(self, config):

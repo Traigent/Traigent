@@ -701,7 +701,7 @@ class _OnceDict(dict):  # type: ignore[type-arg]
 def _gate_off(monkeypatch: pytest.MonkeyPatch) -> Any:
     tg.set_mode("off")
     yield
-    tg.set_mode("off")
+    tg.set_mode(None)
 
 
 def test_requests_path_sends_exactly_the_checked_bytes(

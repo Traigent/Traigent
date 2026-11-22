@@ -8,6 +8,7 @@ import os
 import sys
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 from traigent.utils.money import format_usd
 
 if TYPE_CHECKING:
@@ -36,7 +37,7 @@ if sys.excepthook is sys.__excepthook__:
     sys.excepthook = _traigent_excepthook
 
 
-class TraigentError(Exception):
+class TraigentError(PicklableExceptionMixin, Exception):
     """Base exception for all Traigent-related errors."""
 
     def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:

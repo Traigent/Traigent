@@ -131,14 +131,24 @@ def test_workflow_traces_ingest_does_not_follow_redirect_under_opt_in() -> None:
     from unittest.mock import MagicMock
 
     from traigent.integrations.observability import workflow_traces
+    from traigent.utils import optimization_only_egress
 
     response = MagicMock(status_code=302)
     with patch.dict("os.environ", OPT_IN_ENV, clear=True):
         with patch("socket.getaddrinfo", return_value=_addr_info("10.20.30.40")):
             client = workflow_traces.WorkflowTracesClient(SELF_HOSTED)
-        with patch.object(
-            workflow_traces.requests, "post", return_value=response
-        ) as post:
+        # The optimization_only egress gate (key validation) is covered in
+        # tests/egress_canary; here it is allowed so the redirect handling is reached.
+        with (
+            patch.object(
+                optimization_only_egress,
+                "ensure_trace_egress_allowed",
+                return_value=True,
+            ),
+            patch.object(
+                workflow_traces.requests, "post", return_value=response
+            ) as post,
+        ):
             graph = MagicMock(to_dict=MagicMock(return_value={"nodes": []}))
             result = client.ingest_traces(graph=graph)
     assert post.call_args.kwargs["allow_redirects"] is False

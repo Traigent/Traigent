@@ -414,7 +414,9 @@ class BackendConfig:
         Returns:
             str | None: API key if configured, None otherwise
         """
-        api_key = os.environ.get("TRAIGENT_API_KEY")
+        # Blank/whitespace-only values count as unset; padding (e.g. a trailing
+        # newline from a CI secret) is stripped so it never reaches a header.
+        api_key = (os.environ.get("TRAIGENT_API_KEY") or "").strip()
         if api_key:
             logger.debug("Using API key from TRAIGENT_API_KEY")
             return api_key
@@ -423,7 +425,7 @@ class BackendConfig:
         try:
             from traigent.cloud.credential_manager import CredentialManager
 
-            stored_key = CredentialManager.get_stored_api_key_only()
+            stored_key = (CredentialManager.get_stored_api_key_only() or "").strip()
             if stored_key:
                 logger.debug("Using API key from stored CLI credentials")
                 return stored_key

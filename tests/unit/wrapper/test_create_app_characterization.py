@@ -82,6 +82,22 @@ def _call(method, path, body=b"", service=None, scope_type="http", headers=TRACE
 
 J = lambda d: json.dumps(d).encode()  # noqa: E731
 
+# Contract-valid request bodies (#3239): the app now rejects bodies without a
+# UUID request_id, tunable_id and (for execute) a config object before dispatch.
+RID = "550e8400-e29b-41d4-a716-446655440000"
+EID = "660e8400-e29b-41d4-a716-446655440001"
+
+
+def VX(**extra):  # noqa: N802
+    return J(
+        {"request_id": RID, "tunable_id": "t", "config": {}, "examples": [], **extra}
+    )
+
+
+def VE(**extra):  # noqa: N802
+    return J({"request_id": EID, "tunable_id": "t", "evaluations": [], **extra})
+
+
 CASES = {
     "lifespan": ("GET", "/traigent/v1/capabilities", b"", None, "lifespan"),
     "caps": ("GET", "/traigent/v1/capabilities", b"", None, "http"),
@@ -90,48 +106,48 @@ CASES = {
     "health": ("GET", "/traigent/v1/health", b"", None, "http"),
     "health_post": ("POST", "/traigent/v1/health", b"", None, "http"),
     "unknown": ("GET", "/nope", b"", None, "http"),
-    "execute": ("POST", "/traigent/v1/execute", J({"request_id": "r1"}), None, "http"),
+    "execute": ("POST", "/traigent/v1/execute", VX(), None, "http"),
     "execute_get": ("GET", "/traigent/v1/execute", b"", None, "http"),
     "execute_empty_body": ("POST", "/traigent/v1/execute", b"", None, "http"),
     "execute_timeout_ok": (
         "POST",
         "/traigent/v1/execute",
-        J({"request_id": 7, "timeout_ms": 1000}),
+        VX(timeout_ms=1000),
         None,
         "http",
     ),
     "execute_timeout_bad": (
         "POST",
         "/traigent/v1/execute",
-        J({"request_id": "r", "timeout_ms": 5}),
+        VX(timeout_ms=5),
         None,
         "http",
     ),
     "execute_timeout_type": (
         "POST",
         "/traigent/v1/execute",
-        J({"timeout_ms": "x"}),
+        VX(timeout_ms="x"),
         None,
         "http",
     ),
     "execute_times_out": (
         "POST",
         "/traigent/v1/execute",
-        J({"request_id": "r", "timeout_ms": 1000}),
+        VX(timeout_ms=1000),
         _Service(execute=TimeoutError()),
         "http",
     ),
     "execute_non_dict": (
         "POST",
         "/traigent/v1/execute",
-        J({"request_id": "r"}),
+        VX(),
         _Service(execute=[1]),
         "http",
     ),
     "execute_hybrid_error": (
         "POST",
         "/traigent/v1/execute",
-        J({"request_id": "r"}),
+        VX(),
         _Service(
             execute=HybridAPIError(
                 "teapot",
@@ -153,14 +169,14 @@ CASES = {
     "execute_value_error": (
         "POST",
         "/traigent/v1/execute",
-        J({"request_id": "r"}),
+        VX(),
         _Service(execute=ValueError("bad value")),
         "http",
     ),
     "execute_internal_error": (
         "POST",
         "/traigent/v1/execute",
-        J({"request_id": "r"}),
+        VX(),
         _Service(execute=RuntimeError("kaboom")),
         "http",
     ),
@@ -176,21 +192,21 @@ CASES = {
     "evaluate": (
         "POST",
         "/traigent/v1/evaluate",
-        J({"request_id": "e1"}),
+        VE(),
         None,
         "http",
     ),
     "evaluate_timeout": (
         "POST",
         "/traigent/v1/evaluate",
-        J({"request_id": "e", "timeout_ms": 2000}),
+        VE(timeout_ms=2000),
         None,
         "http",
     ),
     "evaluate_error": (
         "POST",
         "/traigent/v1/evaluate",
-        J({"request_id": "e"}),
+        VE(),
         _Service(evaluate=KeyError("k")),
         "http",
     ),
@@ -258,10 +274,8 @@ GOLDEN: dict = {
         "calls": "[]",
     },
     "execute": {
-        "out": "[(200, [('content-length', '32'), ('content-type', 'application/json'), "
-        "('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', "
-        "'r1')]), {'request_id': 'r1', 'ok': True}]",
-        "calls": "[('execute', {'request_id': 'r1'})]",
+        "out": "[(200, [('content-length', '66'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', '550e8400-e29b-41d4-a716-446655440000')]), {'request_id': '550e8400-e29b-41d4-a716-446655440000', 'ok': True}]",
+        "calls": "[('execute', {'request_id': '550e8400-e29b-41d4-a716-446655440000', 'tunable_id': 't', 'config': {}, 'examples': []})]",
     },
     "execute_get": {
         "out": "[(404, [('content-length', '82'), ('content-type', 'application/json'), "
@@ -270,85 +284,48 @@ GOLDEN: dict = {
         "calls": "[]",
     },
     "execute_empty_body": {
-        "out": "[(200, [('content-length', '32'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), ('tracestate', "
-        "'k=v')]), {'request_id': None, 'ok': True}]",
-        "calls": "[('execute', {})]",
+        "out": "[(400, [('content-length', '75'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v')]), {'error': {'code': 'INVALID_REQUEST', 'message': 'request_id is required'}}]",
+        "calls": "[]",
     },
     "execute_timeout_ok": {
-        "out": "[(200, [('content-length', '29'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), ('tracestate', "
-        "'k=v'), ('x-traigent-request-id', '7')]), {'request_id': 7, 'ok': "
-        "True}]",
-        "calls": "[('execute', {'request_id': 7, 'timeout_ms': 1000})]",
+        "out": "[(200, [('content-length', '66'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', '550e8400-e29b-41d4-a716-446655440000')]), {'request_id': '550e8400-e29b-41d4-a716-446655440000', 'ok': True}]",
+        "calls": "[('execute', {'request_id': '550e8400-e29b-41d4-a716-446655440000', 'tunable_id': 't', 'config': {}, 'examples': [], 'timeout_ms': 1000})]",
     },
     "execute_timeout_bad": {
-        "out": "[(400, [('content-length', '79'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), ('tracestate', "
-        "'k=v'), ('x-traigent-request-id', 'r')]), {'error': {'code': "
-        "'INVALID_REQUEST', 'message': 'timeout_ms must be >= 1000'}}]",
+        "out": "[(400, [('content-length', '79'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', '550e8400-e29b-41d4-a716-446655440000')]), {'error': {'code': 'INVALID_REQUEST', 'message': 'timeout_ms must be >= 1000'}}]",
         "calls": "[]",
     },
     "execute_timeout_type": {
-        "out": "[(400, [('content-length', '82'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), ('tracestate', "
-        "'k=v')]), {'error': {'code': 'INVALID_REQUEST', 'message': "
-        "'timeout_ms must be an integer'}}]",
+        "out": "[(400, [('content-length', '82'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', '550e8400-e29b-41d4-a716-446655440000')]), {'error': {'code': 'INVALID_REQUEST', 'message': 'timeout_ms must be an integer'}}]",
         "calls": "[]",
     },
     "execute_times_out": {
-        "out": "[(408, [('content-length', '152'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), ('tracestate', "
-        "'k=v'), ('x-traigent-request-id', 'r')]), {'error': {'code': "
-        "'REQUEST_TIMEOUT', 'message': 'Request timed out after 1000ms', "
-        "'details': {'endpoint': '/traigent/v1/execute', 'timeout_ms': "
-        "1000}}}]",
-        "calls": "[('execute', {'request_id': 'r', 'timeout_ms': 1000})]",
+        "out": "[(408, [('content-length', '152'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', '550e8400-e29b-41d4-a716-446655440000')]), {'error': {'code': 'REQUEST_TIMEOUT', 'message': 'Request timed out after 1000ms', 'details': {'endpoint': '/traigent/v1/execute', 'timeout_ms': 1000}}}]",
+        "calls": "[('execute', {'request_id': '550e8400-e29b-41d4-a716-446655440000', 'tunable_id': 't', 'config': {}, 'examples': [], 'timeout_ms': 1000})]",
     },
     "execute_non_dict": {
-        "out": "[(400, [('content-length', '102'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), ('tracestate', "
-        "'k=v'), ('x-traigent-request-id', 'r')]), {'error': {'code': "
-        "'INVALID_REQUEST', 'message': 'Wrapper service handler must return a "
-        "JSON object'}}]",
-        "calls": "[('execute', {'request_id': 'r'})]",
+        "out": "[(400, [('content-length', '102'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', '550e8400-e29b-41d4-a716-446655440000')]), {'error': {'code': 'INVALID_REQUEST', 'message': 'Wrapper service handler must return a JSON object'}}]",
+        "calls": "[('execute', {'request_id': '550e8400-e29b-41d4-a716-446655440000', 'tunable_id': 't', 'config': {}, 'examples': []})]",
     },
     "execute_hybrid_error": {
-        "out": "[(418, [('content-length', '68'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), ('tracestate', "
-        "'k=v'), ('x-extra', 'e'), ('x-traigent-request-id', 'r')]), "
-        "{'error': {'code': 'TEA', 'message': 'teapot', 'details': {'a': "
-        "1}}}]",
-        "calls": "[('execute', {'request_id': 'r'})]",
+        "out": "[(418, [('content-length', '68'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-extra', 'e'), ('x-traigent-request-id', '550e8400-e29b-41d4-a716-446655440000')]), {'error': {'code': 'TEA', 'message': 'teapot', 'details': {'a': 1}}}]",
+        "calls": "[('execute', {'request_id': '550e8400-e29b-41d4-a716-446655440000', 'tunable_id': 't', 'config': {}, 'examples': []})]",
     },
     "execute_bad_request_no_id": {
-        "out": "[(400, [('content-length', '57'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), "
-        "('tracestate', 'k=v')]), {'error': {'code': "
-        "'INVALID_REQUEST', 'message': 'nope'}}]",
-        "calls": "[('execute', {'zzz': 1})]",
+        "out": "[(400, [('content-length', '75'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v')]), {'error': {'code': 'INVALID_REQUEST', 'message': 'request_id is required'}}]",
+        "calls": "[]",
     },
     "execute_value_error": {
-        "out": "[(400, [('content-length', '62'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), ('tracestate', "
-        "'k=v'), ('x-traigent-request-id', 'r')]), {'error': {'code': "
-        "'INVALID_REQUEST', 'message': 'bad value'}}]",
-        "calls": "[('execute', {'request_id': 'r'})]",
+        "out": "[(400, [('content-length', '62'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', '550e8400-e29b-41d4-a716-446655440000')]), {'error': {'code': 'INVALID_REQUEST', 'message': 'bad value'}}]",
+        "calls": "[('execute', {'request_id': '550e8400-e29b-41d4-a716-446655440000', 'tunable_id': 't', 'config': {}, 'examples': []})]",
     },
     "execute_internal_error": {
-        "out": "[(500, [('content-length', '58'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), ('tracestate', "
-        "'k=v'), ('x-traigent-request-id', 'r')]), {'error': {'code': "
-        "'INTERNAL_ERROR', 'message': 'kaboom'}}]",
-        "calls": "[('execute', {'request_id': 'r'})]",
+        "out": "[(500, [('content-length', '58'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', '550e8400-e29b-41d4-a716-446655440000')]), {'error': {'code': 'INTERNAL_ERROR', 'message': 'kaboom'}}]",
+        "calls": "[('execute', {'request_id': '550e8400-e29b-41d4-a716-446655440000', 'tunable_id': 't', 'config': {}, 'examples': []})]",
     },
     "execute_internal_error_empty_request": {
-        "out": "[(500, [('content-length', '58'), "
-        "('content-type', 'application/json'), "
-        "('traceparent', '00-abc'), ('tracestate', "
-        "'k=v')]), {'error': {'code': 'INTERNAL_ERROR', "
-        "'message': 'kaboom'}}]",
-        "calls": "[('execute', {})]",
+        "out": "[(400, [('content-length', '75'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v')]), {'error': {'code': 'INVALID_REQUEST', 'message': 'request_id is required'}}]",
+        "calls": "[]",
     },
     "execute_invalid_json": {
         "out": "[(400, [('content-length', '139'), ('content-type', "
@@ -366,24 +343,16 @@ GOLDEN: dict = {
         "calls": "[]",
     },
     "evaluate": {
-        "out": "[(200, [('content-length', '32'), ('content-type', 'application/json'), "
-        "('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', "
-        "'e1')]), {'request_id': 'e1', 'ok': True}]",
-        "calls": "[('evaluate', {'request_id': 'e1'})]",
+        "out": "[(200, [('content-length', '66'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', '660e8400-e29b-41d4-a716-446655440001')]), {'request_id': '660e8400-e29b-41d4-a716-446655440001', 'ok': True}]",
+        "calls": "[('evaluate', {'request_id': '660e8400-e29b-41d4-a716-446655440001', 'tunable_id': 't', 'evaluations': []})]",
     },
     "evaluate_timeout": {
-        "out": "[(200, [('content-length', '31'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), ('tracestate', "
-        "'k=v'), ('x-traigent-request-id', 'e')]), {'request_id': 'e', 'ok': "
-        "True}]",
-        "calls": "[('evaluate', {'request_id': 'e', 'timeout_ms': 2000})]",
+        "out": "[(200, [('content-length', '66'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', '660e8400-e29b-41d4-a716-446655440001')]), {'request_id': '660e8400-e29b-41d4-a716-446655440001', 'ok': True}]",
+        "calls": "[('evaluate', {'request_id': '660e8400-e29b-41d4-a716-446655440001', 'tunable_id': 't', 'evaluations': [], 'timeout_ms': 2000})]",
     },
     "evaluate_error": {
-        "out": "[(500, [('content-length', '55'), ('content-type', "
-        "'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), "
-        "('x-traigent-request-id', 'e')]), {'error': {'code': 'INTERNAL_ERROR', "
-        "'message': \"'k'\"}}]",
-        "calls": "[('evaluate', {'request_id': 'e'})]",
+        "out": "[(500, [('content-length', '55'), ('content-type', 'application/json'), ('traceparent', '00-abc'), ('tracestate', 'k=v'), ('x-traigent-request-id', '660e8400-e29b-41d4-a716-446655440001')]), {'error': {'code': 'INTERNAL_ERROR', 'message': \"'k'\"}}]",
+        "calls": "[('evaluate', {'request_id': '660e8400-e29b-41d4-a716-446655440001', 'tunable_id': 't', 'evaluations': []})]",
     },
     "keep_alive_yes": {
         "out": "[(200, [('content-length', '39'), ('content-type', "

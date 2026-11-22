@@ -6,12 +6,14 @@ including session creation, status updates, and configuration run management.
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
+import json
 import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
 from traigent.cloud import content_less as content_less_session
+from traigent.cloud._detached_raise import raise_detached
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import (
     CloudEgressBlockedError,
@@ -51,6 +53,7 @@ from traigent.config.backend_config import (
 )
 from traigent.config.types import _warn_deprecated_once
 from traigent.core.session_types import (
+    PROJECT_CONTEXT_REQUIRED_MESSAGE,
     SessionCreationFailureDetail,
     SessionCreationHTTPError,
     safe_http_error_summary,
@@ -317,6 +320,61 @@ def _typed_configuration_entry(entry: Any) -> Any:
 #: HTTP statuses of a typed session create that mean "the typed shape was not
 #: accepted" and so justify one legacy-contract retry (#2818).
 _TYPED_SHAPE_RETRY_STATUSES = frozenset({400, 404, 405, 415, 422, 426})
+
+
+#: Knob names the legacy grid session contract accepts (#2805). Any other tuned
+#: variable is refused by the backend ("unsupported grid knob(s)").
+_LEGACY_GRID_KNOBS = frozenset(
+    {"agent_platform", "max_tokens", "model", "prompt_template", "temperature", "top_p"}
+)
+#: The backend rejects session requests over 1 MiB with HTTP 413 (#2805).
+_LEGACY_MAX_PAYLOAD_BYTES = 1024 * 1024
+
+
+def _discrete_grid_size(configuration_space: dict[str, Any]) -> int | None:
+    """Number of grid points, or ``None`` when any axis is not a finite list."""
+    size = 1
+    for values in configuration_space.values():
+        if isinstance(values, dict) and isinstance(values.get("choices"), list):
+            values = values["choices"]
+        if not isinstance(values, (list, tuple)):
+            return None
+        size *= max(len(values), 1)
+    return size
+
+
+def _legacy_contract_blockers(
+    legacy_payload: dict[str, Any], max_trials: int
+) -> list[str]:
+    """Reasons the legacy grid contract cannot carry this run (#2805).
+
+    Content-free: knob NAMES, counts and sizes only, never values.
+    """
+    blockers: list[str] = []
+    space = legacy_payload.get("search_space")
+    if isinstance(space, dict):
+        unsupported = sorted(str(k) for k in space if k not in _LEGACY_GRID_KNOBS)
+        if unsupported:
+            blockers.append(
+                "the search space tunes knob(s) the legacy contract rejects: "
+                + ", ".join(unsupported)
+            )
+        grid_size = _discrete_grid_size(space)
+        if grid_size is not None and grid_size > max_trials:
+            blockers.append(
+                f"the legacy contract forces grid search, which would "
+                f"materialize {grid_size} configurations (max_trials={max_trials})"
+            )
+    try:
+        size = len(json.dumps(legacy_payload, default=str).encode("utf-8"))
+    except (TypeError, ValueError):
+        size = 0
+    if size > _LEGACY_MAX_PAYLOAD_BYTES:
+        blockers.append(
+            f"the legacy request is {size} bytes, over the backend's "
+            f"{_LEGACY_MAX_PAYLOAD_BYTES}-byte limit (HTTP 413)"
+        )
+    return blockers
 
 
 class ApiOperations:
@@ -602,6 +660,22 @@ class ApiOperations:
             session_request,
             max_trials_value,
         )
+        blockers = _legacy_contract_blockers(legacy_payload, max_trials_value)
+        if blockers:
+            # Fail fast (#2805): the legacy contract cannot carry this run, so a
+            # second POST would only fail later with a confusing parse error.
+            status = getattr(typed_failure, "status_code", None)
+            code = getattr(typed_failure, "safe_error_code", "unknown")
+            raise SessionContractError(
+                f"Typed session create was refused (HTTP {status}, {code}) and "
+                "the legacy session contract cannot carry this run: "
+                + "; ".join(blockers)
+                + ". Fix the typed create refusal (set "
+                "TRAIGENT_SESSION_CONTRACT=typed to see it without the legacy "
+                "retry, and check your account's typed storage), or restrict "
+                "the run to the legacy-supported knobs and size, or run "
+                "offline with algorithm='grid' or 'random'."
+            ) from typed_exc
         try:
             return await self._post_session_creation(legacy_payload, headers, connector)
         except CloudServiceError as legacy_exc:
@@ -1229,6 +1303,11 @@ class ApiOperations:
             cast(Any, auth_exc).session_creation_failure = detail
             raise auth_exc from structured_cause
 
+        if detail.is_project_context_required:
+            project_exc = CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
+            cast(Any, project_exc).session_creation_failure = detail
+            raise project_exc from structured_cause
+
         if status_code in (500, 502, 503, 504):
             logger.debug("Backend HTTP error: %s", status_code)
             service_exc = CloudServiceError(f"Backend HTTP {status_code}")
@@ -1250,12 +1329,17 @@ class ApiOperations:
     def _handle_connector_error(self, error: aiohttp.ClientConnectorError) -> None:
         """Handle aiohttp connector errors — DEBUG only."""
         logger.debug("Backend connection failed: %s", error)
-        raise CloudServiceError("Backend unavailable (connection failed)") from error
+        # Drop the frame's only reference: the raised error's traceback keeps this
+        # frame (and its locals) alive for locals-capturing reporters (#3264).
+        del error
+        raise_detached(CloudServiceError("Backend unavailable (connection failed)"))
 
     def _handle_client_error(self, error: aiohttp.ClientError) -> None:
         """Handle generic aiohttp client errors — DEBUG only."""
         logger.debug("Network error connecting to backend: %s", error)
-        raise CloudServiceError(f"Network error: {error}") from error
+        failure = CloudServiceError(f"Network error: {error}")
+        del error  # see _handle_connector_error (#3264)
+        raise_detached(failure)
 
     def _handle_generic_session_exception(self, error: Exception) -> None:
         """Handle unexpected exceptions during session creation — DEBUG only."""

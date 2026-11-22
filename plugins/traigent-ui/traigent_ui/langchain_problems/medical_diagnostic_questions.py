@@ -16,9 +16,8 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any
 
-from examples.langchain_problems.base import ProblemConfig, ProblemDefinition
-
 from . import register_problem
+from .base import ProblemConfig, ProblemDefinition
 
 
 @dataclass

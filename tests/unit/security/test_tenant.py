@@ -708,3 +708,41 @@ class TestTenantManager:
 
         # Current tenant should be None
         assert manager.get_current_tenant() is None
+
+
+class TestTenantNonFiniteAndZeroQuota:
+    """Non-finite amounts are rejected; zero quotas do not crash (#3136, #3121)."""
+
+    @staticmethod
+    def _tenant(**quota_overrides):
+        quotas = TenantQuotas(**quota_overrides) if quota_overrides else None
+        return Tenant(
+            tenant_id="t1",
+            name="T",
+            contact_email="a@test.com",
+            tier=TenantTier.BASIC,
+            quotas=quotas,
+        )
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), True])
+    def test_release_quota_rejects_non_finite_and_keeps_usage(self, bad):
+        tenant = self._tenant()
+        assert tenant.consume_quota("api_calls_per_hour", 3)
+        with pytest.raises(ValueError):
+            tenant.release_quota("api_calls_per_hour", bad)
+        assert tenant.usage.api_calls_this_hour == 3
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_consume_and_check_reject_non_finite(self, bad):
+        tenant = self._tenant()
+        with pytest.raises(ValueError):
+            tenant.consume_quota("users", bad)
+        with pytest.raises(ValueError):
+            tenant.check_quota("users", bad)
+
+    def test_quota_utilization_with_zero_quota(self):
+        tenant = self._tenant(max_users=0)
+        utilization = tenant.get_quota_utilization()
+        assert utilization["users"] == 0.0
+        tenant.usage.active_users = 1
+        assert tenant.get_quota_utilization()["users"] == 100.0

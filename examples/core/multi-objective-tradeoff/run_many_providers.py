@@ -20,6 +20,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from _cost_display import format_cost
+
 MOCK = str(os.getenv("TRAIGENT_MOCK_LLM", "")).lower() in {"1", "true", "yes", "y"}
 BASE = Path(__file__).parent
 if MOCK:
@@ -454,7 +456,7 @@ def _print_results(result: OptimizationResult) -> None:
     counts = stats.trial_counts
     print("\nExperiment totals:")
     print(f"  Total duration: {stats.total_duration:.3f}s")
-    print(f"  Total cost: {stats.total_cost:.6f}")
+    print("  Total cost: " + format_cost(stats.total_cost, stats.cost_lower_bound))
     print(f"  Unique configurations: {stats.unique_configurations}")
     print(
         "  Trials — completed: {completed}, failed: {failed}, cancelled: {cancelled}, pending: {pending}, running: {running}".format(
@@ -787,7 +789,8 @@ def answer(
     max_tokens: int = 128,
 ) -> str:
     if MOCK:
-        return _evaluate_expression(question)
+        # No model is called in mock mode, so the measured cost is exactly $0.
+        return traigent.with_usage(_evaluate_expression(question), total_cost=0.0)
 
     _ensure_api_key()
 

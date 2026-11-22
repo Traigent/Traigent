@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 # Closed vocabulary of quota/limit error codes safe to render. Anything else
 # (including backend-invented strings) is shown as "unknown" so a quota
 # diagnostic can never carry backend or customer text (#2550).
@@ -174,6 +176,17 @@ CLOSED_REFUSAL_CODES = frozenset(
 )
 
 
+PROJECT_CONTEXT_REQUIRED_CODES = frozenset(
+    {"project_context_required", "project_context_required_for_write"}
+)
+
+PROJECT_CONTEXT_REQUIRED_MESSAGE = (
+    "The backend requires an explicit project for this write (HTTP 422 "
+    "PROJECT_CONTEXT_REQUIRED). Set TRAIGENT_PROJECT_ID to your project id, or "
+    "use a project-bound API key."
+)
+
+
 # Closed vocabulary of generic backend error codes that may appear in an SDK
 # error message. Anything else is rendered as "unknown" so backend-invented
 # text (which can echo customer content) never reaches an exception or a log
@@ -191,6 +204,8 @@ SAFE_HTTP_ERROR_CODES = (
             "invalid_request",
             "not_found",
             "payload_too_large",
+            "project_context_required",
+            "project_context_required_for_write",
             "rate_limited",
             "service_unavailable",
             "session_not_found",
@@ -199,6 +214,18 @@ SAFE_HTTP_ERROR_CODES = (
         }
     )
 )
+
+
+def is_project_context_required_response(
+    status_code: int | None, raw_body: str | None
+) -> bool:
+    """True for a 422 carrying the closed PROJECT_CONTEXT_REQUIRED(_FOR_WRITE) code."""
+
+    if status_code != 422:
+        return False
+    return SessionCreationFailureDetail.from_http_response(
+        status_code, raw_body
+    ).is_project_context_required
 
 
 def safe_http_error_summary(status_code: int | None, raw_body: str | None) -> str:
@@ -356,6 +383,13 @@ class SessionCreationFailureDetail:
         return code in CLOSED_REFUSAL_CODES
 
     @property
+    def is_project_context_required(self) -> bool:
+        """True for the backend's closed "write needs an explicit project" refusal."""
+
+        code = (self.error_code or "").strip().lower()
+        return self.status_code == 422 and code in PROJECT_CONTEXT_REQUIRED_CODES
+
+    @property
     def safe_quota_error_code(self) -> str:
         """The error code if it is in the closed quota vocabulary, else 'unknown'."""
 
@@ -393,7 +427,7 @@ class SessionCreationFailureDetail:
         return " | ".join(parts)
 
 
-class SessionCreationHTTPError(Exception):
+class SessionCreationHTTPError(PicklableExceptionMixin, Exception):
     """HTTP error raised while creating a backend tracking session."""
 
     def __init__(self, detail: SessionCreationFailureDetail) -> None:

@@ -216,7 +216,7 @@ MAX_SPAN_NAME_LEN: Final = 80
 MAX_RECORD_NAME_LEN: Final = 256
 MAX_RECORD_STATUS_LEN: Final = 1024
 
-_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.\-/:]{1,80}$")
+_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.\-/:]{1,80}\Z")
 # Identifier-shaped data hides in "static-looking" names (``order_12345_john``,
 # ``user:42``, ``/users/42/orders``).  A name that carries any of these shapes
 # is treated as data, not a static operation name.
@@ -230,10 +230,10 @@ _SEGMENT_SPLIT = re.compile(r"[:/.]")
 # spaces, slashes) is rejected; a dotted identifier that merely *looks* like a
 # module path cannot be told apart from one (documented residual).
 _SAFE_SCOPE_NAME = re.compile(
-    r"^[A-Za-z_][A-Za-z0-9_]{0,63}(\.[A-Za-z_][A-Za-z0-9_]{0,63}){0,7}$"
+    r"^[A-Za-z_][A-Za-z0-9_]{0,63}(\.[A-Za-z_][A-Za-z0-9_]{0,63}){0,7}\Z"
 )
-_SAFE_SCOPE_VERSION = re.compile(r"^[A-Za-z0-9_.\-+]{1,32}$")
-_SAFE_KEY = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
+_SAFE_SCOPE_VERSION = re.compile(r"^[A-Za-z0-9_.\-+]{1,32}\Z")
+_SAFE_KEY = re.compile(r"^[A-Za-z0-9_.\-]{1,128}\Z")
 
 
 def is_token_charset(value: str) -> bool:

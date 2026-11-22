@@ -127,6 +127,18 @@ class DataRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+class EncryptionKeyNotFoundError(SecurityError):
+    """Raised when the key needed to decrypt is absent, expired or inactive."""
+
+    def __init__(self, key_id: str) -> None:
+        self.key_id = key_id
+        super().__init__(
+            f"Encryption key '{key_id}' is not available in this key store "
+            "(missing, expired or inactive); data can only be decrypted with "
+            "the key store that encrypted it."
+        )
+
+
 class EncryptionManager:
     """Manages data encryption and key lifecycle."""
 
@@ -271,6 +283,8 @@ class EncryptionManager:
             raise ValueError("Authentication tag must be 16 bytes for AES-GCM")
 
         key_data: bytes | None = self.key_manager.get_key(key_id)
+        if key_data is None:
+            raise EncryptionKeyNotFoundError(key_id)
         key_buffer = self._to_mutable_key_buffer(key_data)
 
         if self.crypto_available and key_buffer:
@@ -549,19 +563,47 @@ class PIIDetector:
                 match for match in pii_matches if match.pii_type in pii_types
             ]
 
-        # Sort matches by position in reverse order to maintain indices
-        pii_matches.sort(key=lambda x: x.start_pos, reverse=True)
+        # A card-shaped number is sensitive even when its checksum fails.
+        eligible = [
+            match
+            for match in pii_matches
+            if match.confidence > 0.5 or match.pii_type == PIIType.CREDIT_CARD
+        ]
 
-        for match in pii_matches:
-            if match.confidence > 0.5:  # Only anonymize decent confidence matches
-                replacement = f"[{match.pii_type.value.upper()}_REDACTED]"
-                anonymized_text = (
-                    anonymized_text[: match.start_pos]
-                    + replacement
-                    + anonymized_text[match.end_pos :]
-                )
+        for start, end, winner in reversed(self._merge_overlapping(eligible)):
+            replacement = f"[{winner.pii_type.value.upper()}_REDACTED]"
+            anonymized_text = (
+                anonymized_text[:start] + replacement + anonymized_text[end:]
+            )
 
         return anonymized_text
+
+    @staticmethod
+    def _merge_overlapping(
+        matches: list[PIIMatch],
+    ) -> list[tuple[int, int, PIIMatch]]:
+        """Merge overlapping matches into (start, end, winning match) spans.
+
+        The winner is the highest-confidence match (credit cards win ties),
+        and the span extends to the union of all overlapping matches.
+        """
+        merged: list[list[Any]] = []
+        for match in sorted(matches, key=lambda m: (m.start_pos, -m.end_pos)):
+            if merged and match.start_pos < merged[-1][1]:
+                span = merged[-1]
+                span[1] = max(span[1], match.end_pos)
+                span[2].append(match)
+            else:
+                merged.append([match.start_pos, match.end_pos, [match]])
+
+        def rank(m: PIIMatch) -> tuple[float, bool, int]:
+            return (
+                m.confidence,
+                m.pii_type == PIIType.CREDIT_CARD,
+                m.end_pos - m.start_pos,
+            )
+
+        return [(s, e, max(group, key=rank)) for s, e, group in merged]
 
     def pseudonymize_text(
         self, text: str, pii_types: list[PIIType] | None = None
@@ -1107,7 +1149,12 @@ class DataProtectionManager:
             encrypt: Whether to encrypt the data
 
         Returns:
-            Dictionary with protection results and metadata
+            Dictionary with protection results and metadata. When encrypted,
+            ``protected_data`` is a JSON envelope (hex ciphertext, iv, tag and
+            ``key_id``); the key itself is held only by this manager's key
+            store. The default ``KeyManager`` is in-memory, so the envelope
+            can be decrypted only while that key store is alive, or with a
+            manager sharing the same (persisted) key store.
         """
         if classification is None:
             if isinstance(data, str):
@@ -1143,6 +1190,18 @@ class DataProtectionManager:
                 "key_id": encrypted_result["key_id"],
                 "algorithm": encrypted_result["algorithm"],
             }
+            # Return the ciphertext envelope, never the plaintext, when the
+            # result is labelled as encrypted.
+            protected_data = json.dumps(
+                {
+                    "ciphertext": encrypted_result["ciphertext"].hex(),
+                    "iv": encrypted_result["iv"].hex(),
+                    "tag": encrypted_result["tag"].hex(),
+                    "key_id": encrypted_result["key_id"],
+                    "algorithm": encrypted_result["algorithm"],
+                    "classification": encrypted_result["classification"],
+                }
+            )
 
         # Create result metadata
         metadata = {
@@ -1157,10 +1216,11 @@ class DataProtectionManager:
         result = {
             "is_encrypted": encrypt,
             "classification": classification.value,
-            "original_data": data,
             "protected_data": protected_data,
             "metadata": metadata,
         }
+        if not encrypt:
+            result["original_data"] = data
 
         return result
 
@@ -1203,16 +1263,78 @@ class DataProtectionManager:
         expiry_date = created_date + timedelta(days=retention_days)
         return datetime.now(UTC) > expiry_date
 
-    def unprotect_data(self, protected_result: dict[str, Any]) -> str:
+    def unprotect_data(
+        self,
+        protected_result: dict[str, Any],
+        *,
+        require_encrypted: bool = False,
+    ) -> str:
         """Unprotect data from protection result.
+
+        Behaviour is decided by the ``is_encrypted`` flag only. If it is true,
+        ``protected_data`` must be a complete, valid encryption envelope, which
+        is decrypted and authenticated. If it is false or absent,
+        ``protected_data`` is returned unchanged.
+
+        The returned record is not self-authenticating: the flag travels with
+        the data and can be altered by whoever holds it. Callers that stored
+        encrypted data should pass ``require_encrypted=True``.
+
+        Decryption needs the same key store that encrypted the data.
 
         Args:
             protected_result: Result from protect_data() method
+            require_encrypted: Reject records whose ``is_encrypted`` is not true
 
         Returns:
             Unprotected data as string
+
+        Raises:
+            SecurityError: ``require_encrypted`` is set and the record is not
+                marked encrypted.
+            ValueError: the record is marked encrypted but the envelope is
+                missing or malformed.
+            EncryptionKeyNotFoundError: the key id is not in the key store.
+            RuntimeError: authentication failed (tampered data).
         """
-        return cast(str, protected_result["protected_data"])
+        encrypted = protected_result.get("is_encrypted") is True
+        if require_encrypted and not encrypted:
+            raise SecurityError("Expected encrypted data but record is not encrypted")
+        protected = protected_result["protected_data"]
+        if not encrypted:
+            return cast(str, protected)
+
+        envelope = self._parse_envelope(protected)
+        if envelope is None:
+            raise ValueError(
+                "Result is marked encrypted but protected_data is not a "
+                "valid encryption envelope"
+            )
+        try:
+            parts = {
+                "ciphertext": bytes.fromhex(envelope["ciphertext"]),
+                "iv": bytes.fromhex(envelope["iv"]),
+                "tag": bytes.fromhex(envelope["tag"]),
+                "key_id": envelope["key_id"],
+                "algorithm": envelope.get("algorithm", "AES-256-GCM"),
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Malformed encryption envelope") from exc
+        return self.encryption_manager.decrypt(parts).decode("utf-8")
+
+    @staticmethod
+    def _parse_envelope(protected: Any) -> dict[str, Any] | None:
+        """Return the envelope dict if complete, else None."""
+        if not isinstance(protected, str):
+            return None
+        try:
+            parsed = json.loads(protected)
+        except ValueError:
+            return None
+        required = {"ciphertext", "iv", "tag", "key_id"}
+        if isinstance(parsed, dict) and required <= parsed.keys():
+            return parsed
+        return None
 
 
 @dataclass

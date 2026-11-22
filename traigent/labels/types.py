@@ -25,13 +25,13 @@ _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _OPAQUE_REF = re.compile(
     rf"^(?:{_UUID}|(?:tenant|project)_[0-9a-f]{{32}}|[a-z]+ref_[0-9a-f]{{32}})$"
 )
-_DIGEST = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
-_KEY_MATERIAL = re.compile(r"^[A-Za-z0-9_-]+$")
+_DIGEST = re.compile(r"^(?:sha256:)?[0-9a-f]{64}\Z")
+_KEY_MATERIAL = re.compile(r"^[A-Za-z0-9_-]+\Z")
 _MODULE = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
 _CODE_ID = re.compile(
-    rf"^({_MODULE}):([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_<>]*)*)$"
+    rf"^({_MODULE}):([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_<>]*)*)\Z"
 )
-_REL_PATH = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$))[A-Za-z0-9_./-]{1,255}$")
+_REL_PATH = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$))[A-Za-z0-9_./-]{1,255}\Z")
 
 MAX_KEY_MATERIAL_LEN = 512
 

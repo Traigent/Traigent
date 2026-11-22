@@ -7,12 +7,11 @@ which parts of the script are tested.
 """
 
 from pathlib import Path
-from typing import Dict, Tuple
 
 
 def analyze_script_coverage(
     script_path: Path, test_path: Path
-) -> Tuple[float, Dict[str, bool]]:
+) -> tuple[float, dict[str, bool]]:
     """
     Analyze test coverage for a shell script.
 
@@ -38,7 +37,7 @@ def analyze_script_coverage(
         "package_install": False,
         "precommit_install": False,
         "run_tests": False,
-        "black_check": False,
+        "format_check": False,
         "isort_check": False,
         "flake8_check": False,
         "mypy_check": False,
@@ -84,8 +83,8 @@ def analyze_script_coverage(
 
     # Check for code quality tests
     if "test_code_quality_checks" in test_content:
-        if "black" in test_content:
-            coverage_map["black_check"] = True
+        if "ruff" in test_content:
+            coverage_map["format_check"] = True
         if "isort" in test_content:
             coverage_map["isort_check"] = True
         if "flake8" in test_content:
@@ -117,14 +116,14 @@ def analyze_script_coverage(
     return coverage_percentage, testable_elements
 
 
-def print_coverage_report(script_name: str, coverage: float, details: Dict[str, bool]):
+def print_coverage_report(script_name: str, coverage: float, details: dict[str, bool]):
     """Print a formatted coverage report."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Coverage Report for {script_name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Overall Coverage: {coverage:.1f}%")
     print("\nDetailed Coverage:")
-    print(f"{'-'*60}")
+    print(f"{'-' * 60}")
 
     for element, tested in sorted(details.items()):
         status = "✅" if tested else "❌"
@@ -132,7 +131,7 @@ def print_coverage_report(script_name: str, coverage: float, details: Dict[str, 
             f"{status} {element.replace('_', ' ').title():<40} {'Tested' if tested else 'Not Tested'}"
         )
 
-    print(f"{'-'*60}")
+    print(f"{'-' * 60}")
 
     if coverage >= 85:
         print("✅ Coverage goal of >85% achieved!")

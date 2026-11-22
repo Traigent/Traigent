@@ -41,6 +41,7 @@ class TestParameterValidator:
         """Set up test fixtures."""
         self.validator = ParameterValidator()
 
+    @pytest.mark.usefixtures("connected_policy_env")
     def test_validate_execution_mode_valid(self):
         """Test validation of valid execution modes on the real surface.
 
@@ -370,6 +371,7 @@ class TestValidateOptimizeParameters:
 class TestParameterValidatorIntegration:
     """Integration tests for parameter validator."""
 
+    @pytest.mark.usefixtures("connected_policy_env")
     def test_real_world_parameters(self):
         """Test validation with realistic parameter combinations."""
         # Example from documentation

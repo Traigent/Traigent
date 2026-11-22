@@ -21,7 +21,7 @@ logger = get_logger(__name__)
 
 
 # A dated snapshot suffix of the SAME model id: -YYYYMMDD, -YYYY-MM-DD, @YYYYMMDD.
-_SNAPSHOT_SUFFIX = re.compile(r"^[-@](\d{8}|\d{4}-\d{2}-\d{2})$")
+_SNAPSHOT_SUFFIX = re.compile(r"^[-@](\d{8}|\d{4}-\d{2}-\d{2})\Z")
 
 
 def _build_model_cost_per_1k() -> dict[str, float]:

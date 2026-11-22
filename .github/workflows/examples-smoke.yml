@@ -162,16 +162,16 @@ jobs:
     - name: Install linting dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install ruff black
+        pip install ruff
 
     - name: Lint examples with ruff
       run: |
         ruff check examples/ --exclude examples/archive/
 
-    - name: Check code formatting with black
+    - name: Check code formatting with ruff format
       run: |
         # Exclude documentation examples and templates (intentionally formatted for readability)
-        black --check examples/ --exclude '(examples/(archive|templates|gallery/page-inline|tvl/reusable_safety/run_demo\.py|advanced/(execution-modes|results-analysis)))'
+        ruff format --check examples/ --exclude examples/archive --exclude examples/templates --exclude examples/gallery/page-inline --exclude examples/tvl/reusable_safety/run_demo.py --exclude examples/advanced/execution-modes --exclude examples/advanced/results-analysis --exclude '*.md'
 
   docs-validation:
     runs-on: ubuntu-latest

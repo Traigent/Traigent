@@ -27,7 +27,7 @@ def analytics_credential_kwargs_from_auth_headers(
 
 
 def _configured_jwt_without_api_key(api_key_fallback: str | None = None) -> bool:
-    if api_key_fallback or os.getenv("TRAIGENT_API_KEY"):
+    if api_key_fallback or (os.getenv("TRAIGENT_API_KEY") or "").strip():
         return False
     if os.getenv("TRAIGENT_JWT_TOKEN"):
         return True

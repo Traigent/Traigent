@@ -28,11 +28,15 @@ class UsageMetadata(TypedDict):
         input_tokens: Number of input tokens consumed
         output_tokens: Number of output tokens generated
         response_time_ms: Response time in milliseconds (optional)
+        tokens_invalid: True when a declared token count was rejected
+            (negative, bool, float, string, absurdly large); the token usage
+            is then unknown rather than clamped to zero (Traigent#3252)
     """
 
     input_tokens: int
     output_tokens: int
     response_time_ms: NotRequired[float]
+    tokens_invalid: NotRequired[bool]
 
 
 class CallCostEntry(TypedDict):

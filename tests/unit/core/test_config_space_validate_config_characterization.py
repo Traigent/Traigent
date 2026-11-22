@@ -272,7 +272,7 @@ def test_truthy_constraint_results_allow(truthy: Any) -> None:
     assert _space([], constraints=[lambda c: truthy]).validate_config({}) is True
 
 
-def test_constraint_exception_denies_and_logs_exact_message(
+def test_constraint_exception_denies_and_logs_type_only(
     log: RecordingLogger,
 ) -> None:
     calls: list[str] = []
@@ -288,11 +288,18 @@ def test_constraint_exception_denies_and_logs_exact_message(
     assert _space([], constraints=[bad, after]).validate_config({}) is False
     assert calls == ["bad"]
     assert log.calls == [
-        ("debug", ("Constraint check raised exception (treating as invalid): boom",))
+        (
+            "warning",
+            ("Constraint check raised %s (treating as invalid)", "ValueError"),
+        )
     ]
+    # The exception message never reaches the log record.
+    assert "boom" not in repr(log.calls)
 
 
-def test_constraint_exception_is_stringified_once() -> None:
+def test_constraint_exception_is_never_stringified_or_rerun(
+    log: RecordingLogger,
+) -> None:
     class Counted(Exception):
         n = 0
 
@@ -300,11 +307,21 @@ def test_constraint_exception_is_stringified_once() -> None:
             type(self).n += 1
             return "counted"
 
+    runs = {"n": 0}
+
     def bad(c: Any) -> bool:
+        runs["n"] += 1
         raise Counted()
 
     assert _space([], constraints=[bad]).validate_config({}) is False
-    assert Counted.n == 1
+    # Only the exception type is reported: the message is never rendered, and
+    # the user constraint is not re-run to build a violation message (#3123).
+    assert Counted.n == 0
+    assert runs["n"] == 1
+    assert log.calls == [
+        ("warning", ("Constraint check raised %s (treating as invalid)", "Counted"))
+    ]
+    assert "counted" not in repr(log.calls)
 
 
 def test_constraint_raising_once_then_succeeding_uses_try_per_call(
@@ -346,10 +363,11 @@ def test_raising_truth_of_constraint_result_is_inside_the_guard(
     assert _space([], constraints=[lambda c: Untruthy()]).validate_config({}) is False
     assert log.calls == [
         (
-            "debug",
-            ("Constraint check raised exception (treating as invalid): truth failed",),
+            "warning",
+            ("Constraint check raised %s (treating as invalid)", "RuntimeError"),
         )
     ]
+    assert "truth failed" not in repr(log.calls)
 
 
 def test_truth_of_constraint_result_evaluated_once() -> None:

@@ -28,6 +28,7 @@ from traigent.core.objective_directions import (
     resolve_objective_orientation,
     validate_objective_orientation,
 )
+from traigent.utils.discrete_domains import sample_range_dict
 from traigent.utils.exceptions import SessionError
 from traigent.utils.logging import get_logger
 
@@ -523,7 +524,12 @@ class _SessionStateRegistry:
         return {
             **self._stats,
             "current_sessions": len(self._sessions),
-            "capacity_utilization": len(self._sessions) / self.max_sessions,
+            # A zero-capacity manager is always full.
+            "capacity_utilization": (
+                len(self._sessions) / self.max_sessions
+                if self.max_sessions > 0
+                else 1.0
+            ),
             "dirty_sessions": len(self.list_dirty_sessions()),
         }
 
@@ -868,6 +874,9 @@ class SessionManager:
                     config[param] = _SECURE_RANDOM.randint(min_val, max_val)
                 else:
                     config[param] = _SECURE_RANDOM.uniform(min_val, max_val)
+            elif isinstance(space, dict) and "low" in space and "high" in space:
+                # Typed range dict (Range / IntRange)
+                config[param] = sample_range_dict(_SECURE_RANDOM, space)
             else:
                 # Default
                 config[param] = space
@@ -894,14 +903,18 @@ class SessionManager:
         elif trial_number <= 10:
             # Mid exploration: medium subsets
             subset_size = min(
-                int(dataset_size * 0.2), strategy.get("max_examples_per_trial", 100)
+                max(1, int(dataset_size * 0.2)),
+                strategy.get("max_examples_per_trial", 100),
+                dataset_size,
             )
             selection_strategy = "representative_sampling"
             confidence = 0.6
         else:
             # Exploitation: larger subsets
             subset_size = min(
-                int(dataset_size * 0.5), strategy.get("max_examples_per_trial", 100)
+                max(1, int(dataset_size * 0.5)),
+                strategy.get("max_examples_per_trial", 100),
+                dataset_size,
             )
             selection_strategy = "high_confidence_sampling"
             confidence = 0.9

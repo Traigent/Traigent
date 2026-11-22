@@ -137,7 +137,7 @@ def validate_comparability_metadata(comparability: Any) -> bool:
     return True
 
 
-_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*\Z")
 
 
 def _validate_metric_entries(entries: dict, key_label: str, value_label: str) -> None:

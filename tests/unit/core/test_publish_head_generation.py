@@ -419,7 +419,9 @@ _KEY = "tg_" + "x" * 61  # pragma: allowlist secret
 
 
 def _client() -> BackendIntegratedClient:
-    client = BackendIntegratedClient(api_key=_KEY, base_url="https://api.test")
+    client = BackendIntegratedClient(
+        api_key=_KEY, base_url="https://api.test", project_id="proj-1"
+    )
     client.auth_manager.auth.get_headers = AsyncMock(
         return_value={"Authorization": "Bearer test-token"}
     )
@@ -497,7 +499,7 @@ def test_fetch_agent_head_generation_reads_generation(mock_get):
     mock_get.return_value = _resp(200, {"success": True, "data": {"generation": 0}})
     assert _client().fetch_agent_head_generation_sync("a/1", environment="prod") == 0
     call = mock_get.call_args
-    assert call.args[0].endswith("/api/v1/best-configs/agent-heads/a%2F1")
+    assert call.args[0].endswith("/api/v1/projects/proj-1/agents/a/1/best-config-head")
     assert call.kwargs["params"] == {"environment": "prod"}
 
 

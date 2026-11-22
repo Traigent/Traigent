@@ -103,6 +103,13 @@ async def main() -> None:
     print("\nRunning optimization (this will make real API calls)...")
     results = await qa_agent.optimize(algorithm="random", max_trials=8, random_seed=42)
 
+    if results.best_config is None:
+        print(
+            "\nNo best configuration: the run ended with status "
+            f"{results.status!r} (stop reason: {results.stop_reason!r})."
+        )
+        raise SystemExit(1)
+
     print("\nBest Configuration:")
     best_prompt = results.best_config.get("system_prompt", "N/A")
     print(f"  System Prompt: {best_prompt}")

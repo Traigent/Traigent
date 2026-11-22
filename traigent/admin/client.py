@@ -27,6 +27,7 @@ from traigent.utils.exceptions import (
     ClientError,
     TraigentConnectionError,
 )
+from traigent.utils.url_segments import quote_path_segment
 from traigent.utils.wire_text import filter_wire_metadata
 
 
@@ -67,7 +68,9 @@ class EnterpriseAdminClient:
         return TenantListResponse.from_dict(self._unwrap_data(payload, "tenant list"))
 
     def get_tenant(self, tenant_id: str) -> TenantDTO:
-        payload = self._request_json("GET", f"/tenants/{tenant_id}")
+        payload = self._request_json(
+            "GET", f"/tenants/{quote_path_segment(tenant_id, field='tenant_id')}"
+        )
         return TenantDTO.from_dict(self._unwrap_data(payload, "tenant detail"))
 
     def create_tenant(
@@ -106,7 +109,11 @@ class EnterpriseAdminClient:
             payload["tier"] = payload["tier"].value
         if "metadata" in payload:
             payload["metadata"] = filter_wire_metadata(payload["metadata"])
-        response = self._request_json("PATCH", f"/tenants/{tenant_id}", payload)
+        response = self._request_json(
+            "PATCH",
+            f"/tenants/{quote_path_segment(tenant_id, field='tenant_id')}",
+            payload,
+        )
         return TenantDTO.from_dict(self._unwrap_data(response, "tenant update"))
 
     def list_tenant_memberships(
@@ -123,7 +130,7 @@ class EnterpriseAdminClient:
         if isinstance(role, str):
             role = TenantMembershipRole(role)
         path = self._build_query_path(
-            f"/tenants/{tenant_id}/memberships",
+            f"/tenants/{quote_path_segment(tenant_id, field='tenant_id')}/memberships",
             page=page,
             per_page=per_page,
             status=status.value if status else None,
@@ -149,7 +156,7 @@ class EnterpriseAdminClient:
             status = TenantMembershipStatus(status)
         payload = self._request_json(
             "POST",
-            f"/tenants/{tenant_id}/memberships",
+            f"/tenants/{quote_path_segment(tenant_id, field='tenant_id')}/memberships",
             {
                 "user_id": user_id,
                 "role": role.value,
@@ -176,7 +183,7 @@ class EnterpriseAdminClient:
             payload["status"] = payload["status"].value
         response = self._request_json(
             "PATCH",
-            f"/tenants/{tenant_id}/memberships/{membership_id}",
+            f"/tenants/{quote_path_segment(tenant_id, field='tenant_id')}/memberships/{quote_path_segment(membership_id, field='membership_id')}",
             payload,
         )
         return TenantMembershipDTO.from_dict(
@@ -184,7 +191,9 @@ class EnterpriseAdminClient:
         )
 
     def get_tenant_sso_config(self, tenant_id: str) -> TenantSSOConfigDTO | None:
-        payload = self._request_json("GET", f"/tenants/{tenant_id}/sso")
+        payload = self._request_json(
+            "GET", f"/tenants/{quote_path_segment(tenant_id, field='tenant_id')}/sso"
+        )
         data = self._unwrap_data(payload, "tenant SSO config")
         if data is None:
             return None
@@ -204,7 +213,7 @@ class EnterpriseAdminClient:
             provider_type = SSOProviderType(provider_type)
         response = self._request_json(
             "PUT",
-            f"/tenants/{tenant_id}/sso",
+            f"/tenants/{quote_path_segment(tenant_id, field='tenant_id')}/sso",
             {
                 "provider_type": provider_type.value,
                 "enabled": enabled,

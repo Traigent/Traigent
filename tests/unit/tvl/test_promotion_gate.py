@@ -106,7 +106,7 @@ class TestPromotionGate:
                     0.92,
                     0.90,
                     0.89,
-                    0.91,
+                    0.93,
                 ],
                 "latency": [
                     80.0,
@@ -118,13 +118,23 @@ class TestPromotionGate:
                     83.0,
                     77.0,
                     81.0,
-                    80.0,
+                    83.0,
                 ],
             },
         )
 
         assert decision.decision == "promote"
         assert decision.dominance_satisfied is True
+
+    def test_zero_variance_improvement_does_not_promote(self) -> None:
+        """#2948: a constant paired gap is degenerate evidence; the gate fails closed."""
+        policy = PromotionPolicy(alpha=0.05, min_effect={"accuracy": 0.01})
+        gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
+        decision = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.80] * 30},
+            candidate_metrics={"accuracy": [0.90] * 30},
+        )
+        assert decision.decision != "promote"
 
     def test_reject_when_dominated(self) -> None:
         """Candidate is rejected when dominated by incumbent."""
@@ -260,7 +270,7 @@ class TestPromotionGate:
             # yet NOT worse beyond epsilon (so the old gate ignored it).
             "x": list(incumbent_metrics["x"]),
             # Y: clearly better.
-            "y": [0.80, 0.82, 0.78, 0.81, 0.79, 0.80, 0.83, 0.77, 0.81, 0.80],
+            "y": [0.80, 0.82, 0.78, 0.81, 0.79, 0.80, 0.83, 0.77, 0.81, 0.84],
         }
         objectives = [
             ObjectiveSpec("x", "maximize"),
@@ -355,8 +365,8 @@ class TestChanceConstraints:
         gate = PromotionGate(policy, objectives)
 
         decision = gate.evaluate(
-            incumbent_metrics={"accuracy": [0.8] * 5},
-            candidate_metrics={"accuracy": [0.9] * 5},
+            incumbent_metrics={"accuracy": [0.80, 0.81, 0.79, 0.80, 0.82]},
+            candidate_metrics={"accuracy": [0.90, 0.92, 0.89, 0.91, 0.93]},
             constraint_data={"error_rate": (30, 100)},  # (violations, trials)
         )
 
@@ -909,7 +919,7 @@ class TestChanceConstraintFailsClosedWithoutScipy:
     keeps the objective (non-inferiority/superiority) path working on a core,
     no-scipy install via the pure-python paired test, but the exact beta
     Clopper-Pearson quantile has no reliable pure-python implementation:
-    ``statistics._beta_quantile_approx`` clamps to ``0.001`` on
+    the former ``statistics._beta_quantile_approx`` (since replaced by an exact bisection) clamped to ``0.001`` on
     high-violation / high-confidence inputs and would silently UNDER-estimate
     the violation-rate upper bound, flipping a chance-constraint verdict to
     "promote" when it must reject. So when scipy is unavailable AND a chance
@@ -974,8 +984,8 @@ class TestChanceConstraintFailsClosedWithoutScipy:
         policy = PromotionPolicy(min_effect={"accuracy": 0.0})  # no chance constraints
         gate = PromotionGate(policy, [ObjectiveSpec("accuracy", "maximize")])
         decision = gate.evaluate(
-            incumbent_metrics={"accuracy": [0.80] * 8},
-            candidate_metrics={"accuracy": [0.95] * 8},
+            incumbent_metrics={"accuracy": [0.80 + 0.001 * i for i in range(8)]},
+            candidate_metrics={"accuracy": [0.95 + 0.002 * i for i in range(8)]},
         )
         assert decision.decision == "promote"
         assert decision.chance_results == []

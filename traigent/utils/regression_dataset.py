@@ -59,10 +59,11 @@ from typing import Any
 
 from traigent.evaluators.base import Dataset
 from traigent.security.redaction import redact_sensitive_data
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 from traigent.utils.persistence import _safe_json_value
 
 
-class UnresolvedExampleIdError(ValueError):
+class UnresolvedExampleIdError(PicklableExceptionMixin, ValueError):
     """Some example ids did not resolve to exactly one dataset row.
 
     Attributes:
@@ -104,6 +105,16 @@ class UnresolvedExampleIdError(ValueError):
             "; ".join(parts)
             + ". Pass the original dataset the run evaluated, unmodified; "
             "nothing was selected."
+        )
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # The constructor normalises inputs to plain lists; rebuild from those, not
+        # from the caller's original sequence objects (which may carry more).
+        rebuild, (cls, _args, _kwargs), state = super().__reduce__()
+        return (
+            rebuild,
+            (cls, (self.unresolved, self.ambiguous, self.unverifiable), {}),
+            state,
         )
 
 
@@ -249,6 +260,55 @@ def select_examples_by_id(
         UnresolvedExampleIdError: When any id is unverifiable, unresolved or
             ambiguous.
     """
+    ids_by_row = _resolve_rows(dataset, example_ids, run)
+    examples = []
+    for index in sorted(ids_by_row):
+        example = copy.deepcopy(dataset.examples[index])
+        metadata = dict(example.metadata or {})
+        metadata.setdefault("example_id", f"example_{index}")
+        example.metadata = metadata
+        examples.append(example)
+    return _subset(dataset, examples)
+
+
+def select_examples_with_run_ids(
+    dataset: Dataset, example_ids: Sequence[str], run: Any
+) -> Dataset:
+    """Like :func:`select_examples_by_id`, but each row carries the run's id.
+
+    Every returned row's ``metadata["example_id"]`` is the id the run recorded
+    for that row (the requested id that resolved to it), whatever the source
+    row holds: an empty, ``None`` or absent ``example_id`` in the file, or a
+    positional id, never leaks through. Used by the regression set, which must
+    store the id the run used.
+
+    Raises:
+        Same as :func:`select_examples_by_id`.
+    """
+    ids_by_row = _resolve_rows(dataset, example_ids, run)
+    examples = []
+    for index in sorted(ids_by_row):
+        example = copy.deepcopy(dataset.examples[index])
+        metadata = dict(example.metadata or {})
+        metadata["example_id"] = ids_by_row[index][0]
+        example.metadata = metadata
+        examples.append(example)
+    return _subset(dataset, examples)
+
+
+def _subset(dataset: Dataset, examples: list[Any]) -> Dataset:
+    return Dataset(
+        examples=examples,
+        name=dataset.name,
+        description=dataset.description,
+        metadata=copy.deepcopy(dataset.metadata),
+    )
+
+
+def _resolve_rows(
+    dataset: Dataset, example_ids: Sequence[str], run: Any
+) -> dict[int, list[str]]:
+    """Map each source row index to the requested ids that resolved to it."""
     requested = _validated_requested_ids(dataset, example_ids)
 
     recorded = _recorded_content(list(getattr(run, "trials", None) or []))
@@ -259,17 +319,4 @@ def select_examples_by_id(
     )
     if unverifiable or unresolved or ambiguous:
         raise UnresolvedExampleIdError(unresolved, ambiguous, unverifiable)
-
-    examples = []
-    for index in sorted(ids_by_row):
-        example = copy.deepcopy(dataset.examples[index])
-        metadata = dict(example.metadata or {})
-        metadata.setdefault("example_id", f"example_{index}")
-        example.metadata = metadata
-        examples.append(example)
-    return Dataset(
-        examples=examples,
-        name=dataset.name,
-        description=dataset.description,
-        metadata=copy.deepcopy(dataset.metadata),
-    )
+    return ids_by_row

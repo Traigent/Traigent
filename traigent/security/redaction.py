@@ -85,7 +85,7 @@ def contains_credential_shape(value: str) -> bool:
     return any(p.search(value) for p in _EMBEDDED_CREDENTIAL_PATTERNS)
 
 
-_COMPACT_TIMESTAMP_PATTERN = re.compile(r"^\d{8}[- ]?\d{6}$")
+_COMPACT_TIMESTAMP_PATTERN = re.compile(r"^\d{8}[- ]?\d{6}\Z")
 _CREDENTIAL_KEY_REDACTION = "[REDACTED]"
 
 # Canonical, single source of truth for key-*name*-based redaction.

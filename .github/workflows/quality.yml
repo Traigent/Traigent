@@ -34,9 +34,9 @@ jobs:
         python -m pip install -e ".[dev,all]"
         python -m pip install pre-commit
 
-    - name: Code formatting check with black
+    - name: Code formatting check with ruff format
       run: |
-        black --check --diff traigent/ traigent_validation/
+        ruff format --check --diff traigent/ traigent_validation/
 
     - name: Import sorting check with isort
       run: |
@@ -48,7 +48,7 @@ jobs:
 
     - name: Ruff statistics
       run: |
-        ruff check traigent/ traigent_validation/ --statistics || true
+        ruff check traigent/ traigent_validation/ --statistics
 
     - name: Type checking with mypy
       run: |
@@ -57,7 +57,7 @@ jobs:
     - name: Docstring quality with pydocstyle
       run: |
         python -m pip install pydocstyle
-        pydocstyle traigent/ traigent_validation/ --convention=google || true
+        pydocstyle traigent/ traigent_validation/ --convention=google
 
     - name: Complexity analysis with radon
       run: |
@@ -68,22 +68,27 @@ jobs:
     - name: Security check with bandit
       run: |
         python -m pip install bandit[toml]
-        bandit -r traigent/ traigent_validation/ -f json -o bandit-report.json || true
-        bandit -r traigent/ traigent_validation/ || true
+        # Write the JSON report and print the text report, then fail if either found issues.
+        rc=0
+        bandit -r traigent/ traigent_validation/ -f json -o bandit-report.json || rc=$?
+        bandit -r traigent/ traigent_validation/ || rc=$?
+        exit "$rc"
 
     - name: Dependency vulnerability check with safety
       run: |
         python -m pip install safety
-        safety check --json --output safety-report.json || true
-        safety check || true
+        rc=0
+        safety check --json --output safety-report.json || rc=$?
+        safety check || rc=$?
+        exit "$rc"
 
     - name: Pre-commit hooks
       run: |
-        pre-commit run --all-files || true
+        pre-commit run --all-files
 
     - name: Test assertion quality lint
       run: |
-        python -m tests.optimizer_validation.tools.lint_test_assertions --format github || true
+        python -m tests.optimizer_validation.tools.lint_test_assertions --format github
 
     - name: Pricing consistency lint
       run: |
@@ -232,7 +237,7 @@ jobs:
     - name: Spell check documentation
       run: |
         # Install aspell if needed for spell checking
-        python -m pip install pyspelling || true
+        python -m pip install pyspelling
         echo "Spell checking would run here with pyspelling"
 
   dependency-analysis:
@@ -264,8 +269,10 @@ jobs:
 
     - name: Audit dependencies for vulnerabilities
       run: |
-        pip-audit --format=json --output=pip-audit-report.json || true
-        pip-audit || true
+        rc=0
+        pip-audit --format=json --output=pip-audit-report.json || rc=$?
+        pip-audit || rc=$?
+        exit "$rc"
 
     - name: Upload dependency reports
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

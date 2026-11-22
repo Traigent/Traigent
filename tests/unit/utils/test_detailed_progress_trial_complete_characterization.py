@@ -115,3 +115,12 @@ def test_string_total_raises_before_printing(printed):
     with pytest.raises(TypeError):
         c.on_trial_complete(_trial(), _progress(total="10", completed=1))
     assert printed == []
+
+
+def test_started_trial_number_is_matched_by_config(printed):
+    c = _callback(trial_count=2)
+    c.on_trial_start(0, {"a": 1})
+    c.on_trial_start(1, {"a": 2})
+    trial = SimpleNamespace(status="completed", metrics=None, config={"a": 1})
+    c.on_trial_complete(trial, _progress(total=2, completed=1))
+    assert "✅ Trial 1/2 completed" in _lines(printed)

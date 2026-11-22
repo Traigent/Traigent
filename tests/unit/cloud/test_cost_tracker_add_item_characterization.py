@@ -45,6 +45,13 @@ class _Logger:
         self._trace.append(("error", msg))
 
 
+class _FakeCoro(tuple):
+    """Tuple stand-in for a coroutine object (supports ``close``)."""
+
+    def close(self):
+        pass
+
+
 @pytest.fixture
 def env(monkeypatch):
     trace: list = []
@@ -62,7 +69,8 @@ def env(monkeypatch):
             tracker,
             "_cache_cost_item",
             lambda item: (
-                trace.append(("cache", item.item_id)) or ("coro", item.item_id)
+                trace.append(("cache", item.item_id))
+                or _FakeCoro(("coro", item.item_id))
             ),
         )
         monkeypatch.setattr(
@@ -77,6 +85,9 @@ def env(monkeypatch):
         return ("task", coro)
 
     monkeypatch.setattr(billing_module.asyncio, "create_task", fake_create_task)
+    # Characterize the in-loop path; the no-loop path is covered in
+    # test_cost_tracker_no_loop_3246.py (Traigent#3246).
+    monkeypatch.setattr(billing_module.asyncio, "get_running_loop", lambda: object())
     return SimpleNamespace(make=make, trace=trace)
 
 
@@ -312,16 +323,20 @@ class TestFailurePaths:
         assert _ids(tracker._session_costs["s"]) == ["a"]
         assert len(tracker._pending_sync_items) == 1
 
-    def test_task_creation_error_propagates_before_alerts(self, env, monkeypatch):
+    def test_task_creation_error_is_logged_and_does_not_skip_alerts(
+        self, env, monkeypatch
+    ):
+        """Scheduling the optional cache write must not fail a recorded charge
+        (a caller retry would double count it, Traigent#3246)."""
         tracker = env.make(cache_costs_locally=True, enable_real_time_alerts=True)
 
         def boom(coro):
             raise RuntimeError("no loop")
 
         monkeypatch.setattr(billing_module.asyncio, "create_task", boom)
-        with pytest.raises(RuntimeError, match="no loop"):
-            tracker._add_cost_item(_item("a"))
-        assert ("alerts",) not in env.trace
+        tracker._add_cost_item(_item("a"))
+        assert ("alerts",) in env.trace
+        assert ("warning", "Could not schedule local cost cache write") in env.trace
         assert _ids(tracker._cost_items) == ["a"]
 
 

@@ -7,7 +7,6 @@ for optimization experiments.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
 import asyncio
-import concurrent.futures
 import copy
 import hashlib
 import json
@@ -32,6 +31,8 @@ from traigent.cloud.session_budgets import (
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
 from traigent.core.session_types import (
+    PROJECT_CONTEXT_REQUIRED_MESSAGE,
+    SessionCreationFailureDetail,
     normalize_next_trial_payload,
     safe_http_error_summary,
 )
@@ -39,6 +40,7 @@ from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
+from traigent.utils.thread_timeout import run_in_thread_with_timeout
 from traigent.utils.trial_costs import is_cost_unmeasured, lift_cost_floor_to_body
 from traigent.utils.wire_text import (
     filter_summary_stats,
@@ -151,6 +153,37 @@ def _closed_stop_reason(reason: Any) -> str | None:
     return "unknown"
 
 
+def _as_duration_seconds(value: Any) -> float | None:
+    """Return ``value`` as finite non-negative seconds, else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number
+
+
+def _trial_duration_seconds(
+    metadata: Mapping[str, Any], metrics: Mapping[str, Any]
+) -> float | None:
+    """Measured trial duration in seconds, or None when none was measured.
+
+    Prefers the trial's own ``duration`` carried in the backend metadata, then
+    the ``duration`` metric, then ``execution_time_ms`` (milliseconds). Never
+    fabricates a value: absence stays absent so the service does not record a
+    made-up zero as a measurement.
+    """
+    for source, key, scale in (
+        (metadata, "duration", 1.0),
+        (metrics, "duration", 1.0),
+        (metrics, "execution_time_ms", 0.001),
+    ):
+        seconds = _as_duration_seconds(source.get(key))
+        if seconds is not None:
+            return seconds * scale
+    return None
+
+
 @dataclass(frozen=True)
 class TrialSlotResult:
     """Neutral result for a backend trial-slot request."""
@@ -199,6 +232,73 @@ class TrialSubmissionResult:
 _sync_registration_loop: ContextVar[bool] = ContextVar(
     "traigent_sync_registration_loop", default=False
 )
+
+
+# The backend rejects a results request body above 1 MiB with HTTP 413, which
+# the SDK treats as permanent (the run drops to local-only). The limit is taken
+# from the backend route constant cited in #2964 (not readable from this repo);
+# a small margin covers JSON encoder differences.
+_MAX_RESULTS_BODY_BYTES = 1_048_576 - 4_096
+
+
+def _results_body_size(body: Any) -> int:
+    """Size in bytes of ``body`` as the HTTP client serializes it (json.dumps)."""
+    return len(json.dumps(body).encode("utf-8"))
+
+
+def _fit_results_body(body: dict[str, Any], trial_id: str) -> dict[str, Any] | None:
+    """Return ``body`` shrunk to fit the request-size cap, or None if it cannot.
+
+    Per-example ``measures`` are the only part trimmed (longest prefix that
+    fits, with a WARNING). If the body is still too large without them it is
+    NOT sent: an ERROR names the cause instead of a permanent 413 (#2964).
+    """
+    try:
+        if _results_body_size(body) <= _MAX_RESULTS_BODY_BYTES:
+            return body
+        measures = body.get("measures")
+        if not isinstance(measures, list) or not measures:
+            raise _ResultsBodyTooLargeError
+        trimmed = {k: v for k, v in body.items() if k != "measures"}
+        if _results_body_size(trimmed) > _MAX_RESULTS_BODY_BYTES:
+            raise _ResultsBodyTooLargeError
+        low, high = 0, len(measures)  # largest prefix length that fits
+        while low < high:
+            mid = (low + high + 1) // 2
+            if _results_body_size({**trimmed, "measures": measures[:mid]}) <= (
+                _MAX_RESULTS_BODY_BYTES
+            ):
+                low = mid
+            else:
+                high = mid - 1
+        logger.warning(
+            "Trial %s results body exceeds the backend request-size limit; "
+            "truncating per-example measures from %s to %s.",
+            trial_id,
+            len(measures),
+            low,
+        )
+        return {**trimmed, "measures": measures[:low]} if low else trimmed
+    except _ResultsBodyTooLargeError:
+        logger.error(
+            "Trial %s results body exceeds the backend request-size limit "
+            "(%s bytes) even without per-example measures (large config or "
+            "metadata); not sending it.",
+            trial_id,
+            _MAX_RESULTS_BODY_BYTES,
+        )
+        return None
+    except (TypeError, ValueError):
+        logger.error(
+            "Trial %s results body could not be sized for the request-size "
+            "limit; not sending it.",
+            trial_id,
+        )
+        return None
+
+
+class _ResultsBodyTooLargeError(Exception):
+    """Internal signal: the body cannot be made to fit."""
 
 
 class TrialOperations:
@@ -577,9 +677,15 @@ class TrialOperations:
                 _sync_registration_loop.reset(context_reset)
 
         try:
-            # Check if there's a running event loop
+            # Detect the loop first so a RuntimeError raised by the work itself
+            # is not mistaken for "no running loop" (#3144).
             try:
-                asyncio.get_running_loop()  # Raises RuntimeError if no loop running
+                asyncio.get_running_loop()
+                in_running_loop = True
+            except RuntimeError:
+                in_running_loop = False
+
+            if in_running_loop:
                 # Loop is running (e.g., in Jupyter, async frameworks).
                 # CRITICAL: run_coroutine_threadsafe().result() DEADLOCKS if called
                 # from the same thread as the running loop — the loop cannot process
@@ -596,13 +702,10 @@ class TrialOperations:
                     finally:
                         new_loop.close()
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    return future.result(timeout=60)
+                return run_in_thread_with_timeout(_run_in_new_loop, 60)
 
-            except RuntimeError:
-                # No running loop, safe to use asyncio.run()
-                return asyncio.run(_register_async())
+            # No running loop, safe to use asyncio.run()
+            return asyncio.run(_register_async())
         except Exception:
             logger.exception(
                 "Failed to register trial start synchronously for session %s trial %s (%s)",
@@ -714,6 +817,12 @@ class TrialOperations:
                             error_msg,
                         )
                         return TrialSlotResult.unavailable()
+                    if response.status == 422:
+                        error_msg = await response.text()
+                        if SessionCreationFailureDetail.from_http_response(
+                            422, error_msg
+                        ).is_project_context_required:
+                            logger.error(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     logger.warning(
                         "Failed to acquire trial slot for session %s: HTTP %s",
                         session_id,
@@ -778,6 +887,7 @@ class TrialOperations:
         caller-supplied metadata so a stray value never rides along.
         """
         result_metadata = copy.deepcopy(metadata or {})
+        duration = _trial_duration_seconds(result_metadata, clean_metrics)
         result_metadata.pop("execution_mode", None)
         result_metadata.pop("mode", None)
         result_metadata["sdk_version"] = get_version()
@@ -791,6 +901,11 @@ class TrialOperations:
             "status": backend_status,
             "metadata": result_metadata,
         }
+        if duration is not None:
+            # Top-level, in seconds: the session results contract carries
+            # ``duration`` (number >= 0) and the service sums it into the
+            # finalize ``total_duration``; omitting it reported 0.0 (#3238).
+            result_data["duration"] = duration
         return result_data
 
     def _log_measures_debug(self, trial_id: str, measures: Any) -> None:
@@ -1089,6 +1204,13 @@ class TrialOperations:
             )
             return False
         error_text = await response.text()
+        if (
+            response.status == 422
+            and SessionCreationFailureDetail.from_http_response(
+                422, error_text
+            ).is_project_context_required
+        ):
+            logger.error(PROJECT_CONTEXT_REQUIRED_MESSAGE)
         error_result = self._handle_trial_error_response(
             response.status, trial_id, session_id, url, error_text
         )
@@ -1112,6 +1234,88 @@ class TrialOperations:
             logger.debug(
                 f"🔍 Redacted payload (first 1000 chars): {payload_json[:1000]}"
             )
+
+    def _prepare_trial_result_payload(
+        self,
+        session_id: str,
+        trial_id: str,
+        config: dict[str, Any],
+        metrics: dict[str, Any],
+        backend_status: str,
+        error_message: str | None,
+        metadata: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        """Validated result body and clean metrics, or None when rejected."""
+        # Extract transport-only fields before validating trial metrics.
+        measures, summary_stats, clean_metrics = self._extract_measures_from_metrics(
+            metrics
+        )
+
+        # Validate key naming and cardinality for numeric metrics. This is
+        # a hard contract (mirrors the schema validation below): a trial
+        # whose measures violate the MeasuresDict contract must not be
+        # submitted with unvalidated numeric metrics silently substituted
+        # in (Traigent#1724 — was fail-open, log-only).
+        try:
+            validated_metrics: dict[str, Any] = dict(MeasuresDict(clean_metrics))
+        except (TypeError, ValueError) as validation_error:
+            logger.exception(
+                "Invalid trial metrics for trial %s: %s. Rejecting submission "
+                "(measures contract violation).",
+                trial_id,
+                validation_error,
+            )
+            return None
+
+        ensure_cost_metric_for_budgeted_completed_submission(
+            client=self.client,
+            session_id=session_id,
+            metrics=validated_metrics,
+            status=backend_status,
+            telemetry_sources=(metrics, metadata, measures, summary_stats),
+            logger=logger,
+        )
+
+        # Build result data
+        result_data = self._build_trial_result_data(
+            trial_id,
+            config,
+            validated_metrics,
+            backend_status,
+            metadata=metadata,
+        )
+
+        lift_cost_floor_to_body(result_data)
+
+        # Add measures and summary_stats at the top level if present
+        if measures is not None:
+            result_data["measures"] = copy.deepcopy(measures)
+        self._log_measures_debug(trial_id, measures)
+
+        if summary_stats is not None:
+            result_data["summary_stats"] = filter_summary_stats(summary_stats)
+        self._log_summary_stats_debug(trial_id, summary_stats)
+
+        # Validate the submission data. Schema validation is authoritative;
+        # invalid payloads must not be posted to the backend.
+        try:
+            validate_configuration_run_submission(result_data)
+        except ValueError as e:
+            logger.exception(f"Invalid configuration run submission: {e}")
+            return None
+
+        if error_message:
+            # Wire key MUST be "error_message" — the backend route
+            # (traigent_session_routes.py) and TraigentCloudClient both
+            # read "error_message"; a key of "error" was silently
+            # dropped, so every failed-trial message was lost
+            # (Traigent#1724).
+            result_data["error_message"] = self.client._sanitize_error_message(
+                error_message
+            )
+
+        self._log_submission_debug(trial_id, result_data)
+        return result_data, clean_metrics
 
     async def submit_trial_result_via_session(
         self,
@@ -1160,75 +1364,18 @@ class TrialOperations:
                 status, endpoint="config_run"
             )
 
-            # Extract transport-only fields before validating trial metrics.
-            measures, summary_stats, clean_metrics = (
-                self._extract_measures_from_metrics(metrics)
-            )
-
-            # Validate key naming and cardinality for numeric metrics. This is
-            # a hard contract (mirrors the schema validation below): a trial
-            # whose measures violate the MeasuresDict contract must not be
-            # submitted with unvalidated numeric metrics silently substituted
-            # in (Traigent#1724 — was fail-open, log-only).
-            try:
-                validated_metrics: dict[str, Any] = dict(MeasuresDict(clean_metrics))
-            except (TypeError, ValueError) as validation_error:
-                logger.exception(
-                    "Invalid trial metrics for trial %s: %s. Rejecting submission "
-                    "(measures contract violation).",
-                    trial_id,
-                    validation_error,
-                )
-                return False
-
-            ensure_cost_metric_for_budgeted_completed_submission(
-                client=self.client,
-                session_id=session_id,
-                metrics=validated_metrics,
-                status=backend_status,
-                telemetry_sources=(metrics, metadata, measures, summary_stats),
-                logger=logger,
-            )
-
-            # Build result data
-            result_data = self._build_trial_result_data(
+            prepared = self._prepare_trial_result_payload(
+                session_id,
                 trial_id,
                 config,
-                validated_metrics,
+                metrics,
                 backend_status,
-                metadata=metadata,
+                error_message,
+                metadata,
             )
-
-            lift_cost_floor_to_body(result_data)
-
-            # Add measures and summary_stats at the top level if present
-            if measures is not None:
-                result_data["measures"] = copy.deepcopy(measures)
-            self._log_measures_debug(trial_id, measures)
-
-            if summary_stats is not None:
-                result_data["summary_stats"] = filter_summary_stats(summary_stats)
-            self._log_summary_stats_debug(trial_id, summary_stats)
-
-            # Validate the submission data. Schema validation is authoritative;
-            # invalid payloads must not be posted to the backend.
-            try:
-                validate_configuration_run_submission(result_data)
-            except ValueError as e:
-                logger.exception(f"Invalid configuration run submission: {e}")
+            if prepared is None:
                 return False
-
-            if error_message:
-                # Wire key MUST be "error_message" — the backend route
-                # (traigent_session_routes.py) and TraigentCloudClient both
-                # read "error_message"; a key of "error" was silently
-                # dropped, so every failed-trial message was lost
-                # (Traigent#1724).
-                result_data["error_message"] = self.client._sanitize_error_message(
-                    error_message
-                )
-
-            self._log_submission_debug(trial_id, result_data)
+            result_data, clean_metrics = prepared
 
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
@@ -1248,6 +1395,11 @@ class TrialOperations:
                     explicit=oo_egress.policy_of(self.client, headers, url),
                     session_id=session_id,
                 )
+
+                fitted = _fit_results_body(wire_result, trial_id)
+                if fitted is None:
+                    return False
+                wire_result = fitted
 
                 for attempt in range(_TRIAL_SUBMIT_MAX_ATTEMPTS):
                     async with session.post(

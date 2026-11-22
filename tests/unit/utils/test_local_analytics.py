@@ -574,6 +574,8 @@ class TestGetDaysSinceFirstUse:
             assert days == 0
 
 
+# Connected mode: submit_usage_stats is gated off under the default offline lane (#3184).
+@pytest.mark.backend_online
 class TestSubmitUsageStats:
     """Tests for submit_usage_stats method."""
 

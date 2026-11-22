@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/agent_head_error_schema.json",
+  "title": "AgentHeadError",
+  "description": "Error body the agent-head read route emits from its own handler (400 validation, 404 agent not in the path project, 500). Fixed server-controlled text only; nothing client-supplied is echoed. The guards in front of the handler (authentication, project scope, permission) answer with the same closed vocabulary as agent_readiness/agent_readiness_error_schema.json (401, 403, and the closed 404 for a project outside the caller's reach), so its values are included here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "error",
+    "message",
+    "error_code"
+  ],
+  "properties": {
+    "success": {
+      "x-content-class": "closed_enum",
+      "const": false
+    },
+    "error": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "agent id must be a non-empty string",
+        "agent id is too long",
+        "environment must be a non-empty string",
+        "environment must be one of: default, development, production, staging, test",
+        "agent not found",
+        "Internal server error",
+        "Best config operation failed",
+        "best_config_error",
+        "invalid_request",
+        "authentication_required",
+        "authorization_denied",
+        "not_found"
+      ]
+    },
+    "message": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "agent id must be a non-empty string",
+        "agent id is too long",
+        "environment must be a non-empty string",
+        "environment must be one of: default, development, production, staging, test",
+        "agent not found",
+        "Internal server error",
+        "Best config operation failed",
+        "Invalid request",
+        "Authentication required",
+        "Authorization denied",
+        "Not found",
+        "Project not found"
+      ]
+    },
+    "error_code": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "AGENT_HEAD_VALIDATION_ERROR",
+        "BEST_CONFIG_VALIDATION_ERROR",
+        "AGENT_NOT_FOUND",
+        "BEST_CONFIG_ERROR",
+        "invalid_request",
+        "authentication_required",
+        "authorization_denied",
+        "not_found",
+        "PROJECT_ACCESS_DENIED",
+        "PROJECT_NOT_FOUND",
+        "TENANT_ACCESS_DENIED",
+        "TENANT_NOT_FOUND"
+      ]
+    }
+  }
+}

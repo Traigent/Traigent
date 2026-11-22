@@ -269,6 +269,30 @@ jobs:
           compose exec -T backend rm -f /tmp/ci_api_key
           printf '%s=%s\n' "TRAIGENT_API_KEY" "$key" >> "$GITHUB_ENV"
 
+      - name: Resolve live-contract project id
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          set -euo pipefail
+          # The minted key is not project-bound and the mint script creates no
+          # project; backend writes answer 422 PROJECT_CONTEXT_REQUIRED without an
+          # explicit one. Use the tenant's deterministic default project id (the
+          # backend materializes that row on the first authenticated request).
+          # The backend logs INFO lines to stdout on import, so keep only the
+          # last output line and require the project_default_<16 hex> shape before exporting it.
+          raw="$(docker compose -p "$COMPOSE_PROJECT_NAME" \
+            -f docker/docker-compose.dev.yml exec -T backend python -c \
+            'from src.security.project_context import default_project_id_for_tenant as f; from src.security.tenant_context import DEFAULT_TENANT_ID as t; print(f(t))' \
+            2>/dev/null)" || {
+            echo "::error::Could not run the project-id helper in the backend container." >&2
+            exit 1
+          }
+          project_id="$(printf '%s\n' "$raw" | tail -n 1 | tr -d '[:space:]')"
+          if ! printf '%s' "$project_id" | grep -Eq '^project_default_[0-9a-f]{16}$'; then
+            echo "::error::Could not resolve the live-contract project id (last output line was not project_default_<16 hex>)." >&2
+            exit 1
+          fi
+          printf '%s=%s\n' "TRAIGENT_PROJECT_ID" "$project_id" >> "$GITHUB_ENV"
+
       - name: Clean container-owned build artifacts from the SDK checkout
         working-directory: ${{ env.SDK_DIR }}
         run: |

@@ -7,7 +7,7 @@ for better maintainability and adherence to software engineering principles.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Security FUNC-CLOUD-HYBRID FUNC-AGENTS FUNC-SECURITY REQ-CLOUD-009 REQ-AGNT-013 REQ-SEC-010
 
 import asyncio
-import concurrent.futures
+import dataclasses
 import json
 import logging
 import math
@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.cloud._detached_raise import raise_detached
 from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
 from traigent.cloud.auth import (
     AuthenticationError,
@@ -107,8 +108,10 @@ from traigent.security.session_manager import SessionManager as SecuritySessionM
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
+from traigent.utils.numeric_validation import positive_int_env
 from traigent.utils.optimization_only_egress import parse_flag
 from traigent.utils.retry import RetryConfig, RetryHandler
+from traigent.utils.thread_timeout import run_in_thread_with_timeout
 
 BACKEND_CLIENT = "backend client"
 REQUESTS_IS_UNAVAILABLE = "requests is unavailable"
@@ -158,6 +161,8 @@ except ImportError:  # pragma: no cover - optional dependency for offline mode
 
 logger = get_logger(__name__)
 _ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
+# Service-side per-request cap on example features (HTTP 400 above it).
+_MAX_EXAMPLE_FEATURES_PER_REQUEST = 1000
 _JSON_CONTENT_TYPE = "application/json"
 _SDK_USER_AGENT = get_sdk_user_agent()
 _AGENT_ID_HEADER = "X-Traigent-Agent-Id"
@@ -472,8 +477,12 @@ def _raise_for_transient_backend_response(response: Any, operation: str) -> None
 def _run_sync_backend_request_with_retry(
     operation: str,
     request_call: Callable[[], Any],
+    max_retries: int | None = None,
 ) -> Any:
-    retry = RetryHandler(_SYNC_BACKEND_RETRY_CONFIG)
+    config = _SYNC_BACKEND_RETRY_CONFIG
+    if max_retries is not None:
+        config = dataclasses.replace(config, max_attempts=max(0, max_retries) + 1)
+    retry = RetryHandler(config)
     result = retry.execute_with_result(request_call)
     if result.success:
         return result.result
@@ -1010,6 +1019,19 @@ def _validate_backend_api_path(api_path: str | None) -> None:
         raise ValueError("backend client API base URL must not contain path traversal")
 
 
+def _example_feature_chunks(
+    features: list[dict[str, Any]] | dict[str, Any],
+) -> list[list[dict[str, Any]] | dict[str, Any]]:
+    # The service rejects more than _MAX_EXAMPLE_FEATURES_PER_REQUEST
+    # features per request with a 400; send larger sets in chunks (#2992).
+    if isinstance(features, list):
+        return [
+            features[i : i + _MAX_EXAMPLE_FEATURES_PER_REQUEST]
+            for i in range(0, len(features), _MAX_EXAMPLE_FEATURES_PER_REQUEST)
+        ]
+    return [features]
+
+
 class BackendIntegratedClient:
     """Enhanced backend client with Traigent Backend integration (Refactored).
 
@@ -1040,6 +1062,7 @@ class BackendIntegratedClient:
         local_storage_path: str | None = None,
         no_egress: bool = False,
         optimization_only: bool | None = None,
+        project_id: str | None = None,
     ) -> None:
         """Initialize backend integrated client.
 
@@ -1056,7 +1079,10 @@ class BackendIntegratedClient:
             no_egress: Runtime policy flag that forbids backend transport
             optimization_only: Opt in (True) or out (False) of optimization-only egress;
                 None defers to ``TRAIGENT_OPTIMIZATION_ONLY`` (unset = legacy behaviour).
+            project_id: Project sent as ``X-Project-Id`` on backend writes; wins over
+                ``TRAIGENT_PROJECT_ID``. None defers to the environment.
         """
+        self.project_id = project_id
         self.optimization_only = parse_flag(
             optimization_only, source="optimization_only"
         )
@@ -1089,6 +1115,7 @@ class BackendIntegratedClient:
             effective_rate_limit,
             rate_limit_period,
             no_egress=self.no_egress,
+            project_id=project_id,
         )
         self.auth = self.auth_manager.auth
         self.session_manager = BackendSessionManager(
@@ -1140,8 +1167,8 @@ class BackendIntegratedClient:
 
         # Security session manager for token issuance and validation
         redis_url = os.getenv("TRAIGENT_SESSION_REDIS_URL")
-        session_ttl = int(os.getenv("TRAIGENT_SESSION_TTL", "3600"))
-        max_sessions_per_user = int(os.getenv("TRAIGENT_MAX_SESSIONS_PER_USER", "10"))
+        session_ttl = positive_int_env("TRAIGENT_SESSION_TTL", 3600)
+        max_sessions_per_user = positive_int_env("TRAIGENT_MAX_SESSIONS_PER_USER", 10)
         self._security_sessions = SecuritySessionManager(
             redis_url=redis_url,
             session_ttl=session_ttl,
@@ -2194,6 +2221,7 @@ class BackendIntegratedClient:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
         Delegates to session_operations module. Phase 8: an optional
@@ -2206,6 +2234,7 @@ class BackendIntegratedClient:
             certified_selection=certified_selection,
             session_aggregation=session_aggregation,
             optimization_outcome=optimization_outcome,
+            stop_reason=stop_reason,
         )
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
@@ -2220,6 +2249,7 @@ class BackendIntegratedClient:
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
         optimization_outcome: OptimizationOutcome | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session.
         Delegates to session_operations module."""
@@ -2229,6 +2259,7 @@ class BackendIntegratedClient:
             certified_selection=certified_selection,
             session_aggregation=session_aggregation,
             optimization_outcome=optimization_outcome,
+            stop_reason=stop_reason,
         )
 
     def delete_session_sync(self, session_id: str, cascade: bool = True) -> bool:
@@ -2309,12 +2340,19 @@ class BackendIntegratedClient:
                 new_loop.close()
 
         try:
+            # Detect the loop first so a RuntimeError raised by the header work
+            # is not mistaken for "no running loop" (#3144).
             try:
                 asyncio.get_running_loop()
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_run_in_new_loop)
-                    headers = future.result(timeout=min(self.timeout, 30.0))
+                in_running_loop = True
             except RuntimeError:
+                in_running_loop = False
+
+            if in_running_loop:
+                headers = run_in_thread_with_timeout(
+                    _run_in_new_loop, min(self.timeout, 30.0)
+                )
+            else:
                 headers = asyncio.run(_get_headers_async())
         except AuthenticationError:
             # Re-raise: a backend-rejected key must NEVER be downgraded to a
@@ -2455,6 +2493,37 @@ class BackendIntegratedClient:
             environment=environment,
         )
 
+    def _build_agent_head_url(self, agent_ref: str) -> str | None:
+        """Sanitized project-level head URL of one agent, or None if it cannot be built.
+
+        ``<api base>/projects/{project_id}/agents/{agent_ref}/best-config-head``. The
+        project is the client's configured project (``project_id`` or the project
+        environment variable), never an ``X-Project-Id`` header; without one there is
+        no URL, so the head read fails closed.
+        """
+        project = (self.project_id or read_optional_project_env() or "").strip()
+        if not project:
+            return None
+        parsed = urlparse(self.api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        path = (
+            f"{parsed.path.rstrip('/')}/projects/{quote(project, safe='')}"
+            f"/agents/{quote(agent_ref, safe='/')}/best-config-head"
+        )
+        return cast(
+            str,
+            urlunparse(parsed._replace(path=path, params="", query="", fragment="")),
+        )
+
     def fetch_agent_head_generation_sync(
         self, agent_id: str, *, environment: str | None = None
     ) -> int:
@@ -2471,10 +2540,9 @@ class BackendIntegratedClient:
         except ImportError as exc:  # pragma: no cover - requests is required
             raise CloudServiceError(REQUESTS_IS_UNAVAILABLE) from exc
 
-        base = self._build_best_config_url()
-        if not base:
+        url = self._build_agent_head_url(agent_id)
+        if not url:
             raise CloudServiceError("Backend agent-head URL is invalid")
-        url = f"{base}/agent-heads/{quote(agent_id, safe='')}"
 
         headers = self._get_sync_auth_headers(target="backend")
         # second, credential-scoped check now that the final headers are known
@@ -2508,7 +2576,9 @@ class BackendIntegratedClient:
             _raise_for_transient_backend_response(response, AGENT_HEAD_FETCH)
             return response
 
-        response = _run_sync_backend_request_with_retry(AGENT_HEAD_FETCH, _get_head)
+        response = _run_sync_backend_request_with_retry(
+            AGENT_HEAD_FETCH, _get_head, self.max_retries
+        )
         _refuse_redirect_response(response, AGENT_HEAD_FETCH)
         if response.status_code >= 400:
             raise CloudServiceError(
@@ -2604,7 +2674,7 @@ class BackendIntegratedClient:
         except (requests.exceptions.RequestException, ConnectionError, TimeoutError):
             # RequestException also covers InvalidHeader / InvalidURL / MissingSchema,
             # whose text quotes the offending header or URL.
-            raise CloudServiceError(f"{operation} transport failed") from None
+            raise_detached(CloudServiceError(f"{operation} transport failed"))
         finally:
             session.close()
 
@@ -2614,7 +2684,7 @@ class BackendIntegratedClient:
         """Read a content-less agent's head generation by its opaque ``agent_ref``.
 
         Contract: TraigentSchema ``optimization/best_config_head_endpoints.json``
-        (``GET /api/v1/best-configs/agent-heads/by-ref/{agent_ref}?environment=``).
+        (``GET /api/v1/projects/{project_id}/agents/{agent_ref}/best-config-head?environment=``).
         Returns the generation (0 when never promoted). Any closed refusal raises
         ``CloudBestConfigHeadRefusedError``; any other failure raises
         ``CloudServiceError`` with fixed text. The caller captures this ONCE, at the
@@ -2631,10 +2701,9 @@ class BackendIntegratedClient:
             raise CloudBestConfigHeadRefusedError(HeadRefusalCode.HEAD_CAPTURE_INVALID)
         if environment not in content_less_session.ENVIRONMENTS:
             raise CloudBestConfigHeadRefusedError(HeadRefusalCode.HEAD_CAPTURE_INVALID)
-        base = self._build_best_config_url()
-        if not base:
+        url = self._build_agent_head_url(agent_ref)
+        if not url:
             raise CloudServiceError("Backend agent-head URL is invalid")
-        url = f"{base}/agent-heads/by-ref/{quote(agent_ref, safe='')}"
         headers = self._get_sync_auth_headers(target="backend")
 
         def _get_head() -> Any:
@@ -2656,7 +2725,9 @@ class BackendIntegratedClient:
                 )
             return response
 
-        response = _run_sync_backend_request_with_retry(AGENT_HEAD_FETCH, _get_head)
+        response = _run_sync_backend_request_with_retry(
+            AGENT_HEAD_FETCH, _get_head, self.max_retries
+        )
         if response.status_code >= 400:
             raise self._head_refusal_from_response(response)
         try:
@@ -2667,12 +2738,11 @@ class BackendIntegratedClient:
         generation = data.get("generation") if isinstance(data, dict) else None
         if (
             not isinstance(data, dict)
-            or data.get("agent_ref") != agent_ref
+            or data.get("agent_id") != agent_ref
             or data.get("environment") != environment
             or isinstance(generation, bool)
             or not isinstance(generation, int)
             or not 0 <= generation <= _MAX_HEAD_GENERATION
-            or data.get("exists") is not (generation >= 1)
         ):
             raise CloudServiceError("Agent-head response did not match its contract")
         return generation
@@ -2922,6 +2992,7 @@ class BackendIntegratedClient:
         response = _run_sync_backend_request_with_retry(
             BEST_CONFIG_PUBLISH,
             _post_best_config,
+            self.max_retries,
         )
         _refuse_redirect_response(response, BEST_CONFIG_PUBLISH)
 
@@ -3077,6 +3148,7 @@ class BackendIntegratedClient:
         response = _run_sync_backend_request_with_retry(
             BEST_CONFIG_FETCH,
             _get_best_config,
+            self.max_retries,
         )
         if response.status_code == 304:
             # Not Modified answers the If-None-Match conditional fetch. It is not a
@@ -3317,6 +3389,51 @@ class BackendIntegratedClient:
         oo_egress.refuse_if_active(
             "example_feature_upload", explicit=oo_egress.policy_of(self, headers, url)
         )
+        accepted = 0
+        for chunk in _example_feature_chunks(features):
+            try:
+                chunk_accepted = self._post_example_feature_chunk(
+                    requests, experiment_run_id, feature_kind, chunk, url, headers
+                )
+            except (CloudEgressBlockedError, oo_egress.OptimizationOnlyRefusal):
+                raise
+            except Exception as exc:
+                logger.debug(
+                    "Example feature upload failed for run %s: %s",
+                    experiment_run_id,
+                    exc,
+                )
+                return False
+            if not chunk_accepted:
+                logger.warning(
+                    "Example feature upload for run %s stopped after %s of %s "
+                    "feature rows were accepted; content analytics for the "
+                    "remainder will be missing",
+                    experiment_run_id,
+                    accepted,
+                    len(features),
+                )
+                return False
+            accepted += len(chunk)
+
+        return True
+
+    def _post_example_feature_chunk(
+        self,
+        requests: Any,
+        experiment_run_id: str,
+        feature_kind: str,
+        features: list[dict[str, Any]] | dict[str, Any],
+        url: str,
+        headers: dict[str, str],
+    ) -> bool:
+        """POST one feature chunk; True when the service accepted it."""
+        # Re-check policy at the send site: the chunk path must refuse exactly
+        # like the single-request upload when egress is disallowed.
+        self._raise_if_backend_egress_disabled("upload example features")
+        oo_egress.refuse_if_active(
+            "example_feature_upload", explicit=oo_egress.policy_of(self, headers, url)
+        )
         payload = {"feature_kind": feature_kind, "features": features}
 
         def _post_example_features() -> Any:
@@ -3343,22 +3460,17 @@ class BackendIntegratedClient:
             _raise_for_transient_backend_response(response, EXAMPLE_FEATURE_UPLOAD)
             return response
 
-        try:
-            response = _run_sync_backend_request_with_retry(
-                EXAMPLE_FEATURE_UPLOAD,
-                _post_example_features,
-            )
-            _refuse_redirect_response(response, EXAMPLE_FEATURE_UPLOAD)
-        except Exception as exc:
-            logger.debug(
-                "Example feature upload failed for run %s: %s",
-                experiment_run_id,
-                exc,
-            )
-            return False
+        # Transport/redirect failures propagate to upload_example_features,
+        # which reports them and returns False.
+        response = _run_sync_backend_request_with_retry(
+            EXAMPLE_FEATURE_UPLOAD,
+            _post_example_features,
+            self.max_retries,
+        )
+        _refuse_redirect_response(response, EXAMPLE_FEATURE_UPLOAD)
 
         if response.status_code >= 400:
-            logger.debug(
+            logger.warning(
                 "Example feature upload rejected for run %s: %s",
                 experiment_run_id,
                 safe_http_error_summary(response.status_code, response.text),

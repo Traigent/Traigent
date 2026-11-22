@@ -59,7 +59,17 @@ class TestResolveCallbacks:
         """Explicit callbacks are preserved alongside auto-injected bar."""
 
         class CustomCallback:
-            pass
+            def on_optimization_start(self, *args, **kwargs):
+                pass
+
+            def on_trial_start(self, *args, **kwargs):
+                pass
+
+            def on_trial_complete(self, *args, **kwargs):
+                pass
+
+            def on_optimization_complete(self, *args, **kwargs):
+                pass
 
         custom = CustomCallback()
         with patch("traigent.core.optimized_function.sys") as mock_sys:
@@ -75,7 +85,17 @@ class TestResolveCallbacks:
         """Decorator callbacks used as fallback."""
 
         class DecoratorCb:
-            pass
+            def on_optimization_start(self, *args, **kwargs):
+                pass
+
+            def on_trial_start(self, *args, **kwargs):
+                pass
+
+            def on_trial_complete(self, *args, **kwargs):
+                pass
+
+            def on_optimization_complete(self, *args, **kwargs):
+                pass
 
         dec_cb = DecoratorCb()
         with patch("traigent.core.optimized_function.sys") as mock_sys:

@@ -9,7 +9,7 @@ import os
 import secrets
 import threading
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Literal, cast, overload
 from dotenv import load_dotenv
 
 from .logging import get_logger
+from .numeric_validation import parse_positive_finite_float
 
 # ============================================================================
 # MIGRATION GUARD: Reject deprecated TRAIGENT_MOCK_MODE at import time
@@ -40,6 +41,19 @@ def _is_production_env_name(name: str | None) -> bool:
     if name is None:
         return False
     return name.strip().lower() in {"prod", "production"}
+
+
+def any_environment_declared_production() -> bool:
+    """True if ANY of the deployment-environment variables names production.
+
+    Used by the mock-mode hard-blocks so they agree with the shared resolver's
+    strictest-wins rule (#3267) without depending on definitions made later in
+    this module.
+    """
+    return any(
+        _is_production_env_name(os.environ.get(key))
+        for key in ("TRAIGENT_ENVIRONMENT", "ENVIRONMENT", "TRAIGENT_ENV")
+    )
 
 
 def _is_truthy_env_value(value: str | None) -> bool:
@@ -71,13 +85,14 @@ def _check_mock_llm_prod_guard() -> None:
     """
     if not _is_truthy_env_value(os.environ.get("TRAIGENT_MOCK_LLM")):
         return
-    if _is_production_env_name(os.environ.get("ENVIRONMENT")):
+    if any_environment_declared_production():
         raise OSError(
             "TRAIGENT_MOCK_LLM=true is set in a production environment "
-            "(ENVIRONMENT=production). Mock mode is hard-blocked in "
+            "(one of TRAIGENT_ENVIRONMENT, ENVIRONMENT, TRAIGENT_ENV names "
+            "production). Mock mode is hard-blocked in "
             "production to prevent silent substitution of real LLM "
             "calls. Either unset TRAIGENT_MOCK_LLM, or run with "
-            "ENVIRONMENT!=production. For programmatic mock activation "
+            "a non-production environment. For programmatic mock activation "
             "use traigent.testing.enable_mock_mode_for_quickstart()."
         )
     # The flag may only have landed now (a ``.env`` loaded after ``import
@@ -245,7 +260,16 @@ _NON_PRODUCTION_ENV_NAMES = {
     "staging",
 }
 _KNOWN_ENVIRONMENT_NAMES = _PRODUCTION_ENV_NAMES | _NON_PRODUCTION_ENV_NAMES | {"ci"}
-_ENVIRONMENT_KEYS = ("ENVIRONMENT", "TRAIGENT_ENV", "TRAIGENT_ENVIRONMENT")
+# The single documented precedence for the deployment environment, highest first:
+# TRAIGENT_ENVIRONMENT (the product variable), then the generic platform
+# ENVIRONMENT, then the deprecated TRAIGENT_ENV alias. When more than one is set
+# and they disagree, the STRICTER value wins for security decisions (production
+# or any unrecognised value > staging > development); see
+# :func:`resolve_environment_name`. The telemetry ladder in
+# ``traigent.identity.workload`` keeps TRAIGENT_ENVIRONMENT first (labels only).
+_ENVIRONMENT_KEYS = ("TRAIGENT_ENVIRONMENT", "ENVIRONMENT", "TRAIGENT_ENV")
+_STAGING_ENV_NAMES = frozenset({"stage", "staging"})
+_warned_env_disagreements: set[tuple[str, ...]] = set()
 
 logger = get_logger(__name__)
 
@@ -264,12 +288,69 @@ def _normalize_str(value: str | None) -> str | None:
     return normalized or None
 
 
-def resolve_environment_name(default: str | None = None) -> str | None:
-    """Return the normalized deployment environment using the canonical key order."""
+def _environment_strictness(name: str) -> int:
+    """Rank a name: 4 production, 3 unknown, 2 staging, 1 development."""
+    if name in _PRODUCTION_ENV_NAMES:
+        return 4
+    if name not in _NON_PRODUCTION_ENV_NAMES:
+        return 3
+    if name in _STAGING_ENV_NAMES:
+        return 2
+    return 1
+
+
+def select_environment(
+    environ: Mapping[str, str] | None = None,
+    *,
+    known_only: bool = False,
+) -> tuple[str, str] | None:
+    """Pick ``(key, value)`` from the environment variables in ``_ENVIRONMENT_KEYS``.
+
+    One value set: that value. Several set: the strictest value wins (so
+    ``TRAIGENT_ENVIRONMENT=development`` with ``ENVIRONMENT=production`` is
+    production); ties go to the higher-precedence key. ``known_only`` drops
+    values outside ``_KNOWN_ENVIRONMENT_NAMES`` (used for telemetry labels).
+    One value-free WARNING per process names the disagreeing variables.
+    """
+    source = os.environ if environ is None else environ
+    declared: list[tuple[str, str]] = []
     for key in _ENVIRONMENT_KEYS:
-        value = _normalize_str(os.getenv(key))
-        if value is not None:
-            return value.lower()
+        value = _normalize_str(source.get(key))
+        if value is None:
+            continue
+        value = value.lower()
+        if known_only and value not in _KNOWN_ENVIRONMENT_NAMES:
+            continue
+        declared.append((key, value))
+    if not declared:
+        return None
+    best = declared[0]
+    for candidate in declared[1:]:
+        if _environment_strictness(candidate[1]) > _environment_strictness(best[1]):
+            best = candidate
+    if len({value for _, value in declared}) > 1:
+        keys = tuple(key for key, _ in declared)
+        if keys not in _warned_env_disagreements:
+            _warned_env_disagreements.add(keys)
+            logger.warning(
+                "Deployment environment variables disagree (%s); the stricter "
+                "value is used for security decisions. Set one of them, or make "
+                "them match (precedence: %s).",
+                ", ".join(keys),
+                " > ".join(_ENVIRONMENT_KEYS),
+            )
+    return best
+
+
+def resolve_environment_name(default: str | None = None) -> str | None:
+    """Return the normalized deployment environment (the one shared resolver).
+
+    Precedence is ``_ENVIRONMENT_KEYS``; if several are set and disagree the
+    stricter value wins, so security gates fail closed.
+    """
+    selected = select_environment()
+    if selected is not None:
+        return selected[1]
     return default.strip().lower() if default else None
 
 
@@ -293,18 +374,17 @@ def resolve_environment_label(default: str | None = None) -> str | None:
 
 
 def _get_environment_name() -> str:
-    """Return normalized ENVIRONMENT value with development as default.
+    """Return the normalized deployment environment, ``development`` if unset.
 
-    This intentionally preserves the fail-open semantics of
-    ``is_production_strict_env``: only the primary ENVIRONMENT key enables
-    production-only behavior.
+    Delegates to :func:`select_environment` (#3267): TRAIGENT_ENVIRONMENT, then
+    ENVIRONMENT, then TRAIGENT_ENV, and the stricter value wins on disagreement.
     """
-    value = os.getenv("ENVIRONMENT", "development")
-    return value.strip().lower()
+    selected = select_environment()
+    return selected[1] if selected is not None else "development"
 
 
 def is_production_strict_env() -> bool:
-    """Return True only for exact production ENVIRONMENT aliases.
+    """Return True only for exact production aliases of the selected environment.
 
     This is a legacy compatibility check for developer conveniences such as
     mock-mode blocking. Policy surfaces should use
@@ -832,10 +912,11 @@ def get_validation_timeout() -> float:
     """
     timeout_str = get_env_var("TRAIGENT_VALIDATION_TIMEOUT", "5.0")
     try:
-        return float(timeout_str)
+        return parse_positive_finite_float("TRAIGENT_VALIDATION_TIMEOUT", timeout_str)
     except ValueError:
         logger.warning(
-            "Invalid TRAIGENT_VALIDATION_TIMEOUT '%s', using default 5.0s",
+            "Invalid TRAIGENT_VALIDATION_TIMEOUT '%s' (need a finite number > 0), "
+            "using default 5.0s",
             timeout_str,
         )
         return 5.0

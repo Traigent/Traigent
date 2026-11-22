@@ -480,30 +480,30 @@ wheels = [
 
 [[package]]
 name = "boto3"
-version = "1.43.83"
+version = "1.44.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore" },
     { name = "jmespath" },
     { name = "s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ec/30/96cf7d324e75cd2c349e2911ae2334d987fb8525d551495a2ef6758c26f3/boto3-1.43.83.tar.gz", hash = "sha256:6413d6e99f716af5d333a732db140e4b3359cac005a1271b11777b6d9ca82194", size = 112686, upload-time = "2026-08-28T19:35:52.273Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/58/d4/dc4395067912abd87af0880c275bc62995f3b15ed9dd64aa9b428eb91e94/boto3-1.44.4.tar.gz", hash = "sha256:3d9ce4195296d59b545181acaf5b35882c2a148f6bbf656d16e6f57a51eae994", size = 112786, upload-time = "2026-11-16T20:47:39.256Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/4b/843f30dc77324778efa90c4169d503963668760b8d8abdf26a61bd090141/boto3-1.43.83-py3-none-any.whl", hash = "sha256:73a3564f737d4516625964eee709a498fa98ccee6aca929febad2b0b5fbeae1e", size = 140025, upload-time = "2026-08-28T19:35:49.228Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/0d/7b8d3d043daded9f3d3d0baa725707179cc7826cda2f405b8a94fc5d5798/boto3-1.44.4-py3-none-any.whl", hash = "sha256:8f1b66649346a5b29a909827d1bb460c02bd795c4d39751e36e03d5a18a3eec8", size = 140156, upload-time = "2026-11-16T20:47:37.76Z" },
 ]
 
 [[package]]
 name = "botocore"
-version = "1.43.85"
+version = "1.44.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jmespath" },
     { name = "python-dateutil" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/93/a8b3acb06fcbb440704f195dbf14d12bb83c9c9d67b2e699076017f3d5c6/botocore-1.43.85.tar.gz", hash = "sha256:8fc0a3c56078c629320b021edadf7a45d289eea21a4988ada6a02277e5bbbdc0", size = 16040188, upload-time = "2026-08-31T23:23:48.929Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/20/e0/6085c611f50106fa490cb9020ae3f55370d1bd3eb9d229404de72a79e5ac/botocore-1.44.4.tar.gz", hash = "sha256:9f01ec9c9bdd76dfb263bb4efe798229383dce32c942d26b9d9aeb062a979002", size = 16766727, upload-time = "2026-11-16T20:47:33.307Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/20/4b/bb053aec2a9902df4cdbf9301dd5a41dd197c1cef0c085a32f5d04eeb3e3/botocore-1.43.85-py3-none-any.whl", hash = "sha256:685510e5f4c0f321806c815a60f121a176c0969665f053c4a336209cbe62b1d5", size = 15732946, upload-time = "2026-08-31T23:23:45.927Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/c4/a3049fc708b9f1329200033b078cada75b7611e9c35aeb7fe65552292816/botocore-1.44.4-py3-none-any.whl", hash = "sha256:5a9303fc65e9a133bbc515fbb8d5c486787fb12108c37b2143c1c111c4a46525", size = 16462628, upload-time = "2026-11-16T20:47:28.822Z" },
 ]
 
 [[package]]
@@ -2715,33 +2715,39 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.103.4"
+version = "1.108.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "boto3" },
+    { name = "certifi" },
     { name = "click" },
     { name = "fastuuid" },
+    { name = "filelock" },
     { name = "httpx", extra = ["http2"] },
+    { name = "huggingface-hub" },
     { name = "importlib-metadata" },
     { name = "jinja2" },
     { name = "jsonschema" },
     { name = "openai" },
+    { name = "packaging" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "tiktoken" },
     { name = "tokenizers" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/12/d7/267d97612ee3970933738cf17a05a6c69a502771e7bb662ba389fc56672d/litellm-1.103.4.tar.gz", hash = "sha256:5c93520155c093298a6241d21f4473baaed389f26b27ec36036a87d3e88673a9", size = 18955718, upload-time = "2026-10-07T19:25:22.065Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/e1/09671e69b846564eed126e3a2574faedd8fe3de82526fc4095167ff8e92c/litellm-1.108.6.tar.gz", hash = "sha256:d3a3de43a3bbe3a47a5a14d3df25a835a5f0ddf2b79c734db5685a5deb50edd6", size = 21486042, upload-time = "2026-11-12T01:07:37.569Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/d9/765acee5829037eec8fa58f9fbec3ac7caddbc3772b896f988f0acd8c015/litellm-1.103.4-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:37fc3fcad2091dbd144d8c41646a46751725865cf0f6cb112eedce7d5c718173", size = 27767167, upload-time = "2026-10-07T19:25:00.271Z" },
-    { url = "https://files.pythonhosted.org/packages/e3/f8/ec5763e11cfb34e40ff414a5bd057e4ea3d8013681106a15b13ed55f6c96/litellm-1.103.4-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:6139305f0d27b2cd663ecec3d12674f5d29dcc929c6441c90a254a3bf0094c0a", size = 27229880, upload-time = "2026-10-07T19:25:04.383Z" },
-    { url = "https://files.pythonhosted.org/packages/46/91/9ddb351124e654b3228b5dda0a5732323fda6f164f926f587cb885fb8c28/litellm-1.103.4-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:9df5edc6b03d33705211317f58b3f367c47e100820fada3337f0739fd02953c7", size = 27537512, upload-time = "2026-10-07T19:25:07.994Z" },
-    { url = "https://files.pythonhosted.org/packages/f8/9b/166430315b9d80ac3be626d5a7e0f3401803876d95ef03bfd88ef4f1cdd9/litellm-1.103.4-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:79b17abea0717ec1069dd9b7438445bb5fb1e397a871951dc9181bb085dc0e74", size = 28082677, upload-time = "2026-10-07T19:25:11.079Z" },
-    { url = "https://files.pythonhosted.org/packages/d4/35/42d07548040e7291e7b405846706d4c08b46661bfb8e00958a61b21c157c/litellm-1.103.4-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:2012c743bff490317c1368c295c525534771a37a515c6cd8545d3b6806a8957a", size = 27620013, upload-time = "2026-10-07T19:25:13.81Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/6f/f8fd7648111990fe4fd27cbfc09260606a3a377008c5460422fb9f7b471c/litellm-1.103.4-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:6b896fe9dc0243b331b7868e73ea38ec62232f2c19e96d6bcf37155c4553fea2", size = 28199379, upload-time = "2026-10-07T19:25:16.462Z" },
-    { url = "https://files.pythonhosted.org/packages/97/e9/cf3b148f9a3aa4d8d9ba3517c0efe5c65b14c52ba39b03bc55f4124c9e97/litellm-1.103.4-cp310-abi3-win_amd64.whl", hash = "sha256:09424f885db3a026e3d024c2601f006c32fec3dc2f21955adeffd1379f7b7f62", size = 28143674, upload-time = "2026-10-07T19:25:19.393Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/14/d931f761b16caab572d165582b48057149a783fc610cf8c5a9aae3572890/litellm-1.108.6-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:8f3b194c12b07a908c56d7810a2fe0fc397e7b5195a9b05ea5dd985a31df4d69", size = 36517793, upload-time = "2026-11-12T01:07:12.615Z" },
+    { url = "https://files.pythonhosted.org/packages/65/a1/8afeb5391313991a2c8fdcb834d6c5068613d33b7f1efdef484dfd6dc444/litellm-1.108.6-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:8965bd880821f29fcdd8bac3d3ce75d6a87dcebb2838f470ce6071a9d2eb2167", size = 35828879, upload-time = "2026-11-12T01:07:16.216Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/35/5ac9a10a59211c1098beb5322b6d04e4b4e0a874e446e93773ab8f5afb5a/litellm-1.108.6-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:55d6ccad225633b351a45cf5f94aab53b1057975b32724cac89351673b530d7b", size = 36325273, upload-time = "2026-11-12T01:07:19.158Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/70/961e7f372e3750783f7a81eb56c3e42db6dd8507e6f888f641e9bfa06b86/litellm-1.108.6-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:e1203ca46466e48d78c210389c0d2a1f8ca42d636063a78707e0bf6991f072b3", size = 37016163, upload-time = "2026-11-12T01:07:22.529Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/8b/c33df2f2057cf5a45ab4a36c05b5dc88ab79a9167f9065e0adb401307358/litellm-1.108.6-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:e06653e4755b43a98c0de7652fa0e6534d338fdf30220d06c2f3ccfb47f78005", size = 36462233, upload-time = "2026-11-12T01:07:25.964Z" },
+    { url = "https://files.pythonhosted.org/packages/22/de/0d00eef4a2924093fbc382015eacda9a8127a386226871cf1d17cd03c547/litellm-1.108.6-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b3f9d7790be23a9b56d0d77b5a0a4faed66454745621bf81ccf359c82193c37e", size = 37093859, upload-time = "2026-11-12T01:07:28.719Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/0b/24bf234ebfe7dc46088b04e47a2d7dff30a7773d1e03f79bbca679e9f4d5/litellm-1.108.6-cp310-abi3-win_amd64.whl", hash = "sha256:a3890b759b18cf97743efb5509c4c44c58628ee70ebb3e3ebe211bb6ccf958ed", size = 37966531, upload-time = "2026-11-12T01:07:33.125Z" },
 ]
 
 [[package]]
@@ -5653,7 +5659,7 @@ wheels = [
 
 [[package]]
 name = "traigent"
-version = "0.33.0"
+version = "0.34.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -5665,14 +5671,17 @@ dependencies = [
     { name = "jsonschema" },
     { name = "litellm" },
     { name = "multidict" },
+    { name = "packaging" },
     { name = "psutil" },
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
+    { name = "pyyaml" },
     { name = "rank-bm25" },
     { name = "requests" },
     { name = "rich" },
     { name = "tenacity" },
     { name = "traigent-schema" },
+    { name = "urllib3" },
     { name = "yarl" },
 ]
 
@@ -5755,7 +5764,6 @@ deepeval = [
 ]
 dev = [
     { name = "bandit" },
-    { name = "black" },
     { name = "flake8" },
     { name = "hypothesis" },
     { name = "isort" },
@@ -5990,7 +5998,6 @@ requires-dist = [
     { name = "azure-storage-blob", marker = "extra == 'snapshot-azure'", specifier = ">=12.20.0" },
     { name = "backoff", specifier = ">=2.2.0" },
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7.0" },
-    { name = "black", marker = "extra == 'dev'", specifier = ">=26.10.1" },
     { name = "boto3", marker = "extra == 'cloud'", specifier = ">=1.28.0" },
     { name = "boto3", marker = "extra == 'integrations'", specifier = ">=1.28.0" },
     { name = "boto3", marker = "extra == 'snapshot-s3'", specifier = ">=1.35.2" },
@@ -6023,7 +6030,7 @@ requires-dist = [
     { name = "langchain-openai", marker = "extra == 'integrations'", specifier = ">=1.1.14" },
     { name = "langchain-text-splitters", marker = "extra == 'integrations'", specifier = ">=1.1.2" },
     { name = "langgraph-sdk", marker = "extra == 'integrations'", specifier = ">=0.4.4,<0.5" },
-    { name = "litellm", specifier = ">=1.100.5,<2" },
+    { name = "litellm", specifier = ">=1.108.6,<2" },
     { name = "matplotlib", marker = "extra == 'analytics'", specifier = ">=3.5.0" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.5.0" },
     { name = "mcp", marker = "extra == 'hybrid'", specifier = ">=1.30.0,<3.0.0" },
@@ -6064,6 +6071,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", marker = "extra == 'observability-langchain'", specifier = ">=1.45.1,<2.0.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability-openai'", specifier = ">=1.45.1,<2.0.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'tracing'", specifier = ">=1.20.0,<2.0.0" },
+    { name = "packaging", specifier = ">=23.0" },
     { name = "pandas", marker = "extra == 'analytics'", specifier = ">=1.3.0" },
     { name = "pandas", marker = "extra == 'integrations'", specifier = ">=1.3.0" },
     { name = "passlib", marker = "extra == 'security'", specifier = ">=1.7.4" },
@@ -6087,6 +6095,7 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.0.0" },
     { name = "python-dotenv", marker = "extra == 'integrations'", specifier = ">=1.2.2" },
     { name = "python-multipart", marker = "extra == 'security'", specifier = ">=0.0.26" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "rank-bm25" },
     { name = "rank-bm25", marker = "extra == 'integrations'", specifier = ">=0.2.2" },
     { name = "rapidfuzz", marker = "extra == 'test'", specifier = ">=3.14.0" },
@@ -6109,6 +6118,7 @@ requires-dist = [
     { name = "types-bleach", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
+    { name = "urllib3", specifier = ">=2.8.0" },
     { name = "uvicorn", marker = "extra == 'security'", specifier = ">=0.18.0" },
     { name = "wandb", marker = "extra == 'integrations'", specifier = ">=0.15.0" },
     { name = "yarl", specifier = ">=1.24.5,<2" },

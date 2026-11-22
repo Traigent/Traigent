@@ -31,7 +31,7 @@ def isolate_quickstart_import_state(monkeypatch: pytest.MonkeyPatch) -> None:
 
     yield
 
-    for stem in ("01_simple_qa", "03_custom_objectives"):
+    for stem in ("01_simple_qa", "02_customer_support_rag", "03_custom_objectives"):
         sys.modules.pop(f"_quickstart_{stem}", None)
     for key in _QUICKSTART_ENV_KEYS:
         os.environ.pop(key, None)
@@ -110,3 +110,44 @@ def test_custom_objectives_function_reads_config_context(monkeypatch) -> None:
         {"model": "gpt-4.1-mini", "temperature": 0.1, "top_p": 0.9}
     ):
         assert module.weighted_agent.func(question) == "Jupiter"
+
+
+def test_custom_objectives_states_rule_based_no_model_calls_3205(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """03 never calls a model: it must say so and not claim 'Mock mode: false'."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+    module = _load_example_module("03_custom_objectives")
+
+    assert "no model is called" in module.RULE_BASED_NOTICE
+    assert "$0.00" in module.RULE_BASED_NOTICE
+    label = module._mock_mode_label()
+    assert "never calls a model" in label
+    assert label != "false"
+
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    assert module._mock_mode_label().startswith("true")
+    monkeypatch.delenv("TRAIGENT_MOCK_LLM")
+    assert module._mock_mode_label().startswith("false")
+
+
+def test_customer_support_rag_declares_only_knobs_it_reads_3205() -> None:
+    """02 must not tune model/temperature unless its code reads them."""
+    import inspect
+
+    module = _load_example_module("02_customer_support_rag")
+    space = module.customer_support_agent.configuration_space
+    source = inspect.getsource(module.customer_support_agent.func)
+
+    assert "no language model is called" in module.RULE_BASED_NOTICE
+    for knob in space:
+        assert f'"{knob}"' in source, f"{knob} is tuned but never read"
+    assert "model" not in space
+    assert "temperature" not in space
+
+    question = "What is your return policy?"
+    with ConfigurationContext({"k": 2}):
+        shallow = module.customer_support_agent.func(question)
+    with ConfigurationContext({"k": 5}):
+        deep = module.customer_support_agent.func(question)
+    assert shallow != deep

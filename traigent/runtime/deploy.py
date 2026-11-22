@@ -141,8 +141,10 @@ class DeployController:
     ) -> DeployOutcome:
         """Deploy the one promoted candidate of ``optimized`` under the approved grant.
 
-        The backend exposes no attempt or grant read, so the caller names the approved
-        ``grant_ref`` and the server-issued ``best_config_id``/``version`` to publish.
+        The hosted client can read attempts and grants (``ReactiveClient.list_attempts``,
+        ``get_attempt`` and ``get_grant``), but this method does not look them up: the
+        caller names the approved ``grant_ref`` and the server-issued
+        ``best_config_id``/``version`` to publish.
         ``candidate_fingerprint`` picks among several promoted candidates; the backend
         refuses a key whose fingerprint and gate digest the grant does not bind.
         """

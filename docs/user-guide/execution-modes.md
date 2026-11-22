@@ -64,6 +64,30 @@ result = await my_agent.optimize()
 See [Execution Modes / Optimization Routing](../guides/execution-modes.md) for
 the full `algorithm` / `offline` routing reference within `local` and `cloud`.
 
+## When `algorithm="auto"` falls back to a local search
+
+`algorithm="auto"` asks the Traigent backend to pick configurations. When the
+backend session cannot be created, the run falls back to a **local random
+search** on your machine, but only for these failures: no API key; an
+unreachable or unavailable backend (for example timeouts and 408, 500, 502, 503
+or 504 responses); or an `auto` run where cloud is not required and both the
+typed and the legacy session-creation requests were answered with HTTP 400.
+Definitive authentication rejections, quota
+refusals, closed backend refusals and other client errors (for example 401,
+402, 403, 404, 409, 422 or 429) raise instead. Set `TRAIGENT_REQUIRE_CLOUD=1`
+to fail instead of falling back.
+
+The session-creation request may already have been sent to Traigent before the
+failure, so a fallback run is not guaranteed to have sent nothing. After the
+fallback, the search and trials run locally.
+
+Traigent logs a warning when this happens, naming the reason. You can also
+check the result:
+
+- `result.metadata["source"] == "local_fallback"` (a managed run reports
+  `"cloud_brain"`), with the reason in `result.metadata["fallback_reason"]`.
+- `result.cloud_url` is not set, because no backend experiment exists.
+
 ## Removed and deprecated names
 
 | Old name | Status | Replacement |

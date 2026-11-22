@@ -106,6 +106,7 @@ from traigent.core.optimization_pipeline import (
     resolve_execution_parameters,
 )
 from traigent.core.orchestrator import OptimizationOrchestrator, _safe_exception_text
+from traigent.core.seed_configs import validate_seed_configs
 from traigent.core.stop_conditions import NoUsageCapturedStopCondition
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import (
@@ -321,6 +322,38 @@ def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> No
         )
 
 
+#: Hooks the CallbackManager invokes unconditionally; these are exactly the
+#: abstract methods of ``OptimizationCallback`` (``on_run_settings`` is optional).
+_CALLBACK_HOOKS = (
+    "on_optimization_start",
+    "on_trial_start",
+    "on_trial_complete",
+    "on_optimization_complete",
+)
+
+
+def _coerce_callbacks(value: Any, name: str = "callbacks") -> list[Any] | None:
+    """Normalize a ``callbacks`` argument to a list, rejecting non-callbacks.
+
+    Shared by the decoration-time and call-time paths so both name the argument
+    instead of failing later with "'int' object is not iterable" (#2922).
+    """
+    if value is None:
+        return None
+    items = list(value) if isinstance(value, (list, tuple)) else [value]
+    for index, item in enumerate(items):
+        missing = [
+            hook for hook in _CALLBACK_HOOKS if not callable(getattr(item, hook, None))
+        ]
+        if missing:
+            raise TypeError(
+                f"{name} must be an OptimizationCallback or a list of them; "
+                f"{name}[{index}] is {type(item).__name__} and lacks "
+                f"{', '.join(missing)}"
+            )
+    return items
+
+
 def _resolve_callbacks(
     explicit_callbacks: list[Any] | None,
     decorator_callbacks: list[Any] | None,
@@ -419,7 +452,11 @@ def _resolve_callbacks(
     def _reports_per_trial(callback: Any) -> bool:
         return type(callback) in _per_trial_reporters
 
-    callbacks = list(explicit_callbacks or decorator_callbacks or [])
+    callbacks = list(
+        _coerce_callbacks(explicit_callbacks)
+        or _coerce_callbacks(decorator_callbacks)
+        or []
+    )
     has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
 
     if progress_bar is not False and not has_progress:
@@ -877,6 +914,56 @@ def _guard_cost_objective_without_usage(
         _NO_USAGE_CAPTURED_MESSAGE,
         COST_OBJECTIVE_NO_USAGE_WARNING_CODE,
     )
+
+
+def _preflight_save_to(save_to: object) -> None:
+    """Reject an unusable ``save_to`` before any trial runs (#3195).
+
+    ``save_to`` is only written after the last trial, so a typo would otherwise
+    discard a fully paid run. Checks the type, that the target is not an
+    existing directory, and that the parent directory exists and is writable
+    (the writer does not create directories). Never reads file contents.
+    ``None`` and ``""`` mean "no save" and pass.
+    """
+    if save_to is None or save_to == "":
+        return
+    if not isinstance(save_to, (str, os.PathLike)):
+        raise ConfigurationError(
+            f"save_to must be a str or path-like, got {type(save_to).__name__}"
+        )
+    given = os.fspath(save_to)
+    if not isinstance(given, str):
+        raise ConfigurationError("save_to must be a text path, not bytes")
+    target = Path(given).expanduser()
+    if not target.is_absolute():
+        target = Path.cwd() / target
+    # The path is customer-controlled text: it stays out of every rendering
+    # (exception, log, warning), per the best-config leak-class contract.
+    if target.is_dir():
+        raise ConfigurationError(
+            "save_to is a directory; give a file path (for example <dir>/results.json)"
+        )
+    parent = target.parent
+    if not parent.is_dir():
+        raise ConfigurationError(
+            "save_to: the parent directory of the save_to path does not exist; "
+            "create it before optimizing"
+        )
+    if not os.access(parent, os.W_OK | os.X_OK):
+        raise ConfigurationError(
+            "save_to: the parent directory of the save_to path is not writable"
+        )
+    # Same containment rule as the writer (relative paths stay under the cwd).
+    from traigent.utils.secure_path import validate_path
+
+    base_dir = target.parent if Path(given).expanduser().is_absolute() else Path.cwd()
+    try:
+        validate_path(target, base_dir, must_exist=False)
+    except Exception:
+        raise ConfigurationError(
+            "save_to is not an allowed location (relative paths must stay "
+            "inside the current directory)"
+        ) from None
 
 
 def _record_pricing_provenance(
@@ -1349,17 +1436,14 @@ class OptimizedFunction[**P, R]:
             self.callbacks = None
             return
 
-        if isinstance(callbacks_value, list):
-            self.callbacks = callbacks_value
-            kwargs["callbacks"] = list(callbacks_value)
-        elif isinstance(callbacks_value, tuple):
-            normalized_callbacks = list(callbacks_value)
-            self.callbacks = normalized_callbacks
-            kwargs["callbacks"] = list(normalized_callbacks)
-        else:
-            normalized_callbacks = [callbacks_value]
-            self.callbacks = normalized_callbacks
-            kwargs["callbacks"] = list(normalized_callbacks)
+        normalized_callbacks = _coerce_callbacks(callbacks_value) or []
+        # Keep list identity when the caller passed a list (existing behaviour).
+        self.callbacks = (
+            callbacks_value
+            if isinstance(callbacks_value, list)
+            else normalized_callbacks
+        )
+        kwargs["callbacks"] = list(normalized_callbacks)
 
     def _store_optional_param(
         self,
@@ -1923,7 +2007,9 @@ class OptimizedFunction[**P, R]:
     # Optuna, ...) runs server-side and may accept algorithm-specific
     # hyperparameters this repo has no local schema for (verified: no such
     # hyperparameter name appears anywhere under ``traigent/``). ``seed`` is
-    # kept on the allowlist for exactly that reason, and because rejecting it
+    # kept on the allowlist for exactly that reason (local ``random`` treats it as
+    # an alias of ``random_seed``; local optimizers that cannot honour it warn,
+    # Traigent#2947), and because rejecting it
     # would break the pre-existing call-time contract pinned by
     # ``tests/unit/core/optimized_function_tests/test_optimize_calltime_kwarg_rejection.py``.
     # A general schema for smart-algorithm kwargs is a further follow-up.
@@ -2396,6 +2482,7 @@ class OptimizedFunction[**P, R]:
         eval_dataset: (
             str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
         ) = None,
+        seed_configs: Sequence[Mapping[str, Any]] | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization on the function.
@@ -2463,6 +2550,23 @@ class OptimizedFunction[**P, R]:
                 same way as the decorator's ``eval_dataset``. Not forwarded to
                 ``algorithm_kwargs``. With ``resume_from``, prior trials are reused
                 only when their dataset fingerprint matches this dataset.
+            seed_configs: Known-good starting configurations (issue #1665),
+                e.g. ``[{"model": "m1", "top_k": 15}]``. Each seed is run as a
+                trial before the optimizer suggests anything, in the order
+                given (after the decorator's ``default_config`` baseline, if
+                any), so with no ``default_config`` trial 1 is the first seed.
+                Seeds count toward ``max_trials`` and are recorded and
+                submitted like any other trial. Local optimizers (grid,
+                random) never re-propose a seed; for backend-guided
+                algorithms such as ``bayesian`` the seeds are evaluated first
+                but are not guaranteed to inform the remote surrogate.
+                A seed already seen under a ``cache_policy`` that filters
+                repeats is skipped, and the run continues. Every seed must name each declared parameter and hold
+                an in-space value; unknown keys, out-of-space values and
+                duplicates raise ``ValueError`` (the message names the seed's
+                position and the declared parameter names, never the supplied
+                values). To warm-start from a previous run's trials, see
+                ``resume_from``.
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -2505,6 +2609,7 @@ class OptimizedFunction[**P, R]:
             "resume_from": resume_from,
             "allow_unverified_resume": allow_unverified_resume,
             "eval_dataset": eval_dataset,
+            "seed_configs": seed_configs,
             "algorithm_kwargs": algorithm_kwargs,
         }
         from traigent.utils.cost_calculator import cost_run_scope
@@ -2515,6 +2620,22 @@ class OptimizedFunction[**P, R]:
                 return await self._optimize_run(**run_kwargs)
         finally:
             self._end_advancing_run()
+
+    def _assert_seamless_injectable(self, configuration_space: Any) -> None:
+        injection_mode_name = getattr(self.injection_mode, "value", self.injection_mode)
+        if injection_mode_name == "seamless" and isinstance(
+            self._provider, SeamlessParameterProvider
+        ):
+            sample_config = self._representative_seamless_config(configuration_space)
+            if sample_config:
+                self._provider.assert_injectable(self.func, sample_config)
+
+    def _new_snapshot_run(self) -> Any:
+        if getattr(self, "snapshot_store", None) is None:
+            return None
+        from traigent.certification.snapshot_binding import SnapshotRun
+
+        return SnapshotRun(self.snapshot_store)
 
     async def _optimize_run(
         self,
@@ -2538,9 +2659,15 @@ class OptimizedFunction[**P, R]:
         resume_from: OptimizationResult | str | os.PathLike[str] | None = None,
         allow_unverified_resume: bool = False,
         eval_dataset: Any = None,
+        seed_configs: Sequence[Mapping[str, Any]] | None = None,
         algorithm_kwargs: dict[str, Any],
     ) -> OptimizationResult:
         """Body of :meth:`optimize` for one advancing run."""
+        # #3195: fail before the first trial, not after the last one, and before
+        # any per-call state (objective schema, TVL options) is installed.
+        _preflight_save_to(
+            save_to if save_to is not None else getattr(self, "save_to", None)
+        )
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
         # Per-call dataset (#2541): resolved before any run state changes, so a bad
@@ -2589,13 +2716,7 @@ class OptimizedFunction[**P, R]:
         # `best_config: None`. It runs here, not at decoration, so a decorated
         # function that is only ever called directly is unaffected; the
         # per-call checks in providers.py remain as defence in depth.
-        injection_mode_name = getattr(self.injection_mode, "value", self.injection_mode)
-        if injection_mode_name == "seamless" and isinstance(
-            self._provider, SeamlessParameterProvider
-        ):
-            sample_config = self._representative_seamless_config(configuration_space)
-            if sample_config:
-                self._provider.assert_injectable(self.func, sample_config)
+        self._assert_seamless_injectable(configuration_space)
 
         original_schema = self.objective_schema
         runtime_objective_input = (
@@ -2620,11 +2741,7 @@ class OptimizedFunction[**P, R]:
             execution_mode=self._resolve_runtime_execution_mode(algorithm).value,
         )
 
-        snapshot_run: Any = None
-        if getattr(self, "snapshot_store", None) is not None:
-            from traigent.certification.snapshot_binding import SnapshotRun
-
-            snapshot_run = SnapshotRun(self.snapshot_store)
+        snapshot_run = self._new_snapshot_run()
         try:
             validate_objectives(self.objectives)
             # When cost is an objective, a model with no price must not be
@@ -2657,6 +2774,7 @@ class OptimizedFunction[**P, R]:
                         resume_from, algorithm, allow_unverified_resume
                     ),
                     call_dataset=per_call_dataset,
+                    seed_configs=seed_configs,
                     **({} if snapshot_run is None else {"snapshot_run": snapshot_run}),
                 )
                 # Inside the run scope: a cost objective that measured no
@@ -2703,6 +2821,7 @@ class OptimizedFunction[**P, R]:
         eval_dataset: (
             str | list[str | dict[str, Any] | EvaluationExample] | Dataset | None
         ) = None,
+        seed_configs: Sequence[Mapping[str, Any]] | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization synchronously (convenience wrapper).
@@ -2734,6 +2853,8 @@ class OptimizedFunction[**P, R]:
             resume_from: Resume a local run from a prior result; see
                 :meth:`optimize`.
             allow_unverified_resume: Unsafe opt-in; see :meth:`optimize`.
+            seed_configs: Starting configurations evaluated first; see
+                :meth:`optimize`.
             **algorithm_kwargs: Additional algorithm parameters
 
         Returns:
@@ -2782,6 +2903,7 @@ class OptimizedFunction[**P, R]:
             resume_from=resume_from,
             allow_unverified_resume=allow_unverified_resume,
             eval_dataset=eval_dataset,
+            seed_configs=seed_configs,
             **algorithm_kwargs,
         )
 
@@ -3851,7 +3973,7 @@ class OptimizedFunction[**P, R]:
 
             # Save results if requested
             if save_to:
-                self.save_optimization_results(save_to)
+                self._save_results_best_effort(result, save_to)
 
             logger.info(
                 f"Optimization completed: {len(result.trials)} trials, "
@@ -3885,6 +4007,36 @@ class OptimizedFunction[**P, R]:
                 orchestrator, post_orchestrator_failure, result
             )
             raise
+
+    def _save_results_best_effort(
+        self, result: OptimizationResult, save_to: str | os.PathLike[str]
+    ) -> None:
+        """Persist ``result`` to ``save_to`` without discarding a finished run (#3195).
+
+        The path was validated before the first trial, so a failure here is a
+        late environmental one (disk full, directory removed mid-run). The
+        completed result is still returned; the failure is logged, warned about
+        and recorded on ``result.metadata["save_to_error"]``. The explicit
+        ``save_optimization_results`` method still raises.
+        """
+        try:
+            self.save_optimization_results(save_to)  # type: ignore[arg-type]
+        except Exception as exc:
+            reason = type(exc).__name__
+            message = (
+                "Optimization finished but its results could not be saved to the "
+                f"save_to path ({reason}). The result is still returned; call "
+                "save_optimization_results(<path>) to retry."
+            )
+            if isinstance(result.metadata, dict):
+                result.metadata["save_to_error"] = {"error_type": reason}
+            logger.warning(message)
+            try:
+                warnings.warn(message, RuntimeWarning, stacklevel=2)
+            except Warning:
+                # ``-W error`` turns the warning into an exception; the
+                # finished result must still be returned.
+                pass
 
     def _carry_result_sync_session_id(
         self,
@@ -4078,8 +4230,13 @@ class OptimizedFunction[**P, R]:
                 and cost_enforcer.get_status().unknown_cost_mode
             ):
                 budget.mark_cost_untracked()
-        except Exception:  # pragma: no cover - defensive; never break finalize
-            logger.debug("ExecutionBudget unknown-cost fold-in failed", exc_info=True)
+        except Exception:  # never break finalize, but degrade the verdict
+            logger.warning(
+                "ExecutionBudget unknown-cost fold-in failed; "
+                "marking cost tracking incomplete",
+                exc_info=True,
+            )
+            budget.mark_cost_untracked()
         if "UNPRICED_MODEL_RUNTIME" in result.warning_codes:
             budget.mark_cost_untracked()
 
@@ -4118,6 +4275,7 @@ class OptimizedFunction[**P, R]:
         execution_budget: ExecutionBudget | None = None,
         custom_evaluator: Callable[..., Any] | None = None,
         snapshot_g1_required: bool = False,
+        seed_configs: list[dict[str, Any]] | None = None,
     ) -> OptimizationResult | None:
         """Try cloud-brain execution, returning None for allowed local fallback."""
 
@@ -4211,6 +4369,8 @@ class OptimizedFunction[**P, R]:
                 snapshot_g1_required=snapshot_g1_required,
             )
             orchestrator._cloud_guidance_client = cloud_client
+            if seed_configs:
+                orchestrator.set_seed_configs(seed_configs)
             return await self._run_and_finalize_optimization(
                 orchestrator=orchestrator,
                 dataset=dataset,
@@ -4314,6 +4474,30 @@ class OptimizedFunction[**P, R]:
             return
 
         missing = find_models_missing_price_coverage(model_ids)
+        # Explicit strict accounting is decided BEFORE any exemption: it refuses every
+        # unpriced model, admitted by name or not (docs/features/safety-gates.md).
+        if missing and is_strict_cost_accounting(include_run_default=False):
+            raise UnknownModelError(
+                "Cost coverage preflight failed before any optimization trial "
+                f"started: pricing is unavailable for {_format_model_id_list(missing)}. "
+                "Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
+                "pricing, or contact Traigent to add coverage."
+            )
+        # Models a caller admitted by name (Continuous Tuning's ``admit``: a model
+        # released after the price table shipped) may run with their cost unknown.
+        # Only those exact ids are exempt; every other unpriced model still fails
+        # the guards below.  The exemption is a private, instance-scoped set on an
+        # isolated candidate copy, never a call-time option.
+        exempt = getattr(self, "_unpriced_models_allowed", None) or ()
+        if exempt:
+            allowed = [m for m in missing if m in exempt]
+            if allowed:
+                logger.info(
+                    "Running admitted unpriced models with cost unknown: %s",
+                    ", ".join(allowed),
+                )
+            missing = [m for m in missing if m not in exempt]
         if not missing:
             return
 
@@ -4591,6 +4775,7 @@ Remediation:
         resume_source: OptimizationResult | None = None,
         call_dataset: Dataset | None = None,
         snapshot_run: Any = None,
+        seed_configs: Sequence[Mapping[str, Any]] | None = None,
     ) -> OptimizationResult:
         """Execute optimization assuming objective schema is already resolved.
 
@@ -4633,6 +4818,10 @@ Remediation:
             fallback_algorithm=cast(str, getattr(self, "algorithm", "grid")),
             fallback_max_trials=getattr(self, "max_trials", None),
             default_config=self.default_config,
+        )
+        # Fail before any dataset load, egress or trial (issue #1665).
+        validated_seed_configs = validate_seed_configs(
+            seed_configs, effective_config_space
         )
         used_implicit_default_max_trials = (
             requested_max_trials is None
@@ -4753,6 +4942,7 @@ Remediation:
             execution_budget=execution_budget,
             custom_evaluator=custom_evaluator,
             snapshot_g1_required=g1_required,
+            seed_configs=validated_seed_configs,
         )
         if cloud_result is not None:
             return cloud_result
@@ -4814,6 +5004,9 @@ Remediation:
             snapshot_g1_required=g1_required,
             snapshot_g1_pending=g1_pending,
         )
+
+        if validated_seed_configs:
+            orchestrator.set_seed_configs(validated_seed_configs)
 
         OptimizedFunction._prepare_orchestrator_run(
             self,
@@ -5554,7 +5747,8 @@ Remediation:
         if isinstance(source, Dataset):
             return source
 
-        elif isinstance(source, str):
+        elif isinstance(source, (str, os.PathLike)):
+            source = os.fspath(source)
             try:
                 return Dataset.from_jsonl(source)
             except Exception as e:

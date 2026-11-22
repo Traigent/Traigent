@@ -2542,21 +2542,18 @@ class TestConfigPersistence:
             assert "function_name" not in data
             assert "traigent_version" not in data
 
-    def test_auto_load_silently_skips_on_error(
+    def test_explicit_load_from_missing_fails_loudly(
         self, mock_function, sample_config_space, sample_objectives, sample_dataset
     ):
-        """Test that auto-load silently skips when config can't be loaded."""
-        opt_func = OptimizedFunction(
-            func=mock_function,
-            configuration_space=sample_config_space,
-            objectives=sample_objectives,
-            eval_dataset=sample_dataset,
-            load_from="/nonexistent/path/config.json",
-        )
-
-        # Should not raise, just skip loading
-        # Config should remain unset (or default)
-        assert opt_func._best_config is None or opt_func._best_config == {}
+        """An explicit load_from that cannot be loaded raises (#3268)."""
+        with pytest.raises(ConfigurationError):
+            OptimizedFunction(
+                func=mock_function,
+                configuration_space=sample_config_space,
+                objectives=sample_objectives,
+                eval_dataset=sample_dataset,
+                load_from="/nonexistent/path/config.json",
+            )
 
 
 class TestFallbackReasonText:

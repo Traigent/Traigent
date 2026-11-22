@@ -31,7 +31,9 @@ Example of zero-code-change optimization:
 
 from __future__ import annotations
 
-from typing import Any
+import importlib
+import threading
+from typing import TYPE_CHECKING, Any
 
 # Activation state management (thread-safe state)
 from .activation import ActivationState, create_activation_state
@@ -63,6 +65,36 @@ from .mappings import (
     get_supported_frameworks,
 )
 
+# Workflow traces integration (always available - graceful degradation for OTEL)
+from .observability.workflow_traces import (
+    OTEL_AVAILABLE,
+    SpanPayload,
+    SpanStatus,
+    SpanType,
+    TraceIngestionRequest,
+    TraceIngestionResponse,
+    TraigentSpanExporter,
+    WorkflowEdge,
+    WorkflowGraphPayload,
+    WorkflowLoop,
+    WorkflowNode,
+    WorkflowTracesClient,
+    WorkflowTracesTracker,
+    create_workflow_tracker,
+    detect_loops_in_graph,
+    extract_edges_from_langgraph,
+    extract_nodes_from_langgraph,
+    setup_workflow_tracing,
+)
+
+# Provider-based model selection
+from .providers import (
+    get_all_tiers,
+    get_models_for_tier,
+    list_available_providers,
+    register_provider_tiers,
+)
+
 # Wrapper utilities (Protocol and helper functions)
 from .wrappers import (
     OverrideContext,
@@ -72,69 +104,221 @@ from .wrappers import (
     create_wrapper,
 )
 
-# MLflow integration
-try:
-    from .observability.mlflow import (
-        TraigentMLflowTracker,
-        compare_traigent_runs,
-        create_mlflow_tracker,
-        enable_mlflow_autolog,
-        get_best_traigent_run,
-        log_traigent_optimization,
-    )
+WORKFLOW_TRACES_INTEGRATION_AVAILABLE = True
 
-    MLFLOW_INTEGRATION_AVAILABLE = True
-except ImportError:
-    TraigentMLflowTracker = None  # type: ignore[assignment, misc]
+# ---------------------------------------------------------------------------
+# Optional integrations are loaded lazily (PEP 562) on first attribute access,
+# so ``import traigent`` / ``traigent.optimize`` never imports third-party
+# frameworks (dspy, litellm, langchain, mlflow, wandb, ...) as a side effect.
+# Public names, availability flags and unavailable-stub behaviour are unchanged.
+# ---------------------------------------------------------------------------
 
-    def _mlflow_unavailable(*args: Any, **kwargs: Any) -> Any:
-        raise ImportError(
+
+def _unavailable_stub(message: str) -> Any:
+    def _stub(*args: Any, **kwargs: Any) -> Any:
+        raise ImportError(message)
+
+    return _stub
+
+
+# group -> module, exported names, flag assignments, caught errors, stub message,
+# names that fall back to ``None`` instead of a raising stub.
+_LAZY_GROUPS: dict[str, dict[str, Any]] = {
+    "mlflow": {
+        "module": ".observability.mlflow",
+        "names": (
+            "TraigentMLflowTracker",
+            "compare_traigent_runs",
+            "create_mlflow_tracker",
+            "enable_mlflow_autolog",
+            "get_best_traigent_run",
+        ),
+        "flags": {"MLFLOW_INTEGRATION_AVAILABLE": None},
+        "catch": (ImportError,),
+        "message": (
             "MLflow integration is unavailable. Install `traigent[integrations]` "
             "or install `mlflow-skinny` and `pandas`."
-        )
-
-    compare_traigent_runs = _mlflow_unavailable
-    create_mlflow_tracker = _mlflow_unavailable
-    enable_mlflow_autolog = _mlflow_unavailable
-    get_best_traigent_run = _mlflow_unavailable
-    log_traigent_optimization = _mlflow_unavailable
-    MLFLOW_INTEGRATION_AVAILABLE = False
-
-# Weights & Biases integration
-try:
-    from .observability.wandb import (  # type: ignore[assignment]
-        TraigentWandBTracker,
-        WandBIntegration,
-        create_wandb_sweep_config,
-        create_wandb_tracker,
-        enable_wandb_autolog,
-        init_wandb_run,
-        log_final_results_to_wandb,
-        log_traigent_optimization,
-        log_trial_to_wandb,
-    )
-
-    WANDB_INTEGRATION_AVAILABLE = True
-except ImportError:
-    TraigentWandBTracker = None  # type: ignore[assignment, misc]
-
-    def _wandb_unavailable(*args: Any, **kwargs: Any) -> Any:
-        raise ImportError(
+        ),
+        "none_names": ("TraigentMLflowTracker",),
+    },
+    "wandb": {
+        "module": ".observability.wandb",
+        "names": (
+            "TraigentWandBTracker",
+            "WandBIntegration",
+            "create_wandb_sweep_config",
+            "create_wandb_tracker",
+            "enable_wandb_autolog",
+            "init_wandb_run",
+            "log_final_results_to_wandb",
+            "log_traigent_optimization",
+            "log_trial_to_wandb",
+        ),
+        "flags": {"WANDB_INTEGRATION_AVAILABLE": None},
+        "catch": (ImportError,),
+        "message": (
             "W&B integration is unavailable. Install the optional `wandb` dependency."
-        )
+        ),
+        "none_names": ("TraigentWandBTracker",),
+    },
+    "langchain_llm": {
+        "module": ".llms.langchain.base",
+        "names": (
+            "add_langchain_llm_mapping",
+            "auto_detect_langchain_llms",
+            "enable_chatgpt_optimization",
+            "enable_claude_optimization",
+            "enable_langchain_optimization",
+            "get_supported_langchain_llms",
+        ),
+        "flags": {"LANGCHAIN_INTEGRATION_AVAILABLE": None},
+        "catch": (ImportError,),
+        "message": "LangChain integration is unavailable. Install `langchain`.",
+        "none_names": (),
+    },
+    "openai_sdk": {
+        "module": ".llms.openai",
+        "names": (
+            "auto_detect_openai",
+            "enable_async_openai",
+            "enable_openai_optimization",
+            "enable_streaming_optimization",
+            "enable_sync_openai",
+            "enable_tools_optimization",
+            "get_supported_openai_clients",
+            "openai_context",
+        ),
+        "flags": {"OPENAI_SDK_INTEGRATION_AVAILABLE": None},
+        "catch": (ImportError,),
+        "message": "OpenAI SDK integration is unavailable. Install `openai`.",
+        "none_names": (),
+    },
+    "dspy": {
+        "module": ".dspy_adapter",
+        "names": (
+            "DSPyPromptOptimizer",
+            "PromptOptimizationResult",
+            "create_dspy_integration",
+        ),
+        # DSPY_AVAILABLE is exported by the adapter; mirrored into the flag below.
+        "flags": {
+            "DSPY_AVAILABLE": "DSPY_AVAILABLE",
+            "DSPY_INTEGRATION_AVAILABLE": "DSPY_AVAILABLE",
+        },
+        # KeyError/RuntimeError can occur due to pydantic/litellm version conflicts
+        "catch": (ImportError, KeyError, RuntimeError),
+        "message": (
+            "DSPy integration is unavailable. Traigent does not bundle DSPy; bring "
+            "your own compatible installation only after reviewing its dependency "
+            "security."
+        ),
+        "none_names": (),
+    },
+    "pydantic_ai": {
+        "module": ".pydantic_ai",
+        "names": (
+            "PydanticAIHandler",
+            "PydanticAIPlugin",
+            "create_pydantic_ai_handler",
+        ),
+        "flags": {
+            "PYDANTICAI_AVAILABLE": "PYDANTICAI_AVAILABLE",
+            "PYDANTICAI_INTEGRATION_AVAILABLE": "PYDANTICAI_AVAILABLE",
+        },
+        "catch": (ImportError, KeyError, RuntimeError),
+        "message": (
+            "PydanticAI integration is unavailable. "
+            "Install with: pip install 'pydantic-ai>=1,<2'"
+        ),
+        "none_names": (),
+    },
+    "langfuse": {
+        "module": ".langfuse",
+        "names": (
+            "LangfuseClient",
+            "LangfuseObservation",
+            "LangfuseOptimizationCallback",
+            "LangfuseTraceMetrics",
+            "LangfuseTracker",
+            "TraceIdResolver",
+            "create_langfuse_tracker",
+        ),
+        "flags": {
+            "LANGFUSE_AVAILABLE": "LANGFUSE_AVAILABLE",
+            "LANGFUSE_INTEGRATION_AVAILABLE": None,
+        },
+        "catch": (ImportError,),
+        "message": (
+            "Langfuse integration is unavailable. "
+            "Install the optional dependencies: pip install aiohttp requests"
+        ),
+        "none_names": (),
+    },
+    "langchain_handler": {
+        "module": ".langchain",
+        "names": (
+            "LLMCallMetrics",
+            "ToolCallMetrics",
+            "TraigentHandler",
+            "TraigentHandlerMetrics",
+            "create_traigent_handler",
+            "get_current_node_name",
+            "get_current_trial_config",
+            "node_context",
+            "trial_context",
+        ),
+        "flags": {
+            "LANGCHAIN_AVAILABLE": "LANGCHAIN_AVAILABLE",
+            "LANGCHAIN_HANDLER_AVAILABLE": None,
+        },
+        "catch": (ImportError,),
+        "message": (
+            "LangChain handler integration is unavailable. "
+            "Install langchain-core: pip install langchain-core"
+        ),
+        "none_names": (),
+    },
+}
 
-    create_wandb_sweep_config = _wandb_unavailable
-    create_wandb_tracker = _wandb_unavailable
-    enable_wandb_autolog = _wandb_unavailable
-    init_wandb_run = _wandb_unavailable
-    log_final_results_to_wandb = _wandb_unavailable
-    log_traigent_optimization = _wandb_unavailable
-    log_trial_to_wandb = _wandb_unavailable
-    WandBIntegration = _wandb_unavailable  # type: ignore[assignment, misc]
-    WANDB_INTEGRATION_AVAILABLE = False
+# Public attribute -> owning group. Flag names resolve to their group as well.
+# (``log_traigent_optimization`` is exported by both MLflow and W&B; W&B won
+# historically because it was imported last, so it keeps winning.)
+_LAZY_ATTRS: dict[str, str] = {}
+for _group_name, _spec in _LAZY_GROUPS.items():
+    for _attr in (*_spec["names"], *_spec["flags"]):
+        _LAZY_ATTRS[_attr] = _group_name
+_LAZY_ATTRS["log_traigent_optimization"] = "wandb"
+del _group_name, _spec, _attr
 
-# LangChain integration
-try:
+if TYPE_CHECKING:
+    from .dspy_adapter import (
+        DSPY_AVAILABLE,
+        DSPyPromptOptimizer,
+        PromptOptimizationResult,
+        create_dspy_integration,
+    )
+    from .langchain import (
+        LANGCHAIN_AVAILABLE,
+        LLMCallMetrics,
+        ToolCallMetrics,
+        TraigentHandler,
+        TraigentHandlerMetrics,
+        create_traigent_handler,
+        get_current_node_name,
+        get_current_trial_config,
+        node_context,
+        trial_context,
+    )
+    from .langfuse import (
+        LANGFUSE_AVAILABLE,
+        LangfuseClient,
+        LangfuseObservation,
+        LangfuseOptimizationCallback,
+        LangfuseTraceMetrics,
+        LangfuseTracker,
+        TraceIdResolver,
+        create_langfuse_tracker,
+    )
     from .llms.langchain.base import (
         add_langchain_llm_mapping,
         auto_detect_langchain_llms,
@@ -143,13 +327,6 @@ try:
         enable_langchain_optimization,
         get_supported_langchain_llms,
     )
-
-    LANGCHAIN_INTEGRATION_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_INTEGRATION_AVAILABLE = False
-
-# OpenAI SDK integration
-try:
     from .llms.openai import (
         auto_detect_openai,
         enable_async_openai,
@@ -160,38 +337,24 @@ try:
         get_supported_openai_clients,
         openai_context,
     )
-
-    OPENAI_SDK_INTEGRATION_AVAILABLE = True
-except ImportError:
-    OPENAI_SDK_INTEGRATION_AVAILABLE = False
-
-# DSPy integration
-try:
-    from .dspy_adapter import (
-        DSPY_AVAILABLE,
-        DSPyPromptOptimizer,
-        PromptOptimizationResult,
-        create_dspy_integration,
+    from .observability.mlflow import (
+        TraigentMLflowTracker,
+        compare_traigent_runs,
+        create_mlflow_tracker,
+        enable_mlflow_autolog,
+        get_best_traigent_run,
     )
-
-    DSPY_INTEGRATION_AVAILABLE = DSPY_AVAILABLE
-except (ImportError, KeyError, RuntimeError):
-    # KeyError/RuntimeError can occur due to pydantic/litellm version conflicts
-    DSPY_INTEGRATION_AVAILABLE = False
-    DSPY_AVAILABLE = False
-
-    def _dspy_unavailable(*args: Any, **kwargs: Any) -> Any:
-        raise ImportError(
-            "DSPy integration is unavailable. Traigent does not bundle DSPy; bring your "
-            "own compatible installation only after reviewing its dependency security."
-        )
-
-    DSPyPromptOptimizer = _dspy_unavailable  # type: ignore[assignment, misc]
-    PromptOptimizationResult = _dspy_unavailable  # type: ignore[assignment, misc]
-    create_dspy_integration = _dspy_unavailable
-
-# PydanticAI integration
-try:
+    from .observability.wandb import (
+        TraigentWandBTracker,
+        WandBIntegration,
+        create_wandb_sweep_config,
+        create_wandb_tracker,
+        enable_wandb_autolog,
+        init_wandb_run,
+        log_final_results_to_wandb,
+        log_traigent_optimization,
+        log_trial_to_wandb,
+    )
     from .pydantic_ai import (
         PYDANTICAI_AVAILABLE,
         PydanticAIHandler,
@@ -199,28 +362,60 @@ try:
         create_pydantic_ai_handler,
     )
 
-    PYDANTICAI_INTEGRATION_AVAILABLE = PYDANTICAI_AVAILABLE
-except (ImportError, KeyError, RuntimeError):
-    PYDANTICAI_INTEGRATION_AVAILABLE = False
-    PYDANTICAI_AVAILABLE = False
+    MLFLOW_INTEGRATION_AVAILABLE: bool
+    WANDB_INTEGRATION_AVAILABLE: bool
+    LANGCHAIN_INTEGRATION_AVAILABLE: bool
+    OPENAI_SDK_INTEGRATION_AVAILABLE: bool
+    DSPY_INTEGRATION_AVAILABLE: bool
+    PYDANTICAI_INTEGRATION_AVAILABLE: bool
+    LANGFUSE_INTEGRATION_AVAILABLE: bool
+    LANGCHAIN_HANDLER_AVAILABLE: bool
 
-    def _pydanticai_unavailable(*args: Any, **kwargs: Any) -> Any:
-        raise ImportError(
-            "PydanticAI integration is unavailable. "
-            "Install with: pip install 'pydantic-ai>=1,<2'"
-        )
 
-    PydanticAIHandler = _pydanticai_unavailable  # type: ignore[assignment, misc]
-    PydanticAIPlugin = _pydanticai_unavailable  # type: ignore[assignment, misc]
-    create_pydantic_ai_handler = _pydanticai_unavailable
+_loaded_groups: set[str] = set()
+_lazy_lock = threading.RLock()
 
-# Provider-based model selection
-from .providers import (
-    get_all_tiers,
-    get_models_for_tier,
-    list_available_providers,
-    register_provider_tiers,
-)
+
+def _load_group(group: str) -> None:
+    """Import one optional integration group and publish its names."""
+    with _lazy_lock:
+        if group in _loaded_groups:
+            return
+        spec = _LAZY_GROUPS[group]
+        namespace = globals()
+        try:
+            module = importlib.import_module(spec["module"], __name__)
+            exported = {name: getattr(module, name) for name in spec["names"]}
+            flags = {
+                flag: (True if source is None else getattr(module, source))
+                for flag, source in spec["flags"].items()
+            }
+        except spec["catch"]:
+            stub = _unavailable_stub(spec["message"])
+            exported = {
+                name: (None if name in spec["none_names"] else stub)
+                for name in spec["names"]
+            }
+            flags = dict.fromkeys(spec["flags"], False)
+        for name, value in exported.items():
+            # Do not let a group clobber a name another group owns.
+            if _LAZY_ATTRS.get(name) == group:
+                namespace[name] = value
+        namespace.update(flags)
+        _loaded_groups.add(group)
+
+
+def __getattr__(name: str) -> Any:
+    group = _LAZY_ATTRS.get(name)
+    if group is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    _load_group(group)
+    return globals()[name]
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_ATTRS))
+
 
 __all__ = [
     # Core framework override (primary API)
@@ -254,154 +449,14 @@ __all__ = [
     "create_resilient_wrapper",
 ]
 
-# Add MLflow exports if available
-if MLFLOW_INTEGRATION_AVAILABLE:
-    __all__.extend(
-        [
-            "TraigentMLflowTracker",
-            "create_mlflow_tracker",
-            "enable_mlflow_autolog",
-            "log_traigent_optimization",
-            "compare_traigent_runs",
-            "get_best_traigent_run",
-        ]
-    )
-
-# Add W&B exports if available
-if WANDB_INTEGRATION_AVAILABLE:
-    __all__.extend(
-        [
-            "TraigentWandBTracker",
-            "init_wandb_run",
-            "log_traigent_optimization",
-            "log_trial_to_wandb",
-            "log_final_results_to_wandb",
-            "create_wandb_tracker",
-            "enable_wandb_autolog",
-            "create_wandb_sweep_config",
-            "WandBIntegration",
-        ]
-    )
-
-# Add LangChain exports if available
-if LANGCHAIN_INTEGRATION_AVAILABLE:
-    __all__.extend(
-        [
-            "enable_langchain_optimization",
-            "get_supported_langchain_llms",
-            "add_langchain_llm_mapping",
-            "enable_chatgpt_optimization",
-            "enable_claude_optimization",
-            "auto_detect_langchain_llms",
-        ]
-    )
-
-# Add OpenAI SDK exports if available
-if OPENAI_SDK_INTEGRATION_AVAILABLE:
-    __all__.extend(
-        [
-            "enable_openai_optimization",
-            "get_supported_openai_clients",
-            "enable_sync_openai",
-            "enable_async_openai",
-            "openai_context",
-            "auto_detect_openai",
-            "enable_streaming_optimization",
-            "enable_tools_optimization",
-        ]
-    )
-
-# Add DSPy exports if available
-if DSPY_INTEGRATION_AVAILABLE:
-    __all__.extend(
-        [
-            "DSPyPromptOptimizer",
-            "PromptOptimizationResult",
-            "create_dspy_integration",
-            "DSPY_AVAILABLE",
-        ]
-    )
-
-# Add PydanticAI exports if available
-if PYDANTICAI_INTEGRATION_AVAILABLE:
-    __all__.extend(
-        [
-            "PydanticAIHandler",
-            "PydanticAIPlugin",
-            "create_pydantic_ai_handler",
-            "PYDANTICAI_AVAILABLE",
-        ]
-    )
-
-# Langfuse integration (always available - graceful degradation for langfuse SDK)
-try:
-    from .langfuse import (
-        LANGFUSE_AVAILABLE,
-        LangfuseClient,
-        LangfuseObservation,
-        LangfuseOptimizationCallback,
-        LangfuseTraceMetrics,
-        LangfuseTracker,
-        TraceIdResolver,
-        create_langfuse_tracker,
-    )
-
-    LANGFUSE_INTEGRATION_AVAILABLE = True
-except ImportError:
-    LANGFUSE_AVAILABLE = False
-    LANGFUSE_INTEGRATION_AVAILABLE = False
-
-    def _langfuse_unavailable(*args: Any, **kwargs: Any) -> Any:
-        raise ImportError(
-            "Langfuse integration is unavailable. "
-            "Install the optional dependencies: pip install aiohttp requests"
-        )
-
-    LangfuseClient = _langfuse_unavailable  # type: ignore[assignment, misc]
-    LangfuseObservation = _langfuse_unavailable  # type: ignore[assignment, misc]
-    LangfuseOptimizationCallback = _langfuse_unavailable  # type: ignore[assignment, misc]
-    LangfuseTraceMetrics = _langfuse_unavailable  # type: ignore[assignment, misc]
-    LangfuseTracker = _langfuse_unavailable  # type: ignore[assignment, misc]
-    TraceIdResolver = _langfuse_unavailable  # type: ignore[assignment, misc]
-    create_langfuse_tracker = _langfuse_unavailable
-
-# Workflow traces integration (always available - graceful degradation for OTEL)
-from .observability.workflow_traces import (
-    OTEL_AVAILABLE,
-    SpanPayload,
-    SpanStatus,
-    SpanType,
-    TraceIngestionRequest,
-    TraceIngestionResponse,
-    TraigentSpanExporter,
-    WorkflowEdge,
-    WorkflowGraphPayload,
-    WorkflowLoop,
-    WorkflowNode,
-    WorkflowTracesClient,
-    WorkflowTracesTracker,
-    create_workflow_tracker,
-    detect_loops_in_graph,
-    extract_edges_from_langgraph,
-    extract_nodes_from_langgraph,
-    setup_workflow_tracing,
-)
-
-WORKFLOW_TRACES_INTEGRATION_AVAILABLE = True
-
-# Add provider exports (always available)
+# Exports of lazily-loaded optional integrations, workflow traces and providers.
+__all__.extend(sorted(_LAZY_ATTRS))
 __all__.extend(
     [
         "get_models_for_tier",
         "list_available_providers",
         "get_all_tiers",
         "register_provider_tiers",
-    ]
-)
-
-# Add Workflow Traces exports (always available)
-__all__.extend(
-    [
         "OTEL_AVAILABLE",
         "WORKFLOW_TRACES_INTEGRATION_AVAILABLE",
         "SpanStatus",
@@ -423,73 +478,3 @@ __all__.extend(
         "detect_loops_in_graph",
     ]
 )
-
-# Add Langfuse exports if available
-if LANGFUSE_INTEGRATION_AVAILABLE:
-    __all__.extend(
-        [
-            "LANGFUSE_AVAILABLE",
-            "LANGFUSE_INTEGRATION_AVAILABLE",
-            "LangfuseClient",
-            "LangfuseObservation",
-            "LangfuseOptimizationCallback",
-            "LangfuseTraceMetrics",
-            "LangfuseTracker",
-            "TraceIdResolver",
-            "create_langfuse_tracker",
-        ]
-    )
-
-# LangChain/LangGraph handler integration (graceful degradation for langchain-core)
-try:
-    from .langchain import (
-        LANGCHAIN_AVAILABLE,
-        LLMCallMetrics,
-        ToolCallMetrics,
-        TraigentHandler,
-        TraigentHandlerMetrics,
-        create_traigent_handler,
-        get_current_node_name,
-        get_current_trial_config,
-        node_context,
-        trial_context,
-    )
-
-    LANGCHAIN_HANDLER_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_AVAILABLE = False
-    LANGCHAIN_HANDLER_AVAILABLE = False
-
-    def _langchain_handler_unavailable(*args: Any, **kwargs: Any) -> Any:
-        raise ImportError(
-            "LangChain handler integration is unavailable. "
-            "Install langchain-core: pip install langchain-core"
-        )
-
-    TraigentHandler = _langchain_handler_unavailable  # type: ignore[assignment, misc]
-    TraigentHandlerMetrics = _langchain_handler_unavailable  # type: ignore[assignment, misc]
-    LLMCallMetrics = _langchain_handler_unavailable  # type: ignore[assignment, misc]
-    ToolCallMetrics = _langchain_handler_unavailable  # type: ignore[assignment, misc]
-    create_traigent_handler = _langchain_handler_unavailable
-    trial_context = _langchain_handler_unavailable  # type: ignore[assignment, misc]
-    node_context = _langchain_handler_unavailable  # type: ignore[assignment, misc]
-    get_current_trial_config = _langchain_handler_unavailable
-    get_current_node_name = _langchain_handler_unavailable
-
-# Add LangChain handler exports if available
-if LANGCHAIN_HANDLER_AVAILABLE:
-    __all__.extend(
-        [
-            "LANGCHAIN_AVAILABLE",
-            "LANGCHAIN_HANDLER_AVAILABLE",
-            "TraigentHandler",
-            "TraigentHandlerMetrics",
-            "LLMCallMetrics",
-            "ToolCallMetrics",
-            "create_traigent_handler",
-            "trial_context",
-            "node_context",
-            "get_current_trial_config",
-            "get_current_node_name",
-        ]
-    )

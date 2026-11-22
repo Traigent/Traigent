@@ -22,6 +22,8 @@ from traigent.utils.secure_path import PathTraversalError, validate_path
 
 logger = get_logger(__name__)
 console = Console()
+# Problem reports go here so stdout stays data-only (Traigent#3266).
+err_console = Console(stderr=True)
 
 
 def _resolve_module_path(module_path: str, workspace_root: str | Path | None) -> Path:
@@ -249,9 +251,9 @@ def print_discovery_summary(
         console.print(f"  • [bold]{func_info.name}[/bold]: {indicators}")
 
     if issues:
-        console.print(f"\n[yellow]Validation Issues ({len(issues)}):[/yellow]")
+        err_console.print(f"\n[yellow]Validation Issues ({len(issues)}):[/yellow]")
         for issue in issues:
-            console.print(f"  ⚠️  {issue}")
+            err_console.print(f"  ⚠️  {issue}")
     if notes:
         console.print("\n[dim]Notes:[/dim]")
         for note in notes:

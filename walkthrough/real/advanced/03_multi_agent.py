@@ -135,6 +135,13 @@ async def main() -> None:
     print("\nRunning optimization (this will make real API calls)...")
     results = await rag_agent.optimize(algorithm="random", max_trials=6, random_seed=42)
 
+    if results.best_config is None:
+        print(
+            "\nNo best configuration: the run ended with status "
+            f"{results.status!r} (stop reason: {results.stop_reason!r})."
+        )
+        raise SystemExit(1)
+
     print("\nBest Configuration:")
     print(f"  Retriever k: {results.best_config.get('k')}")
     print(f"  Search type: {results.best_config.get('search_type')}")

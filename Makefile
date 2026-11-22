@@ -7,7 +7,6 @@
 PYTHON ?= .venv/bin/python
 PIP := $(PYTHON) -m pip
 PYTEST := $(PYTHON) -m pytest
-BLACK := $(PYTHON) -m black
 RUFF := $(PYTHON) -m ruff
 MYPY := $(PYTHON) -m mypy
 BANDIT := $(PYTHON) -m bandit

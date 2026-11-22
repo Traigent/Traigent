@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from traigent.core import objective_directions
 from traigent.utils.logging import get_logger
+from traigent.utils.metric_name_tokens import is_usd_cost_metric
 
 if TYPE_CHECKING:
     from traigent.core.result import OptimizationResult
@@ -165,7 +166,6 @@ def _render_metric_cell(metric: str, raw_value: Any, trial: Any = None) -> str:
 
 _SECONDS_METRICS = frozenset({"duration", "avg_response_time", "response_time"})
 _MS_METRICS = frozenset({"latency"})
-_RATIO_COST_MARKERS = ("_per_cost", "cost_efficiency", "cost_ratio", "per_dollar")
 
 
 def _metric_unit(metric: str) -> str:
@@ -177,7 +177,7 @@ def _metric_unit(metric: str) -> str:
     ``avg_response_time`` are seconds.
     """
     name = metric.lower()
-    if "cost" in name and not any(m in name for m in _RATIO_COST_MARKERS):
+    if is_usd_cost_metric(name):
         return "usd"
     if name in _MS_METRICS or name.endswith("_ms") or name.startswith("latency_"):
         return "ms"

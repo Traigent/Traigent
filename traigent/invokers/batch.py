@@ -231,7 +231,13 @@ class BatchInvoker(LocalInvoker):
                     f"Reduced optimal batch size to {self._optimal_batch_size}"
                 )
             elif recent_avg > older_avg * 1.1:  # 10% performance improvement
-                self._optimal_batch_size = min(100, int(self._optimal_batch_size * 1.2))
+                self._optimal_batch_size = min(
+                    100,
+                    max(
+                        self._optimal_batch_size + 1,
+                        int(self._optimal_batch_size * 1.2),
+                    ),
+                )
                 logger.debug(
                     f"Increased optimal batch size to {self._optimal_batch_size}"
                 )

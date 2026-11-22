@@ -160,8 +160,8 @@ class TestInstallDevScript(unittest.TestCase):
         """Test code quality check commands."""
         mock_run.return_value = MagicMock(returncode=0)
 
-        # Test black
-        subprocess.run(["black", "--check", "traigent", "tests", "examples"])
+        # Test ruff format
+        subprocess.run(["ruff", "format", "--check", "traigent", "tests", "examples"])
 
         # Test isort
         subprocess.run(["isort", "--check-only", "traigent", "tests", "examples"])
@@ -228,7 +228,7 @@ class TestInstallDevScript(unittest.TestCase):
         next_steps = [
             "source venv/bin/activate",
             "pytest",
-            "black traigent tests",
+            "ruff format traigent tests",
             "python examples/basic_optimization.py",
         ]
 

@@ -578,6 +578,48 @@ class TestMeasuresProducerCap:
         assert len(metadata["measures"]) == MAX_EXAMPLES_PER_RUN
         assert any("exceed the backend cap" in rec.message for rec in caplog.records)
 
+    def test_measures_capped_by_bytes_not_only_by_count(
+        self, mock_trial_result, mock_config, caplog
+    ):
+        """#2964: 1000 examples with many metrics must not exceed the byte budget."""
+        from traigent.core.metadata_helpers import MAX_MEASURES_BYTES
+
+        mock_config.execution_mode = "edge_analytics"
+        results = self._make_example_results(1000)
+        for r in results:
+            r.metrics = {f"user_metric_{i:02d}": 0.123456789 for i in range(45)}
+        mock_trial_result.metadata = {"example_results": results}
+
+        with caplog.at_level("WARNING"):
+            metadata = build_backend_metadata(
+                mock_trial_result, "accuracy", mock_config
+            )
+
+        kept = metadata["measures"]
+        assert 0 < len(kept) < 1000
+        wire = json.dumps(kept, separators=(",", ":"), default=str).encode("utf-8")
+        assert len(wire) <= MAX_MEASURES_BYTES
+        assert any("request-size budget" in rec.message for rec in caplog.records)
+
+    def test_cap_measures_drops_unserializable_measure_instead_of_shipping_it(
+        self, caplog
+    ):
+        from traigent.core.metadata_helpers import _cap_measures
+
+        class Unserializable:
+            def __str__(self) -> str:
+                raise ValueError("no")
+
+        measures = [
+            {"example_id": "a", "m": 1},
+            {"example_id": "b", "m": Unserializable()},
+        ]
+        with caplog.at_level("WARNING"):
+            kept = _cap_measures(measures, "edge_analytics")
+
+        assert kept == measures[:1]
+        assert any("request-size budget" in rec.message for rec in caplog.records)
+
     def test_at_limit_not_capped_no_warning(
         self, mock_trial_result, mock_config, caplog
     ):

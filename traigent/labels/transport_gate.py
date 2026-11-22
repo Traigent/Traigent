@@ -36,6 +36,7 @@ from typing import Any
 from urllib.parse import urlencode, urlsplit
 
 from traigent.utils import optimization_only_egress as oo_egress
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 from traigent.utils.logging import get_logger
 
 from .content_classes import BLOCKING, classify_request, get_table
@@ -54,7 +55,7 @@ _lock = threading.Lock()
 _CLASS_CACHE: dict[tuple[type, str], type] = {}
 
 
-class TransportGateRefusal(RuntimeError):
+class TransportGateRefusal(PicklableExceptionMixin, RuntimeError):
     """A request was refused before send. Carries counts only, never values."""
 
     def __init__(
@@ -285,6 +286,39 @@ def _check_strict(client: Any, url: str) -> None:
 def _is_redirect_status(status: int) -> bool:
     """Every 3xx (including 304/305/306): a strict session never returns one to a caller."""
     return 300 <= int(status) < 400
+
+
+# Headers (or ``auth=``) that must never ride a redirect. aiohttp would replay
+# X-API-Key / X-Project-Id to the redirect target and re-add session-default
+# credentials, so a gated request carrying any of them does not follow redirects
+# at all: the 3xx comes back to the caller as a non-2xx response. Refusal is
+# origin-independent on purpose (the backend never redirects writes).
+_NO_REDIRECT_HEADERS = frozenset({"authorization", "x-api-key", "x-project-id"})
+
+
+def _header_names(source: Any) -> set[str]:
+    """Lower-cased header names from a dict, CIMultiDict or list of tuples."""
+    names: set[str] = set()
+    if not source:
+        return names
+    try:
+        items = source.items() if hasattr(source, "items") else source
+        for item in items:
+            key = item[0] if isinstance(item, (tuple, list)) else item
+            names.add(str(key).lower())
+    except (TypeError, ValueError, IndexError):
+        # Unreadable header container: treat as carrying credentials (fail closed).
+        names.add("authorization")
+    return names
+
+
+def _carries_no_redirect_credentials(session: Any, kwargs: dict[str, Any]) -> bool:
+    if kwargs.get("auth") is not None or getattr(session, "_default_auth", None):
+        return True
+    names = _header_names(getattr(session, "headers", None)) | _header_names(
+        kwargs.get("headers")
+    )
+    return bool(names & _NO_REDIRECT_HEADERS)
 
 
 def _is_strict(client: Any) -> bool:
@@ -682,6 +716,8 @@ def _build_aiohttp(base: type) -> type:
                     extra_origins=extra,
                 )
             if not _refuses_redirects(self, url):
+                if _carries_no_redirect_credentials(self, kwargs):
+                    kwargs["allow_redirects"] = False
                 response = await super()._request(method, str_or_url, **kwargs)
                 await _latch_aiohttp(response, url, _effective_headers(self, kwargs))
                 return response

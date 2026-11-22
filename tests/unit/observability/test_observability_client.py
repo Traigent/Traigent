@@ -6733,3 +6733,77 @@ class TestFallbackSnapshotPreservesAbsentStatus:
             "static minimal snapshot" in record.getMessage()
             for record in caplog.records
         )
+
+
+class TestLegacyPrivacyModeEnvParity:
+    """#3269: the JS SDK's deprecated TRAIGENT_OBSERVABILITY_PRIVACY_MODE is
+    honoured here with its JS meaning (true -> metadata, false -> no opinion);
+    a disagreement with CAPTURE_CONTENT turns content capture off."""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self, monkeypatch):
+        from traigent.observability import config as cfg
+
+        for name in (
+            "TRAIGENT_OBSERVABILITY_CONTENT",
+            "TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT",
+            "TRAIGENT_OBSERVABILITY_PRIVACY_MODE",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        cfg._legacy_warned.clear()
+
+    def test_privacy_mode_true_alone_restricts_a_record_request(self, monkeypatch):
+        from traigent.observability.config import resolve_client_content_mode
+
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_PRIVACY_MODE", "true")
+        assert resolve_client_content_mode("record") == ("metadata", True)
+
+    def test_privacy_mode_false_alone_has_no_opinion(self, monkeypatch):
+        from traigent.observability.config import resolve_client_content_mode
+
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_PRIVACY_MODE", "false")
+        assert resolve_client_content_mode("record") == ("record", True)
+        assert resolve_client_content_mode(None) == ("metadata", False)
+
+    def test_invalid_privacy_mode_raises_naming_variable(self, monkeypatch):
+        from traigent.observability.config import resolve_client_content_mode
+
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_PRIVACY_MODE", "banana")
+        with pytest.raises(ValueError, match="TRAIGENT_OBSERVABILITY_PRIVACY_MODE"):
+            resolve_client_content_mode("record")
+
+    @pytest.mark.parametrize(
+        ("capture", "privacy"), [("true", "true"), ("false", "false")]
+    )
+    def test_disagreement_turns_capture_off_and_warns_without_values(
+        self, monkeypatch, caplog, capture, privacy
+    ):
+        import logging
+
+        from traigent.observability.config import resolve_client_content_mode
+
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", capture)
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_PRIVACY_MODE", privacy)
+        with caplog.at_level(logging.WARNING, logger="traigent.observability.config"):
+            assert resolve_client_content_mode("record") == ("metadata", True)
+            resolve_client_content_mode("record")
+        msgs = [r.getMessage() for r in caplog.records]
+        assert len(msgs) == 1
+        assert "TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT" in msgs[0]
+        assert "TRAIGENT_OBSERVABILITY_PRIVACY_MODE" in msgs[0]
+        assert f"={capture}" not in msgs[0] and "'true'" not in msgs[0]
+
+    def test_agreement_capture_true_privacy_false_still_records(self, monkeypatch):
+        from traigent.observability.config import resolve_client_content_mode
+
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", "true")
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_PRIVACY_MODE", "false")
+        assert resolve_client_content_mode("record") == ("record", True)
+
+    def test_capture_content_alone_unchanged(self, monkeypatch):
+        from traigent.observability.config import resolve_client_content_mode
+
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", "false")
+        assert resolve_client_content_mode("record") == ("metadata", True)
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", "true")
+        assert resolve_client_content_mode("record") == ("record", True)

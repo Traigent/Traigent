@@ -154,6 +154,15 @@ def coerce_to_openai_format(
     return coerce_messages(messages, default_role="user")
 
 
+def _content_to_text(content: Any) -> str:
+    """Render message content as text, joining text blocks instead of repr()."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, Sequence) and not isinstance(content, bytes):
+        return _extract_text_from_parts(content)
+    return str(content) if content is not None else ""
+
+
 def coerce_to_anthropic_format(
     messages: str | list[str] | list[dict[str, Any]] | Any,
 ) -> tuple[str | None, list[dict[str, str]]]:
@@ -177,10 +186,10 @@ def coerce_to_anthropic_format(
         if msg.get("role") == "system":
             # Extract system message
             if system_message is None:
-                system_message = str(msg.get("content", ""))
+                system_message = _content_to_text(msg.get("content", ""))
             else:
                 # Append additional system messages
-                system_message += "\n" + str(msg.get("content", ""))
+                system_message += "\n" + _content_to_text(msg.get("content", ""))
         else:
             conversation.append(msg)
 
@@ -209,7 +218,7 @@ def coerce_to_gemini_format(
 
     if len(normalized) == 1 and normalized[0].get("role") == "user":
         # Single user message -> return just the content string
-        return str(normalized[0].get("content", ""))
+        return _content_to_text(normalized[0].get("content", ""))
 
     # Multi-turn -> convert to Gemini content format
     gemini_contents = []
@@ -224,7 +233,7 @@ def coerce_to_gemini_format(
         gemini_contents.append(
             {
                 "role": role,
-                "parts": [{"text": str(content)}],
+                "parts": [{"text": _content_to_text(content)}],
             }
         )
 

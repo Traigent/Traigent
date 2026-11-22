@@ -6,17 +6,17 @@ import re
 from itertools import product
 from typing import TYPE_CHECKING, Any
 
-from traigent_validation.base import (
-    ConstraintViolation,
-    SatResult,
-    SatStatus,
-    ValidationResult,
-)
 from traigent.utils.discrete_domains import (
     stepped_float_cardinality,
     stepped_float_values,
     stepped_int_cardinality,
     stepped_int_values,
+)
+from traigent_validation.base import (
+    ConstraintViolation,
+    SatResult,
+    SatStatus,
+    ValidationResult,
 )
 
 if TYPE_CHECKING:
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 _PARAM_REF_PATTERN = re.compile(r"\bparams\.([A-Za-z_][A-Za-z0-9_]*)\b")
 _MAX_SAT_ENUMERATION_CONFIGS = 10_000
+_EVALUATION_ERROR_PREFIX = "Constraint evaluation error"
 
 
 def _extract_param_refs(expression: str) -> set[str]:
@@ -69,10 +70,10 @@ class PythonConstraintValidator:
                 violations.append(
                     ConstraintViolation(
                         constraint_index=i,
-                        constraint_id=constraint.id,
-                        constraint_description=constraint.description,
+                        constraint_id=getattr(constraint, "id", None),
+                        constraint_description=getattr(constraint, "description", None),
                         violating_values=config.copy(),
-                        message=f"Constraint evaluation error: {exc}",
+                        message=f"{_EVALUATION_ERROR_PREFIX}: {exc}",
                     )
                 )
 
@@ -120,9 +121,15 @@ class PythonConstraintValidator:
 
             names = list(domains)
             var_names = {id(tvar): name for name, tvar in tvars.items()}
+            had_evaluation_error = False
             for values in product(*(domains[name] for name in names)):
                 config = dict(zip(names, values, strict=True))
                 result = self.validate_config(config, constraints, var_names)
+                if not result.is_valid and any(
+                    v.message.startswith(_EVALUATION_ERROR_PREFIX)
+                    for v in result.violations
+                ):
+                    had_evaluation_error = True
                 if result.is_valid:
                     return SatResult(
                         status=SatStatus.SAT,
@@ -130,6 +137,16 @@ class PythonConstraintValidator:
                         message="At least one configuration satisfies all constraints",
                     )
 
+            if had_evaluation_error:
+                # A constraint that could not be evaluated (e.g. an expression
+                # nested past the recursion limit) is not proof of unsatisfiability.
+                return SatResult(
+                    status=SatStatus.UNKNOWN,
+                    message=(
+                        "A constraint could not be evaluated, so satisfiability "
+                        "is unknown."
+                    ),
+                )
             return SatResult(
                 status=SatStatus.UNSAT,
                 unsat_core=list(range(len(constraints))),

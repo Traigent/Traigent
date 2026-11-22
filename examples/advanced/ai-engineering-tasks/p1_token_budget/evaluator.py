@@ -292,23 +292,19 @@ def _truncate_sentence_boundary(content: str, max_tokens: int) -> str:
     estimated_tokens = 0
 
     for sentence in sentences:
-
         sentence_tokens = estimate_token_usage(sentence)
 
         if estimated_tokens + sentence_tokens <= max_tokens:
-
             truncated_sentences.append(sentence)
 
             estimated_tokens += sentence_tokens
 
         else:
-
             break
 
     truncated_content = ". ".join(truncated_sentences)
 
     if truncated_content and not truncated_content.endswith("."):
-
         truncated_content += "."
 
     return truncated_content
@@ -319,29 +315,24 @@ def _truncate_importance_scoring(content: str, max_tokens: int) -> str:
     sentences = content.split(". ")
 
     if len(sentences) <= 1:
-
         return content[: int(max_tokens * 4)]
 
     important_sentences = [sentences[0]]
 
     if len(sentences) > 1:
-
         important_sentences.append(sentences[-1])
 
     middle_sentences = sentences[1:-1] if len(sentences) > 2 else []
 
     for sentence in middle_sentences:
-
         candidate = ". ".join(
             important_sentences[:-1] + [sentence, important_sentences[-1]]
         )
 
         if estimate_token_usage(candidate) <= max_tokens:
-
             important_sentences.insert(-1, sentence)
 
         else:
-
             break
 
     return ". ".join(important_sentences)
@@ -354,7 +345,6 @@ def _truncate_recursive_summarization(content: str, max_tokens: int) -> str:
     target_words = max(1, int(max_tokens / 1.3))
 
     if len(words) > target_words:
-
         return " ".join(words[: target_words - 5]) + " [content continues...]"
 
     return content

@@ -112,4 +112,4 @@ def test_legacy_token_without_expiry_is_logged_as_missing(
     )
     with caplog.at_level(logging.WARNING):
         _message(tmp_path)
-    assert any("missing or not a valid" in r.getMessage() for r in caplog.records)
+    assert any("explicit offset" in r.getMessage() for r in caplog.records)

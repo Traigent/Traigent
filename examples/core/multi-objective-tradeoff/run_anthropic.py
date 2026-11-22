@@ -437,7 +437,8 @@ def answer(
     The SDK handles all error logging and metrics collection.
     """
     if MOCK:
-        return _evaluate_expression(question)
+        # No model is called in mock mode, so the measured cost is exactly $0.
+        return traigent.with_usage(_evaluate_expression(question), total_cost=0.0)
 
     assert os.getenv("ANTHROPIC_API_KEY"), "Missing ANTHROPIC_API_KEY"
 
