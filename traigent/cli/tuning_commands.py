@@ -12,7 +12,7 @@ import json
 import sys
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 import yaml
@@ -125,6 +125,27 @@ def check_command(file_path: Path, as_json: bool) -> None:
         raise click.exceptions.Exit(EXIT_ERRORS)
 
 
+def _load_history_mapping(history_path: Path) -> dict[str, Any]:
+    """The history mapping of a history file (unwrapping ``input.history``)."""
+    history = _load_yaml(history_path, "history file")
+    if isinstance(history, dict) and "steps" not in history:
+        inner = history.get("input", {})
+        if isinstance(inner, dict) and isinstance(inner.get("history"), dict):
+            history = inner["history"]
+    if not isinstance(history, dict):
+        _die("history file must hold a history mapping")
+    return cast("dict[str, Any]", history)
+
+
+def _die_on_lint_errors(module: Any) -> None:
+    """Print every TVL lint error and exit when there is one."""
+    errors = [d for d in lint_document(module) if d.severity == "error"]
+    if errors:
+        for d in errors:
+            click.echo(f"{d.severity} {d.code}: {d.message}", err=True)
+        raise click.exceptions.Exit(EXIT_ERRORS)
+
+
 @tune.command("simulate")
 @click.argument(
     "file_path", type=click.Path(exists=True, dir_okay=False, path_type=Path)
@@ -140,18 +161,8 @@ def simulate_command(file_path: Path, history_path: Path, fmt: str) -> None:
     """Run the TVL reference relation over a recorded history; print derived facts."""
     _require_validator()
     module = _module_doc(file_path)
-    history = _load_yaml(history_path, "history file")
-    if isinstance(history, dict) and "steps" not in history:
-        inner = history.get("input", {})
-        if isinstance(inner, dict) and isinstance(inner.get("history"), dict):
-            history = inner["history"]
-    if not isinstance(history, dict):
-        _die("history file must hold a history mapping")
-    errors = [d for d in lint_document(module) if d.severity == "error"]
-    if errors:
-        for d in errors:
-            click.echo(f"{d.severity} {d.code}: {d.message}", err=True)
-        raise click.exceptions.Exit(EXIT_ERRORS)
+    history = _load_history_mapping(history_path)
+    _die_on_lint_errors(module)
     try:
         trace = conditions_trace(module, history)
     except TuningError as exc:
@@ -233,6 +244,68 @@ def _now(text: str | None) -> Any:
         _die("--now must be a UTC instant like 2026-11-20T10:00:00Z")
 
 
+def _state_from_target(target: str) -> tuple[Any, Any, dict[str, Any]]:
+    """``(state, optimize_fn, initial_config)`` of a ``FILE.py:FUNCTION`` target."""
+    from traigent.tuning.controller import traigent_optimize_fn
+    from traigent.tuning.state import find_optimized, initial_config_of
+
+    optimize_fn = None
+    initial_config: dict[str, Any] = {}
+    file_part, _, function = target.rpartition(":")
+    from traigent.cli.main import _load_user_module, _resolve_user_cli_path
+
+    resolved = _resolve_user_cli_path(Path(file_part), "File path", must_exist=True)
+    sys.path.insert(0, str(resolved.parent))
+    try:
+        fn = getattr(_load_user_module(resolved), function, None)
+    except Exception:  # noqa: BLE001 - user module errors are not echoed
+        _die("module_load_failed")
+    finally:
+        if str(resolved.parent) in sys.path:
+            sys.path.remove(str(resolved.parent))
+    state: Any = getattr(fn, "tuning", None)
+    if state is None:
+        _die("function_not_found_or_has_no_tuning_policy")
+    optimized = getattr(state, "optimized", None) or find_optimized(fn)
+    if optimized is not None:
+        optimize_fn = traigent_optimize_fn(optimized)
+        initial_config = initial_config_of(optimized)
+    if not initial_config:
+        click.echo(
+            "warning: no default configuration found for the target; "
+            "the initial head config is {}",
+            err=True,
+        )
+    return state, optimize_fn, initial_config
+
+
+def _state_from_tvl(tvl_path: Path, agent: str | None) -> Any:
+    """The tuning state a ``--tvl`` module file describes."""
+    from traigent.tuning.policy import Tuning
+    from traigent.tuning.state import TuningState
+
+    doc = _module_doc(tvl_path)
+    diagnostics = lint_document(doc)  # TVL decides; its codes are shown unchanged
+    failing = [d for d in diagnostics if d.is_error]
+    if failing:
+        _die(str(TvlValidationFailed(failing)))
+    try:
+        policy = Tuning.from_tvl(doc)
+    except TuningError:
+        # outside the builder's shape: the controller reads ``state.tvl`` and
+        # a ``--tvl`` file carries no local checkers or holdout, so the policy
+        # is a neutral one
+        policy = Tuning()
+    state = TuningState(
+        agent=agent,
+        policy=policy,
+        tvl=doc,
+        validated=not any(d.is_error for d in diagnostics),
+        diagnostics=diagnostics,
+    )
+    return state
+
+
 def _build_controller(
     store: Path | None,
     tvl_path: Path | None,
@@ -241,64 +314,16 @@ def _build_controller(
     authority_path: Path | None = None,
 ) -> Any:
     from traigent.tuning.authority import load_authority
-    from traigent.tuning.controller import Controller, traigent_optimize_fn
-    from traigent.tuning.policy import Tuning
-    from traigent.tuning.state import (
-        TuningState,
-        find_optimized,
-        initial_config_of,
-    )
+    from traigent.tuning.controller import Controller
     from traigent.utils.env_config import resolve_environment_name
 
     _require_validator()
     optimize_fn = None
     initial_config: dict[str, Any] = {}
     if target is not None:
-        file_part, _, function = target.rpartition(":")
-        from traigent.cli.main import _load_user_module, _resolve_user_cli_path
-
-        resolved = _resolve_user_cli_path(Path(file_part), "File path", must_exist=True)
-        sys.path.insert(0, str(resolved.parent))
-        try:
-            fn = getattr(_load_user_module(resolved), function, None)
-        except Exception:  # noqa: BLE001 - user module errors are not echoed
-            _die("module_load_failed")
-        finally:
-            if str(resolved.parent) in sys.path:
-                sys.path.remove(str(resolved.parent))
-        state: Any = getattr(fn, "tuning", None)
-        if state is None:
-            _die("function_not_found_or_has_no_tuning_policy")
-        optimized = getattr(state, "optimized", None) or find_optimized(fn)
-        if optimized is not None:
-            optimize_fn = traigent_optimize_fn(optimized)
-            initial_config = initial_config_of(optimized)
-        if not initial_config:
-            click.echo(
-                "warning: no default configuration found for the target; "
-                "the initial head config is {}",
-                err=True,
-            )
+        state, optimize_fn, initial_config = _state_from_target(target)
     elif tvl_path is not None:
-        doc = _module_doc(tvl_path)
-        diagnostics = lint_document(doc)  # TVL decides; its codes are shown unchanged
-        failing = [d for d in diagnostics if d.is_error]
-        if failing:
-            _die(str(TvlValidationFailed(failing)))
-        try:
-            policy = Tuning.from_tvl(doc)
-        except TuningError:
-            # outside the builder's shape: the controller reads ``state.tvl`` and
-            # a ``--tvl`` file carries no local checkers or holdout, so the policy
-            # is a neutral one
-            policy = Tuning()
-        state = TuningState(
-            agent=agent,
-            policy=policy,
-            tvl=doc,
-            validated=not any(d.is_error for d in diagnostics),
-            diagnostics=diagnostics,
-        )
+        state = _state_from_tvl(tvl_path, agent)
     else:
         _die("one of --tvl or --target is required")
     if agent is not None:
