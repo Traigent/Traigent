@@ -18,8 +18,8 @@ except ImportError:  # pragma: no cover
     )
     import traigent
 
-from traigent.metrics import configure_ragas_defaults  # noqa: E402
 from traigent.core.objectives import create_default_objectives  # noqa: E402
+from traigent.metrics import configure_ragas_defaults  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -51,7 +51,7 @@ _METRIC_FUNCTIONS: dict[str, Callable[..., float]] | None = None
 if _RAGAS_READY and not _MOCK_MODE:
     if not os.getenv("OPENAI_API_KEY"):
         raise SystemExit("Set OPENAI_API_KEY to run this example.")
-    ragas_llm = LangchainLLM(ChatOpenAI(model="gpt-4.1-mini", temperature=0.0))
+    ragas_llm = LangchainLLM(ChatOpenAI(model="gpt-5.4-mini", temperature=0.0))
 elif _MOCK_MODE:
     # Force fallback to deterministic metrics in mock mode
     _RAGAS_READY = False

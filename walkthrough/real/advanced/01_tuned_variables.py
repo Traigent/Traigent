@@ -46,7 +46,7 @@ traigent.initialize()
 # Factory-created parameter ranges
 temperature = Range.temperature(creative=True)  # [0.7, 1.5]
 max_tokens = IntRange.max_tokens(task="short")  # [50, 256]
-model = Choices.model(provider="openai", tier="fast")  # [gpt-4.1-mini]
+model = Choices.model(provider="openai", tier="fast")  # [gpt-5.4-mini]
 
 # Constraints
 constraints = [

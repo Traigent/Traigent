@@ -39,13 +39,13 @@ temperature = Range.temperature(creative=True)  # [0.7, 1.5]
 max_tokens = IntRange.max_tokens(task="medium")  # [256, 1024]
 # Choices.model() defaults are owned by the library and may change, so use an
 # explicit list that contains the model the constraint below names.
-model = Choices(["gpt-4.1-mini", "gpt-4.1"], default="gpt-4.1-mini", name="model")
+model = Choices(["gpt-5.4-mini", "gpt-5.2"], default="gpt-5.4-mini", name="model")
 top_p = Range.top_p()  # [0.1, 1.0]
 
 # Define constraints
 constraints = [
-    # If model is gpt-4.1, temperature must be <= 1.0
-    implies(model.equals("gpt-4.1"), temperature.lte(1.0)),
+    # If model is gpt-5.2, temperature must be <= 1.0
+    implies(model.equals("gpt-5.2"), temperature.lte(1.0)),
     # If creative mode (high temp), max_tokens should be >= 512
     implies(temperature.gte(1.0), max_tokens.gte(512)),
     # Constraint using operator syntax (>> means implication)
@@ -99,8 +99,8 @@ def creative_writer(question: str) -> str | dict:
         answer = f"{answer} [detailed response with {tokens} tokens]"
 
     # Model affects quality simulation
-    if model_name == "gpt-4.1":
-        answer = f"{answer} [gpt-4.1]"
+    if model_name == "gpt-5.2":
+        answer = f"{answer} [gpt-5.2]"
 
     # Low top_p = more focused
     if p_value < 0.5:
@@ -122,7 +122,7 @@ async def main() -> None:
     print(f"  top_p: {top_p.low} - {top_p.high}")
 
     print("\nConstraints:")
-    print("  1. gpt-4.1 -> temperature <= 1.0")
+    print("  1. gpt-5.2 -> temperature <= 1.0")
     print("  2. temperature >= 1.0 -> max_tokens >= 512")
     print("  3. top_p <= 0.5 -> temperature <= 0.9")
 

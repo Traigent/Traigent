@@ -102,9 +102,9 @@ def adaptive_chat_bot(user_message: str) -> str:
 
     # Map custom parameters to actual LLM parameters
     model_map = {
-        "fast": "gpt-4.1-mini",
-        "balanced": "gpt-4.1-mini",
-        "accurate": "gpt-4.1",
+        "fast": "gpt-5.4-mini",
+        "balanced": "gpt-5.4-mini",
+        "accurate": "gpt-5.2",
     }
 
     max_tokens_map = {"short": 100, "medium": 300, "long": 500}
@@ -117,7 +117,7 @@ def adaptive_chat_bot(user_message: str) -> str:
     }
 
     # Create LLM with optimized parameters
-    model = model_map.get(config.get("model_tier", "balanced"), "gpt-4.1-mini")
+    model = model_map.get(config.get("model_tier", "balanced"), "gpt-5.4-mini")
     temperature = float(config.get("llm_creativity", 0.5))
     max_tokens = max_tokens_map.get(config.get("response_length", "medium"), 300)
 

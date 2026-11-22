@@ -385,7 +385,7 @@ from traigent import Range, Choices
 
 @traigent.optimize(
     # Define parameter search space
-    model=Choices(["gpt-4o", "gpt-4o-mini", "claude-3-sonnet"]),
+    model=Choices(["gpt-5.2", "gpt-5.4-mini", "claude-3-sonnet"]),
     temperature=Range(0.0, 1.0),
 
     # Set optimization objectives

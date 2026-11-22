@@ -46,7 +46,7 @@ DATASETS = Path(__file__).parent.parent / "datasets"
 OBJECTIVES = ["accuracy", "cost"]
 # Valid model names: https://models.litellm.ai/
 CONFIG_SPACE = {
-    "model": ["gpt-4.1-mini", "gpt-4.1"],
+    "model": ["gpt-5.4-mini", "gpt-5.2"],
     "temperature": [0.1, 0.5, 0.9],
 }
 
@@ -64,7 +64,7 @@ def answer_question(question: str) -> str:
     # Seamless mode rewrites these local assignments with each trial's
     # configuration. The names must match the configuration keys; literals
     # passed straight to ChatOpenAI(...) cannot be rewritten.
-    model = "gpt-4.1-mini"
+    model = "gpt-5.4-mini"
     temperature = 0.7
     llm = ChatOpenAI(model=model, temperature=temperature)
     try:

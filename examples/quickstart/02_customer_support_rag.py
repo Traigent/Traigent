@@ -120,7 +120,7 @@ def customer_support_agent(query: str) -> str:
 
     # In real usage with LangChain:
     # from langchain_openai import ChatOpenAI
-    # llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
+    # llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0.7)
     # response = llm.invoke(f"Context: {context}\nQuestion: {query}\nAnswer:")
     # return response.content
 

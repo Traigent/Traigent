@@ -385,7 +385,7 @@ def sentiment_score(output, expected, llm_metrics=None):
 @traigent.optimize(
     configuration_space={
         "temperature": [0.0, 0.3, 0.7],
-        "model": ["gpt-4.1-mini", "gpt-4.1"]
+        "model": ["gpt-5.4-mini", "gpt-5.2"]
     },
     eval_dataset="sentiment_eval.jsonl",
     scoring_function=sentiment_score,
@@ -445,7 +445,7 @@ def semantic_accuracy(output: str, expected: str) -> float:
 def qa_system(question: str) -> str:
     cfg = traigent.get_config()
     response = litellm.completion(
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         temperature=cfg["temperature"],
         max_tokens=cfg["max_tokens"],
         messages=[{"role": "user", "content": f"Answer concisely: {question}"}],

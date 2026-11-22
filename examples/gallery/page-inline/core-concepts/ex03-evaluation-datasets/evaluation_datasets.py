@@ -28,8 +28,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 try:
     import traigent
@@ -49,7 +49,6 @@ except ImportError:  # pragma: no cover - support IDE execution paths
     traigent = importlib.import_module("traigent")
 
 from traigent.core.objectives import create_default_objectives
-
 from traigent.evaluators.base import Dataset, EvaluationExample  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
@@ -111,7 +110,7 @@ def _records_to_dataset(records: list[dict[str, Any]], name: str) -> Dataset:
 # Example 1: Using JSONL file dataset
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.1, 0.5, 0.9],
     },
     eval_dataset=DATASET_FILE,  # JSONL file
@@ -121,7 +120,7 @@ def _records_to_dataset(records: list[dict[str, Any]], name: str) -> Dataset:
 )
 def classifier_with_jsonl(text: str) -> str:
     """Classifier using JSONL dataset for evaluation."""
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.3)
+    llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0.3)
 
     prompt = (
         "Classify the text into one of these categories: complaint, feedback, inquiry.\n"
@@ -149,7 +148,7 @@ def create_python_dataset() -> Dataset:
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.1, 0.3, 0.5],
         "prompt_style": ["direct", "detailed", "structured"],
     },
@@ -173,7 +172,7 @@ def classifier_with_python_list(text: str) -> str:
     }
 
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-4.1-mini"),
+        model=config.get("model", "gpt-5.4-mini"),
         temperature=config.get("temperature", 0.3),
     )
 
@@ -245,7 +244,7 @@ class DynamicDatasetGenerator:
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.0, 0.1, 0.2],  # Low temp for math
         "reasoning_steps": [True, False],
     },
@@ -265,7 +264,7 @@ def math_solver(problem: str) -> str:
         prompt = f"Solve: {problem}"
 
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-4.1-mini"),
+        model=config.get("model", "gpt-5.4-mini"),
         temperature=config.get("temperature", 0.1),
     )
 
