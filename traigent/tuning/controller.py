@@ -93,6 +93,11 @@ E_CONNECTED_TUNING_REFUSED = "E_CONNECTED_TUNING_REFUSED"
 
 GATE_FORMAT = "traigent-gate-result/1"
 DEFAULT_STORE_ROOT = Path(".traigent") / "tuning"
+_HEAD_FILE = "head.json"
+_HISTORY_FILE = "history.jsonl"
+_CONTROLLER_LOG_FILE = "controller.jsonl"
+_APPROVALS_FILE = "approvals.json"
+_META_FILE = "meta.json"
 _REF = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 # The rule keys this release executes; every other key (``when``, cooldowns,
 # ``only_while`` / ``unless`` conditions, repeat limits, ...) is refused at construction.
@@ -425,7 +430,7 @@ def _read_lines(path: Path) -> list[dict[str, Any]]:
 
 def read_head(store_dir: Path | str) -> dict[str, Any] | None:
     """The head ``{fingerprint, config, generation}`` of a store, or None."""
-    head = _read_json(Path(store_dir) / "head.json")
+    head = _read_json(Path(store_dir) / _HEAD_FILE)
     return head if isinstance(head, dict) else None
 
 
@@ -643,18 +648,18 @@ class Controller:
     ) -> None:
         digest = "sha256:" + _digest(self._module)
         with self._locked():
-            meta = _read_json(self._p("meta.json"))
+            meta = _read_json(self._p(_META_FILE))
             if meta is None:
                 # Init is a recoverable transaction: ``meta.json`` is written LAST,
                 # so a crash earlier leaves the store uninitialized and the next
                 # start clears the partial files and redoes the whole init.
                 with contextlib.suppress(FileNotFoundError):
-                    self._p("head.json").unlink()
+                    self._p(_HEAD_FILE).unlink()
                 origin = _utc(now).replace(hour=0, minute=0, second=0)
                 config = dict(initial_config or {})
                 fingerprint = config_fingerprint(config)
                 head = {"fingerprint": fingerprint, "config": config, "generation": 0}
-                _write_json(self._p("head.json"), head)
+                _write_json(self._p(_HEAD_FILE), head)
                 meta = {
                     "agent": agent,
                     "environment": environment,
@@ -662,7 +667,7 @@ class Controller:
                     "contract_digest": digest,
                     "initial_head": {"fingerprint": fingerprint, "generation": 0},
                 }
-                _write_json(self._p("meta.json"), meta)
+                _write_json(self._p(_META_FILE), meta)
             elif meta["contract_digest"] != digest or meta["agent"] != agent:
                 raise TuningError(E_STORE_MISMATCH, "store belongs to another policy")
             elif meta.get("environment") != environment:
@@ -671,14 +676,14 @@ class Controller:
                     "store was created for another environment",
                 )
             else:
-                for name in ("history.jsonl", "controller.jsonl"):
+                for name in (_HISTORY_FILE, _CONTROLLER_LOG_FILE):
                     _repair_tail(self._p(name))
             self.meta: dict[str, Any] = meta
             self.origin = _parse_instant(meta["origin"])
 
     # -- history --------------------------------------------------------------------
     def _lines(self) -> list[dict[str, Any]]:
-        return _read_lines(self._p("history.jsonl"))
+        return _read_lines(self._p(_HISTORY_FILE))
 
     def _history(
         self,
@@ -739,7 +744,7 @@ class Controller:
             raise TuningError(
                 E_INVALID_RECORD, f"{category} rejected by the TVL relation"
             ) from exc
-        _append_line(self._p("history.jsonl"), line)
+        _append_line(self._p(_HISTORY_FILE), line)
 
     def _last_persisted_instant(self) -> int:
         """The last instant the history journal holds (0 when it is empty)."""
@@ -908,7 +913,7 @@ class Controller:
                 E_APPROVER_NOT_AUTHORIZED, "that approver was not authenticated"
             )
         with self._locked():
-            approvals = _read_json(self._p("approvals.json"), {})
+            approvals = _read_json(self._p(_APPROVALS_FILE), {})
             approvals.setdefault(
                 ref,
                 {
@@ -917,7 +922,7 @@ class Controller:
                     "authentication": authority.mode,
                 },
             )
-            _write_json(self._p("approvals.json"), approvals)
+            _write_json(self._p(_APPROVALS_FILE), approvals)
 
     def record_standing_grant(self, *_args: Any, **_kwargs: Any) -> None:
         """Standing grants are not supported in this release."""
@@ -928,11 +933,11 @@ class Controller:
 
     def controller_facts(self) -> list[dict[str, Any]]:
         """Closed facts the controller itself recorded (refusals); TVL never sees them."""
-        return _read_lines(self._p("controller.jsonl"))
+        return _read_lines(self._p(_CONTROLLER_LOG_FILE))
 
     def _record_controller_fact(self, fact: dict[str, Any]) -> None:
         if fact not in self.controller_facts():
-            _append_line(self._p("controller.jsonl"), fact)
+            _append_line(self._p(_CONTROLLER_LOG_FILE), fact)
 
     # -- the step -------------------------------------------------------------------
     def step(
@@ -1059,7 +1064,7 @@ class Controller:
     def _authorized_now(self, occ: Mapping[str, Any], ref: str) -> bool:
         """A recorded approval for THIS occurrence by an approver the authority allows
         now (every approval mode other than ``human`` is refused at construction)."""
-        approval = _read_json(self._p("approvals.json"), {}).get(ref)
+        approval = _read_json(self._p(_APPROVALS_FILE), {}).get(ref)
         return approval is not None and self._on_list_now(
             approval.get("approver"), _approve_context(ref)
         )
@@ -1238,7 +1243,7 @@ class Controller:
             raise TuningError(E_NO_OPTIMIZER, f"{attempt} needs an optimize_fn")
         # -- preparation: every read and write the spend needs, under the store
         # lock and BEFORE the final gate ------------------------------------
-        approval = _read_json(self._p("approvals.json"), {}).get(ref)
+        approval = _read_json(self._p(_APPROVALS_FILE), {}).get(ref)
         if approval is None:
             self._refuse_spend(report, attempt, "approval_missing")
             return False
@@ -1258,7 +1263,7 @@ class Controller:
         last_persisted = self._last_persisted_instant()
         # The one journal scan the final gate would otherwise need: repair the tail
         # now, under the lock and before authentication; the gate only appends.
-        append_start = _prepare_append(self._p("history.jsonl"))
+        append_start = _prepare_append(self._p(_HISTORY_FILE))
         # Only the adapter this SDK built may be handed the final check.  Decided
         # before the marker: nothing after the marker may fail before the optimizer runs.
         optimize_fn = self.optimize_fn
@@ -1771,7 +1776,7 @@ class Controller:
 
     def _approval_text(self, ref: str) -> str:
         """Who approved the run, as a person reads it."""
-        approval = _read_json(self._p("approvals.json"), {}).get(ref) or {}
+        approval = _read_json(self._p(_APPROVALS_FILE), {}).get(ref) or {}
         return f"approved by {approval.get('approver', 'an approver')}"
 
     def status(self) -> dict[str, Any]:
@@ -1785,7 +1790,7 @@ class Controller:
         self.state.require_validated()
         facts = self._derive()["facts"]
         closed = {f["attempt"] for f in facts if f["fact"] == "attempt_closed"}
-        approvals = _read_json(self._p("approvals.json"), {})
+        approvals = _read_json(self._p(_APPROVALS_FILE), {})
         domains = {f["attempt"]: f for f in facts if f["fact"] == "search_domain"}
         attempts = []
         for opened in self._open_attempts(facts):
@@ -2118,13 +2123,13 @@ class HeadLoader:
 
     def head(self) -> dict[str, Any] | None:
         try:
-            st = (self.dir / "head.json").stat()
+            st = (self.dir / _HEAD_FILE).stat()
         except FileNotFoundError:
             return None
         stamp = (st.st_mtime_ns, st.st_size)
         if stamp != self._stamp:
             if self.environment is not None:
-                meta = _read_json(self.dir / "meta.json") or {}
+                meta = _read_json(self.dir / _META_FILE) or {}
                 if meta.get("environment") != self.environment:
                     raise TuningError(
                         E_STORE_ENVIRONMENT_MISMATCH,
