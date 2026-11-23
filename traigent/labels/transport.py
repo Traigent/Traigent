@@ -551,7 +551,7 @@ def _state_dir() -> Path:
     return _state_path().parent.resolve()
 
 
-def _require_local_file(path: Path) -> None:
+def _require_local_file(path: Path) -> Path:
     """Refuse a state/lock/temp file unless it lies inside the resolved state directory.
 
     The path is SDK-built (``TRAIGENT_RESULTS_FOLDER`` or ``~/.traigent`` plus a fixed file
@@ -561,6 +561,8 @@ def _require_local_file(path: Path) -> None:
     or an override pointing elsewhere therefore cannot redirect the replay-protection
     journal, its lock, or its temp file.
     """
+    if "\0" in str(path):
+        raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
     try:
         resolved = path.resolve()
         parent = path.parent.resolve()
@@ -570,13 +572,14 @@ def _require_local_file(path: Path) -> None:
             or not resolved.is_relative_to(_state_dir())
         ):
             raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
         raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
+    return resolved
 
 
 def _read_state(path: Path) -> dict[str, Any]:
     """The retained-sequence map. Missing file = empty; unreadable/corrupt = closed refusal."""
-    _require_local_file(path)
+    path = _require_local_file(path)
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -614,8 +617,9 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
     try:
         lock_path = path.with_suffix(".lock")
         tmp = path.with_suffix(f".tmp{os.getpid()}")
-        for candidate in (path, lock_path, tmp):
-            _require_local_file(candidate)
+        path, lock_path, tmp = (
+            _require_local_file(candidate) for candidate in (path, lock_path, tmp)
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, "a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)

@@ -639,7 +639,7 @@ def test_other_session_factories_register_their_own_base(
         await cloud.close()
 
         backend = BackendIntegratedClient(
-            api_key="uk_" + "a" * 43,
+            api_key="uk_" + "a" * 43,  # pragma: allowlist secret
             backend_config=BackendClientConfig(backend_base_url=base),
         )
         backend.auth_manager = MagicMock()
@@ -1069,3 +1069,27 @@ def test_normal_state_path_inside_state_dir_still_works(
     t._retain_sequence(state, "s", 4)
     assert t._retained_sequence(state, "s") == 4
     assert json.loads(state.read_text("utf-8")) == {"s": 4}
+
+
+def test_state_file_containment_refuses_symlink_nul_and_dotdot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.labels import transport as t
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(state_dir))
+    ok = t._state_path()
+    assert t._require_local_file(ok) == ok.resolve()
+    outside = tmp_path / "outside.lock"
+    outside.write_text("")
+    link = ok.with_suffix(".lock")
+    link.symlink_to(outside)
+    with pytest.raises(t.LabelTransportError):
+        t._require_local_file(link)
+    with pytest.raises(t.LabelTransportError):
+        t._require_local_file(state_dir / "x\0y")
+    with pytest.raises(t.LabelTransportError):
+        t._require_local_file(state_dir / ".." / "outside.json")
+    with pytest.raises(t.LabelTransportError):
+        t._retain_sequence(ok, "s", 1)
