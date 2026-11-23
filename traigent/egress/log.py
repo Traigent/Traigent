@@ -106,11 +106,35 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def operator_log_path(path: str | os.PathLike[str]) -> Path:
+    """Resolve the log path the operator chose, refusing anything that is not a plain file.
+
+    The path comes from the operator (``--log`` on the egress CLI or the caller of
+    :class:`RelayLog`), never from a request or a server response, so its *location* is
+    trusted: any directory the operator can write is acceptable.  What is refused is a
+    path that is not what it looks like: a NUL byte, a symlink at the file itself (it
+    could redirect an append-only audit log elsewhere), or an existing entry that is not
+    a regular file.  Errors carry no path.
+    """
+    if "\0" in os.fspath(path):
+        raise RelayLogError(_LOG_UNOPENABLE_MESSAGE)
+    candidate = Path(path)
+    try:
+        if candidate.is_symlink():
+            raise RelayLogError(_LOG_UNOPENABLE_MESSAGE)
+        resolved = candidate.resolve()
+        if resolved.exists() and not resolved.is_file():
+            raise RelayLogError(_LOG_UNOPENABLE_MESSAGE)
+    except (OSError, RuntimeError, ValueError):
+        raise RelayLogError(_LOG_UNOPENABLE_MESSAGE) from None
+    return resolved
+
+
 class RelayLog:
     """Writer for the relay log. Thread-safe."""
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
-        self.path = Path(path)
+        self.path = operator_log_path(path)
         self._lock = threading.Lock()
         self._failed = False
         self._closed = False
@@ -227,8 +251,10 @@ class RelayLog:
 def iter_lines(path: str | os.PathLike[str]) -> Iterator[dict[str, Any]]:
     """Yield the well-formed entries of a log file; torn or foreign lines are skipped."""
     try:
-        handle = open(path, encoding="utf-8")  # noqa: SIM115 - generator scope
-    except OSError:
+        handle = open(  # noqa: SIM115 - generator scope
+            operator_log_path(path), encoding="utf-8"
+        )
+    except (OSError, RelayLogError):
         return
     with handle:
         for raw in handle:
