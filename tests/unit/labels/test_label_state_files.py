@@ -19,10 +19,12 @@ _needs_fcntl = pytest.mark.skipif(
 )
 
 
-_needs_fcntl = pytest.mark.skipif(
-    importlib.util.find_spec("fcntl") is None,
-    reason="the state writer needs fcntl advisory locks",
-)
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    """Create ``link`` -> ``target``, or skip where the platform cannot make symlinks."""
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
 
 
 @_needs_fcntl
@@ -53,7 +55,7 @@ def test_state_file_containment_refuses_symlink_nul_and_dotdot(
     outside = tmp_path / "outside.lock"
     outside.write_text("")
     link = ok.with_suffix(".lock")
-    link.symlink_to(outside)
+    _symlink_or_skip(link, outside)
     with pytest.raises(t.LabelTransportError):
         t._require_local_file(link)
     with pytest.raises(t.LabelTransportError):
@@ -73,7 +75,7 @@ def test_state_files_are_opened_without_following_a_swapped_in_link(
     outside = tmp_path / "victim"
     outside.write_text("keep", encoding="utf-8")
     link = tmp_path / "labels_state.lock"
-    link.symlink_to(outside)
+    _symlink_or_skip(link, outside)
     for flags in (os.O_RDONLY, os.O_RDWR | os.O_CREAT):
         with pytest.raises(t.LabelTransportError):
             t._open_state_fd(link, flags)
