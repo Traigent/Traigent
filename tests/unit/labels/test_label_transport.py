@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -1113,6 +1114,13 @@ def test_state_files_are_opened_without_following_a_swapped_in_link(
         t._open_state_fd(tmp_path, os.O_RDONLY)  # a directory is not a regular file
 
 
+_needs_fcntl = pytest.mark.skipif(
+    importlib.util.find_spec("fcntl") is None,
+    reason="the state writer needs fcntl advisory locks",
+)
+
+
+@_needs_fcntl
 def test_the_retained_state_temp_must_still_be_the_file_that_was_written(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1120,23 +1128,70 @@ def test_the_retained_state_temp_must_still_be_the_file_that_was_written(
 
     monkeypatch.setattr(t, "_state_dir", lambda: tmp_path)
     state = tmp_path / "labels_state.json"
+    created: list[Path] = []
+    real_open = t._open_state_fd
+
+    def spying(path, flags):
+        fd = real_open(path, flags)
+        if flags & os.O_EXCL:
+            created.append(Path(path))
+        return fd
+
+    monkeypatch.setattr(t, "_open_state_fd", spying)
     monkeypatch.setattr(t, "same_entry", lambda fd, path: False)
     with pytest.raises(t.LabelTransportError):
         t._retain_sequence(state, "s", 1)
+    assert len(created) == 1  # the temp-creation path really ran
     assert not state.exists()
-    assert not list(tmp_path.glob("labels_state.tmp*"))  # the temp is removed
+    assert not created[0].exists()  # and the temp it created is removed
+    assert not list(tmp_path.glob("labels_state.json.*.tmp"))
 
 
-def test_a_preexisting_state_temp_is_refused_and_not_deleted(
+@_needs_fcntl
+def test_a_stale_pid_named_temp_does_not_block_the_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from traigent.labels import transport as t
 
     monkeypatch.setattr(t, "_state_dir", lambda: tmp_path)
     state = tmp_path / "labels_state.json"
-    temp = tmp_path / f"labels_state.tmp{os.getpid()}"
-    temp.write_text("not ours", encoding="utf-8")
+    stale = tmp_path / f"labels_state.tmp{os.getpid()}"
+    stale.write_text("stale", encoding="utf-8")
+    t._retain_sequence(state, "s", 1)
+    assert json.loads(state.read_text(encoding="utf-8")) == {"s": 1}
+    assert stale.read_text(encoding="utf-8") == "stale"  # never ours to delete
+
+
+@_needs_fcntl
+def test_a_temp_name_collision_retries_with_a_new_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.labels import transport as t
+
+    monkeypatch.setattr(t, "_state_dir", lambda: tmp_path)
+    state = tmp_path / "labels_state.json"
+    names = iter(["aa" * 8, "bb" * 8])
+    monkeypatch.setattr(t.secrets, "token_hex", lambda n: next(names))
+    taken = tmp_path / f"labels_state.json.{'aa' * 8}.tmp"
+    taken.write_text("not ours", encoding="utf-8")
+    t._retain_sequence(state, "s", 1)
+    assert json.loads(state.read_text(encoding="utf-8")) == {"s": 1}
+    assert taken.read_text(encoding="utf-8") == "not ours"  # the collider is untouched
+    assert not (tmp_path / f"labels_state.json.{'bb' * 8}.tmp").exists()
+
+
+@_needs_fcntl
+def test_persistent_temp_collisions_fail_closed_and_leave_them_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.labels import transport as t
+
+    monkeypatch.setattr(t, "_state_dir", lambda: tmp_path)
+    state = tmp_path / "labels_state.json"
+    taken = tmp_path / f"labels_state.json.{'cc' * 8}.tmp"
+    taken.write_text("not ours", encoding="utf-8")
+    monkeypatch.setattr(t.secrets, "token_hex", lambda n: "cc" * 8)
     with pytest.raises(t.LabelTransportError):
         t._retain_sequence(state, "s", 1)
-    assert temp.read_text(encoding="utf-8") == "not ours"
+    assert taken.read_text(encoding="utf-8") == "not ours"
     assert not state.exists()

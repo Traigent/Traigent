@@ -31,6 +31,7 @@ import json
 import math
 import os
 import re
+import secrets
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
@@ -589,7 +590,7 @@ def _open_state_fd(path: Path, flags: int) -> int:
     """
     try:
         return open_verified(path, flags, 0o600)
-    except FileNotFoundError:
+    except (FileNotFoundError, FileExistsError):
         raise
     except OSError:
         raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
@@ -621,6 +622,9 @@ def _retained_sequence(path: Path, scope: str) -> int:
     return value
 
 
+_STATE_TEMP_ATTEMPTS = 5
+
+
 def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
     """Durably record the highest verified binding-list sequence, or raise.
 
@@ -635,10 +639,7 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
         raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
     try:
         lock_path = path.with_suffix(".lock")
-        tmp = path.with_suffix(f".tmp{os.getpid()}")
-        path, lock_path, tmp = (
-            _require_local_file(candidate) for candidate in (path, lock_path, tmp)
-        )
+        path, lock_path = (_require_local_file(c) for c in (path, lock_path))
         path.parent.mkdir(parents=True, exist_ok=True)
         with os.fdopen(_open_state_fd(lock_path, os.O_RDWR | os.O_CREAT), "r+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
@@ -649,14 +650,27 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
             if sequence < current:
                 raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
             data[scope] = max(sequence, current)
-            # No pre-delete: an existing temp entry is refused by the exclusive
-            # open below and is never removed by this call.
-            created = False
-            try:
-                tmp_fd = _open_state_fd(
-                    tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_TRUNC
+            # Unique temp name per call (never PID-derived, so a stale temp from a
+            # crashed process cannot block writes). Created exclusively; a name
+            # collision retries with a new name, and only a temp this call created
+            # is ever removed.
+            tmp: Path | None = None
+            tmp_fd = -1
+            for _ in range(_STATE_TEMP_ATTEMPTS):
+                candidate = _require_local_file(
+                    path.with_name(f"{path.name}.{secrets.token_hex(8)}.tmp")
                 )
-                created = True
+                try:
+                    tmp_fd = _open_state_fd(
+                        candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_TRUNC
+                    )
+                except FileExistsError:
+                    continue
+                tmp = candidate
+                break
+            if tmp is None:
+                raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
+            try:
                 with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
                     handle.write(json.dumps(data, sort_keys=True))
                     handle.flush()
@@ -670,11 +684,8 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
                         raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
                 os.replace(tmp, path)
             except BaseException:
-                # Remove the temp only when this call created it (exclusive open
-                # succeeded); a pre-existing entry is never ours to delete.
-                if created:
-                    with contextlib.suppress(OSError):
-                        os.unlink(tmp)
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
                 raise
             dir_fd = os.open(path.parent, os.O_RDONLY)
             try:

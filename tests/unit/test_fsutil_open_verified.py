@@ -53,6 +53,9 @@ def test_a_symlink_is_refused_with_or_without_o_nofollow(
     assert target.read_text() == "keep"
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="os.replace over an open file is not allowed on Windows"
+)
 def test_a_swap_between_the_open_and_the_verification_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -67,11 +70,14 @@ def test_a_swap_between_the_open_and_the_verification_is_refused(
         os.replace(other, f)
 
     _swap_after_open(monkeypatch, swap)
-    with pytest.raises(OSError) as err:
+    with pytest.raises(_fsutil.UnverifiedFileError) as err:
         _fsutil.open_verified(f, os.O_RDWR)
     assert str(tmp_path) not in str(err.value)
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="unlinking or replacing an open file is unsupported"
+)
 def test_a_symlink_swapped_in_after_the_open_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -85,7 +91,7 @@ def test_a_symlink_swapped_in_after_the_open_is_refused(
         f.symlink_to(elsewhere)
 
     _swap_after_open(monkeypatch, swap)
-    with pytest.raises(OSError):
+    with pytest.raises(_fsutil.UnverifiedFileError):
         _fsutil.open_verified(f, os.O_RDONLY)
 
 
@@ -182,6 +188,9 @@ def test_a_reader_gives_up_after_bounded_attempts(
     assert count == 3
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="unlinking or replacing an open file is unsupported"
+)
 def test_a_symlink_swap_is_not_retried_for_a_reader(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -195,9 +204,9 @@ def test_a_symlink_swap_is_not_retried_for_a_reader(
         f.symlink_to(elsewhere)
 
     calls = _swap_once(monkeypatch, swap)
-    with pytest.raises(OSError):
+    with pytest.raises(_fsutil.UnverifiedFileError):
         _fsutil.open_verified(f, os.O_RDONLY)
-    assert len(calls) <= 2  # the retry meets the symlink and is refused
+    assert len(calls) == 1  # a symlink is refused at once, never retried
 
 
 @pytest.mark.skipif(
@@ -234,3 +243,36 @@ def test_missing_on_the_first_attempt_keeps_missing_file_semantics(
 ) -> None:
     with pytest.raises(FileNotFoundError):
         _fsutil.open_verified(tmp_path / "absent", os.O_RDONLY)
+
+
+def test_replacement_then_missing_is_an_error_on_every_platform(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Injected filesystem results: no real rename over an open handle is needed."""
+    f = tmp_path / "published"
+    f.write_text("old")
+    other = tmp_path / "other"
+    other.write_text("new")
+    other_stat = os.lstat(other)
+    real_open = os.open
+    real_lstat = os.lstat
+    opens = 0
+
+    def opening(path, flags, mode=0o777):
+        nonlocal opens
+        opens += 1
+        if opens == 2:
+            raise FileNotFoundError(2, "gone")
+        return real_open(path, flags, mode)
+
+    def lstat(path, *a, **k):
+        # The path now names a different regular file than the opened descriptor.
+        return other_stat if os.fspath(path) == os.fspath(f) else real_lstat(path)
+
+    monkeypatch.setattr(_fsutil.os, "open", opening)
+    monkeypatch.setattr(_fsutil.os, "lstat", lstat)
+    with pytest.raises(_fsutil.UnverifiedFileError) as err:
+        _fsutil.open_verified(f, os.O_RDONLY)
+    assert not isinstance(err.value, FileNotFoundError)
+    assert str(tmp_path) not in str(err.value)
+    assert opens == 2
