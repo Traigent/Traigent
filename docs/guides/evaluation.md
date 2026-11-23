@@ -39,7 +39,7 @@ from traigent.evaluators.base import Dataset, EvaluationExample
 
 
 @traigent.optimize(
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"]},
     objectives=["accuracy"],
 )
 def qa_agent(question: str) -> str:
@@ -96,7 +96,7 @@ import traigent
 )
 def classifier(query: str) -> str:
     response = litellm.completion(
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         temperature=0.0,
         messages=[{"role": "user", "content": f"Label: {query}"}],
     )
@@ -422,7 +422,7 @@ Best accuracy: 0.00
 3. **Use Temperature=0 for Deterministic Output**
    ```python
    configuration_space={
-       "model": ["gpt-4o-mini", "gpt-4o"],
+       "model": ["gpt-5.4-mini", "gpt-5.2"],
        "temperature": [0.0]  # Deterministic
    }
    ```

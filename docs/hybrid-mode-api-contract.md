@@ -235,8 +235,8 @@ Returns tunable variable definitions. Traigent uses these to understand what par
     {
       "name": "model",
       "type": "enum",
-      "domain": {"values": ["gpt-4o", "claude-3-sonnet", "llama-70b"]},
-      "default": "gpt-4o"
+      "domain": {"values": ["gpt-5.2", "claude-3-sonnet", "llama-70b"]},
+      "default": "gpt-5.2"
     },
     {
       "name": "temperature",
@@ -269,7 +269,7 @@ Returns tunable variable definitions. Traigent uses these to understand what par
     "alpha": 0.05,
     "min_effect": {"accuracy": 0.02}
   },
-  "defaults": {"model": "gpt-4o"},
+  "defaults": {"model": "gpt-5.2"},
   "measures": ["accuracy", "cost", "latency"]
 }
 ```
@@ -296,7 +296,7 @@ Returns tunable variable definitions. Traigent uses these to understand what par
 | `default` | any | No | Default value |
 | `agent` | string | No | Agent name for multi-agent grouping |
 | `is_tool` | boolean | No | True if this tunable configures an MCP tool |
-| `constraints` | array | No | Conditional constraints (e.g., `"requires model == gpt-4.1"`) |
+| `constraints` | array | No | Conditional constraints (e.g., `"requires model == gpt-5.2"`) |
 
 #### Tunable Types
 
@@ -367,7 +367,7 @@ Execute the agent with a specific configuration on a batch of inputs.
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
   "tunable_id": "my_agent",
   "config": {
-    "model": "gpt-4o",
+    "model": "gpt-5.2",
     "temperature": 0.5,
     "max_tokens": 1024,
     "use_cache": true

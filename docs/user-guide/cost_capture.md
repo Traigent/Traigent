@@ -37,7 +37,7 @@ client = openai.OpenAI(base_url=os.environ["LLM_BASE_URL"])  # build it once
 
 
 @traigent.optimize(
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"]},
     objectives=["accuracy", "cost"],
     eval_dataset="data.jsonl",
     auto_override_frameworks=True,
@@ -45,7 +45,7 @@ client = openai.OpenAI(base_url=os.environ["LLM_BASE_URL"])  # build it once
 )
 def answer(question: str) -> str:
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  # replaced by the trial's model
+        model="gpt-5.4-mini",  # replaced by the trial's model
         messages=[{"role": "user", "content": question}],
     )
     return response.choices[0].message.content

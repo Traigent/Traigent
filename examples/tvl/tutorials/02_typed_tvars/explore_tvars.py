@@ -79,7 +79,7 @@ def demonstrate_domain_parsing():
     print("=" * 60)
 
     # Enum domain from list
-    domain1 = parse_domain_spec("model", "enum", ["gpt-4.1", "claude-3"])
+    domain1 = parse_domain_spec("model", "enum", ["gpt-5.2", "claude-3"])
     print(f"\n  List domain: {domain1}")
 
     # Range domain

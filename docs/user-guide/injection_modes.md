@@ -33,14 +33,14 @@ Access configuration through Traigent's context system — flexible, thread/asyn
 @traigent.optimize(
     injection_mode="context",
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.0, 0.5, 1.0]
     }
 )
 def generate_text(prompt: str) -> str:
     cfg = traigent.get_config()  # Works during optimization and after apply_best_config()
     return ai_client.generate(
-        model=cfg.get("model", "gpt-4o-mini"),
+        model=cfg.get("model", "gpt-5.4-mini"),
         temperature=cfg.get("temperature", 0.7),
         prompt=prompt
     )
@@ -105,14 +105,14 @@ Traigent automatically injects configuration values into simple variable assignm
 @traigent.optimize(
     injection_mode="seamless",
     configuration_space={
-        "model": ["claude-sonnet-4-6", "gpt-4o", "gemini-3.8-flash"],
+        "model": ["claude-sonnet-4-6", "gpt-5.2", "gemini-3.8-flash"],
         "max_retries": [1, 3, 5],
         "timeout": [10, 30, 60]
     }
 )
 def robust_api_call(query: str) -> str:
     # These assignments are overridden by Traigent during optimization
-    model = "gpt-4o"
+    model = "gpt-5.2"
     max_retries = 3
     timeout = 30
 
@@ -507,7 +507,7 @@ Context mode is the default and recommended starting point for most use cases:
 ```python
 # Start with this (context mode is default)
 @traigent.optimize(
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]}
+    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"]}
 )
 def my_function(prompt: str) -> str:
     cfg = traigent.get_config()  # Get config for current call
@@ -551,7 +551,7 @@ Emit the active configuration from inside the optimized function so your monitor
 ```python
 @traigent.optimize(
     injection_mode="context",
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"]},
 )
 def api_endpoint(query: str) -> str:
     config = traigent.get_config()
@@ -578,7 +578,7 @@ def preprocess(text):
 # Seamless - Traigent rewrites simple local variable assignments
 @traigent.optimize(injection_mode="seamless")
 def pipeline(data):
-    model = "gpt-4o-mini"
+    model = "gpt-5.4-mini"
     temperature = 0.2
     return call_llm(model=model, temperature=temperature, prompt=data)
 
@@ -635,7 +635,7 @@ import traigent
     eval_dataset="data.jsonl",
     objectives=["accuracy"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.0, 0.5, 1.0]
     }
 )
@@ -651,7 +651,7 @@ print(f"Best model: {result.best_config['model']}")       # ✅ From Optimizatio
 print(f"Best temp: {result.best_config['temperature']}")
 
 # The function now uses best_config automatically
-response = my_function("Hello!")  # Uses {"model": "gpt-4o", "temperature": 0.5}
+response = my_function("Hello!")  # Uses {"model": "gpt-5.2", "temperature": 0.5}
 
 # Can also access via function attribute
 print(f"Applied config: {my_function.current_config}")    # ✅ Same as best_config

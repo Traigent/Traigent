@@ -52,10 +52,9 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
 
 CONFIG_SPACE = {
     "model": [
-        "gpt-4.1-mini",
-        "gpt-4.1",
+        "gpt-5.4-mini",
+        "gpt-5.4",
         "gpt-5.2",
-        "gpt-5-nano",
     ],
     "prompt": ["minimal", "role_based"],
     "temperature": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
@@ -63,62 +62,59 @@ CONFIG_SPACE = {
     "max_tokens": [50, 100, 200],
 }
 
-# Accuracy values from a real run of walkthrough/real/09_rag_multi_objective.py
-# (algorithm=random, seed=42, 18 trials). Keyed by (model, prompt, temperature,
-# instructions, max_tokens). Trials 17-18 were not captured, so they fall back
-# to the formula below.
-# Mock calibration data, re-keyed from the retired models of the original run
-# (mini tier and legacy cheap tier -> gpt-4.1-mini, flagship -> gpt-4.1;
-# originals: `git show origin/develop:walkthrough/mock/09_rag_multi_objective.py`).
-# Every original row maps to exactly one distinct key and no value is dropped (16 rows in, 16 keys out; rows of a model litellm now lists with a shutdown date are re-keyed gpt-5.2). These values are NOT measurements
-# of the new models.
+# Mock calibration data. The original rows came from one real run of an earlier
+# model set (algorithm=random, seed=42, 18 trials; trials 17-18 were not
+# captured, so they fall back to the formula below). The rows are re-keyed to
+# the current models (mini tier and legacy cheap tier -> gpt-5.4-mini,
+# flagship -> gpt-5.4), keyed by (model, prompt, temperature, instructions,
+# max_tokens). Rows of the retired nano-tier model (2 rows, base 0.03) are
+# dropped because its shutdown is announced and no undated nano-tier model
+# remains. Other rows keep their values. These values are NOT measurements of
+# the current models.
 _REAL_ACCURACY: dict[tuple, float] = {
     ("gpt-5.2", "minimal", 0.0, "direct", 50): 0.180,
-    ("gpt-4.1-mini", "minimal", 0.1, "CoT", 200): 0.771,  # orig row: mini tier
+    ("gpt-5.4-mini", "minimal", 0.1, "CoT", 200): 0.771,  # orig row: mini tier
     ("gpt-5.2", "minimal", 0.0, "CoT", 50): 0.128,
-    ("gpt-4.1-mini", "minimal", 0.8, "CoT", 200): 0.745,  # orig row: mini tier
+    ("gpt-5.4-mini", "minimal", 0.8, "CoT", 200): 0.745,  # orig row: mini tier
     ("gpt-5.2", "role_based", 0.3, "direct", 200): 0.811,
-    ("gpt-4.1", "minimal", 0.2, "direct", 100): 0.741,  # orig row: flagship
-    ("gpt-4.1", "minimal", 0.3, "direct", 50): 0.710,  # orig row: flagship
+    ("gpt-5.4", "minimal", 0.2, "direct", 100): 0.741,  # orig row: flagship
+    ("gpt-5.4", "minimal", 0.3, "direct", 50): 0.710,  # orig row: flagship
     (
-        "gpt-4.1-mini",
+        "gpt-5.4-mini",
         "role_based",
         0.1,
         "direct",
         100,
     ): 0.874,  # orig row: legacy cheap tier
-    ("gpt-5-nano", "role_based", 0.0, "direct", 200): 0.050,
     (
-        "gpt-4.1-mini",
+        "gpt-5.4-mini",
         "role_based",
         0.1,
         "direct",
         200,
     ): 0.868,  # orig row: legacy cheap tier
-    ("gpt-5-nano", "role_based", 0.9, "CoT", 200): 0.000,
     (
-        "gpt-4.1-mini",
+        "gpt-5.4-mini",
         "minimal",
         0.3,
         "direct",
         50,
     ): 0.776,  # orig row: legacy cheap tier
-    ("gpt-4.1-mini", "minimal", 0.6, "direct", 100): 0.738,  # orig row: mini tier
+    ("gpt-5.4-mini", "minimal", 0.6, "direct", 100): 0.738,  # orig row: mini tier
     ("gpt-5.2", "role_based", 0.2, "direct", 100): 0.711,
-    ("gpt-4.1-mini", "role_based", 0.1, "CoT", 200): 0.864,  # orig row: mini tier
+    ("gpt-5.4-mini", "role_based", 0.1, "CoT", 200): 0.864,  # orig row: mini tier
     ("gpt-5.2", "minimal", 0.2, "direct", 100): 0.335,
 }
 
 _RAG_MODEL_BASE = {
     "gpt-5.2": 0.70,
-    "gpt-4.1-mini": 0.75,
-    "gpt-4.1": 0.68,
-    "gpt-5-nano": 0.03,
+    "gpt-5.4-mini": 0.75,
+    "gpt-5.4": 0.68,
 }
 _COT_SENSITIVITY = {
     "gpt-5.2": 0.02,
-    "gpt-4.1": 0.05,
-    "gpt-4.1-mini": 0.02,
+    "gpt-5.4": 0.05,
+    "gpt-5.4-mini": 0.02,
 }
 
 

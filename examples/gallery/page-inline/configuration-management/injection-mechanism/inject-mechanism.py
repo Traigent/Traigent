@@ -47,7 +47,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
 # Your original code:
 def original_function():
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0.7)
     response = llm.invoke("Hello")
     return getattr(response, "content", str(response))
 
@@ -68,11 +68,11 @@ def my_function():
 
     optimal_config = traigent.get_config()
     if not isinstance(optimal_config, dict):
-        optimal_config = {"model": "gpt-4.1-mini", "temperature": 0.3}
+        optimal_config = {"model": "gpt-5.4-mini", "temperature": 0.3}
 
     # Your code sees this, but Traigent modified the parameters:
     llm = ChatOpenAI(
-        model=optimal_config["model"],  # Was "gpt-4.1-mini", now "gpt-4.1"
+        model=optimal_config["model"],  # Was "gpt-5.4-mini", now "gpt-5.2"
         temperature=optimal_config["temperature"],  # Was 0.7, now 0.3
     )
     response = llm.invoke("Hello")

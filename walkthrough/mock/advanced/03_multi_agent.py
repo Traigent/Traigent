@@ -71,8 +71,8 @@ def mock_generate(
         answer = "I can help with that."
 
     # Model affects response style (mock effect)
-    if model == "gpt-4.1":
-        answer = f"{answer} [gpt-4.1]"
+    if model == "gpt-5.2":
+        answer = f"{answer} [gpt-5.2]"
 
     # Temperature affects verbosity (mock effect)
     if temperature > 0.8:
@@ -116,8 +116,8 @@ async def method_1_per_parameter_agent() -> None:
         # Generator agent parameters
         temperature=Range(0.0, 1.0, default=0.7, name="temperature", agent="generator"),
         model=Choices(
-            ["gpt-4.1-mini", "gpt-4.1"],
-            default="gpt-4.1-mini",
+            ["gpt-5.4-mini", "gpt-5.2"],
+            default="gpt-5.4-mini",
             name="model",
             agent="generator",
         ),
@@ -174,7 +174,7 @@ async def method_2_prefix_grouping() -> None:
         ),
         generator_temp=Range(0.0, 1.0, default=0.7, name="generator_temp"),
         generator_model=Choices(
-            ["gpt-4.1-mini", "gpt-4.1"], default="gpt-4.1-mini", name="generator_model"
+            ["gpt-5.4-mini", "gpt-5.2"], default="gpt-5.4-mini", name="generator_model"
         ),
         # Enable prefix-based grouping
         agent_prefixes=["retriever_", "generator_"],
@@ -241,7 +241,7 @@ async def method_3_explicit_agents() -> None:
         ),
         temperature=Range(0.0, 1.0, default=0.7, name="temperature"),
         model=Choices(
-            ["gpt-4.1-mini", "gpt-4.1"], default="gpt-4.1-mini", name="model"
+            ["gpt-5.4-mini", "gpt-5.2"], default="gpt-5.4-mini", name="model"
         ),
         # Pass explicit agent definitions
         agents={

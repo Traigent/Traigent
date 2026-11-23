@@ -4,6 +4,14 @@ The SDK restores them from its snapshots (OpenRouter + retired non-OpenRouter).
 The fixture was generated with the SDK's own ``cost_from_tokens(100, 10, id)``
 and ``litellm.get_llm_provider(id)`` under litellm 1.103.4; these tests pin
 the restored pricing and routing to those values.
+
+The pins check the SDK's own snapshot data, not whatever the installed litellm
+ships: ``_snapshot_only_cost_map`` removes every snapshot id from litellm's
+table first, so a later litellm that re-adds a retired id under new pricing
+(for example moonshot/kimi-latest, an alias of kimi-k3 since 1.110) cannot
+change the outcome. ``ensure_bundled_provider_prices`` never overrides live
+entries, so the restored value is what the SDK would price if litellm dropped
+the id again.
 """
 
 import json
@@ -67,12 +75,23 @@ def _no_copilot_oauth(monkeypatch):
     monkeypatch.setattr(authenticator.Authenticator, "_login", _refuse)
 
 
+@pytest.fixture
+def _snapshot_only_cost_map(monkeypatch):
+    """litellm's table without any id the SDK snapshots restore."""
+    snapshot_ids = set(cc._load_sdk_retired_snapshot()) | set(
+        cc._load_sdk_openrouter_snapshot()
+    )
+    stripped = {k: v for k, v in litellm.model_cost.items() if k not in snapshot_ids}
+    monkeypatch.setattr(litellm, "model_cost", stripped)
+    return stripped
+
+
 def test_fixture_covers_all_736_removed_ids():
     assert len(_FIXTURE["prices"]) == 736
     assert all(isinstance(v, list) for v in _FIXTURE["prices"].values())
 
 
-def test_every_restored_id_prices_as_under_litellm_1_103_4():
+def test_every_restored_id_prices_as_under_litellm_1_103_4(_snapshot_only_cost_map):
     cc.ensure_bundled_provider_prices()
     mismatches = {}
     for model, expected in _FIXTURE["prices"].items():
@@ -119,7 +138,7 @@ def test_off_peak_weekday_windows_are_kept_for_restored_deepseek_entry():
     assert got != base
 
 
-def test_every_restored_id_routes_as_under_litellm_1_103_4():
+def test_every_restored_id_routes_as_under_litellm_1_103_4(_snapshot_only_cost_map):
     cc.ensure_bundled_provider_prices()
     mismatches = {}
     for model, expected in _FIXTURE["routes"].items():

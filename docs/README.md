@@ -21,7 +21,7 @@ import traigent
 @traigent.optimize(
     eval_dataset="examples/datasets/rag-optimization/evaluation_set.jsonl",
     objectives=["accuracy", "cost"],
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.0, 0.7]},
+    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"], "temperature": [0.0, 0.7]},
 )
 def answer_question(question: str) -> str:
     cfg = traigent.get_config()  # Active trial/applied config

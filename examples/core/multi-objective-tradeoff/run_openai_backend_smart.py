@@ -241,8 +241,8 @@ if model_env:
     MODEL_CHOICES = [m.strip() for m in model_env.split(",") if m.strip()]
 else:
     MODEL_CHOICES = [
-        "openai/gpt-4.1-mini",  # Very cheap baseline
-        "openai/gpt-4.1",  # Noticeably more expensive, good pruning signal
+        "openai/gpt-5.4-mini",  # Very cheap baseline
+        "openai/gpt-5.2",  # Noticeably more expensive, good pruning signal
     ]
 
 TEMPERATURE_CHOICES = [0.0, 0.5]
@@ -617,7 +617,7 @@ if BUDGET_LIMIT is not None and BUDGET_LIMIT > 0:
 @traigent.optimize(**_OPTIMIZE_KWARGS)
 def answer(
     question: str,
-    model: str = "openai/gpt-4.1-mini",
+    model: str = "openai/gpt-5.4-mini",
     temperature: float = 0.1,
     # max_tokens: int = 128,
 ) -> str:

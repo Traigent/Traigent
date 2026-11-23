@@ -34,7 +34,7 @@ DATASETS = Path(__file__).parent.parent / "datasets"
 RESULTS_DIR = os.getenv("TRAIGENT_RESULTS_FOLDER", "./local_results")
 OBJECTIVES = ["accuracy"]
 CONFIG_SPACE = {
-    "model": ["gpt-4.1-mini", "gpt-4.1"],
+    "model": ["gpt-5.4-mini", "gpt-5.2"],
     "temperature": [0.1, 0.5],
 }
 

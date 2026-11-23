@@ -835,7 +835,7 @@ def seed_tool_calling_multistep_trace_fixture(
                         "tool_decision_count": 2,
                         "tool_strategy": "sequential",
                         "traigent_active_config": {
-                            "model": "gpt-4.1-mini",
+                            "model": "gpt-5.4-mini",
                             "tool_choice": "auto",
                             "tools": tool_names,
                         },
@@ -871,7 +871,7 @@ def seed_tool_calling_multistep_trace_fixture(
                                     "latency_ms": 91,
                                     "input_tokens": 22,
                                     "output_tokens": 18,
-                                    "model_name": "gpt-4.1-mini",
+                                    "model_name": "gpt-5.4-mini",
                                     "input_data": {
                                         "question": "Where is the enterprise shipment and can we expedite it?"
                                     },
@@ -952,7 +952,7 @@ def seed_tool_calling_multistep_trace_fixture(
                                     "latency_ms": 84,
                                     "input_tokens": 16,
                                     "output_tokens": 28,
-                                    "model_name": "gpt-4.1-mini",
+                                    "model_name": "gpt-5.4-mini",
                                     "output_data": {
                                         "answer": "The shipment is still on schedule for tomorrow morning and has already been escalated for enterprise handling."
                                     },
@@ -1208,7 +1208,7 @@ def seed_access_control_fixture(
             "dataset_id": dataset_id,
             "agent_id": agent_id,
             "measures": [{"measure_id": "faithfulness"}],
-            "configurations": {"model": "gpt-4.1"},
+            "configurations": {"model": "gpt-5.2"},
         },
     )
     write_json(output_dir / "access-control-experiment.json", experiment_payload)

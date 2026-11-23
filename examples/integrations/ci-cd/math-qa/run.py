@@ -30,7 +30,7 @@ def load_saved_config():
     else:
         # Default config if none exists
         return {
-            "model": "gpt-4.1-mini",
+            "model": "gpt-5.4-mini",
             "temperature": 0.0,
             "prompt_style": "direct",
             "max_tokens": 50,

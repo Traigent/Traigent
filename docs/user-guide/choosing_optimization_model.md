@@ -39,7 +39,7 @@ graph TD
 ```python
 @traigent.optimize(
     evaluation={"eval_dataset": "evals.jsonl"},
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"]},
     objectives=["accuracy"],
 )
 def agent(question: str) -> str:
