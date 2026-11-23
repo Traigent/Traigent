@@ -45,3 +45,20 @@ def test_a_symlinked_log_is_refused_for_write_and_read(tmp_path: Path) -> None:
 def test_a_directory_is_refused(tmp_path: Path) -> None:
     with pytest.raises(RelayLogError):
         RelayLog(tmp_path)
+
+
+def test_a_link_swapped_in_after_the_path_check_is_not_followed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The open refuses a symlink itself (O_NOFOLLOW), not only the earlier check."""
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep")
+    victim.chmod(0o644)
+    target = tmp_path / "relay.jsonl"
+    checked = operator_log_path(target)  # passes: nothing there yet
+    os.symlink(victim, target)  # replaced between the check and the open
+    monkeypatch.setattr("traigent.egress.log.operator_log_path", lambda p: checked)
+    with pytest.raises(RelayLogError):
+        RelayLog(target)
+    assert victim.read_text() == "keep"
+    assert (victim.stat().st_mode & 0o777) == 0o644  # fchmod never reached the target

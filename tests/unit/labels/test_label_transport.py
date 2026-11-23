@@ -1093,3 +1093,21 @@ def test_state_file_containment_refuses_symlink_nul_and_dotdot(
         t._require_local_file(state_dir / ".." / "outside.json")
     with pytest.raises(t.LabelTransportError):
         t._retain_sequence(ok, "s", 1)
+
+
+def test_state_files_are_opened_without_following_a_swapped_in_link(
+    tmp_path: Path,
+) -> None:
+    """A link planted after the containment check is refused by the open itself."""
+    from traigent.labels import transport as t
+
+    outside = tmp_path / "victim"
+    outside.write_text("keep", encoding="utf-8")
+    link = tmp_path / "labels_state.lock"
+    link.symlink_to(outside)
+    for flags in (os.O_RDONLY, os.O_RDWR | os.O_CREAT):
+        with pytest.raises(t.LabelTransportError):
+            t._open_state_fd(link, flags)
+    assert outside.read_text(encoding="utf-8") == "keep"
+    with pytest.raises(t.LabelTransportError):
+        t._open_state_fd(tmp_path, os.O_RDONLY)  # a directory is not a regular file

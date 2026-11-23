@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -130,6 +131,27 @@ def operator_log_path(path: str | os.PathLike[str]) -> Path:
     return resolved
 
 
+def _open_log_fd(path: Path, flags: int, mode: int = 0o600) -> int:
+    """Open ``path`` without following a symlink; the descriptor must be a regular file.
+
+    The refusal is part of the open itself (``O_NOFOLLOW``), so a link swapped in
+    after ``operator_log_path`` checked the path is not followed, and the checks that
+    follow (lock, ``fchmod``) act on this verified descriptor only.
+    """
+    fd = os.open(
+        path,
+        flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+        mode,
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("not a regular file")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 class RelayLog:
     """Writer for the relay log. Thread-safe."""
 
@@ -140,7 +162,9 @@ class RelayLog:
         self._closed = False
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            self._fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            self._fd = _open_log_fd(
+                self.path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600
+            )
         except OSError:
             raise RelayLogError(_LOG_UNOPENABLE_MESSAGE) from None
         try:
@@ -169,12 +193,11 @@ class RelayLog:
         invalid line for a request that was forwarded.
         """
         try:
-            with open(self.path, "rb") as handle:
-                handle.seek(0, os.SEEK_END)
-                if handle.tell() == 0:
-                    return
-                handle.seek(-1, os.SEEK_END)
-                last = handle.read(1)
+            size = os.fstat(self._fd).st_size
+            if size == 0:
+                return
+            os.lseek(self._fd, size - 1, os.SEEK_SET)  # appends still go to the end
+            last = os.read(self._fd, 1)
         except OSError:
             raise RelayLogError(_LOG_UNOPENABLE_MESSAGE) from None
         if last != b"\n":
@@ -251,8 +274,9 @@ class RelayLog:
 def iter_lines(path: str | os.PathLike[str]) -> Iterator[dict[str, Any]]:
     """Yield the well-formed entries of a log file; torn or foreign lines are skipped."""
     try:
-        handle = open(  # noqa: SIM115 - generator scope
-            operator_log_path(path), encoding="utf-8"
+        handle = os.fdopen(
+            _open_log_fd(operator_log_path(path), os.O_RDONLY),
+            encoding="utf-8",
         )
     except (OSError, RelayLogError):
         return

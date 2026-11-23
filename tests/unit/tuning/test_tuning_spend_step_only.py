@@ -260,11 +260,11 @@ def test_a_revocation_during_the_tail_repair_is_seen_by_the_final_authentication
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     real = controller_module._prepare_append
 
-    def prepare(path: Path) -> Any:
-        appender = real(path)  # the tail repair happens here
+    def prepare(base: Path, path: Path) -> Any:
+        appender = real(base, path)  # the tail repair happens here
         approved = any(
             ln["category"] == "optimizations" and ln["record"].get("fact") == "approval"
-            for ln in controller_module._read_lines(path)
+            for ln in controller_module._read_lines(base, path)
         )
         if approved:  # the preparation of the spend, not the approval's own append
             revoked[0] = True

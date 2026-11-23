@@ -227,7 +227,7 @@ def test_a_new_directory_is_fsynced_into_its_parent(
         real(fd)
 
     monkeypatch.setattr(os, "fsync", spy)
-    controller_module._write_json(tmp_path / "attempts" / "m.json", {"a": 1})
+    controller_module._write_json(tmp_path, tmp_path / "attempts" / "m.json", {"a": 1})
     assert str(tmp_path / "attempts") in synced  # the rename inside it
     assert str(tmp_path) in synced  # the new "attempts" entry itself
 

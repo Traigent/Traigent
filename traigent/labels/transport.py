@@ -26,10 +26,12 @@ Config (``traigent.yml``)::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import os
 import re
+import stat
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
@@ -577,11 +579,38 @@ def _require_local_file(path: Path) -> Path:
     return resolved
 
 
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+
+
+def _open_state_fd(path: Path, flags: int) -> int:
+    """Open a state file without following a symlink; the descriptor must be a regular file.
+
+    The no-follow refusal is part of the open itself, so a link swapped in after
+    ``_require_local_file`` is not followed.  A missing file raises
+    ``FileNotFoundError``; any other failure is the closed ``sequence_not_persisted``.
+    """
+    try:
+        fd = os.open(path, flags | _NOFOLLOW | _CLOEXEC, 0o600)
+    except FileNotFoundError:
+        raise
+    except OSError:
+        raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 def _read_state(path: Path) -> dict[str, Any]:
     """The retained-sequence map. Missing file = empty; unreadable/corrupt = closed refusal."""
     path = _require_local_file(path)
     try:
-        raw = path.read_text(encoding="utf-8")
+        with os.fdopen(_open_state_fd(path, os.O_RDONLY), "r", encoding="utf-8") as fh:
+            raw = fh.read()
     except FileNotFoundError:
         return {}
     except OSError:
@@ -621,7 +650,7 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
             _require_local_file(candidate) for candidate in (path, lock_path, tmp)
         )
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_path, "a+") as lock:
+        with os.fdopen(_open_state_fd(lock_path, os.O_RDWR | os.O_CREAT), "r+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             data = _read_state(path)
             current = data.get(scope, 0)
@@ -630,7 +659,12 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
             if sequence < current:
                 raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
             data[scope] = max(sequence, current)
-            with open(tmp, "w", encoding="utf-8") as handle:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)  # a stale temp of this pid; never opened through
+            tmp_fd = _open_state_fd(
+                tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_TRUNC
+            )
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
                 handle.write(json.dumps(data, sort_keys=True))
                 handle.flush()
                 os.fsync(handle.fileno())
