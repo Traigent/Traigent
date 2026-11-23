@@ -282,6 +282,65 @@ def _init_api_key(api_key: str | None) -> str:
     return key
 
 
+def _build_exporting_processor(
+    provider: Any,
+    snap_key: str | None,
+    snap_base: str | None,
+    endpoint: str | None,
+    project: str | None,
+    transport: Transport | None,
+    mode: Any,
+    allowed_span_names: Sequence[str] | None,
+    *,
+    max_batch_bytes: int,
+    export_timeout_s: float,
+    max_queue_spans: int,
+    schedule_delay_s: float,
+    max_batch_spans: int,
+    exit_flush: bool,
+    exit_flush_timeout_s: float,
+    on_drop: Callable[[str, int], None] | None,
+) -> tuple[TraigentSpanProcessor, TraigentOTLPExporter]:
+    """Build the exporter and span processor the gate validated and attach them."""
+    # send exactly what the gate validated: never re-read key/destination
+    key = snap_key
+    if key is None:  # unreachable: the guard above switches to offline
+        raise RuntimeError("observability exporter built without a validated key")
+    base = snap_base or (
+        endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}"
+    ).rstrip("/")
+    url = validate_cloud_base_url(base, purpose="observability OTLP endpoint")
+    headers = {"X-API-Key": key.strip(), "User-Agent": "traigent-otel/1"}
+    if project:
+        headers["X-Project-Id"] = project
+    exporter = TraigentOTLPExporter(
+        transport or UrllibTransport(f"{url}/v1/traces", headers),
+        content_mode=mode,
+        allowed_span_names=allowed_span_names,
+        max_batch_bytes=max_batch_bytes,
+        export_timeout=export_timeout_s,
+    )
+    processor = TraigentSpanProcessor(
+        exporter,
+        max_queue_spans=max_queue_spans,
+        schedule_delay_s=schedule_delay_s,
+        max_batch_spans=max_batch_spans,
+        max_batch_bytes=max_batch_bytes,
+        exit_flush=exit_flush,
+        exit_flush_timeout_s=exit_flush_timeout_s,
+        on_drop=on_drop,
+    )
+    # bind the exporter and processor to this credential so a closed
+    # ``403 optimization_only`` seen for it (by any SDK client) stops them
+    oo_scope = oo_egress.credential_scope(url, headers)
+    exporter.oo_scope = oo_scope
+    # the exact credential/origin the gate validated, re-checked before each POST
+    exporter.egress_credential = (key.strip(), url)
+    processor.oo_scope = oo_scope
+    provider.add_span_processor(processor)
+    return processor, exporter
+
+
 def init(
     *,
     api_key: str | None = None,
@@ -364,44 +423,24 @@ def init(
 
         processor = exporter = None
         if not offline:
-            # send exactly what the gate validated: never re-read key/destination
-            key = snap_key
-            if key is None:  # unreachable: the guard above switches to offline
-                raise RuntimeError(
-                    "observability exporter built without a validated key"
-                )
-            base = snap_base or (
-                endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}"
-            ).rstrip("/")
-            url = validate_cloud_base_url(base, purpose="observability OTLP endpoint")
-            headers = {"X-API-Key": key.strip(), "User-Agent": "traigent-otel/1"}
-            if project:
-                headers["X-Project-Id"] = project
-            exporter = TraigentOTLPExporter(
-                transport or UrllibTransport(f"{url}/v1/traces", headers),
-                content_mode=mode,
-                allowed_span_names=allowed_span_names,
+            processor, exporter = _build_exporting_processor(
+                provider,
+                snap_key,
+                snap_base,
+                endpoint,
+                project,
+                transport,
+                mode,
+                allowed_span_names,
                 max_batch_bytes=max_batch_bytes,
-                export_timeout=export_timeout_s,
-            )
-            processor = TraigentSpanProcessor(
-                exporter,
+                export_timeout_s=export_timeout_s,
                 max_queue_spans=max_queue_spans,
                 schedule_delay_s=schedule_delay_s,
                 max_batch_spans=max_batch_spans,
-                max_batch_bytes=max_batch_bytes,
                 exit_flush=exit_flush,
                 exit_flush_timeout_s=exit_flush_timeout_s,
                 on_drop=on_drop,
             )
-            # bind the exporter and processor to this credential so a closed
-            # ``403 optimization_only`` seen for it (by any SDK client) stops them
-            oo_scope = oo_egress.credential_scope(url, headers)
-            exporter.oo_scope = oo_scope
-            # the exact credential/origin the gate validated, re-checked before each POST
-            exporter.egress_credential = (key.strip(), url)
-            processor.oo_scope = oo_scope
-            provider.add_span_processor(processor)
         if set_global:
             trace.set_tracer_provider(provider)
         handle = ObservabilityHandle(

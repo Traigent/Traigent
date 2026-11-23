@@ -58,7 +58,14 @@ import threading
 import time
 import types
 import weakref
-from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -93,6 +100,11 @@ E_CONNECTED_TUNING_REFUSED = "E_CONNECTED_TUNING_REFUSED"
 
 GATE_FORMAT = "traigent-gate-result/1"
 DEFAULT_STORE_ROOT = Path(".traigent") / "tuning"
+_HEAD_FILE = "head.json"
+_HISTORY_FILE = "history.jsonl"
+_CONTROLLER_LOG_FILE = "controller.jsonl"
+_APPROVALS_FILE = "approvals.json"
+_META_FILE = "meta.json"
 _REF = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 # The rule keys this release executes; every other key (``when``, cooldowns,
 # ``only_while`` / ``unless`` conditions, repeat limits, ...) is refused at construction.
@@ -328,6 +340,50 @@ def _is_legacy_line(piece: bytes) -> bool:
         return False
 
 
+def _refuse_unsupported_rule(rule: Mapping[str, Any]) -> None:
+    """Raise ``E_UNSUPPORTED_IN_RELEASE`` for a rule feature this release does not run."""
+    if rule.get("approval") == "standing":
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "standing approval is not supported in this release; use human approval",
+        )
+    trigger = rule.get("trigger")
+    if isinstance(trigger, Mapping) and "external" in trigger:
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "external-event triggers (ModelReleased) are not supported "
+            "in this release; use a schedule",
+        )
+    unsupported = sorted(set(rule) - _SUPPORTED_RULE_KEYS)
+    if unsupported:
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "rule condition(s) not supported in this release: "
+            + ", ".join(str(k) for k in unsupported),
+        )
+    if rule.get("do") not in _SUPPORTED_ACTIONS:
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "only the optimize and notify actions are supported in this release",
+        )
+    if not _supported_trigger(trigger):
+        raise TuningError(
+            E_UNSUPPORTED_IN_RELEASE,
+            "only a schedule trigger is supported in this release",
+        )
+
+
+def _refuse_legacy_format(path: Path, present: list[bytes]) -> None:
+    """Raise ``E_STORE_FORMAT`` when every non-blank line is pre-checksum JSON."""
+    if present and all(_is_legacy_line(p) for p in present):
+        raise TuningError(
+            E_STORE_FORMAT,
+            f"the tuning store at {path.parent} was written in an older format "
+            "without checksums and cannot be read; re-initialize the store "
+            "(remove the directory and start again). Its files were not modified.",
+        )
+
+
 def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
     """``(values, valid_byte_length, torn)`` of a framed JSONL file.
 
@@ -342,14 +398,7 @@ def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
     except FileNotFoundError:
         return [], 0, False
     pieces = raw.split(b"\n")
-    present = [p for p in pieces if p]
-    if present and all(_is_legacy_line(p) for p in present):
-        raise TuningError(
-            E_STORE_FORMAT,
-            f"the tuning store at {path.parent} was written in an older format "
-            "without checksums and cannot be read; re-initialize the store "
-            "(remove the directory and start again). Its files were not modified.",
-        )
+    _refuse_legacy_format(path, [p for p in pieces if p])
     values: list[Any] = []
     valid = 0
     for index, piece in enumerate(pieces):
@@ -425,7 +474,7 @@ def _read_lines(path: Path) -> list[dict[str, Any]]:
 
 def read_head(store_dir: Path | str) -> dict[str, Any] | None:
     """The head ``{fingerprint, config, generation}`` of a store, or None."""
-    head = _read_json(Path(store_dir) / "head.json")
+    head = _read_json(Path(store_dir) / _HEAD_FILE)
     return head if isinstance(head, dict) else None
 
 
@@ -529,6 +578,22 @@ class _GateFailed(Exception):
         self.original = original
 
 
+def _unwrap_result(result: Any) -> tuple[Collection[str] | None, Any]:
+    """``(loaded dataset digests, bare result)`` of one optimizer return value."""
+    if isinstance(result, OptimizerRun):
+        return result.loaded_dataset_digests, result.result
+    if isinstance(result, Mapping):
+        return result.get("loaded_dataset_digests"), result
+    return None, result
+
+
+def _result_field(result: Any, name: str, default: Any = None) -> Any:
+    """A field of a mapping or attribute result."""
+    if isinstance(result, Mapping):
+        return result.get(name, default)
+    return getattr(result, name, default)
+
+
 class Controller:
     """Executes the TVL relation locally over a durable store.
 
@@ -582,36 +647,7 @@ class Controller:
         """
         for response in self._module.get("responses", []):
             for rule in response.get("rules", []):
-                if rule.get("approval") == "standing":
-                    raise TuningError(
-                        E_UNSUPPORTED_IN_RELEASE,
-                        "standing approval is not supported in this release; "
-                        "use human approval",
-                    )
-                trigger = rule.get("trigger")
-                if isinstance(trigger, Mapping) and "external" in trigger:
-                    raise TuningError(
-                        E_UNSUPPORTED_IN_RELEASE,
-                        "external-event triggers (ModelReleased) are not supported "
-                        "in this release; use a schedule",
-                    )
-                unsupported = sorted(set(rule) - _SUPPORTED_RULE_KEYS)
-                if unsupported:
-                    raise TuningError(
-                        E_UNSUPPORTED_IN_RELEASE,
-                        "rule condition(s) not supported in this release: "
-                        + ", ".join(str(k) for k in unsupported),
-                    )
-                if rule.get("do") not in _SUPPORTED_ACTIONS:
-                    raise TuningError(
-                        E_UNSUPPORTED_IN_RELEASE,
-                        "only the optimize and notify actions are supported in this release",
-                    )
-                if not _supported_trigger(trigger):
-                    raise TuningError(
-                        E_UNSUPPORTED_IN_RELEASE,
-                        "only a schedule trigger is supported in this release",
-                    )
+                _refuse_unsupported_rule(rule)
 
     # -- store ----------------------------------------------------------------------
     def _p(self, name: str) -> Path:
@@ -643,18 +679,18 @@ class Controller:
     ) -> None:
         digest = "sha256:" + _digest(self._module)
         with self._locked():
-            meta = _read_json(self._p("meta.json"))
+            meta = _read_json(self._p(_META_FILE))
             if meta is None:
                 # Init is a recoverable transaction: ``meta.json`` is written LAST,
                 # so a crash earlier leaves the store uninitialized and the next
                 # start clears the partial files and redoes the whole init.
                 with contextlib.suppress(FileNotFoundError):
-                    self._p("head.json").unlink()
+                    self._p(_HEAD_FILE).unlink()
                 origin = _utc(now).replace(hour=0, minute=0, second=0)
                 config = dict(initial_config or {})
                 fingerprint = config_fingerprint(config)
                 head = {"fingerprint": fingerprint, "config": config, "generation": 0}
-                _write_json(self._p("head.json"), head)
+                _write_json(self._p(_HEAD_FILE), head)
                 meta = {
                     "agent": agent,
                     "environment": environment,
@@ -662,7 +698,7 @@ class Controller:
                     "contract_digest": digest,
                     "initial_head": {"fingerprint": fingerprint, "generation": 0},
                 }
-                _write_json(self._p("meta.json"), meta)
+                _write_json(self._p(_META_FILE), meta)
             elif meta["contract_digest"] != digest or meta["agent"] != agent:
                 raise TuningError(E_STORE_MISMATCH, "store belongs to another policy")
             elif meta.get("environment") != environment:
@@ -671,14 +707,14 @@ class Controller:
                     "store was created for another environment",
                 )
             else:
-                for name in ("history.jsonl", "controller.jsonl"):
+                for name in (_HISTORY_FILE, _CONTROLLER_LOG_FILE):
                     _repair_tail(self._p(name))
             self.meta: dict[str, Any] = meta
             self.origin = _parse_instant(meta["origin"])
 
     # -- history --------------------------------------------------------------------
     def _lines(self) -> list[dict[str, Any]]:
-        return _read_lines(self._p("history.jsonl"))
+        return _read_lines(self._p(_HISTORY_FILE))
 
     def _history(
         self,
@@ -739,12 +775,46 @@ class Controller:
             raise TuningError(
                 E_INVALID_RECORD, f"{category} rejected by the TVL relation"
             ) from exc
-        _append_line(self._p("history.jsonl"), line)
+        _append_line(self._p(_HISTORY_FILE), line)
 
     def _last_persisted_instant(self) -> int:
         """The last instant the history journal holds (0 when it is empty)."""
         lines = self._lines()
         return int(lines[-1]["instant"]) if lines else 0
+
+    @staticmethod
+    def _authenticated_afresh(authenticate: Callable[[], bool]) -> bool:
+        """The platform authenticator's answer; one that fails never authenticates."""
+        try:
+            return bool(authenticate())
+        except Exception:  # noqa: BLE001 - an authenticator that fails never authenticates
+            return False
+
+    def _sample_and_record(
+        self,
+        clock: Callable[[], datetime],
+        last_persisted: int,
+        lapse_at: Callable[[int], str | None],
+        record: Callable[[int], None],
+    ) -> int:
+        """Steps 2-4 of the gate: ONE clock sample, the lapse checks, the journal append.
+
+        A refusal passes through; any other failure is wrapped as ``_GateFailed``.
+        """
+        try:
+            sample = _utc(clock())
+            instant = int((sample - self.origin).total_seconds())
+            if instant < last_persisted:
+                raise _GateRefused("persisted_time_ahead")
+            reason = lapse_at(instant)
+            if reason is not None:
+                raise _GateRefused(reason)
+            record(instant)
+        except _GateRefused:
+            raise
+        except Exception as exc:
+            raise _GateFailed(exc) from exc
+        return instant
 
     def _gated_effect(
         self,
@@ -780,25 +850,9 @@ class Controller:
         def final_check() -> int:
             if gated:
                 raise TuningError(E_INVALID_RECORD, "the final check runs once")
-            try:
-                authenticated = bool(authenticate())
-            except Exception:  # noqa: BLE001 - an authenticator that fails never authenticates
-                authenticated = False
-            if not authenticated:
+            if not self._authenticated_afresh(authenticate):
                 raise _GateRefused("approver_not_authorized")
-            try:
-                sample = _utc(clock())
-                instant = int((sample - self.origin).total_seconds())
-                if instant < last_persisted:
-                    raise _GateRefused("persisted_time_ahead")
-                reason = lapse_at(instant)
-                if reason is not None:
-                    raise _GateRefused(reason)
-                record(instant)
-            except _GateRefused:
-                raise
-            except Exception as exc:
-                raise _GateFailed(exc) from exc
+            instant = self._sample_and_record(clock, last_persisted, lapse_at, record)
             gated.append(instant)
             return instant
 
@@ -908,7 +962,7 @@ class Controller:
                 E_APPROVER_NOT_AUTHORIZED, "that approver was not authenticated"
             )
         with self._locked():
-            approvals = _read_json(self._p("approvals.json"), {})
+            approvals = _read_json(self._p(_APPROVALS_FILE), {})
             approvals.setdefault(
                 ref,
                 {
@@ -917,7 +971,7 @@ class Controller:
                     "authentication": authority.mode,
                 },
             )
-            _write_json(self._p("approvals.json"), approvals)
+            _write_json(self._p(_APPROVALS_FILE), approvals)
 
     def record_standing_grant(self, *_args: Any, **_kwargs: Any) -> None:
         """Standing grants are not supported in this release."""
@@ -928,11 +982,11 @@ class Controller:
 
     def controller_facts(self) -> list[dict[str, Any]]:
         """Closed facts the controller itself recorded (refusals); TVL never sees them."""
-        return _read_lines(self._p("controller.jsonl"))
+        return _read_lines(self._p(_CONTROLLER_LOG_FILE))
 
     def _record_controller_fact(self, fact: dict[str, Any]) -> None:
         if fact not in self.controller_facts():
-            _append_line(self._p("controller.jsonl"), fact)
+            _append_line(self._p(_CONTROLLER_LOG_FILE), fact)
 
     # -- the step -------------------------------------------------------------------
     def step(
@@ -1059,7 +1113,7 @@ class Controller:
     def _authorized_now(self, occ: Mapping[str, Any], ref: str) -> bool:
         """A recorded approval for THIS occurrence by an approver the authority allows
         now (every approval mode other than ``human`` is refused at construction)."""
-        approval = _read_json(self._p("approvals.json"), {}).get(ref)
+        approval = _read_json(self._p(_APPROVALS_FILE), {}).get(ref)
         return approval is not None and self._on_list_now(
             approval.get("approver"), _approve_context(ref)
         )
@@ -1128,95 +1182,157 @@ class Controller:
         for opened in self._open_attempts(facts):
             if opened["finished"]:
                 continue
-            attempt, occ = opened["attempt"], opened["occurrence"]
-            ref = occurrence_ref(occ)
-            moment = clock()  # fresh before each decision that can spend
-            instant = self._instant(moment)  # whole seconds
-            marker_path = self._marker_path(attempt, ref)
-            marker = _read_json(marker_path)
-            if (
-                abandon_interrupted
-                and marker is None
-                and attempt not in report.approved
-                and self._approval_recorded(attempt)
-            ):
-                # A granted human approval already counts as the start (TVL), but the
-                # process stopped before the attempt marker existed: nothing else would
-                # ever finish it and every later schedule would stay held.  Explicit
-                # abandonment records it as cancelled.
-                record = self._finished_record(attempt, "cancelled", [])
-                _write_json(
-                    marker_path,
-                    {
-                        "attempt": attempt,
-                        "occurrence": ref,
-                        "state": "finished",
-                        "finished_record": record,
-                    },
-                )
-                return True
-            if opened["closed"] and marker is None:
-                if self._approval_recorded(attempt):
-                    # a recorded grant already counts as the start (TVL): record the
-                    # cancellation so the attempt never holds a later schedule.
-                    self._cancel_refused(
-                        report, attempt, ref, marker_path, "attempt_closed"
-                    )
-                    return True
-                continue  # closed and never started: nothing to finish, nothing blocks
-            # Immediately before any authorization is used or the optimizer is
-            # invoked: the relation, over the history up to now, must still show
-            # this occurrence's scope as requiring intervention.
-            if marker is None and not self._scope_requires_intervention(occ, instant):
-                if self._approval_recorded(attempt):
-                    # granted, then the scope lapsed before any start: a granted
-                    # approval counts as the start, so cancel rather than hold.
-                    self._cancel_refused(
-                        report, attempt, ref, marker_path, "scope_expired"
-                    )
-                    return True
-                self._record_controller_fact(
-                    {
-                        "fact": "optimize_refused",
-                        "attempt": attempt,
-                        "reason": "scope_expired",
-                    }
-                )
-                report.refused.append(f"{attempt}:scope_expired")
-                continue
-            if not self._approval_recorded(attempt):
-                if not self._authorized_now(occ, ref):
-                    if ref not in report.awaiting_approval:
-                        report.awaiting_approval.append(ref)
-                    continue
-                self._append(
-                    "optimizations",
-                    {"attempt": attempt, "fact": "approval", "state": "granted"},
-                    instant,
-                )
-                report.approved.append(attempt)
-                return True
-            if marker is not None and "finished_record" in marker:
-                if self._finish_recorded(attempt):
-                    continue  # delivered once already (a closed attempt may ignore it)
-                self._append("optimizations", marker["finished_record"], instant)
-                report.finished.append(attempt)
-                return True
-            if marker is not None:
-                if not abandon_interrupted:
-                    raise TuningError(
-                        E_ATTEMPT_IN_PROGRESS,
-                        f"{attempt} was interrupted; it is not started twice",
-                    )
-                record = self._finished_record(attempt, "cancelled", [])
-                _write_json(marker_path, {**marker, "finished_record": record})
-                return True
-            if self._spend(
-                report, attempt, occ, ref, domains.get(attempt), marker_path, clock
+            if self._advance_attempt(
+                opened, domains, clock, report, abandon_interrupted
             ):
                 return True
-            continue
         return False
+
+    def _advance_attempt(
+        self,
+        opened: Mapping[str, Any],
+        domains: Mapping[str, Mapping[str, Any]],
+        clock: Callable[[], datetime],
+        report: StepReport,
+        abandon_interrupted: bool,
+    ) -> bool:
+        """Do at most one thing for one open attempt; True when history grew."""
+        attempt, occ = opened["attempt"], opened["occurrence"]
+        ref = occurrence_ref(occ)
+        moment = clock()  # fresh before each decision that can spend
+        instant = self._instant(moment)  # whole seconds
+        marker_path = self._marker_path(attempt, ref)
+        marker = _read_json(marker_path)
+        if marker is None:
+            settled = self._settle_unstarted(
+                report,
+                opened,
+                ref,
+                marker_path,
+                instant,
+                abandon_interrupted,
+            )
+            if settled is not None:
+                return settled
+        if not self._approval_recorded(attempt):
+            return self._seek_approval(report, attempt, occ, ref, instant)
+        if marker is not None:
+            return self._resume_started(
+                report, attempt, marker, marker_path, instant, abandon_interrupted
+            )
+        return self._spend(
+            report, attempt, occ, ref, domains.get(attempt), marker_path, clock
+        )
+
+    def _settle_unstarted(
+        self,
+        report: StepReport,
+        opened: Mapping[str, Any],
+        ref: str,
+        marker_path: Path,
+        instant: int,
+        abandon_interrupted: bool,
+    ) -> bool | None:
+        """An attempt with no marker that must not start: the answer, else ``None``.
+
+        ``True`` when history will grow, ``False`` when nothing is done and the next
+        attempt is looked at, ``None`` when the attempt may go on towards approval.
+        """
+        attempt, occ = opened["attempt"], opened["occurrence"]
+        if (
+            abandon_interrupted
+            and attempt not in report.approved
+            and self._approval_recorded(attempt)
+        ):
+            # A granted human approval already counts as the start (TVL), but the
+            # process stopped before the attempt marker existed: nothing else would
+            # ever finish it and every later schedule would stay held.  Explicit
+            # abandonment records it as cancelled.
+            record = self._finished_record(attempt, "cancelled", [])
+            _write_json(
+                marker_path,
+                {
+                    "attempt": attempt,
+                    "occurrence": ref,
+                    "state": "finished",
+                    "finished_record": record,
+                },
+            )
+            return True
+        if opened["closed"]:
+            if self._approval_recorded(attempt):
+                # a recorded grant already counts as the start (TVL): record the
+                # cancellation so the attempt never holds a later schedule.
+                self._cancel_refused(
+                    report, attempt, ref, marker_path, "attempt_closed"
+                )
+                return True
+            return False  # closed and never started: nothing to finish, nothing blocks
+        # Immediately before any authorization is used or the optimizer is
+        # invoked: the relation, over the history up to now, must still show
+        # this occurrence's scope as requiring intervention.
+        if not self._scope_requires_intervention(occ, instant):
+            if self._approval_recorded(attempt):
+                # granted, then the scope lapsed before any start: a granted
+                # approval counts as the start, so cancel rather than hold.
+                self._cancel_refused(report, attempt, ref, marker_path, "scope_expired")
+                return True
+            self._record_controller_fact(
+                {
+                    "fact": "optimize_refused",
+                    "attempt": attempt,
+                    "reason": "scope_expired",
+                }
+            )
+            report.refused.append(f"{attempt}:scope_expired")
+            return False
+        return None
+
+    def _seek_approval(
+        self,
+        report: StepReport,
+        attempt: str,
+        occ: Mapping[str, Any],
+        ref: str,
+        instant: int,
+    ) -> bool:
+        """No approval on record: grant it when authorized now, else wait for it."""
+        if not self._authorized_now(occ, ref):
+            if ref not in report.awaiting_approval:
+                report.awaiting_approval.append(ref)
+            return False
+        self._append(
+            "optimizations",
+            {"attempt": attempt, "fact": "approval", "state": "granted"},
+            instant,
+        )
+        report.approved.append(attempt)
+        return True
+
+    def _resume_started(
+        self,
+        report: StepReport,
+        attempt: str,
+        marker: Mapping[str, Any],
+        marker_path: Path,
+        instant: int,
+        abandon_interrupted: bool,
+    ) -> bool:
+        """An approved attempt whose marker exists: deliver, refuse or abandon it."""
+        if "finished_record" in marker:
+            if self._finish_recorded(attempt):
+                return False  # delivered once already (a closed attempt may ignore it)
+            self._append("optimizations", marker["finished_record"], instant)
+            report.finished.append(attempt)
+            return True
+        if not abandon_interrupted:
+            raise TuningError(
+                E_ATTEMPT_IN_PROGRESS,
+                f"{attempt} was interrupted; it is not started twice",
+            )
+        record = self._finished_record(attempt, "cancelled", [])
+        _write_json(marker_path, {**marker, "finished_record": record})
+        return True
 
     def _spend(
         self,
@@ -1238,7 +1354,7 @@ class Controller:
             raise TuningError(E_NO_OPTIMIZER, f"{attempt} needs an optimize_fn")
         # -- preparation: every read and write the spend needs, under the store
         # lock and BEFORE the final gate ------------------------------------
-        approval = _read_json(self._p("approvals.json"), {}).get(ref)
+        approval = _read_json(self._p(_APPROVALS_FILE), {}).get(ref)
         if approval is None:
             self._refuse_spend(report, attempt, "approval_missing")
             return False
@@ -1258,7 +1374,7 @@ class Controller:
         last_persisted = self._last_persisted_instant()
         # The one journal scan the final gate would otherwise need: repair the tail
         # now, under the lock and before authentication; the gate only appends.
-        append_start = _prepare_append(self._p("history.jsonl"))
+        append_start = _prepare_append(self._p(_HISTORY_FILE))
         # Only the adapter this SDK built may be handed the final check.  Decided
         # before the marker: nothing after the marker may fail before the optimizer runs.
         optimize_fn = self.optimize_fn
@@ -1587,23 +1703,13 @@ class Controller:
         """
         from tvl.promotion_join import join_promotion_decisions
 
-        loaded: Collection[str] | None = None
-        if isinstance(result, OptimizerRun):
-            loaded, result = result.loaded_dataset_digests, result.result
-        elif isinstance(result, Mapping):
-            loaded = result.get("loaded_dataset_digests")
-
-        def pick(name: str, default: Any = None) -> Any:
-            if isinstance(result, Mapping):
-                return result.get(name, default)
-            return getattr(result, name, default)
-
-        completion = pick("completion", "normal")
+        loaded, result = _unwrap_result(result)
+        completion = _result_field(result, "completion", "normal")
         if completion not in _COMPLETIONS:
             completion = "normal"
-        raw = pick("candidates")
+        raw = _result_field(result, "candidates")
         if raw is None:
-            best = pick("best_config")
+            best = _result_field(result, "best_config")
             raw = [{"config": best}] if best else []
         if any(
             isinstance(i, Mapping)
@@ -1628,84 +1734,125 @@ class Controller:
         gates: dict[str, Any] = {}
         for item in raw:
             item = item if isinstance(item, Mapping) else {"config": item}
-            config = item.get("config")
+            config = item.get("config")  # outside the evidence boundary, as before
             try:
-                if code_version is None:
-                    raise ValueError("no code version")
-                if not isinstance(config, Mapping) or not config:
-                    raise ValueError("no config")
-                config = copy.deepcopy(dict(config))  # frozen snapshot at selection
-                fingerprint = config_fingerprint(config)
-                legacy = "NoDecision"
-                given: Mapping[str, str] = {}
-                holdout_digest: str | None = None
-                evidence = self._measure_candidate(attempt, config, incumbent, loaded)
-                if evidence is not None:
-                    legacy = evidence.legacy_decision
-                    given = evidence.monitor_verdicts
-                    holdout_digest = evidence.holdout_digest
-                if config_fingerprint(config) != fingerprint:
-                    self._record_controller_fact(
-                        {
-                            "fact": "candidate_config_changed",
-                            "attempt": attempt,
-                            "fingerprint": fingerprint,
-                        }
-                    )
-                    raise ValueError("config changed during evaluation")
-                if legacy not in _LEGACY:
-                    legacy = "NoDecision"
-                verdicts = {
-                    n: str(given.get(n, "UNKNOWN(insufficient)")) for n in monitors
-                }
-                joined = join_promotion_decisions(
-                    legacy, [verdicts[n] for n in monitors]
+                judged = self._judge_candidate(
+                    attempt,
+                    config,
+                    code_version,
+                    incumbent,
+                    loaded,
+                    monitors,
+                    join_promotion_decisions,
                 )
             except Exception:  # noqa: BLE001 - unusable evidence is invalid, never guessed
                 candidates.append({"evidence_valid": False})
                 continue
-            gate_input: dict[str, Any] = {
-                "format": GATE_FORMAT,
-                "contract_digest": self.meta["contract_digest"],
-                "code_version": code_version,
-                "fingerprint": fingerprint,
-                "incumbent_fingerprint": incumbent.get("fingerprint"),
-                "incumbent_generation": incumbent.get("generation"),
-                "legacy_decision": legacy,
-                "monitors": verdicts,
-                "decision": str(joined),
-            }
-            if holdout_digest is not None:
-                gate_input["holdout_digest"] = holdout_digest
-            gate_digest = "sha256:" + _digest(gate_input)
+            # outside the evidence boundary: a failure here escapes, as it always did
+            fingerprint, config, gate, record = self._gate_and_record(
+                code_version, incumbent, judged
+            )
             configs[fingerprint] = copy.deepcopy(config)
-            gates[fingerprint] = {
-                **gate_input,
-                "gate_digest": gate_digest,
-                **(
-                    {
-                        "holdout_rows": evidence.n,
-                        "holdout_unresolved_rows": evidence.unresolved_rows,
-                        "holdout_counts": evidence.counts,
-                        "holdout_prior_uses": self._holdout_prior_uses(holdout_digest),
-                        "errors": list(evidence.errors),
-                    }
-                    if evidence is not None and holdout_digest is not None
-                    else {}
-                ),
-            }
-            record: dict[str, Any] = {
-                "evidence_valid": True,
-                "fingerprint": fingerprint,
-                "gate_digest": gate_digest,
-                "code_version": code_version,
-                "legacy_decision": legacy,
-                "monitor_verdicts": verdicts,
-            }
-            if holdout_digest is not None:
-                record["holdout_digest"] = holdout_digest
+            gates[fingerprint] = gate
             candidates.append(record)
         return str(completion), candidates, configs, gates
+
+    def _judge_candidate(
+        self,
+        attempt: str,
+        config: Any,
+        code_version: str | None,
+        incumbent: Mapping[str, Any],
+        loaded: Collection[str] | None,
+        monitors: Iterable[str],
+        join_promotion_decisions: Callable[[str, list[str]], Any],
+    ) -> tuple[str, dict[str, Any], str, dict[str, str], Any, str | None, Any]:
+        """Measure one candidate; ``(fingerprint, config, legacy, verdicts, joined,
+        holdout_digest, evidence)``.
+
+        Raises on any unusable evidence (the caller records it as invalid).  Only
+        this measuring step sits inside that boundary.
+        """
+        if code_version is None:
+            raise ValueError("no code version")
+        if not isinstance(config, Mapping) or not config:
+            raise ValueError("no config")
+        config = copy.deepcopy(dict(config))  # frozen snapshot at selection
+        fingerprint = config_fingerprint(config)
+        legacy = "NoDecision"
+        given: Mapping[str, str] = {}
+        holdout_digest: str | None = None
+        evidence = self._measure_candidate(attempt, config, incumbent, loaded)
+        if evidence is not None:
+            legacy = evidence.legacy_decision
+            given = evidence.monitor_verdicts
+            holdout_digest = evidence.holdout_digest
+        if config_fingerprint(config) != fingerprint:
+            self._record_controller_fact(
+                {
+                    "fact": "candidate_config_changed",
+                    "attempt": attempt,
+                    "fingerprint": fingerprint,
+                }
+            )
+            raise ValueError("config changed during evaluation")
+        if legacy not in _LEGACY:
+            legacy = "NoDecision"
+        verdicts = {n: str(given.get(n, "UNKNOWN(insufficient)")) for n in monitors}
+        joined = join_promotion_decisions(legacy, [verdicts[n] for n in monitors])
+        return fingerprint, config, legacy, verdicts, joined, holdout_digest, evidence
+
+    def _gate_and_record(
+        self,
+        code_version: str | None,
+        incumbent: Mapping[str, Any],
+        judged: tuple[str, dict[str, Any], str, dict[str, str], Any, str | None, Any],
+    ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """``(fingerprint, config, gate, record)`` of a measured candidate.
+
+        Not wrapped as invalid evidence: an error here escapes ``_map_result``.
+        """
+        fingerprint, config, legacy, verdicts, joined, holdout_digest, evidence = judged
+        gate_input: dict[str, Any] = {
+            "format": GATE_FORMAT,
+            "contract_digest": self.meta["contract_digest"],
+            "code_version": code_version,
+            "fingerprint": fingerprint,
+            "incumbent_fingerprint": incumbent.get("fingerprint"),
+            "incumbent_generation": incumbent.get("generation"),
+            "legacy_decision": legacy,
+            "monitors": verdicts,
+            "decision": str(joined),
+        }
+        if holdout_digest is not None:
+            gate_input["holdout_digest"] = holdout_digest
+        gate_digest = "sha256:" + _digest(gate_input)
+        gate = {
+            **gate_input,
+            "gate_digest": gate_digest,
+            **(
+                {
+                    "holdout_rows": evidence.n,
+                    "holdout_unresolved_rows": evidence.unresolved_rows,
+                    "holdout_counts": evidence.counts,
+                    "holdout_prior_uses": self._holdout_prior_uses(holdout_digest),
+                    "errors": list(evidence.errors),
+                }
+                if evidence is not None and holdout_digest is not None
+                else {}
+            ),
+        }
+        record: dict[str, Any] = {
+            "evidence_valid": True,
+            "fingerprint": fingerprint,
+            "gate_digest": gate_digest,
+            "code_version": code_version,
+            "legacy_decision": legacy,
+            "monitor_verdicts": verdicts,
+        }
+        if holdout_digest is not None:
+            record["holdout_digest"] = holdout_digest
+        return fingerprint, config, gate, record
 
     # -- release (planned, not built; not run by this controller) --------------
     def build_acceptance(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
@@ -1771,8 +1918,85 @@ class Controller:
 
     def _approval_text(self, ref: str) -> str:
         """Who approved the run, as a person reads it."""
-        approval = _read_json(self._p("approvals.json"), {}).get(ref) or {}
+        approval = _read_json(self._p(_APPROVALS_FILE), {}).get(ref) or {}
         return f"approved by {approval.get('approver', 'an approver')}"
+
+    def _attempt_entry(
+        self,
+        opened: dict[str, Any],
+        approvals: dict[str, Any],
+        domains: dict[str, Any],
+    ) -> dict[str, Any]:
+        """One open attempt as ``status`` reports it."""
+        ref = occurrence_ref(opened["occurrence"])
+        if opened["finished"]:
+            state = "deploy_awaiting"
+        elif self._approval_recorded(opened["attempt"]) or ref in approvals:
+            marker = _read_json(self._marker_path(opened["attempt"], ref))
+            state = (
+                "interrupted"
+                if marker and "finished_record" not in marker
+                else "approved"
+            )
+        else:
+            state = "awaiting_approval"
+        entry: dict[str, Any] = {
+            "attempt": opened["attempt"],
+            "occurrence": ref,
+            "state": state,
+        }
+        if state in ("approved", "interrupted"):
+            entry["approval"] = self._approval_text(ref)
+        if state == "awaiting_approval":
+            domain = domains.get(opened["attempt"])
+            entry["approve_run"] = {
+                **self._trigger_view(opened["occurrence"]),
+                "spend_limit": self.spend_limit(),
+                "admits": (
+                    {"tvar": domain["tvar"], "domain": list(domain["domain"])}
+                    if domain
+                    else None
+                ),
+            }
+        return entry
+
+    def _pending_deploy_entry(
+        self, f: dict[str, Any], head: dict[str, Any]
+    ) -> dict[str, Any]:
+        """One attempt awaiting a deploy, with its release evidence."""
+        gate = self._gate_of(f)
+        return {
+            "attempt": f["attempt"],
+            "occurrence": occurrence_ref(f["occurrence"]),
+            "candidate": f["candidate"],
+            "release_evidence": {
+                "incumbent": {
+                    "fingerprint": gate.get("incumbent_fingerprint"),
+                    "generation": gate.get("incumbent_generation"),
+                },
+                "candidate": {"fingerprint": f["candidate"]},
+                "code_version": gate.get("code_version"),
+                "code_version_label": self._label_for(gate.get("code_version")),
+                "holdout": {
+                    "digest": gate.get("holdout_digest"),
+                    "rows": gate.get("holdout_rows"),
+                    "unresolved_rows": gate.get("holdout_unresolved_rows"),
+                    "counts": gate.get("holdout_counts"),
+                    "prior_uses": gate.get("holdout_prior_uses"),
+                },
+                "gate": {
+                    "legacy_decision": gate.get("legacy_decision"),
+                    "monitors": gate.get("monitors"),
+                    "decision": gate.get("decision"),
+                    "errors": gate.get("errors", []),
+                },
+                "observed_generation": head.get("generation"),
+                "gate_incumbent_current": (
+                    gate.get("incumbent_generation") == head.get("generation")
+                    and gate.get("incumbent_fingerprint") == head.get("fingerprint")
+                ),
+            },
+        }
 
     def status(self) -> dict[str, Any]:
         """Head, open attempts and pending deploys (derived, read-only).
@@ -1785,84 +2009,19 @@ class Controller:
         self.state.require_validated()
         facts = self._derive()["facts"]
         closed = {f["attempt"] for f in facts if f["fact"] == "attempt_closed"}
-        approvals = _read_json(self._p("approvals.json"), {})
+        approvals = _read_json(self._p(_APPROVALS_FILE), {})
         domains = {f["attempt"]: f for f in facts if f["fact"] == "search_domain"}
         attempts = []
         for opened in self._open_attempts(facts):
             if opened["closed"]:
                 continue  # draining attempts exist for recovery, not as open work
-            ref = occurrence_ref(opened["occurrence"])
-            if opened["finished"]:
-                state = "deploy_awaiting"
-            elif self._approval_recorded(opened["attempt"]) or ref in approvals:
-                marker = _read_json(self._marker_path(opened["attempt"], ref))
-                state = (
-                    "interrupted"
-                    if marker and "finished_record" not in marker
-                    else "approved"
-                )
-            else:
-                state = "awaiting_approval"
-            entry: dict[str, Any] = {
-                "attempt": opened["attempt"],
-                "occurrence": ref,
-                "state": state,
-            }
-            if state in ("approved", "interrupted"):
-                entry["approval"] = self._approval_text(ref)
-            if state == "awaiting_approval":
-                domain = domains.get(opened["attempt"])
-                entry["approve_run"] = {
-                    **self._trigger_view(opened["occurrence"]),
-                    "spend_limit": self.spend_limit(),
-                    "admits": (
-                        {"tvar": domain["tvar"], "domain": list(domain["domain"])}
-                        if domain
-                        else None
-                    ),
-                }
-            attempts.append(entry)
+            attempts.append(self._attempt_entry(opened, approvals, domains))
         head = read_head(self.dir) or {}
-        deploys = []
-        for f in facts:
-            if f["fact"] != "deploy_awaiting" or f["attempt"] in closed:
-                continue
-            gate = self._gate_of(f)
-            deploys.append(
-                {
-                    "attempt": f["attempt"],
-                    "occurrence": occurrence_ref(f["occurrence"]),
-                    "candidate": f["candidate"],
-                    "release_evidence": {
-                        "incumbent": {
-                            "fingerprint": gate.get("incumbent_fingerprint"),
-                            "generation": gate.get("incumbent_generation"),
-                        },
-                        "candidate": {"fingerprint": f["candidate"]},
-                        "code_version": gate.get("code_version"),
-                        "code_version_label": self._label_for(gate.get("code_version")),
-                        "holdout": {
-                            "digest": gate.get("holdout_digest"),
-                            "rows": gate.get("holdout_rows"),
-                            "unresolved_rows": gate.get("holdout_unresolved_rows"),
-                            "counts": gate.get("holdout_counts"),
-                            "prior_uses": gate.get("holdout_prior_uses"),
-                        },
-                        "gate": {
-                            "legacy_decision": gate.get("legacy_decision"),
-                            "monitors": gate.get("monitors"),
-                            "decision": gate.get("decision"),
-                            "errors": gate.get("errors", []),
-                        },
-                        "observed_generation": head.get("generation"),
-                        "gate_incumbent_current": (
-                            gate.get("incumbent_generation") == head.get("generation")
-                            and gate.get("incumbent_fingerprint")
-                            == head.get("fingerprint")
-                        ),
-                    },
-                }
-            )
+        deploys = [
+            self._pending_deploy_entry(f, head)
+            for f in facts
+            if f["fact"] == "deploy_awaiting" and f["attempt"] not in closed
+        ]
         return {
             "head": {
                 "generation": head.get("generation"),
@@ -2118,13 +2277,13 @@ class HeadLoader:
 
     def head(self) -> dict[str, Any] | None:
         try:
-            st = (self.dir / "head.json").stat()
+            st = (self.dir / _HEAD_FILE).stat()
         except FileNotFoundError:
             return None
         stamp = (st.st_mtime_ns, st.st_size)
         if stamp != self._stamp:
             if self.environment is not None:
-                meta = _read_json(self.dir / "meta.json") or {}
+                meta = _read_json(self.dir / _META_FILE) or {}
                 if meta.get("environment") != self.environment:
                     raise TuningError(
                         E_STORE_ENVIRONMENT_MISMATCH,
