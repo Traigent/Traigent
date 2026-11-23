@@ -1125,3 +1125,18 @@ def test_the_retained_state_temp_must_still_be_the_file_that_was_written(
         t._retain_sequence(state, "s", 1)
     assert not state.exists()
     assert not list(tmp_path.glob("labels_state.tmp*"))  # the temp is removed
+
+
+def test_a_preexisting_state_temp_is_refused_and_not_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.labels import transport as t
+
+    monkeypatch.setattr(t, "_state_dir", lambda: tmp_path)
+    state = tmp_path / "labels_state.json"
+    temp = tmp_path / f"labels_state.tmp{os.getpid()}"
+    temp.write_text("not ours", encoding="utf-8")
+    with pytest.raises(t.LabelTransportError):
+        t._retain_sequence(state, "s", 1)
+    assert temp.read_text(encoding="utf-8") == "not ours"
+    assert not state.exists()

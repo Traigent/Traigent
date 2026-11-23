@@ -255,6 +255,9 @@ def test_log_file_mode_is_0600(relay, log_path):
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="the writer lock is POSIX-only (fcntl.flock)"
+)
 def test_second_relay_cannot_share_a_log(relay, log_path):
     with pytest.raises(Exception, match="already writing"):
         RelayLog(log_path)

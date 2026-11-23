@@ -41,10 +41,18 @@ def open_verified(path: str | os.PathLike[str], flags: int, mode: int = 0o600) -
     p = Path(path)
     read_only = not flags & _WRITE_FLAGS
     attempts = _READ_ATTEMPTS if read_only else 1
+    replaced = False
     for attempt in range(attempts):
         try:
             return _open_once(p, flags, mode)
+        except FileNotFoundError:
+            if not replaced:
+                raise  # first attempt: genuine missing-file semantics
+            # A replacement was already observed, so the file existed: a later
+            # absence is a verification failure, not a "missing store".
+            raise UnverifiedFileError("path no longer names the opened file") from None
         except _ReplacedError:
+            replaced = True
             if attempt == attempts - 1:
                 raise UnverifiedFileError(
                     "path no longer names the opened file"
@@ -62,8 +70,10 @@ def _open_once(p: Path, flags: int, mode: int) -> int:
     # Without O_NOFOLLOW (no such flag on this platform) the open precedes the entry
     # check, so a symlink planted between the caller's pre-check and the open can be
     # followed, and O_CREAT may create its target, before the mismatch is refused.
-    # Accepted: those platforms need elevated rights to create symlinks, and an
-    # attacker would already need write access to the user's own directory.
+    # Trusted-directory model: O_NOFOLLOW protects the final path component where
+    # available; elsewhere an open can follow a link before verification rejects
+    # it, so the store directory must be writable only by the user.  (Windows
+    # Developer Mode lets unprivileged users create symlinks.)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(p, flags | nofollow | _CLOEXEC | _BINARY, mode)
     try:

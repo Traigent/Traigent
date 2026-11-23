@@ -649,12 +649,14 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
             if sequence < current:
                 raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
             data[scope] = max(sequence, current)
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)  # a stale temp of this pid; never opened through
+            # No pre-delete: an existing temp entry is refused by the exclusive
+            # open below and is never removed by this call.
+            created = False
             try:
                 tmp_fd = _open_state_fd(
                     tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_TRUNC
                 )
+                created = True
                 with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
                     handle.write(json.dumps(data, sort_keys=True))
                     handle.flush()
@@ -668,9 +670,11 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
                         raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
                 os.replace(tmp, path)
             except BaseException:
-                # The temp name is ours (exclusive create): never leave it behind.
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp)
+                # Remove the temp only when this call created it (exclusive open
+                # succeeded); a pre-existing entry is never ours to delete.
+                if created:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp)
                 raise
             dir_fd = os.open(path.parent, os.O_RDONLY)
             try:

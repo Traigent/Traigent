@@ -94,6 +94,15 @@ def test_torn_log_is_refused_and_left_untouched(tmp_path):
     assert path.read_bytes() == torn
 
 
+def test_log_ending_in_ctrl_z_after_a_newline_is_refused_and_untouched(tmp_path):
+    path = tmp_path / "relay.jsonl"
+    content = b'{"schema_version":1,"seq":1,"kind":"request"}\n\x1a'
+    path.write_bytes(content)
+    with pytest.raises(RelayLogError, match="incomplete line"):
+        RelayLog(path)
+    assert path.read_bytes() == content
+
+
 def test_cli_refuses_a_torn_log_with_a_fixed_message(tmp_path):
     path = tmp_path / "relay.jsonl"
     path.write_bytes(b'{"seq":1')
