@@ -42,7 +42,7 @@ def test_normal_state_path_inside_state_dir_still_works(
     assert json.loads(state.read_text("utf-8")) == {"s": 4}
 
 
-def test_state_file_containment_refuses_symlink_nul_and_dotdot(
+def test_state_file_containment_refuses_a_symlink(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from traigent.labels import transport as t
@@ -59,11 +59,31 @@ def test_state_file_containment_refuses_symlink_nul_and_dotdot(
     with pytest.raises(t.LabelTransportError):
         t._require_local_file(link)
     with pytest.raises(t.LabelTransportError):
+        t._retain_sequence(ok, "s", 1)
+
+
+def test_state_file_containment_refuses_a_nul_byte_in_the_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.labels import transport as t
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(state_dir))
+    with pytest.raises(t.LabelTransportError):
         t._require_local_file(state_dir / "x\0y")
+
+
+def test_state_file_containment_refuses_a_dotdot_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.labels import transport as t
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(state_dir))
     with pytest.raises(t.LabelTransportError):
         t._require_local_file(state_dir / ".." / "outside.json")
-    with pytest.raises(t.LabelTransportError):
-        t._retain_sequence(ok, "s", 1)
 
 
 def test_state_files_are_opened_without_following_a_swapped_in_link(
@@ -80,6 +100,11 @@ def test_state_files_are_opened_without_following_a_swapped_in_link(
         with pytest.raises(t.LabelTransportError):
             t._open_state_fd(link, flags)
     assert outside.read_text(encoding="utf-8") == "keep"
+
+
+def test_state_file_open_refuses_a_directory(tmp_path: Path) -> None:
+    from traigent.labels import transport as t
+
     with pytest.raises(t.LabelTransportError):
         t._open_state_fd(tmp_path, os.O_RDONLY)  # a directory is not a regular file
 
