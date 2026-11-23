@@ -3979,7 +3979,7 @@ cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 <span class="s">@traigent.optimize(</span>
 <span class="s">    # Define TUNED VARIABLES - parameters to optimize</span>
 <span class="s">    configuration_space={</span>
-<span class="s">        "model": ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4o"],</span>
+<span class="s">        "model": ["gpt-5.4-mini", "gpt-5.2"],</span>
 <span class="s">        "temperature": [0.1, 0.5, 0.9],</span>
 <span class="s">        "max_tokens": [500, 1000, 2000]</span>
 <span class="s">    },</span>
@@ -4029,23 +4029,23 @@ sleep<span class="w"> </span><span class="m">0</span>.5
 <span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">1</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">"[1/27] Testing: gpt-4.1-mini, temp=0.1, tokens=500"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[1/27] Testing: gpt-5.4-mini, temp=0.1, tokens=500"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.72, cost=\$0.002"</span>
 sleep<span class="w"> </span><span class="m">0</span>.3
-<span class="nb">echo</span><span class="w"> </span><span class="s2">"[2/27] Testing: gpt-4.1-mini, temp=0.1, tokens=1000"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[2/27] Testing: gpt-5.4-mini, temp=0.1, tokens=1000"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.75, cost=\$0.003"</span>
 sleep<span class="w"> </span><span class="m">0</span>.3
-<span class="nb">echo</span><span class="w"> </span><span class="s2">"[3/27] Testing: gpt-4.1-mini, temp=0.5, tokens=500"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[3/27] Testing: gpt-5.4-mini, temp=0.5, tokens=500"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.68, cost=\$0.002"</span>
 sleep<span class="w"> </span><span class="m">0</span>.3
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"..."</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
-<span class="nb">echo</span><span class="w"> </span><span class="s2">"[15/27] Testing: gpt-4o-mini, temp=0.1, tokens=1000"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[15/27] Testing: gpt-5.4-mini, temp=0.1, tokens=1000"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.89, cost=\$0.008  &lt;- New best!"</span>
 sleep<span class="w"> </span><span class="m">0</span>.3
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"..."</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
-<span class="nb">echo</span><span class="w"> </span><span class="s2">"[27/27] Testing: gpt-4o, temp=0.9, tokens=2000"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[27/27] Testing: gpt-5.2, temp=0.9, tokens=2000"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.91, cost=\$0.045"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">1</span>
@@ -4053,7 +4053,7 @@ sleep<span class="w"> </span><span class="m">1</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"Optimization complete!"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"BEST CONFIGURATION FOUND:"</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">"  model: gpt-4o-mini"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  model: gpt-5.4-mini"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"  temperature: 0.1"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"  max_tokens: 1000"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
@@ -4061,7 +4061,7 @@ sleep<span class="w"> </span><span class="m">1</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"  accuracy: 0.89 (89%)"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"  cost: \$0.008 per query"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">"Compared to default (gpt-4.1-mini, temp=0.7):"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Compared to default (gpt-5.4-mini, temp=0.7):"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"  +17% accuracy improvement"</span>
 <span class="nb">echo</span><span class="w"> </span><span class="s2">"  Best cost/accuracy trade-off"</span>
 sleep<span class="w"> </span><span class="m">3</span>
@@ -4076,7 +4076,7 @@ cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 <span class="s">results = await qa_agent.optimize()</span>
 <span class="s">qa_agent.apply_best_config(results)</span>
 
-<span class="s"># Now qa_agent uses: gpt-4o-mini, temp=0.1, tokens=1000</span>
+<span class="s"># Now qa_agent uses: gpt-5.4-mini, temp=0.1, tokens=1000</span>
 <span class="s">answer = qa_agent("What is machine learning?")</span>
 <span class="s">PYTHON</span>
 sleep<span class="w"> </span><span class="m">2</span>
@@ -4126,7 +4126,7 @@ cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 <span class="s">)</span>
 
 <span class="s">@traigent.optimize(</span>
-<span class="s">    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},</span>
+<span class="s">    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"]},</span>
 <span class="s">    objectives=["accuracy"],</span>
 <span class="s">)</span>
 <span class="s">def my_agent(query: str) -&gt; str:</span>

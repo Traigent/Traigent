@@ -3834,7 +3834,7 @@ tuned values, running optimization, and inspecting results.</p>
 <code>"true"</code> are ignored.</p>
 <h2 id="configuration-spaces">Configuration Spaces<a class="headerlink" href="#configuration-spaces" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="n">space</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">],</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-5.4-mini"</span><span class="p">,</span> <span class="s2">"gpt-5.2"</span><span class="p">],</span>
     <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">],</span>
     <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="p">[</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">512</span><span class="p">],</span>
 <span class="p">}</span>
@@ -3843,7 +3843,7 @@ tuned values, running optimization, and inspecting results.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">Choices</span><span class="p">,</span> <span class="n">Range</span>
 
 <span class="n">space</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">"model"</span><span class="p">:</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">]),</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">"gpt-5.4-mini"</span><span class="p">,</span> <span class="s2">"gpt-5.2"</span><span class="p">]),</span>
     <span class="s2">"temperature"</span><span class="p">:</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
 <span class="p">}</span>
 </code></pre></div>

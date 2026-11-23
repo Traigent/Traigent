@@ -115,10 +115,10 @@ paths:
                     type: enum
                     domain:
                       values:
-                        - gpt-4o
+                        - gpt-5.2
                         - claude-3-sonnet
                         - llama-70b
-                    default: gpt-4o
+                    default: gpt-5.2
                   - name: temperature
                     type: float
                     domain:
@@ -180,7 +180,7 @@ paths:
               request_id: 550e8400-e29b-41d4-a716-446655440000
               tunable_id: my_agent
               config:
-                model: gpt-4o
+                model: gpt-5.2
                 temperature: 0.5
               examples:
                 - example_id: case_001
@@ -681,7 +681,7 @@ components:
               - type: number
               - type: boolean
           example:
-            - gpt-4o
+            - gpt-5.2
             - claude-3-sonnet
         range:
           type: array
@@ -746,7 +746,7 @@ components:
             type: string
             maxLength: 512
           example:
-            - requires model == gpt-4.1
+            - requires model == gpt-5.2
     EvaluationKwargDefinition:
       type: object
       description: |

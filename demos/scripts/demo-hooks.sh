@@ -50,7 +50,7 @@ echo -e "    ${CYAN}DetailedProgressCallback${RESET}  ${DIM}# Comprehensive outp
 echo -e ")"
 echo ""
 echo -e "${CYAN}@traigent.optimize${RESET}("
-echo -e "    configuration_space={${GREEN}\"model\"${RESET}: [\"gpt-4o-mini\", \"gpt-4o\"]},"
+echo -e "    configuration_space={${GREEN}\"model\"${RESET}: [\"gpt-5.4-mini\", \"gpt-5.2\"]},"
 echo -e "    objectives=[${GREEN}\"accuracy\"${RESET}],"
 echo -e ")"
 echo -e "${BLUE}def${RESET} ${YELLOW}my_agent${RESET}(query: str) -> str:"

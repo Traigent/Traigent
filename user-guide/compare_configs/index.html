@@ -3586,14 +3586,14 @@ agents.</p>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"dev.jsonl"</span><span class="p">,</span>
     <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">],</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)},</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-5.4-mini"</span><span class="p">,</span> <span class="s2">"gpt-5.2"</span><span class="p">],</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
 
 <span class="n">result</span> <span class="o">=</span> <span class="n">answer</span><span class="o">.</span><span class="n">compare</span><span class="p">(</span>
     <span class="p">[</span>
-        <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"gpt-4o"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">},</span>        <span class="c1"># winner</span>
-        <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>   <span class="c1"># current default</span>
+        <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"gpt-5.2"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">},</span>        <span class="c1"># winner</span>
+        <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"gpt-5.4-mini"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>   <span class="c1"># current default</span>
     <span class="p">],</span>
     <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"holdout.jsonl"</span><span class="p">,</span>   <span class="c1"># optional; default is the decorated dataset</span>
     <span class="n">repeats</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>

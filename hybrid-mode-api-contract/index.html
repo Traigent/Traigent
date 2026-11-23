@@ -4762,8 +4762,8 @@ target_id: "target_001"                    # Stable across runs
 <span class="w">    </span><span class="p">{</span>
 <span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"model"</span><span class="p">,</span>
 <span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"enum"</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"values"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"gpt-4o"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude-3-sonnet"</span><span class="p">,</span><span class="w"> </span><span class="s2">"llama-70b"</span><span class="p">]},</span>
-<span class="w">      </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-4o"</span>
+<span class="w">      </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"values"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"gpt-5.2"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude-3-sonnet"</span><span class="p">,</span><span class="w"> </span><span class="s2">"llama-70b"</span><span class="p">]},</span>
+<span class="w">      </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-5.2"</span>
 <span class="w">    </span><span class="p">},</span>
 <span class="w">    </span><span class="p">{</span>
 <span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"temperature"</span><span class="p">,</span>
@@ -4796,7 +4796,7 @@ target_id: "target_001"                    # Stable across runs
 <span class="w">    </span><span class="nt">"alpha"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">"min_effect"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.02</span><span class="p">}</span>
 <span class="w">  </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">"defaults"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-4o"</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"defaults"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-5.2"</span><span class="p">},</span>
 <span class="w">  </span><span class="nt">"measures"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span><span class="w"> </span><span class="s2">"cost"</span><span class="p">,</span><span class="w"> </span><span class="s2">"latency"</span><span class="p">]</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -4917,7 +4917,7 @@ target_id: "target_001"                    # Stable across runs
 <td><code>constraints</code></td>
 <td>array</td>
 <td>No</td>
-<td>Conditional constraints (e.g., <code>"requires model == gpt-4.1"</code>)</td>
+<td>Conditional constraints (e.g., <code>"requires model == gpt-5.2"</code>)</td>
 </tr>
 </tbody>
 </table>
@@ -4973,7 +4973,7 @@ target_id: "target_001"                    # Stable across runs
 <span class="w">  </span><span class="nt">"request_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"550e8400-e29b-41d4-a716-446655440000"</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">"tunable_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"my_agent"</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-4o"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-5.2"</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">"temperature"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.5</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">"max_tokens"</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">"use_cache"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>

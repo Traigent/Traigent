@@ -4382,14 +4382,14 @@
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"context"</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">],</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-5.4-mini"</span><span class="p">,</span> <span class="s2">"gpt-5.2"</span><span class="p">],</span>
         <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">generate_text</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>  <span class="c1"># Works during optimization and after apply_best_config()</span>
     <span class="k">return</span> <span class="n">ai_client</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
-        <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">,</span> <span class="s2">"gpt-4o-mini"</span><span class="p">),</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">,</span> <span class="s2">"gpt-5.4-mini"</span><span class="p">),</span>
         <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"temperature"</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">),</span>
         <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span>
     <span class="p">)</span>
@@ -4445,14 +4445,14 @@
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"seamless"</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"claude-sonnet-4-6"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">,</span> <span class="s2">"gemini-3.8-flash"</span><span class="p">],</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"claude-sonnet-4-6"</span><span class="p">,</span> <span class="s2">"gpt-5.2"</span><span class="p">,</span> <span class="s2">"gemini-3.8-flash"</span><span class="p">],</span>
         <span class="s2">"max_retries"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">5</span><span class="p">],</span>
         <span class="s2">"timeout"</span><span class="p">:</span> <span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="mi">60</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">robust_api_call</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="c1"># These assignments are overridden by Traigent during optimization</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="s2">"gpt-4o"</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="s2">"gpt-5.2"</span>
     <span class="n">max_retries</span> <span class="o">=</span> <span class="mi">3</span>
     <span class="n">timeout</span> <span class="o">=</span> <span class="mi">30</span>
 
@@ -4831,7 +4831,7 @@ does not fail closed.</p>
 <p>Context mode is the default and recommended starting point for most use cases:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Start with this (context mode is default)</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">]}</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-5.4-mini"</span><span class="p">,</span> <span class="s2">"gpt-5.2"</span><span class="p">]}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_function</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>  <span class="c1"># Get config for current call</span>
@@ -4864,7 +4864,7 @@ does not fail closed.</p>
 <p>Emit the active configuration from inside the optimized function so your monitoring/observability pipeline picks it up — context mode keeps each trial isolated:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"context"</span><span class="p">,</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">]},</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-5.4-mini"</span><span class="p">,</span> <span class="s2">"gpt-5.2"</span><span class="p">]},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">api_endpoint</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
@@ -4888,7 +4888,7 @@ does not fail closed.</p>
 <span class="c1"># Seamless - Traigent rewrites simple local variable assignments</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">injection_mode</span><span class="o">=</span><span class="s2">"seamless"</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">pipeline</span><span class="p">(</span><span class="n">data</span><span class="p">):</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="s2">"gpt-4o-mini"</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="s2">"gpt-5.4-mini"</span>
     <span class="n">temperature</span> <span class="o">=</span> <span class="mf">0.2</span>
     <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">temperature</span><span class="p">,</span> <span class="n">prompt</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
 
@@ -4978,7 +4978,7 @@ does not fail closed.</p>
     <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data.jsonl"</span><span class="p">,</span>
     <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">],</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-5.4-mini"</span><span class="p">,</span> <span class="s2">"gpt-5.2"</span><span class="p">],</span>
         <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
@@ -4994,7 +4994,7 @@ does not fail closed.</p>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best temp: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="p">[</span><span class="s1">'temperature'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
 <span class="c1"># The function now uses best_config automatically</span>
-<span class="n">response</span> <span class="o">=</span> <span class="n">my_function</span><span class="p">(</span><span class="s2">"Hello!"</span><span class="p">)</span>  <span class="c1"># Uses {"model": "gpt-4o", "temperature": 0.5}</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">my_function</span><span class="p">(</span><span class="s2">"Hello!"</span><span class="p">)</span>  <span class="c1"># Uses {"model": "gpt-5.2", "temperature": 0.5}</span>
 
 <span class="c1"># Can also access via function attribute</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Applied config: </span><span class="si">{</span><span class="n">my_function</span><span class="o">.</span><span class="n">current_config</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>    <span class="c1"># ✅ Same as best_config</span>
