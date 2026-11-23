@@ -253,3 +253,30 @@ def test_a_gate_failure_records_an_error_outcome_for_the_run(
         if ln["category"] == "optimizations" and ln["record"].get("fact") == "finished"
     ]
     assert finished and all(r.get("completion") == "error" for r in finished)
+
+
+class _RaisingGet(dict):  # type: ignore[type-arg]
+    def get(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise OSError("candidate getter failed")
+
+
+def test_a_failing_config_lookup_escapes_map_result(tmp_path: Path) -> None:
+    c = controller(tmp_path, FakeOptimizer())
+    with pytest.raises(OSError):
+        c._map_result("a1", {"candidates": [_RaisingGet(config={"m": 1})]})
+
+
+def test_a_failing_config_lookup_records_an_error_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clock(monkeypatch, at(10))
+    opt = FakeOptimizer(result={"candidates": [_RaisingGet(config={"m": 1})]})
+    c = controller(tmp_path, opt, now=at(0))
+    c.approve_optimization(e_ref("E1"), "approver-1", at(10))
+    c.step()
+    finished = [
+        ln["record"]
+        for ln in c._lines()
+        if ln["category"] == "optimizations" and ln["record"].get("fact") == "finished"
+    ]
+    assert finished and all(r.get("completion") == "error" for r in finished)

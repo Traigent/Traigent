@@ -1734,10 +1734,11 @@ class Controller:
         gates: dict[str, Any] = {}
         for item in raw:
             item = item if isinstance(item, Mapping) else {"config": item}
+            config = item.get("config")  # outside the evidence boundary, as before
             try:
                 judged = self._judge_candidate(
                     attempt,
-                    item.get("config"),
+                    config,
                     code_version,
                     incumbent,
                     loaded,
