@@ -206,15 +206,15 @@ class _GateSpy:
             finally:
                 spy.authenticated = spy.sampled = False
 
-        def scan(path: Path) -> Any:
+        def scan(base: Path, path: Path) -> Any:
             if spy.sampled:
                 spy.scans_after_sample.append(Path(path).name)
-            return real_scan(path)
+            return real_scan(base, path)
 
-        def repair(path: Path) -> None:
+        def repair(base: Path, path: Path) -> None:
             if spy.sampled:
                 spy.scans_after_sample.append(Path(path).name)
-            real_repair(path)
+            real_repair(base, path)
 
         monkeypatch.setattr(Controller, "_gated_effect", gated)
         monkeypatch.setattr(controller_module, "_scan_lines", scan)

@@ -136,7 +136,7 @@ def test_cli_step_exits_non_zero_when_an_approved_run_ended_in_error(
             f"{r}" in result.output
             for r in ("unpriced_model", "cost_preflight_refused")
         )
-        facts = _read_lines(tmp_path / "store" / "controller.jsonl")
+        facts = _read_lines(tmp_path / "store", tmp_path / "store" / "controller.jsonl")
         assert [f["reason"] for f in facts if f.get("fact") == "optimize_failed"]
     finally:
         sys.modules.pop("agent_diag", None)
