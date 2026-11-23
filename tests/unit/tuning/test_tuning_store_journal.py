@@ -435,9 +435,10 @@ class TestStorePathContainment:
 
     def test_a_dotdot_in_the_file_path_is_normalised(self, tmp_path: Path) -> None:
         (tmp_path / "sub").mkdir()
-        assert c._store_file(tmp_path / "sub" / ".." / "head.json") == (
-            tmp_path / "head.json"
-        ).resolve()
+        assert (
+            c._store_file(tmp_path / "sub" / ".." / "head.json")
+            == (tmp_path / "head.json").resolve()
+        )
 
     def test_a_symlinked_store_file_is_refused(self, tmp_path: Path) -> None:
         outside = tmp_path / "outside"

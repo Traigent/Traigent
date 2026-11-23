@@ -20,9 +20,10 @@ def test_a_plain_path_opens_and_resolves(tmp_path: Path) -> None:
 
 def test_a_dotdot_path_is_normalised_to_the_real_file(tmp_path: Path) -> None:
     (tmp_path / "a").mkdir()
-    assert operator_log_path(tmp_path / "a" / ".." / "x.jsonl") == (
-        tmp_path / "x.jsonl"
-    ).resolve()
+    assert (
+        operator_log_path(tmp_path / "a" / ".." / "x.jsonl")
+        == (tmp_path / "x.jsonl").resolve()
+    )
 
 
 def test_a_nul_byte_is_refused() -> None:
