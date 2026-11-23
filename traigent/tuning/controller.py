@@ -264,6 +264,51 @@ def parse_occurrence_ref(ref: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------------
+# store path containment
+# ---------------------------------------------------------------------------------
+_E_STORE_PATH = "the tuning store path is not acceptable"
+
+
+def _store_dir(store_dir: Path | str) -> Path:
+    """Resolve an operator-chosen store directory (the base every store file lives in).
+
+    The directory is chosen explicitly by the operator or the calling code (never by a
+    server response), so it is trusted as a location; it is still resolved to one
+    absolute path and a NUL byte is refused.  Errors never echo the path.
+    """
+    if "\0" in str(store_dir):
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH)
+    try:
+        return Path(store_dir).resolve()
+    except (OSError, RuntimeError, ValueError):
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
+
+
+def _store_file(path: Path | str) -> Path:
+    """Return ``path`` resolved, only if it is a real file entry of its own directory.
+
+    Refuses a NUL byte, a symlink at the file itself, and any path whose resolved
+    location is not directly inside its resolved parent (so a ``..`` component or a
+    planted link cannot redirect a store, journal or lock file elsewhere).
+    """
+    if "\0" in str(path):
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH)
+    candidate = Path(path)
+    try:
+        resolved = candidate.resolve()
+        inside = (
+            not candidate.is_symlink()
+            and resolved.parent == candidate.parent.resolve()
+            and resolved.is_relative_to(candidate.parent.resolve())
+        )
+    except (OSError, RuntimeError, ValueError):
+        inside = False
+    if not inside:
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH)
+    return resolved
+
+
+# ---------------------------------------------------------------------------------
 # atomic file helpers
 # ---------------------------------------------------------------------------------
 def _fsync_dir(directory: Path) -> None:
@@ -291,6 +336,7 @@ def _mkdir_durable(directory: Path) -> None:
 
 def _write_json(path: Path, value: Any) -> None:
     """Write JSON atomically: temp file in the same directory, fsync, rename."""
+    path = _store_file(path)
     _mkdir_durable(path.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
@@ -307,6 +353,7 @@ def _write_json(path: Path, value: Any) -> None:
 
 
 def _read_json(path: Path, default: Any = None) -> Any:
+    path = _store_file(path)
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -393,6 +440,7 @@ def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
     bad line anywhere else.  A file in the pre-checksum format (plain JSON lines)
     raises ``E_STORE_FORMAT`` untouched.
     """
+    path = _store_file(path)
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
@@ -422,6 +470,7 @@ def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
 
 def _repair_tail(path: Path) -> None:
     """Truncate a torn final line (logged) so the next append starts clean."""
+    path = _store_file(path)
     _, valid, torn = _scan_lines(path)
     if torn:
         logger.warning("truncating a torn final record of %s", path.name)
@@ -450,6 +499,7 @@ def _prepare_append(path: Path) -> Callable[[Any], None]:
     and before the final gate; the returned callable frames one record and appends it
     without reading the journal again.
     """
+    path = _store_file(path)
     _mkdir_durable(path.parent)
     _repair_tail(path)
     created = not path.exists()
@@ -474,7 +524,7 @@ def _read_lines(path: Path) -> list[dict[str, Any]]:
 
 def read_head(store_dir: Path | str) -> dict[str, Any] | None:
     """The head ``{fingerprint, config, generation}`` of a store, or None."""
-    head = _read_json(Path(store_dir) / _HEAD_FILE)
+    head = _read_json(_store_dir(store_dir) / _HEAD_FILE)
     return head if isinstance(head, dict) else None
 
 
@@ -627,7 +677,7 @@ class Controller:
             if agent is None:
                 raise TuningError(E_INVALID_RECORD, "store_dir or an agent is required")
             store_dir = default_store_dir(agent, environment)
-        self.dir = Path(store_dir)
+        self.dir = _store_dir(store_dir)
         self.optimize_fn = optimize_fn
         if authority is None and authorized_approvers is not None:
             authority = ApproverAuthority(frozenset(authorized_approvers))
@@ -663,7 +713,7 @@ class Controller:
                 E_LOCK_UNSUPPORTED_PLATFORM,
                 "the tuning store lock needs a POSIX platform (fcntl is unavailable)",
             ) from None
-        with open(self._p(".lock"), "a+") as fh:
+        with open(_store_file(self._p(".lock")), "a+") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
             try:
                 yield
@@ -2270,7 +2320,7 @@ class HeadLoader:
     """Loads the head configuration from a store at call time (cached by generation)."""
 
     def __init__(self, store_dir: Path | str, environment: str | None = None) -> None:
-        self.dir = Path(store_dir)
+        self.dir = _store_dir(store_dir)
         self.environment = environment
         self._stamp: tuple[int, int] | None = None
         self._head: dict[str, Any] | None = None

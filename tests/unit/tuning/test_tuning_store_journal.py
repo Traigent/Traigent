@@ -423,3 +423,43 @@ class TestSmallRecords:
         for name in ("__missing_dunder__", "no_such_field"):
             with pytest.raises(AttributeError):
                 getattr(run, name)
+
+
+@tvl_free
+class TestStorePathContainment:
+    def test_a_valid_store_file_round_trips(self, tmp_path: Path) -> None:
+        c._write_json(tmp_path / "head.json", {"a": 1})
+        assert c._read_json(tmp_path / "head.json") == {"a": 1}
+        c._append_line(tmp_path / "history.jsonl", {"n": 1})
+        assert c._read_lines(tmp_path / "history.jsonl") == [{"n": 1}]
+
+    def test_a_dotdot_in_the_file_path_is_normalised(self, tmp_path: Path) -> None:
+        (tmp_path / "sub").mkdir()
+        assert c._store_file(tmp_path / "sub" / ".." / "head.json") == (
+            tmp_path / "head.json"
+        ).resolve()
+
+    def test_a_symlinked_store_file_is_refused(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.json").write_text("{}")
+        store = tmp_path / "store"
+        store.mkdir()
+        (store / "head.json").symlink_to(outside / "secret.json")
+        for op in (
+            lambda: c._read_json(store / "head.json"),
+            lambda: c._write_json(store / "head.json", {}),
+            lambda: c._scan_lines(store / "head.json"),
+            lambda: c._append_line(store / "head.json", {}),
+        ):
+            with pytest.raises(TuningError) as err:
+                op()
+            assert _code(err) == c.E_INVALID_RECORD
+            assert "secret" not in str(err.value)
+
+    def test_a_nul_byte_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(TuningError) as err:
+            c._store_file(str(tmp_path / "head\0.json"))
+        assert _code(err) == c.E_INVALID_RECORD
+        with pytest.raises(TuningError):
+            c.read_head(str(tmp_path) + "\0")
