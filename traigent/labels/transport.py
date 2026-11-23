@@ -670,6 +670,9 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
                 break
             if tmp is None:
                 raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
+            # Set when the temp name no longer names our descriptor: the entry at
+            # that path is not ours any more, so it must not be unlinked.
+            tmp_replaced = False
             try:
                 with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
                     handle.write(json.dumps(data, sort_keys=True))
@@ -681,11 +684,13 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
                     # wrote, with the descriptor still open, before it replaces
                     # the real file.
                     if not same_entry(handle.fileno(), tmp):
+                        tmp_replaced = True
                         raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
                 os.replace(tmp, path)
             except BaseException:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp)
+                if not tmp_replaced:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp)
                 raise
             dir_fd = os.open(path.parent, os.O_RDONLY)
             try:

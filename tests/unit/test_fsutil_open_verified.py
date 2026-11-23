@@ -10,6 +10,14 @@ import pytest
 from traigent import _fsutil
 
 
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    """Create ``link`` -> ``target``, or skip where the platform cannot make symlinks."""
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("this platform or account cannot create symlinks")
+
+
 def _swap_after_open(monkeypatch: pytest.MonkeyPatch, swap) -> None:
     real_open = os.open
 
@@ -47,7 +55,7 @@ def test_a_symlink_is_refused_with_or_without_o_nofollow(
     target = tmp_path / "target"
     target.write_text("keep")
     link = tmp_path / "link"
-    link.symlink_to(target)
+    _symlink_or_skip(link, target)
     with pytest.raises(OSError):
         _fsutil.open_verified(link, os.O_RDONLY)
     assert target.read_text() == "keep"

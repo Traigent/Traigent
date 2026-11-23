@@ -372,7 +372,7 @@ def test_sequence_is_persisted_and_an_older_list_is_refused_after_restart(
     _fake, sent = asyncio.run(_with_server(vectors, first))
     assert sent == {AGENT_REF: 1}
     assert json.loads(state.read_text("utf-8"))[_scope(vectors)] == 1
-    assert not list(tmp_path.glob("labels_state.tmp*"))  # temp file renamed away
+    assert not list(tmp_path.glob("labels_state.json.*.tmp"))  # temp renamed away
 
     # another client has since verified a newer list (sequence 2) and retained it
     state.write_text(json.dumps({_scope(vectors): 2}), encoding="utf-8")
@@ -1058,6 +1058,13 @@ def test_dotdot_state_path_escaping_state_dir_is_refused(
     assert not (tmp_path / "escaped.lock").exists()
 
 
+_needs_fcntl = pytest.mark.skipif(
+    importlib.util.find_spec("fcntl") is None,
+    reason="the state writer needs fcntl advisory locks",
+)
+
+
+@_needs_fcntl
 def test_normal_state_path_inside_state_dir_still_works(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1114,12 +1121,6 @@ def test_state_files_are_opened_without_following_a_swapped_in_link(
         t._open_state_fd(tmp_path, os.O_RDONLY)  # a directory is not a regular file
 
 
-_needs_fcntl = pytest.mark.skipif(
-    importlib.util.find_spec("fcntl") is None,
-    reason="the state writer needs fcntl advisory locks",
-)
-
-
 @_needs_fcntl
 def test_the_retained_state_temp_must_still_be_the_file_that_was_written(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1143,8 +1144,39 @@ def test_the_retained_state_temp_must_still_be_the_file_that_was_written(
         t._retain_sequence(state, "s", 1)
     assert len(created) == 1  # the temp-creation path really ran
     assert not state.exists()
-    assert not created[0].exists()  # and the temp it created is removed
-    assert not list(tmp_path.glob("labels_state.json.*.tmp"))
+    # The mismatch path never unlinks the temp name (it is not ours once replaced);
+    # the replaced-entry test below asserts that directly.
+
+
+@_needs_fcntl
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="os.replace over an open temp file is not allowed on Windows",
+)
+def test_a_replaced_temp_entry_is_not_unlinked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another file replaces the temp name before the identity check: the entry is not ours."""
+    from traigent.labels import transport as t
+
+    monkeypatch.setattr(t, "_state_dir", lambda: tmp_path)
+    state = tmp_path / "labels_state.json"
+    real_same_entry = t.same_entry
+    seen: list[Path] = []
+
+    def replacing(fd, path):
+        other = tmp_path / "replacement"
+        other.write_text("not ours", encoding="utf-8")
+        os.replace(other, path)
+        seen.append(Path(path))
+        return real_same_entry(fd, path)
+
+    monkeypatch.setattr(t, "same_entry", replacing)
+    with pytest.raises(t.LabelTransportError):
+        t._retain_sequence(state, "s", 1)
+    assert len(seen) == 1  # the replacement really happened before the check
+    assert seen[0].read_text(encoding="utf-8") == "not ours"  # still there, untouched
+    assert not state.exists()
 
 
 @_needs_fcntl
