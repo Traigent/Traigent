@@ -28,6 +28,11 @@ def open_verified(path: str | os.PathLike[str], flags: int, mode: int = 0o600) -
     descriptor is leaked.
     """
     p = Path(path)
+    # Without O_NOFOLLOW (no such flag on this platform) the open precedes the entry
+    # check, so a symlink planted between the caller's pre-check and the open can be
+    # followed, and O_CREAT may create its target, before the mismatch is refused.
+    # Accepted: those platforms need elevated rights to create symlinks, and an
+    # attacker would already need write access to the user's own directory.
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(p, flags | nofollow | _CLOEXEC, mode)
     try:

@@ -355,11 +355,19 @@ def _write_json(base: Path, path: Path, value: Any) -> None:
     Filesystem failures are the closed store-path error (no path in the message).
     """
     path = _store_file(path, base)
+    tmp: Path | None = None
     try:
         _mkdir_durable(path.parent)
         tmp = path.parent / f".{path.name}.{os.urandom(8).hex()}.tmp"
         fd = open_verified(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # O_EXCL refused: the entry is not ours, so it must never be unlinked here.
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
     except OSError:
+        # Verification can fail after the temp file was created; remove it too.
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
         raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

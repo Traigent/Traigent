@@ -547,3 +547,25 @@ def test_a_failing_mkdir_is_a_closed_error_without_the_path(
     assert _code(err) == c.E_INVALID_RECORD
     assert "canary_store_dir" not in str(err.value)
     assert err.value.__cause__ is None
+
+
+@tvl_free
+def test_a_verification_failure_after_the_temp_create_leaves_no_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The temp file is created, then the path check fails: the temp must be removed."""
+    real_lstat = os.lstat
+
+    def lstat(p, *args, **kwargs):  # the verification's lstat of the temp path fails
+        if str(p).endswith(".tmp"):
+            raise OSError("simulated")
+        return real_lstat(p, *args, **kwargs)
+
+    monkeypatch.setattr(c.os, "lstat", lstat)
+    target = tmp_path / "head.json"
+    with pytest.raises(TuningError) as err:
+        c._write_json(tmp_path, target, {"a": 1})
+    assert err.value.code == c.E_INVALID_RECORD
+    assert str(tmp_path) not in str(err.value)
+    assert not target.exists()
+    assert [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
