@@ -20,21 +20,52 @@ class UnverifiedFileError(OSError):
     """The opened descriptor is not the regular file the path names (no path in message)."""
 
 
+_BINARY = getattr(os, "O_BINARY", 0)  # Windows: never translate line endings
+_READ_ATTEMPTS = 3
+_WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+
+
 def open_verified(path: str | os.PathLike[str], flags: int, mode: int = 0o600) -> int:
     """Open ``path`` as given and return a descriptor verified against the path.
 
     ``FileNotFoundError`` from the open itself is passed through unchanged; every other
     failure, including a verification mismatch, is an ``OSError``.  On any failure no
     descriptor is leaked.
+
+    A read-only open tolerates a concurrent atomic replacement: when the path now names
+    a different *regular file* (a writer published with ``os.replace`` between the open
+    and the check), the open is retried, each attempt fully verified, up to three times.
+    A symlink or any non-regular entry is never tolerated, and neither is any mismatch on
+    a write, create, append or lock open.
     """
     p = Path(path)
+    read_only = not flags & _WRITE_FLAGS
+    attempts = _READ_ATTEMPTS if read_only else 1
+    for attempt in range(attempts):
+        try:
+            return _open_once(p, flags, mode)
+        except _ReplacedError:
+            if attempt == attempts - 1:
+                raise UnverifiedFileError(
+                    "path no longer names the opened file"
+                ) from None
+    raise UnverifiedFileError(
+        "path no longer names the opened file"
+    )  # pragma: no cover
+
+
+class _ReplacedError(UnverifiedFileError):
+    """The path now names another regular file (an atomic replacement)."""
+
+
+def _open_once(p: Path, flags: int, mode: int) -> int:
     # Without O_NOFOLLOW (no such flag on this platform) the open precedes the entry
     # check, so a symlink planted between the caller's pre-check and the open can be
     # followed, and O_CREAT may create its target, before the mismatch is refused.
     # Accepted: those platforms need elevated rights to create symlinks, and an
     # attacker would already need write access to the user's own directory.
     nofollow = getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(p, flags | nofollow | _CLOEXEC, mode)
+    fd = os.open(p, flags | nofollow | _CLOEXEC | _BINARY, mode)
     try:
         opened = os.fstat(fd)
         if not stat.S_ISREG(opened.st_mode):
@@ -43,7 +74,11 @@ def open_verified(path: str | os.PathLike[str], flags: int, mode: int = 0o600) -
             named = os.lstat(p)
         except OSError:
             raise UnverifiedFileError("path no longer names the opened file") from None
-        if stat.S_ISLNK(named.st_mode) or not os.path.samestat(opened, named):
+        if stat.S_ISLNK(named.st_mode):
+            raise UnverifiedFileError("path no longer names the opened file")
+        if not os.path.samestat(opened, named):
+            if stat.S_ISREG(named.st_mode):
+                raise _ReplacedError("path now names another file")
             raise UnverifiedFileError("path no longer names the opened file")
     except BaseException:
         os.close(fd)

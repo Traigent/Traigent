@@ -10,6 +10,19 @@ import pytest
 from traigent.egress.log import RelayLog, RelayLogError, iter_lines, operator_log_path
 
 
+def _symlink_or_skip(target: Path, link: Path) -> None:
+    """Create a symlink, or skip where the platform or its privileges forbid it."""
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available here")
+
+
+_POSIX_MODES = pytest.mark.skipif(
+    os.name == "nt", reason="POSIX permission bits are not enforced here"
+)
+
+
 def test_a_plain_path_opens_and_resolves(tmp_path: Path) -> None:
     log = RelayLog(tmp_path / "sub" / "relay.jsonl")
     try:
@@ -36,7 +49,7 @@ def test_a_symlinked_log_is_refused_for_write_and_read(tmp_path: Path) -> None:
     target = tmp_path / "elsewhere.jsonl"
     target.write_text("")
     link = tmp_path / "relay.jsonl"
-    os.symlink(target, link)
+    _symlink_or_skip(target, link)
     with pytest.raises(RelayLogError):
         RelayLog(link)
     assert list(iter_lines(link)) == []
@@ -47,6 +60,7 @@ def test_a_directory_is_refused(tmp_path: Path) -> None:
         RelayLog(tmp_path)
 
 
+@_POSIX_MODES
 def test_a_link_swapped_in_after_the_path_check_is_not_followed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -56,7 +70,7 @@ def test_a_link_swapped_in_after_the_path_check_is_not_followed(
     victim.chmod(0o644)
     target = tmp_path / "relay.jsonl"
     checked = operator_log_path(target)  # passes: nothing there yet
-    os.symlink(victim, target)  # replaced between the check and the open
+    _symlink_or_skip(victim, target)  # replaced between the check and the open
     monkeypatch.setattr("traigent.egress.log.operator_log_path", lambda p: checked)
     with pytest.raises(RelayLogError):
         RelayLog(target)
@@ -64,6 +78,7 @@ def test_a_link_swapped_in_after_the_path_check_is_not_followed(
     assert (victim.stat().st_mode & 0o777) == 0o644  # fchmod never reached the target
 
 
+@_POSIX_MODES
 def test_a_file_swapped_between_the_check_and_the_open_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -79,7 +94,7 @@ def test_a_file_swapped_between_the_check_and_the_open_is_refused(
     def swapping_open(path, flags, mode=0o777):
         fd = real_open(path, flags, mode)  # creates the log file
         os.unlink(target)
-        os.symlink(victim, target)  # swapped right after the open
+        _symlink_or_skip(victim, target)  # swapped right after the open
         return fd
 
     monkeypatch.setattr("traigent.egress.log.operator_log_path", lambda p: checked)

@@ -754,7 +754,10 @@ class Controller:
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
-        _mkdir_durable(self.dir)
+        try:
+            _mkdir_durable(self.dir)
+        except OSError:
+            raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
         try:
             import fcntl  # POSIX only: imported when tuning is used, never at CLI start
         except ImportError:
@@ -2386,6 +2389,8 @@ class HeadLoader:
             st = (self.dir / _HEAD_FILE).stat()
         except FileNotFoundError:
             return None
+        except OSError:  # e.g. the store path is a regular file
+            raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
         stamp = (st.st_mtime_ns, st.st_size)
         if stamp != self._stamp:
             if self.environment is not None:

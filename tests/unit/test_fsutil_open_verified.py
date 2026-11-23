@@ -96,3 +96,96 @@ def test_no_descriptor_leaks_on_refusal(tmp_path: Path) -> None:
             _fsutil.open_verified(tmp_path, os.O_RDONLY)
     if before:
         assert len(os.listdir("/proc/self/fd")) <= before + 1
+
+
+def _swap_once(monkeypatch: pytest.MonkeyPatch, swap) -> list[int]:
+    real_open = os.open
+    calls: list[int] = []
+
+    def opening(path, flags, mode=0o777):
+        fd = real_open(path, flags, mode)
+        calls.append(fd)
+        if len(calls) == 1:
+            swap()
+        return fd
+
+    monkeypatch.setattr(_fsutil.os, "open", opening)
+    return calls
+
+
+def test_a_reader_tolerates_one_atomic_publication_between_open_and_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = tmp_path / "published"
+    f.write_text("old")
+
+    def publish() -> None:
+        new = tmp_path / "new"
+        new.write_text("new")
+        os.replace(new, f)
+
+    calls = _swap_once(monkeypatch, publish)
+    fd = _fsutil.open_verified(f, os.O_RDONLY)
+    try:
+        assert os.read(fd, 10) == b"new"
+    finally:
+        os.close(fd)
+    assert len(calls) == 2
+
+
+def test_a_writer_does_not_tolerate_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = tmp_path / "published"
+    f.write_text("old")
+
+    def publish() -> None:
+        new = tmp_path / "new"
+        new.write_text("new")
+        os.replace(new, f)
+
+    calls = _swap_once(monkeypatch, publish)
+    with pytest.raises(OSError):
+        _fsutil.open_verified(f, os.O_RDWR)
+    assert len(calls) == 1
+
+
+def test_a_reader_gives_up_after_bounded_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = tmp_path / "published"
+    f.write_text("old")
+    real_open = os.open
+    count = 0
+
+    def opening(path, flags, mode=0o777):
+        nonlocal count
+        fd = real_open(path, flags, mode)
+        count += 1
+        new = tmp_path / "new"
+        new.write_text("new")
+        os.replace(new, f)
+        return fd
+
+    monkeypatch.setattr(_fsutil.os, "open", opening)
+    with pytest.raises(OSError):
+        _fsutil.open_verified(f, os.O_RDONLY)
+    assert count == 3
+
+
+def test_a_symlink_swap_is_not_retried_for_a_reader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = tmp_path / "published"
+    f.write_text("old")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.write_text("x")
+
+    def swap() -> None:
+        f.unlink()
+        f.symlink_to(elsewhere)
+
+    calls = _swap_once(monkeypatch, swap)
+    with pytest.raises(OSError):
+        _fsutil.open_verified(f, os.O_RDONLY)
+    assert len(calls) <= 2  # the retry meets the symlink and is refused

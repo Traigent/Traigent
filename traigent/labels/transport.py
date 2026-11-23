@@ -651,20 +651,27 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
             data[scope] = max(sequence, current)
             with contextlib.suppress(OSError):
                 os.unlink(tmp)  # a stale temp of this pid; never opened through
-            tmp_fd = _open_state_fd(
-                tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_TRUNC
-            )
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps(data, sort_keys=True))
-                handle.flush()
-                os.fsync(handle.fileno())
-                # Threat model: the state directory is local and single-user; anyone
-                # able to write it already controls this user's state.  Cheap check
-                # only: the temp name must still be the file we wrote, with the
-                # descriptor still open, before it replaces the real file.
-                if not same_entry(handle.fileno(), tmp):
-                    raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
-            os.replace(tmp, path)
+            try:
+                tmp_fd = _open_state_fd(
+                    tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_TRUNC
+                )
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(data, sort_keys=True))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                    # Threat model: the state directory is local and single-user;
+                    # anyone able to write it already controls this user's state.
+                    # Cheap check only: the temp name must still be the file we
+                    # wrote, with the descriptor still open, before it replaces
+                    # the real file.
+                    if not same_entry(handle.fileno(), tmp):
+                        raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
+                os.replace(tmp, path)
+            except BaseException:
+                # The temp name is ours (exclusive create): never leave it behind.
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+                raise
             dir_fd = os.open(path.parent, os.O_RDONLY)
             try:
                 os.fsync(dir_fd)

@@ -1124,3 +1124,4 @@ def test_the_retained_state_temp_must_still_be_the_file_that_was_written(
     with pytest.raises(t.LabelTransportError):
         t._retain_sequence(state, "s", 1)
     assert not state.exists()
+    assert not list(tmp_path.glob("labels_state.tmp*"))  # the temp is removed

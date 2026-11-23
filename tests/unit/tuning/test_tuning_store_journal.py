@@ -569,3 +569,25 @@ def test_a_verification_failure_after_the_temp_create_leaves_no_temp_file(
     assert str(tmp_path) not in str(err.value)
     assert not target.exists()
     assert [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
+
+
+@tvl_free
+def test_a_regular_file_as_the_store_dir_is_a_closed_error_without_the_path(
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    blocker = tmp_path / "canary_store_file"
+    blocker.write_text("x")
+    with pytest.raises(TuningError) as err:
+        c.HeadLoader(blocker).head()
+    assert _code(err) == c.E_INVALID_RECORD
+    assert "canary_store_file" not in str(err.value)
+    assert err.value.__cause__ is None
+
+    with pytest.raises(TuningError) as err:
+        with c.Controller._locked(SimpleNamespace(dir=blocker)):  # type: ignore[arg-type]
+            pass
+    assert _code(err) == c.E_INVALID_RECORD
+    assert "canary_store_file" not in str(err.value)
+    assert err.value.__cause__ is None

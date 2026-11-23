@@ -249,6 +249,7 @@ def test_upstream_rules_accept(url, expected):
     assert parse_upstream(url) == expected
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_log_file_mode_is_0600(relay, log_path):
     send(relay, "GET", "/x")
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
@@ -314,6 +315,7 @@ def test_response_log_failure_still_delivers_then_refuses_everything(
     assert [ln["kind"] for ln in _lines(log_path)] == ["request"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_existing_loose_log_file_is_tightened_to_0600(tmp_path):
     path = tmp_path / "a" / "b" / "relay.jsonl"
     path.parent.mkdir(parents=True)
