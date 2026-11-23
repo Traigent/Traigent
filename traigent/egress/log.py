@@ -36,13 +36,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import stat
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from traigent._fsutil import open_verified
 from traigent.egress.route_words import ROUTE_WORDS
 
 try:  # POSIX
@@ -123,7 +123,8 @@ def operator_log_path(path: str | os.PathLike[str]) -> Path:
     try:
         if candidate.is_symlink():
             raise RelayLogError(_LOG_UNOPENABLE_MESSAGE)
-        resolved = candidate.resolve()
+        # Only the directory is resolved; the final component is never followed.
+        resolved = candidate.parent.resolve() / candidate.name
         if resolved.exists() and not resolved.is_file():
             raise RelayLogError(_LOG_UNOPENABLE_MESSAGE)
     except (OSError, RuntimeError, ValueError):
@@ -132,24 +133,14 @@ def operator_log_path(path: str | os.PathLike[str]) -> Path:
 
 
 def _open_log_fd(path: Path, flags: int, mode: int = 0o600) -> int:
-    """Open ``path`` without following a symlink; the descriptor must be a regular file.
+    """Open ``path`` as given, without following a symlink; verify the descriptor.
 
-    The refusal is part of the open itself (``O_NOFOLLOW``), so a link swapped in
-    after ``operator_log_path`` checked the path is not followed, and the checks that
-    follow (lock, ``fchmod``) act on this verified descriptor only.
+    ``O_NOFOLLOW`` is used where available, and the opened descriptor is always
+    checked to be a regular file that is the one the path names now, so a swap after
+    ``operator_log_path`` ran is refused on every platform.  The checks that follow
+    (lock, ``fchmod``) act on this verified descriptor only.
     """
-    fd = os.open(
-        path,
-        flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
-        mode,
-    )
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise OSError("not a regular file")
-    except BaseException:
-        os.close(fd)
-        raise
-    return fd
+    return open_verified(path, flags, mode)
 
 
 class RelayLog:

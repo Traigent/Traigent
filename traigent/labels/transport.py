@@ -31,7 +31,6 @@ import json
 import math
 import os
 import re
-import stat
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
@@ -40,6 +39,7 @@ from typing import Any, NoReturn
 
 import yaml
 
+from traigent._fsutil import open_verified, same_entry
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.logging import get_logger
 
@@ -579,30 +579,20 @@ def _require_local_file(path: Path) -> Path:
     return resolved
 
 
-_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
-_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-
-
 def _open_state_fd(path: Path, flags: int) -> int:
-    """Open a state file without following a symlink; the descriptor must be a regular file.
+    """Open a state file without following a symlink; the descriptor must be verified.
 
-    The no-follow refusal is part of the open itself, so a link swapped in after
-    ``_require_local_file`` is not followed.  A missing file raises
+    ``O_NOFOLLOW`` is used where available and the descriptor is always checked to be
+    a regular file that is the one the path names now, so a swap after
+    ``_require_local_file`` is refused on every platform.  A missing file raises
     ``FileNotFoundError``; any other failure is the closed ``sequence_not_persisted``.
     """
     try:
-        fd = os.open(path, flags | _NOFOLLOW | _CLOEXEC, 0o600)
+        return open_verified(path, flags, 0o600)
     except FileNotFoundError:
         raise
     except OSError:
         raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
-    except BaseException:
-        os.close(fd)
-        raise
-    return fd
 
 
 def _read_state(path: Path) -> dict[str, Any]:
@@ -668,6 +658,12 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
                 handle.write(json.dumps(data, sort_keys=True))
                 handle.flush()
                 os.fsync(handle.fileno())
+                # Threat model: the state directory is local and single-user; anyone
+                # able to write it already controls this user's state.  Cheap check
+                # only: the temp name must still be the file we wrote, with the
+                # descriptor still open, before it replaces the real file.
+                if not same_entry(handle.fileno(), tmp):
+                    raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
             os.replace(tmp, path)
             dir_fd = os.open(path.parent, os.O_RDONLY)
             try:

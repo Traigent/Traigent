@@ -62,3 +62,29 @@ def test_a_link_swapped_in_after_the_path_check_is_not_followed(
         RelayLog(target)
     assert victim.read_text() == "keep"
     assert (victim.stat().st_mode & 0o777) == 0o644  # fchmod never reached the target
+
+
+def test_a_file_swapped_between_the_check_and_the_open_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Even without O_NOFOLLOW, the opened file must be the one the path names now."""
+    monkeypatch.setattr(os, "O_NOFOLLOW", 0, raising=False)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep")
+    victim.chmod(0o644)
+    target = tmp_path / "relay.jsonl"
+    checked = operator_log_path(target)  # passes: nothing there yet
+    real_open = os.open
+
+    def swapping_open(path, flags, mode=0o777):
+        fd = real_open(path, flags, mode)  # creates the log file
+        os.unlink(target)
+        os.symlink(victim, target)  # swapped right after the open
+        return fd
+
+    monkeypatch.setattr("traigent.egress.log.operator_log_path", lambda p: checked)
+    monkeypatch.setattr("traigent._fsutil.os.open", swapping_open)
+    with pytest.raises(RelayLogError):
+        RelayLog(target)
+    assert victim.read_text() == "keep"
+    assert (victim.stat().st_mode & 0o777) == 0o644

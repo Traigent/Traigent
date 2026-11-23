@@ -1111,3 +1111,16 @@ def test_state_files_are_opened_without_following_a_swapped_in_link(
     assert outside.read_text(encoding="utf-8") == "keep"
     with pytest.raises(t.LabelTransportError):
         t._open_state_fd(tmp_path, os.O_RDONLY)  # a directory is not a regular file
+
+
+def test_the_retained_state_temp_must_still_be_the_file_that_was_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from traigent.labels import transport as t
+
+    monkeypatch.setattr(t, "_state_dir", lambda: tmp_path)
+    state = tmp_path / "labels_state.json"
+    monkeypatch.setattr(t, "same_entry", lambda fd, path: False)
+    with pytest.raises(t.LabelTransportError):
+        t._retain_sequence(state, "s", 1)
+    assert not state.exists()

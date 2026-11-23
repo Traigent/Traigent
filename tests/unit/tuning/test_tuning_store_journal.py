@@ -530,3 +530,20 @@ class TestStorePathContainment:
         assert _code(err) == c.E_INVALID_RECORD
         with pytest.raises(TuningError):
             c.read_head(str(tmp_path) + "\0")
+
+
+def test_a_failing_mkdir_is_a_closed_error_without_the_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = tmp_path / "canary_store_dir"
+    base.mkdir()
+
+    def boom(self, *a, **k):
+        raise PermissionError(13, "denied", str(self))
+
+    monkeypatch.setattr(Path, "mkdir", boom)
+    with pytest.raises(TuningError) as err:
+        c._write_json(base, base / "sub" / "head.json", {"a": 1})
+    assert _code(err) == c.E_INVALID_RECORD
+    assert "canary_store_dir" not in str(err.value)
+    assert err.value.__cause__ is None

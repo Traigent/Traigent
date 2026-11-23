@@ -53,7 +53,6 @@ import json
 import logging
 import os
 import re
-import stat
 import tempfile
 import threading
 import time
@@ -72,6 +71,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
+from traigent._fsutil import open_verified
 from traigent.tuning.authority import LOCAL_TRUSTED, ApproverAuthority
 from traigent.tuning.errors import (
     E_APPROVER_NOT_AUTHORIZED,
@@ -307,31 +307,20 @@ def _store_file(path: Path | str, base: Path) -> Path:
     return resolved
 
 
-_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
-_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-
-
 def _open_regular(path: Path, flags: int, mode: int = 0o600) -> int:
-    """Open ``path`` without following a symlink and return a descriptor of a regular file.
+    """Open ``path`` without following a symlink and return a verified regular-file descriptor.
 
-    The refusal is part of the open itself (``O_NOFOLLOW``), so a link swapped in
-    after an earlier check is not followed; the opened descriptor is then verified to
-    be a regular file.  A missing file raises ``FileNotFoundError`` for the caller's
-    default handling; any other failure is the closed store-path error (no path).
+    ``O_NOFOLLOW`` is used where available and the descriptor is always checked
+    against the path (see ``traigent._fsutil``), so a swap after an earlier check is
+    refused on every platform.  A missing file raises ``FileNotFoundError`` for the
+    caller's default handling; any other failure is the closed store-path error (no path).
     """
     try:
-        fd = os.open(path, flags | _NOFOLLOW | _CLOEXEC, mode)
+        return open_verified(path, flags, mode)
     except FileNotFoundError:
         raise
     except OSError:
         raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise TuningError(E_INVALID_RECORD, _E_STORE_PATH)
-    except BaseException:
-        os.close(fd)
-        raise
-    return fd
 
 
 # ---------------------------------------------------------------------------------
@@ -361,15 +350,17 @@ def _mkdir_durable(directory: Path) -> None:
 
 
 def _write_json(base: Path, path: Path, value: Any) -> None:
-    """Write JSON atomically: exclusive no-follow temp file beside the target, fsync, rename."""
+    """Write JSON atomically: exclusive no-follow temp file beside the target, fsync, rename.
+
+    Filesystem failures are the closed store-path error (no path in the message).
+    """
     path = _store_file(path, base)
-    _mkdir_durable(path.parent)
-    tmp = path.parent / f".{path.name}.{os.urandom(8).hex()}.tmp"
-    fd = os.open(
-        tmp,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _CLOEXEC,
-        0o600,
-    )
+    try:
+        _mkdir_durable(path.parent)
+        tmp = path.parent / f".{path.name}.{os.urandom(8).hex()}.tmp"
+        fd = open_verified(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except OSError:
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(value, fh, sort_keys=True, indent=2)
@@ -377,6 +368,10 @@ def _write_json(base: Path, path: Path, value: Any) -> None:
             os.fsync(fh.fileno())
         os.replace(tmp, path)
         _fsync_dir(path.parent)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
