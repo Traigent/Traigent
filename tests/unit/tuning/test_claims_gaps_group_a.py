@@ -1,4 +1,10 @@
-"""SDK-129 group A regressions for the tuning loop (N60, N71, N122, N123, N1255, N1256, N1258)."""
+"""SDK-129 group A regressions for the tuning loop.
+
+Checks in this module:
+- an approver mapping is refused rather than reduced to its names (g7);
+- a missing head file is refused with E_HEAD_DIVERGED before the optimizer runs (sol1);
+- an output list does not match an expected tuple of the same items (sol3).
+"""
 
 from __future__ import annotations
 
