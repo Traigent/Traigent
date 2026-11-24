@@ -28,9 +28,9 @@ Before running optimization, verify:
 6. Auth behavior is consistent across all endpoints if authentication is required; accept both `Authorization` and `x-api-key` because the SDK sends both from `HybridAPIOptions.auth_header`.
 7. Timeout/error behavior is explicit for `400/401/404/408/429/500/503` and client retry logic is implemented.
 
-## ID-Only Mode (Optional Convention)
+## Privacy-Preserving Mode (Default)
 
-Traigent Hybrid Mode supports an **ID-only pattern**; it is a convention you opt into, not something the SDK enforces. During optimization the trial path observes configuration values, metrics and IDs, and the SDK does not send input, output or target content on it when you follow the ID-only pattern below. This is a convention your evaluator service follows, not a filter the SDK applies to everything it sends. Session creation sends caller-supplied text, and the fields depend on the entry point: a connected `@traigent.optimize` run can forward `run_description` (and its session metadata) through ordinary session creation, except under an `optimization_only` workspace policy, which drops `run_description` before the request is sent, while the separate `create_hybrid_session()` call sends `problem_statement` and the caller's `metadata` (only the documented metadata keys are filtered). Keep content out of whichever fields you use. If an example ID is also your input text, it is sent as an ID.
+Traigent Hybrid Mode is designed with **privacy as the default**. Only configuration values and metrics are observed during optimization - your actual data content is never transmitted to Traigent.
 
 ### What Gets Transmitted
 

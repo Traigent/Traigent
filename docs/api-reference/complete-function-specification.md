@@ -328,9 +328,7 @@ objective), computed from per-example scores at ~zero cost:
   - `"na"` — two configs exist but there is no shared per-example data for a
     paired test.
 - `best_config_margin` is `None` when there is no runner-up (fewer than two
-  distinct configs, no primary objective, or a `band`-oriented primary
-  objective, including one declared only through the objective schema; band
-  objectives are ranked by band distance, so there is no raw-value runner-up).
+  distinct configs, or no primary objective).
 
 > **A margin within its CI at typical eval sizes (n = 20–80) is not a
 > decision.** A `"statistical_tie"` winner is noise-level ahead of its

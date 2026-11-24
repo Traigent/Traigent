@@ -249,8 +249,6 @@ Soundness rules:
   violation".
 * Every holdout row needs an expected `output`; a row without one refuses the holdout
   (`holdout_missing_expected_output`).
-* A holdout row tagged `metadata.synthetic: true` (the tag `ExampleSynthesizer` writes) refuses
-  the holdout (`holdout_synthetic_rows`): generated rows are not customer-labelled.
 * A holdout whose bytes or content equal the optimized function's `eval_dataset` is refused
   (`holdout_is_optimization_eval_set`).
 * The gate result names the incumbent it measured (fingerprint and generation), and carries the

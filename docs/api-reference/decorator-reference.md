@@ -4,7 +4,7 @@ This document provides a comprehensive reference for the `@traigent.optimize()` 
 
 ## Overview
 
-The `@traigent.optimize()` decorator is the main entry point for Traigent SDK. It tunes the parameters you declare in `configuration_space` for a function containing LLM invocations. Parameter values reach your code through the chosen `injection_mode` (default `context`: read them with `traigent.get_config()`); automatic framework overriding is off by default and is opt-in via `auto_override_frameworks=True` (requires the traigent-integrations plugin).
+The `@traigent.optimize()` decorator is the main entry point for Traigent SDK. It enables zero-code-change optimization for any function containing LLM invocations by automatically detecting and optimizing LLM parameters.
 
 ## Import Signatures
 
