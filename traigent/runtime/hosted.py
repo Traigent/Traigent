@@ -829,11 +829,16 @@ class ReactiveClient:
         if problem is not None:
             at = REACTIVE_AGENT_ID_ENV if self._agent_id_from_env else problem
             raise RuntimeRequirementError("invalid_request", at)
-        if not isinstance(self.project_id, str) or not re.fullmatch(
-            _PROJECT_ID, self.project_id
-        ):
+        # An explicit project id is trimmed before validation, as the JS SDK does.  A value
+        # that is blank after trimming fails the pattern too; it never falls back to the env.
+        project_id = (
+            self.project_id.strip()
+            if isinstance(self.project_id, str)
+            else self.project_id
+        )
+        if not isinstance(project_id, str) or not re.fullmatch(_PROJECT_ID, project_id):
             raise RuntimeRequirementError("invalid_request", "project_id")
-        project = quote(self.project_id, safe="")
+        project = quote(project_id, safe="")
         agent = quote(self.agent_id, safe="")
         return f"{REACTIVE_PREFIX}/{project}/agents/{agent}/{REACTIVE_SEGMENT}{tail}"
 

@@ -775,6 +775,26 @@ def test_an_explicit_digest_agent_id_still_lets_the_head_read_work() -> None:
     assert calls == [f"GET /api/v1/best-configs/agent-heads/{DIGEST}/config"]
 
 
+def test_a_padded_explicit_project_id_builds_the_path_with_the_trimmed_id() -> None:
+    calls: list[str] = []
+    client = _recording_client(calls, project_id=f"  {REACTIVE_PROJECT}\t ")
+    with pytest.raises(ReactiveNotFoundError):  # the recorder answers 404
+        client.list_attempts()
+    assert calls[0].startswith(
+        f"GET /api/v1/projects/{quote(REACTIVE_PROJECT, safe='')}/agents/"
+    )
+    assert "%20" not in calls[0] and "  " not in calls[0]
+
+
+def test_a_whitespace_only_explicit_project_raises_before_any_transport_call() -> None:
+    calls: list[str] = []
+    client = _recording_client(calls, project_id="   ")
+    with pytest.raises(RuntimeRequirementError) as err:
+        client.list_attempts()
+    assert err.value.path == "project_id"
+    assert calls == []
+
+
 @pytest.mark.parametrize("bad", ["", "   "])
 def test_a_blank_explicit_project_is_an_error_and_never_falls_back(
     monkeypatch: Any, bad: str
