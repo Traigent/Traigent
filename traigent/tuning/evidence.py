@@ -72,6 +72,19 @@ def _digest_of(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+def _is_synthetic(item: dict[str, Any]) -> bool:
+    """Whether a row carries the ``synthetic`` tag ExampleSynthesizer writes.
+
+    The tag lands at ``metadata.synthetic`` in a JSONL row (a top-level
+    ``synthetic`` is checked too). Generated rows are not customer-labelled, so
+    they cannot serve as a holdout. Never echoes row content.
+    """
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("synthetic") is True:
+        return True
+    return item.get("synthetic") is True
+
+
 def _parse_holdout(data: bytes) -> list[dict[str, Any]]:
     try:
         text = data.decode("utf-8")
@@ -89,6 +102,8 @@ def _parse_holdout(data: bytes) -> list[dict[str, Any]]:
             raise EvidenceUnavailable("holdout_invalid")
         if item.get("output") is None:  # exact-match scoring needs an expected output
             raise EvidenceUnavailable("holdout_missing_expected_output")
+        if _is_synthetic(item):
+            raise EvidenceUnavailable("holdout_synthetic_rows")
         examples.append(item)
     if not examples:
         raise EvidenceUnavailable("holdout_empty")
@@ -297,6 +312,72 @@ def _unresolved_limit(monitors: Sequence[Mapping[str, Any]]) -> float:
     return min(declared) if declared else DEFAULT_MAX_UNRESOLVED_FRACTION
 
 
+def _checker_label_sets(
+    monitors: Sequence[Mapping[str, Any]],
+    requirements: Mapping[str, Mapping[str, Any]],
+    checkers: Mapping[str, Callable[..., Any]] | None,
+    checker_labels: Mapping[str, Sequence[str]] | None,
+) -> dict[str, frozenset[str]]:
+    """Per-checker label sets, refusing a monitor whose checker cannot be trusted."""
+    label_sets: dict[str, frozenset[str]] = {}
+    for monitor in monitors:
+        requirement = requirements.get(str(monitor.get("requirement")))
+        if requirement is None:
+            raise EvidenceUnavailable("requirement_missing")
+        if "among" in requirement:
+            # RFC 0003 s11.4.2 population: not evaluated locally; refuse, never count
+            # out-of-population examples in the denominator.
+            raise EvidenceUnavailable("requirement_among_unsupported")
+        violation = requirement.get("violation") or {}
+        checker_name = str(violation.get("checker"))
+        if not callable((checkers or {}).get(checker_name)):
+            raise EvidenceUnavailable("checker_missing")
+        declared = (checker_labels or {}).get(checker_name)
+        if not declared:
+            raise EvidenceUnavailable("checker_labels_missing")
+        label_sets[checker_name] = frozenset(str(x) for x in declared)
+        if not set(violation.get("label_in", [])) <= label_sets[checker_name]:
+            raise EvidenceUnavailable("checker_labels_inconsistent")
+    return label_sets
+
+
+def _evaluate_monitors(
+    monitors: Sequence[Mapping[str, Any]],
+    requirements: Mapping[str, Mapping[str, Any]],
+    checkers: Mapping[str, Callable[..., Any]] | None,
+    label_sets: Mapping[str, frozenset[str]],
+    examples: Sequence[Any],
+    candidate_runs: Sequence[Any],
+) -> tuple[dict[str, str], dict[str, dict[str, Any]], dict[str, int]]:
+    """``(verdicts, counts, stats)`` of every promotion monitor on the holdout."""
+    from tvl.promotion_monitor import evaluate_promotion_monitor
+
+    verdicts: dict[str, str] = {}
+    all_counts: dict[str, dict[str, Any]] = {}
+    stats: dict[str, int] = {}
+    for monitor in monitors:
+        requirement = requirements[monitor["requirement"]]
+        violation = requirement["violation"]
+        counts = monitor_counts(
+            (checkers or {})[violation["checker"]],
+            list(violation.get("label_in", [])),
+            examples,
+            candidate_runs,
+            labels=label_sets[violation["checker"]],
+            stats=stats,
+        )
+        try:
+            result = evaluate_promotion_monitor(requirement, monitor, counts)
+        except Exception:  # noqa: BLE001 - TVL refusals are closed reasons
+            raise EvidenceUnavailable("monitor_not_evaluable") from None
+        verdict = str(result["verdict"])
+        if verdict == "UNKNOWN":
+            verdict = f"UNKNOWN({result['reason']})"
+        verdicts[monitor["name"]] = verdict
+        all_counts[monitor["name"]] = counts
+    return verdicts, all_counts, stats
+
+
 def build_promotion_evidence(
     module: Mapping[str, Any],
     *,
@@ -334,25 +415,7 @@ def build_promotion_evidence(
         raise EvidenceUnavailable("cost_unknown_unpriced_model")
     if names != {MEASURED_OBJECTIVE}:
         raise EvidenceUnavailable("objective_not_measurable")
-    label_sets: dict[str, frozenset[str]] = {}
-    for monitor in monitors:
-        requirement = requirements.get(str(monitor.get("requirement")))
-        if requirement is None:
-            raise EvidenceUnavailable("requirement_missing")
-        if "among" in requirement:
-            # RFC 0003 s11.4.2 population: not evaluated locally; refuse, never count
-            # out-of-population examples in the denominator.
-            raise EvidenceUnavailable("requirement_among_unsupported")
-        violation = requirement.get("violation") or {}
-        checker_name = str(violation.get("checker"))
-        if not callable((checkers or {}).get(checker_name)):
-            raise EvidenceUnavailable("checker_missing")
-        declared = (checker_labels or {}).get(checker_name)
-        if not declared:
-            raise EvidenceUnavailable("checker_labels_missing")
-        label_sets[checker_name] = frozenset(str(x) for x in declared)
-        if not set(violation.get("label_in", [])) <= label_sets[checker_name]:
-            raise EvidenceUnavailable("checker_labels_inconsistent")
+    label_sets = _checker_label_sets(monitors, requirements, checkers, checker_labels)
     digest, examples = read_holdout(holdout)
     held = set(eval_set_digests)
     if digest in held or examples_digest(examples) in held:
@@ -362,31 +425,10 @@ def build_promotion_evidence(
     )
 
     from tvl.promotion import epsilon_pareto_gate
-    from tvl.promotion_monitor import evaluate_promotion_monitor
 
-    verdicts: dict[str, str] = {}
-    all_counts: dict[str, dict[str, Any]] = {}
-    stats: dict[str, int] = {}
-    for monitor in monitors:
-        requirement = requirements[monitor["requirement"]]
-        violation = requirement["violation"]
-        counts = monitor_counts(
-            (checkers or {})[violation["checker"]],
-            list(violation.get("label_in", [])),
-            examples,
-            candidate_runs,
-            labels=label_sets[violation["checker"]],
-            stats=stats,
-        )
-        try:
-            result = evaluate_promotion_monitor(requirement, monitor, counts)
-        except Exception:  # noqa: BLE001 - TVL refusals are closed reasons
-            raise EvidenceUnavailable("monitor_not_evaluable") from None
-        verdict = str(result["verdict"])
-        if verdict == "UNKNOWN":
-            verdict = f"UNKNOWN({result['reason']})"
-        verdicts[monitor["name"]] = verdict
-        all_counts[monitor["name"]] = counts
+    verdicts, all_counts, stats = _evaluate_monitors(
+        monitors, requirements, checkers, label_sets, examples, candidate_runs
+    )
     errors: list[str] = []
     if stats.get("out_of_label_set"):
         errors.append(E_CHECKER_LABEL_OUT_OF_SET)

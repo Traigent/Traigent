@@ -311,23 +311,7 @@ class Tuning:
             self._fragment = _load_fragment(_resolve_fragment(tvl, caller_file))
             self.tvl_path = Path(tvl)
             return
-        for item in self.keep:
-            if not isinstance(item, FailureRate):
-                raise TuningError(E_INVALID_TUNING, "keep entries must be FailureRate")
-        if audit is not None and not isinstance(audit, RandomAudit):
-            raise TuningError(E_INVALID_TUNING, "audit must be RandomAudit")
-        for trigger in self.on:
-            if not isinstance(trigger, (ModelReleased, OnBreach, Every)):
-                raise TuningError(
-                    E_INVALID_TUNING,
-                    "on entries must be ModelReleased, OnBreach or Every",
-                )
-        if fix is not None and not isinstance(fix, ProposeFix):
-            raise TuningError(E_INVALID_TUNING, "fix must be ProposeFix")
-        if recover not in CLOSURE_SCOPES:
-            raise TuningError(
-                E_INVALID_TUNING, f"recover must be one of {list(CLOSURE_SCOPES)}"
-            )
+        _check_builder_args(self.keep, audit, self.on, fix, recover)
 
     # -- compile ----------------------------------------------------------------
     def _keep_names(self) -> list[str]:
@@ -355,48 +339,9 @@ class Tuning:
             prod = item.monitor or f"{name}_prod"
             gate = item.gate or f"{name}_gate"
             runtime_monitor_of[name] = prod
-            requirements.append(
-                {
-                    "name": name,
-                    "kind": "rate_bound",
-                    "unit": "invocation",
-                    "violation": {"checker": item.checker, "label_in": ["fail"]},
-                    "max_rate": decimal_to_json(item.at_most),
-                }
-            )
-            evidence: dict[str, Any] = {
-                "source": "customer_side",
-                "deployment_environment": "production",
-                "attribution": "agent_key_exact_v1",
-                "resolution": "terminal_status_v1",
-            }
-            if self.audit is not None:
-                evidence["sampling"] = {
-                    "mode": SAMPLING_MODE,
-                    "rate": decimal_to_json(self.audit.rate),
-                }
-            monitors.append(
-                {
-                    "name": prod,
-                    "requirement": name,
-                    "phase": "runtime",
-                    "evidence": evidence,
-                    "decision": dict(_RUNTIME_DECISION),
-                    "window": {
-                        "tumbling_hours": WINDOW_HOURS[item.window],
-                        "grace_minutes": 0,
-                    },
-                    "episode": {**_EPISODE_DEFAULTS, "closure_scope": self.recover},
-                }
-            )
-            monitors.append(
-                {
-                    "name": gate,
-                    "requirement": name,
-                    "phase": "promotion",
-                    "evidence": {"source": "evaluation_set"},
-                    "decision": dict(_GATE_DECISION),
-                }
+            requirements.append(_requirement_block(item, name))
+            monitors.extend(
+                _monitor_blocks(item, name, prod, gate, self.audit, self.recover)
             )
         rules: list[dict[str, Any]] = []
         used: set[str] = set()
@@ -415,48 +360,13 @@ class Tuning:
 
         for trig in self.on:
             if isinstance(trig, OnBreach):
-                for name in names:
-                    base = "on_breach" if len(names) == 1 else f"on_breach_{name}"
-                    rules.append(
-                        {
-                            "id": rule_id(trig.id if len(names) == 1 else None, base),
-                            "trigger": {
-                                "monitor": runtime_monitor_of[name],
-                                "event": "episode_opened",
-                            },
-                            **common(),
-                        }
-                    )
-            elif isinstance(trig, ModelReleased):
-                match: dict[str, Any] = {}
-                if trig.family:
-                    match["provider_family"] = list(trig.family)
-                if trig.tier:
-                    match["tier"] = list(trig.tier)
-                trigger: dict[str, Any] = {"external": "model_released"}
-                if match:
-                    trigger["match"] = match
-                rule: dict[str, Any] = {
-                    "id": rule_id(trig.id, "on_new_model"),
-                    "trigger": trigger,
-                    **common(),
-                }
-                if trig.admit is not None:
-                    rule["admit"] = {"tvar": trig.admit}
-                rule["protects"] = list(
-                    names if trig.protects is None else trig.protects
+                rules.extend(
+                    _breach_rules(trig, names, runtime_monitor_of, common, rule_id)
                 )
-                rules.append(rule)
+            elif isinstance(trig, ModelReleased):
+                rules.append(_model_released_rule(trig, names, common, rule_id))
             else:
-                rule = {
-                    "id": rule_id(trig.id, "on_schedule"),
-                    "trigger": {
-                        "schedule": {"every_days": trig.days, "anchor": trig.anchor}
-                    },
-                    **common(),
-                    "protects": list(names if trig.protects is None else trig.protects),
-                }
-                rules.append(rule)
+                rules.append(_schedule_rule(trig, names, common, rule_id))
         responses = [{"name": RESPONSE_NAME, "rules": rules}] if rules else []
         return {
             "requirements": requirements,
@@ -642,19 +552,162 @@ def _canonical(value: Any) -> Any:
     return json.loads(json.dumps(value, sort_keys=True))
 
 
-def _parse_doc(doc: Mapping[str, Any]) -> Tuning:
+def _check_builder_args(
+    keep: Sequence[Any],
+    audit: Any,
+    on: Sequence[Any],
+    fix: Any,
+    recover: str,
+) -> None:
+    """Refuse builder arguments of the wrong type or an unknown ``recover`` scope."""
+    for item in keep:
+        if not isinstance(item, FailureRate):
+            raise TuningError(E_INVALID_TUNING, "keep entries must be FailureRate")
+    if audit is not None and not isinstance(audit, RandomAudit):
+        raise TuningError(E_INVALID_TUNING, "audit must be RandomAudit")
+    for trigger in on:
+        if not isinstance(trigger, (ModelReleased, OnBreach, Every)):
+            raise TuningError(
+                E_INVALID_TUNING,
+                "on entries must be ModelReleased, OnBreach or Every",
+            )
+    if fix is not None and not isinstance(fix, ProposeFix):
+        raise TuningError(E_INVALID_TUNING, "fix must be ProposeFix")
+    if recover not in CLOSURE_SCOPES:
+        raise TuningError(
+            E_INVALID_TUNING, f"recover must be one of {list(CLOSURE_SCOPES)}"
+        )
+
+
+def _requirement_block(item: FailureRate, name: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "kind": "rate_bound",
+        "unit": "invocation",
+        "violation": {"checker": item.checker, "label_in": ["fail"]},
+        "max_rate": decimal_to_json(item.at_most),
+    }
+
+
+def _monitor_blocks(
+    item: FailureRate,
+    name: str,
+    prod: str,
+    gate: str,
+    audit: RandomAudit | None,
+    recover: str,
+) -> list[dict[str, Any]]:
+    """The runtime and promotion monitors of one requirement."""
+    evidence: dict[str, Any] = {
+        "source": "customer_side",
+        "deployment_environment": "production",
+        "attribution": "agent_key_exact_v1",
+        "resolution": "terminal_status_v1",
+    }
+    if audit is not None:
+        evidence["sampling"] = {
+            "mode": SAMPLING_MODE,
+            "rate": decimal_to_json(audit.rate),
+        }
+    return [
+        {
+            "name": prod,
+            "requirement": name,
+            "phase": "runtime",
+            "evidence": evidence,
+            "decision": dict(_RUNTIME_DECISION),
+            "window": {
+                "tumbling_hours": WINDOW_HOURS[item.window],
+                "grace_minutes": 0,
+            },
+            "episode": {**_EPISODE_DEFAULTS, "closure_scope": recover},
+        },
+        {
+            "name": gate,
+            "requirement": name,
+            "phase": "promotion",
+            "evidence": {"source": "evaluation_set"},
+            "decision": dict(_GATE_DECISION),
+        },
+    ]
+
+
+def _breach_rules(
+    trig: OnBreach,
+    names: Sequence[str],
+    runtime_monitor_of: Mapping[str, str],
+    common: Callable[[], dict[str, Any]],
+    rule_id: Callable[[str | None, str], str],
+) -> list[dict[str, Any]]:
+    rules: list[dict[str, Any]] = []
+    for name in names:
+        base = "on_breach" if len(names) == 1 else f"on_breach_{name}"
+        rules.append(
+            {
+                "id": rule_id(trig.id if len(names) == 1 else None, base),
+                "trigger": {
+                    "monitor": runtime_monitor_of[name],
+                    "event": "episode_opened",
+                },
+                **common(),
+            }
+        )
+    return rules
+
+
+def _model_released_rule(
+    trig: ModelReleased,
+    names: Sequence[str],
+    common: Callable[[], dict[str, Any]],
+    rule_id: Callable[[str | None, str], str],
+) -> dict[str, Any]:
+    match: dict[str, Any] = {}
+    if trig.family:
+        match["provider_family"] = list(trig.family)
+    if trig.tier:
+        match["tier"] = list(trig.tier)
+    trigger: dict[str, Any] = {"external": "model_released"}
+    if match:
+        trigger["match"] = match
+    rule: dict[str, Any] = {
+        "id": rule_id(trig.id, "on_new_model"),
+        "trigger": trigger,
+        **common(),
+    }
+    if trig.admit is not None:
+        rule["admit"] = {"tvar": trig.admit}
+    rule["protects"] = list(names if trig.protects is None else trig.protects)
+    return rule
+
+
+def _schedule_rule(
+    trig: Every,
+    names: Sequence[str],
+    common: Callable[[], dict[str, Any]],
+    rule_id: Callable[[str | None, str], str],
+) -> dict[str, Any]:
+    return {
+        "id": rule_id(trig.id, "on_schedule"),
+        "trigger": {"schedule": {"every_days": trig.days, "anchor": trig.anchor}},
+        **common(),
+        "protects": list(names if trig.protects is None else trig.protects),
+    }
+
+
+def _parse_requirements(
+    doc: Mapping[str, Any],
+) -> tuple[list[FailureRate], RandomAudit | None, str]:
+    """``(keep, audit, recover)`` from a compiled doc's requirements and monitors."""
     reqs = {r["name"]: r for r in doc.get("requirements", [])}
     runtime = [m for m in doc.get("monitors", []) if m["phase"] == "runtime"]
     gates = [m for m in doc.get("monitors", []) if m["phase"] == "promotion"]
     inv_hours = {v: k for k, v in WINDOW_HOURS.items()}
     keep: list[FailureRate] = []
-    runtime_of: dict[str, str] = {}
     audit: RandomAudit | None = None
     recover = "since_head_move"
     for name, req in reqs.items():
         prod = next(m for m in runtime if m["requirement"] == name)
         gate = next(m for m in gates if m["requirement"] == name)
-        runtime_of[prod["name"]] = name
         keep.append(
             FailureRate(
                 req["violation"]["checker"],
@@ -669,36 +722,46 @@ def _parse_doc(doc: Mapping[str, Any]) -> Tuning:
         if sampling is not None:
             audit = RandomAudit(_num_str(sampling["rate"]))
         recover = prod["episode"]["closure_scope"]
+    return keep, audit, recover
+
+
+def _add_trigger(on: list[_Trigger], rule: Mapping[str, Any], keep_count: int) -> None:
+    """Append the trigger a compiled rule declares to ``on``."""
+    trig = rule["trigger"]
+    if "monitor" in trig:
+        if not any(isinstance(t, OnBreach) for t in on):
+            on.append(OnBreach(id=rule["id"]) if keep_count == 1 else OnBreach())
+    elif "external" in trig:
+        match = trig.get("match", {})
+        on.append(
+            ModelReleased(
+                family=match.get("provider_family", ()),
+                tier=match.get("tier", ()),
+                admit=rule.get("admit", {}).get("tvar"),
+                protects=rule.get("protects"),
+                id=rule["id"],
+            )
+        )
+    else:
+        sched = trig["schedule"]
+        on.append(
+            Every(
+                sched["every_days"],
+                sched["anchor"],
+                protects=rule.get("protects"),
+                id=rule["id"],
+            )
+        )
+
+
+def _parse_doc(doc: Mapping[str, Any]) -> Tuning:
+    keep, audit, recover = _parse_requirements(doc)
     fix: ProposeFix | None = None
     on: list[_Trigger] = []
     for response in doc.get("responses", []):
         for rule in response["rules"]:
             fix = ProposeFix(rule["approval"], rule["deploy"])
-            trig = rule["trigger"]
-            if "monitor" in trig:
-                if not any(isinstance(t, OnBreach) for t in on):
-                    on.append(OnBreach(id=rule["id"]) if len(keep) == 1 else OnBreach())
-            elif "external" in trig:
-                match = trig.get("match", {})
-                on.append(
-                    ModelReleased(
-                        family=match.get("provider_family", ()),
-                        tier=match.get("tier", ()),
-                        admit=rule.get("admit", {}).get("tvar"),
-                        protects=rule.get("protects"),
-                        id=rule["id"],
-                    )
-                )
-            else:
-                sched = trig["schedule"]
-                on.append(
-                    Every(
-                        sched["every_days"],
-                        sched["anchor"],
-                        protects=rule.get("protects"),
-                        id=rule["id"],
-                    )
-                )
+            _add_trigger(on, rule, len(keep))
     return Tuning(keep=keep, audit=audit, on=on, fix=fix, recover=recover)
 
 
