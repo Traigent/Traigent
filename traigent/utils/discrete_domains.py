@@ -36,7 +36,7 @@ def stepped_int_values(low: int, high: int, step: int) -> tuple[int, ...]:
     values = list(range(low, high + 1, step))
     if not values:
         values.append(low)
-    if values[-1] != high:
+    elif values[-1] != high:
         values.append(high)
     return tuple(values)
 
