@@ -3,7 +3,7 @@
 Checks in this module:
 - an approver mapping is refused rather than reduced to its names (g7);
 - a missing head file is refused with E_HEAD_DIVERGED before the optimizer runs (sol1);
-- an output list does not match an expected tuple of the same items (sol3).
+- an actual tuple does not match an expected list of the same items (sol3).
 """
 
 from __future__ import annotations
