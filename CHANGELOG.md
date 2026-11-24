@@ -6,6 +6,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.34.2] - 2026-11-24
+
+### Fixed
+
+- Eval audit: the consensus detector now runs on the normal scoring path, including wrong-by-score cells, Bedrock model-family ids and consensus ranking, and the holdout refuses synthetic rows.
+- The outcome-matrix artifact honors the `TRAIGENT_LOG_EXAMPLE_CONTENT` opt-out.
+- Session network error handlers log the exception with its traceback.
+- The regression CLI lets non-`SystemExit` `BaseException`s propagate, while ordinary exceptions at module import stay a closed exit-2 result.
+
+### Security
+
+- Store, label-state and egress-log files are contained to their base directory: they are opened without following symlinks, must be plain files, and path errors are closed (they do not echo the path).
+- The egress relay verifies TLS certificates by default and no longer returns from a `finally` block.
+- `opentelemetry` is raised to 1.45.2 (GHSA-mf5v-w3w3-f6cg), and the install floors for the opentelemetry packages are now `>=1.45.2`.
+
 ## [0.34.1] - 2026-11-23
 
 0.34.0 was tagged but never published to PyPI: its publish job failed unit tests under the newest pyotp, litellm and openai. 0.34.1 is the first 0.34 release on PyPI and contains everything listed under 0.34.0.
