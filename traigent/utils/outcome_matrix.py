@@ -679,6 +679,30 @@ def select_failing_example_ids(
     return failing
 
 
+def _row_failure_basis(
+    cells_by_id: Mapping[Any, Any],
+    selected_ids: Iterable[Any],
+    threshold: float,
+) -> tuple[str, str] | None:
+    """``(failed_by, metric_field)`` when every selected cell failed, else None."""
+    reasons: set[str] = set()
+    fields: set[str] = set()
+    for trial_id in selected_ids:
+        cell = cells_by_id.get(trial_id)
+        if not isinstance(cell, Mapping) or (_classify_cell(cell, threshold) != _FAIL):
+            return None
+        if cell.get("error") is not None or cell.get("success") is False:
+            reasons.add("error")
+            fields.add("error")
+        else:
+            reasons.add("score")
+            fields.add("score" if cell.get("score") is not None else "accuracy")
+    return (
+        reasons.pop() if len(reasons) == 1 else "mixed",
+        fields.pop() if len(fields) == 1 else "mixed",
+    )
+
+
 def select_failure_basis(
     matrix: Mapping[str, Any],
     example_ids: Iterable[str],
@@ -723,23 +747,7 @@ def select_failure_basis(
         example_id, cells_by_id = _row_id_and_cells(position, row)
         if example_id not in wanted or example_id in basis:
             continue
-        reasons: set[str] = set()
-        fields: set[str] = set()
-        for trial_id in selected_ids:
-            cell = cells_by_id.get(trial_id)
-            if not isinstance(cell, Mapping) or (
-                _classify_cell(cell, threshold) != _FAIL
-            ):
-                break
-            if cell.get("error") is not None or cell.get("success") is False:
-                reasons.add("error")
-                fields.add("error")
-            else:
-                reasons.add("score")
-                fields.add("score" if cell.get("score") is not None else "accuracy")
-        else:
-            basis[example_id] = (
-                reasons.pop() if len(reasons) == 1 else "mixed",
-                fields.pop() if len(fields) == 1 else "mixed",
-            )
+        row_basis = _row_failure_basis(cells_by_id, selected_ids, threshold)
+        if row_basis is not None:
+            basis[example_id] = row_basis
     return basis

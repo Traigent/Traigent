@@ -767,11 +767,11 @@ def _invoke_model(
             # "anthropic/claude-haiku-4-5-20251001",
             # "anthropic/claude-sonnet-4",
             # "anthropic/claude-sonnet-4-6",
-            # "openai/gpt-4.1-mini",
-            "openai/gpt-4.1-mini",
+            # "openai/gpt-5.4-mini",
+            "openai/gpt-5.4-mini",
             # "openai/gpt-5o-mini",
-            "openai/gpt-4.1-mini",
-            # "openai/gpt-5-nano",
+            "openai/gpt-5.4-mini",
+            # "openai/gpt-5.4-mini",
         ],
         "temperature": TEMPERATURE_CHOICES,
         "max_tokens": [64],
@@ -784,7 +784,7 @@ def _invoke_model(
 )
 def answer(
     question: str,
-    model: str = "openai/gpt-4.1-mini",
+    model: str = "openai/gpt-5.4-mini",
     temperature: float = 0.1,
     max_tokens: int = 128,
 ) -> str:

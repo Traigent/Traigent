@@ -10,31 +10,38 @@ DEFAULT_SNAPSHOT_ID = "1970-01-01T00:00:00Z"
 _MINIMIZE_HINTS = ("cost", "latency", "error", "time", "loss", "token", "tokens")
 
 
-def _tvar(name: str, values: Any) -> dict[str, Any] | None:
-    if (
+def _is_real_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _range_tvar(name: str, values: Any) -> dict[str, Any] | None:
+    """A ``(lo, hi)`` numeric tuple as a range tvar, else ``None``."""
+    if not (
         isinstance(values, (list, tuple))
         and len(values) == 2
         and isinstance(values, tuple)
     ):
-        lo, hi = values
-        if all(
-            isinstance(v, (int, float)) and not isinstance(v, bool) for v in (lo, hi)
-        ):
-            kind = "int" if isinstance(lo, int) and isinstance(hi, int) else "float"
-            return {"name": name, "type": kind, "domain": {"range": [lo, hi]}}
-    if isinstance(values, (list, tuple)) and values:
-        if all(isinstance(v, str) for v in values):
-            kind = "str"
-        elif all(isinstance(v, int) and not isinstance(v, bool) for v in values):
-            kind = "int"
-        elif all(
-            isinstance(v, (int, float)) and not isinstance(v, bool) for v in values
-        ):
-            kind = "float"
-        else:
-            return None
-        return {"name": name, "type": f"enum[{kind}]", "domain": list(values)}
-    # ParameterRange objects (Choices/Range/IntRange/LogRange): reuse ConfigSpace's TVL export.
+        return None
+    lo, hi = values
+    if not all(_is_real_number(v) for v in (lo, hi)):
+        return None
+    kind = "int" if isinstance(lo, int) and isinstance(hi, int) else "float"
+    return {"name": name, "type": kind, "domain": {"range": [lo, hi]}}
+
+
+def _enum_kind(values: Any) -> str | None:
+    """The common element kind of a non-empty list or tuple, else ``None``."""
+    if all(isinstance(v, str) for v in values):
+        return "str"
+    if all(isinstance(v, int) and not isinstance(v, bool) for v in values):
+        return "int"
+    if all(_is_real_number(v) for v in values):
+        return "float"
+    return None
+
+
+def _parameter_range_tvar(name: str, values: Any) -> dict[str, Any] | None:
+    """ParameterRange objects (Choices/Range/IntRange/LogRange): reuse ConfigSpace's TVL export."""
     try:
         from traigent.api.config_space import ConfigSpace
 
@@ -43,6 +50,18 @@ def _tvar(name: str, values: Any) -> dict[str, Any] | None:
         return dict(spec)
     except Exception:  # noqa: BLE001 - an unsupported tvar is left out; TVL lint reports the gap
         return None
+
+
+def _tvar(name: str, values: Any) -> dict[str, Any] | None:
+    range_tvar = _range_tvar(name, values)
+    if range_tvar is not None:
+        return range_tvar
+    if isinstance(values, (list, tuple)) and values:
+        kind = _enum_kind(values)
+        if kind is None:
+            return None
+        return {"name": name, "type": f"enum[{kind}]", "domain": list(values)}
+    return _parameter_range_tvar(name, values)
 
 
 def _objective(item: Any) -> dict[str, str] | None:

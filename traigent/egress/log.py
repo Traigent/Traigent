@@ -51,6 +51,7 @@ except ImportError:  # pragma: no cover - Windows
 
 SCHEMA_VERSION = 1
 ROUTE_SOURCE_ALLOWLIST = "allowlist"
+_LOG_UNOPENABLE_MESSAGE = "the egress relay log cannot be opened"
 DEFAULT_LOG_PATH = Path(".traigent") / "egress" / "relay.jsonl"
 METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 OTHER_METHOD = "OTHER"
@@ -117,7 +118,7 @@ class RelayLog:
             self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             self._fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         except OSError:
-            raise RelayLogError("the egress relay log cannot be opened") from None
+            raise RelayLogError(_LOG_UNOPENABLE_MESSAGE) from None
         try:
             if fcntl is not None:
                 try:
@@ -130,9 +131,7 @@ class RelayLog:
                 try:
                     os.fchmod(self._fd, 0o600)
                 except OSError:
-                    raise RelayLogError(
-                        "the egress relay log cannot be opened"
-                    ) from None
+                    raise RelayLogError(_LOG_UNOPENABLE_MESSAGE) from None
             self._require_clean_tail()
             self._seq = max((e["seq"] for e in iter_lines(self.path)), default=0)
         except BaseException:
@@ -153,7 +152,7 @@ class RelayLog:
                 handle.seek(-1, os.SEEK_END)
                 last = handle.read(1)
         except OSError:
-            raise RelayLogError("the egress relay log cannot be opened") from None
+            raise RelayLogError(_LOG_UNOPENABLE_MESSAGE) from None
         if last != b"\n":
             raise RelayLogError(MSG_TORN_LOG)
 

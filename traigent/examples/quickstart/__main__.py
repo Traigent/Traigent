@@ -67,7 +67,7 @@ DATASET = [
     },
 ]
 CONFIG_SPACE = {
-    "model": ["gpt-4.1-mini", "gpt-4.1"],
+    "model": ["gpt-5.4-mini", "gpt-5.2"],
     "temperature": [0.0, 0.7, 1.0],
 }
 
@@ -85,7 +85,7 @@ _SYSTEM_PROMPT = (
 # A custom scoring function is the right escape hatch for mock-mode
 # demos; users who switch to real LLMs replace it with their own
 # accuracy metric (see walkthrough/real/01_tuning_qa.py).
-_MODEL_DEMO_SCORES = (("gpt-4.1", 0.85), ("gpt-4.1-mini", 0.65))
+_MODEL_DEMO_SCORES = (("gpt-5.2", 0.85), ("gpt-5.4-mini", 0.65))
 
 
 def _model_demo_score(model: object) -> float:

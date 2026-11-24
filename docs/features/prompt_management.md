@@ -73,7 +73,7 @@ result = client.run_playground(
     "support/welcome",
     version=2,
     variables={"customer_name": "Ada"},
-    model="gpt-4.1-mini",
+    model="gpt-5.4-mini",
     provider="openai",
     dry_run=False,
 )
@@ -115,7 +115,7 @@ result = prompts.run_playground(
     version=2,
     variables={"customer_name": "Ada"},
     provider="openai",
-    model="gpt-4.1-mini",
+    model="gpt-5.4-mini",
     dry_run=False,
 )
 

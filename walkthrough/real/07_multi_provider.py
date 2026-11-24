@@ -77,7 +77,7 @@ traigent.initialize(minimal_logging=True)
 # -----------------------------------------------------------------------------
 
 # Models organized by provider (valid model names: https://models.litellm.ai/)
-OPENAI_MODELS = ["gpt-4.1-mini", "gpt-4.1"]
+OPENAI_MODELS = ["gpt-5.4-mini", "gpt-5.2"]
 ANTHROPIC_MODELS = ["claude-haiku-4-5-20251001"]
 GOOGLE_MODELS = ["gemini-3.8-flash"]
 
@@ -105,7 +105,7 @@ PARALLEL_TRIALS = 4
 
 # Configuration space - only includes models for available providers
 CONFIG_SPACE = {
-    "model": AVAILABLE_MODELS if AVAILABLE_MODELS else ["gpt-4.1-mini"],
+    "model": AVAILABLE_MODELS if AVAILABLE_MODELS else ["gpt-5.4-mini"],
     "temperature": [0.1, 0.5],
 }
 
@@ -161,7 +161,7 @@ def answer_with_any_provider(question: str) -> str:
     routes the request to the appropriate provider SDK based on the model name.
     """
     config = traigent.get_config()
-    model = config.get("model", "gpt-4.1-mini")
+    model = config.get("model", "gpt-5.4-mini")
     temperature = config.get("temperature", 0.1)
 
     llm = create_llm_client(model, temperature)

@@ -182,7 +182,7 @@ they were declared in `@optimize`.
 # Context injection (default)
 @traigent.optimize(
     eval_dataset="math.jsonl",
-    configuration_space={"model": ["openai/gpt-4.1-mini", "openai/gpt-4.1"]},
+    configuration_space={"model": ["openai/gpt-5.4-mini", "openai/gpt-5.2"]},
     plateau_window=5,
     plateau_epsilon=1e-5,
     cost_limit=0.5,
@@ -205,7 +205,7 @@ def chat(question: str, config: dict) -> str:
 # Seamless injection
 @traigent.optimize(
     eval_dataset="scenarios.jsonl",
-    configuration_space={"model": ["openai/gpt-4o", "openai/gpt-4o-mini"]},
+    configuration_space={"model": ["openai/gpt-5.2", "openai/gpt-5.4-mini"]},
     injection_mode="seamless",
     metric_limit=100_000,
     metric_name="total_tokens",

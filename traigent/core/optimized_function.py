@@ -536,6 +536,23 @@ def _iter_config_model_values(value: Any) -> list[str]:
     return []
 
 
+def _unpriced_non_interactive_guidance() -> str:
+    """How to proceed when unpriced models meet a non-interactive shell."""
+    if is_mock_llm():
+        # Simulated run: name the dry-run route, not spend approval (#2795).
+        return (
+            "Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
+            "TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
+            f"pricing. {mock_cost_preflight_guidance()}"
+        )
+    return (
+        "Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON "
+        "or TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
+        "pricing, set TRAIGENT_COST_APPROVED=true to acknowledge this "
+        "cost concern, or run interactively."
+    )
+
+
 def _dedupe_model_ids(model_ids: list[str]) -> list[str]:
     return list(dict.fromkeys(model_ids))
 
@@ -4454,6 +4471,31 @@ class OptimizedFunction[**P, R]:
 
         return True, backend_optimization_strategy
 
+    def _preflight_model_ids(
+        self, effective_config_space: Mapping[str, Any]
+    ) -> list[str]:
+        """Model ids the cost preflight must cover (config space, else defaults)."""
+        model_ids = _extract_config_space_model_ids(effective_config_space)
+        if not model_ids:
+            model_ids = _dedupe_model_ids(
+                _extract_config_model_ids(getattr(self, "_current_config", {}))
+                + _extract_config_model_ids(getattr(self, "default_config", {}))
+            )
+        return model_ids
+
+    def _drop_admitted_unpriced_models(self, missing: list[str]) -> list[str]:
+        """Remove models a caller admitted by name from the unpriced list."""
+        exempt = getattr(self, "_unpriced_models_allowed", None) or ()
+        if exempt:
+            allowed = [m for m in missing if m in exempt]
+            if allowed:
+                logger.info(
+                    "Running admitted unpriced models with cost unknown: %s",
+                    ", ".join(allowed),
+                )
+            missing = [m for m in missing if m not in exempt]
+        return missing
+
     def _preflight_model_cost_coverage(
         self,
         effective_config_space: Mapping[str, Any],
@@ -4464,12 +4506,7 @@ class OptimizedFunction[**P, R]:
         if cost_preflight_mock_exempt():
             return
 
-        model_ids = _extract_config_space_model_ids(effective_config_space)
-        if not model_ids:
-            model_ids = _dedupe_model_ids(
-                _extract_config_model_ids(getattr(self, "_current_config", {}))
-                + _extract_config_model_ids(getattr(self, "default_config", {}))
-            )
+        model_ids = self._preflight_model_ids(effective_config_space)
         if not model_ids:
             return
 
@@ -4489,15 +4526,7 @@ class OptimizedFunction[**P, R]:
         # Only those exact ids are exempt; every other unpriced model still fails
         # the guards below.  The exemption is a private, instance-scoped set on an
         # isolated candidate copy, never a call-time option.
-        exempt = getattr(self, "_unpriced_models_allowed", None) or ()
-        if exempt:
-            allowed = [m for m in missing if m in exempt]
-            if allowed:
-                logger.info(
-                    "Running admitted unpriced models with cost unknown: %s",
-                    ", ".join(allowed),
-                )
-            missing = [m for m in missing if m not in exempt]
+        missing = self._drop_admitted_unpriced_models(missing)
         if not missing:
             return
 
@@ -4528,20 +4557,7 @@ class OptimizedFunction[**P, R]:
             return
 
         if not sys.stdin.isatty():
-            if is_mock_llm():
-                # Simulated run: name the dry-run route, not spend approval (#2795).
-                how_to_proceed = (
-                    "Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
-                    "TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
-                    f"pricing. {mock_cost_preflight_guidance()}"
-                )
-            else:
-                how_to_proceed = (
-                    "Set TRAIGENT_CUSTOM_MODEL_PRICING_JSON "
-                    "or TRAIGENT_CUSTOM_MODEL_PRICING_FILE with explicit per-token "
-                    "pricing, set TRAIGENT_COST_APPROVED=true to acknowledge this "
-                    "cost concern, or run interactively."
-                )
+            how_to_proceed = _unpriced_non_interactive_guidance()
             raise UnknownModelError(
                 "Cost coverage preflight failed before any optimization trial "
                 "started: pricing is unavailable for "
