@@ -796,15 +796,15 @@ def test_init_crash_is_recoverable(
 
     real_write, real_append = module_._write_json, module_._append_line
 
-    def write(path: Path, value: Any) -> None:
+    def write(base: Path, path: Path, value: Any) -> None:
         if path.name == failing:
             raise RuntimeError("simulated crash during init")
-        real_write(path, value)
+        real_write(base, path, value)
 
-    def append(path: Path, value: Any) -> None:
+    def append(base: Path, path: Path, value: Any) -> None:
         if path.name == failing:
             raise RuntimeError("simulated crash during init")
-        real_append(path, value)
+        real_append(base, path, value)
 
     monkeypatch.setattr(module_, "_write_json", write)
     monkeypatch.setattr(module_, "_append_line", append)
@@ -897,7 +897,8 @@ def test_legacy_plain_json_store_is_refused_untouched(tmp_path: Path) -> None:
     with pytest.raises(TuningError) as err:
         controller(tmp_path, FakeOptimizer())
     assert err.value.code == E_STORE_FORMAT
-    assert str(store) in str(err.value) and "re-initialize" in str(err.value)
+    assert "re-initialize" in str(err.value)
+    assert str(store) not in str(err.value)  # path-free error contract
     assert before == {n: (store / n).read_bytes() for n in before}
 
 

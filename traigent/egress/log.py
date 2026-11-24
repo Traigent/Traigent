@@ -42,6 +42,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from traigent._fsutil import open_verified
 from traigent.egress.route_words import ROUTE_WORDS
 
 try:  # POSIX
@@ -106,17 +107,55 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def operator_log_path(path: str | os.PathLike[str]) -> Path:
+    """Resolve the log path the operator chose, refusing anything that is not a plain file.
+
+    The path comes from the operator (``--log`` on the egress CLI or the caller of
+    :class:`RelayLog`), never from a request or a server response, so its *location* is
+    trusted: any directory the operator can write is acceptable.  What is refused is a
+    path that is not what it looks like: a NUL byte, a symlink at the file itself (it
+    could redirect an append-only audit log elsewhere), or an existing entry that is not
+    a regular file.  Errors carry no path.
+    """
+    if "\0" in os.fspath(path):
+        raise RelayLogError(_LOG_UNOPENABLE_MESSAGE)
+    candidate = Path(path)
+    try:
+        if candidate.is_symlink():
+            raise RelayLogError(_LOG_UNOPENABLE_MESSAGE)
+        # Only the directory is resolved; the final component is never followed.
+        resolved = candidate.parent.resolve() / candidate.name
+        if resolved.exists() and not resolved.is_file():
+            raise RelayLogError(_LOG_UNOPENABLE_MESSAGE)
+    except (OSError, RuntimeError, ValueError):
+        raise RelayLogError(_LOG_UNOPENABLE_MESSAGE) from None
+    return resolved
+
+
+def _open_log_fd(path: Path, flags: int, mode: int = 0o600) -> int:
+    """Open ``path`` as given, without following a symlink; verify the descriptor.
+
+    ``O_NOFOLLOW`` is used where available, and the opened descriptor is always
+    checked to be a regular file that is the one the path names now, so a swap after
+    ``operator_log_path`` ran is refused on every platform.  The checks that follow
+    (lock, ``fchmod``) act on this verified descriptor only.
+    """
+    return open_verified(path, flags, mode)
+
+
 class RelayLog:
     """Writer for the relay log. Thread-safe."""
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
-        self.path = Path(path)
+        self.path = operator_log_path(path)
         self._lock = threading.Lock()
         self._failed = False
         self._closed = False
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            self._fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            self._fd = _open_log_fd(
+                self.path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600
+            )
         except OSError:
             raise RelayLogError(_LOG_UNOPENABLE_MESSAGE) from None
         try:
@@ -145,12 +184,11 @@ class RelayLog:
         invalid line for a request that was forwarded.
         """
         try:
-            with open(self.path, "rb") as handle:
-                handle.seek(0, os.SEEK_END)
-                if handle.tell() == 0:
-                    return
-                handle.seek(-1, os.SEEK_END)
-                last = handle.read(1)
+            size = os.fstat(self._fd).st_size
+            if size == 0:
+                return
+            os.lseek(self._fd, size - 1, os.SEEK_SET)  # appends still go to the end
+            last = os.read(self._fd, 1)
         except OSError:
             raise RelayLogError(_LOG_UNOPENABLE_MESSAGE) from None
         if last != b"\n":
@@ -227,8 +265,11 @@ class RelayLog:
 def iter_lines(path: str | os.PathLike[str]) -> Iterator[dict[str, Any]]:
     """Yield the well-formed entries of a log file; torn or foreign lines are skipped."""
     try:
-        handle = open(path, encoding="utf-8")  # noqa: SIM115 - generator scope
-    except OSError:
+        handle = os.fdopen(
+            _open_log_fd(operator_log_path(path), os.O_RDONLY),
+            encoding="utf-8",
+        )
+    except (OSError, RelayLogError):
         return
     with handle:
         for raw in handle:

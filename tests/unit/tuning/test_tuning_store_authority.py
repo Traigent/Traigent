@@ -358,13 +358,13 @@ def test_creating_and_renaming_journal_files_fsyncs_the_parent_directory(
         real(fd)
 
     monkeypatch.setattr(os, "fsync", spy)
-    controller_module._write_json(tmp_path / "head.json", {"generation": 1})
+    controller_module._write_json(tmp_path, tmp_path / "head.json", {"generation": 1})
     assert len(synced_dirs) == 1  # the rename of head.json is durable
     synced_dirs.clear()
-    controller_module._append_line(tmp_path / "commits.jsonl", {"fact": "x"})
+    controller_module._append_line(tmp_path, tmp_path / "commits.jsonl", {"fact": "x"})
     assert len(synced_dirs) == 1  # the creation of commits.jsonl is durable
     synced_dirs.clear()
-    controller_module._append_line(tmp_path / "commits.jsonl", {"fact": "y"})
+    controller_module._append_line(tmp_path, tmp_path / "commits.jsonl", {"fact": "y"})
     assert synced_dirs == []  # an append to an existing file adds no directory entry
 
 

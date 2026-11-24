@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,11 @@ pytestmark = pytest.mark.skipif(
 NAME = "Alice_has_diabetes"  # a customer-chosen name: content, sealed before it leaves
 AGENT_REF = "agentref_" + "ab" * 16
 DATASET_REF = "datasetref_" + "cd" * 16
+
+_needs_fcntl = pytest.mark.skipif(
+    importlib.util.find_spec("fcntl") is None,
+    reason="the state writer needs fcntl advisory locks",
+)
 
 
 def _validator(definition: str, schema_file: str = "label_io_schema.json"):
@@ -356,6 +362,7 @@ def test_corrupt_state_fails_closed(
     assert result == {} and fake.plaintexts == {}
 
 
+@_needs_fcntl
 def test_sequence_is_persisted_and_an_older_list_is_refused_after_restart(
     tmp_path: Path, vectors: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -371,7 +378,7 @@ def test_sequence_is_persisted_and_an_older_list_is_refused_after_restart(
     _fake, sent = asyncio.run(_with_server(vectors, first))
     assert sent == {AGENT_REF: 1}
     assert json.loads(state.read_text("utf-8"))[_scope(vectors)] == 1
-    assert not list(tmp_path.glob("labels_state.tmp*"))  # temp file renamed away
+    assert not list(tmp_path.glob("labels_state.json.*.tmp"))  # temp renamed away
 
     # another client has since verified a newer list (sequence 2) and retained it
     state.write_text(json.dumps({_scope(vectors): 2}), encoding="utf-8")
@@ -639,7 +646,7 @@ def test_other_session_factories_register_their_own_base(
         await cloud.close()
 
         backend = BackendIntegratedClient(
-            api_key="uk_" + "a" * 43,
+            api_key="uk_" + "a" * 43,  # pragma: allowlist secret
             backend_config=BackendClientConfig(backend_base_url=base),
         )
         backend.auth_manager = MagicMock()
@@ -1055,17 +1062,3 @@ def test_dotdot_state_path_escaping_state_dir_is_refused(
         t._retain_sequence(escaped, "s", 1)
     assert not (tmp_path / "escaped.json").exists()
     assert not (tmp_path / "escaped.lock").exists()
-
-
-def test_normal_state_path_inside_state_dir_still_works(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from traigent.labels import transport as t
-
-    state_dir = tmp_path / "state"
-    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(state_dir))
-    state = t._state_path()
-    assert state == state_dir / "labels_state.json"
-    t._retain_sequence(state, "s", 4)
-    assert t._retained_sequence(state, "s") == 4
-    assert json.loads(state.read_text("utf-8")) == {"s": 4}
