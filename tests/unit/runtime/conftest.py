@@ -12,6 +12,8 @@ from typing import Any
 import pytest
 
 PROJECT = "proj-1"
+#: The vendored contract pins project_id to the ``project_<hex>`` shape.
+REACTIVE_PROJECT = "project_" + "a" * 32
 AGENT = "agent-1"
 PREFIX = f"/api/v1beta/projects/{PROJECT}"
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -295,10 +297,14 @@ class Reactive:
             ],
         )
         self.tokens = TokenMap(self.state)
-        self.backend = StrictBackend(self.agent_ref)
+        self.backend = StrictBackend(self.agent_ref, agent_id=AGENT)
         self.clock = self.backend.clock
         self.client = ReactiveClient(
-            self.agent_ref, self.tokens, transport=self.backend.transport
+            self.agent_ref,
+            self.tokens,
+            project_id=REACTIVE_PROJECT,
+            agent_id=AGENT,
+            transport=self.backend.transport,
         )
         self.response = self.tokens.hosted("response", self.requirement.ladder_name)
         self.rule = self.tokens.hosted("rule", "fix")

@@ -102,7 +102,7 @@ def test_happy_path_publishes_with_the_approval_generation_and_key(
     assert result["publish_result_key"] == deploy_key(ref, FP, GATE)
     # deploy_started was accepted before the write
     order = [r["operation"] for r in b.log]
-    assert order.index("startTvlReactiveAttempt") < order.index(PUBLISH)
+    assert order.index("production_reactive.start_attempt") < order.index(PUBLISH)
     # The head is read back through the exact-version endpoint, not a listing.
     assert reactive.client.get_pinned_config().spec == SPEC
     assert b.attempts[ref]["deploy_outcome"] == "deployed"

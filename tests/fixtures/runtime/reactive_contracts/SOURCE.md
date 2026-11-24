@@ -6,7 +6,9 @@ To refresh: copy the files from the new TraigentSchema ref with `git show <ref>:
 update the pins, and say so in the PR.
 
 Source: Traigent/TraigentSchema develop, root `traigent_schema/schemas/`.
-commit sha1: cdbcd68be09ad5b51b7451da0401e05ced7eca3d
+commit sha1: 01e7171ef99074a3b21cc5c1795a597994c0f6cc
+interim pin: Schema PR fix/reactive-agent-ref-is-agent-id @01e7171ef (unmerged); re-vendor from the merged SHA before push.
+The other files below are still the cdbcd68be copies; only the two reactive endpoint files were re-vendored from 01e7171ef.
 
 ## Files
 
@@ -22,11 +24,11 @@ optimization/hybrid_api_options_schema.json sha256: 56f5b08b2ac68a424ed4f180fc48
 optimization/optimization_strategy_schema.json sha256: dca307773a0ca77358c37220f92140617078a8e3718a41419d3447c7b26ff642
 optimization/tvl_reactive_authority_schema.json sha256: 8f7ec4cf458e1f1940cbf92621187557a6f572c6ffbaddd035849ac70339ff4f
 optimization/tvl_reactive_common_schema.json sha256: 0acb1599b989f096dbd5bcf7e826cebae8677169e0d235c3d2c794ae93e52617
-optimization/tvl_reactive_endpoints.json sha256: 95bdcdfe6743b5e0717af371ad04546a435cd0670fc5390029d7f9407d4256a2
+optimization/tvl_reactive_endpoints.json sha256: f9a34b4b015ef2dcb3cd606ed2f62fd13f27439e1e4e1bd56934bf8b7d6083b4
 optimization/tvl_reactive_facts_schema.json sha256: d8ee10511c51462ba53015b78907a5f1ba6d02f0bb9898c915a48aecf56ca136
 optimization/tvl_reactive_import_schema.json sha256: e399010abeef016c04524d5b7611edb9100cff30944f6a921df06fbaa72a6ad9
 optimization/tvl_reactive_notification_schema.json sha256: f642ad95ab0657bae384ce21617dc33175fdc6778ae1f88d6f6e76044bed7fd9
 optimization/tvl_reactive_policy_schema.json sha256: 143c677751683f74a39313a7133b6afcb5e0b86f2fedc430ff720b17230f1a76
 optimization/tvl_reactive_stage_schema.json sha256: 46a498091aad801bff815667ec3769f1636929bf1d7908c80ada8259ff8950f3
 production_requirements/tvl_reactive_import_endpoints.json sha256: 4b6d584089c63c87255c5b492cf7cc1f80834221dc4fe3b92d07031437890de9
-production_requirements/tvl_reactive_policy_endpoints.json sha256: a84f619c7aed88873cb37c0f86e610ce43c72139a312f202cf7427c3145ece89
+production_requirements/tvl_reactive_policy_endpoints.json sha256: 2c30d72344dd34e8c6f0ffb4490c87e4b94fa9c31b090f49615d6f8a6d2c4aa9

@@ -84,11 +84,11 @@ def test_start_is_accepted_before_the_run_and_the_result_carries_the_generation(
     assert fn.starts_at_launch == [1]  # the backend had accepted the start at launch
     assert fn.calls == [{"cost_limit": 5.0, "max_trials": 20}]
     order = ops(reactive)
-    assert order.index("reserveTvlReactiveAttempt") < order.index(
-        "startTvlReactiveAttempt"
+    assert order.index("production_reactive.reserve_attempt") < order.index(
+        "production_reactive.start_attempt"
     )
-    assert order.index("startTvlReactiveAttempt") < order.index(
-        "reportTvlReactiveAttemptResult"
+    assert order.index("production_reactive.start_attempt") < order.index(
+        "production_reactive.report_attempt_result"
     )
     (report,) = reactive.backend.results
     assert report["reservation_generation"] == result.reservation_generation == 1
@@ -112,7 +112,7 @@ def test_no_second_start_for_an_occurrence(reactive: Reactive, tmp_path: Any) ->
     # Even an explicit retry with the attempt finished is refused by state, never re-started.
     assert reactive.backend.starts_accepted[ref] == 1
     assert [r["operation"] for r in reactive.backend.log[before:]].count(
-        "startTvlReactiveAttempt"
+        "production_reactive.start_attempt"
     ) == 0
 
 
@@ -154,13 +154,13 @@ def test_reservation_conflict_for_a_second_holder(reactive: Reactive) -> None:
 def test_start_refused_means_nothing_runs(reactive: Reactive) -> None:
     ref = reactive.approved_optimize()
     grant = reactive.backend.attempts[ref]["grant_ref"]
-    original = reactive.backend._op_startTvlReactiveAttempt
+    original = reactive.backend._op_production_reactive_start_attempt
 
     def revoke_then_start(v: Any, q: Any, body: Any) -> Any:
         reactive.backend.revoke(grant)  # approval revoked between reserve and start
         return original(v, q, body)
 
-    reactive.backend._op_startTvlReactiveAttempt = revoke_then_start  # type: ignore[method-assign]
+    reactive.backend._op_production_reactive_start_attempt = revoke_then_start  # type: ignore[method-assign]
     fn = Fn(reactive)
     with pytest.raises(RuntimeRequirementError) as err:
         go(reactive, fn)
@@ -174,7 +174,7 @@ def test_unconfirmed_start_holds_without_running_or_asking_twice(
 ) -> None:
     ref = reactive.approved_optimize()
     reactive.backend.fail_next(
-        "startTvlReactiveAttempt", "transport", "503", "transport"
+        "production_reactive.start_attempt", "transport", "503", "transport"
     )
     fn = Fn(reactive)
     with pytest.raises(RuntimeRequirementError) as err:
@@ -182,22 +182,22 @@ def test_unconfirmed_start_holds_without_running_or_asking_twice(
     assert err.value.code == E_HOLD and err.value.path == "start_unconfirmed"
     keys = {
         r["body"]["start_key"]
-        for r in reactive.backend.requests_of("startTvlReactiveAttempt")
+        for r in reactive.backend.requests_of("production_reactive.start_attempt")
     }
     assert len(keys) == 1  # three tries are ONE request, replayed under one key
     assert fn.calls == [] and reactive.backend.starts_accepted[ref] == 0
     # The cache remembers: a later call does not even try again.
     with pytest.raises(RuntimeRequirementError):
         go(reactive, fn, attempt_ref=ref)
-    assert len(reactive.backend.requests_of("startTvlReactiveAttempt")) == 3
+    assert len(reactive.backend.requests_of("production_reactive.start_attempt")) == 3
 
 
 def test_lost_start_response_is_replayed_not_restarted(reactive: Reactive) -> None:
     ref = reactive.approved_optimize()
-    reactive.backend.fail_next("startTvlReactiveAttempt", "drop_after_commit")
+    reactive.backend.fail_next("production_reactive.start_attempt", "drop_after_commit")
     fn = Fn(reactive)
     result = go(reactive, fn)
-    starts = reactive.backend.requests_of("startTvlReactiveAttempt")
+    starts = reactive.backend.requests_of("production_reactive.start_attempt")
     assert (
         len(starts) == 2
         and starts[0]["body"]["start_key"] == starts[1]["body"]["start_key"]
@@ -217,9 +217,11 @@ def test_heartbeat_renews_the_reservation_while_the_run_is_in_flight(
         return SimpleNamespace(optimization_id="run-slow")
 
     go(reactive, Fn(reactive, slow))
-    beats = reactive.backend.requests_of("renewTvlReactiveAttemptLease")
+    beats = reactive.backend.requests_of("production_reactive.heartbeat_attempt")
     assert len(beats) >= 3
-    first = reactive.backend.requests_of("reserveTvlReactiveAttempt")[0]["response"]
+    first = reactive.backend.requests_of("production_reactive.reserve_attempt")[0][
+        "response"
+    ]
     assert all(
         b["body"]["reservation_generation"] == first["generation"]
         and b["body"]["reservation_ref"] == first["reservation_ref"]
@@ -259,13 +261,15 @@ def test_heartbeat_ambiguity_is_tolerated_only_until_the_vouched_deadline(
         return SimpleNamespace(optimization_id="run-ok")
 
     reactive.backend.fail_next(
-        "renewTvlReactiveAttemptLease", "transport", "503", "transport", "429"
+        "production_reactive.heartbeat_attempt", "transport", "503", "transport", "429"
     )
     assert go(reactive, Fn(reactive, tolerated)).result_recorded
 
     reactive2 = Reactive(reactive.state.parent / "second")
     reactive2.approved_optimize()
-    reactive2.backend.fail_next("renewTvlReactiveAttemptLease", *["transport"] * 50)
+    reactive2.backend.fail_next(
+        "production_reactive.heartbeat_attempt", *["transport"] * 50
+    )
     cancelled = {"flag": False}
 
     async def until_deadline() -> Any:
@@ -368,7 +372,7 @@ def test_expired_or_revoked_grant_runs_nothing(reactive: Reactive) -> None:
     assert err.value.code in (E_APPROVAL_EXPIRED, "approval_required")
     assert (
         fn.calls == []
-        and reactive.backend.requests_of("reserveTvlReactiveAttempt") == []
+        and reactive.backend.requests_of("production_reactive.reserve_attempt") == []
     )
 
 
@@ -426,7 +430,9 @@ def test_lease_loss_is_judged_by_the_start_receipt_before_any_heartbeat_succeeds
     reactive: Reactive,
 ) -> None:
     ref = reactive.approved_optimize()
-    reactive.backend.fail_next("renewTvlReactiveAttemptLease", *["transport"] * 200)
+    reactive.backend.fail_next(
+        "production_reactive.heartbeat_attempt", *["transport"] * 200
+    )
     cancelled = {"flag": False}
 
     async def work() -> Any:
@@ -443,7 +449,9 @@ def test_lease_loss_is_judged_by_the_start_receipt_before_any_heartbeat_succeeds
         go(reactive, Fn(reactive, work))
     assert err.value.path == "lease" and cancelled["flag"]
     assert reactive.backend.results == []
-    start = reactive.backend.requests_of("startTvlReactiveAttempt")[0]["response"]
+    start = reactive.backend.requests_of("production_reactive.start_attempt")[0][
+        "response"
+    ]
     assert "lease_expires_at" in start  # the deadline comes from the receipt
     assert reactive.backend.starts_accepted[ref] == 1
 
@@ -491,7 +499,10 @@ def test_crash_after_optimize_before_results_leaves_the_result_reportable(
 ) -> None:
     ref = reactive.approved_optimize()
     reactive.backend.fail_next(
-        "reportTvlReactiveAttemptResult", "transport", "transport", "transport"
+        "production_reactive.report_attempt_result",
+        "transport",
+        "transport",
+        "transport",
     )
     with pytest.raises(RuntimeRequirementError) as err:
         go(reactive, Fn(reactive))

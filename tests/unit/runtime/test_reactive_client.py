@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
@@ -16,13 +18,14 @@ from traigent.runtime.head_loader import (
 from traigent.runtime.hosted import (
     ReactiveClient,
     ReactiveError,
+    ReactiveNotFoundError,
     build_candidate,
     deploy_key,
     parse_refusal,
 )
 from traigent.runtime.model import E_BACKEND, E_STATE, RuntimeRequirementError
 
-from .conftest import CANARY, Reactive
+from .conftest import AGENT, CANARY, REACTIVE_PROJECT, Reactive
 from .reactive_fake import SCHEMA_ROOT, SCHEMAS, make_ref, refusal
 
 
@@ -168,7 +171,7 @@ def test_names_are_sent_as_hosted_tokens_only(reactive: Reactive) -> None:
             }
         ],
     )
-    (sent,) = reactive.backend.requests_of("stageTvlReactiveEvaluation")
+    (sent,) = reactive.backend.requests_of("production_reactive.stage_evaluation")
     text = json.dumps(sent["body"])
     for local in (
         reactive.requirement.monitor_name,
@@ -282,7 +285,7 @@ def test_responses_are_parsed_strictly(reactive: Reactive, mutate: Any) -> None:
     ref = reactive.approved_optimize()
     good = reactive.backend.transport(
         "GET",
-        f"/api/v1/production-reactive/agents/{reactive.agent_ref}/attempts/{ref}",
+        f"/api/v1/projects/{REACTIVE_PROJECT}/agents/{AGENT}/production-reactive/attempts/{ref}",
         None,
         None,
     )[1]
@@ -290,7 +293,13 @@ def test_responses_are_parsed_strictly(reactive: Reactive, mutate: Any) -> None:
     def transport(*_a: Any) -> tuple[int, Any, dict[str, str]]:
         return 200, mutate(good), {}
 
-    client = ReactiveClient(reactive.agent_ref, reactive.tokens, transport=transport)
+    client = ReactiveClient(
+        reactive.agent_ref,
+        reactive.tokens,
+        project_id=REACTIVE_PROJECT,
+        agent_id=AGENT,
+        transport=transport,
+    )
     with pytest.raises(ReactiveError) as err:
         client.get_attempt(ref)
     assert err.value.code == E_BACKEND and err.value.ambiguous
@@ -301,7 +310,11 @@ def test_a_response_for_another_attempt_is_refused(reactive: Reactive) -> None:
     doc = reactive.client.get_attempt(one)
 
     client = ReactiveClient(
-        reactive.agent_ref, reactive.tokens, transport=lambda *_a: (200, doc, {})
+        reactive.agent_ref,
+        reactive.tokens,
+        project_id=REACTIVE_PROJECT,
+        agent_id=AGENT,
+        transport=lambda *_a: (200, doc, {}),
     )
     with pytest.raises(ReactiveError):
         client.get_attempt(two)
@@ -320,6 +333,8 @@ def test_refusal_envelope_is_closed(reactive: Reactive) -> None:
     client = ReactiveClient(
         reactive.agent_ref,
         reactive.tokens,
+        project_id=REACTIVE_PROJECT,
+        agent_id=AGENT,
         transport=lambda *_a: (
             409,
             {**refusal("grant_not_valid"), "detail": CANARY},
@@ -446,6 +461,8 @@ def test_approval_context_response_is_closed(reactive: Reactive, mutate: Any) ->
     client = ReactiveClient(
         reactive.agent_ref,
         reactive.tokens,
+        project_id=REACTIVE_PROJECT,
+        agent_id=AGENT,
         transport=lambda *_a: (200, mutate(good), {}),
     )
     with pytest.raises(ReactiveError) as err:
@@ -477,7 +494,172 @@ def test_notification_for_another_ref_is_refused(reactive: Reactive) -> None:
     one, two = b.add_notification(), b.add_notification()
     doc = reactive.client.get_notification(one)
     client = ReactiveClient(
-        reactive.agent_ref, reactive.tokens, transport=lambda *_a: (200, doc, {})
+        reactive.agent_ref,
+        reactive.tokens,
+        project_id=REACTIVE_PROJECT,
+        agent_id=AGENT,
+        transport=lambda *_a: (200, doc, {}),
     )
     with pytest.raises(ReactiveError):
         client.get_notification(two)
+
+
+# --- project-scoped reactive paths, agent-id addressing (SDK-CONTRACT-reactive-paths) ----
+
+DIGEST = "agentref_" + "0" * 32
+
+
+def _recording_client(
+    calls: list[str],
+    *,
+    project_id: str = REACTIVE_PROJECT,
+    agent_id: str | None = AGENT,
+) -> ReactiveClient:
+    from .reactive_fake import refusal
+
+    def transport(method: str, path: str, *_a: Any) -> tuple[int, Any, dict[str, str]]:
+        calls.append(f"{method} {path}")
+        return 404, refusal("reference_not_found"), {}
+
+    from traigent.runtime.hosted import TokenMap
+
+    return ReactiveClient(
+        DIGEST,
+        TokenMap(Path("/nonexistent-token-state")),
+        project_id=project_id,
+        agent_id=agent_id,
+        transport=transport,
+    )
+
+
+def _contract_reactive_routes() -> list[tuple[str, str]]:
+    """(method, documented path) for every production-reactive route in the vendored contract."""
+    from .reactive_fake import SCHEMA_ROOT
+
+    doc = json.loads(
+        (SCHEMA_ROOT / "optimization/tvl_reactive_endpoints.json").read_text()
+    )
+    routes = []
+    for path, methods in doc["paths"].items():
+        for method in methods:
+            if "/production-reactive/" in path:
+                routes.append((method.upper(), path))
+    return routes
+
+
+def test_the_contract_has_fourteen_project_scoped_reactive_routes() -> None:
+    routes = _contract_reactive_routes()
+    assert len(routes) == 14
+    for _method, path in routes:
+        assert path.startswith("/api/v1/projects/{project_id}/agents/{agent_ref}/")
+
+
+def test_each_of_the_14_reactive_routes_builds_the_documented_path_with_encoded_segments() -> (
+    None
+):
+    calls: list[str] = []
+    client = _recording_client(calls)
+    for _method, documented in _contract_reactive_routes():
+        tail = documented.split("/production-reactive", 1)[1]
+        expected = (
+            f"/api/v1/projects/{quote(REACTIVE_PROJECT, safe='')}"
+            f"/agents/{quote(AGENT, safe='')}/production-reactive{tail}"
+        )
+        expected = expected.replace("{instant}", "3").replace("{attempt_ref}", "a1")
+        expected = expected.replace("{grant_ref}", "g1").replace(
+            "{notification_ref}", "n1"
+        )
+        assert (
+            client._path(
+                tail.replace("{instant}", "3")
+                .replace("{attempt_ref}", "a1")
+                .replace("{grant_ref}", "g1")
+                .replace("{notification_ref}", "n1")
+            )
+            == expected
+        )
+
+
+def test_an_agent_id_is_accepted_and_the_digest_is_not_used_for_reactive_calls() -> (
+    None
+):
+    calls: list[str] = []
+    client = _recording_client(calls)
+    with pytest.raises(ReactiveError):
+        client.get_attempt("attemptref_" + "1" * 32)
+    assert calls == [
+        f"GET /api/v1/projects/{REACTIVE_PROJECT}/agents/{AGENT}"
+        f"/production-reactive/attempts/attemptref_{'1' * 32}"
+    ]
+    assert DIGEST not in calls[0]
+
+
+@pytest.mark.parametrize("agent_id", ["", "a/b", "x" * 129])
+def test_an_invalid_agent_id_raises_before_any_request(agent_id: str) -> None:
+    calls: list[str] = []
+    with pytest.raises(RuntimeRequirementError) as err:
+        _recording_client(calls, agent_id=agent_id).list_attempts()
+    assert err.value.path == "agent_id"
+    assert calls == []
+
+
+def test_a_missing_agent_id_raises_before_any_request() -> None:
+    calls: list[str] = []
+    client = _recording_client(calls, agent_id=None)
+    with pytest.raises(RuntimeRequirementError) as err:
+        client.list_attempts()
+    assert err.value.path == "agent_id"
+    assert calls == []
+
+
+def test_a_missing_project_id_raises_before_any_request(monkeypatch: Any) -> None:
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    calls: list[str] = []
+    client = _recording_client(calls, project_id="")
+    with pytest.raises(RuntimeRequirementError) as err:
+        client.list_attempts()
+    assert err.value.path == "project_id"
+    assert calls == []
+
+
+def test_the_project_comes_from_the_environment_when_not_passed(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_PROJECT_ID", REACTIVE_PROJECT)
+    calls: list[str] = []
+    client = _recording_client(calls, project_id="")
+    assert client.project_id == REACTIVE_PROJECT
+    with pytest.raises(ReactiveNotFoundError):  # the recorder answers 404
+        client.list_attempts()
+    assert calls[0].startswith(f"GET /api/v1/projects/{REACTIVE_PROJECT}/agents/")
+
+
+def test_a_project_id_with_a_slash_stays_one_path_segment() -> None:
+    calls: list[str] = []
+    client = _recording_client(calls, project_id="project/x")
+    with pytest.raises(ReactiveNotFoundError):  # the recorder answers 404
+        client.list_attempts()
+    assert calls[0].startswith("GET /api/v1/projects/project%2Fx/agents/")
+
+
+def test_release_family_and_head_paths_keep_the_digest() -> None:
+    calls: list[str] = []
+    client = _recording_client(calls)
+    assert (
+        client._head_path("/config")
+        == f"/api/v1/best-configs/agent-heads/{DIGEST}/config"
+    )
+    with pytest.raises(RuntimeRequirementError):
+        ReactiveClient(
+            AGENT, _recording_client(calls).tokens, transport=lambda *_a: (200, {}, {})
+        )
+
+
+def test_reference_not_found_404_maps_to_the_typed_not_found_error() -> None:
+    calls: list[str] = []
+    client = _recording_client(calls)
+    with pytest.raises(ReactiveNotFoundError) as err:
+        client.get_attempt("attemptref_" + "2" * 32)
+    assert isinstance(err.value, ReactiveError)
+    assert err.value.code == "reference_not_found"
+    assert err.value.status == 404 and not err.value.ambiguous

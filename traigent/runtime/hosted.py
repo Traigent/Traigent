@@ -30,7 +30,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
+from traigent.config.project import read_optional_project_env
 from traigent.runtime import manifest
 from traigent.runtime.client import RuntimeClient
 from traigent.runtime.model import (
@@ -40,7 +42,10 @@ from traigent.runtime.model import (
 )
 
 SCHEMA_VERSION = 1
-REACTIVE_PREFIX = "/api/v1/production-reactive/agents"
+# Project-scoped production-reactive routes: ``{REACTIVE_PREFIX}/{project}/agents/{agent}/
+# production-reactive/<tail>``.  ``{agent}`` is the agent id (not the ``agentref_`` digest).
+REACTIVE_PREFIX = "/api/v1/projects"
+REACTIVE_SEGMENT = "production-reactive"
 HEAD_PREFIX = "/api/v1/best-configs/agent-heads"
 _BEST_CONFIG_ID = r"[A-Za-z0-9_-]{1,128}"
 MAX_JS_INT = 9_007_199_254_740_991
@@ -120,6 +125,8 @@ PHASES = ("collect", "freeze", "authority", "seal")
 HOSTED_TOKEN_RE = re.compile(r"t[A-Za-z0-9_-]{16}")
 _DIGEST = r"[0-9a-f]{64}"
 _AGENT_REF = r"agentref_[0-9a-f]{32}"
+# Reactive routes address the agent by its id (1-128 characters, one path segment).
+_AGENT_ID = r"[^/]{1,128}"
 _ATTEMPT_REF = r"attemptref_[0-9a-f]{32}"
 _GRANT_REF = r"grantref_[0-9a-f]{32}"
 _RESERVATION_REF = r"reservationref_[0-9a-f]{32}"
@@ -163,6 +170,10 @@ class ReactiveError(RuntimeRequirementError):
 
 
 # --- tiny strict validators -----------------------------------------------------------------
+
+
+class ReactiveNotFoundError(ReactiveError):
+    """The backend answered the closed 404 ``reference_not_found`` (masked: absent or not visible)."""
 
 
 class _Bad(Exception):
@@ -749,14 +760,19 @@ class ReactiveClient:
         tokens: TokenMap,
         *,
         project_id: str = "",
+        agent_id: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
         transport: Transport | None = None,
     ) -> None:
         self.agent_ref = _need(_AGENT_REF, agent_ref, "agent_ref")
+        self.agent_id = (
+            None if agent_id is None else _need(_AGENT_ID, agent_id, "agent_id")
+        )
+        self.project_id = _resolve_project_id(project_id)  # "" when none is configured
         self.tokens = tokens
         if transport is None:
-            http = RuntimeClient(project_id, base_url=base_url, api_key=api_key)
+            http = RuntimeClient(self.project_id, base_url=base_url, api_key=api_key)
 
             def _default(
                 method: str,
@@ -777,9 +793,17 @@ class ReactiveClient:
 
     # -- plumbing ---------------------------------------------------------------------------
     def _path(self, tail: str) -> str:
-        return f"{REACTIVE_PREFIX}/{self.agent_ref}{tail}"
+        # Reactive routes address the agent by id; a missing id fails before any request.
+        if self.agent_id is None:
+            raise RuntimeRequirementError("invalid_request", "agent_id")
+        if not self.project_id:
+            raise RuntimeRequirementError("invalid_request", "project_id")
+        project = quote(self.project_id, safe="")
+        agent = quote(self.agent_id, safe="")
+        return f"{REACTIVE_PREFIX}/{project}/agents/{agent}/{REACTIVE_SEGMENT}{tail}"
 
     def _head_path(self, tail: str) -> str:
+        # Best-config head and publish routes stay on the release-family digest.
         return f"{HEAD_PREFIX}/{self.agent_ref}{tail}"
 
     def _call(
@@ -812,6 +836,8 @@ class ReactiveClient:
         code = parse_refusal(parsed)
         if code is None:
             raise ReactiveError(E_BACKEND, "response", status=status, ambiguous=True)
+        if status == 404 and code == "reference_not_found":
+            raise ReactiveNotFoundError(code, status=status)
         raise ReactiveError(
             code,
             status=status,
@@ -1343,6 +1369,16 @@ def _closed(fact: Mapping[str, Any], allowed: set[str], field: str) -> None:
         raise RuntimeRequirementError("invalid_request", field)
 
 
+def _resolve_project_id(project_id: str) -> str:
+    """The explicit project id, else ``TRAIGENT_PROJECT_ID`` (the SDK's project source).
+
+    Empty when neither is set; the production-reactive path builder refuses that before
+    any request, while the release-family head routes (no project in their path) still work.
+    """
+    explicit = project_id.strip() if isinstance(project_id, str) else ""
+    return explicit or (read_optional_project_env() or "")
+
+
 def _retry_after(headers: Mapping[str, str]) -> int | None:
     raw = next((v for k, v in headers.items() if k.lower() == "retry-after"), None)
     if raw is None or not raw.isdigit():
@@ -1355,6 +1391,7 @@ __all__ = [
     "PublishResult",
     "ReactiveClient",
     "ReactiveError",
+    "ReactiveNotFoundError",
     "ReservationHandle",
     "TokenMap",
     "build_candidate",
