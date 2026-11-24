@@ -82,10 +82,7 @@ my_agent.optimize_with_guidance(provider, rewrite_llm=my_llm, prompt_param="prom
   `rewrite_llm` you supply, which is your provider's service if it is hosted.
 - **Connected tracking can send content** — in connected mode, expanded prompt
   choices can be sent at session creation and selected prompts in trial
-  results, per your backend tracking settings. Local/offline mode keeps them out
-  of Traigent optimization tracking only; it does not stop prompts from
-  reaching a hosted `rewrite_llm` (see the previous point), including prompt
-  variants added in earlier rewrite rounds.
+  results, per your backend tracking settings.
 - **Our signals stay server-side** — the plan is a lossy, opaque projection of
   the tuning signals; it carries no signal names, values, formulas, or per-seed
   counts.

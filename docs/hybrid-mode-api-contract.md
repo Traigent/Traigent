@@ -510,11 +510,6 @@ The Python SDK applies these rules:
   trial's `cost_lower_bound`), including rows from other (unflagged) batches whose response-level
   total was used to price them. A service-level floor given without item costs
   is not carried.
-- A processed row with no valid item cost of its own (a negative `cost_usd` such as `-1` counts as no price, and the row stays unmeasured even when the batch has a valid total) takes an equal share of the response
-  total, but only if it has a matching output; a requested row with no matching
-  output stays unmeasured: the total divided by the number of requested rows, whether or not
-  other rows are priced. Priced rows are not netted out first, so the shares
-  and the item costs together can add up to more than the response total.
 
 You can add any custom operational metrics:
 ```json

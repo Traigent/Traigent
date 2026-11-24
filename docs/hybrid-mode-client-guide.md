@@ -46,15 +46,6 @@ The "No" rows below hold only if you use opaque IDs and your caller-supplied fie
 | Output data content | **No**, only if you return `output_id` in place of `output` | Only output IDs |
 | Target data content | **No**, only if you send `target_id` in place of `target` | Only target IDs |
 
-Opaque IDs alone do not keep content local. The SDK sends the dataset's input payload and any other caller-supplied field as you provide it, so build the dataset caller-side from IDs only, for example:
-
-```python
-dataset = [
-    {"input": {"example_id": "case_001"}, "expected_output": {"target_id": "case_001"}},
-    {"input": {"example_id": "case_002"}, "expected_output": {"target_id": "case_002"}},
-]  # no text, no fields with content
-```
-
 Dataset payloads and every other caller-supplied field must omit content. An output must be replaced by its `output_id` and a target by its `target_id`; sending both the ID and the content transmits the content.
 
 ### How to Implement Privacy-Preserving Mode
