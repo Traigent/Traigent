@@ -620,9 +620,8 @@ break the tie identically (secondary metrics in the declared objective order, th
 aggregate) crowns the same winner in both places rather than opposite first-by-order
 picks. `results.best_score` remains the winner's primary-objective value (e.g. its
 accuracy); the weighted basis of the selection is surfaced per-trial in
-`metrics["score"]` (or, when `score` is itself a declared objective, in
-`metadata["weighted_selection_score"]`, so the evaluator's own value is never
-overwritten) and in `metadata["session_summary"]["weighted_selection"]`.
+`metrics["score"]` (a declared objective named `score` is overwritten by the
+weighted aggregate) and in `metadata["session_summary"]["weighted_selection"]`.
 `auto_load_best` and `get_best_config()` load this same weighted winner.
 
 The agreement holds for the common run. Two narrow cases can still diverge, by
