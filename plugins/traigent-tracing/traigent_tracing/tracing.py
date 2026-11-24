@@ -68,9 +68,6 @@ __all__ = [
 ]
 
 
-_UNSUPPORTED_INPUT_PLACEHOLDER = "<unsupported input>"
-_UNSUPPORTED_VALUE_PLACEHOLDER = "<unsupported value>"
-
 # Substrings that mark a config/payload key as secret-bearing.
 # Span attributes that ship to OTLP exporters MUST scrub these.
 _SECRET_KEY_SUBSTRINGS = (
@@ -128,7 +125,7 @@ def _scrub_pii_text(text: Any) -> Any:
     return result
 
 
-def _redact_payload(value: Any, *, strict: bool = False) -> Any:
+def _redact_payload(value: Any) -> Any:
     """Recursively scrub secrets *and* PII from trace payloads.
 
     Mirrors ``traigent.core.tracing._redact_payload`` so the plugin
@@ -143,22 +140,14 @@ def _redact_payload(value: Any, *, strict: bool = False) -> Any:
             if any(needle in key_str for needle in _SECRET_KEY_SUBSTRINGS):
                 redacted[key] = "***REDACTED***"
             else:
-                redacted[key] = _redact_payload(sub, strict=strict)
+                redacted[key] = _redact_payload(sub)
         return redacted
     if isinstance(value, list):
-        return [_redact_payload(item, strict=strict) for item in value]
+        return [_redact_payload(item) for item in value]
     if isinstance(value, tuple):
-        return tuple(_redact_payload(item, strict=strict) for item in value)
+        return tuple(_redact_payload(item) for item in value)
     if isinstance(value, str):
         return _scrub_pii_text(value)
-    if strict:
-        # Span names and ``trial.config`` ship to OTLP backends: an arbitrary
-        # object's repr is arbitrary text, so a fixed placeholder stands in.
-        if isinstance(value, (set, frozenset)):
-            return [_redact_payload(item, strict=True) for item in value]
-        if value is None or isinstance(value, (bool, int, float)):
-            return value
-        return _UNSUPPORTED_VALUE_PLACEHOLDER
     return value
 
 
@@ -416,28 +405,19 @@ def _set_session_span_attributes(
     """Set attributes on an optimization session span."""
     # Add test context attributes first (so they appear at top in Jaeger)
     for key, value in get_test_context().items():
-        if any(needle in str(key).lower() for needle in _SECRET_KEY_SUBSTRINGS):
-            span.set_attribute(key, "***REDACTED***")
-        elif isinstance(value, str):
-            span.set_attribute(key, _scrub_pii_text(value))
-        elif isinstance(value, (int, float, bool)):
+        if isinstance(value, (str, int, float, bool)):
             span.set_attribute(key, value)
 
-    span.set_attribute("traigent.function_name", _scrub_pii_text(function_name))
+    span.set_attribute("traigent.function_name", function_name)
 
     if max_trials is not None:
         span.set_attribute("traigent.max_trials", max_trials)
     if timeout is not None:
         span.set_attribute("traigent.timeout", timeout)
     if algorithm:
-        span.set_attribute("traigent.algorithm", _scrub_pii_text(algorithm))
-    # Only plain string names are attached: a structured entry's text is not
-    # inspected key-aware, so it is omitted rather than stringified.
-    objective_names = [o for o in objectives or () if isinstance(o, str)]
-    if objective_names:
-        span.set_attribute(
-            "traigent.objectives", _scrub_pii_text(",".join(objective_names))
-        )
+        span.set_attribute("traigent.algorithm", algorithm)
+    if objectives:
+        span.set_attribute("traigent.objectives", ",".join(objectives))
     if config_space:
         try:
             config_str = json.dumps(_redact_payload(config_space))
@@ -469,11 +449,10 @@ def optimization_session_span(
 
     # Build span name from test context or function name
     test_ctx = get_test_context()
-    # The root span name ships to OTLP backends: scrub it like the attributes.
     span_name = (
-        f"optimization: {_scrub_pii_text(str(test_ctx['test.name']))}"
+        f"optimization: {test_ctx['test.name']}"
         if test_ctx.get("test.name")
-        else f"optimization: {_scrub_pii_text(str(function_name))}"
+        else f"optimization: {function_name}"
     )
 
     # Create fresh context to start a NEW trace (not nested under parent)
@@ -517,9 +496,7 @@ def _safe_value_for_summary(key: str, value: Any) -> str:
     """
     if any(needle in key.lower() for needle in _SECRET_KEY_SUBSTRINGS):
         return "***REDACTED***"
-    # Redact nested containers key-aware first, so a compound value such as
-    # ``{"api_key": ...}`` is not stringified whole and only PII-scrubbed.
-    return str(_scrub_pii_text(str(_redact_payload(value, strict=True))))
+    return _scrub_pii_text(str(value))
 
 
 def _add_priority_keys(
@@ -570,15 +547,11 @@ def _extract_dict_preview(input_data: dict[str, Any]) -> str:
     common_keys = ["text", "input", "query", "prompt", "message", "content"]
     for key in common_keys:
         if key in input_data:
-            return str(_redact_payload(input_data[key], strict=True))
+            return str(input_data[key])
     # Fallback to first value or empty dict representation
-    if not input_data:
-        return "{}"
-    first_key, first_value = next(iter(input_data.items()))
-    if any(needle in str(first_key).lower() for needle in _SECRET_KEY_SUBSTRINGS):
-        # The key is dropped from the preview, so mask the value here.
-        return "***REDACTED***"
-    return str(_redact_payload(first_value, strict=True))
+    if input_data:
+        return str(next(iter(input_data.values())))
+    return "{}"
 
 
 def _truncate_and_quote(preview: str, max_length: int) -> str:
@@ -607,12 +580,8 @@ def _format_input_preview(input_data: Any, max_length: int = 35) -> str:
             preview = input_data
         elif isinstance(input_data, dict):
             preview = _extract_dict_preview(input_data)
-        elif isinstance(input_data, (int, float, bool, list, tuple)):
-            preview = str(_redact_payload(input_data, strict=True))
         else:
-            # Unsupported object: its repr is arbitrary text, so a fixed
-            # placeholder stands in for it.
-            preview = _UNSUPPORTED_INPUT_PLACEHOLDER
+            preview = str(input_data)
 
         preview = _scrub_pii_text(preview)
         return _truncate_and_quote(preview, max_length)
@@ -657,11 +626,11 @@ def trial_span(
         span.set_attribute(
             "trial.display_number", display_number
         )  # 1-based for display
-        redacted_config = _redact_payload(config, strict=True)
+        redacted_config = _redact_payload(config)
         try:
             span.set_attribute("trial.config", json.dumps(redacted_config))
         except (TypeError, ValueError):
-            span.set_attribute("trial.config", _UNSUPPORTED_VALUE_PLACEHOLDER)
+            span.set_attribute("trial.config", str(redacted_config))
         try:
             yield span
         except BaseException as exc:
@@ -773,8 +742,7 @@ def example_evaluation_span(
                     input_str = input_str[:500] + "..."
                 span.set_attribute("example.input", input_str)
             except (TypeError, ValueError):
-                # json refused the payload: never emit arbitrary repr text.
-                span.set_attribute("example.input", _UNSUPPORTED_INPUT_PLACEHOLDER)
+                span.set_attribute("example.input", str(redacted_input)[:500])
         if expected_output is not None:
             scrubbed_expected = _scrub_for_export(expected_output)
             try:

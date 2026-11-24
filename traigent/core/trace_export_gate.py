@@ -37,20 +37,9 @@ class _GatedSession(requests.Session if requests is not None else object):  # ty
         self._gate_api_key = api_key
 
     def send(self, request: Any, **kwargs: Any) -> Any:
-        if (
-            _live_offline()
-            or _tracing()._optimization_only_blocks_export(
-                self._gate_endpoint, self._gate_api_key
-            )
-            or not self._prepared_request_allowed(request)
-        ):
-            raise ConnectionAbortedError(
-                "optimization_only: trace export blocked at send time"
-            )
-        # Authorization above can be slow (credential validation); the offline /
-        # opt-out state may have changed meanwhile. Re-read it as the last check
-        # before the request is handed to the HTTP transport.
-        if _live_offline():
+        if _tracing()._optimization_only_blocks_export(
+            self._gate_endpoint, self._gate_api_key
+        ) or not self._prepared_request_allowed(request):
             raise ConnectionAbortedError(
                 "optimization_only: trace export blocked at send time"
             )
@@ -98,21 +87,6 @@ class _GatedSession(requests.Session if requests is not None else object):  # ty
             return False
 
 
-def _live_offline() -> bool:
-    """Live offline check (env or an in-flight ``offline=True`` run).
-
-    Evaluated per batch and per HTTP send so batches queued before offline began,
-    and retries, are dropped rather than sent.
-    """
-    import os
-
-    from traigent.utils.env_config import is_backend_offline, is_truthy
-
-    # TRAIGENT_DISABLE_TELEMETRY is the telemetry opt-out: honoured at every
-    # batch and every HTTP send, like offline mode.
-    return is_backend_offline() or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
-
-
 class _GatedSpanExporter:
     """Span exporter that re-checks optimization_only on every batch.
 
@@ -130,9 +104,7 @@ class _GatedSpanExporter:
     def export(self, spans: Any) -> Any:
         from opentelemetry.sdk.trace.export import SpanExportResult
 
-        if _live_offline() or _tracing()._optimization_only_blocks_export(
-            self._endpoint, self._api_key
-        ):
+        if _tracing()._optimization_only_blocks_export(self._endpoint, self._api_key):
             return SpanExportResult.SUCCESS
         try:
             with _tracing()._quiet_otel_header_logs():
