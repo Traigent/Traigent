@@ -602,8 +602,10 @@ Exactly which exits carry it:
 
 When a run is unranked (no successful trials, no ranking-eligible trial, or every
 candidate is excluded for an unmeasured cost or a non-finite metric),
-`calculate_weighted_scores()` omits `best_weighted_config` and returns
-`best_weighted_score: None`; the winner claims below apply only to ranked runs.
+`calculate_weighted_scores()` omits `best_weighted_config`; the winner claims
+below apply only to ranked runs. An `OptimizationResult` with no successful
+trials returns the numeric fallback `best_weighted_score: 0.0`, not `None`, so
+check whether `best_weighted_config` is present rather than testing the score.
 
 When you declare more than one objective — e.g. `objectives=["accuracy", "cost"]`,
 **including the default equal weights** — `results.best_config` is the winner of
@@ -618,8 +620,11 @@ every config within the conservative weighted-score tolerance of the maximum and
 break the tie identically (secondary metrics in the declared objective order, then
 `trial_id`), so a two-endpoint Pareto tie (both configs sharing the top weighted
 aggregate) crowns the same winner in both places rather than opposite first-by-order
-picks. `results.best_score` remains the winner's primary-objective value (e.g. its
-accuracy); the weighted basis of the selection is surfaced per-trial in
+picks. `results.best_score` is the winner's primary-objective value (e.g. its
+accuracy), with one exception: when the primary objective is named `score`, the
+selector reads that metric after it was replaced by the weighted aggregate, so
+`best_score` is the weighted aggregate (for example 0.8 for a `score=4, latency=9`
+trial under weights 0.8/0.2), not the raw `score`. The weighted basis of the selection is surfaced per-trial in
 `metrics["score"]` (a declared objective named `score` is overwritten by the
 weighted aggregate) and in `metadata["session_summary"]["weighted_selection"]`.
 `auto_load_best` and `get_best_config()` load this same weighted winner.
