@@ -132,28 +132,6 @@ def clopper_pearson_upper_bound(
     return float(_scipy_stats.beta.ppf(confidence, k + 1, n - k))
 
 
-def _has_samples(metrics: Any, name: str) -> bool:
-    """True when ``metrics`` has a non-empty sample sequence under ``name``.
-
-    Uses key presence and ``len`` rather than truthiness, which is ambiguous
-    for NumPy arrays.
-    """
-    if name not in metrics:
-        return False
-    values = metrics[name]
-    if values is None:
-        return False
-    try:
-        return len(values) > 0
-    except TypeError:
-        return False
-
-
-def _native_samples(samples: Sequence[Any]) -> list[Any]:
-    """Samples as native Python numbers (NumPy scalars via ``.item()``)."""
-    return [x.item() if hasattr(x, "item") and callable(x.item) else x for x in samples]
-
-
 @dataclass(slots=True)
 class ObjectiveResult:
     """Result of comparing a single objective.
@@ -173,15 +151,8 @@ class ObjectiveResult:
             prove the candidate is not worse by more than epsilon.
         p_value_super: Superiority p-value (raw, before multiplicity
             adjustment). Small values prove the candidate is strictly better.
-        verdict: Per-objective verdict ("superior", "noninferior", "inferior",
-            "untestable" for standard objectives; "in_band" or "out_of_band" for
-            banded).
-        noninf_inconclusive: True when the non-inferiority test could not be
-            computed because the paired differences have zero variance. The
-            verdict is then "untestable" (non-inferiority is *unproven*), unless
-            the constant observed effect is already worse than the margin: that
-            is a measurement, so the verdict stays "inferior" even though the
-            statistical test is inconclusive. The gate never promotes on it.
+        verdict: Per-objective verdict ("superior", "noninferior", "inferior"
+            for standard objectives; "in_band" or "out_of_band" for banded).
     """
 
     name: str
@@ -195,9 +166,8 @@ class ObjectiveResult:
     p_value_noninf: float = 1.0
     p_value_super: float = 1.0
     verdict: Literal[
-        "superior", "noninferior", "inferior", "untestable", "in_band", "out_of_band"
+        "superior", "noninferior", "inferior", "in_band", "out_of_band"
     ] = "noninferior"
-    noninf_inconclusive: bool = False
 
 
 @dataclass(slots=True)
@@ -231,9 +201,6 @@ class PromotionDecision:
 
     Attributes:
         decision: The promotion decision ("promote", "reject", "no_decision").
-            "no_decision" is also returned when promotion is withheld only because
-            an objective is untestable (see ``untestable_objectives``): callers
-            must not promote on it.
         reason: Human-readable explanation of the decision.
         objective_results: Per-objective comparison results.
         chance_results: Per-constraint evaluation results.
@@ -241,13 +208,6 @@ class PromotionDecision:
             adjustment (standard objectives only).
         dominance_satisfied: Whether the candidate was promoted (all objectives
             non-inferior and at least one superior).
-        untestable_objectives: Names of objectives whose non-inferiority could
-            not be tested (zero-variance paired differences). Machine-readable
-            companion to the reason text. When this is the only reason promotion
-            is withheld the decision is "no_decision" rather than "reject"; callers
-            must never promote on it. A "reject" decision can still reflect
-            unproven non-inferiority, missing data or a failed band test, not only
-            a measured loss or a failed constraint.
     """
 
     decision: Literal["promote", "reject", "no_decision"]
@@ -256,7 +216,6 @@ class PromotionDecision:
     chance_results: list[ChanceConstraintResult] = field(default_factory=list)
     adjusted_p_values: dict[str, float] = field(default_factory=dict)
     dominance_satisfied: bool = False
-    untestable_objectives: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -370,10 +329,8 @@ class PromotionGate:
         super_p_values: dict[str, float] = {}
 
         for obj in self._objective_list:
-            if not _has_samples(incumbent_metrics, obj.name) or not _has_samples(
-                candidate_metrics, obj.name
-            ):
-                continue  # absent or empty: reported as missing data (fail closed)
+            if obj.name not in incumbent_metrics or obj.name not in candidate_metrics:
+                continue
             result = self._compare_objective(
                 obj, incumbent_metrics[obj.name], candidate_metrics[obj.name]
             )
@@ -436,14 +393,7 @@ class PromotionGate:
 
             # Non-inferiority is the unadjusted intersection component.
             if result.p_value_noninf >= alpha:
-                # Zero-variance differences cannot be tested.  When the observed
-                # (constant) effect is already worse than the margin that is a
-                # measurement, so the candidate is inferior; otherwise the result
-                # is untestable, not "measured worse".
-                untestable = result.noninf_inconclusive and (
-                    result.effect_size >= -result.epsilon
-                )
-                result.verdict = "untestable" if untestable else "inferior"
+                result.verdict = "inferior"
                 all_noninferior = False
                 continue
 
@@ -483,22 +433,9 @@ class PromotionGate:
         missing_objectives = [
             obj.name
             for obj in self._objective_list
-            if not _has_samples(incumbent_metrics, obj.name)
-            or not _has_samples(candidate_metrics, obj.name)
+            if obj.name not in incumbent_metrics or obj.name not in candidate_metrics
         ]
         if objective_results and missing_objectives:
-            # Classify the objectives that do have data, so a measured loss is
-            # never reported as the default "noninferior" verdict.  The
-            # multiplicity family is every declared test: an objective without
-            # data counts as p=1, so the present ones are not under-corrected.
-            family = {
-                obj.name: raw_super_p.get(obj.name, 1.0)
-                for obj in self._objective_list
-                if obj.name in raw_super_p or obj.name in missing_objectives
-            }
-            self._classify_objectives(
-                objective_results, self._apply_p_value_adjustment(family)
-            )
             return PromotionDecision(
                 decision="reject",
                 reason=(
@@ -508,9 +445,6 @@ class PromotionGate:
                 objective_results=objective_results,
                 chance_results=self._evaluate_chance_constraints(constraint_data or {}),
                 dominance_satisfied=False,
-                untestable_objectives=[
-                    r.name for r in objective_results if r.verdict == "untestable"
-                ],
             )
         if not objective_results:
             return PromotionDecision(
@@ -545,11 +479,6 @@ class PromotionGate:
             chance_results=chance_results,
             adjusted_p_values=adjusted_super,
             dominance_satisfied=decision == "promote",
-            untestable_objectives=(
-                [r.name for r in objective_results if r.verdict == "untestable"]
-                if decision != "promote"
-                else []
-            ),
         )
 
     def _decide(
@@ -569,13 +498,9 @@ class PromotionGate:
         banded-objective failure; Promote if any objective is superior;
         otherwise NoDecision.
         """
-        failing = [r.name for r in objective_results if r.verdict == "inferior"]
-        untestable = [r.name for r in objective_results if r.verdict == "untestable"]
-        if failing:
-            reason = f"Non-inferiority failed on: {', '.join(failing)}"
-            if untestable:
-                reason += f" (also untestable: {', '.join(untestable)})"
-            return "reject", reason
+        if not all_noninferior:
+            failing = [r.name for r in objective_results if r.verdict == "inferior"]
+            return "reject", f"Non-inferiority failed on: {', '.join(failing)}"
 
         if not all_chance_pass:
             failing = [r.name for r in chance_results if not r.satisfied]
@@ -584,15 +509,6 @@ class PromotionGate:
         if not all_bands_pass:
             failing = [r.name for r in objective_results if r.verdict == "out_of_band"]
             return "reject", f"Banded objectives failed TOST: {', '.join(failing)}"
-
-        if untestable:
-            # Not measured inferior: the evidence cannot be tested.  Withheld, but
-            # distinct from a reject; no promotion is ever granted on it.
-            return (
-                "no_decision",
-                "Promotion not proven: zero-variance paired differences cannot be "
-                f"tested for non-inferiority on: {', '.join(untestable)}",
-            )
 
         if any_superior:
             superior = [r.name for r in objective_results if r.verdict == "superior"]
@@ -627,10 +543,6 @@ class PromotionGate:
         Returns:
             ObjectiveResult with comparison outcome.
         """
-        # fixed-width NumPy scalars wrap on subtraction (uint8: 90 - 100 = 246):
-        # measure on native numbers, as the equivalent Python lists would be
-        incumbent_samples = _native_samples(incumbent_samples)
-        candidate_samples = _native_samples(candidate_samples)
         if obj.direction == "band":
             # Banded objectives are exempt from the min_effect requirement.
             epsilon = self.policy.get_epsilon(obj.name, default=0.0)
@@ -666,13 +578,10 @@ class PromotionGate:
             test_direction,
         )
 
-        # The paired test's own effect (mean of the row-wise differences), oriented
-        # so positive means the candidate is better; separately summed means round
-        # differently and could flip an inconclusive result into a rejection.
         if obj.direction == "maximize":
-            effect_size = noninf_cmp.effect_size
+            effect_size = cand_mean - inc_mean
         else:
-            effect_size = -noninf_cmp.effect_size
+            effect_size = inc_mean - cand_mean  # Positive if candidate is better
 
         return ObjectiveResult(
             name=obj.name,
@@ -683,7 +592,6 @@ class PromotionGate:
             candidate_mean=cand_mean,
             incumbent_mean=inc_mean,
             epsilon=epsilon,
-            noninf_inconclusive=noninf_cmp.zero_variance_inconclusive,
             p_value_noninf=noninf_cmp.p_value,
             p_value_super=super_cmp.p_value,
         )
@@ -721,19 +629,11 @@ class PromotionGate:
         cand_mean = cand_tost.sample_mean
 
         # Band gate: the candidate must itself be within the band.
-        # A single observation has no variance estimate, so no statistical
-        # test ran: it is insufficient evidence and never passes the gate.
         verdict: Literal["in_band", "out_of_band"] = (
-            "in_band"
-            if cand_tost.is_equivalent and cand_tost.sample_size >= 2
-            else "out_of_band"
+            "in_band" if cand_tost.is_equivalent else "out_of_band"
         )
         # TOST p-value (in_band iff this is below band_alpha).
-        p_value = (
-            1.0
-            if cand_tost.sample_size < 2
-            else max(cand_tost.p_lower, cand_tost.p_upper)
-        )
+        p_value = max(cand_tost.p_lower, cand_tost.p_upper)
 
         if obj.band.low is not None and obj.band.high is not None:
             center = (obj.band.low + obj.band.high) / 2

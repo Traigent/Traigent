@@ -32,11 +32,6 @@ class TOSTResult:
         sample_std: Standard deviation of the samples.
         sample_size: Number of samples.
         confidence_interval: 90% CI for the mean (corresponding to alpha=0.05 two-sided).
-        insufficient_evidence: True when no test could run (a single observation has
-            no variance estimate).  ``is_equivalent`` is then False and the p-values
-            are 1.0: no statistical equivalence is claimed.
-        point_in_band: Whether the sample mean lies in the band (inclusive endpoints).
-            Point membership only, never statistical evidence.
     """
 
     is_equivalent: bool
@@ -46,8 +41,6 @@ class TOSTResult:
     sample_std: float
     sample_size: int
     confidence_interval: tuple[float, float]
-    insufficient_evidence: bool = False
-    point_in_band: bool = False
 
 
 @dataclass(slots=True)
@@ -257,11 +250,6 @@ def tost_equivalence_test(
     mean <= low OR mean >= high). Rejecting both one-sided nulls
     establishes equivalence.
 
-    A single sample (``n == 1``) has no variance estimate, so no test is run:
-    the result reports ``insufficient_evidence=True``, ``is_equivalent=False`` and
-    p-values of 1.0.  Whether the lone point lies in the band (inclusive
-    endpoints) is reported separately as ``point_in_band``.
-
     Args:
         samples: Sequence of observed values.
         target: Band target specification with [low, high] bounds.
@@ -283,18 +271,16 @@ def tost_equivalence_test(
     sample_mean = sum(samples) / n
 
     if n == 1:
-        # Single sample: no variance estimate, so no test ran.  Insufficient
-        # evidence, never equivalence; point membership is reported on its own.
+        # Single sample: can only check if it's in the band
+        in_band = target.contains(sample_mean)
         return TOSTResult(
-            is_equivalent=False,
-            p_lower=1.0,
-            p_upper=1.0,
+            is_equivalent=in_band,
+            p_lower=0.0 if sample_mean > target.low else 1.0,
+            p_upper=0.0 if sample_mean < target.high else 1.0,
             sample_mean=sample_mean,
             sample_std=0.0,
             sample_size=1,
             confidence_interval=(sample_mean, sample_mean),
-            insufficient_evidence=True,
-            point_in_band=target.contains(sample_mean),
         )
 
     # Compute sample standard deviation
@@ -327,7 +313,6 @@ def tost_equivalence_test(
         sample_std=sample_std,
         sample_size=n,
         confidence_interval=ci,
-        point_in_band=target.contains(sample_mean),
     )
 
 

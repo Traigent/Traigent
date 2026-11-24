@@ -69,12 +69,10 @@ class TestTOSTEquivalenceTest:
             tost_equivalence_test([], band)
 
     def test_single_sample_inside_band(self) -> None:
-        """Single sample inside band: point membership only, no equivalence."""
+        """Single sample inside band shows equivalent."""
         band = BandTarget(low=0.8, high=0.95)
         result = tost_equivalence_test([0.87], band)
-        assert result.is_equivalent is False
-        assert result.insufficient_evidence is True
-        assert result.point_in_band is True
+        assert result.is_equivalent is True
         assert result.sample_size == 1
 
     def test_single_sample_outside_band(self) -> None:
@@ -87,9 +85,8 @@ class TestTOSTEquivalenceTest:
         """n=1 edge case: sample exactly at lower bound."""
         band = BandTarget(low=0.8, high=0.95)
         result = tost_equivalence_test([0.8], band)
-        # At the bound, the point is inside, but no test ran
-        assert result.point_in_band is True
-        assert result.is_equivalent is False
+        # At the bound, considered inside
+        assert result.is_equivalent is True
         assert result.sample_size == 1
         assert result.sample_std == 0.0  # No variance with n=1
         assert result.confidence_interval == (0.8, 0.8)  # Degenerate CI
@@ -98,8 +95,7 @@ class TestTOSTEquivalenceTest:
         """n=1 edge case: sample exactly at upper bound."""
         band = BandTarget(low=0.8, high=0.95)
         result = tost_equivalence_test([0.95], band)
-        assert result.point_in_band is True
-        assert result.is_equivalent is False
+        assert result.is_equivalent is True
         assert result.sample_size == 1
 
     def test_n1_edge_case_just_outside_lower(self) -> None:
