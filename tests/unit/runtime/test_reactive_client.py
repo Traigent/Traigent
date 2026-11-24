@@ -709,12 +709,16 @@ def test_the_project_comes_from_the_environment_when_not_passed(
     assert calls[0].startswith(f"GET /api/v1/projects/{REACTIVE_PROJECT}/agents/")
 
 
-def test_a_project_id_with_a_slash_stays_one_path_segment() -> None:
+@pytest.mark.parametrize("project_id", ["project/x", "bogus", "proj-1"])
+def test_a_project_id_outside_the_contract_pattern_is_refused_before_any_request(
+    project_id: str,
+) -> None:
     calls: list[str] = []
-    client = _recording_client(calls, project_id="project/x")
-    with pytest.raises(ReactiveNotFoundError):  # the recorder answers 404
+    client = _recording_client(calls, project_id=project_id)
+    with pytest.raises(RuntimeRequirementError) as err:
         client.list_attempts()
-    assert calls[0].startswith("GET /api/v1/projects/project%2Fx/agents/")
+    assert err.value.path == "project_id"
+    assert calls == []
 
 
 def test_release_family_and_head_paths_keep_the_digest() -> None:
@@ -748,3 +752,85 @@ def test_controller_for_carries_the_agent_id_and_keeps_the_digest(
     controller = controller_for(DIGEST, tmp_path, agent_id=AGENT)
     assert controller.client.agent_ref == DIGEST
     assert controller.client.agent_id == AGENT
+
+
+def test_a_digest_in_the_explicit_agent_id_is_refused_at_construction() -> None:
+    with pytest.raises(RuntimeRequirementError) as err:
+        ReactiveClient(
+            DIGEST,
+            TokenMap(Path("/nonexistent-token-state")),
+            project_id=REACTIVE_PROJECT,
+            agent_id=DIGEST,
+            transport=lambda *_a: (200, {}, {}),
+        )
+    assert err.value.path == "agent_id:not_the_agentref_digest"
+
+
+def test_a_digest_in_the_reactive_env_var_is_refused_before_any_request(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_REACTIVE_AGENT_ID", DIGEST)
+    calls: list[str] = []
+    client = _recording_client(calls, agent_id=None)
+    with pytest.raises(RuntimeRequirementError) as err:
+        client.list_attempts()
+    assert err.value.path == "TRAIGENT_REACTIVE_AGENT_ID"
+    assert calls == []
+
+
+def test_an_invalid_reactive_env_does_not_block_the_digest_head_read(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_REACTIVE_AGENT_ID", "legacy/agent")
+    calls: list[str] = []
+    client = _recording_client(calls, agent_id=None)  # the env value is resolved here
+    with pytest.raises(ReactiveNotFoundError):  # the recorder answers 404
+        client.get_pinned_config()
+    assert calls == [f"GET /api/v1/best-configs/agent-heads/{DIGEST}/config"]
+    with pytest.raises(RuntimeRequirementError) as err:
+        client.list_attempts()
+    assert err.value.path == "TRAIGENT_REACTIVE_AGENT_ID"
+    assert len(calls) == 1
+
+
+def test_a_dot_then_newline_agent_id_is_accepted_like_the_js_sdk() -> None:
+    client = _recording_client([], agent_id=".\n")
+    assert client._path("/attempts").endswith(
+        "/agents/.%0A/production-reactive/attempts"
+    )
+
+
+def test_the_strict_fake_records_malformed_percent_encoding_as_a_violation() -> None:
+    from .reactive_fake import FIXTURE_PROJECT, StrictBackend
+
+    backend = StrictBackend(make_ref("agent", 1), agent_id="agent one")
+    status, _body, _headers = backend.transport(
+        "GET",
+        f"/api/v1/projects/{FIXTURE_PROJECT}/agents/%FF/production-reactive/attempts",
+        {"limit": 50},
+        None,
+    )
+    assert status == 400
+    assert backend.violations == [
+        "production_reactive.list_attempts: malformed percent-encoding"
+    ]
+
+
+def test_the_project_pattern_is_the_vendored_contract_pattern() -> None:
+    from traigent.runtime import hosted
+
+    from .reactive_fake import SCHEMA_ROOT
+
+    doc = json.loads(
+        (SCHEMA_ROOT / "optimization/tvl_reactive_endpoints.json").read_text()
+    )
+    params = next(
+        p
+        for p in doc["paths"][
+            "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/attempts"
+        ]["get"]["parameters"]
+        if p["name"] == "project_id"
+    )
+    contract = params["schema"]["pattern"]
+    assert contract.startswith("^") and contract.endswith("(?![\\s\\S])")
+    assert hosted._PROJECT_ID == contract[1 : -len("(?![\\s\\S])")]

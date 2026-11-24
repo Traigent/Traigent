@@ -386,7 +386,14 @@ class StrictBackend:
         reactive = "/production-reactive/" in path
         if reactive:
             # The wire segments are percent-encoded; validate and compare the decoded value.
-            values = {name: unquote(value) for name, value in values.items()}
+            try:
+                values = {
+                    name: unquote(value, errors="strict")
+                    for name, value in values.items()
+                }
+            except UnicodeDecodeError:
+                self.violations.append(f"{route.operation}: malformed percent-encoding")
+                return self._answer(entry, route, 400, refusal("invalid_request"))
             if values.get("project_id") != self.project_id:
                 self.violations.append(f"{route.operation}: project is not this one")
                 return self._answer(entry, route, 404, refusal("reference_not_found"))

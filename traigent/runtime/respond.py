@@ -382,6 +382,7 @@ async def respond(
             agent_ref=agent_ref or (reactive.agent_ref if reactive else ""),
             # The respond() agent id is the id the agents API returns (reactive routes).
             agent_id=agent_id,
+            project_id=project_id,
             attempt_ref=attempt_ref,
             client=reactive,
             max_fix_cost_usd=max_fix_cost_usd,
@@ -831,6 +832,7 @@ async def respond_hosted(
     *,
     agent_ref: str,
     agent_id: str | None = None,
+    project_id: str | None = None,
     attempt_ref: str | None = None,
     client: ReactiveClient | None = None,
     max_fix_cost_usd: float | None = None,
@@ -853,7 +855,9 @@ async def respond_hosted(
     """
     rule_id = _validate_hosted_response(fn, requirement)
     state = state_dir or manifest.default_state_dir()
-    api = client or ReactiveClient(agent_ref, TokenMap(state), agent_id=agent_id)
+    api = client or ReactiveClient(
+        agent_ref, TokenMap(state), project_id=project_id or "", agent_id=agent_id
+    )
     # The token map is read first: unavailable means nothing is asked or reserved.
     attempt = _select_attempt(api, api.tokens, requirement, rule_id, attempt_ref)
     grant = api.get_grant(attempt["grant_ref"])

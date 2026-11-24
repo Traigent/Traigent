@@ -128,7 +128,9 @@ _DIGEST = r"[0-9a-f]{64}"
 _AGENT_REF = r"agentref_[0-9a-f]{32}"
 # Reactive routes address the agent by its id (1-128 characters, one path segment; "." and
 # ".." are refused because the transport normalizes them away).
-_AGENT_ID = r"(?!\.\.?$)[^/]{1,128}"
+_AGENT_ID = r"(?!\.\.?\Z)(?!agentref_[0-9a-f]{32}\Z)[^/]{1,128}"
+#: The vendored tvl_reactive_endpoints.json pins project_id to this shape (schema :23).
+_PROJECT_ID = r"project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})"
 #: Env fallback for the reactive agent id.  Deliberately not ``TRAIGENT_AGENT_ID``, which
 #: is the observability execution-context variable.
 REACTIVE_AGENT_ID_ENV = "TRAIGENT_REACTIVE_AGENT_ID"
@@ -784,12 +786,16 @@ class ReactiveClient:
         # agent_ref: the ``agentref_`` digest, used only by the release-family head routes.
         # agent_id: the id the agents API returns, used by the production-reactive routes.
         self.agent_ref = _need(_AGENT_REF, agent_ref, "agent_ref")
-        # An explicit value (even "") is validated as given; only None reads the env var.
-        if agent_id is None:
-            agent_id = read_optional_env(REACTIVE_AGENT_ID_ENV)
-        self.agent_id = (
-            None if agent_id is None else _need(_AGENT_ID, agent_id, "agent_id")
-        )
+        # An explicit value (even "") is validated now.  The env value is only resolved
+        # here: it is validated when a reactive path is built, so a bad reactive setting
+        # cannot block the digest-only head reads.
+        if agent_id is not None:
+            problem = _agent_id_problem(agent_id)
+            if problem is not None:
+                raise RuntimeRequirementError("invalid_request", problem)
+            self.agent_id: str | None = agent_id
+        else:
+            self.agent_id = read_optional_env(REACTIVE_AGENT_ID_ENV)
         self.project_id = _resolve_project_id(project_id)  # "" when none is configured
         self.tokens = tokens
         if transport is None:
@@ -816,9 +822,9 @@ class ReactiveClient:
     def _path(self, tail: str) -> str:
         # Reactive routes address the agent by id; a missing or unusable id or project
         # fails here, before any request is built or sent.
-        if self.agent_id is None:
+        if self.agent_id is None or _agent_id_problem(self.agent_id) is not None:
             raise RuntimeRequirementError("invalid_request", REACTIVE_AGENT_ID_ENV)
-        if not self.project_id or self.project_id in (".", ".."):
+        if not re.fullmatch(_PROJECT_ID, self.project_id):
             raise RuntimeRequirementError("invalid_request", "project_id")
         project = quote(self.project_id, safe="")
         agent = quote(self.agent_id, safe="")
@@ -1389,6 +1395,15 @@ class ReactiveClient:
 def _closed(fact: Mapping[str, Any], allowed: set[str], field: str) -> None:
     if not isinstance(fact, Mapping) or not set(fact) <= allowed:
         raise RuntimeRequirementError("invalid_request", field)
+
+
+def _agent_id_problem(value: str) -> str | None:
+    """The closed reason an agent id is unusable for the reactive routes, else None."""
+    if re.fullmatch(_AGENT_REF, value):
+        return "agent_id:not_the_agentref_digest"  # takes the agents-API id, not the digest
+    if not re.fullmatch(_AGENT_ID, value):
+        return "agent_id"
+    return None
 
 
 def _resolve_project_id(project_id: str) -> str:
