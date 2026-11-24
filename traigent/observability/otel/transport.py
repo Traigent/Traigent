@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -13,10 +14,15 @@ from traigent.observability.client import (
     _NoRedirectHandler,
     _parse_retry_after,
 )
+from traigent.utils.env_config import is_backend_offline, is_truthy
 
 
 class TransportError(Exception):
     """Network-level failure (connect/reset/timeout); retryable."""
+
+
+class TransportSuppressed(Exception):
+    """The live telemetry opt-out / offline switch blocked this POST; never retried."""
 
 
 @dataclass
@@ -40,7 +46,15 @@ class UrllibTransport:
         self._gzip = gzip_body
         self._opener = _gate_opener(urllib.request.build_opener(_NoRedirectHandler))
 
+    @staticmethod
+    def _raise_if_suppressed() -> None:
+        if is_backend_offline() or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY")):
+            raise TransportSuppressed("telemetry_disabled")
+
     def post(self, body: bytes, *, timeout: float) -> TransportResponse:
+        # Live opt-out at the last boundary before the network: the switch may
+        # have been turned on after the exporter's own checks ran.
+        self._raise_if_suppressed()
         headers = {"Content-Type": "application/x-protobuf", **self._headers}
         payload = body
         if self._gzip:
@@ -49,6 +63,9 @@ class UrllibTransport:
         req = urllib.request.Request(
             self._url, data=payload, headers=headers, method="POST"
         )
+        # Compression and request construction take time: re-check right
+        # before the connection is opened.
+        self._raise_if_suppressed()
         try:
             with self._opener.open(req, timeout=max(0.05, timeout)) as resp:  # nosec B310
                 return TransportResponse(

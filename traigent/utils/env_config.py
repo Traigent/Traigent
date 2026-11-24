@@ -810,6 +810,12 @@ def is_backend_offline() -> bool:
     - Use real LLMs but skip backend (MOCK_LLM=false, OFFLINE=true)
     - Both mock and offline (MOCK_LLM=true, OFFLINE=true) for local testing
 
+    Offline blocks Traigent backend traffic and SDK-managed integrations such
+    as Langfuse. It does not stop your own LLM calls: with ``MOCK_LLM=false``
+    your code (or a configured LLM client) can still make billable provider
+    requests with whatever credentials it can find. It is not a free dry-run
+    unless LLM calls are also mocked or no provider keys are available.
+
     Returns:
         True if backend calls should be skipped, False for normal backend communication.
 

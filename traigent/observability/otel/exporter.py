@@ -22,6 +22,7 @@ callable so an export already in flight sees a deadline set LATER by ``flush``.
 
 from __future__ import annotations
 
+import os
 import random
 import threading
 import time
@@ -40,9 +41,20 @@ from traigent.observability.otel.transport import (
     Transport,
     TransportError,
     TransportResponse,
+    TransportSuppressed,
 )
 from traigent.utils import optimization_only_egress as oo_egress
-from traigent.utils.env_config import is_backend_offline
+from traigent.utils.env_config import is_backend_offline, is_truthy
+
+
+def _send_blocked(scope: str | None) -> bool:
+    """Live send-time block: offline, telemetry opt-out, or optimization_only."""
+    return (
+        is_backend_offline()
+        or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
+        or oo_egress.is_active(scope=scope)
+    )
+
 
 RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
 
@@ -132,9 +144,7 @@ class TraigentOTLPExporter(SpanExporter):
         outcome = ExportOutcome()
         if not spans:
             return outcome
-        if is_backend_offline() or oo_egress.is_active(
-            scope=getattr(self, "oo_scope", None)
-        ):
+        if _send_blocked(getattr(self, "oo_scope", None)):
             # Send-time recheck, fail closed: spans queued while online are
             # dropped (not held for later) if offline became true since.
             outcome.dropped_offline += len(spans)
@@ -242,6 +252,9 @@ class TraigentOTLPExporter(SpanExporter):
             )
             try:
                 resp = self._transport.post(body, timeout=timeout)
+            except TransportSuppressed:
+                outcome.dropped_offline += count  # opted out at the send boundary
+                return
             except TransportError:
                 resp = None
             if resp is not None and self._handle_response(
@@ -266,9 +279,7 @@ class TraigentOTLPExporter(SpanExporter):
         # optimization_only needs no 403 latch here: the mode disables the exporter
         # (init, processor and these two checks) before anything is sent, so the OTLP
         # receiver's non-JSON 403 body is never reached.
-        if is_backend_offline() or oo_egress.is_active(
-            scope=getattr(self, "oo_scope", None)
-        ):  # recheck every POST
+        if _send_blocked(getattr(self, "oo_scope", None)):  # recheck every POST
             outcome.dropped_offline += count
             return True, None
         credential = getattr(self, "egress_credential", None)
@@ -276,6 +287,11 @@ class TraigentOTLPExporter(SpanExporter):
             credential is not None
             and not oo_egress.ensure_trace_egress_allowed(credential[0], credential[1])
         ):  # cached per (key digest, origin); fail closed on a missing/failed validation
+            outcome.dropped_offline += count
+            return True, None
+        # Validation can take time (and may itself switch the opt-out on):
+        # recheck the live block once more immediately before the POST.
+        if _send_blocked(getattr(self, "oo_scope", None)):
             outcome.dropped_offline += count
             return True, None
         remaining = self._remaining(deadline)

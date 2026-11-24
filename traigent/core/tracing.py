@@ -25,12 +25,12 @@ import contextlib
 from collections.abc import Iterator
 from typing import Any
 
-_MIN_PLUGIN_VERSION = (0, 1, 2)
+_MIN_PLUGIN_VERSION = (0, 1, 3)
 _PLUGIN_REJECTED = False
 
 
 def _plugin_version_ok() -> bool:
-    """Return True only when the traigent-tracing add-on is >= 0.1.2.
+    """Return True only when the traigent-tracing add-on is >= 0.1.3.
 
     Older add-ons predate the span-attribute scrubbers, so they are ignored in
     favour of the embedded scrubbed implementation. Fails closed: any error,
@@ -302,7 +302,7 @@ except ImportError:
 
         _logging.getLogger(__name__).warning(
             "Ignoring the traigent-tracing add-on: version is older than "
-            "0.1.2 or could not be determined. Using the built-in scrubbed "
+            "0.1.3 or could not be determined. Using the built-in scrubbed "
             "tracing; upgrade the add-on to use it."
         )
 
@@ -343,6 +343,9 @@ except ImportError:
 
     if TYPE_CHECKING:
         from opentelemetry.trace import Span, Tracer
+
+    _UNSUPPORTED_INPUT_PLACEHOLDER = "<unsupported input>"
+    _UNSUPPORTED_VALUE_PLACEHOLDER = "<unsupported value>"
 
     # Substrings that mark a config/payload key as secret-bearing.
     # Span attributes that ship to OTLP exporters MUST scrub these.
@@ -401,7 +404,7 @@ except ImportError:
             result = pattern.sub(replacement, result)
         return result
 
-    def _redact_payload(value: Any) -> Any:
+    def _redact_payload(value: Any, *, strict: bool = False) -> Any:
         """Recursively scrub secrets *and* PII from trace payloads.
 
         Two complementary protections run against every span attribute
@@ -423,14 +426,22 @@ except ImportError:
                 if any(needle in key_str for needle in _SECRET_KEY_SUBSTRINGS):
                     redacted[key] = "***REDACTED***"
                 else:
-                    redacted[key] = _redact_payload(sub)
+                    redacted[key] = _redact_payload(sub, strict=strict)
             return redacted
         if isinstance(value, list):
-            return [_redact_payload(item) for item in value]
+            return [_redact_payload(item, strict=strict) for item in value]
         if isinstance(value, tuple):
-            return tuple(_redact_payload(item) for item in value)
+            return tuple(_redact_payload(item, strict=strict) for item in value)
         if isinstance(value, str):
             return _scrub_pii_text(value)
+        if strict:
+            # Span names and ``trial.config`` ship to OTLP backends: an arbitrary
+            # object's repr is arbitrary text, so a fixed placeholder stands in.
+            if isinstance(value, (set, frozenset)):
+                return [_redact_payload(item, strict=True) for item in value]
+            if value is None or isinstance(value, (bool, int, float)):
+                return value
+            return _UNSUPPORTED_VALUE_PLACEHOLDER
         return value
 
     def _scrub_for_export(value: Any) -> Any:
@@ -676,17 +687,26 @@ except ImportError:
     ) -> None:
         """Set attributes on an optimization session span."""
         for key, value in get_test_context().items():
-            if isinstance(value, (str, int, float, bool)):
+            if any(needle in str(key).lower() for needle in _SECRET_KEY_SUBSTRINGS):
+                span.set_attribute(key, "***REDACTED***")
+            elif isinstance(value, str):
+                span.set_attribute(key, _scrub_pii_text(value))
+            elif isinstance(value, (int, float, bool)):
                 span.set_attribute(key, value)
-        span.set_attribute("traigent.function_name", function_name)
+        span.set_attribute("traigent.function_name", _scrub_pii_text(function_name))
         if max_trials is not None:
             span.set_attribute("traigent.max_trials", max_trials)
         if timeout is not None:
             span.set_attribute("traigent.timeout", timeout)
         if algorithm:
-            span.set_attribute("traigent.algorithm", algorithm)
-        if objectives:
-            span.set_attribute("traigent.objectives", ",".join(objectives))
+            span.set_attribute("traigent.algorithm", _scrub_pii_text(algorithm))
+        # Only plain string names are attached: a structured entry's text is
+        # not inspected key-aware, so it is omitted rather than stringified.
+        objective_names = [o for o in objectives or () if isinstance(o, str)]
+        if objective_names:
+            span.set_attribute(
+                "traigent.objectives", _scrub_pii_text(",".join(objective_names))
+            )
         if config_space:
             try:
                 config_str = json.dumps(_redact_payload(config_space))
@@ -712,10 +732,11 @@ except ImportError:
             return
 
         test_ctx = get_test_context()
+        # The root span name ships to OTLP backends: scrub it like the attributes.
         span_name = (
-            f"optimization: {test_ctx['test.name']}"
+            f"optimization: {_scrub_pii_text(str(test_ctx['test.name']))}"
             if test_ctx.get("test.name")
-            else f"optimization: {function_name}"
+            else f"optimization: {_scrub_pii_text(str(function_name))}"
         )
         fresh_context = otel_context.Context() if otel_context else None
         token = (
@@ -760,7 +781,10 @@ except ImportError:
         def _safe_value(key: str, value: Any) -> str:
             if any(needle in key.lower() for needle in _SECRET_KEY_SUBSTRINGS):
                 return "***REDACTED***"
-            return str(_scrub_pii_text(str(value)))
+            # Redact nested containers key-aware first: a compound value such
+            # as ``{"api_key": ...}`` must not be stringified whole and only
+            # PII-scrubbed.
+            return str(_scrub_pii_text(str(_redact_payload(value, strict=True))))
 
         parts, seen_keys = _priority_config_parts(config, _safe_value)
         for key, value in config.items():
@@ -804,8 +828,12 @@ except ImportError:
                 preview = input_data
             elif isinstance(input_data, dict):
                 preview = _dict_input_preview(input_data)
+            elif isinstance(input_data, (int, float, bool, list, tuple)):
+                preview = str(_redact_payload(input_data, strict=True))
             else:
-                preview = str(input_data)
+                # Unsupported object: its repr is arbitrary text, so a fixed
+                # placeholder stands in for it.
+                preview = _UNSUPPORTED_INPUT_PLACEHOLDER
             preview = _scrub_pii_text(preview)
             preview = preview.replace("\n", " ").strip()
             if len(preview) > max_length:
@@ -819,10 +847,19 @@ except ImportError:
     def _dict_input_preview(input_data: dict[str, Any]) -> str:
         for key in ["text", "input", "query", "prompt", "message", "content"]:
             if key in input_data:
-                preview = str(input_data[key])
+                preview = str(_redact_payload(input_data[key], strict=True))
                 break
         else:
-            preview = str(next(iter(input_data.values()))) if input_data else "{}"
+            if not input_data:
+                return "{}"
+            first_key, first_value = next(iter(input_data.items()))
+            if any(
+                needle in str(first_key).lower() for needle in _SECRET_KEY_SUBSTRINGS
+            ):
+                # The key is dropped from the preview, so a secret-keyed value
+                # must be masked here rather than relying on value-only scrubbing.
+                return "***REDACTED***"
+            preview = str(_redact_payload(first_value, strict=True))
         return preview
 
     @contextmanager
@@ -847,11 +884,11 @@ except ImportError:
             span.set_attribute("trial.id", trial_id)
             span.set_attribute("trial.number", trial_number)
             span.set_attribute("trial.display_number", display_number)
-            redacted_config = _redact_payload(config)
+            redacted_config = _redact_payload(config, strict=True)
             try:
                 span.set_attribute("trial.config", json.dumps(redacted_config))
             except (TypeError, ValueError):
-                span.set_attribute("trial.config", str(redacted_config))
+                span.set_attribute("trial.config", _UNSUPPORTED_VALUE_PLACEHOLDER)
             try:
                 yield span
             except BaseException as exc:
@@ -928,7 +965,8 @@ except ImportError:
                         input_str = input_str[:500] + "..."
                     span.set_attribute("example.input", input_str)
                 except (TypeError, ValueError):
-                    span.set_attribute("example.input", str(redacted_input)[:500])
+                    # json refused the payload: never emit arbitrary repr text.
+                    span.set_attribute("example.input", _UNSUPPORTED_INPUT_PLACEHOLDER)
             if expected_output is not None:
                 # Scrub PII/secrets before serialising. Without this, raw
                 # ``example.expected_output`` text ships unredacted to
