@@ -215,7 +215,7 @@ async def optimize(
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `algorithm` | `str \| None` | Decorator default | Optimizer to use. Omit it for the default smart optimizer. `"grid"` and `"random"` run local search and still sync results when authenticated. Explicit smart algorithms such as `"bayesian"`, `"tpe"`, `"optuna_tpe"`, `"optuna_random"`, `"optuna_grid"`, `"optuna_cmaes"`, `"optuna_nsga2"`, `"nsga2"`, `"nsgaii"`, `"nsga_ii"`, `"cmaes"`, and `"cma_es"` require cloud and hard-error when unavailable or offline. |
-| `max_trials` | `int \| None` | Decorator default | Maximum number of trials to execute. Omitting it or passing `None` to `optimize()` keeps the decorator's value; the run is unlimited only when the decorator itself resolves to no limit. Zero or negative values raise `ValueError`. |
+| `max_trials` | `int \| None` | Decorator default | Maximum number of trials to execute. Omitting it or passing `None` to `optimize()` keeps the decorator's value (`None` is treated as unset); the run is unlimited only when the decorator itself resolves to no limit. A TVL `exploration.budgets.max_trials` applies only when the value in force is unset: an explicit decorator `max_trials=None` is also unset, so a TVL budget (e.g. 3) wins over it, and a decorator value of 10 yields to a TVL budget passed to `optimize(max_trials=None, tvl_spec=...)`. Zero or negative values raise `ValueError`. |
 | `timeout` | `float \| None` | Decorator default | Wall-clock budget in seconds. |
 | `save_to` | `str \| None` | `None` | Optional path to persist results after completion. |
 | `custom_evaluator` | `Callable \| None` | `None` | Overrides the evaluator for this run only. |
@@ -238,7 +238,7 @@ async def optimize(
 | `max_examples` | Caps the number of dataset examples processed per trial. |
 | `max_total_examples` | Global sample budget across all trials. |
 | `cache_policy` | One of `"allow_repeats"` (default) or other cache policies. |
-| `cost_limit` | USD spending cap for this run, enforced at trial/batch boundaries on measured spend: a trial already running when the cap is reached finishes, so the run can overshoot by about one trial (one batch in parallel mode). It is an admission check, not a hard ceiling; the first batch skips the estimate check only while no trial has completed and the shared budget has zero spend. See `docs/guides/execution-budget.md`. |
+| `cost_limit` | USD spending cap for this run, enforced at trial/batch boundaries on measured spend: a trial already running when the cap is reached finishes, so the run can overshoot by about one trial (one batch in parallel mode). It is an admission check, not a hard ceiling; the first batch skips the shared-budget estimate check only while `trial_count == 0` and the shared budget has zero recorded spend (a recorded failed `$0` trial raises `trial_count`, which closes the exception even at zero spend); the per-run permit is a separate check, so with a small `cost_limit` and a larger estimate the first concurrent permit can succeed and the second be denied. See `docs/guides/execution-budget.md`. |
 | `cost_approved` | Skip cost approval prompt only when passed as real Python `True`; strings such as `"true"` are ignored. Env approval requires exact `TRAIGENT_COST_APPROVED=true`; `1`/`yes` do not approve. |
 | `metric_limit` / `metric_name` / `metric_include_pruned` | Configure soft cumulative-metric early stopping. |
 | `budget_limit` / `budget_metric` / `budget_include_pruned` | Removed in 0.13.0; passing them raises `TypeError` naming the replacement. Use `cost_limit` for a USD spend cap checked at trial or batch boundaries (it can be overshot by about one trial, one batch in parallel mode; see `docs/guides/execution-budget.md`), or `metric_limit` / `metric_name` / `metric_include_pruned`. |
@@ -249,7 +249,7 @@ async def optimize(
 
 Unknown keys are forwarded to the optimizer and may raise errors when unsupported.
 
-**Model-key checks.** Fixed model keys (`model`, `model_name`, `model_id`, `engine`) are checked for provider keys and price coverage. For a user `*_model` knob such as `expert_model`: the price-coverage check keeps only values with a known price, while the provider-key check keeps unpriced values too and drops unpriced values only under `embedding_model`, `embedder_model`, `embed_model`, `rerank_model` and `reranker_model`.
+**Model-key checks.** On a paid run, fixed model keys (`model`, `model_name`, `model_id`, `engine`) are checked for provider keys and, separately, for price coverage and cost estimation. The provider-key preflight is skipped when the run has no explicit `cost_limit` or `cost_approved` and no `TRAIGENT_RUN_COST_LIMIT` (for example `model=["gpt-4o"]` alone). For a user `*_model` knob such as `expert_model`: the price-coverage check keeps only values with a known price, while the provider-key check keeps unpriced values too and drops unpriced values only under `embedding_model`, `embedder_model`, `embed_model`, `rerank_model` and `reranker_model`.
 
 **Example:**
 ```python
@@ -600,12 +600,12 @@ Exactly which exits carry it:
 
 #### `best_config` in multi-objective runs (authoritative accessor)
 
-When a run is unranked (no successful trials, no ranking-eligible trial, or every
-candidate is excluded for an unmeasured cost or a non-finite metric),
-`calculate_weighted_scores()` omits `best_weighted_config`; the winner claims
+When a run is unranked because every candidate is excluded for an unmeasured cost or
+a non-finite metric, or no trial is ranking-eligible, `calculate_weighted_scores()`
+omits `best_weighted_config`; the winner claims
 below apply only to ranked runs. An `OptimizationResult` with no successful
 trials returns the numeric fallback `best_weighted_score: 0.0`, not `None`, so
-check whether `best_weighted_config` is present rather than testing the score.
+do not read the key's presence as proof of a ranked winner: a result with `trials=[]`, `best_config={}` and `best_score=0.0` (and one with no successful trials) returns the compatibility fallback `best_weighted_config: {}`. Test for a non-empty `best_weighted_config` backed by at least one successful trial, rather than testing the score or the key.
 
 When you declare more than one objective — e.g. `objectives=["accuracy", "cost"]`,
 **including the default equal weights** — `results.best_config` is the winner of
@@ -621,10 +621,14 @@ break the tie identically (secondary metrics in the declared objective order, th
 `trial_id`), so a two-endpoint Pareto tie (both configs sharing the top weighted
 aggregate) crowns the same winner in both places rather than opposite first-by-order
 picks. `results.best_score` is the winner's primary-objective value (e.g. its
-accuracy), with one exception: when the primary objective is named `score`, the
-selector reads that metric after it was replaced by the weighted aggregate, so
-`best_score` is the weighted aggregate (for example 0.8 for a `score=4, latency=9`
-trial under weights 0.8/0.2), not the raw `score`. The weighted basis of the selection is surfaced per-trial in
+accuracy). With aggregated selection (repetitions of one configuration combined) it is
+the winning configuration's raw mean of that metric. With one exception under per-trial
+selection: when the primary objective is named `score`, the selector reads that metric
+after it was replaced by the weighted aggregate, so `best_score` is the weighted
+aggregate (for example 0.8 for a single `score=4, latency=9` trial under weights
+0.8/0.2), not the raw `score`. Two repetitions each of `(score=4, latency=9)` and
+`(score=2, latency=1)` under the same weights select aggregated and return
+`best_score=4.0`. The weighted basis of the selection is surfaced per-trial in
 `metrics["score"]` (a declared objective named `score` is overwritten by the
 weighted aggregate) and in `metadata["session_summary"]["weighted_selection"]`.
 `auto_load_best` and `get_best_config()` load this same weighted winner.

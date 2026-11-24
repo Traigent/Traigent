@@ -80,7 +80,7 @@ For current contract compatibility, keep auth policy consistent across all endpo
 
 ## ID-Only Mode (Optional Convention)
 
-Traigent Hybrid Mode supports an ID-only pattern that you opt into. **During optimization the trial path observes configuration values, metrics and IDs**, and the SDK does not send input, output or target content on it when you follow the ID-only pattern below. This is a convention your service follows, not a filter the SDK applies to everything it sends: session creation also sends caller-supplied text: a connected `@traigent.optimize` run forwards `run_description` through ordinary session creation, and the separate `create_hybrid_session()` call sends `problem_statement` and the caller's `metadata` (only the documented metadata keys are filtered), and an example ID is sent as given, so do not use input text as an example ID.
+Traigent Hybrid Mode supports an ID-only pattern that you opt into. **During optimization the trial path observes configuration values, metrics and IDs**, and the SDK does not send input, output or target content on it when you follow the ID-only pattern below. This is a convention your service follows, not a filter the SDK applies to everything it sends: session creation also sends caller-supplied text: a connected `@traigent.optimize` run can forward `run_description` through ordinary session creation (an `optimization_only` workspace policy drops that field, and refuses the separate hybrid-session endpoint), and the separate `create_hybrid_session()` call sends `problem_statement` and the caller's `metadata` (only the documented metadata keys are filtered), and an example ID is sent as given, so do not use input text as an example ID.
 
 ### How It Works
 
@@ -90,7 +90,7 @@ Traigent Hybrid Mode supports an ID-only pattern that you opt into. **During opt
 
 ### What Traigent Observes
 
-The "No" rows hold only when you use opaque IDs and follow these conditions: dataset payloads omit content (`/execute` also sends the dataset payload), an output is replaced by its `output_id` and a target by its `target_id` (if an output item has an `output` key, even `null`, it is sent and the `output_id` is dropped, so omit the `output` key entirely when returning an `output_id`), and every other caller-supplied field (`run_description`, `problem_statement`, `metadata`, example IDs) is content-free.
+The "No" rows hold only when you use opaque IDs and follow these conditions: dataset payloads omit content (`/execute` also sends the dataset payload), an output is replaced by its `output_id` and a target by its `target_id` (in the separate `/evaluate` request an output item with an `output` key, even `null`, is sent and its `output_id` is dropped; combined and execute-only modes keep the ID in the result. Omit the `output` key entirely when returning an `output_id`, so the response is portable across modes), and every other caller-supplied field (`run_description`, `problem_statement`, `metadata`, example IDs) is content-free.
 
 | Data | Observed by Traigent |
 |------|---------------------|
@@ -498,15 +498,19 @@ The Python SDK applies these rules:
 - A response that sets the flag has its batch-level `total_cost_usd` discarded.
   A flagged response whose items are all priced still contributes those items'
   costs, so the trial totals can still be emitted when every row is measured.
+  A flagged response with `status: failed` discards its item prices as well.
 - The trial's `cost` and `total_cost` are omitted whenever any row in the trial
   remains unmeasured, and the trial carries `cost_unmeasured` instead.
-- `cost_lower_bound` is the sum of the costs of all measured rows in
+- For an unmeasured trial the SDK emits `cost_lower_bound` only when the measured
+  sum is positive; a trial whose measured rows sum to `$0` with an unknown row
+  emits `cost_unmeasured=1.0` and no `cost_lower_bound`. The field is the sum of the costs of all measured rows in
   the trial, including equal-share allocated estimates (so it can exceed actual
-  spend, e.g. a $0.60 batch with one $0.50 item and one unpriced item
-  contributes $0.80), including rows from other (unflagged) batches whose response-level
+  spend, e.g. a $0.60 batch with one $0.50 item and one allocated $0.30 item
+  contributes $0.80, and if another row stays unmeasured that $0.80 is the
+  trial's `cost_lower_bound`), including rows from other (unflagged) batches whose response-level
   total was used to price them. A service-level floor given without item costs
   is not carried.
-- A row with no item cost of its own takes an equal share of the response
+- A processed row with no valid item cost of its own (a negative `cost_usd` such as `-1` counts as no price, and the row stays unmeasured even when the batch has a valid total) takes an equal share of the response
   total, but only if it has a matching output; a requested row with no matching
   output stays unmeasured: the total divided by the number of requested rows, whether or not
   other rows are priced. Priced rows are not netted out first, so the shares

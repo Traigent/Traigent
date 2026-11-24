@@ -120,7 +120,7 @@ the decision is about.
 **Approve run** allows one optimization to spend. Before you approve, `status` prints, per
 attempt awaiting approval (`approve_run`): the trigger that fired (the rule's TVL trigger and
 its approval mode) and the **declared spend limit** (`max_trials`, `cost_limit`, `timeout` of the
-optimized function; `none declared` when there is none). These are the declared settings only:
+optimized function; `none configured` when there is none). These are the declared settings only:
 the run may also apply `TRAIGENT_RUN_COST_LIMIT` or the SDK defaults, which this view does not show.
 
 **Release** is not decided here. A measured candidate waits for a release mechanism that is planned, not built;

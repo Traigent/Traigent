@@ -219,7 +219,7 @@ Unwrapped, the same function reports cost as unmeasured and a strict run
   remaining budget, floored at `1s` and capped at `5min` — before the watchdog
   aborts it. So the deadline is hard at trial granularity, not a mid-trial
   guillotine.
-- **Fully observed cost makes the consumed total exact, not the cap a ceiling.** The
+- **The consumed total is the sum the SDK booked, not a cap ceiling.** It can include allocated estimates (for example a hybrid response with a $0.60 batch total, a $0.50 item and one unpriced item books $0.80), and `cost_tracking == "complete"` is a coverage verdict, not a promise that the booked sum equals actual spend. The
   cap is still enforced only at admission and between trials (see the admission bullet
   below), so admitted work can overshoot it. On raw
   provider paths, self-hosted models, or unpriced models the SDK cannot see the
@@ -245,15 +245,18 @@ Unwrapped, the same function reports cost as unmeasured and a strict run
   stop condition between trials — never mid-call. In **parallel** mode a batch of up
   to `parallel_trials` trials is admitted together, so the gate only admits a batch
   when the shared remaining can fund the whole batch's *estimated* cost. The one
-  exception is the **first** batch of a run: only while no trial has completed AND the
-  shared budget has recorded zero spend (a budget already spent into by an earlier phase
+  exception is the **first** batch of a run: only while `trial_count == 0` AND the
+  shared budget has recorded zero spend (a recorded failed `$0` trial still raises
+  `trial_count`, so the next shared check applies the estimate gate despite zero spend) (a budget already spent into by an earlier phase
   gets the estimate gate), there is no measured cost, only the default estimate, so that
   batch is admitted without the estimate gate. It still respects the exhaustion checks
   (an exhausted or debit-exhausted budget blocks it), and its real spend is enforced
   afterwards. A very small cap can
   therefore be overshot by the first batch, even when that batch costs less than the
   estimate it skipped. Two checks gate admission: the per-run permit (your
-  `cost_limit`) is checked before each trial or batch is started, and the shared
+  `cost_limit`) is checked before each trial or batch is started (independently of
+  the shared budget: with a $0.01 `cost_limit` and a $0.05 estimate the first concurrent
+  permit can succeed while the second is denied), and the shared
   budget's remaining is checked by the pre-batch gate against the estimate (except
   for the first batch). Neither check limits what a trial that is already running
   spends. Overshoot is therefore possible: by up to the first batch's actual cost on

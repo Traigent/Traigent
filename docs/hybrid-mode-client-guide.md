@@ -30,7 +30,7 @@ Before running optimization, verify:
 
 ## ID-Only Mode (Optional Convention)
 
-Traigent Hybrid Mode supports an **ID-only pattern**; it is a convention you opt into, not something the SDK enforces. During optimization the trial path observes configuration values, metrics and IDs, and the SDK does not send input, output or target content on it when you follow the ID-only pattern below. This is a convention your evaluator service follows, not a filter the SDK applies to everything it sends. Session creation sends caller-supplied text, and the fields depend on the entry point: a connected `@traigent.optimize` run forwards `run_description` (and its session metadata) through ordinary session creation, while the separate `create_hybrid_session()` call sends `problem_statement` and the caller's `metadata` (only the documented metadata keys are filtered). Keep content out of whichever fields you use. If an example ID is also your input text, it is sent as an ID.
+Traigent Hybrid Mode supports an **ID-only pattern**; it is a convention you opt into, not something the SDK enforces. During optimization the trial path observes configuration values, metrics and IDs, and the SDK does not send input, output or target content on it when you follow the ID-only pattern below. This is a convention your evaluator service follows, not a filter the SDK applies to everything it sends. Session creation sends caller-supplied text, and the fields depend on the entry point: a connected `@traigent.optimize` run can forward `run_description` (and its session metadata) through ordinary session creation, except under an `optimization_only` workspace policy, which drops `run_description` before the request is sent, while the separate `create_hybrid_session()` call sends `problem_statement` and the caller's `metadata` (only the documented metadata keys are filtered). Keep content out of whichever fields you use. If an example ID is also your input text, it is sent as an ID.
 
 ### What Gets Transmitted
 
@@ -50,8 +50,8 @@ Opaque IDs alone do not keep content local. The SDK sends the dataset's input pa
 
 ```python
 dataset = [
-    {"input": {"example_id": "case_001"}},
-    {"input": {"example_id": "case_002"}},
+    {"input": {"example_id": "case_001"}, "expected_output": {"target_id": "case_001"}},
+    {"input": {"example_id": "case_002"}, "expected_output": {"target_id": "case_002"}},
 ]  # no text, no fields with content
 ```
 

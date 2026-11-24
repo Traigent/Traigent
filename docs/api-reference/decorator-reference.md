@@ -317,7 +317,7 @@ When a TVL spec is loaded, the `TVLSpecArtifact` provides access to all parsed s
 
 **Runtime Wiring (TVL 0.9 `exploration` section)**:
 
-- `exploration.budgets.max_trials` → `max_trials` (applies only when `max_trials` was not passed explicitly to the decorator; an explicit decorator `max_trials` wins)
+- `exploration.budgets.max_trials` → `max_trials` (applies only when no `max_trials` is in force: an explicit decorator `max_trials=None` counts as unset, so the TVL budget wins, while a non-`None` decorator value wins at decoration time; at call time `optimize(max_trials=None, tvl_spec=...)` is also treated as unset, so the spec's budget (e.g. 3) overrides a decorator value of 10)
 - `exploration.budgets.max_spend_usd` → `cost_limit`
 - `exploration.budgets.max_wallclock_s` → `timeout`
 - `exploration.strategy.type` → `algorithm`
@@ -570,7 +570,7 @@ approve.
 ```
 
 `budget_limit` / `budget_metric` / `budget_include_pruned` were removed in
-0.13.0 and now raise `TypeError`. Use `cost_limit` for a USD spend cap checked at trial or batch admission (admitted work can overshoot it; the first batch skips the estimate check only while no trial has completed and the shared budget has zero spend),
+0.13.0 and now raise `TypeError`. Use `cost_limit` for a USD spend cap checked at trial or batch admission (admitted work can overshoot it; the first batch skips the shared-budget estimate check only while `trial_count == 0` and the shared budget has zero recorded spend (a recorded failed `$0` trial raises `trial_count` and closes it); the per-run permit is checked independently),
 or `metric_limit` / `metric_name` for other cumulative metrics.
 
 **Stop Conditions**:
