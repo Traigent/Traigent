@@ -78,9 +78,9 @@ For current contract compatibility, keep auth policy consistent across all endpo
 
 ---
 
-## Privacy-Preserving Mode (Default)
+## ID-Only Mode (Optional Convention)
 
-Traigent Hybrid Mode is designed with privacy as the default. **Only configuration values and metrics are observed during optimization** - the actual content of inputs, outputs, and targets is never transmitted to Traigent.
+Traigent Hybrid Mode supports an ID-only pattern that you opt into. **During optimization the trial path observes configuration values, metrics and IDs**, and the SDK does not send input, output or target content on it when you follow the ID-only pattern below. This is a convention your service follows, not a filter the SDK applies to everything it sends: session creation also sends the `problem_statement` and the caller's `metadata` (only the documented metadata keys are filtered), and an example ID is sent as given, so do not use input text as an example ID.
 
 ### How It Works
 
@@ -90,15 +90,17 @@ Traigent Hybrid Mode is designed with privacy as the default. **Only configurati
 
 ### What Traigent Observes
 
+The "No" rows hold only when you use opaque IDs and follow these conditions: dataset payloads omit content (`/execute` also sends the dataset payload), an output is replaced by its `output_id` and a target by its `target_id` (a non-null `output` is sent and takes precedence over `output_id`), and every other caller-supplied field (`problem_statement`, `metadata`, example IDs) is content-free.
+
 | Data | Observed by Traigent |
 |------|---------------------|
 | Tunable definitions (config-space) | ✓ Yes |
 | Configuration values per trial | ✓ Yes |
 | Operational metrics (cost, latency, tokens) | ✓ Yes |
 | Quality metrics (accuracy, relevance, etc.) | ✓ Yes |
-| Input data content | ✗ No (only IDs) |
-| Output data content | ✗ No (only IDs) |
-| Target/expected output content | ✗ No (only IDs) |
+| Input data content | ✗ No, if the dataset payload omits content and IDs are opaque (only IDs) |
+| Output data content | ✗ No, if you return `output_id` and no `output` (only IDs) |
+| Target/expected output content | ✗ No, if you send `target_id` (only IDs) |
 
 ### Session and ID Management
 
@@ -490,6 +492,22 @@ executed examples could not be priced. `total_cost_usd` is then only a *lower bo
 (the spend that was reported; `0.0` if none was), never the total. A consumer that
 honours the flag treats the number as "at least"; the flag, not the number, is the
 signal. Omit the flag only when every example reported its cost.
+
+The Python SDK applies these rules:
+
+- A response that sets the flag has its batch-level `total_cost_usd` discarded.
+  A flagged response whose items are all priced still contributes those items'
+  costs, so the trial totals can still be emitted when every row is measured.
+- The trial's `cost` and `total_cost` are omitted whenever any row in the trial
+  remains unmeasured, and the trial carries `cost_unmeasured` instead.
+- `cost_lower_bound` is the sum of the per-item costs of all measured rows in
+  the trial, including rows from other (unflagged) batches whose response-level
+  total was used to price them. A service-level floor given without item costs
+  is not carried.
+- Per-row sharing of a response total covers only the rows matched to a
+  requested example. Priced rows are netted out first; if they exhaust the
+  total, the unpriced rows get zero, and if they materially exceed it the
+  figures conflict and the unpriced rows stay unmeasured.
 
 You can add any custom operational metrics:
 ```json

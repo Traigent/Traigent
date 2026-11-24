@@ -1380,9 +1380,11 @@ components:
       description: |
         Single evaluation item with output and target.
 
-        **Privacy-preserving mode**: Use `output_id` and `target_id` instead of actual content.
-        Your service looks up the actual data locally using these IDs. This ensures that
-        sensitive input/output content is never transmitted to Traigent.
+        **ID-only mode**: Use `output_id` and `target_id` in place of `output` and `target`.
+        Your service looks up the actual data locally using these IDs. The IDs keep that
+        content local only if the corresponding `output` and `target` are omitted, and the
+        dataset input payload and other caller-supplied fields carry no content: the SDK
+        serializes dataset input into `/execute` as given.
 
         **Full-content datasets**: Include `output` and `target` with actual content.
 

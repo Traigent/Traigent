@@ -160,6 +160,8 @@ def my_agent(query: str) -> str:
 
 **Note:** Use `metric_functions` to provide custom metrics in mock mode where no real LLM calls occur.
 
+**How a metric function is called.** The SDK tries these call shapes in order and uses the first one that binds to the function's signature (`inspect.Signature.bind`): (1) if the function takes `*args`, a positional call `(output, expected, llm_metrics)`; (2) if any parameter has a recognized name (`output`/`actual`/`prediction`..., `expected`/`expected_output`/`ground_truth`..., `llm_metrics`/`metrics`, `example`, `input_data`, `metadata`, `config`, `example_index`) or the function takes `**kwargs`, a keyword call with only the recognized names; (3) a positional call with 3, then 2, then 1, then 0 arguments. A recognized name does not rule out positional binding: if the keyword call does not bind (for example `def metric(output, x)`, where `x` is left unfilled), the next attempt is positional, so `x` receives `expected`. A function whose parameters are all unrecognized is bound entirely by position. If no attempt binds, the call fails with the bind error.
+
 ### 4) Advanced custom evaluators
 
 For full control over evaluation logic, use `custom_evaluator` which receives the full context:
@@ -192,7 +194,7 @@ Keys in `ExampleResult.metrics` that are not objectives (here `exact_match` and 
 
 | Situation | `custom_evaluator` | `metric_functions` |
 |-----------|--------------------|--------------------|
-| Your code raises on one row | That row scores 0.0 on quality metrics (cost-family metrics stay unmeasured). The trial stays completed unless every row fails. When some but not all rows failed, the trial metadata records `custom_evaluator_failed_rows` and `custom_evaluator_total_rows`, and `result.warning_codes` contains `CUSTOM_EVALUATOR_ROWS_FAILED`. | A metric function that raises on an objective metric fails the trial; on a non-objective metric the error is recorded in `metric_errors` and the metric is left out for that row. |
+| Your code raises on one row | That row scores 0.0 on quality metrics (cost-family metrics stay unmeasured). The trial stays completed unless every row fails. When some but not all rows failed, the trial metadata records `custom_evaluator_failed_rows` and `custom_evaluator_total_rows`, and `result.warning_codes` contains `CUSTOM_EVALUATOR_ROWS_FAILED`. | A metric function that raises on an objective metric fails the trial; on a non-objective metric the error is recorded in `metric_errors` and that row reports a compatibility `0.0` for the metric (so read `metric_errors` before trusting a non-objective average). |
 | All rows raise | The trial fails (no warning code; the failure itself is the signal). | Same for an objective metric. |
 | A row omits an objective key | The trial fails with an `EvaluationError` naming the metric and the row count. No 0.0 is substituted. | The trial fails; no 0.0 is substituted for an objective. |
 

@@ -48,7 +48,8 @@ export TRAIGENT_CUSTOM_MODEL_PRICING_FILE=.traigent/model-pricing.json
 
 ## CI Run Approval
 
-Optimization in CI requires explicit approval. The recommended
+Optimization in CI requires explicit approval for `local` execution mode (the
+SDK-side CI gate returns immediately in other modes). The recommended
 environment approval is:
 
 ```bash

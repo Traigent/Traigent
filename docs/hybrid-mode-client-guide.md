@@ -28,11 +28,13 @@ Before running optimization, verify:
 6. Auth behavior is consistent across all endpoints if authentication is required; accept both `Authorization` and `x-api-key` because the SDK sends both from `HybridAPIOptions.auth_header`.
 7. Timeout/error behavior is explicit for `400/401/404/408/429/500/503` and client retry logic is implemented.
 
-## Privacy-Preserving Mode (Default)
+## ID-Only Mode (Optional Convention)
 
-Traigent Hybrid Mode is designed with **privacy as the default**. Only configuration values and metrics are observed during optimization - your actual data content is never transmitted to Traigent.
+Traigent Hybrid Mode supports an **ID-only pattern**; it is a convention you opt into, not something the SDK enforces. During optimization the trial path observes configuration values, metrics and IDs, and the SDK does not send input, output or target content on it when you follow the ID-only pattern below. This is a convention your evaluator service follows, not a filter the SDK applies to everything it sends. Session creation also sends the `problem_statement` and the caller's `metadata` as you supplied them (only the documented metadata keys are filtered), so keep content out of those fields. If an example ID is also your input text, it is sent as an ID.
 
 ### What Gets Transmitted
+
+The "No" rows below hold only if you use opaque IDs and your caller-supplied fields (`problem_statement`, `metadata`, example IDs) carry no content.
 
 | Data Type | Transmitted | Description |
 |-----------|-------------|-------------|
@@ -40,9 +42,17 @@ Traigent Hybrid Mode is designed with **privacy as the default**. Only configura
 | Configuration values | Yes | Tunable values per trial |
 | Operational metrics | Yes | Cost, latency, tokens, etc. |
 | Quality metrics | Yes | Accuracy, relevance, etc. |
-| Input data content | **No** | Only example IDs |
-| Output data content | **No** | Only output IDs |
-| Target data content | **No** | Only target IDs |
+| Input data content | **No**, only if your dataset holds IDs and no content | `/execute` serializes each dataset input as given; whatever your dataset carries is sent |
+| Output data content | **No**, only if you return `output_id` in place of `output` | Only output IDs |
+| Target data content | **No**, only if you send `target_id` in place of `target` | Only target IDs |
+
+Opaque IDs alone do not keep content local. The SDK sends the dataset's input payload and any other caller-supplied field as you provide it, so build the dataset caller-side from IDs only, for example:
+
+```python
+dataset = [{"example_id": "case_001"}, {"example_id": "case_002"}]  # no text, no fields with content
+```
+
+Dataset payloads and every other caller-supplied field must omit content. An output must be replaced by its `output_id` and a target by its `target_id`; sending both the ID and the content transmits the content.
 
 ### How to Implement Privacy-Preserving Mode
 

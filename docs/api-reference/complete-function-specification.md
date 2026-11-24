@@ -215,7 +215,7 @@ async def optimize(
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `algorithm` | `str \| None` | Decorator default | Optimizer to use. Omit it for the default smart optimizer. `"grid"` and `"random"` run local search and still sync results when authenticated. Explicit smart algorithms such as `"bayesian"`, `"tpe"`, `"optuna_tpe"`, `"optuna_random"`, `"optuna_grid"`, `"optuna_cmaes"`, `"optuna_nsga2"`, `"nsga2"`, `"nsgaii"`, `"nsga_ii"`, `"cmaes"`, and `"cma_es"` require cloud and hard-error when unavailable or offline. |
-| `max_trials` | `int \| None` | Decorator default | Maximum number of trials to execute. `None` means unlimited. |
+| `max_trials` | `int \| None` | Decorator default | Maximum number of trials to execute. Omitting it or passing `None` to `optimize()` keeps the decorator's value; the run is unlimited only when the decorator itself resolves to no limit. Zero or negative values raise `ValueError`. |
 | `timeout` | `float \| None` | Decorator default | Wall-clock budget in seconds. |
 | `save_to` | `str \| None` | `None` | Optional path to persist results after completion. |
 | `custom_evaluator` | `Callable \| None` | `None` | Overrides the evaluator for this run only. |
@@ -238,16 +238,18 @@ async def optimize(
 | `max_examples` | Caps the number of dataset examples processed per trial. |
 | `max_total_examples` | Global sample budget across all trials. |
 | `cache_policy` | One of `"allow_repeats"` (default) or other cache policies. |
-| `cost_limit` | Maximum USD spending for this run. |
+| `cost_limit` | USD spending cap for this run, enforced at trial/batch boundaries on measured spend: a trial already running when the cap is reached finishes, so the run can overshoot by about one trial (one batch in parallel mode). It is an admission check, not a hard ceiling; the first batch skips the estimate check only while no trial has completed and the shared budget has zero spend. See `docs/guides/execution-budget.md`. |
 | `cost_approved` | Skip cost approval prompt only when passed as real Python `True`; strings such as `"true"` are ignored. Env approval requires exact `TRAIGENT_COST_APPROVED=true`; `1`/`yes` do not approve. |
 | `metric_limit` / `metric_name` / `metric_include_pruned` | Configure soft cumulative-metric early stopping. |
-| `budget_limit` / `budget_metric` / `budget_include_pruned` | Removed in 0.13.0; passing them raises `TypeError` naming the replacement. Use `cost_limit` for hard USD spend control, or `metric_limit` / `metric_name` / `metric_include_pruned`. |
+| `budget_limit` / `budget_metric` / `budget_include_pruned` | Removed in 0.13.0; passing them raises `TypeError` naming the replacement. Use `cost_limit` for a USD spend cap checked at trial or batch boundaries (it can be overshot by about one trial, one batch in parallel mode; see `docs/guides/execution-budget.md`), or `metric_limit` / `metric_name` / `metric_include_pruned`. |
 | `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
 | `semantic_saturation` | Configure opt-in semantic saturation. Uses per-example metric-vector churn plus continuous objective improvement and emits sanitized diagnostics in `OptimizationResult.metadata["semantic_saturation"]`. |
 | `parameter_order` | Grid search only: mapping of parameter names to numeric priorities. Lower values vary slowest; higher values vary fastest. |
 | `order` | Alias for `parameter_order` (grid search only). |
 
 Unknown keys are forwarded to the optimizer and may raise errors when unsupported.
+
+**Model-key checks.** Fixed model keys (`model`, `model_name`, `model_id`, `engine`) are checked for provider keys and price coverage. For a user `*_model` knob such as `expert_model`: the price-coverage check keeps only values with a known price, while the provider-key check keeps unpriced values too and drops unpriced values only under `embedding_model`, `embedder_model`, `embed_model`, `rerank_model` and `reranker_model`.
 
 **Example:**
 ```python
@@ -328,7 +330,9 @@ objective), computed from per-example scores at ~zero cost:
   - `"na"` — two configs exist but there is no shared per-example data for a
     paired test.
 - `best_config_margin` is `None` when there is no runner-up (fewer than two
-  distinct configs, or no primary objective).
+  distinct configs, no primary objective, or a `band`-oriented primary
+  objective, including one declared only through the objective schema; band
+  objectives are ranked by band distance, so there is no raw-value runner-up).
 
 > **A margin within its CI at typical eval sizes (n = 20–80) is not a
 > decision.** A `"statistical_tie"` winner is noise-level ahead of its
@@ -596,6 +600,11 @@ Exactly which exits carry it:
 
 #### `best_config` in multi-objective runs (authoritative accessor)
 
+When a run is unranked (no successful trials, no ranking-eligible trial, or every
+candidate is excluded for an unmeasured cost or a non-finite metric),
+`calculate_weighted_scores()` omits `best_weighted_config` and returns
+`best_weighted_score: None`; the winner claims below apply only to ranked runs.
+
 When you declare more than one objective — e.g. `objectives=["accuracy", "cost"]`,
 **including the default equal weights** — `results.best_config` is the winner of
 the declared **weighted aggregate**, not the highest-accuracy config. This is the
@@ -611,7 +620,9 @@ break the tie identically (secondary metrics in the declared objective order, th
 aggregate) crowns the same winner in both places rather than opposite first-by-order
 picks. `results.best_score` remains the winner's primary-objective value (e.g. its
 accuracy); the weighted basis of the selection is surfaced per-trial in
-`metrics["score"]` and in `metadata["session_summary"]["weighted_selection"]`.
+`metrics["score"]` (or, when `score` is itself a declared objective, in
+`metadata["weighted_selection_score"]`, so the evaluator's own value is never
+overwritten) and in `metadata["session_summary"]["weighted_selection"]`.
 `auto_load_best` and `get_best_config()` load this same weighted winner.
 
 The agreement holds for the common run. Two narrow cases can still diverge, by

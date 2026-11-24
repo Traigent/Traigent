@@ -119,8 +119,9 @@ the decision is about.
 
 **Approve run** allows one optimization to spend. Before you approve, `status` prints, per
 attempt awaiting approval (`approve_run`): the trigger that fired (the rule's TVL trigger and
-its approval mode) and the **spend limit** the optimizer will run under (`max_trials`,
-`cost_limit`, `timeout` of the optimized function; `none configured` when there is none).
+its approval mode) and the **declared spend limit** (`max_trials`, `cost_limit`, `timeout` of the
+optimized function; `none declared` when there is none). These are the declared settings only:
+the run may also apply `TRAIGENT_RUN_COST_LIMIT` or the SDK defaults, which this view does not show.
 
 **Release** is not decided here. A measured candidate waits for a release mechanism that is planned, not built;
 `status` prints, per pending deploy (`release_evidence`, read-only): the **incumbent** (the head
@@ -377,7 +378,12 @@ TRAIGENT_TVL_REQUIRED=1 python -m pytest -q tests/unit/tuning
   code reading those variables meanwhile, can interfere.
 * Local evidence measures `accuracy` (exact match) only. Cost, latency and other objectives make
   the candidate `NoDecision` (`objective_not_measurable`).
-* Spend per run is bounded by the optimized function's own `max_trials` and `cost_limit`.
+* `max_trials` limits how many trials start, and `cost_limit` is a trial admission limit: a trial
+  is admitted on its estimated cost, and actual spend can exceed the configured limit inside an
+  admitted trial. It is not a hard spend bound. The promotion holdout that follows has no budget
+  and no metering at all: it makes two agent calls per holdout row (candidate and incumbent) for
+  each candidate measured, so size the holdout, and the number of candidates, for what you are
+  willing to pay for those calls.
 * The window aggregation is yours to run: the controller records what you hand it
   (`record_window`) and acts on `step`.
 * Release rollback and RFC 0011 Part B are not implemented (see the support table).

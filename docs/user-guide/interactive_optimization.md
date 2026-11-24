@@ -308,7 +308,7 @@ else:
 
 | Feature              | Interactive Optimization   | Full Remote          | Full Local       |
 | -------------------- | -------------------------- | -------------------- | ---------------- |
-| Data Privacy         | ✅ High (data stays local) | ❌ Low               | ✅ High          |
+| Data Privacy         | ⚠️ Dataset and function execution stay local. The optimizer hands the error text and metadata you report to the configured service as given; the Traigent Cloud adapter sends a closed error code and filters selected metadata fields, but a custom service receives them raw. The configuration space and dataset metadata are sent at session setup. Do not put private content in these fields | ❌ Low               | ✅ High          |
 | Optimization Quality | ✅ High (cloud algorithms) | ✅ High              | ⚠️ Limited       |
 | Execution Speed      | ✅ Fast (local execution)  | ⚠️ Network dependent | ✅ Fast          |
 | Cost Efficiency      | ✅ 60-80% savings          | ❌ Full cost         | ✅ No cloud cost |
