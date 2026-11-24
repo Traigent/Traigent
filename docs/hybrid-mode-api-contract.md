@@ -78,9 +78,9 @@ For current contract compatibility, keep auth policy consistent across all endpo
 
 ---
 
-## ID-Only Mode (Optional Convention)
+## Privacy-Preserving Mode (Default)
 
-Traigent Hybrid Mode supports an ID-only pattern that you opt into. **During optimization the trial path observes configuration values, metrics and IDs**, and the SDK does not send input, output or target content on it when you follow the ID-only pattern below. This is a convention your service follows, not a filter the SDK applies to everything it sends: session creation also sends caller-supplied text: a connected `@traigent.optimize` run can forward `run_description` through ordinary session creation (an `optimization_only` workspace policy drops that field, and refuses the separate hybrid-session endpoint), and the separate `create_hybrid_session()` call sends `problem_statement` and the caller's `metadata` (only the documented metadata keys are filtered), and an example ID is sent as given, so do not use input text as an example ID.
+Traigent Hybrid Mode is designed with privacy as the default. **Only configuration values and metrics are observed during optimization** - the actual content of inputs, outputs, and targets is never transmitted to Traigent.
 
 ### How It Works
 
@@ -90,17 +90,15 @@ Traigent Hybrid Mode supports an ID-only pattern that you opt into. **During opt
 
 ### What Traigent Observes
 
-The "No" rows hold only when you use opaque IDs and follow these conditions: dataset payloads omit content (`/execute` also sends the dataset payload), an output is replaced by its `output_id` and a target by its `target_id` (in the separate `/evaluate` request an output item with an `output` key, even `null`, is sent and its `output_id` is dropped; combined and execute-only modes keep the ID in the result. Omit the `output` key entirely when returning an `output_id`, so the response is portable across modes), and every other caller-supplied field (`run_description`, `problem_statement`, `metadata`, example IDs) is content-free.
-
 | Data | Observed by Traigent |
 |------|---------------------|
 | Tunable definitions (config-space) | ✓ Yes |
 | Configuration values per trial | ✓ Yes |
 | Operational metrics (cost, latency, tokens) | ✓ Yes |
 | Quality metrics (accuracy, relevance, etc.) | ✓ Yes |
-| Input data content | ✗ No, if the dataset payload omits content and IDs are opaque (only IDs) |
-| Output data content | ✗ No, if you return `output_id` and no `output` (only IDs) |
-| Target/expected output content | ✗ No, if you send `target_id` (only IDs) |
+| Input data content | ✗ No (only IDs) |
+| Output data content | ✗ No (only IDs) |
+| Target/expected output content | ✗ No (only IDs) |
 
 ### Session and ID Management
 
@@ -492,24 +490,6 @@ executed examples could not be priced. `total_cost_usd` is then only a *lower bo
 (the spend that was reported; `0.0` if none was), never the total. A consumer that
 honours the flag treats the number as "at least"; the flag, not the number, is the
 signal. Omit the flag only when every example reported its cost.
-
-The Python SDK applies these rules:
-
-- A response that sets the flag has its batch-level `total_cost_usd` discarded.
-  A flagged response whose items are all priced still contributes those items'
-  costs, so the trial totals can still be emitted when every row is measured.
-  A flagged response with `status: failed` discards its item prices as well.
-- The trial's `cost` and `total_cost` are omitted whenever any row in the trial
-  remains unmeasured, and the trial carries `cost_unmeasured` instead.
-- For an unmeasured trial the SDK emits `cost_lower_bound` only when the measured
-  sum is positive; a trial whose measured rows sum to `$0` with an unknown row
-  emits `cost_unmeasured=1.0` and no `cost_lower_bound`. The field is the sum of the costs of all measured rows in
-  the trial, including equal-share allocated estimates (so it can exceed actual
-  spend, e.g. a $0.60 batch with one $0.50 item and one allocated $0.30 item
-  contributes $0.80, and if another row stays unmeasured that $0.80 is the
-  trial's `cost_lower_bound`), including rows from other (unflagged) batches whose response-level
-  total was used to price them. A service-level floor given without item costs
-  is not carried.
 
 You can add any custom operational metrics:
 ```json

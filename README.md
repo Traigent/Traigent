@@ -226,9 +226,7 @@ The default run uses Traigent's smart optimizer when portal credentials are avai
 | Credential  | 1st (highest)                  | 2nd                    | 3rd (default)        |
 |-------------|--------------------------------|------------------------|----------------------|
 | API Key     | `TRAIGENT_API_KEY` env var     | Stored CLI credentials | None (local only)    |
-| Backend URL | `TRAIGENT_BACKEND_URL` env var | Origin of a valid `TRAIGENT_API_URL` env var, then stored CLI credentials | `portal.traigent.ai` |
-
-> **Note:** `TRAIGENT_API_URL`, when set, decides the API base URL (its host and path), while `TRAIGENT_BACKEND_URL` decides the backend origin. With both set to different hosts the two accessors return different hosts. If only `TRAIGENT_API_URL` is set, its origin is used as the backend origin (ahead of stored credentials), and a value that is only a host (no path) gets the default API path `/api/v1`.
+| Backend URL | `TRAIGENT_BACKEND_URL` env var | Stored CLI credentials | `portal.traigent.ai` |
 
 > **Tip:** No env vars needed after `traigent auth login` — the SDK picks up stored credentials automatically.
 
