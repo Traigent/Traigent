@@ -581,3 +581,34 @@ def test_respond_forwards_the_explicit_project_over_the_environment(
         )
     assert seen["project_id"] == REACTIVE_PROJECT
     assert seen["agent_id"] == AGENT
+
+
+def test_respond_does_not_fall_back_to_the_environment_for_a_blank_project(
+    reactive: Reactive, monkeypatch: Any
+) -> None:
+    from traigent.runtime import respond as respond_module
+
+    from .conftest import AGENT
+
+    seen: dict[str, Any] = {}
+
+    class Recorder:
+        def __init__(self, agent_ref: str, tokens: Any, **kwargs: Any) -> None:
+            seen.update(kwargs)
+            raise _Stop()
+
+    monkeypatch.setattr(respond_module, "ReactiveClient", Recorder)
+    monkeypatch.setenv("TRAIGENT_PROJECT_ID", "project_" + "b" * 32)
+    with pytest.raises(_Stop):
+        run(
+            respond_module.respond(
+                Fn(reactive),
+                reactive.requirement,
+                project_id="  ",
+                agent_id=AGENT,
+                agent_ref=reactive.agent_ref,
+                state_dir=reactive.state,
+                clock=reactive.clock,
+            )
+        )
+    assert seen["project_id"] == "  "

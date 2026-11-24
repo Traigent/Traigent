@@ -364,17 +364,21 @@ def controller_for(
     state_dir: Path | None = None,
     *,
     agent_id: str | None = None,
+    project_id: str | None = None,
     **kwargs: Any,
 ) -> DeployController:
     """A controller using the production transport and the persisted token map.
 
     ``agent_ref`` is the ``agentref_`` digest (release-family head routes).  ``agent_id``
     is the id the agents API returns (production-reactive routes); when omitted it falls
-    back to ``TRAIGENT_REACTIVE_AGENT_ID``.
+    back to ``TRAIGENT_REACTIVE_AGENT_ID``.  ``project_id`` reaches the client; when
+    omitted the client reads ``TRAIGENT_PROJECT_ID``.
     """
     state = state_dir or manifest.default_state_dir()
     return DeployController(
-        ReactiveClient(agent_ref, TokenMap(state), agent_id=agent_id),
+        ReactiveClient(
+            agent_ref, TokenMap(state), agent_id=agent_id, project_id=project_id
+        ),
         state_dir=state,
         **kwargs,
     )

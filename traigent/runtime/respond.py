@@ -856,7 +856,7 @@ async def respond_hosted(
     rule_id = _validate_hosted_response(fn, requirement)
     state = state_dir or manifest.default_state_dir()
     api = client or ReactiveClient(
-        agent_ref, TokenMap(state), project_id=project_id or "", agent_id=agent_id
+        agent_ref, TokenMap(state), project_id=project_id, agent_id=agent_id
     )
     # The token map is read first: unavailable means nothing is asked or reserved.
     attempt = _select_attempt(api, api.tokens, requirement, rule_id, attempt_ref)

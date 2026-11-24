@@ -513,8 +513,8 @@ DIGEST = "agentref_" + "0" * 32
 def _recording_client(
     calls: list[str],
     *,
-    project_id: str = REACTIVE_PROJECT,
-    agent_id: str | None = AGENT,
+    project_id: str | None = REACTIVE_PROJECT,
+    agent_id: Any = AGENT,
 ) -> ReactiveClient:
     from .reactive_fake import refusal
 
@@ -631,8 +631,9 @@ def test_the_agent_id_falls_back_to_the_reactive_env_var_only(monkeypatch: Any) 
 @pytest.mark.parametrize("agent_id", [".", ".."])
 def test_a_dot_segment_agent_id_is_refused_before_any_request(agent_id: str) -> None:
     calls: list[str] = []
+    client = _recording_client(calls, agent_id=agent_id)  # never raises at construction
     with pytest.raises(RuntimeRequirementError) as err:
-        _recording_client(calls, agent_id=agent_id)
+        client.list_attempts()
     assert err.value.path == "agent_id"
     assert calls == []
 
@@ -702,7 +703,7 @@ def test_the_project_comes_from_the_environment_when_not_passed(
 ) -> None:
     monkeypatch.setenv("TRAIGENT_PROJECT_ID", REACTIVE_PROJECT)
     calls: list[str] = []
-    client = _recording_client(calls, project_id="")
+    client = _recording_client(calls, project_id=None)  # None reads the environment
     assert client.project_id == REACTIVE_PROJECT
     with pytest.raises(ReactiveNotFoundError):  # the recorder answers 404
         client.list_attempts()
@@ -749,21 +750,84 @@ def test_controller_for_carries_the_agent_id_and_keeps_the_digest(
 ) -> None:
     from traigent.runtime.deploy import controller_for
 
-    controller = controller_for(DIGEST, tmp_path, agent_id=AGENT)
+    controller = controller_for(
+        DIGEST, tmp_path, agent_id=AGENT, project_id=REACTIVE_PROJECT
+    )
     assert controller.client.agent_ref == DIGEST
     assert controller.client.agent_id == AGENT
+    assert controller.client.project_id == REACTIVE_PROJECT
 
 
-def test_a_digest_in_the_explicit_agent_id_is_refused_at_construction() -> None:
+def test_a_digest_in_the_explicit_agent_id_never_raises_at_construction() -> None:
+    calls: list[str] = []
+    client = _recording_client(calls, agent_id=DIGEST)
     with pytest.raises(RuntimeRequirementError) as err:
-        ReactiveClient(
-            DIGEST,
-            TokenMap(Path("/nonexistent-token-state")),
-            project_id=REACTIVE_PROJECT,
-            agent_id=DIGEST,
-            transport=lambda *_a: (200, {}, {}),
-        )
+        client.list_attempts()
     assert err.value.path == "agent_id:not_the_agentref_digest"
+    assert calls == []
+
+
+def test_an_explicit_digest_agent_id_still_lets_the_head_read_work() -> None:
+    calls: list[str] = []
+    client = _recording_client(calls, agent_id=DIGEST)
+    with pytest.raises(ReactiveNotFoundError):  # the recorder answers 404
+        client.get_pinned_config()
+    assert calls == [f"GET /api/v1/best-configs/agent-heads/{DIGEST}/config"]
+
+
+@pytest.mark.parametrize("bad", ["", "   "])
+def test_a_blank_explicit_project_is_an_error_and_never_falls_back(
+    monkeypatch: Any, bad: str
+) -> None:
+    monkeypatch.setenv("TRAIGENT_PROJECT_ID", REACTIVE_PROJECT)
+    calls: list[str] = []
+    client = _recording_client(calls, project_id=bad)  # constructor never raises
+    assert client.project_id == bad
+    with pytest.raises(RuntimeRequirementError) as err:
+        client.list_attempts()
+    assert err.value.path == "project_id"
+    assert calls == []
+
+
+def test_a_blank_explicit_agent_id_is_an_error_and_never_falls_back(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("TRAIGENT_REACTIVE_AGENT_ID", AGENT)
+    calls: list[str] = []
+    client = _recording_client(calls, agent_id="")
+    with pytest.raises(RuntimeRequirementError) as err:
+        client.list_attempts()
+    assert err.value.path == "agent_id"
+    assert calls == []
+
+
+@pytest.mark.parametrize("bad", [42, None, ["x"]])
+def test_non_string_reactive_ids_are_invalid_request_not_type_errors(bad: Any) -> None:
+    calls: list[str] = []
+    client = _recording_client(calls, agent_id=bad)  # constructor never raises
+    with pytest.raises(RuntimeRequirementError) as err:
+        client.list_attempts()
+    assert err.value.code == "invalid_request"
+    assert calls == []
+    client = _recording_client(calls, project_id=bad)
+    with pytest.raises(RuntimeRequirementError) as err:
+        client.list_attempts()
+    assert err.value.code == "invalid_request" and err.value.path in {
+        "project_id",
+        "TRAIGENT_REACTIVE_AGENT_ID",
+    }
+    assert calls == []
+
+
+def test_the_constructor_never_raises_for_reactive_ids(monkeypatch: Any) -> None:
+    monkeypatch.delenv("TRAIGENT_REACTIVE_AGENT_ID", raising=False)
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    for project_id, agent_id in [
+        ("bogus", "legacy/agent"),
+        (" ", ""),
+        (DIGEST, DIGEST),
+    ]:
+        _recording_client([], project_id=project_id, agent_id=agent_id)
 
 
 def test_a_digest_in_the_reactive_env_var_is_refused_before_any_request(

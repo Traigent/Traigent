@@ -777,7 +777,7 @@ class ReactiveClient:
         agent_ref: str,
         tokens: TokenMap,
         *,
-        project_id: str = "",
+        project_id: str | None = None,
         agent_id: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
@@ -786,20 +786,22 @@ class ReactiveClient:
         # agent_ref: the ``agentref_`` digest, used only by the release-family head routes.
         # agent_id: the id the agents API returns, used by the production-reactive routes.
         self.agent_ref = _need(_AGENT_REF, agent_ref, "agent_ref")
-        # An explicit value (even "") is validated now.  The env value is only resolved
-        # here: it is validated when a reactive path is built, so a bad reactive setting
-        # cannot block the digest-only head reads.
-        if agent_id is not None:
-            problem = _agent_id_problem(agent_id)
-            if problem is not None:
-                raise RuntimeRequirementError("invalid_request", problem)
-            self.agent_id: str | None = agent_id
-        else:
-            self.agent_id = read_optional_env(REACTIVE_AGENT_ID_ENV)
-        self.project_id = _resolve_project_id(project_id)  # "" when none is configured
+        # The reactive ids are resolved once here and validated only when a reactive path is
+        # built, so no bad reactive value can block the digest-only head reads.  None means
+        # "not given": the agent id then reads TRAIGENT_REACTIVE_AGENT_ID, the project reads
+        # TRAIGENT_PROJECT_ID.  An explicit value, even "" or whitespace, is never replaced.
+        self._agent_id_from_env = agent_id is None
+        self.agent_id: Any = (
+            read_optional_env(REACTIVE_AGENT_ID_ENV) if agent_id is None else agent_id
+        )
+        self.project_id: Any = (
+            (read_optional_project_env() or "") if project_id is None else project_id
+        )
+        # Head calls use the project only for the client's transport, never in a path.
+        head_project = self.project_id if isinstance(self.project_id, str) else ""
         self.tokens = tokens
         if transport is None:
-            http = RuntimeClient(self.project_id, base_url=base_url, api_key=api_key)
+            http = RuntimeClient(head_project, base_url=base_url, api_key=api_key)
 
             def _default(
                 method: str,
@@ -820,11 +822,16 @@ class ReactiveClient:
 
     # -- plumbing ---------------------------------------------------------------------------
     def _path(self, tail: str) -> str:
-        # Reactive routes address the agent by id; a missing or unusable id or project
-        # fails here, before any request is built or sent.
-        if self.agent_id is None or _agent_id_problem(self.agent_id) is not None:
+        # Every reactive id check runs here, before any request is built or sent.
+        if self.agent_id is None:
             raise RuntimeRequirementError("invalid_request", REACTIVE_AGENT_ID_ENV)
-        if not re.fullmatch(_PROJECT_ID, self.project_id):
+        problem = _agent_id_problem(self.agent_id)
+        if problem is not None:
+            at = REACTIVE_AGENT_ID_ENV if self._agent_id_from_env else problem
+            raise RuntimeRequirementError("invalid_request", at)
+        if not isinstance(self.project_id, str) or not re.fullmatch(
+            _PROJECT_ID, self.project_id
+        ):
             raise RuntimeRequirementError("invalid_request", "project_id")
         project = quote(self.project_id, safe="")
         agent = quote(self.agent_id, safe="")
@@ -1397,23 +1404,15 @@ def _closed(fact: Mapping[str, Any], allowed: set[str], field: str) -> None:
         raise RuntimeRequirementError("invalid_request", field)
 
 
-def _agent_id_problem(value: str) -> str | None:
+def _agent_id_problem(value: Any) -> str | None:
     """The closed reason an agent id is unusable for the reactive routes, else None."""
+    if not isinstance(value, str):
+        return "agent_id"
     if re.fullmatch(_AGENT_REF, value):
         return "agent_id:not_the_agentref_digest"  # takes the agents-API id, not the digest
     if not re.fullmatch(_AGENT_ID, value):
         return "agent_id"
     return None
-
-
-def _resolve_project_id(project_id: str) -> str:
-    """The explicit project id, else ``TRAIGENT_PROJECT_ID`` (the SDK's project source).
-
-    Empty when neither is set; the production-reactive path builder refuses that before
-    any request, while the release-family head routes (no project in their path) still work.
-    """
-    explicit = project_id.strip() if isinstance(project_id, str) else ""
-    return explicit or (read_optional_project_env() or "")
 
 
 def _retry_after(headers: Mapping[str, str]) -> int | None:
