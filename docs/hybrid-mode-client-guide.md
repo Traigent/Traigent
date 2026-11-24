@@ -34,19 +34,15 @@ Traigent Hybrid Mode is designed with **privacy as the default**. Only configura
 
 ### What Gets Transmitted
 
-The "No" rows below hold only if you use opaque IDs and your caller-supplied fields (`run_description`, `problem_statement`, `metadata`, example IDs) carry no content.
-
 | Data Type | Transmitted | Description |
 |-----------|-------------|-------------|
 | Tunable definitions | Yes | Your config-space response |
 | Configuration values | Yes | Tunable values per trial |
 | Operational metrics | Yes | Cost, latency, tokens, etc. |
 | Quality metrics | Yes | Accuracy, relevance, etc. |
-| Input data content | **No**, only if your dataset holds IDs and no content | `/execute` serializes each dataset input as given; whatever your dataset carries is sent |
-| Output data content | **No**, only if you return `output_id` in place of `output` | Only output IDs |
-| Target data content | **No**, only if you send `target_id` in place of `target` | Only target IDs |
-
-Dataset payloads and every other caller-supplied field must omit content. An output must be replaced by its `output_id` and a target by its `target_id`; sending both the ID and the content transmits the content.
+| Input data content | **No** | Only example IDs |
+| Output data content | **No** | Only output IDs |
+| Target data content | **No** | Only target IDs |
 
 ### How to Implement Privacy-Preserving Mode
 

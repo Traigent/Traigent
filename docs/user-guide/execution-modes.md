@@ -27,10 +27,8 @@ API": the Traigent SDK calls your service to run each configuration (see the
 [Hybrid Mode Client Guide](../hybrid-mode-client-guide.md); the reference
 contract lives in the `traigent-api` repo).
 
-`cloud` mode is not a privacy mode. To keep Traigent backend calls off the
-network, use `local` (`offline=True`). That scopes only Traigent's own backend
-traffic: your agent code can still contact model providers and tools, so it is
-not machine-wide egress control.
+`cloud` mode is not a privacy mode. If nothing may leave the machine, use
+`local` (`offline=True`).
 
 ## Code examples
 

@@ -238,10 +238,10 @@ async def optimize(
 | `max_examples` | Caps the number of dataset examples processed per trial. |
 | `max_total_examples` | Global sample budget across all trials. |
 | `cache_policy` | One of `"allow_repeats"` (default) or other cache policies. |
-| `cost_limit` | USD spending cap for this run, enforced at trial/batch boundaries on measured spend: a trial already running when the cap is reached finishes, so the run can overshoot by about one trial (one batch in parallel mode). It is an admission check, not a hard ceiling; the first batch skips the shared-budget estimate check only while `trial_count == 0` and the shared budget has zero recorded spend (a recorded failed `$0` trial raises `trial_count`, which closes the exception even at zero spend); the per-run permit is a separate check, so with a small `cost_limit` and a larger estimate the first concurrent permit can succeed and the second be denied. See `docs/guides/execution-budget.md`. |
+| `cost_limit` | Maximum USD spending for this run. |
 | `cost_approved` | Skip cost approval prompt only when passed as real Python `True`; strings such as `"true"` are ignored. Env approval requires exact `TRAIGENT_COST_APPROVED=true`; `1`/`yes` do not approve. |
 | `metric_limit` / `metric_name` / `metric_include_pruned` | Configure soft cumulative-metric early stopping. |
-| `budget_limit` / `budget_metric` / `budget_include_pruned` | Removed in 0.13.0; passing them raises `TypeError` naming the replacement. Use `cost_limit` for a USD spend cap checked at trial or batch boundaries (it can be overshot by about one trial, one batch in parallel mode; see `docs/guides/execution-budget.md`), or `metric_limit` / `metric_name` / `metric_include_pruned`. |
+| `budget_limit` / `budget_metric` / `budget_include_pruned` | Removed in 0.13.0; passing them raises `TypeError` naming the replacement. Use `cost_limit` for hard USD spend control, or `metric_limit` / `metric_name` / `metric_include_pruned`. |
 | `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
 | `semantic_saturation` | Configure opt-in semantic saturation. Uses per-example metric-vector churn plus continuous objective improvement and emits sanitized diagnostics in `OptimizationResult.metadata["semantic_saturation"]`. |
 | `parameter_order` | Grid search only: mapping of parameter names to numeric priorities. Lower values vary slowest; higher values vary fastest. |

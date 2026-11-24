@@ -225,11 +225,9 @@ part of this contract version.
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Privacy-Preserving Mode}\label{sec:privacy}
 
-ID-only mode is a convention you opt into, not a filter the SDK applies.
-Input, output and target content stay local only if your dataset holds IDs and
-no content, outputs are replaced by \field{output\_id} and targets by
-\field{target\_id}, and other caller-supplied fields carry no content: the SDK
-serializes dataset input into \texttt{/execute} as given.
+Privacy is the default. Only configuration values and numeric metrics are
+observed by Traigent. Input data, output content, and evaluation targets are
+\textbf{never} transmitted.
 
 \begin{center}
 \small
@@ -241,9 +239,9 @@ Tunable definitions (config-space)             & Yes \\
 Configuration values per trial                 & Yes \\
 Operational metrics (cost, latency, tokens)    & Yes \\
 Quality metrics (accuracy, relevance, etc.)    & Yes \\
-Input data content                             & \textcolor{privacygreen}{\textbf{No}} only if the dataset has IDs, not content \\
-Output data content                            & \textcolor{privacygreen}{\textbf{No}} only if \field{output\_id} replaces \field{output} \\
-Target / expected output content               & \textcolor{privacygreen}{\textbf{No}} only if \field{target\_id} replaces \field{target} \\
+Input data content                             & \textcolor{privacygreen}{\textbf{No}} (only IDs) \\
+Output data content                            & \textcolor{privacygreen}{\textbf{No}} (only IDs) \\
+Target / expected output content               & \textcolor{privacygreen}{\textbf{No}} (only IDs) \\
 \bottomrule
 \end{tabular}
 \end{center}
