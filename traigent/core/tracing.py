@@ -335,7 +335,14 @@ except ImportError:
     except ImportError:
         OTEL_AVAILABLE = False
         requests = None  # type: ignore
-        trace = None  # type: ignore
+        # The exporter/SDK import failed, but the API-only ``trace`` module can
+        # still be present. Keep it so ``_set_error_status`` sets a real
+        # ``StatusCode.ERROR`` on spans a caller supplied (a partial install,
+        # e.g. SDK without the OTLP HTTP exporter, must not drop error status).
+        try:
+            from opentelemetry import trace
+        except ImportError:
+            trace = None  # type: ignore
         otel_context = None  # type: ignore
         TracerProvider = None  # type: ignore
         OTLPHttpSpanExporter = None  # type: ignore
