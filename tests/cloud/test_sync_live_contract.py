@@ -17,6 +17,7 @@ Enable with:
     TRAIGENT_LIVE_SYNC_E2E=1 \
     TRAIGENT_BACKEND_URL=http://localtest.me:5001 \
     TRAIGENT_API_KEY=<scoped key: sessions/experiments :write> \
+    TRAIGENT_PROJECT_ID=<project id; the minted CI key is NOT project-bound> \
     pytest tests/cloud/test_sync_live_contract.py -m contract
 """
 
@@ -39,6 +40,7 @@ pytestmark = [
 
 _BACKEND = os.getenv("TRAIGENT_BACKEND_URL", "http://localtest.me:5001")
 _KEY = os.getenv("TRAIGENT_API_KEY", "")
+_PROJECT = os.getenv("TRAIGENT_PROJECT_ID", "").strip()
 
 
 def _api(path: str) -> str:
@@ -47,6 +49,9 @@ def _api(path: str) -> str:
 
 def test_edge_analytics_sync_lands_cost_in_configuration_run():
     """A finalized cost session syncs with zero step errors and lands cost>0."""
+    # Backend writes need an explicit project (422 PROJECT_CONTEXT_REQUIRED); the
+    # CI-minted key is not project-bound, so the lane must pass its project.
+    assert _PROJECT, "set TRAIGENT_PROJECT_ID (the minted CI key is not project-bound)"
     store = tempfile.mkdtemp(prefix="traigent-sync-contract-")
     os.environ.update(
         TRAIGENT_BACKEND_URL=_BACKEND,
@@ -54,6 +59,7 @@ def test_edge_analytics_sync_lands_cost_in_configuration_run():
         ENVIRONMENT="development",
         TRAIGENT_RESULTS_FOLDER=store,
         TRAIGENT_API_KEY=_KEY,
+        TRAIGENT_PROJECT_ID=_PROJECT,
     )
     try:
         from traigent.cloud.sync_manager import SyncManager

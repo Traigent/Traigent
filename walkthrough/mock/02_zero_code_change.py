@@ -35,7 +35,7 @@ traigent.initialize(minimal_logging=True)
 DATASETS = Path(__file__).parent.parent / "datasets"
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {
-    "model": ["gpt-4.1-mini", "gpt-4.1"],
+    "model": ["gpt-5.4-mini", "gpt-5.2"],
     "temperature": [0.1, 0.5, 0.9],
 }
 
@@ -45,7 +45,7 @@ def results_match_score(
 ) -> float:
     """Simple scoring: 1.0 if expected answer appears in output, else 0.0.
 
-    In mock mode, returns model-dependent accuracy (gpt-4.1 > gpt-4.1-mini).
+    In mock mode, returns model-dependent accuracy (gpt-5.2 > gpt-5.4-mini).
     In real mode, checks if the expected answer appears in the LLM output.
     """
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
@@ -70,14 +70,16 @@ def results_match_score(
 def answer_question(question: str) -> str | dict:
     """Your existing code - unchanged! Traigent intercepts the LLM call.
 
-    In real mode, this would have:
-        llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.7)  # Hardcoded
+    The real twin (walkthrough/real/02_zero_code_change.py) has the same shape:
+        model = "gpt-5.4-mini"  # Hardcoded
+        temperature = 0.7  # Hardcoded
+        llm = ChatOpenAI(model=model, temperature=temperature)
         return llm.invoke(question).content
-    Traigent intercepts and overrides those hardcoded values.
+    Traigent overrides those local assignments with each trial's configuration.
     """
     # Hardcoded values: seamless mode rewrites these local assignments with
     # the trial's configuration (names must match the config keys).
-    model = "gpt-4.1-mini"
+    model = "gpt-5.4-mini"
     temperature = 0.7  # noqa: F841 - overridden by seamless injection
     set_mock_model(model)
     answer = ANSWERS.get(normalize_text(question), "I don't know")

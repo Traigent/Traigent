@@ -45,10 +45,13 @@ The service automatically exposes endpoints at:
 from traigent.wrapper.errors import (
     BadRequestError,
     HybridAPIError,
+    IdempotencyConflictError,
+    InvalidInputsError,
     RateLimitError,
     RequestTimeoutError,
     ServiceUnavailableError,
     UnauthorizedError,
+    UnknownTunableIdError,
 )
 from traigent.wrapper.service import (
     EvaluationContext,
@@ -68,4 +71,7 @@ __all__ = [
     "RequestTimeoutError",
     "RateLimitError",
     "ServiceUnavailableError",
+    "InvalidInputsError",
+    "IdempotencyConflictError",
+    "UnknownTunableIdError",
 ]

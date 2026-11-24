@@ -48,7 +48,6 @@ install_package "flake8" "Flake8"
 install_package "mypy" "MyPy"
 install_package "pylint" "Pylint"
 install_package "ruff" "Ruff"
-install_package "black" "Black (formatter)"
 install_package "isort" "isort (import sorter)"
 
 # Verify installations
@@ -58,7 +57,7 @@ echo "========================================="
 echo ""
 
 # Check each tool
-for tool in flake8 mypy pylint ruff black isort; do
+for tool in flake8 mypy pylint ruff isort; do
     if [ -f "traigent_test_env/bin/$tool" ]; then
         echo -e "${GREEN}✓ $tool is installed${NC}"
     else

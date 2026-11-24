@@ -178,7 +178,9 @@ async def test_local_timeout_keeps_sync_worker_lane_occupied_until_settled() -> 
             if value == 1:
                 first_finished.set()
 
-    evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1, timeout=0.05)
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], max_workers=1, timeout=0.05, max_stuck_workers=0
+    )
     dataset = Dataset(
         examples=[
             EvaluationExample(input_data={"value": 1}, expected_output=1),
@@ -199,7 +201,7 @@ async def test_local_timeout_keeps_sync_worker_lane_occupied_until_settled() -> 
         assert not second_started.is_set()
         assert peak_active == 1
         assert result.total_examples == 2
-        assert result.errors[1] == (
+        assert result.errors[1].startswith(
             "Sync evaluator worker lane unavailable after 0.05s"
         )
     finally:
@@ -222,7 +224,9 @@ async def test_local_sync_timeout_returns_promptly_but_retains_worker_lane() -> 
             second_started.set()
         return value
 
-    evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1, timeout=0.05)
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], max_workers=1, timeout=0.05, max_stuck_workers=0
+    )
     first = asyncio.create_task(evaluator._execute_function(blocking, {}, {"value": 1}))
     await asyncio.wait_for(asyncio.to_thread(first_started.wait, 1.0), timeout=1.0)
 
@@ -263,7 +267,9 @@ async def test_local_sync_timeout_bounds_wait_for_wedged_worker_lane() -> None:
             if value == 1:
                 worker_done.set()
 
-    evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1, timeout=0.05)
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], max_workers=1, timeout=0.05, max_stuck_workers=0
+    )
     dataset = Dataset(
         examples=[
             EvaluationExample(input_data={"value": 1}, expected_output=1),
@@ -284,7 +290,7 @@ async def test_local_sync_timeout_bounds_wait_for_wedged_worker_lane() -> None:
         assert elapsed < 0.4
         assert evaluation.total_examples == 2
         assert evaluation.errors[0] == "Function call timed out after 0.05s"
-        assert evaluation.errors[1] == (
+        assert evaluation.errors[1].startswith(
             "Sync evaluator worker lane unavailable after 0.05s"
         )
         assert evaluator._sync_worker_slots.acquire(blocking=False) is False

@@ -15,7 +15,6 @@ Notes
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import json
 import time
 from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
@@ -122,25 +121,92 @@ class BedrockChatResponse:
     model: str | None = None
 
 
-def _stream_payload(
+_PROFILE_REGION_PREFIXES = ("us.", "eu.", "apac.", "us-gov.", "global.")
+# Families whose Bedrock request schema differs from both the Anthropic Messages
+# and the AI21 Jamba chat schema. Sending them the Anthropic body is wrong, so
+# fail up front instead of silently ignoring max_tokens/temperature/top_p (#2931).
+_UNSUPPORTED_FAMILIES = frozenset(
+    {"meta", "amazon", "mistral", "cohere", "writer", "deepseek", "stability"}
+)
+
+
+def _base_model_id(model_id: str | None) -> str:
+    """Return the bare ``<provider>.<model>`` id.
+
+    Accepts plain ids, cross-region inference-profile ids (``us.amazon...``) and
+    ARNs (``arn:...:foundation-model/ai21...``), which Bedrock all take as modelId.
+    """
+    base = str(model_id).rsplit("/", 1)[-1]
+    for prefix in _PROFILE_REGION_PREFIXES:
+        if base.startswith(prefix):
+            return base[len(prefix) :]
+    return base
+
+
+def _is_ai21(model_id: str | None) -> bool:
+    """True for AI21 Jamba (chat-completions schema) model ids."""
+    return _base_model_id(model_id).startswith("ai21.jamba")
+
+
+def _build_request_payload(
+    model_id: str,
     messages: list[Mapping[str, Any]] | str | Iterable[str],
     max_tokens: int,
     temperature: float,
     top_p: float | None,
     extra_params: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "anthropic_version": _default_anthropic_version(),
-        "max_tokens": int(max_tokens),
-        "messages": _coerce_user_messages(messages),
-        "temperature": float(temperature),
-    }
+    """Build the per-family request body shared by every invoke path.
+
+    * ``anthropic.*`` and unknown ids: Anthropic Messages body
+      (``anthropic_version``, ``max_tokens``, ``messages``, ``temperature``,
+      optional ``top_p``).
+    * ``ai21.*`` (Jamba): chat-completions body (``messages`` with plain-text
+      content, ``max_tokens``, ``temperature``, optional ``top_p``).
+    * Other known families (``meta``, ``amazon``, ``mistral``, non-Jamba
+      ``ai21`` such as Jurassic-2, ...): not supported; ``ValueError``.
+    * ``model_id`` may be a plain id, a cross-region profile id or an ARN.
+    """
+    model = str(model_id)
+    family = _base_model_id(model).split(".", 1)[0]
+    if family in _UNSUPPORTED_FAMILIES or (family == "ai21" and not _is_ai21(model)):
+        raise ValueError(
+            f"BedrockChatClient does not support model family of {model!r}: "
+            "only Anthropic Claude and AI21 Jamba request shapes are implemented."
+        )
+    payload: dict[str, Any]
+    if _is_ai21(model):
+        payload = {
+            "messages": _ai21_request_messages(messages),
+            "max_tokens": int(max_tokens),
+            "temperature": float(temperature),
+        }
+    else:
+        payload = {
+            "anthropic_version": _default_anthropic_version(),
+            "max_tokens": int(max_tokens),
+            "messages": _coerce_user_messages(messages),
+            "temperature": float(temperature),
+        }
     if top_p is not None:
         payload["top_p"] = float(top_p)
     if extra_params:
         payload.update(dict(extra_params))
-
     return payload
+
+
+def _extract_stream_text(model_id: str | None, data: Any) -> str:
+    """Extract incremental text from one streamed chunk for the model family."""
+    if _is_ai21(model_id):
+        pieces: list[str] = []
+        choices = data.get("choices") if isinstance(data, Mapping) else None
+        for choice in choices or []:
+            delta = choice.get("delta") if isinstance(choice, Mapping) else None
+            content = delta.get("content") if isinstance(delta, Mapping) else None
+            if content:
+                pieces.append(str(content))
+        return "".join(pieces)
+    return _extract_text_from_messages_response(data)
 
 
 class BedrockChatClient:
@@ -251,7 +317,7 @@ class BedrockChatClient:
         start_time = time.perf_counter()
         client = self._ensure_client()
 
-        if str(model_id).startswith("ai21."):
+        if _is_ai21(model_id):
             return self._capture_response(
                 self._invoke_ai21(
                     model_id=model_id,
@@ -259,22 +325,16 @@ class BedrockChatClient:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     top_p=top_p,
+                    extra_params=extra_params,
                 ),
                 model_id=model_id,
                 start_time=start_time,
                 capture=_capture,
             )
 
-        payload: dict[str, Any] = {
-            "anthropic_version": _default_anthropic_version(),
-            "max_tokens": int(max_tokens),
-            "messages": _coerce_user_messages(messages),
-            "temperature": float(temperature),
-        }
-        if top_p is not None:
-            payload["top_p"] = float(top_p)
-        if extra_params:
-            payload.update(dict(extra_params))
+        payload = _build_request_payload(
+            model_id, messages, max_tokens, temperature, top_p, extra_params
+        )
 
         resp = client.invoke_model(
             modelId=model_id,
@@ -307,15 +367,14 @@ class BedrockChatClient:
         max_tokens: int,
         temperature: float,
         top_p: float | None,
+        extra_params: Mapping[str, Any] | None = None,
     ) -> BedrockChatResponse:
         """Invoke an AI21 Jamba family model via Bedrock."""
 
-        request_messages = _ai21_request_messages(messages)
-
+        payload = _build_request_payload(
+            model_id, messages, max_tokens, temperature, top_p, extra_params
+        )
         client = self._ensure_client()
-        payload = {
-            "messages": request_messages,
-        }
 
         resp = client.invoke_model(
             modelId=model_id,
@@ -352,8 +411,8 @@ class BedrockChatClient:
         start_time = time.perf_counter()
         client = self._ensure_client()
 
-        payload = _stream_payload(
-            messages, max_tokens, temperature, top_p, extra_params
+        payload = _build_request_payload(
+            model_id, messages, max_tokens, temperature, top_p, extra_params
         )
 
         final_text_parts: list[str] = []
@@ -374,7 +433,7 @@ class BedrockChatClient:
             except Exception:  # noqa: BLE001 - defensive
                 continue
             # Extract incremental text if present
-            text_piece = _extract_text_from_messages_response(data)
+            text_piece = _extract_stream_text(model_id, data)
             if text_piece:
                 final_text_parts.append(text_piece)
                 yield text_piece
@@ -432,19 +491,20 @@ class BedrockChatClient:
         except ImportError:
             start_time = time.perf_counter()
             loop = asyncio.get_running_loop()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                response = await loop.run_in_executor(
-                    executor,
-                    lambda: self.invoke(
-                        model_id=model_id,
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        extra_params=extra_params,
-                        _capture=False,
-                    ),
-                )
+            # Default executor, not a ``with`` pool: pool exit would join the
+            # worker and block the loop on cancellation (#3142).
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.invoke(
+                    model_id=model_id,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    extra_params=extra_params,
+                    _capture=False,
+                ),
+            )
             return self._capture_response(
                 response,
                 model_id=model_id,
@@ -464,16 +524,9 @@ class BedrockChatClient:
         """Internal async implementation using aioboto3."""
         import aioboto3
 
-        payload: dict[str, Any] = {
-            "anthropic_version": _default_anthropic_version(),
-            "max_tokens": int(max_tokens),
-            "messages": _coerce_user_messages(messages),
-            "temperature": float(temperature),
-        }
-        if top_p is not None:
-            payload["top_p"] = float(top_p)
-        if extra_params:
-            payload.update(dict(extra_params))
+        payload = _build_request_payload(
+            model_id, messages, max_tokens, temperature, top_p, extra_params
+        )
 
         session = (
             aioboto3.Session(profile_name=self._profile_name)
@@ -496,8 +549,11 @@ class BedrockChatClient:
             else:
                 data = json.loads(raw_body)
 
-        text = _extract_text_from_messages_response(data)
-        usage = data.get("usage") if isinstance(data, Mapping) else None
+        if _is_ai21(model_id):
+            text, usage = _ai21_text_and_usage(data)
+        else:
+            text = _extract_text_from_messages_response(data)
+            usage = data.get("usage") if isinstance(data, Mapping) else None
         return BedrockChatResponse(text=text, raw=data, usage=usage, model=model_id)
 
     async def ainvoke_stream(
@@ -550,8 +606,7 @@ class BedrockChatClient:
                     )
                 )
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                chunks = await loop.run_in_executor(executor, _collect_chunks)
+            chunks = await loop.run_in_executor(None, _collect_chunks)
             for chunk in chunks:
                 yield chunk
 
@@ -568,8 +623,8 @@ class BedrockChatClient:
         """Internal async streaming implementation using aioboto3."""
         import aioboto3
 
-        payload = _stream_payload(
-            messages, max_tokens, temperature, top_p, extra_params
+        payload = _build_request_payload(
+            model_id, messages, max_tokens, temperature, top_p, extra_params
         )
 
         session = (
@@ -597,6 +652,6 @@ class BedrockChatClient:
                     data = json.loads(chunk.get("bytes").decode("utf-8"))
                 except Exception:  # noqa: BLE001 - defensive
                     continue
-                text_piece = _extract_text_from_messages_response(data)
+                text_piece = _extract_stream_text(model_id, data)
                 if text_piece:
                     yield text_piece

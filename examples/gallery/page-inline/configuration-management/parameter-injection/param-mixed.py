@@ -73,7 +73,7 @@ wrap_untrusted = _SAFE_HELPERS.wrap_untrusted
 @traigent.optimize(
     configuration_space={
         # Direct LLM parameters (seamless injection)
-        "model": ["gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.1, 0.5, 0.9],
         # Custom application parameters
         "summarization_style": ["bullet", "paragraph", "outline"],
@@ -87,7 +87,7 @@ def smart_document_processor(document: str) -> str:
         config = {}
 
     # Seamless injection handles model and temperature
-    model = str(config.get("model", "gpt-4.1-mini"))
+    model = str(config.get("model", "gpt-5.4-mini"))
     temperature = float(config.get("temperature", 0.7))
     llm = ChatOpenAI(model=model, temperature=temperature)
 

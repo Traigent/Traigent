@@ -171,7 +171,7 @@ detector = TunedVariableDetector()
 
 def my_agent(query: str) -> str:
     temperature = 0.7
-    model = "gpt-4o"
+    model = "gpt-5.2"
     max_tokens = 1024
     response = llm(query, temperature=temperature, model=model, max_tokens=max_tokens)
     return response
@@ -194,7 +194,7 @@ def rag_pipeline(query: str) -> str:
     temperature = 0.5
     chunk_size = 512
     k = 5
-    model = "gpt-4o-mini"
+    model = "gpt-5.4-mini"
     ...
 '''
 
@@ -240,7 +240,7 @@ detector = TunedVariableDetector(strategies=[
 detector = TunedVariableDetector(strategies=[
     ASTDetectionStrategy(),
     DataFlowDetectionStrategy(),
-    LLMDetectionStrategy(model="gpt-4o-mini"),
+    LLMDetectionStrategy(model="gpt-5.4-mini"),
 ])
 ```
 
@@ -253,7 +253,7 @@ The `DataFlowDetectionStrategy` uses **backward program slicing** to find variab
 ```python
 def my_agent(query: str) -> str:
     custom_temp = 0.7                                  # no "temperature" in name
-    llm = ChatOpenAI(temperature=custom_temp, model="gpt-4o")
+    llm = ChatOpenAI(temperature=custom_temp, model="gpt-5.2")
     return llm.invoke(query)
     # DataFlow detects: custom_temp (HIGH — 1 hop to ChatOpenAI.__init__)
 ```
@@ -343,7 +343,7 @@ detection when no explicit config space is provided:
 )
 def my_agent(query: str) -> str:
     temperature = 0.7
-    model = "gpt-4o-mini"
+    model = "gpt-5.4-mini"
     return run_agent(query, temperature=temperature, model=model)
 ```
 

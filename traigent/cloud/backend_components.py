@@ -29,6 +29,7 @@ from traigent.cloud.auth import (
 )
 from traigent.cloud.billing import UsageTracker
 from traigent.cloud.client import CloudServiceError
+from traigent.config.project import apply_project_header
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -117,7 +118,9 @@ class BackendAuthManager:
         rate_limit_period: float = 60.0,
         *,
         no_egress: bool = False,
+        project_id: str | None = None,
     ) -> None:
+        self.project_id = project_id
         auth_cls: type[AuthManager]
         backend_client_module = sys.modules.get("traigent.cloud.backend_client")
         if backend_client_module and hasattr(backend_client_module, "AuthManager"):
@@ -174,7 +177,15 @@ class BackendAuthManager:
             if key not in merged_headers:
                 merged_headers[key] = value
 
+        # Traigent-backend request path only (never provider clients). The
+        # caller's own X-Project-Id, in any letter case, wins.
+        self.apply_project(merged_headers)
         return merged_headers
+
+    def apply_project(self, headers: dict[str, str]) -> dict[str, str]:
+        """Add the explicit/configured ``X-Project-Id`` to backend request headers."""
+        apply_project_header(headers, self.project_id)
+        return headers
 
     async def check_rate_limit(self) -> None:
         """Enforce request rate limits using a simple sliding window."""

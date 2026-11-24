@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.33.0.dev0"
+version = "0.34.0.dev0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -45,11 +45,14 @@ dependencies = [
     "cryptography>=50.0.0",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709); CVE-2026-69249/GHSA-jwv3-5hgf-82ww (High, cert-chain DoS) + CVE-2026-69248/GHSA-m2h6-j472-rp4c (Moderate, wildcard-DNS name-constraint escape) fixed in 49.0.0; CVE-2026-69247/GHSA-g6cj-pr64-35w5 (High, PKCS#7 Bleichenbacher oracle) fixed in 50.0.0. Reaching 50 required dropping full mlflow, which pins cryptography<50 -- see #2183.
     "PyJWT[crypto]>=2.15.1,<3.0.0",  # >=2.15.1: Dependabot alerts — DoS, SSRF via JWKClient, HS256 forgery, alg bypass, kid DoS
     "backoff>=2.2.0",
-    "litellm>=1.100.5,<2",  # Floor: 1.84+ escaped the 1.83.x python-dotenv==1.0.1 and openai==2.24.0 exact sub-pins; 1.87.1 is the first stable release verified against this SDK. Upper bound <2 guards against a future breaking major. Only the public API surface (completion, acompletion, cost_per_token, token_counter, model_cost, ModelResponse) is used — stable across the 1.x line.
-    "filelock>=4.2.1,<5",  # CVE-2026-112940/112913/112907 fixed in 4.2.1; retains AIKIDO-2026-181731 and -444439 fixes; transitive via litellm -> tokenizers -> huggingface-hub, undeclared upstream
+    "litellm>=1.108.6,<2",  # Floor: 1.108.6 patches AIKIDO-2026-31520 and AIKIDO-2026-652241 (and accepts filelock<5); 1.84+ escaped the 1.83.x python-dotenv==1.0.1 and openai==2.24.0 exact sub-pins; 1.87.1 is the first stable release verified against this SDK. Upper bound <2 guards against a future breaking major. Only the public API surface (completion, acompletion, cost_per_token, token_counter, model_cost, ModelResponse) is used — stable across the 1.x line.
+    "filelock>=4.2.1,<5",  # CVE-2026-112940/112913/112907 fixed in 4.2.1; retains AIKIDO-2026-181731 and -444439 fixes; declared directly by litellm 1.108.6 (also reaches us via tokenizers -> huggingface-hub)
     "tenacity>=8.1.0",  # tenacity completes litellm's retry surface: litellm imports it lazily in its public *_with_retries helpers (and the retry path exercised on litellm 1.91.0, #1824) but doesn't declare it — declare it so litellm's retry path works on a clean install
     "rank-bm25",
     "psutil>=5.8.0",
+    "pyyaml>=6.0",  # imported at module level in 14 places (#3169); was only transitive via traigent-schema
+    "packaging>=23.0",  # imported at module level (version/specifier parsing, #3169); was only transitive via litellm -> tokenizers -> huggingface-hub
+    "urllib3>=2.8.0",  # imported at module level by snapshot/backends/github.py (#3169); was only transitive via requests
     # Required by API decorators and config validation
     "pydantic>=2.0.0",
     # Published contract package: the certification verifier (`traigent certify
@@ -229,7 +232,6 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.10.0",
     "pytest-xdist>=3.0.0",  # Required by addopts: -n auto --dist loadgroup
-    "black>=26.10.1",  # CVE-2026-32274 fix; GHSA/Dependabot 2026-10-23 security floor
     "isort==9.0.1",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
     "flake8>=5.0.0",
     "mypy==2.3.1",  # Exact pin (#2469): matches .pre-commit-config.yaml + uv.lock
@@ -339,6 +341,7 @@ traigent = [
     "connectors/schemas/*.json",
     "labels/content_class_table.json",
     "utils/openrouter_prices_litellm_1_103_4.json",
+    "utils/litellm_retired_prices_1_103_4.json",
 ]
 traigent_validation = ["py.typed"]
 
@@ -359,32 +362,6 @@ constraint-dependencies = [
     "virtualenv>=21.14.9",  # GHSA/Dependabot 2026-10-23 security floor
     "werkzeug>=3.1.6",
 ]
-
-[tool.black]
-line-length = 88
-target-version = ["py312"]
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-  | demos
-  | docs/page-inline
-  | examples/templates
-  | examples/advanced/execution-modes
-  | examples/advanced/results-analysis
-  | examples/tvl/reusable_safety/run_demo\.py
-  | traigent/generated
-)/
-'''
 
 [tool.isort]
 profile = "black"
@@ -565,7 +542,7 @@ select = [
     "UP", # pyupgrade
 ]
 ignore = [
-    "E501",  # line too long, handled by black
+    "E501",  # line too long, handled by ruff format
     "B008",  # do not perform function calls in argument defaults
     "C901",  # too complex
 ]

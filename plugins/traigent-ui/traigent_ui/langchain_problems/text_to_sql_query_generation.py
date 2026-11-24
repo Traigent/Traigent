@@ -16,10 +16,10 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any
 
-from examples.langchain_problems.base import ProblemConfig, ProblemDefinition
 from traigent_ui.security_utils import wrap_untrusted
 
 from . import register_problem
+from .base import ProblemConfig, ProblemDefinition
 
 
 @dataclass

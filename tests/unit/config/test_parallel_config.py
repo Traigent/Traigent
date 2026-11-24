@@ -176,3 +176,82 @@ def test_resolve_unset_mode_trial_one_keeps_example_concurrency() -> None:
     assert resolved.mode == "sequential"
     assert resolved.trial_concurrency == 1
     assert resolved.example_concurrency == 3
+
+
+@pytest.mark.parametrize(
+    "field", ["trial_concurrency", "example_concurrency", "thread_workers"]
+)
+@pytest.mark.parametrize(
+    "bad",
+    [True, False, float("nan"), float("inf"), 2.0, "2", 0, -1, 10**9],
+)
+@pytest.mark.parametrize("mode", [None, "auto", "sequential", "parallel"])
+def test_resolve_rejects_malformed_concurrency_naming_field(
+    field: str, bad: object, mode: str | None
+) -> None:
+    kwargs: dict = {"mode": mode, field: bad}
+    if field != "trial_concurrency" and mode == "parallel":
+        kwargs["trial_concurrency"] = 2
+    cfg = ParallelConfig(**kwargs)
+
+    with pytest.raises(ValidationException) as exc:
+        resolve_parallel_config(
+            cfg,
+            default_thread_workers=4,
+            config_space_size=10,
+            detected_function_kind="sync",
+        )
+
+    assert f"parallel_config.{field}" in str(exc.value)
+
+
+def test_resolve_accepts_upper_bound_value() -> None:
+    from traigent.config.parallel import MAX_PARALLEL_CONCURRENCY
+
+    cfg = ParallelConfig(
+        mode="parallel", trial_concurrency=2, thread_workers=MAX_PARALLEL_CONCURRENCY
+    )
+    resolved = resolve_parallel_config(
+        cfg,
+        default_thread_workers=4,
+        config_space_size=10,
+        detected_function_kind="sync",
+    )
+    assert resolved.thread_workers == MAX_PARALLEL_CONCURRENCY
+
+
+def test_resolve_rejects_out_of_range_inherited_worker_default() -> None:
+    with pytest.raises(ValidationException) as exc:
+        resolve_parallel_config(
+            ParallelConfig(mode="parallel", trial_concurrency=2),
+            default_thread_workers=2048,
+            config_space_size=10,
+            detected_function_kind="sync",
+        )
+    assert "parallel_workers" in str(exc.value)
+
+
+def test_configure_rejects_invalid_parallel_config_without_storing() -> None:
+    import traigent
+    from traigent.api.functions import _GLOBAL_CONFIG
+
+    before = dict(_GLOBAL_CONFIG)
+    for bad in ({"thread_workers": 1025}, {"trial_concurrency": "2"}):
+        with pytest.raises(ValidationException):
+            traigent.configure(parallel_config=bad)
+    with pytest.raises(ValidationException):
+        traigent.configure(parallel_workers=10**9)
+    assert _GLOBAL_CONFIG.get("parallel_config") == before.get("parallel_config")
+    assert _GLOBAL_CONFIG.get("parallel_workers") == before.get("parallel_workers")
+
+
+def test_configure_rejected_parallel_config_does_not_store_parallel_workers() -> None:
+    import traigent
+    from traigent.api.functions import _GLOBAL_CONFIG
+
+    before = _GLOBAL_CONFIG.get("parallel_workers")
+    with pytest.raises(ValidationException):
+        traigent.configure(
+            parallel_workers=8, parallel_config={"trial_concurrency": "2"}
+        )
+    assert _GLOBAL_CONFIG.get("parallel_workers") == before

@@ -9,6 +9,7 @@ remains local and only metrics are transmitted to the backend session API.
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from traigent.cloud._detached_raise import raise_detached
 from traigent.cloud.client import (
     CloudRemoteExecutionUnavailableError,
     CloudServiceError,
@@ -228,7 +229,7 @@ class PrivacyOperations:
 
         except Exception as e:
             logger.exception(f"Failed to create privacy optimization session: {e}")
-            raise CloudServiceError(f"Failed to create session: {e}") from None
+            raise_detached(CloudServiceError(f"Failed to create session: {e}"))
 
     async def get_next_privacy_trial(
         self,
@@ -389,6 +390,9 @@ class PrivacyOperations:
                 metrics,
                 "COMPLETED" if not error_message else "FAILED",
                 error_message,
+                # The measured trial duration (seconds) rides in metadata so
+                # the results POST carries it top-level (#3238).
+                metadata={"duration": duration},
             )
 
             if not session_submitted:

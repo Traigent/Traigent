@@ -1,0 +1,210 @@
+{
+  "expected_tvl": {
+    "environment": {
+      "snapshot_id": "2026-11-20T00:00:00Z"
+    },
+    "evaluation_set": {
+      "dataset": "test://slice"
+    },
+    "monitors": [
+      {
+        "decision": {
+          "confidence": 0.95,
+          "false_alarm_budget": 0.05,
+          "horizon_days": 30,
+          "max_unresolved_fraction": 0.05,
+          "method": "clopper_pearson_rational_v2",
+          "min_samples": 200,
+          "model": "iid_bernoulli_within_window_v1"
+        },
+        "episode": {
+          "closure_max_age_hours": 168,
+          "closure_scope": "since_head_move",
+          "closure_windows": 2
+        },
+        "evidence": {
+          "attribution": "agent_key_exact_v1",
+          "deployment_environment": "production",
+          "resolution": "terminal_status_v1",
+          "sampling": {
+            "mode": "hash_bernoulli_committed_v1",
+            "rate": 0.02
+          },
+          "source": "customer_side"
+        },
+        "name": "quality_prod",
+        "phase": "runtime",
+        "requirement": "quality_floor",
+        "window": {
+          "grace_minutes": 0,
+          "tumbling_hours": 24
+        }
+      },
+      {
+        "decision": {
+          "confidence": 0.95,
+          "false_alarm_budget": 0.05,
+          "method": "clopper_pearson_rational_v2"
+        },
+        "evidence": {
+          "source": "evaluation_set"
+        },
+        "name": "quality_gate",
+        "phase": "promotion",
+        "requirement": "quality_floor"
+      }
+    ],
+    "objectives": [
+      {
+        "direction": "maximize",
+        "name": "quality"
+      }
+    ],
+    "promotion_policy": {
+      "alpha": 0.05,
+      "dominance": "epsilon_pareto",
+      "min_effect": {
+        "quality": 0.02
+      }
+    },
+    "requirements": [
+      {
+        "kind": "rate_bound",
+        "max_rate": 0.08,
+        "name": "quality_floor",
+        "unit": "invocation",
+        "violation": {
+          "checker": "customer:ticket_route_check",
+          "label_in": [
+            "fail"
+          ]
+        }
+      }
+    ],
+    "responses": [
+      {
+        "name": "tuning",
+        "rules": [
+          {
+            "admit": {
+              "tvar": "model"
+            },
+            "approval": "human",
+            "deploy": "if_promoted",
+            "do": "optimize",
+            "id": "on_new_model",
+            "protects": [
+              "quality_floor"
+            ],
+            "trigger": {
+              "external": "model_released",
+              "match": {
+                "provider_family": [
+                  "anthropic"
+                ],
+                "tier": [
+                  "small",
+                  "medium"
+                ]
+              }
+            }
+          },
+          {
+            "approval": "human",
+            "deploy": "if_promoted",
+            "do": "optimize",
+            "id": "on_breach",
+            "trigger": {
+              "event": "episode_opened",
+              "monitor": "quality_prod"
+            }
+          }
+        ]
+      }
+    ],
+    "tvars": [
+      {
+        "domain": [
+          "anthropic/claude-haiku-4-5",
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "name": "model",
+        "type": "enum[str]"
+      }
+    ],
+    "tvl": {
+      "module": "slice.ticket_router"
+    },
+    "tvl_version": "1.7"
+  },
+  "module_context": {
+    "environment": {
+      "snapshot_id": "2026-11-20T00:00:00Z"
+    },
+    "evaluation_set": {
+      "dataset": "test://slice"
+    },
+    "objectives": [
+      {
+        "direction": "maximize",
+        "name": "quality"
+      }
+    ],
+    "promotion_policy": {
+      "alpha": 0.05,
+      "dominance": "epsilon_pareto",
+      "min_effect": {
+        "quality": 0.02
+      }
+    },
+    "tvars": [
+      {
+        "domain": [
+          "anthropic/claude-haiku-4-5",
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "name": "model",
+        "type": "enum[str]"
+      }
+    ],
+    "tvl": {
+      "module": "slice.ticket_router"
+    }
+  },
+  "sugar": {
+    "audit": {
+      "rate": "0.02"
+    },
+    "fix": {
+      "approval": "human",
+      "deploy": "if_promoted"
+    },
+    "keep": [
+      {
+        "at_most": "0.08",
+        "checker": "customer:ticket_route_check",
+        "gate": "quality_gate",
+        "monitor": "quality_prod",
+        "name": "quality_floor",
+        "window": "24h"
+      }
+    ],
+    "on": [
+      {
+        "admit": "model",
+        "family": [
+          "anthropic"
+        ],
+        "kind": "model_released",
+        "tier": [
+          "small",
+          "medium"
+        ]
+      },
+      {
+        "kind": "breach"
+      }
+    ],
+    "recover": "since_head_move"
+  }
+}

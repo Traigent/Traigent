@@ -77,6 +77,7 @@ def setup_logging(
             Traigent-scoped logging without losing its own root
             configuration.
     """
+    custom_format = format_string is not None
     if format_string is None:
         format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
@@ -87,8 +88,8 @@ def setup_logging(
     )
 
     # Remove existing handlers on the target logger only.
-    for handler in target_logger.handlers[:]:
-        target_logger.removeHandler(handler)
+    for old_handler in target_logger.handlers[:]:
+        target_logger.removeHandler(old_handler)
 
     # Configure logging level
     resolved_level = _resolve_logging_level(level)
@@ -96,9 +97,18 @@ def setup_logging(
     if not isinstance(numeric_level, int):
         raise ValueError(f"Invalid log level: {resolved_level}")
 
-    # Use standard handler (rich disabled for basic testing)
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter(format_string))
+    handler: logging.Handler
+    if use_rich:
+        from rich.logging import RichHandler
+
+        handler = RichHandler(rich_tracebacks=True)
+        # Rich renders time and level itself; keep a custom format if given.
+        handler.setFormatter(
+            logging.Formatter(format_string if custom_format else "%(message)s")
+        )
+    else:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(format_string))
 
     target_logger.addHandler(handler)
     target_logger.setLevel(numeric_level)

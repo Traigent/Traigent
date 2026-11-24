@@ -2761,3 +2761,12 @@ objectives:
         assert len(msgs) == 1
         assert "987654" not in msgs[0]
         assert "secret_marker" not in msgs[0]
+
+
+def test_leading_bang_constraint_compiles_3229():
+    from traigent.tvl.spec_loader import compile_constraint_expression as c
+
+    assert c("!params.b", label="x")({"b": False}, {}) is True
+    assert c("!params.b", label="x")({"b": True}, {}) is False
+    assert c("!params.i == 1", label="x")({"i": 2}, {}) is True
+    assert c("params.i > 0 && !params.b", label="x")({"i": 1, "b": False}, {})

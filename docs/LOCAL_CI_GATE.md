@@ -32,8 +32,8 @@ LOCAL_GATE_FULL_UNIT=1 scripts/local_gate.sh          # run the full unit tier
 
 ## Why ruff?
 
-The pre-commit hooks format with `black` and `isort`, but the required pull
-request check runs `ruff`, so the local gate mirrors `ruff`. It only looks at
+The pre-commit hooks format with `ruff format` (and `isort`), and the required
+pull request check runs `ruff`, so the local gate mirrors `ruff`. It only looks at
 the files your branch changes, so unrelated formatting debt elsewhere in the
 tree does not block you.
 

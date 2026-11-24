@@ -34,3 +34,11 @@ def test_retry_after_adversarial_values_are_safe(retry_after, expected_delay):
         0, RetryableError("Rate limited", retry_after=retry_after)
     )
     assert delay == expected_delay
+
+
+def test_jitter_never_exceeds_max_delay():
+    """#3227: jitter is applied before the final max_delay clamp."""
+    client = ResilientClient(base_delay=1.0, max_delay=10.0, jitter_factor=0.5)
+    err = RetryableError("Rate limited", retry_after=10)
+    assert max(client.calculate_delay(3, err) for _ in range(500)) <= 10.0
+    assert max(client.calculate_delay(20, ValueError("x")) for _ in range(500)) <= 10.0

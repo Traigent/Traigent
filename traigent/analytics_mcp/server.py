@@ -600,9 +600,9 @@ def create_server() -> Any:
     @server.tool(
         description=(
             "Ask whether Traigent has a question for the human about an agent "
-            "(closed host-prompt decision). Requires agent_id; project_id is "
-            "optional and, when given, selects the project and adds a "
-            "project-qualified agent_url. Returns {decision: null} when nothing "
+            "(closed host-prompt decision). Requires agent_id and a project "
+            "(project_id or TRAIGENT_PROJECT_ID; it is in the route path); "
+            "adds a project-qualified agent_url. Returns {decision: null} when nothing "
             "applies, or the OPEN decision with its fixed prompt (question and "
             "options). Show that question and exactly those options to the "
             "human with the host's own question UI, then post their choice "
@@ -618,7 +618,8 @@ def create_server() -> Any:
     @server.tool(
         description=(
             "Read the latest host-prompt decision for an agent in any status "
-            "(read-only). Requires agent_id; project_id is optional. After a "
+            "(read-only). Requires agent_id and a project (project_id or "
+            "TRAIGENT_PROJECT_ID). After a "
             "YES, execution_ref and next_action say what to do next: "
             "RUN_PREFLIGHT means run the dry run and cost estimate and get "
             "explicit paid-run approval. Backend auth required."
@@ -631,7 +632,9 @@ def create_server() -> Any:
 
     @server.tool(
         description=(
-            "Post the human's closed answer to a host-prompt decision. Send "
+            "Post the human's closed answer to a host-prompt decision of an "
+            "agent (requires agent_id and a project: project_id or "
+            "TRAIGENT_PROJECT_ID). Send "
             f"exactly the option the human chose ({', '.join(AGENT_DECISION_ANSWERS)}); "
             "never choose for the human. YES means prepare/preflight the "
             "baseline evaluation -- it never authorises spend. Echo "
@@ -645,6 +648,7 @@ def create_server() -> Any:
         )
     )
     async def agent_decision_answer(
+        agent_id: str,
         decision_id: str,
         answer: str,
         options_version: str,
@@ -654,6 +658,7 @@ def create_server() -> Any:
         project_id: str | None = None,
     ) -> dict[str, Any]:
         return await agent_decision_answer_tool(
+            agent_id,
             decision_id,
             answer,
             options_version,

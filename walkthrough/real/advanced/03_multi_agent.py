@@ -79,7 +79,7 @@ generator_agent = AgentDefinition(
     search_type=Choices(["similarity", "mmr"], name="search_type"),
     # Generator parameters
     temperature=Range.temperature(),
-    model=Choices(["gpt-4.1-mini", "gpt-4.1"], name="model"),
+    model=Choices(["gpt-5.4-mini", "gpt-5.2"], name="model"),
     # Agent configuration
     agents={
         "retriever": retriever_agent,
@@ -134,6 +134,13 @@ async def main() -> None:
 
     print("\nRunning optimization (this will make real API calls)...")
     results = await rag_agent.optimize(algorithm="random", max_trials=6, random_seed=42)
+
+    if results.best_config is None:
+        print(
+            "\nNo best configuration: the run ended with status "
+            f"{results.status!r} (stop reason: {results.stop_reason!r})."
+        )
+        raise SystemExit(1)
 
     print("\nBest Configuration:")
     print(f"  Retriever k: {results.best_config.get('k')}")

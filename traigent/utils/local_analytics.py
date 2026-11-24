@@ -90,6 +90,49 @@ def _analytics_api_key_error(api_key: str | None) -> str | None:
     return None
 
 
+def usage_analytics_allowed(config: TraigentConfig) -> bool:
+    """Single gate in front of every usage-analytics send (#3184).
+
+    Refuses when ``enable_usage_analytics`` is False, backend egress is disabled
+    (``no_egress``, ``offline=True`` or an offline policy / ``TRAIGENT_OFFLINE_MODE``), or the
+    documented ``TRAIGENT_DISABLE_TELEMETRY`` opt-out is set. The default of
+    ``enable_usage_analytics`` is unchanged.
+    """
+    from traigent.core.execution_policy_runtime import backend_egress_disabled
+    from traigent.observability.config import _read_observability_offline_mode
+
+    if not config.enable_usage_analytics:
+        return False
+    if _read_observability_offline_mode() or getattr(config, "offline", False) is True:
+        return False
+    return not backend_egress_disabled(config)
+
+
+async def _close_analytics_backend_client(
+    backend_client_module: Any, backend_client: Any
+) -> None:
+    try:
+        await backend_client.__aexit__(None, None, None)
+    except Exception:
+        pass  # Best effort cleanup
+    finally:
+        if getattr(backend_client_module, "_backend_client", None) is backend_client:
+            backend_client_module._backend_client = None
+
+
+def _analytics_trial_metrics(stats: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "total_sessions": float(stats.get("total_sessions", 0)),
+        "completed_sessions": float(stats.get("completed_sessions", 0)),
+        "total_trials": float(stats.get("total_trials", 0)),
+        "avg_trials_per_session": stats.get("avg_trials_per_session", 0.0),
+        "avg_config_space_size": stats.get("avg_config_space_size", 0.0),
+        "avg_improvement_percent": stats.get("avg_improvement_percent", 0.0) or 0.0,
+        "sessions_last_30_days": float(stats.get("sessions_last_30_days", 0)),
+        "days_since_first_use": float(stats.get("days_since_first_use", 0)),
+    }
+
+
 class LocalAnalytics:
     """Handles privacy-safe analytics collection for Edge Analytics mode."""
 
@@ -241,6 +284,16 @@ class LocalAnalytics:
             logger.debug(f"Could not calculate days active (defaulting to 0): {e}")
             return 0
 
+    def _submission_skip_result(self, force: bool) -> dict[str, Any] | None:
+        # Re-evaluate the gate at send time: the environment can change after init.
+        if not self.enabled or not usage_analytics_allowed(self.config):
+            return {"success": False, "reason": "Analytics disabled"}
+
+        # Check if submission is due (daily by default)
+        if not force and not self._is_submission_due():
+            return {"success": False, "reason": "Submission not due yet"}
+        return None
+
     async def submit_usage_stats(self, force: bool = False) -> dict[str, Any]:
         """Submit usage statistics using existing backend session infrastructure.
 
@@ -252,12 +305,9 @@ class LocalAnalytics:
         Returns:
             Result dictionary with success status and details
         """
-        if not self.enabled:
-            return {"success": False, "reason": "Analytics disabled"}
-
-        # Check if submission is due (daily by default)
-        if not force and not self._is_submission_due():
-            return {"success": False, "reason": "Submission not due yet"}
+        skipped = self._submission_skip_result(force)
+        if skipped is not None:
+            return skipped
 
         stats = self.collect_usage_stats()
         if not stats:
@@ -317,27 +367,7 @@ class LocalAnalytics:
                     session_id=session_id,
                     trial_id=f"analytics_{datetime.now(UTC).isoformat()}",
                     config={},
-                    metrics={
-                        "total_sessions": float(stats.get("total_sessions", 0)),
-                        "completed_sessions": float(stats.get("completed_sessions", 0)),
-                        "total_trials": float(stats.get("total_trials", 0)),
-                        "avg_trials_per_session": stats.get(
-                            "avg_trials_per_session", 0.0
-                        ),
-                        "avg_config_space_size": stats.get(
-                            "avg_config_space_size", 0.0
-                        ),
-                        "avg_improvement_percent": stats.get(
-                            "avg_improvement_percent", 0.0
-                        )
-                        or 0.0,
-                        "sessions_last_30_days": float(
-                            stats.get("sessions_last_30_days", 0)
-                        ),
-                        "days_since_first_use": float(
-                            stats.get("days_since_first_use", 0)
-                        ),
-                    },
+                    metrics=_analytics_trial_metrics(stats),
                     duration=1.0,  # Analytics collection time
                 )
 
@@ -356,16 +386,9 @@ class LocalAnalytics:
                     }
             finally:
                 # Ensure session is closed even on cancellation
-                try:
-                    await backend_client.__aexit__(None, None, None)
-                except Exception:
-                    pass  # Best effort cleanup
-                finally:
-                    if (
-                        getattr(backend_client_module, "_backend_client", None)
-                        is backend_client
-                    ):
-                        backend_client_module._backend_client = None
+                await _close_analytics_backend_client(
+                    backend_client_module, backend_client
+                )
 
         except TimeoutError:
             return {"success": False, "reason": "Request timeout"}
@@ -514,7 +537,7 @@ def collect_and_submit_analytics(config: TraigentConfig) -> None:
     """
     from traigent.utils.env_config import is_mock_llm
 
-    if not config.enable_usage_analytics or config.execution_mode not in {
+    if not usage_analytics_allowed(config) or config.execution_mode not in {
         ExecutionMode.LOCAL.value,
     }:
         return

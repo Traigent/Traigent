@@ -1,0 +1,117 @@
+"""Shared guard for the Continuous Tuning tests: they need the TVL 1.7 toolchain.
+
+Without it the tests skip (collection never imports TVL).  CI that must not lose
+this coverage sets ``TRAIGENT_TVL_REQUIRED=1``: a missing TVL 1.7 then FAILS.
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Iterator
+from typing import Any
+
+import pytest
+
+from traigent.tuning import validator
+
+REQUIRED_ENV = "TRAIGENT_TVL_REQUIRED"
+
+
+def tvl_required() -> bool:
+    return os.environ.get(REQUIRED_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+def check_toolchain() -> None:
+    """Skip (or, with ``TRAIGENT_TVL_REQUIRED=1``, fail) when TVL 1.7 is missing."""
+    if validator.validator_available():
+        return
+    reason = "TVL toolchain with 1.7 support not installed"
+    if tvl_required():
+        pytest.fail(f"{REQUIRED_ENV}=1 but {reason}", pytrace=False)
+    pytest.skip(reason)
+
+
+def tvl_free(fn: Any) -> Any:
+    """Mark a test that exercises no TVL toolchain call, so it runs without one.
+
+    Such a test (compile, store, evidence and guard logic) is real behaviour on
+    its own; skipping it with the toolchain absent left that code unmeasured in
+    the default unit lane.  The ``TRAIGENT_TVL_REQUIRED=1`` lane runs it too.
+    Put it directly above ``def`` (or on a whole test class).  A test that does reach TVL must NOT carry it.
+    """
+    fn._tvl_free = True  # type: ignore[attr-defined]
+    return fn
+
+
+@pytest.fixture(autouse=True)
+def _tvl_toolchain(request: pytest.FixtureRequest) -> None:
+    if getattr(request.function, "_tvl_free", False) or getattr(
+        request.cls, "_tvl_free", False
+    ):
+        return
+    check_toolchain()
+
+
+@pytest.fixture(autouse=True)
+def _agent_code_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Promotion evidence needs an agent code version (no default exists).
+
+    Most tests are not about the code version, so they pin one; the tests that
+    are delete or change this variable themselves.
+    """
+    monkeypatch.setenv("TRAIGENT_AGENT_CODE_VERSION", "test-code-v1")
+
+
+@pytest.fixture(autouse=True)
+def _dataset_root(monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
+    """The optimizer's loader only reads datasets under this root."""
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+
+
+@pytest.fixture(autouse=True)
+def _explicit_non_production_environment() -> Iterator[None]:
+    """``local-trusted`` is refused unless the environment is explicitly non-production.
+
+    Tests that exercise it run as ``development``; the tests that are about
+    production or an unset environment change this themselves.  It uses its own
+    patcher so a test calling ``monkeypatch.undo()`` does not drop the environment.
+    """
+    patcher = pytest.MonkeyPatch()
+    for name in ("TRAIGENT_ENVIRONMENT", "TRAIGENT_ENV"):
+        patcher.delenv(name, raising=False)
+    patcher.setenv("ENVIRONMENT", "development")
+    try:
+        yield
+    finally:
+        patcher.undo()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_litellm_model_info_cache() -> Iterator[None]:
+    """Leave no litellm pricing cache behind for tests outside this directory.
+
+    The loop prices candidate models and litellm caches model info per id. A
+    cached real entry (for example claude-haiku-5-5 with its above-100K tier)
+    survives a later test that swaps ``litellm.model_cost`` and makes price
+    tests order dependent. Clear it on the way in and out.
+    """
+    try:
+        import litellm
+        from litellm import utils as litellm_utils
+    except ImportError:  # litellm absent: nothing is cached
+        yield
+        return
+
+    def _drop() -> None:
+        invalidate = getattr(
+            litellm_utils, "_invalidate_model_cost_lowercase_map", None
+        )
+        if invalidate is not None:
+            invalidate()
+        litellm.get_model_info.cache_clear()
+
+    _drop()
+    try:
+        yield
+    finally:
+        _drop()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextvars
 import functools
 import inspect
+import itertools
 import threading
 from collections.abc import Callable
 from datetime import datetime
@@ -51,6 +52,9 @@ _current_observation_stack: contextvars.ContextVar[tuple[str, ...]] = (
         "traigent_observability_observation_stack",
         default=(),
     )
+)
+_followed_head: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "traigent_followed_head", default=None
 )
 _default_client: ObservabilityClient | None = None
 _default_client_lock = threading.Lock()
@@ -135,6 +139,11 @@ def _sanitize_trial_context(raw_trial_context: Any) -> dict[str, Any]:
 
 
 def _build_observe_enrichment_metadata() -> dict[str, Any]:
+    if _followed_head.get() is not None:
+        # A followed agent's configuration may carry prompt text: trace metadata
+        # gets only the closed stamps of ``_call_metadata`` (agent ref, head
+        # state), never the config or trial context.
+        return {}
     raw_applied_config = applied_config_context.get(None)
     raw_active_config = config_context.get(None)
     active_config, active_config_source = _active_observe_config(
@@ -449,6 +458,15 @@ def _is_async_callable(func: Callable[..., Any]) -> bool:
     )
 
 
+# Contexts entered through a shared ``observe(...)`` factory, per execution
+# context and factory. Keeping them on the factory instance made a second
+# concurrent ``with`` overwrite the first, so the first exit ended the wrong one.
+_FACTORY_KEYS = itertools.count()
+_ENTERED_CONTEXTS: contextvars.ContextVar[dict[int, tuple[Any, ...]] | None] = (
+    contextvars.ContextVar("traigent_observe_entered_contexts", default=None)
+)
+
+
 class _ObserveFactory:
     """Object that acts as both decorator factory and context manager."""
 
@@ -470,8 +488,20 @@ class _ObserveFactory:
         redact_input: bool = False,
         redact_output: bool = False,
         content_mode: str | None = None,
+        agent: str | None = None,
+        tune: Any = None,
+        follow: str | None = None,
+        tuning_store: Any = None,
     ) -> None:
+        if follow not in (None, "head"):
+            raise ValueError("follow must be None or 'head'")
+        if follow == "head" and agent is None and tuning_store is None:
+            raise ValueError("follow='head' needs an agent (or a tuning_store)")
         self.name = name
+        self.agent = agent
+        self.tune = tune
+        self.follow = follow
+        self.tuning_store = tuning_store
         self.client = client
         self.observation_type = observation_type
         self.tool_name = tool_name
@@ -494,16 +524,127 @@ class _ObserveFactory:
         # `__aenter__` below), which could be long after `observe(...)` ran.
         validate_content_mode_override(content_mode)
         self.content_mode = content_mode
-        self._context: ObserveContext | None = None
+        self._factory_key = next(_FACTORY_KEYS)
 
-    def _require_context(self) -> ObserveContext:
-        if self._context is None:
+    def _push_context(self, ctx: ObserveContext) -> None:
+        entered = _ENTERED_CONTEXTS.get() or {}
+        stack = entered.get(self._factory_key, ())
+        _ENTERED_CONTEXTS.set({**entered, self._factory_key: (*stack, ctx)})
+
+    def _pop_context(self) -> ObserveContext:
+        entered = _ENTERED_CONTEXTS.get() or {}
+        stack = entered.get(self._factory_key, ())
+        if not stack:
             raise RuntimeError(
                 "observe context has not been entered; __exit__ called before __enter__"
             )
-        return self._context
+        remaining = {k: v for k, v in entered.items() if k != self._factory_key}
+        if stack[:-1]:
+            remaining[self._factory_key] = stack[:-1]
+        _ENTERED_CONTEXTS.set(remaining)
+        popped: ObserveContext = stack[-1]
+        return popped
 
     def __call__(self, func: Callable[..., Any]):
+        wrapped = self._wrap(func)
+        if self.follow == "head":
+            wrapped = self._follow_head(wrapped)
+        if self.tune is not None:
+            # Continuous Tuning: compile + validate locally (no network) and
+            # expose the result as ``fn.tuning``; calls themselves are unchanged.
+            from traigent.tuning.state import attach_tuning
+
+            wrapped.tuning = attach_tuning(  # type: ignore[attr-defined]
+                wrapped,
+                self.agent,
+                self.tune,
+                source=func,
+                environment=self.environment,
+            )
+        return wrapped
+
+    def _follow_head(self, inner: Callable[..., Any]):
+        """Run ``inner`` on its in-code default and stamp the trace with the head state."""
+        from pathlib import Path
+
+        from traigent.tuning.controller import (
+            DEFAULT_ENVIRONMENT,
+            HeadLoader,
+            default_store_dir,
+        )
+        from traigent.utils.env_config import resolve_environment_name
+
+        # the same environment the controller and the CLI resolve: the declared one,
+        # else the process's, else production
+        environment = (
+            self.environment
+            or resolve_environment_name(default=None)
+            or DEFAULT_ENVIRONMENT
+        )
+        store = (
+            Path(self.tuning_store)
+            if self.tuning_store is not None
+            else default_store_dir(str(self.agent), environment)
+        )
+        loader = HeadLoader(store, environment)
+
+        warned: list[bool] = []
+
+        def _enter() -> tuple[Any, None]:
+            # No head.json configuration is servable until a platform-signed head
+            # exists: the call runs on the function's own in-code configuration and
+            # the trace says so.  The head is only inspected, never applied, and a
+            # failure to read it never reaches the agent call.
+            state = "unreleased"
+            try:
+                loader.head()
+            except Exception as exc:  # noqa: BLE001 - never crash the agent call
+                state = "unreadable"
+                if not warned:
+                    warned.append(True)
+                    logger.warning(
+                        "tuning head is unreadable (%s); serving the in-code default",
+                        type(exc).__name__,
+                    )
+            return _followed_head.set({"agent": self.agent, "head_state": state}), None
+
+        def _exit(tokens: tuple[Any, None]) -> None:
+            _followed_head.reset(tokens[0])
+
+        if _is_async_callable(inner):
+
+            @functools.wraps(inner)
+            async def async_follow(*args, **kwargs):
+                tokens = _enter()
+                try:
+                    return await inner(*args, **kwargs)
+                finally:
+                    _exit(tokens)
+
+            return async_follow
+
+        @functools.wraps(inner)
+        def sync_follow(*args, **kwargs):
+            tokens = _enter()
+            try:
+                return inner(*args, **kwargs)
+            finally:
+                _exit(tokens)
+
+        return sync_follow
+
+    def _call_metadata(self) -> dict[str, Any] | None:
+        """Per-call trace metadata: the factory's, plus closed head stamps."""
+        stamp = _followed_head.get() if self.follow == "head" else None
+        if stamp is None:
+            return self.metadata
+        merged = dict(self.metadata or {})
+        if stamp["agent"] is not None:
+            merged["agent"] = str(stamp["agent"])
+        merged["head_state"] = str(stamp["head_state"])  # closed: unreleased|unreadable
+        return merged
+
+    def _wrap(self, func: Callable[..., Any]):
         observation_name = self.name or func.__name__
 
         if _is_async_callable(func):
@@ -521,7 +662,7 @@ class _ObserveFactory:
                     observation_type=self.observation_type,
                     tool_name=self.tool_name,
                     input_data=input_data,
-                    metadata=self.metadata,
+                    metadata=self._call_metadata(),
                     session_id=self.session_id,
                     user_id=self.user_id,
                     custom_trace_id=self.custom_trace_id,
@@ -552,7 +693,7 @@ class _ObserveFactory:
                 observation_type=self.observation_type,
                 tool_name=self.tool_name,
                 input_data=input_data,
-                metadata=self.metadata,
+                metadata=self._call_metadata(),
                 session_id=self.session_id,
                 user_id=self.user_id,
                 custom_trace_id=self.custom_trace_id,
@@ -571,7 +712,7 @@ class _ObserveFactory:
         return wrapper
 
     def __enter__(self) -> ObserveContext:
-        self._context = ObserveContext(
+        ctx = ObserveContext(
             name=self.name or "observation",
             client=self.client,
             observation_type=self.observation_type,
@@ -588,13 +729,15 @@ class _ObserveFactory:
             redact_output=self.redact_output,
             content_mode=self.content_mode,
         )
-        return self._context.__enter__()
+        entered = ctx.__enter__()
+        self._push_context(ctx)
+        return entered
 
     def __exit__(self, exc_type, exc, exc_tb) -> bool:
-        return self._require_context().__exit__(exc_type, exc, exc_tb)
+        return self._pop_context().__exit__(exc_type, exc, exc_tb)
 
     async def __aenter__(self) -> ObserveContext:
-        self._context = ObserveContext(
+        ctx = ObserveContext(
             name=self.name or "observation",
             client=self.client,
             observation_type=self.observation_type,
@@ -611,10 +754,12 @@ class _ObserveFactory:
             redact_output=self.redact_output,
             content_mode=self.content_mode,
         )
-        return await self._context.__aenter__()
+        entered = await ctx.__aenter__()
+        self._push_context(ctx)
+        return entered
 
     async def __aexit__(self, exc_type, exc, exc_tb) -> bool:
-        return await self._require_context().__aexit__(exc_type, exc, exc_tb)
+        return await self._pop_context().__aexit__(exc_type, exc, exc_tb)
 
 
 def observe(
@@ -634,6 +779,10 @@ def observe(
     redact_input: bool = False,
     redact_output: bool = False,
     content_mode: str | None = None,
+    agent: str | None = None,
+    tune: Any = None,
+    follow: str | None = None,
+    tuning_store: Any = None,
 ):
     """Create a decorator or context manager for observability instrumentation.
 
@@ -643,6 +792,17 @@ def observe(
     placeholders. `redact_input=True` and `redact_output=True` force placeholders
     for the corresponding side. The transport still applies pattern-based
     secret scrubbing before send.
+
+    ``agent`` and ``tune`` (a ``traigent.tuning.Tuning``) declare a Continuous
+    Tuning policy: decoration compiles it to a TVL 1.7 module, validates it with
+    the TVL toolchain when available, and attaches the result as ``fn.tuning``.
+    Calls are unaffected and nothing is sent anywhere.
+
+    ``follow="head"`` serves the function's in-code default until a signed release
+    exists (no stored configuration is applied), and stamps the call's trace with
+    ``agent`` and ``head_state`` (``unreleased`` or ``unreadable``; a reference and
+    a closed state, nothing else). The store is ``tuning_store`` or
+    ``.traigent/tuning/<agent>/``.
     """
 
     if callable(name):
@@ -665,4 +825,8 @@ def observe(
         redact_input=redact_input,
         redact_output=redact_output,
         content_mode=content_mode,
+        agent=agent,
+        tune=tune,
+        follow=follow,
+        tuning_store=tuning_store,
     )

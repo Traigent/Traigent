@@ -42,6 +42,7 @@ from __future__ import annotations
 import contextvars
 import functools
 import inspect
+import itertools
 import re
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -490,6 +491,14 @@ def _protocol(
 # -- the per-unit guard ------------------------------------------------------------------------
 
 
+# Per-context correlation ids, keyed by unit: tasks share one UnitGuard but must not
+# share the id stamped on their events.
+_CID_KEYS = itertools.count()
+_CORRELATION: contextvars.ContextVar[Mapping[int, str | None] | None] = (
+    contextvars.ContextVar("traigent_runtime_guard_correlation", default=None)
+)
+
+
 class UnitGuard:
     """Guard state for one unit: the events that took effect and the producers seen.
 
@@ -511,7 +520,8 @@ class UnitGuard:
         self._rules = tuple(rules)
         self._among = among
         self._ordered_attested = ordered_attested
-        self.correlation_id = correlation_id
+        self._cid_key = next(_CID_KEYS)
+        self._base_correlation_id = correlation_id
         self._history: list[dict[str, Any]] = []
         self._last: dict[str, int] = {}
         self._gap = False
@@ -520,6 +530,18 @@ class UnitGuard:
         self._halted_by: str | None = None
         self.unresolved = False
         self._counter: dict[str, int] = {}
+
+    @property
+    def correlation_id(self) -> str | None:
+        """Correlation id for the calling task/thread context, else the unit default."""
+        scoped = _CORRELATION.get() or {}
+        if self._cid_key in scoped:
+            return scoped[self._cid_key]
+        return self._base_correlation_id
+
+    @correlation_id.setter
+    def correlation_id(self, value: str | None) -> None:
+        _CORRELATION.set({**(_CORRELATION.get() or {}), self._cid_key: value})
 
     # -- bookkeeping ------------------------------------------------------------------
     def set_among(self, requirement: str, answer: bool | None) -> None:
@@ -635,12 +657,15 @@ class UnitGuard:
     @contextmanager
     def correlated(self, correlation_id: str) -> Iterator[None]:
         """Stamp ``correlation_id`` on events the decorator builds inside the block."""
-        previous = self.correlation_id
-        self.correlation_id = correlation_id
+        # Held in a ContextVar so concurrent tasks sharing this unit each keep
+        # their own id, and leaving the block restores exactly this context's view.
+        token = _CORRELATION.set(
+            {**(_CORRELATION.get() or {}), self._cid_key: correlation_id}
+        )
         try:
             yield
         finally:
-            self.correlation_id = previous
+            _CORRELATION.reset(token)
 
 
 def _aggregate(decisions: Sequence[GuardDecision]) -> GuardDecision:

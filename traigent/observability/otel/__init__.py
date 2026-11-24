@@ -6,22 +6,30 @@ Install with ``pip install "traigent[observability]"``.  Public names:
 ``traigent.observability`` is unchanged.
 """
 
-from traigent.observability.otel.api import (
-    ObservabilityHandle,
-    attributes,
-    flush,
-    get_handle,
-    init,
-    instrument,
-    observe,
-    shutdown,
-    stats,
-)
-from traigent.observability.otel.instrument import (
-    InstrumentationStateError,
-    UnverifiedExporterError,
-)
-from traigent.observability.otel.processor import FlushOutcome
+try:
+    from traigent.observability.otel.api import (
+        ObservabilityHandle,
+        attributes,
+        flush,
+        get_handle,
+        init,
+        instrument,
+        observe,
+        shutdown,
+        stats,
+    )
+    from traigent.observability.otel.instrument import (
+        InstrumentationStateError,
+        UnverifiedExporterError,
+    )
+    from traigent.observability.otel.processor import FlushOutcome
+except ModuleNotFoundError as exc:
+    if (exc.name or "").split(".")[0] != "opentelemetry":
+        raise
+    raise ImportError(
+        "traigent.observability.otel requires the OpenTelemetry packages. "
+        "Install them with: pip install 'traigent[observability]'"
+    ) from None
 
 __all__ = [
     "FlushOutcome",

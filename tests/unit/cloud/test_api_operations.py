@@ -2312,6 +2312,7 @@ class TestOrchestratorDefaultConfigPayload:
 
         orch = OptimizationOrchestrator.__new__(OptimizationOrchestrator)
         orch._default_config = default_config
+        orch._seed_configs = []
         return orch
 
     def test_declared_default_config_is_projected(self):

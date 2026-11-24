@@ -123,7 +123,7 @@ def _mock_answer(query: str) -> str:
     eval_dataset=DATASET,
     objectives=["accuracy"],
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4.1", "claude-haiku-4-5-20251001"],
+        "model": ["gpt-5.4-mini", "gpt-5.2", "claude-haiku-4-5-20251001"],
         "temperature": [0.0, 0.3, 0.7],
         "max_tokens": [256, 512, 1024],
     },
@@ -133,7 +133,7 @@ def _mock_answer(query: str) -> str:
 def answer_query(query: str) -> str:
     """Answer a customer support query using the current configuration."""
     config = traigent.get_config()
-    model = str(config.get("model", "gpt-4.1-mini"))
+    model = str(config.get("model", "gpt-5.4-mini"))
     temperature = float(config.get("temperature", 0.0))
     max_tokens = int(config.get("max_tokens", 256))
 
@@ -182,7 +182,7 @@ def run_with_config(config: dict, query: str) -> str:
     from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-4.1-mini"),
+        model=config.get("model", "gpt-5.4-mini"),
         temperature=config.get("temperature", 0.0),
         max_tokens=config.get("max_tokens", 256),
     )

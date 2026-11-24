@@ -46,7 +46,7 @@ traigent.initialize()
 # Factory-created parameter ranges
 temperature = Range.temperature(creative=True)  # [0.7, 1.5]
 max_tokens = IntRange.max_tokens(task="short")  # [50, 256]
-model = Choices.model(provider="openai", tier="fast")  # [gpt-4.1-mini]
+model = Choices.model(provider="openai", tier="fast")  # [gpt-5.4-mini]
 
 # Constraints
 constraints = [
@@ -100,6 +100,13 @@ async def main() -> None:
 
     print("\nRunning optimization (this will make real API calls)...")
     results = await qa_agent.optimize(algorithm="random", max_trials=6, random_seed=42)
+
+    if results.best_config is None:
+        print(
+            "\nNo best configuration: the run ended with status "
+            f"{results.status!r} (stop reason: {results.stop_reason!r})."
+        )
+        raise SystemExit(1)
 
     print("\nBest Configuration:")
     print(f"  Model: {results.best_config.get('model')}")

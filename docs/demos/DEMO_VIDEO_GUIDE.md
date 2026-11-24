@@ -65,7 +65,7 @@ import traigent
 @traigent.optimize(
     # Define TUNED VARIABLES - parameters to optimize
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4o"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.1, 0.5, 0.9],
         "max_tokens": [500, 1000, 2000]
     },
@@ -115,23 +115,23 @@ echo "Configuration space: 27 combinations (3 models x 3 temps x 3 tokens)"
 echo ""
 sleep 1
 
-echo "[1/27] Testing: gpt-4.1-mini, temp=0.1, tokens=500"
+echo "[1/27] Testing: gpt-5.4-mini, temp=0.1, tokens=500"
 echo "       Score: accuracy=0.72, cost=\$0.002"
 sleep 0.3
-echo "[2/27] Testing: gpt-4.1-mini, temp=0.1, tokens=1000"
+echo "[2/27] Testing: gpt-5.4-mini, temp=0.1, tokens=1000"
 echo "       Score: accuracy=0.75, cost=\$0.003"
 sleep 0.3
-echo "[3/27] Testing: gpt-4.1-mini, temp=0.5, tokens=500"
+echo "[3/27] Testing: gpt-5.4-mini, temp=0.5, tokens=500"
 echo "       Score: accuracy=0.68, cost=\$0.002"
 sleep 0.3
 echo "..."
 sleep 0.5
-echo "[15/27] Testing: gpt-4o-mini, temp=0.1, tokens=1000"
+echo "[15/27] Testing: gpt-5.4-mini, temp=0.1, tokens=1000"
 echo "       Score: accuracy=0.89, cost=\$0.008  <- New best!"
 sleep 0.3
 echo "..."
 sleep 0.5
-echo "[27/27] Testing: gpt-4o, temp=0.9, tokens=2000"
+echo "[27/27] Testing: gpt-5.2, temp=0.9, tokens=2000"
 echo "       Score: accuracy=0.91, cost=\$0.045"
 echo ""
 sleep 1
@@ -139,7 +139,7 @@ sleep 1
 echo "Optimization complete!"
 echo ""
 echo "BEST CONFIGURATION FOUND:"
-echo "  model: gpt-4o-mini"
+echo "  model: gpt-5.4-mini"
 echo "  temperature: 0.1"
 echo "  max_tokens: 1000"
 echo ""
@@ -147,7 +147,7 @@ echo "METRICS:"
 echo "  accuracy: 0.89 (89%)"
 echo "  cost: \$0.008 per query"
 echo ""
-echo "Compared to default (gpt-4.1-mini, temp=0.7):"
+echo "Compared to default (gpt-5.4-mini, temp=0.7):"
 echo "  +17% accuracy improvement"
 echo "  Best cost/accuracy trade-off"
 sleep 3
@@ -162,7 +162,7 @@ cat << 'PYTHON'
 results = await qa_agent.optimize()
 qa_agent.apply_best_config(results)
 
-# Now qa_agent uses: gpt-4o-mini, temp=0.1, tokens=1000
+# Now qa_agent uses: gpt-5.4-mini, temp=0.1, tokens=1000
 answer = qa_agent("What is machine learning?")
 PYTHON
 sleep 2
@@ -219,7 +219,7 @@ from traigent.utils.callbacks import (
 )
 
 @traigent.optimize(
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"]},
     objectives=["accuracy"],
 )
 def my_agent(query: str) -> str:

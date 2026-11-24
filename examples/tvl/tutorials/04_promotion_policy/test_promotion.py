@@ -58,7 +58,7 @@ def demonstrate_bh_correction():
         sig_adj = "sig" if adj < 0.05 else "not sig"
         change = "CHANGED" if sig_raw != sig_adj else ""
         print(
-            f"    Objective {i+1}: raw={raw:.3f} ({sig_raw}), adj={adj:.3f} ({sig_adj}) {change}"
+            f"    Objective {i + 1}: raw={raw:.3f} ({sig_raw}), adj={adj:.3f} ({sig_adj}) {change}"
         )
 
     print("\n  BH correction reduces false discoveries when testing")
@@ -127,7 +127,7 @@ def demonstrate_chance_constraints():
     lb_good = clopper_pearson_lower_bound(successes_good, len(good_samples), confidence)
     passes_good = lb_good >= threshold
 
-    print(f"\n  Good configuration (mean={sum(good_samples)/len(good_samples):.3f}):")
+    print(f"\n  Good configuration (mean={sum(good_samples) / len(good_samples):.3f}):")
     print(f"    Samples >= threshold: {successes_good}/{len(good_samples)}")
     print(f"    Lower bound ({confidence:.0%} CI): {lb_good:.3f}")
     print(f"    Constraint satisfied: {passes_good}")
@@ -137,7 +137,7 @@ def demonstrate_chance_constraints():
     lb_bad = clopper_pearson_lower_bound(successes_bad, len(bad_samples), confidence)
     passes_bad = lb_bad >= threshold
 
-    print(f"\n  Bad configuration (mean={sum(bad_samples)/len(bad_samples):.3f}):")
+    print(f"\n  Bad configuration (mean={sum(bad_samples) / len(bad_samples):.3f}):")
     print(f"    Samples >= threshold: {successes_bad}/{len(bad_samples)}")
     print(f"    Lower bound ({confidence:.0%} CI): {lb_bad:.3f}")
     print(f"    Constraint satisfied: {passes_bad}")

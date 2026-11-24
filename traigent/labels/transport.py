@@ -26,10 +26,12 @@ Config (``traigent.yml``)::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import os
 import re
+import secrets
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
@@ -38,6 +40,7 @@ from typing import Any, NoReturn
 
 import yaml
 
+from traigent._fsutil import open_verified, same_entry
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.logging import get_logger
 
@@ -551,7 +554,7 @@ def _state_dir() -> Path:
     return _state_path().parent.resolve()
 
 
-def _require_local_file(path: Path) -> None:
+def _require_local_file(path: Path) -> Path:
     """Refuse a state/lock/temp file unless it lies inside the resolved state directory.
 
     The path is SDK-built (``TRAIGENT_RESULTS_FOLDER`` or ``~/.traigent`` plus a fixed file
@@ -561,6 +564,8 @@ def _require_local_file(path: Path) -> None:
     or an override pointing elsewhere therefore cannot redirect the replay-protection
     journal, its lock, or its temp file.
     """
+    if "\0" in str(path):
+        raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
     try:
         resolved = path.resolve()
         parent = path.parent.resolve()
@@ -570,15 +575,33 @@ def _require_local_file(path: Path) -> None:
             or not resolved.is_relative_to(_state_dir())
         ):
             raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
+        raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
+    return resolved
+
+
+def _open_state_fd(path: Path, flags: int) -> int:
+    """Open a state file without following a symlink; the descriptor must be verified.
+
+    ``O_NOFOLLOW`` is used where available and the descriptor is always checked to be
+    a regular file that is the one the path names now, so a swap after
+    ``_require_local_file`` is refused on every platform.  A missing file raises
+    ``FileNotFoundError``; any other failure is the closed ``sequence_not_persisted``.
+    """
+    try:
+        return open_verified(path, flags, 0o600)
+    except (FileNotFoundError, FileExistsError):
+        raise
+    except OSError:
         raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
 
 
 def _read_state(path: Path) -> dict[str, Any]:
     """The retained-sequence map. Missing file = empty; unreadable/corrupt = closed refusal."""
-    _require_local_file(path)
+    path = _require_local_file(path)
     try:
-        raw = path.read_text(encoding="utf-8")
+        with os.fdopen(_open_state_fd(path, os.O_RDONLY), "r", encoding="utf-8") as fh:
+            raw = fh.read()
     except FileNotFoundError:
         return {}
     except OSError:
@@ -599,6 +622,9 @@ def _retained_sequence(path: Path, scope: str) -> int:
     return value
 
 
+_STATE_TEMP_ATTEMPTS = 5
+
+
 def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
     """Durably record the highest verified binding-list sequence, or raise.
 
@@ -613,11 +639,9 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
         raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
     try:
         lock_path = path.with_suffix(".lock")
-        tmp = path.with_suffix(f".tmp{os.getpid()}")
-        for candidate in (path, lock_path, tmp):
-            _require_local_file(candidate)
+        path, lock_path = (_require_local_file(c) for c in (path, lock_path))
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_path, "a+") as lock:
+        with os.fdopen(_open_state_fd(lock_path, os.O_RDWR | os.O_CREAT), "r+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             data = _read_state(path)
             current = data.get(scope, 0)
@@ -626,11 +650,48 @@ def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
             if sequence < current:
                 raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
             data[scope] = max(sequence, current)
-            with open(tmp, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps(data, sort_keys=True))
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp, path)
+            # Unique temp name per call (never PID-derived, so a stale temp from a
+            # crashed process cannot block writes). Created exclusively; a name
+            # collision retries with a new name, and only a temp this call created
+            # is ever removed.
+            tmp: Path | None = None
+            tmp_fd = -1
+            for _ in range(_STATE_TEMP_ATTEMPTS):
+                candidate = _require_local_file(
+                    path.with_name(f"{path.name}.{secrets.token_hex(8)}.tmp")
+                )
+                try:
+                    tmp_fd = _open_state_fd(
+                        candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_TRUNC
+                    )
+                except FileExistsError:
+                    continue
+                tmp = candidate
+                break
+            if tmp is None:
+                raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
+            # Set when the temp name no longer names our descriptor: the entry at
+            # that path is not ours any more, so it must not be unlinked.
+            tmp_replaced = False
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(data, sort_keys=True))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                    # Threat model: the state directory is local and single-user;
+                    # anyone able to write it already controls this user's state.
+                    # Cheap check only: the temp name must still be the file we
+                    # wrote, with the descriptor still open, before it replaces
+                    # the real file.
+                    if not same_entry(handle.fileno(), tmp):
+                        tmp_replaced = True
+                        raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
+                os.replace(tmp, path)
+            except BaseException:
+                if not tmp_replaced:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp)
+                raise
             dir_fd = os.open(path.parent, os.O_RDONLY)
             try:
                 os.fsync(dir_fd)

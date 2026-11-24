@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from _cost_display import format_cost
+
 MOCK = str(os.getenv("TRAIGENT_MOCK_LLM", "")).lower() in {"1", "true", "yes", "y"}
 BASE = Path(__file__).parent
 if MOCK:
@@ -138,9 +140,9 @@ if model_env:
     MODEL_CHOICES = [m.strip() for m in model_env.split(",") if m.strip()]
 else:
     MODEL_CHOICES = [
-        "openai/gpt-4.1-mini",
-        "openai/gpt-4.1-mini",  # Very cheap baseline
-        "openai/gpt-4.1",  # Noticeably more expensive, good pruning signal
+        "openai/gpt-5.4-mini",
+        "openai/gpt-5.4-mini",  # Very cheap baseline
+        "openai/gpt-5.2",  # Noticeably more expensive, good pruning signal
     ]
 
 MAX_TRIALS = int(os.getenv("TRAIGENT_MAX_TRIALS", "24"))
@@ -391,7 +393,9 @@ def _print_results(result: OptimizationResult) -> None:
 
     summary = result.get_summary()
     print("\nOptimization summary:")
-    total_cost = float(summary.get("total_cost", 0.0) or 0.0)
+    total_cost_text = format_cost(
+        summary.get("total_cost"), summary.get("cost_lower_bound")
+    )
     total_duration = float(summary.get("total_duration", 0.0) or 0.0)
     total_examples = int(summary.get("total_examples_attempted", 0) or 0)
     print(f"  total_trials: {summary.get('total_trials', 0)}")
@@ -399,7 +403,7 @@ def _print_results(result: OptimizationResult) -> None:
     print(f"    pruned: {summary.get('pruned_trials', 0)}")
     print(f"    failed: {summary.get('failed_trials', 0)}")
     print(f"  total_examples_attempted: {total_examples}")
-    print(f"  total_cost: ${total_cost:.6f}")
+    print(f"  total_cost: {total_cost_text}")
     print(f"  total_duration: {total_duration:.3f}s")
 
     per_model = summary.get("trials_per_model") or {}
@@ -584,14 +588,15 @@ if BUDGET_LIMIT is not None and BUDGET_LIMIT > 0:
 @traigent.optimize(**_OPTIMIZE_KWARGS)
 def answer(
     question: str,
-    model: str = "openai/gpt-4.1-mini",
+    model: str = "openai/gpt-5.4-mini",
     temperature: float = 0.1,
     # max_tokens: int = 128,
 ) -> str:
     """Simple function that answers math questions using LLM."""
 
     if MOCK:
-        return _evaluate_expression(question)
+        # No model is called in mock mode, so the measured cost is exactly $0.
+        return traigent.with_usage(_evaluate_expression(question), total_cost=0.0)
 
     assert os.getenv("OPENAI_API_KEY"), "Missing OPENAI_API_KEY"
 

@@ -255,7 +255,7 @@ import traigent
 
 @traigent.optimize(
     evaluation={"eval_dataset": "data.jsonl"},
-    configuration_space={"model": ["gpt-4.1", "gpt-4.1-mini"]}
+    configuration_space={"model": ["gpt-5.2", "gpt-5.4-mini"]}
 )
 def my_function(input_text: str) -> str:
     config = traigent.get_config()

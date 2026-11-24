@@ -33,10 +33,21 @@ class CanonicalizationError(ValueError):
     duplicate keys, unsupported types)."""
 
 
+def _reject_lone_surrogates(text: str) -> None:
+    """Lone surrogates have no UTF-8 form; fail with a typed error, not UnicodeEncodeError."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise CanonicalizationError(
+            "strings containing lone surrogates cannot be canonically hashed"
+        ) from None
+
+
 def _normalize(value: Any) -> Any:
     if value is None or isinstance(value, bool):
         return value
     if isinstance(value, str):
+        _reject_lone_surrogates(value)
         return unicodedata.normalize("NFC", value)
     if isinstance(value, int):
         return value
@@ -64,6 +75,7 @@ def _normalize_mapping(value: Mapping[Any, Any]) -> dict[str, Any]:
     for key, item in value.items():
         if not isinstance(key, str):
             raise CanonicalizationError("mapping keys must be strings")
+        _reject_lone_surrogates(key)
         norm_key = unicodedata.normalize("NFC", key)
         if norm_key in normalized:
             raise CanonicalizationError(f"duplicate key after NFC: {norm_key!r}")

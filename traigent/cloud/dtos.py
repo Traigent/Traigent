@@ -161,7 +161,7 @@ class ExampleMeasure:
     """
 
     MAX_METRICS = 50
-    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$")
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*\Z")
 
     def __init__(self, data: dict[str, Any]) -> None:
         """Initialize from a nested measure dict.
@@ -279,7 +279,7 @@ class MeasuresDict(UserDict):
     # Unicode-identifier bypass closed in the composite-knobs metrics channel.
     # ``traigent.evaluators.metrics_tracker.USER_METRIC_KEY_PATTERN`` mirrors this
     # exactly; the consistency test pins the two together.
-    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*$", re.ASCII)
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_]\w*\Z", re.ASCII)
 
     def __init__(self, data: dict[str, Any] | None = None) -> None:
         """Initialize with optional data dictionary.
@@ -616,7 +616,15 @@ class ExperimentDTO:
         from traigent.utils.exceptions import DTOSerializationError
 
         # Check if strict validation is enabled (default: true)
-        strict_mode = os.getenv("TRAIGENT_STRICT_VALIDATION", "true").lower() == "true"
+        # Fail closed: only an explicit off-spelling disables strict mode.
+        strict_mode = os.getenv(
+            "TRAIGENT_STRICT_VALIDATION", "true"
+        ).strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
 
         try:
             validator = _get_schema_validator_class()()

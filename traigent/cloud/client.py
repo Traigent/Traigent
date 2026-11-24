@@ -19,7 +19,9 @@ from typing import Any, NoReturn, cast
 from urllib.parse import urlparse
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
+from traigent.cloud._detached_raise import raise_detached
 from traigent.labels.transport_gate import client_origins, gate_session
+from traigent.utils.exception_pickling import PicklableExceptionMixin
 
 # Capture the genuine, unpatched ClientSession class at module-load time — before
 # any test can monkeypatch the mutable ``aiohttp.ClientSession`` module attribute.
@@ -35,9 +37,12 @@ else:  # pragma: no cover - minimal environments without aiohttp
     _REAL_AIOHTTP_CLIENT_SESSION = None
 
 from traigent.config.backend_config import PRICING_URL, BackendConfig
+from traigent.config.project import apply_project_header
 from traigent.core.session_types import (
+    PROJECT_CONTEXT_REQUIRED_MESSAGE,
     QuotaRefusalFacts,
     SessionCreationFailureDetail,
+    is_project_context_required_response,
     normalize_next_trial_payload,
     safe_http_error_summary,
 )
@@ -639,7 +644,7 @@ class BaseTraigentClient(ABC):
         return False
 
 
-class StandardizedClientError(Exception):
+class StandardizedClientError(PicklableExceptionMixin, Exception):
     """Standardized error class for all Traigent clients."""
 
     def __init__(
@@ -912,6 +917,7 @@ class TraigentCloudClient(BaseTraigentClient):
         timeout: float = 30.0,
         no_egress: bool = False,
         optimization_only: bool | None = None,
+        project_id: str | None = None,
     ) -> None:
         """Initialize cloud client.
 
@@ -924,7 +930,10 @@ class TraigentCloudClient(BaseTraigentClient):
             no_egress: Runtime policy flag that forbids backend transport
             optimization_only: Opt in (True) or out (False) of optimization-only egress;
                 None defers to ``TRAIGENT_OPTIMIZATION_ONLY`` (unset = legacy behaviour).
+            project_id: Project sent as ``X-Project-Id`` on backend writes; wins over
+                ``TRAIGENT_PROJECT_ID``. None defers to the environment.
         """
+        self._project_id = project_id
         self.optimization_only = oo_egress.parse_flag(
             optimization_only, source="optimization_only"
         )
@@ -1093,6 +1102,8 @@ class TraigentCloudClient(BaseTraigentClient):
         headers = await self.auth.get_headers()
         if "Authorization" not in headers and "X-API-Key" not in headers:
             raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
+        headers = dict(headers)
+        apply_project_header(headers, getattr(self, "_project_id", None))
         return cast(dict[str, str], headers)
 
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
@@ -1383,9 +1394,9 @@ class TraigentCloudClient(BaseTraigentClient):
 
             except aiohttp.ClientError as e:
                 # Convert to retryable network error
-                raise NetworkError(
-                    f"Network error during optimization request: {e}"
-                ) from None
+                raise_detached(
+                    NetworkError(f"Network error during optimization request: {e}")
+                )
 
         # Apply retry decorator to the submit request function
         @retry_http_request
@@ -1729,9 +1740,11 @@ class TraigentCloudClient(BaseTraigentClient):
 
         except aiohttp.ClientError as exc:
             await self._reset_http_session("delete_session network error")
-            raise StandardizedClientError(
-                f"Failed to delete session: {exc}", "session_delete", exc
-            ) from exc
+            raise_detached(
+                StandardizedClientError(
+                    f"Failed to delete session: {exc}", "session_delete"
+                )
+            )
 
     async def list_sessions(
         self,
@@ -1781,9 +1794,11 @@ class TraigentCloudClient(BaseTraigentClient):
                 data = await response.json()
         except aiohttp.ClientError as exc:
             await self._reset_http_session("list_sessions network error")
-            raise StandardizedClientError(
-                f"Failed to list sessions: {exc}", "session_list", exc
-            ) from exc
+            raise_detached(
+                StandardizedClientError(
+                    f"Failed to list sessions: {exc}", "session_list"
+                )
+            )
 
         raw_sessions = data.get("sessions") if isinstance(data, dict) else None
         if not isinstance(raw_sessions, list):
@@ -1941,7 +1956,7 @@ class TraigentCloudClient(BaseTraigentClient):
 
         except aiohttp.ClientError as e:
             await self._reset_http_session("create_session network error")
-            raise CloudServiceError(f"Network error creating session: {e}") from None
+            raise_detached(CloudServiceError(f"Network error creating session: {e}"))
 
     @staticmethod
     async def _raise_session_creation_response_error(response: Any) -> NoReturn:
@@ -1949,6 +1964,10 @@ class TraigentCloudClient(BaseTraigentClient):
         detail = SessionCreationFailureDetail.from_http_response(
             response.status, error_text
         )
+        if detail.is_project_context_required:
+            project_exc = CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
+            project_exc.session_creation_failure = detail  # type: ignore[attr-defined]
+            raise project_exc from None
         if detail.is_quota_refusal:
             raise SessionQuotaRefusedError.from_detail(detail) from None
         if detail.is_closed_refusal:
@@ -2017,13 +2036,17 @@ class TraigentCloudClient(BaseTraigentClient):
                     )
                 else:
                     error_text = await response.text()
+                    if is_project_context_required_response(
+                        response.status, error_text
+                    ):
+                        raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     raise CloudServiceError(
                         f"Failed to get next trial: {safe_http_error_summary(response.status, error_text)}"
                     )
 
         except aiohttp.ClientError as e:
             await self._reset_http_session("next_trial network error")
-            raise CloudServiceError(f"Network error getting next trial: {e}") from None
+            raise_detached(CloudServiceError(f"Network error getting next trial: {e}"))
 
     async def submit_trial_result(
         self,
@@ -2106,13 +2129,17 @@ class TraigentCloudClient(BaseTraigentClient):
                     )
                 elif response.status not in [200, 201, 204]:
                     error_text = await response.text()
+                    if is_project_context_required_response(
+                        response.status, error_text
+                    ):
+                        raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     raise CloudServiceError(
                         f"Failed to submit result: {safe_http_error_summary(response.status, error_text)}"
                     )
 
         except aiohttp.ClientError as e:
             await self._reset_http_session("submit_trial_result network error")
-            raise CloudServiceError(f"Network error submitting result: {e}") from None
+            raise_detached(CloudServiceError(f"Network error submitting result: {e}"))
 
     async def finalize_optimization(
         self, session_id: str, include_full_history: bool = False
@@ -2166,13 +2193,17 @@ class TraigentCloudClient(BaseTraigentClient):
                     )
                 else:
                     error_text = await response.text()
+                    if is_project_context_required_response(
+                        response.status, error_text
+                    ):
+                        raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
                     raise CloudServiceError(
                         f"Failed to finalize session: {safe_http_error_summary(response.status, error_text)}"
                     )
 
         except aiohttp.ClientError as e:
             await self._reset_http_session("finalize_session network error")
-            raise CloudServiceError(f"Network error finalizing session: {e}") from None
+            raise_detached(CloudServiceError(f"Network error finalizing session: {e}"))
 
     # Serialization/deserialization helpers
 
@@ -2534,14 +2565,14 @@ class TraigentCloudClient(BaseTraigentClient):
             raise
         except aiohttp.ClientError as e:
             await self._reset_http_session("agent_optimize network error")
-            raise CloudServiceError(
-                f"Network error starting agent optimization: {e}"
-            ) from None
+            raise_detached(
+                CloudServiceError(f"Network error starting agent optimization: {e}")
+            )
         except Exception as e:
             await self._reset_http_session("agent_optimize failure")
-            raise CloudServiceError(
-                f"Network error starting agent optimization: {e}"
-            ) from None
+            raise_detached(
+                CloudServiceError(f"Network error starting agent optimization: {e}")
+            )
 
     async def execute_agent(
         self,
@@ -2611,10 +2642,10 @@ class TraigentCloudClient(BaseTraigentClient):
             raise
         except aiohttp.ClientError as e:
             await self._reset_http_session("agent_execute network error")
-            raise CloudServiceError(f"Network error executing agent: {e}") from None
+            raise_detached(CloudServiceError(f"Network error executing agent: {e}"))
         except Exception as e:
             await self._reset_http_session("agent_execute failure")
-            raise CloudServiceError(f"Network error executing agent: {e}") from None
+            raise_detached(CloudServiceError(f"Network error executing agent: {e}"))
 
     async def get_agent_optimization_status(
         self, optimization_id: str
@@ -2654,14 +2685,14 @@ class TraigentCloudClient(BaseTraigentClient):
 
         except aiohttp.ClientError as e:
             await self._reset_http_session("agent_status network error")
-            raise CloudServiceError(
-                f"Network error getting optimization status: {e}"
-            ) from None
+            raise_detached(
+                CloudServiceError(f"Network error getting optimization status: {e}")
+            )
         except Exception as e:
             await self._reset_http_session("agent_status failure")
-            raise CloudServiceError(
-                f"Network error getting optimization status: {e}"
-            ) from None
+            raise_detached(
+                CloudServiceError(f"Network error getting optimization status: {e}")
+            )
 
     async def cancel_agent_optimization(self, optimization_id: str) -> dict[str, Any]:
         """Cancel running agent optimization.
@@ -2698,14 +2729,14 @@ class TraigentCloudClient(BaseTraigentClient):
 
         except aiohttp.ClientError as e:
             await self._reset_http_session("agent_cancel network error")
-            raise CloudServiceError(
-                f"Network error canceling optimization: {e}"
-            ) from None
+            raise_detached(
+                CloudServiceError(f"Network error canceling optimization: {e}")
+            )
         except Exception as e:
             await self._reset_http_session("agent_cancel failure")
-            raise CloudServiceError(
-                f"Network error canceling optimization: {e}"
-            ) from None
+            raise_detached(
+                CloudServiceError(f"Network error canceling optimization: {e}")
+            )
 
     # Serialization methods for agent requests
 

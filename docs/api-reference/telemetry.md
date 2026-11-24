@@ -89,7 +89,9 @@ Use `offline=True` when your policy requires no Traigent backend egress at all:
 No-egress runs keep Traigent optimization metadata local while still allowing your
 own function to call LLM providers or other services.
 
-`offline=True` also disables OpenTelemetry export, the langfuse client and the
+`offline=True` also disables OpenTelemetry export, the langfuse client, the
+MLflow and W&B trackers (they raise `OfflineModeError` instead of sending run
+names, tags or tuned values to the tracking server) and the
 standalone API clients while the run is in flight, even if
 `TRAIGENT_TRACE_ENABLED` and `OTEL_EXPORTER_OTLP_ENDPOINT` are set. Outside an
 `offline=True` run, the observability lanes (`@observe`,
@@ -148,6 +150,16 @@ is used as-is — the normal, documented way to opt one call into
 `record`/`redacted` capture. A trace_id this client process never locally
 tracked (created elsewhere, or already closed) resolves purely against the
 client-level policy, same as a bare `start_trace()`.
+
+Deprecated boolean variables (use `TRAIGENT_OBSERVABILITY_CONTENT` instead).
+Two spellings exist, one per SDK. The Python SDK honours both; the JS SDK
+currently honours only `TRAIGENT_OBSERVABILITY_PRIVACY_MODE`:
+`TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT` (`true` = `record`, `false` =
+`metadata`) and `TRAIGENT_OBSERVABILITY_PRIVACY_MODE` (`true` = `metadata`,
+`false` = no opinion). The most restrictive explicit setting wins; if the two
+disagree, content capture is off (`metadata`) and one deprecation warning
+names the variables (never their values). This setting controls content
+capture only; it is not a privacy guarantee for observability data.
 
 **Bound the promise:** `metadata` mode withholds content fields (function
 arguments, return values, explicit `input_data`/`output_data`); arbitrary
@@ -342,6 +354,21 @@ os.environ["TRAIGENT_DISABLE_TELEMETRY"] = "true"
 
 import traigent
 ```
+
+### Usage Analytics
+
+Usage analytics is a separate, default-on lane: when a backend API key is set,
+local runs and `traigent sessions list` can send one anonymous-id session of
+aggregate statistics (session and trial totals, average config-space size and
+improvement, recent-session count, days since first use, SDK version) to the
+Traigent backend. It carries no prompts, outputs, dataset content or
+configuration values. Every one of these stops it, on all three send paths (post-run
+orchestrator, the incentive/hint manager, and the CLI):
+
+- `TRAIGENT_DISABLE_TELEMETRY=true` (same accepted values as below)
+- `TRAIGENT_OFFLINE_MODE=true` or `offline=True` on the decorator or config
+- `TraigentConfig(no_egress=True)`
+- `TraigentConfig(enable_usage_analytics=False)`; the default stays `True`
 
 ### Accepted Values
 

@@ -35,7 +35,7 @@ if __doc__ is not None:
 
 EXPERIMENT_NAME = "Quickstart Publish and Verify"
 CONFIG_SPACE = {
-    "model": ["gpt-4.1-mini", "gpt-4.1"],
+    "model": ["gpt-5.4-mini", "gpt-5.2"],
     "temperature": [0.0, 0.7],
 }
 DATASET = [
@@ -63,7 +63,7 @@ def _demo_scorer(
         except Exception:
             cfg = {}
 
-    model_score = 0.85 if str(cfg.get("model")) == "gpt-4.1" else 0.65
+    model_score = 0.85 if str(cfg.get("model")) == "gpt-5.2" else 0.65
     temperature_raw = cfg.get("temperature", 0.5)
     temperature = (
         float(temperature_raw)
@@ -158,7 +158,7 @@ def main() -> None:
         missing = exc.name or "litellm"
         print(
             f"[traigent] Missing required quickstart dependency '{missing}'. "
-            f'Run: {sys.executable} -m pip install "litellm>=1.100.5,<2"',
+            f'Run: {sys.executable} -m pip install "litellm>=1.108.6,<2"',
             file=sys.stderr,
         )
         raise SystemExit(1) from None

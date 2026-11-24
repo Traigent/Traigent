@@ -16,6 +16,7 @@ not know, and what a trial reports when nothing was captured.
 | `litellm.completion` / `litellm.acompletion` | always (patched by the evaluator) | streaming calls are not captured |
 | Traigent's `BedrockChatClient` | always | |
 | Raw OpenAI SDK, sync and async: `chat.completions.create`, `chat.completions.parse` (also `beta.chat.completions.parse`), `completions.create`, `responses.create`, `responses.parse`, and the `with_raw_response` form of each | the OpenAI override is active (see below) | non-streaming calls that return `usage`. Responses API `input_tokens`/`output_tokens` are counted as prompt/completion tokens. Your code still receives the normal return value; a `with_raw_response` result is parsed once and the parsed object is cached, so your own `.parse()` returns it |
+| Raw Anthropic SDK, sync and async: `messages.create`, and `messages.stream` (usage is read from the final message when the `with` block exits) | the Anthropic override is active (`framework_targets=["anthropic.Anthropic", "anthropic.AsyncAnthropic"]` or `override_anthropic()`) | `usage.input_tokens`/`output_tokens` ([#3250](https://github.com/Traigent/Traigent/issues/3250)). `create(stream=True)` and a `messages.stream` abandoned before its final event report no usage and stay unmeasured, never estimated from text length. Cache read/write tokens, which Anthropic reports beside `input_tokens`, are not priced separately yet (same as `ChatAnthropic`), so a prompt-cached call's cost is a lower bound |
 | Direct `google.genai` calls (Gemini API or Vertex AI client) | never | Traigent does not patch this client, so these calls are outside cost tracking. A trial can show a cost of 0.0, and a run with a cost cap can stop with an unmeasured-cost error. Calling Gemini through `litellm.completion` gets its usage captured. |
 
 ### Raw OpenAI SDK calls (including OpenAI-compatible gateways)
@@ -36,7 +37,7 @@ client = openai.OpenAI(base_url=os.environ["LLM_BASE_URL"])  # build it once
 
 
 @traigent.optimize(
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"]},
     objectives=["accuracy", "cost"],
     eval_dataset="data.jsonl",
     auto_override_frameworks=True,
@@ -44,7 +45,7 @@ client = openai.OpenAI(base_url=os.environ["LLM_BASE_URL"])  # build it once
 )
 def answer(question: str) -> str:
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  # replaced by the trial's model
+        model="gpt-5.4-mini",  # replaced by the trial's model
         messages=[{"role": "user", "content": question}],
     )
     return response.choices[0].message.content

@@ -25,7 +25,7 @@ Built-in implementations:
 | Condition | Purpose | Config knobs |
 |-----------|---------|--------------|
 | `MaxTrialsStopCondition` | Enforces a hard trial budget. | Uses `max_trials`. |
-| `PlateauAfterNStopCondition` | Stops when the best weighted score changes by at most `epsilon` for `window_size` successive trials. | `plateau_window`, `plateau_epsilon`. |
+| `PlateauAfterNStopCondition` | Stops when the last `window_size` running-best values (including the one after the trial just completed; `window_size - 1` comparisons) span at most `epsilon`. `plateau_window` must be a positive integer; N=1 stops after the first trial. | `plateau_window`, `plateau_epsilon`. |
 | `MetricLimitStopCondition` | Soft stop when the cumulative value of a named completed-trial metric reaches a limit. | `metric_limit`, `metric_name`, `metric_include_pruned`. |
 | `CostLimitStopCondition` | Hard money-spend guard backed by `CostEnforcer` permits before execution starts. Parallel-safe. | `cost_limit`, `cost_approved`. |
 | `HypervolumeConvergenceStopCondition` | Stops when hypervolume improvement remains below a threshold across a sliding window. | `convergence_metric="hypervolume_improvement"`, `convergence_window`, `convergence_threshold`. |
@@ -182,7 +182,7 @@ they were declared in `@optimize`.
 # Context injection (default)
 @traigent.optimize(
     eval_dataset="math.jsonl",
-    configuration_space={"model": ["openai/gpt-4.1-mini", "openai/gpt-4.1"]},
+    configuration_space={"model": ["openai/gpt-5.4-mini", "openai/gpt-5.2"]},
     plateau_window=5,
     plateau_epsilon=1e-5,
     cost_limit=0.5,
@@ -205,7 +205,7 @@ def chat(question: str, config: dict) -> str:
 # Seamless injection
 @traigent.optimize(
     eval_dataset="scenarios.jsonl",
-    configuration_space={"model": ["openai/gpt-4o", "openai/gpt-4o-mini"]},
+    configuration_space={"model": ["openai/gpt-5.2", "openai/gpt-5.4-mini"]},
     injection_mode="seamless",
     metric_limit=100_000,
     metric_name="total_tokens",

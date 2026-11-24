@@ -54,7 +54,7 @@ logger = get_logger(__name__)
 
 _SECURE_RANDOM = SystemRandom()
 
-_EXAMPLE_SET_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{3,128}$")
+_EXAMPLE_SET_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{3,128}\Z")
 _TAG_KEY_SANITIZE_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
 _TAG_CONTROL_CHARS_PATTERN = re.compile(r"[\x00-\x1f\x7f]+")
 _METADATA_TAG_VALUE_TYPES = (str, int, float, bool)
@@ -162,7 +162,9 @@ class DatasetConverter:
 
         Args:
             backend_base_url: Backend API base URL. Defaults to the configured
-                cloud backend. Must use http(s) scheme without embedded
+                cloud backend (environment or stored credentials), falling
+                back to the vendor default when none is configured outside
+                strict-endpoint mode. Must use http(s) scheme without embedded
                 credentials, query parameters, or fragments.
             no_egress: Runtime policy flag that forbids backend transport.
         """
@@ -184,7 +186,11 @@ class DatasetConverter:
 
     @property
     def backend_base_url(self) -> str:
-        """Backend base URL; vendor default only outside strict-endpoint mode."""
+        """Backend base URL: the configured backend, else the vendor default.
+
+        The vendor default is used only outside strict-endpoint mode and only
+        when no backend is configured.
+        """
         if self._explicit_backend_base_url:
             return self._explicit_backend_base_url
         strict = is_strict_endpoint_mode()
@@ -195,18 +201,20 @@ class DatasetConverter:
             # and re-resolve (configured endpoint, or EndpointNotConfiguredError).
             self._resolved_backend_base_url = None
         if self._resolved_backend_base_url is None:
-            # Strict-endpoint mode resolves the configured backend (raising
-            # EndpointNotConfiguredError when none is set); otherwise the
-            # vendor default is kept.
-            default_url = (
-                BackendConfig.get_cloud_backend_url()
-                if strict
-                else BackendConfig.get_default_cloud_url_or_raise()
-            )
+            # Follow the configured backend (TRAIGENT_BACKEND_URL,
+            # TRAIGENT_API_URL, stored credentials) like every other SDK
+            # backend client. Strict-endpoint mode raises
+            # EndpointNotConfiguredError when none is set; otherwise the vendor
+            # default is the fallback when nothing is configured.
+            default_url = BackendConfig.get_cloud_backend_url()
             self._resolved_backend_base_url = self._validate_backend_base_url(
                 default_url
             )
-            self._resolved_from_vendor_default = not strict
+            # True only when the resolved value is the vendor default itself
+            # (never in strict mode, never for a differing configured URL).
+            self._resolved_from_vendor_default = (
+                not strict and default_url == BackendConfig.DEFAULT_PROD_URL
+            )
         return self._resolved_backend_base_url
 
     @backend_base_url.setter

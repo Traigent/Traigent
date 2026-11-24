@@ -172,6 +172,25 @@ def test_attach_snapshot_is_noop_without_budget() -> None:
     assert "EXECUTION_BUDGET_UNTRACKED_COST" not in result.warning_codes
 
 
+def test_attach_snapshot_enforcer_status_failure_marks_cost_untracked() -> None:
+    from unittest.mock import MagicMock
+
+    from traigent.core.execution_budget import ExecutionBudget
+
+    budget = ExecutionBudget(max_cost_usd=1.0)
+    enforcer = MagicMock()
+    enforcer.get_status.side_effect = RuntimeError("status unavailable")
+    orchestrator = MagicMock()
+    orchestrator.execution_budget = budget
+    orchestrator.cost_enforcer = enforcer
+
+    result = _empty_result()
+    OptimizedFunction._attach_execution_budget_snapshot(None, result, orchestrator)
+
+    assert "EXECUTION_BUDGET_UNTRACKED_COST" in result.warning_codes
+    assert result.metadata["execution_budget"]["cost_tracking"] != "complete"
+
+
 # ---------------------------------------------------------------------------
 # A full offline run with no budget stops normally and stays budget-free
 # ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-_MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:/@+-]{1,128}$")
+_MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:/@+-]{1,128}\Z")
 _SPAN_TYPE_ALIASES = {
     "agent": SpanType.NODE.value,
 }

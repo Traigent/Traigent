@@ -49,6 +49,10 @@ BYPASS_REGISTER: dict[tuple[str, str], str] = {
     ("utils/diagnostics.py", "socket"): (
         "TCP reachability probe for the diagnose command: connects and sends no bytes"
     ),
+    ("egress/relay.py", "http-connection"): (
+        "the egress relay's upstream leg: it forwards, byte for byte, a request an SDK "
+        "client already sent through its own gate, and logs it before forwarding"
+    ),
 }
 
 
@@ -515,13 +519,14 @@ def test_probe_run_playground_with_the_mode_on_sends_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from traigent.prompts.client import PromptManagementClient
+    from traigent.prompts.config import PromptManagementConfig
 
     monkeypatch.setenv(oo.ENV_VAR, "1")
     with capture_egress() as cap:
         with pytest.raises(oo.OptimizationOnlyRefusal):
-            PromptManagementClient().run_playground(
-                "p", prompt_text="Alice has diabetes", dry_run=True
-            )
+            PromptManagementClient(
+                PromptManagementConfig(project_id="proj_1")
+            ).run_playground("p", prompt_text="Alice has diabetes", dry_run=True)
     assert cap.requests == []
 
 
@@ -547,13 +552,14 @@ def test_probe_run_playground_and_create_evaluator_with_only_a_latch_send_nothin
 ):
     from traigent.evaluation.client import EvaluationClient
     from traigent.prompts.client import PromptManagementClient
+    from traigent.prompts.config import PromptManagementConfig
 
     _latch_key()  # env unset, no keyword: only the credential's latch is on
     with capture_egress() as cap:
         with pytest.raises(oo.OptimizationOnlyRefusal):
-            PromptManagementClient().run_playground(
-                "p", prompt_text="Alice has diabetes", dry_run=True
-            )
+            PromptManagementClient(
+                PromptManagementConfig(project_id="proj_1")
+            ).run_playground("p", prompt_text="Alice has diabetes", dry_run=True)
         with pytest.raises(oo.OptimizationOnlyRefusal):
             EvaluationClient().create_evaluator(
                 name="n",

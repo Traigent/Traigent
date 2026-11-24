@@ -284,7 +284,10 @@ class FakeBackend:
         #: A Backend that predates content_less_v1 advertises nothing.
         self.advertise_content_less = True
         #: Body answered to POST /keys/validate (tests set optimization_only here).
-        self.validate_response: dict[str, Any] = {"valid": True}
+        self.validate_response: dict[str, Any] = {
+            "valid": True,
+            "optimization_only": False,
+        }
         #: Opaque references issued to content-less creates (stable per fake backend).
         self.issued_refs = {
             "agent_ref": "agentref_" + "a1" * 16,

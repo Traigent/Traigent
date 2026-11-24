@@ -145,6 +145,7 @@ def _otel_env(monkeypatch):
     monkeypatch.delenv("TRAIGENT_DISABLE_TELEMETRY", raising=False)
     monkeypatch.delenv("TRAIGENT_OBSERVABILITY_CONTENT", raising=False)
     monkeypatch.delenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", raising=False)
+    monkeypatch.delenv("TRAIGENT_OBSERVABILITY_PRIVACY_MODE", raising=False)
     monkeypatch.delenv("TRAIGENT_OBSERVABILITY_SAMPLE_RATE", raising=False)
     yield
     from traigent.observability.otel import api

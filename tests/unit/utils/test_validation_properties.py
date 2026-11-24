@@ -14,11 +14,19 @@ from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.validation import validate_numeric_metric
 
 
+def _is_finite_float_str(s: str) -> bool:
+    """True if validate_numeric_metric would convert ``s`` to a finite float."""
+    try:
+        return math.isfinite(float(s))
+    except ValueError:
+        return False
+
+
 # Test validate_numeric_metric with invalid non-numeric types
 @given(
     st.one_of(
         st.none(),
-        st.text(),
+        st.text().filter(lambda s: not _is_finite_float_str(s)),
         st.dictionaries(st.text(), st.integers()),
         st.lists(st.integers()),
         st.booleans(),
@@ -76,6 +84,12 @@ def test_validate_numeric_metric_accepts_valid_integers(valid_value):
     result = validate_numeric_metric(valid_value, "test_metric")
     assert isinstance(result, float)
     assert result == float(valid_value)
+
+
+def test_validate_numeric_metric_converts_numeric_strings():
+    """Numeric strings are converted to float by design (not rejected)."""
+    assert validate_numeric_metric("0", "m") == 0.0
+    assert validate_numeric_metric("1.5", "m") == 1.5
 
 
 def test_validate_numeric_metric_rejects_none():

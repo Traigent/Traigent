@@ -166,21 +166,21 @@ def test_canonical_hash_rules():
 
 
 def _ctx(**overrides) -> FreshnessContext:
-    base = dict(
-        cvar_name="theta",
-        tuned_parent_values=(("model", "m1"), ("retriever.k", 4)),
-        calibration_source_id="pool_a",
-        signal_spec_hash=_signal().spec_hash(),
-        calibrator_id="budget_threshold",
-        calibrator_version="1",
-        calibrator_params_hash=canonical_hash({"budgets": [0.1, 0.2]}),
-        dataset_hash="ds_v1",
-        evidence_n=20,
-        calibration_split="cal",
-        eval_split="eval",
-        target=_target(),
-        extensions=(),
-    )
+    base = {
+        "cvar_name": "theta",
+        "tuned_parent_values": (("model", "m1"), ("retriever.k", 4)),
+        "calibration_source_id": "pool_a",
+        "signal_spec_hash": _signal().spec_hash(),
+        "calibrator_id": "budget_threshold",
+        "calibrator_version": "1",
+        "calibrator_params_hash": canonical_hash({"budgets": [0.1, 0.2]}),
+        "dataset_hash": "ds_v1",
+        "evidence_n": 20,
+        "calibration_split": "cal",
+        "eval_split": "eval",
+        "target": _target(),
+        "extensions": (),
+    }
     base.update(overrides)
     return FreshnessContext(**base)
 
@@ -458,3 +458,12 @@ def test_counts_are_natural_numbers():
         with pytest.raises(ValueError):
             EvidenceRef(n=bad, pool_hash="p")
     EvidenceRef(n=0, pool_hash="p")  # zero is a natural number here
+
+
+@pytest.mark.parametrize(
+    "bad", ["\ud800", {"k": "a\udfffb"}, {"\ud800": 1}, ["ok", "\udc00"]]
+)
+def test_canonical_hash_rejects_lone_surrogates_with_typed_error(bad):
+    # #3262: used to leak a raw UnicodeEncodeError at the UTF-8 encode step.
+    with pytest.raises(CanonicalizationError):
+        canonical_hash(bad)

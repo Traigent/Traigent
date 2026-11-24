@@ -125,3 +125,49 @@ class TestManagerMapping:
     )
     def test_status_maps_to_wire_outcome(self, status, outcome):
         assert BackendSessionManager.finalize_outcome_for_status(status) == outcome
+
+
+class TestFinalizeStopReason2508:
+    """#2508: the stop reason is threaded internally but not yet on the wire
+    (the field waits for the TraigentSchema finalize request contract)."""
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_reaches_the_api_call_but_not_the_wire_body(self, client):
+        ops = client._session_ops
+        real = ops._finalize_session_via_api
+        seen: dict = {}
+
+        async def spy(*args, **kwargs):
+            seen.update(kwargs)
+            return await real(*args, **kwargs)
+
+        ops._finalize_session_via_api = spy
+        body = await _finalize_body(
+            client, True, optimization_outcome="completed", stop_reason="cost_limit"
+        )
+        assert seen["stop_reason"] == "cost_limit"
+        assert "stop_reason" not in body
+        assert body["optimization_outcome"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_unknown_stop_reason_is_refused_before_any_send(self, client):
+        session = _http()
+        with patch("aiohttp.ClientSession", return_value=session):
+            with pytest.raises(ValueError):
+                await client._session_ops.finalize_session(
+                    SID, True, stop_reason="because I said so"
+                )
+        session.post.assert_not_called()
+
+    def test_stop_reason_is_not_a_finalize_wire_key(self):
+        out = oo_egress.project_finalize_payload(
+            {"reason": "sdk_explicit_finalization", "stop_reason": "cost_limit"}
+        )
+        assert "stop_reason" not in out
+
+    def test_closed_set_matches_the_public_stop_reason_type(self):
+        from typing import get_args
+
+        from traigent.api.types import StopReason
+
+        assert oo_egress.FINALIZE_STOP_REASONS == frozenset(get_args(StopReason))

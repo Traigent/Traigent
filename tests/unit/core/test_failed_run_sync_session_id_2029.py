@@ -765,18 +765,21 @@ async def test_save_to_failure_after_the_orchestrator_returns_carries_the_id(
     async def answer(text: str, config=None) -> str:
         return "ok"
 
-    with pytest.raises(BaseException) as excinfo:
-        await answer.optimize(algorithm="grid", save_to=str(tmp_path / "out.json"))
-    raised = excinfo.value
+    # #3195: a late save failure no longer raises; the finished result is
+    # returned and still carries the completed run's sync id.
+    with pytest.warns(RuntimeWarning, match="could not be saved to the save_to path"):
+        returned = await answer.optimize(
+            algorithm="grid", save_to=str(tmp_path / "out.json")
+        )
 
     # Non-vacuity: the tail really was reached, and the run really completed.
     assert save_calls, "save_optimization_results was never reached"
     completed_id = captured[0].sync_session_id
     assert isinstance(completed_id, str) and completed_id
 
-    assert type(raised) is OptimizationError
-    assert raised.__cause__ is original
-    assert raised.sync_session_id == completed_id
+    assert returned is captured[0]
+    assert returned.sync_session_id == completed_id
+    assert returned.metadata["save_to_error"]["error_type"] == "RuntimeError"
 
 
 @pytest.mark.asyncio

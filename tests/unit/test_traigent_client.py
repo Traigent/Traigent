@@ -20,6 +20,7 @@ from traigent.utils.exceptions import ConfigurationError, OptimizationError
 class TestTraigentClientInitialization:
     """Tests for TraigentClient initialization."""
 
+    @pytest.mark.usefixtures("connected_policy_env")
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_init_with_explicit_api_key(
@@ -159,6 +160,7 @@ class TestDetermineExecutionMode:
         assert client.backend_client is None
         mock_backend_client.assert_not_called()
 
+    @pytest.mark.usefixtures("connected_policy_env")
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {"TRAIGENT_FORCE_HYBRID": "1"})
@@ -173,6 +175,7 @@ class TestDetermineExecutionMode:
         assert client.execution_mode == ExecutionMode.HYBRID
         mock_backend_client.assert_called_once()
 
+    @pytest.mark.usefixtures("connected_policy_env")
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {"TRAIGENT_FORCE_CLOUD": "1"})

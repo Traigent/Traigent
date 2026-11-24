@@ -230,7 +230,7 @@ class _ToolInputError(ValueError):
 #
 # The Director tools accept no client-composed free text. Every field
 # validated below is an enum, an integer, or an identifier pattern.
-_DIRECTOR_INSTRUCTION_ID_PATTERN = re.compile(r"^di_[0-9a-f]{32}$")
+_DIRECTOR_INSTRUCTION_ID_PATTERN = re.compile(r"^di_[0-9a-f]{32}\Z")
 
 
 def _validate_workflow_kind(value: str) -> str:
@@ -2051,6 +2051,24 @@ def _validate_optional_project_id(value: str | None) -> str | None:
     return value
 
 
+def _resolve_decision_project_id(value: str | None) -> str:
+    """Project of a decision call: the argument or the project env var; required.
+
+    The decision routes carry the project in the path, so a missing project fails closed
+    here, before any request is made.
+    """
+    from traigent.config.project import read_optional_project_env
+
+    pid = _validate_optional_project_id(value)
+    if pid is None:
+        pid = _validate_optional_project_id(read_optional_project_env())
+    if pid is None:
+        raise _ToolInputError(
+            "project_id is required (argument or TRAIGENT_PROJECT_ID)."
+        )
+    return pid
+
+
 def _agent_decision_error_mapper(exc: BaseException, backend_url: str | None) -> Any:
     """Map a backend error to a closed failure; never falls back to a message-echoing path.
 
@@ -2142,7 +2160,7 @@ async def agent_decision_ensure_tool(
     """
     try:
         aid = _validate_agent_id(agent_id)
-        pid = _validate_optional_project_id(project_id)
+        pid = _resolve_decision_project_id(project_id)
     except _ToolInputError as exc:
         return _failure(str(exc))
     return await _agent_decision_read(
@@ -2161,7 +2179,7 @@ async def agent_decision_latest_tool(
     """
     try:
         aid = _validate_agent_id(agent_id)
-        pid = _validate_optional_project_id(project_id)
+        pid = _resolve_decision_project_id(project_id)
     except _ToolInputError as exc:
         return _failure(str(exc))
     return await _agent_decision_read(
@@ -2172,6 +2190,7 @@ async def agent_decision_latest_tool(
 
 
 async def agent_decision_answer_tool(
+    agent_id: str,
     decision_id: str,
     answer: str,
     options_version: str,
@@ -2182,12 +2201,14 @@ async def agent_decision_answer_tool(
 ) -> dict[str, Any]:
     """Post the human's closed answer to a decision.
 
+    ``agent_id`` is the agent the decision belongs to (it is part of the route).
     ``answer`` must be exactly the option the human chose. ``options_version``,
     ``policy_version`` and ``basis_digest`` are echoed from the decision. ``retry_nonce`` is
     generated when omitted and returned, so a retry of the same attempt can reuse it.
     """
     nonce = retry_nonce
     try:
+        aid = _validate_agent_id(agent_id)
         did = _require_identifier(decision_id, field="decision_id")
         if AGENT_DECISION_ID_RE.fullmatch(did) is None:
             raise _ToolInputError("decision_id is not a valid decision id.")
@@ -2211,12 +2232,13 @@ async def agent_decision_answer_tool(
             or AGENT_DECISION_NONCE_RE.fullmatch(nonce) is None
         ):
             raise _ToolInputError("retry_nonce is not a valid retry nonce.")
-        pid = _validate_optional_project_id(project_id)
+        pid = _resolve_decision_project_id(project_id)
     except _ToolInputError as exc:
         return _failure(str(exc))
     final_nonce = nonce
     result = await _call_backend(
         lambda reader: reader.agent_decision_answer(
+            aid,
             did,
             answer=answer,
             options_version=options_version,

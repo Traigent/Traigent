@@ -83,7 +83,7 @@ results = await answer.optimize(
 
 ```python
 space = {
-    "model": ["gpt-4o-mini", "gpt-4o"],
+    "model": ["gpt-5.4-mini", "gpt-5.2"],
     "temperature": [0.0, 0.3, 0.7],
     "max_tokens": [128, 256, 512],
 }
@@ -95,7 +95,7 @@ You can also use structured tuned-variable objects:
 from traigent import Choices, Range
 
 space = {
-    "model": Choices(["gpt-4o-mini", "gpt-4o"]),
+    "model": Choices(["gpt-5.4-mini", "gpt-5.2"]),
     "temperature": Range(0.0, 1.0),
 }
 ```

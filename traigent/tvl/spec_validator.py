@@ -303,6 +303,10 @@ def _is_numeric_config(config: Any) -> bool:
     if hasattr(config, "low") and hasattr(config, "high"):
         return True
 
+    # Handle typed range dicts (Range / IntRange .to_config_value())
+    if isinstance(config, dict) and "low" in config and "high" in config:
+        return True
+
     # Handle raw tuple (low, high)
     if isinstance(config, tuple) and len(config) == 2:
         return all(isinstance(v, (int, float)) for v in config)

@@ -171,6 +171,41 @@ class TestMeasuresDictValidationInSubmission:
         assert "execution_mode" not in metadata
         assert "mode" not in metadata
 
+    @pytest.mark.parametrize(
+        ("metadata", "metrics", "expected"),
+        [
+            ({"duration": 1.5}, {"accuracy": 0.9}, 1.5),
+            (None, {"duration": 0.25}, 0.25),
+            (None, {"execution_time_ms": 250.0}, 0.25),
+            ({"duration": 2.0}, {"duration": 9.0}, 2.0),
+            (None, {"accuracy": 0.9}, None),
+            ({"duration": -1.0}, {"duration": float("nan")}, None),
+            ({"duration": True}, {}, None),
+        ],
+    )
+    def test_trial_result_data_carries_top_level_duration(
+        self, metadata, metrics, expected
+    ) -> None:
+        """#3238: the results POST carries the measured top-level duration
+        (seconds), and omits it rather than inventing 0 when unmeasured."""
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.auth_manager = Mock()
+        ops = TrialOperations(mock_client)
+
+        result_data = ops._build_trial_result_data(
+            trial_id="trial_001",
+            config={"temperature": 0.2},
+            clean_metrics=metrics,
+            backend_status="COMPLETED",
+            metadata=metadata,
+        )
+
+        if expected is None:
+            assert "duration" not in result_data
+        else:
+            assert result_data["duration"] == pytest.approx(expected)
+
     def test_trial_result_data_snapshots_live_submission_dicts(self) -> None:
         """Submission payload dicts are detached before serialization."""
         mock_client = Mock()

@@ -7,8 +7,8 @@ and a later publish sends ``X-Traigent-Agent-Ref`` plus
 ``head_generation_stale`` is never retried or refreshed, a missing capture refuses
 locally (no unprotected fallback), and legacy sessions behave exactly as before.
 
-Contract: TraigentSchema ``optimization/best_config_head_endpoints.json``,
-``agent_head_by_ref_response_schema.json``, ``best_config_head_refusal_schema.json``,
+Contract: TraigentSchema ``optimization/best_config_head_endpoints.json`` (the project-level
+head read), ``agent_head_response_schema.json``, ``best_config_head_refusal_schema.json``,
 ``execution/best_config_endpoints.json`` (POST decision table).
 """
 
@@ -671,7 +671,9 @@ def _client() -> BackendIntegratedClient:
     # and every call says "backend egress is disabled (offline)". Resolve the host here
     # so construction never depends on ambient DNS or ambient environment markers.
     with patch("socket.getaddrinfo", return_value=_PUBLIC_ADDRINFO):
-        client = BackendIntegratedClient(api_key=_KEY, base_url="https://api.test")
+        client = BackendIntegratedClient(
+            api_key=_KEY, base_url="https://api.test", project_id="proj-1"
+        )
     client.auth_manager.auth.get_headers = AsyncMock(
         return_value={"Authorization": "Bearer test-token"}
     )
@@ -743,26 +745,41 @@ _CONTRACT_DIR = (
 )
 #: Byte-for-byte copies of TraigentSchema 083eb11 (traigent_schema/schemas/{optimization,execution}/).
 _CONTRACT_SHA256 = {
-    "agent_head_by_ref_response_schema.json": "878090557b2944fe13802422242104d7f801484a2e54c86bea2809612b518a61",
-    "best_config_endpoints.json": "0f8b37635059aaaeae6e51c269dcee3fae3f3536aa7e91f8ce6f11e2c1c440c2",
-    "best_config_head_endpoints.json": "61c2423fda68c7b4faada5aa4cf0d2d26a6a4443839ebbf43eaa6afa9ad5d92a",
-    "best_config_head_refusal_schema.json": "b93dccaeab1cfc056b9715e4723641a80697c649a8bb4675a92d043b0558ea8e",
-    "best_config_publish_401_schema.json": "9e02e121596610c60da918ff54337486fbbc2d6c7c321aca52120af5487ff822",
-    "best_config_publish_403_schema.json": "c037c7f2e2ce9cfd685a72d799d733c2b3b0e1897a0e71fd0def8cb9916f0391",
-    "best_config_publish_409_schema.json": "3fd219a7254e7b1897683243c37ab99f4cf01c743fb6411d97aa30ebd7d3b380",
-    "best_config_publish_500_schema.json": "45537ee74004ebb2749b66ed1f99950218606b4a9895de6738f67753c7da4cfa",
+    "best_config_endpoints.json": "0f8b37635059aaaeae6e51c269dcee3fae3f3536aa7e91f8ce6f11e2c1c440c2",  # pragma: allowlist secret
+    "best_config_head_refusal_schema.json": "b93dccaeab1cfc056b9715e4723641a80697c649a8bb4675a92d043b0558ea8e",  # pragma: allowlist secret
+    "best_config_publish_401_schema.json": "9e02e121596610c60da918ff54337486fbbc2d6c7c321aca52120af5487ff822",  # pragma: allowlist secret
+    "best_config_publish_403_schema.json": "c037c7f2e2ce9cfd685a72d799d733c2b3b0e1897a0e71fd0def8cb9916f0391",  # pragma: allowlist secret
+    "best_config_publish_409_schema.json": "3fd219a7254e7b1897683243c37ab99f4cf01c743fb6411d97aa30ebd7d3b380",  # pragma: allowlist secret
+    "best_config_publish_500_schema.json": "45537ee74004ebb2749b66ed1f99950218606b4a9895de6738f67753c7da4cfa",  # pragma: allowlist secret
+}
+
+
+_HEAD_CONTRACT_DIR = (
+    Path(__file__).resolve().parents[2] / "fixtures/contracts/schema_d2b02c0e"
+)
+#: Byte-for-byte copies of the TraigentSchema project-level head read
+#: (traigent_schema/schemas/optimization/, API revision Phase 3 slice 2 PR-2).
+_HEAD_CONTRACT_SHA256 = {
+    "agent_head_error_schema.json": "554b88d308fa028ad5c522db7849f68dfc2a3f7709a444634751daa530a65c94",  # pragma: allowlist secret
+    "agent_head_response_schema.json": "1d4c0555422f5640087d17ca41c603cd7f7fda1898b7ae14a5ea0f245a1e30c5",  # pragma: allowlist secret
+    "best_config_head_endpoints.json": "e7bf988f66902945e0c82080922e59dff03fc2715f86016b94641f12b4519728",  # pragma: allowlist secret
 }
 
 
 def _contract(name: str) -> Any:
-    return json.loads((_CONTRACT_DIR / name).read_text())
+    directory = _HEAD_CONTRACT_DIR if name in _HEAD_CONTRACT_SHA256 else _CONTRACT_DIR
+    return json.loads((directory / name).read_text())
 
 
 def test_vendored_contract_files_are_the_pinned_schema_bytes():
     import hashlib
 
-    for name, digest in _CONTRACT_SHA256.items():
-        assert hashlib.sha256((_CONTRACT_DIR / name).read_bytes()).hexdigest() == digest
+    for directory, table in (
+        (_CONTRACT_DIR, _CONTRACT_SHA256),
+        (_HEAD_CONTRACT_DIR, _HEAD_CONTRACT_SHA256),
+    ):
+        for name, digest in table.items():
+            assert hashlib.sha256((directory / name).read_bytes()).hexdigest() == digest
 
 
 def test_sdk_code_table_matches_the_vendored_refusal_schema():
@@ -823,19 +840,38 @@ def test_sdk_status_pairing_matches_the_vendored_endpoint_contract():
         forbidden_codes = set(legacy["not"]["properties"]["error_code"]["enum"])
         assert forbidden_codes == set(_HEAD_REFUSAL_ENVELOPE)
     head = _contract("best_config_head_endpoints.json")["paths"][
-        "/api/v1/best-configs/agent-heads/by-ref/{agent_ref}"
-    ]["get"]["responses"]
-    assert set(head) == {"200", "400", "401", "403", "404", "429", "500"}
-    ok = _contract("agent_head_by_ref_response_schema.json")
-    assert set(ok["required"]) == {"agent_ref", "environment", "generation", "exists"}
+        "/api/v1/projects/{project_id}/agents/{agent_ref}/best-config-head"
+    ]["get"]
+    assert head["operationId"] == "best_configs.get_agent_head"
+    assert set(head["responses"]) == {"200", "400", "401", "403", "404", "429", "500"}
+    ok = _contract("agent_head_response_schema.json")["properties"]["data"]
+    assert set(ok["required"]) == {
+        "agent_id",
+        "environment",
+        "generation",
+        "best_config_id",
+        "best_config_version",
+        "promoted_by_run_id",
+        "updated_at",
+    }
+
+
+def _head_data(agent_ref: str, environment: str, generation: Any) -> dict[str, Any]:
+    return {
+        "agent_id": agent_ref,
+        "environment": environment,
+        "generation": generation,
+        "best_config_id": None,
+        "best_config_version": None,
+        "promoted_by_run_id": None,
+        "updated_at": None,
+    }
 
 
 def test_head_read_by_ref_uses_the_contract_route_and_validates_the_body():
     ok = {
-        "agent_ref": AGENT_REF,
-        "environment": "staging",
-        "generation": 7,
-        "exists": True,
+        "success": True,
+        "data": _head_data(AGENT_REF, "staging", 7),
     }
     wire, patcher = _wired((200, ok))
     with patcher:
@@ -848,7 +884,7 @@ def test_head_read_by_ref_uses_the_contract_route_and_validates_the_body():
     request = wire.requests[0]
     assert request.method == "GET"
     assert request.url == (
-        f"https://api.test/api/v1/best-configs/agent-heads/by-ref/{AGENT_REF}"
+        f"https://api.test/api/v1/projects/proj-1/agents/{AGENT_REF}/best-config-head"
         "?environment=staging"
     )
     assert request.body is None
@@ -857,43 +893,11 @@ def test_head_read_by_ref_uses_the_contract_route_and_validates_the_body():
 @pytest.mark.parametrize(
     "body",
     [
-        {
-            "agent_ref": OTHER_REF,
-            "environment": "staging",
-            "generation": 1,
-            "exists": True,
-        },
-        {
-            "agent_ref": AGENT_REF,
-            "environment": "test",
-            "generation": 1,
-            "exists": True,
-        },
-        {
-            "agent_ref": AGENT_REF,
-            "environment": "staging",
-            "generation": 1,
-            "exists": False,
-        },
-        {
-            "agent_ref": AGENT_REF,
-            "environment": "staging",
-            "generation": 0,
-            "exists": True,
-        },
-        {
-            "agent_ref": AGENT_REF,
-            "environment": "staging",
-            "generation": True,
-            "exists": True,
-        },
-        {
-            "agent_ref": AGENT_REF,
-            "environment": "staging",
-            "generation": -1,
-            "exists": False,
-        },
-        {"agent_ref": AGENT_REF, "environment": "staging"},
+        {"success": True, "data": _head_data(OTHER_REF, "staging", 1)},
+        {"success": True, "data": _head_data(AGENT_REF, "test", 1)},
+        {"success": True, "data": _head_data(AGENT_REF, "staging", True)},
+        {"success": True, "data": _head_data(AGENT_REF, "staging", -1)},
+        {"success": True, "data": {"agent_id": AGENT_REF, "environment": "staging"}},
     ],
 )
 def test_head_read_rejects_a_body_outside_the_contract(body):
@@ -1227,12 +1231,7 @@ async def test_no_customer_string_reaches_the_head_requests_or_the_logs(online, 
     wire, patcher = _wired(
         (
             200,
-            {
-                "agent_ref": AGENT_REF,
-                "environment": "staging",
-                "generation": 2,
-                "exists": True,
-            },
+            {"success": True, "data": _head_data(AGENT_REF, "staging", 2)},
         ),
         (
             409,

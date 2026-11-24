@@ -55,24 +55,28 @@ def test_numeric_perfect_correlation():
     assert res.method == "correlation_based"
     assert res.sample_size == 12
     assert res.importance_score == pytest.approx(1.0)
-    assert res.confidence_interval[1] == 1.0
-    assert res.confidence_interval[0] == pytest.approx(1.0 - 1.96 / 3.0)
+    # No interval is invented (issue #2945)
+    assert res.confidence_interval is None
 
 
-def test_categorical_encoding_is_first_seen_order():
+def test_categorical_score_does_not_depend_on_first_seen_order():
     values = ["b", "a", "b", "c", "a", "b", "c", "a", "b", "c", "a", "c"]
-    # b->0, a->1, c->2 so objectives track the encoding exactly
-    expected = [0, 1, 0, 2, 1, 0, 2, 1, 0, 2, 1, 2]
-    objs = [{0: 0.0, 1: 1.0, 2: 2.0}[e] for e in expected]
+    level = {"a": 1.0, "b": 0.0, "c": 5.0}
+    objs = [level[v] for v in values]
     res = _run(values, objs)
+    # Groups explain all variance: correlation ratio is 1.0 whatever the order
     assert res.importance_score == pytest.approx(1.0)
     assert res.sample_size == 12
+    # Relabel so the first-seen order differs; the score must not change
+    relabel = {"b": "c", "a": "b", "c": "a"}
+    res2 = _run([relabel[v] for v in values], objs)
+    assert res2.importance_score == pytest.approx(res.importance_score)
 
 
 def test_bool_counts_as_numeric_and_other_types_are_skipped():
-    values = [True, False] * 3 + [None, [1], {"a": 1}, 1.5, 2, "s", 7, 8, 9]
+    values = [True, False] * 3 + [None, [1], {"a": 1}, 1.5, 2, 6, 7, 8, 9]
     res = _run(values)
-    # None / list / dict skipped; 6 bool + 1.5, 2, "s", 7, 8, 9 -> 12 valid
+    # None / list / dict skipped; 6 bool + 1.5, 2, 6, 7, 8, 9 -> 12 valid
     assert res.sample_size == 12
 
 
@@ -92,10 +96,10 @@ def test_valid_indices_skip_dropped_trials():
     assert res.importance_score == pytest.approx(1.0)
 
 
-def test_small_sample_uses_fallback_error_via_ten_values_boundary():
+def test_ten_values_boundary_is_measured():
     res = _run(list(range(10)))
     assert res.sample_size == 10
-    assert res.confidence_interval[0] == pytest.approx(1.0 - 1.96 / (7**0.5))
+    assert res.confidence_interval is None
 
 
 def test_config_lookup_is_membership_then_single_read_per_trial():

@@ -275,6 +275,9 @@ class ConfigComparison:
     failed_repeats: int
     example_ids: tuple[str, ...]
     trials: list[Any] = field(default_factory=list, repr=False)
+    #: One entry per repeat, in order: the repeat's trial, or ``None`` when the
+    #: repeat crashed and produced none.
+    repeat_trials: list[Any] = field(default_factory=list, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -292,6 +295,37 @@ class ConfigComparison:
             "failed_repeats": self.failed_repeats,
             "example_ids": list(self.example_ids),
         }
+
+    def example_consistency(self) -> dict[str, Any]:
+        """Per-example consistency labels across this config's repeats.
+
+        Same shape as ``OptimizationResult.example_consistency()``. Needs at
+        least two repeats; a repeat that crashed or returned no per-example
+        results counts as one errored attempt for every example. Computed from
+        the in-memory trials only.
+        """
+        from traigent.utils.example_consistency import (
+            DEFAULT_PASS_THRESHOLD,
+            build_consistency_report,
+            scoring_metric,
+            summarize_example_outcomes,
+            trial_example_outcomes,
+        )
+        from traigent.utils.hashing import generate_config_hash
+
+        # A repeat that crashed, or returned no per-example results, is one
+        # errored attempt for every example (``None``), never silently dropped.
+        per_repeat = [
+            None if trial is None else trial_example_outcomes(trial)
+            for trial in self.repeat_trials
+        ]
+        return build_consistency_report(
+            summarize_example_outcomes(per_repeat),
+            reps=len(per_repeat),
+            config_hash=generate_config_hash(self.config),
+            metric=scoring_metric(per_repeat),
+            threshold=DEFAULT_PASS_THRESHOLD,
+        )
 
 
 def _trial_score(trial: Any, primary_metric: str) -> float | None:
@@ -332,8 +366,10 @@ def aggregate_config(
     unmeasured = 0
     failed = 0
     trials: list[Any] = []
+    repeat_trials: list[Any] = []
     for result in run_results:
         trial = result.trials[0] if getattr(result, "trials", None) else None
+        repeat_trials.append(trial)
         if trial is None:
             failed += 1
             unmeasured += 1
@@ -370,6 +406,7 @@ def aggregate_config(
         failed_repeats=failed,
         example_ids=example_ids,
         trials=trials,
+        repeat_trials=repeat_trials,
     )
 
 
@@ -411,6 +448,30 @@ class ComparisonResult:
     mock_llm_mixed: bool = False
     strict_cost_accounting: bool = False
     strict_cost_accounting_origin: str | None = None
+
+    def example_consistency(self, config_index: int = 0) -> dict[str, Any]:
+        """Per-example consistency labels for ``configs[config_index]``.
+
+        Labels each example ``all_pass``, ``all_fail`` or ``mixed``
+        across that config's ``repeats`` (see
+        ``ConfigComparison.example_consistency``). With ``repeats=1`` no
+        example has two evaluations, so ``examples`` is empty.
+
+        Raises:
+            TypeError: ``config_index`` is not an integer (a ``bool`` is not).
+            IndexError: ``config_index`` is negative or not below the number of
+                configs; negative values do not count from the end.
+        """
+        if isinstance(config_index, bool) or not isinstance(config_index, int):
+            raise TypeError(
+                f"config_index must be an int, got {type(config_index).__name__}."
+            )
+        if not 0 <= config_index < len(self.configs):
+            raise IndexError(
+                f"config_index {config_index} is outside 0..{len(self.configs) - 1} "
+                f"({len(self.configs)} configs compared)."
+            )
+        return self.configs[config_index].example_consistency()
 
     @property
     def completed(self) -> bool:

@@ -35,7 +35,7 @@ DATASET_FILE = os.path.join(os.path.dirname(__file__), "math_qa.jsonl")
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.0, 0.1, 0.3],
         "prompt_style": ["direct", "step-by-step", "chain-of-thought"],
         "max_tokens": [50, 100, 150],
@@ -118,7 +118,7 @@ def solve_arithmetic(expression: str) -> str:
     from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(
-        model=config.get("model", "gpt-4.1-mini"),
+        model=config.get("model", "gpt-5.4-mini"),
         temperature=config.get("temperature", 0.0),
         max_tokens=config.get("max_tokens", 50),
     )

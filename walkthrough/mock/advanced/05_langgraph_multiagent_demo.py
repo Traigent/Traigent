@@ -5,7 +5,7 @@ Demonstrates a multi-agent RAG workflow with:
 - Multiple agents (retriever, grader, generator, web_search)
 - Conditional branching (grade_documents -> generate OR web_search)
 - Workflow trace visualization in the frontend
-- Real LLM mode with OpenAI (gpt-4.1-mini) OR mock mode for testing
+- Real LLM mode with OpenAI (gpt-5.4-mini) OR mock mode for testing
 
 Optional dependencies for real LLM mode:
     pip install langchain-core langchain-openai langgraph opentelemetry-api
@@ -13,7 +13,8 @@ Optional dependencies for real LLM mode:
 Run in REAL mode (uses OpenAI API, incurs costs):
     TRAIGENT_API_KEY=<your_key> OPENAI_API_KEY=<your_key> python 05_langgraph_multiagent_demo.py
 
-Run in MOCK mode (no API costs):
+Run in MOCK mode (no LLM API costs; still needs TRAIGENT_API_KEY because the
+workflow graph is sent to the Traigent backend, so it is not a keyless demo):
     TRAIGENT_API_KEY=<your_key> TRAIGENT_MOCK_LLM=true python 05_langgraph_multiagent_demo.py
 
 The workflow topology will be automatically extracted and sent to the backend
@@ -85,7 +86,7 @@ SCRIPT_DIR = Path(__file__).parent  # Current directory (advanced/)
 MOCK_MODE = os.environ.get("TRAIGENT_MOCK_LLM", "false").lower() == "true"
 
 # Model configuration
-DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MODEL = "gpt-5.4-mini"
 
 # NOTE: LangGraphAdapter will auto-instrument workflows when available.
 # This demo shows MANUAL workarounds until LangGraphAdapter is implemented.
@@ -461,7 +462,7 @@ def cost_metric(output: str, expected: str) -> float:
     In mock mode, simulates realistic LLM costs based on output length.
     In real mode, returns 0.0 (actual costs are tracked by the SDK).
 
-    The simulated costs are based on realistic gpt-4.1-mini pricing:
+    The simulated costs are based on realistic gpt-5.4-mini pricing:
     - ~$0.15 per 1M input tokens
     - ~$0.60 per 1M output tokens
 
@@ -478,7 +479,7 @@ def cost_metric(output: str, expected: str) -> float:
         output_tokens = max(len(output) // 4, 10)
         input_tokens = 150  # Approximate prompt size for RAG workflow
 
-        # Pricing: gpt-4.1-mini rates (per 1M tokens)
+        # Pricing: gpt-5.4-mini rates (per 1M tokens)
         input_cost_per_1m = 0.15
         output_cost_per_1m = 0.60
 
@@ -511,7 +512,7 @@ def cost_metric(output: str, expected: str) -> float:
     },
     configuration_space={
         # Generator Agent parameters (namespaced)
-        # Note: In real mode, we use gpt-4.1-mini for speed and low cost
+        # Note: In real mode, we use gpt-5.4-mini for speed and low cost
         # These params demonstrate what Traigent CAN optimize
         "generate.model": [DEFAULT_MODEL],  # Fast and cheap model
         "generate.temperature": [0.3, 0.7],  # Reduced options to minimize API calls
@@ -561,7 +562,7 @@ def run_rag_workflow(question: str) -> str:
 # =============================================================================
 
 
-async def main() -> None:
+async def main() -> int:
     """Run the LangGraph multi-agent demo with Traigent optimization."""
     print("Traigent Advanced: LangGraph Multi-Agent RAG Workflow")
     print("=" * 50)
@@ -583,11 +584,11 @@ async def main() -> None:
     if not MOCK_MODE and not openai_key:
         print("\nERROR: OPENAI_API_KEY not set for real mode.")
         print("Either set OPENAI_API_KEY or run with TRAIGENT_MOCK_LLM=true")
-        return
+        return 1
 
     if not api_key:
         print("\nERROR: TRAIGENT_API_KEY not set. Please set it and retry.")
-        return
+        return 1
 
     # First, send the workflow graph for visualization
     print("\n" + "-" * 50)
@@ -645,6 +646,7 @@ async def main() -> None:
         experiment_id = results.metadata.get("experiment_id")
         experiment_run_id = results.metadata.get("experiment_run_id")
 
+    graph_delivered = True
     if experiment_id:
         graph_payload = extract_workflow_graph(experiment_id, experiment_run_id)
         response = tracker.client.ingest_traces(graph=graph_payload)
@@ -657,6 +659,7 @@ async def main() -> None:
                 print(f"  Detected loops: {len(graph_payload.loops)}")
         else:
             print(f"  Failed to send graph: {response.error}")
+            graph_delivered = False
 
         # Note: Per-agent spans are automatically recorded via OpenTelemetry
         # and exported to the Traigent backend by the TraigentSpanExporter.
@@ -669,13 +672,19 @@ async def main() -> None:
         print("  - llm.input_tokens, llm.output_tokens for cost tracking")
         print("  - configuration_run_id for linking to specific trials")
     else:
-        print("\n  Note: Workflow graph visualization requires experiment_id.")
-        print("  Per-agent spans are automatically recorded via OpenTelemetry.")
+        # The optimization runs offline=True, so no backend session (and no
+        # experiment_id) exists; that is expected, not a failure.
+        print("\n  Note: no experiment_id (offline run), so the workflow graph was")
+        print("  not sent. Per-agent spans are recorded via OpenTelemetry.")
 
     # Display results
     print("\n" + "-" * 50)
     print("Optimization Results")
     print("-" * 50)
+
+    if not results.best_config:
+        print("\nERROR: optimization finished without a best configuration.")
+        return 1
 
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")
@@ -692,11 +701,12 @@ async def main() -> None:
     print("  1. Workflow graph visualization (nodes, edges, loops)")
     print("  2. Trial execution traces (spans for each trial)")
     print("  3. Agent performance breakdown")
+    return 0 if graph_delivered else 1
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        raise SystemExit(asyncio.run(main()))
     except KeyboardInterrupt:
         print("\nCancelled by user.")
         raise SystemExit(130) from None

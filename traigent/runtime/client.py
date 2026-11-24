@@ -23,6 +23,8 @@ from traigent.runtime.model import (
 from traigent.utils import optimization_only_egress as oo_egress
 
 API_PREFIX = "/api/v1beta/projects"
+#: Project-level agent satellites (production breaches, next step) live on the stable mount.
+AGENT_API_PREFIX = "/api/v1/projects"
 _TIMEOUT = (5.0, 30.0)
 _CODE_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 #: Codes the backend is known to emit on these routes; anything else is ``backend_error``.
@@ -107,6 +109,11 @@ class RuntimeClient:
 
     def _url(self, suffix: str) -> str:
         return f"{self._origin}{API_PREFIX}/{quote(self.project_id, safe='')}{suffix}"
+
+    def _agent_url(self, agent_ref: str, suffix: str) -> str:
+        project = quote(self.project_id, safe="")
+        agent = quote(agent_ref, safe="/")
+        return f"{self._origin}{AGENT_API_PREFIX}/{project}/agents/{agent}{suffix}"
 
     def request(
         self, method: str, suffix: str, body: dict[str, Any] | None = None
@@ -230,8 +237,8 @@ class RuntimeClient:
 
     def list_breaches(self, agent_id: str) -> tuple[list[dict[str, Any]], bool | None]:
         """Breach rows plus ``has_more`` (``None`` when the backend does not report it)."""
-        status, parsed = self.request(
-            "GET", f"/agents/{quote(agent_id, safe='/')}/production-breaches"
+        status, parsed, _headers = self.send(
+            "GET", self._agent_url(agent_id, "/production-breaches")
         )
         body = self._expect(status, parsed, (200,))
         items = body.get("items")
@@ -241,8 +248,8 @@ class RuntimeClient:
         return _rows_only(items), (has_more if isinstance(has_more, bool) else None)
 
     def get_next_step(self, agent_id: str) -> dict[str, Any]:
-        status, parsed = self.request(
-            "GET", f"/agent-readiness/{quote(agent_id, safe='/')}/next-step"
+        status, parsed, _headers = self.send(
+            "GET", self._agent_url(agent_id, "/next-step")
         )
         step: dict[str, Any] = self._expect(status, parsed, (200,))
         return step

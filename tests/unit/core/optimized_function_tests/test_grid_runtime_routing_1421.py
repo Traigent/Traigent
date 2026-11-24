@@ -27,17 +27,17 @@ from traigent.api.types import (
     OptimizationResult,
     OptimizationStatus,
 )
-from traigent.core.backend_session_manager import BackendSessionManager
-from traigent.core.session_types import SessionCreationResult
 from traigent.config.types import (
     ExecutionIntent,
     ExecutionMode,
     ResolvedExecutionPolicy,
     resolve_execution_policy,
 )
+from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.execution_policy_runtime import SOURCE_CLOUD_BRAIN
 from traigent.core.optimization_pipeline import create_traigent_config
 from traigent.core.optimized_function import OptimizedFunction
+from traigent.core.session_types import SessionCreationResult
 from traigent.evaluators.base import Dataset, EvaluationExample
 
 # A small fully-enumerable categorical space: 3 * 2 = 6 unique configs.
@@ -96,6 +96,7 @@ def _auto_optimized_function() -> OptimizedFunction:
     return opt_func
 
 
+@pytest.mark.usefixtures("connected_policy_env")
 class TestRuntimeGridPolicyRecompute:
     """Unit-level coverage of the policy recompute helper (the primary fix)."""
 

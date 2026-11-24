@@ -27,8 +27,8 @@ else:
                 break
         except IndexError:
             continue
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -61,7 +61,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "conversation_eval.jsonl")
     max_trials=10,
 )
 def should_escalate(utterance: str) -> str:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0)
+    llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0.0)
     prompt = (
         "Return yes if this message requires human escalation (legal, threats, complex), else no.\n"
         f"Message: {utterance}\nOne label only."

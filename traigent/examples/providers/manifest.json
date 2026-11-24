@@ -13,7 +13,7 @@
       "import_line": "from langchain_openai import ChatOpenAI",
       "extra_imports": [],
       "llm_expr": "ChatOpenAI(model=cfg[\"model\"], temperature=cfg[\"temperature\"])",
-      "models": ["gpt-4.1-mini", "gpt-4.1"],
+      "models": ["gpt-5.4-mini", "gpt-5.2"],
       "env_vars": [{ "name": "TRAIGENT_MOCK_LLM", "placeholder": "true", "value": "true" }],
       "creds_note": "Mock mode — no LLM provider key needed. LLM calls are intercepted and return canned responses.",
       "run_command": "python -m traigent.examples.quickstart"
@@ -28,7 +28,7 @@
       "import_line": "from langchain_openai import ChatOpenAI",
       "extra_imports": [],
       "llm_expr": "ChatOpenAI(model=cfg[\"model\"], temperature=cfg[\"temperature\"])",
-      "models": ["gpt-4.1-mini", "gpt-4.1"],
+      "models": ["gpt-5.4-mini", "gpt-5.2"],
       "env_vars": [{ "name": "OPENAI_API_KEY", "placeholder": "sk-..." }],
       "creds_note": "Set OPENAI_API_KEY to your OpenAI key.",
       "run_command": "python -m traigent.examples.providers.openai"
@@ -58,7 +58,7 @@
       "import_line": "from langchain_openai import ChatOpenAI",
       "extra_imports": ["import os"],
       "llm_expr": "ChatOpenAI(model=cfg[\"model\"], temperature=cfg[\"temperature\"], base_url=\"https://openrouter.ai/api/v1\", api_key=os.environ[\"OPENROUTER_API_KEY\"])",
-      "models": ["openai/gpt-4.1-mini", "openai/gpt-4.1"],
+      "models": ["openai/gpt-5.4-mini", "openai/gpt-5.2"],
       "env_vars": [{ "name": "OPENROUTER_API_KEY", "placeholder": "sk-or-..." }],
       "creds_note": "Set OPENROUTER_API_KEY. OpenRouter is OpenAI-compatible, so it reuses langchain-openai's ChatOpenAI with base_url=https://openrouter.ai/api/v1.",
       "run_command": "python -m traigent.examples.providers.openrouter"
@@ -71,8 +71,8 @@
       "import_check": "langchain_openai",
       "pip_package": "langchain-openai",
       "import_line": "from langchain_openai import ChatOpenAI",
-      "extra_imports": ["from traigent.integrations.llms.nous_auth import NOUS_BASE_URL, get_nous_api_key"],
-      "llm_expr": "ChatOpenAI(model=cfg[\"model\"], temperature=cfg[\"temperature\"], base_url=NOUS_BASE_URL, api_key=get_nous_api_key())",
+      "extra_imports": ["from traigent.integrations.llms.nous_auth import get_nous_api_key, get_nous_base_url"],
+      "llm_expr": "ChatOpenAI(model=cfg[\"model\"], temperature=cfg[\"temperature\"], base_url=get_nous_base_url(), api_key=get_nous_api_key())",
       "models": ["NousResearch/Hermes-3-Llama-3.1-70B", "NousResearch/Hermes-4-405B"],
       "env_vars": [{ "name": "NOUS_API_KEY", "placeholder": "eyJ... (a pre-minted Nous Portal JWT)" }],
       "creds_note": "Nous Portal is OpenAI-compatible but uses OAuth: it authenticates with a short-lived JWT minted from a refresh token, not a static API key. Set NOUS_API_KEY to a pre-minted token (returned as-is, no auto-refresh), or set NOUS_REFRESH_TOKEN / log in with the Hermes CLI (~/.hermes/auth.json) for auto-refresh via traigent.integrations.llms.nous_auth.get_nous_api_key(). It reuses langchain-openai's ChatOpenAI with base_url=https://inference-api.nousresearch.com/v1. Cost objectives need TRAIGENT_CUSTOM_MODEL_PRICING_JSON — the SDK ships no fabricated Nous prices.",
@@ -175,7 +175,7 @@
       "import_line": "import litellm",
       "extra_imports": [],
       "llm_expr": null,
-      "models": ["gpt-4.1-mini", "claude-haiku-4-5-20251001", "groq/llama-3.3-70b-versatile"],
+      "models": ["gpt-5.4-mini", "claude-haiku-4-5-20251001", "groq/llama-3.3-70b-versatile"],
       "env_vars": [{ "name": "OPENAI_API_KEY", "placeholder": "set the key for whichever provider(s) your models use" }],
       "creds_note": "LiteLLM is a core Traigent dependency, so this works with no extra packages. Use provider-prefixed model strings (e.g. anthropic/..., groq/..., bedrock/...) and set the matching provider key(s). LiteLLM routes each call to the right provider.",
       "run_command": "python -m traigent.examples.providers.litellm_any"

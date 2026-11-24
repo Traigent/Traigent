@@ -203,6 +203,24 @@ async def test_submit_privacy_trial_results_redacts_config_before_delegate():
 
 
 @pytest.mark.asyncio
+async def test_submit_privacy_trial_results_forwards_measured_duration():
+    """#3238: the supplied trial duration reaches the session submission."""
+    client = DummyClient(FakeLock())
+    ops = PrivacyOperations(client)
+
+    success = await ops.submit_privacy_trial_results(
+        session_id="session-1",
+        trial_id="trial-1",
+        config={"x": 1},
+        metrics={"accuracy": 0.9},
+        duration=2.5,
+    )
+
+    assert success is True
+    assert client.submitted_trial_results[-1][1]["metadata"] == {"duration": 2.5}
+
+
+@pytest.mark.asyncio
 async def test_submit_privacy_trial_results_fails_closed_when_redaction_fails():
     """A privacy redaction failure must not fall back to raw config submission."""
     lock = FakeLock()

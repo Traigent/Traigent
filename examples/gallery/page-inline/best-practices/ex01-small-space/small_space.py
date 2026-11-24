@@ -101,7 +101,7 @@ def _exact_match(output: str | None, expected: str | None, llm_metrics=None) -> 
 @traigent.optimize(
     configuration_space={
         # Small, safe space for quick iteration
-        "model": ["gpt-4.1-mini", "gpt-4.1"],
+        "model": ["gpt-5.4-mini", "gpt-5.2"],
         "temperature": [0.0, 0.3],
         "max_tokens": [80, 120],
     },
@@ -112,7 +112,7 @@ def _exact_match(output: str | None, expected: str | None, llm_metrics=None) -> 
     max_trials=10,
 )
 def classify_text(text: str) -> str:
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.0, max_tokens=80)
+    llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0.0, max_tokens=80)
     prompt = f"Label this text as one of [animal, vehicle, other]: {text}"
     resp = llm.invoke([HumanMessage(content=prompt)])
     return getattr(resp, "content", str(resp))

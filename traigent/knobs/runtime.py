@@ -54,6 +54,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from traigent.utils.exception_pickling import PicklableExceptionMixin
+
 from .cascade import (
     CascadePolicy,
     CascadeStep,
@@ -398,7 +400,7 @@ def _adapt_cascade(
     return CascadePolicy(stages=tuple(stage_specs), gates=tuple(gates))
 
 
-class _NestedNoAccept(Exception):
+class _NestedNoAccept(PicklableExceptionMixin, Exception):
     """Signals a nested-composite arm returned ``no_accept`` (NOT an error).
 
     Carries the nested composite name for diagnostics. The cascade driver maps

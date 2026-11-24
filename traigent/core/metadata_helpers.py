@@ -9,10 +9,6 @@ from typing import Any, cast
 
 from traigent._version import get_version
 from traigent.api.types import OptimizationResult, TrialResult
-from traigent.utils.wire_text import (
-    filter_summary_stats_metadata,
-    filter_surrogate_evaluator,
-)
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.utils.example_id import (
     SDK_MINTED_EXAMPLE_ID,
@@ -28,6 +24,10 @@ from traigent.utils.outcome_signals import (
     _example_field,
     build_example_signals,
 )
+from traigent.utils.wire_text import (
+    filter_summary_stats_metadata,
+    filter_surrogate_evaluator,
+)
 
 logger = get_logger(__name__)
 
@@ -40,6 +40,55 @@ logger = get_logger(__name__)
 # about what was dropped, rather than losing everything. Keep in sync with the
 # backend ``MAX_EXAMPLES_PER_RUN`` and ``configuration_run_schema`` maxItems.
 MAX_EXAMPLES_PER_RUN = 1000
+
+# Byte budget for the ``measures[]`` array. The backend also caps the whole
+# results request body at 1 MiB (1_048_576 bytes) and answers 413, which the
+# SDK treats as permanent (the run falls back to local-only). With many metrics
+# per example, 1000 items alone can exceed that, so measures get a budget that
+# leaves headroom for the rest of the body (metrics, metadata, summary stats).
+MAX_MEASURES_BYTES = 900_000
+
+
+def _cap_measures_bytes(
+    measures: list[dict[str, Any]], execution_mode: str
+) -> list[dict[str, Any]]:
+    """Keep the longest prefix of ``measures`` whose JSON fits the byte budget.
+
+    Truncation is loud (WARNING) and never silent. A measure that cannot be
+    serialized is counted as over budget, so unknown input is dropped rather
+    than shipped unmeasured.
+    """
+    total = 2  # the enclosing "[]"
+    kept = 0
+    for measure in measures:
+        try:
+            size = len(
+                json.dumps(measure, separators=(",", ":"), default=str).encode("utf-8")
+            )
+        except (TypeError, ValueError):
+            break
+        size += 1  # separating comma
+        if total + size > MAX_MEASURES_BYTES:
+            break
+        total += size
+        kept += 1
+
+    if kept == len(measures):
+        return measures
+
+    logger.warning(
+        "Per-example measures (%s) exceed the backend request-size budget of "
+        "%s bytes for %s mode; truncating to the first %s and dropping %s. The "
+        "backend rejects oversized submissions permanently, so the run would "
+        "otherwise stop tracking after this trial. Fewer metrics or examples "
+        "keep all of them.",
+        len(measures),
+        MAX_MEASURES_BYTES,
+        execution_mode,
+        kept,
+        len(measures) - kept,
+    )
+    return measures[:kept]
 
 
 def _cap_measures(
@@ -60,6 +109,7 @@ def _cap_measures(
     Returns:
         The measures list, truncated to at most ``MAX_EXAMPLES_PER_RUN`` items.
     """
+    measures = _cap_measures_bytes(measures, execution_mode)
     if len(measures) <= MAX_EXAMPLES_PER_RUN:
         return measures
 

@@ -8,9 +8,9 @@ import json
 import math
 import re
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import click
 from rich.console import Console
@@ -22,8 +22,10 @@ from traigent import get_version_info
 from traigent.api.types import PresetSelection
 from traigent.cli.auth_commands import auth
 from traigent.cli.certify_commands import certify
+from traigent.cli.egress_commands import register_egress_commands
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_local_commands
+from traigent.cli.regression_commands import register_regression_commands
 from traigent.cli.sync_commands import register_sync_command
 from traigent.cli.validation_types import ValidationResult
 from traigent.config.types import accepted_algorithm_values
@@ -48,6 +50,8 @@ from traigent.visualization.plots import create_quick_plot
 _OUTPUT_FILE_LABEL = "Output file"
 
 console = Console()
+# Failure output goes here so stdout stays data-only (Traigent#3266).
+err_console = Console(stderr=True)
 
 # Style constant for table headers
 _TABLE_HEADER_STYLE = "bold magenta"
@@ -253,11 +257,13 @@ def _display_failed_optimization_result(
     max_trials: int,
 ) -> None:
     """Report a run whose trials all failed, without the success tick."""
-    console.print(
+    err_console.print(
         f"❌ [red]Error optimizing {escape(func_name)}: {_safe_error_text(reason)}[/red]"
     )
     for warning in getattr(result, "warnings", None) or []:
-        console.print(f"   [yellow]{_safe_error_text(warning, limit=None)}[/yellow]")
+        err_console.print(
+            f"   [yellow]{_safe_error_text(warning, limit=None)}[/yellow]"
+        )
     _save_result_announcing_replace(
         persistence, result, f"{func_name}_{algorithm}_{max_trials}"
     )
@@ -311,12 +317,16 @@ def _display_optimization_summary(
 def _handle_no_optimizable_functions(function_filter: str | None) -> None:
     """Print error message when no optimizable functions are found."""
     if function_filter:
-        console.print(
+        err_console.print(
             f"[red]No optimizable function named '{function_filter}' found[/red]"
         )
     else:
-        console.print("[red]No functions with @traigent.optimize decorator found[/red]")
-    console.print("\nMake sure your functions are decorated with @traigent.optimize")
+        err_console.print(
+            "[red]No functions with @traigent.optimize decorator found[/red]"
+        )
+    err_console.print(
+        "\nMake sure your functions are decorated with @traigent.optimize"
+    )
 
 
 def _load_user_module(file_path_obj: Path) -> Any | None:
@@ -326,7 +336,7 @@ def _load_user_module(file_path_obj: Path) -> Any | None:
     try:
         return load_user_module(file_path_obj)
     except ModuleSpecError:
-        console.print("[red]Error: Failed to load Python file[/red]")
+        err_console.print("[red]Error: Failed to load Python file[/red]")
         return None
 
 
@@ -412,22 +422,22 @@ def _handle_check_exit(results: list[Any]) -> None:
 
     errored = [r for r in failed if r.has_errors]
     regressed = [r for r in failed if not r.has_errors]
-    console.print(
+    err_console.print(
         f"\n[red]❌ Optimization validation failed for {len(failed)} function(s)[/red]"
     )
     if errored:
         names = ", ".join(r.function_name for r in errored)
-        console.print(
+        err_console.print(
             f"Validation could not complete for {len(errored)} function(s) "
             f"({names}); see the blocking issues above."
         )
-        console.print(
+        err_console.print(
             "Fix the issue above, or rerun with --dry-run to check decorator "
             "wiring only."
         )
     if regressed:
         names = ", ".join(r.function_name for r in regressed)
-        console.print(
+        err_console.print(
             f"Optimization does not improve over default parameters for "
             f"{len(regressed)} function(s): {names}"
         )
@@ -940,12 +950,12 @@ async def _run_optimizations(
             )
             results.append((func_name, result))
         except Exception as e:
-            console.print(
+            err_console.print(
                 f"❌ [red]Error optimizing {escape(func_name)}: "
                 f"{_safe_error_text(e)}[/red]"
             )
             if verbose:
-                console.print(_safe_error_text(traceback.format_exc(), limit=None))
+                err_console.print(_safe_error_text(traceback.format_exc(), limit=None))
             failed_functions.append(func_name)
     return results, failed_functions
 
@@ -1063,16 +1073,16 @@ def optimize(
         if results:
             _display_optimization_summary(results, output_dir_resolved)
         if failed_functions:
-            console.print(
+            err_console.print(
                 f"\n[red]❌ {len(failed_functions)} function(s) failed to "
                 f"optimize: {', '.join(failed_functions)}[/red]"
             )
             sys.exit(1)
 
     except Exception as e:
-        console.print(f"[red]Error loading file: {_safe_error_text(e)}[/red]")
+        err_console.print(f"[red]Error loading file: {_safe_error_text(e)}[/red]")
         if verbose:
-            console.print(_safe_error_text(traceback.format_exc(), limit=None))
+            err_console.print(_safe_error_text(traceback.format_exc(), limit=None))
         sys.exit(1)
     finally:
         if str(parent_dir) in sys.path:
@@ -1085,7 +1095,11 @@ def optimize(
     "--objectives",
     "-o",
     multiple=True,
-    help="Objectives to validate (e.g., accuracy, latency)",
+    help=(
+        "Objective names to check (repeatable). Built-in and custom metric "
+        "names are both accepted; each must be a string, and a repeated "
+        "name produces a warning."
+    ),
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed validation output")
 @click.option(
@@ -1125,9 +1139,9 @@ def validate(
         if verbose:
             console.print(f"   Resolved path: {resolved_path}")
     except ValidationError as e:
-        console.print("❌ [red]Dataset path validation failed[/red]")
-        console.print(f"   [red]{e}[/red]")
-        console.print(
+        err_console.print("❌ [red]Dataset path validation failed[/red]")
+        err_console.print(f"   [red]{e}[/red]")
+        err_console.print(
             "\n[yellow]Hint:[/yellow] Dataset paths must reside under the current "
             "working directory or the path specified by TRAIGENT_DATASET_ROOT."
         )
@@ -1139,9 +1153,11 @@ def validate(
     if path_result.is_valid:
         console.print("✅ [green]Dataset content validation passed[/green]")
     else:
-        console.print("❌ [red]Dataset content validation failed[/red]")
+        err_console.print("❌ [red]Dataset content validation failed[/red]")
 
-    if verbose or not path_result.is_valid:
+    if not path_result.is_valid:
+        err_console.print(path_result.get_feedback())
+    elif verbose:
         console.print(path_result.get_feedback())
 
     has_failure = not path_result.is_valid
@@ -1153,8 +1169,8 @@ def validate(
         if obj_result.is_valid:
             console.print("✅ [green]Objectives validation passed[/green]")
         else:
-            console.print("❌ [red]Objectives validation failed[/red]")
-            console.print(obj_result.get_feedback())
+            err_console.print("❌ [red]Objectives validation failed[/red]")
+            err_console.print(obj_result.get_feedback())
             has_failure = True
 
     if has_failure:
@@ -1380,6 +1396,35 @@ def _format_metric_diff(m1: Any, m2: Any) -> str:
     return "-"
 
 
+def _consistency_summary_line(result: Any) -> str | None:
+    """The per-example consistency line, or None when nothing was recorded.
+
+    A stored report that cannot be read yields a one-line note instead of an
+    error: showing a result must never fail on this optional section.
+    """
+    accessor = getattr(result, "example_consistency", None)
+    if not callable(accessor):
+        return None
+    from traigent.utils.example_consistency import (
+        format_consistency_line,
+        normalize_stored_report,
+    )
+
+    unreadable = "Repeat outcomes: the stored report is unreadable and was skipped"
+    stored = getattr(result, "example_consistency_report", None)
+    if stored is None:
+        return None
+    try:
+        if normalize_stored_report(stored) is None:
+            return unreadable
+        report = accessor()
+        if not isinstance(report, dict):
+            return None
+        return format_consistency_line(report, "winner")
+    except Exception:  # noqa: BLE001 - this optional line never changes the exit code
+        return unreadable
+
+
 def _print_result_summary(result: Any) -> None:
     """Print the summary section of a result."""
     console.print("[bold]Summary[/bold]")
@@ -1403,6 +1448,9 @@ def _print_result_summary(result: Any) -> None:
         )
 
     console.print(summary_table)
+    consistency_line = _consistency_summary_line(result)
+    if consistency_line is not None:
+        console.print(consistency_line, markup=False)
     if preset_selection is not None:
         console.print(f"[dim]{_ADVISORY_SELECTION_NOTICE}[/dim]")
 
@@ -2409,7 +2457,7 @@ def export(
             export_data: dict[str, Any] = {
                 "config": result.best_config,
                 "function_name": getattr(result, "function_name", result_name),
-                "exported_at": __import__("datetime").datetime.now().isoformat(),
+                "exported_at": datetime.now(UTC).isoformat(),
                 "traigent_version": __version__,
             }
             if result.best_metrics:
@@ -2422,7 +2470,7 @@ def export(
             export_data = {
                 "config": result.best_config,
                 "function_name": getattr(result, "function_name", result_name),
-                "exported_at": __import__("datetime").datetime.now().isoformat(),
+                "exported_at": datetime.now(UTC).isoformat(),
                 "traigent_version": __version__,
                 "trials": [
                     {
@@ -2967,6 +3015,27 @@ if __name__ == "__main__":
 '''
 
 
+def _exit_missing_functions(missing: list[str], available: list[str]) -> NoReturn:
+    err_console.print(
+        f"\n[red]❌ Requested function(s) not found: {', '.join(missing)}[/red]"
+    )
+    err_console.print(
+        "Available @traigent.optimize functions: "
+        f"{', '.join(available) if available else '(none)'}"
+    )
+    sys.exit(1)
+
+
+def _report_no_functions(*messages: str, allow_empty: bool) -> None:
+    """Print why nothing is left to check; exit 1 unless ``allow_empty``."""
+    # --allow-empty makes this a non-failure (exit 0): stay on stdout.
+    target = console if allow_empty else err_console
+    for message in messages:
+        target.print(message)
+    if not allow_empty:
+        sys.exit(1)
+
+
 def _missing_requested_functions(
     function_filter: list[str] | None, discovered_functions: list[Any]
 ) -> list[str]:
@@ -2988,13 +3057,13 @@ async def _run_validations(
             result = await validator.validate_optimization(func_info)
             results.append(result)
             if result.should_block:
-                console.print(f"[red]{result.get_summary()}[/red]")
+                err_console.print(f"[red]{result.get_summary()}[/red]")
                 failed += 1
             else:
                 console.print(f"[green]{result.get_summary()}[/green]")
                 passed += 1
         except Exception as e:
-            console.print(
+            err_console.print(
                 f"[red]❌ Error validating {escape(func_info.name)}: "
                 f"{_safe_error_text(e)}[/red]"
             )
@@ -3022,7 +3091,7 @@ def _report_check_dry_run(discovered_functions: list[Any]) -> None:
 
     blocking_issues, _ = classify_discovered_functions(discovered_functions)
     if blocking_issues:
-        console.print(
+        err_console.print(
             f"\n[red]❌ Dry run found {len(blocking_issues)} blocking "
             "issue(s); the real run would be BLOCKED[/red]"
         )
@@ -3090,7 +3159,6 @@ def check(
         traigent check my_module.py --allow-empty      # Zero functions is OK (exit 0)
     """
     import asyncio
-    import sys
 
     from traigent.cli.function_discovery import (
         classify_discovered_functions,
@@ -3118,38 +3186,26 @@ def check(
 
         missing = _missing_requested_functions(function_filter, discovered_functions)
         if missing:
-            available = available_names
-            console.print(
-                f"\n[red]❌ Requested function(s) not found: {', '.join(missing)}[/red]"
-            )
-            console.print(
-                "Available @traigent.optimize functions: "
-                f"{', '.join(available) if available else '(none)'}"
-            )
-            sys.exit(1)
+            _exit_missing_functions(missing, available_names)
 
         if not discovered_functions:
-            console.print(
-                f"\n[red]❌ No optimizable functions found in {module_path}[/red]"
+            _report_no_functions(
+                f"\n[red]❌ No optimizable functions found in {module_path}[/red]",
+                "Make sure your functions are decorated with @traigent.optimize",
+                allow_empty=allow_empty,
             )
-            console.print(
-                "Make sure your functions are decorated with @traigent.optimize"
-            )
-            if allow_empty:
-                return
-            sys.exit(1)
+            return
 
         if objectives_filter:
             discovered_functions = _filter_functions_by_objectives(
                 discovered_functions, objectives_filter
             )
             if not discovered_functions:
-                console.print(
-                    f"\n[red]❌ No functions found with objectives: {objectives_filter}[/red]"
+                _report_no_functions(
+                    f"\n[red]❌ No functions found with objectives: {objectives_filter}[/red]",
+                    allow_empty=allow_empty,
                 )
-                if allow_empty:
-                    return
-                sys.exit(1)
+                return
 
         if dry_run:
             _report_check_dry_run(discovered_functions)
@@ -3167,7 +3223,7 @@ def check(
         _handle_check_exit(results)
 
     except Exception as e:
-        console.print(f"[red]Error during validation: {_safe_error_text(e)}[/red]")
+        err_console.print(f"[red]Error during validation: {_safe_error_text(e)}[/red]")
         exit(1)
 
 
@@ -3175,6 +3231,10 @@ def check(
 register_local_commands(cli)
 # Top-level `traigent sync`.
 register_sync_command(cli)
+# `traigent regression ...`.
+register_regression_commands(cli)
+# `traigent egress ...`.
+register_egress_commands(cli)
 
 cli.add_command(auth)
 cli.add_command(certify)
@@ -3203,6 +3263,10 @@ cli.add_command(first_prompt)
 from traigent.cli.requirements_commands import requirements  # noqa: E402
 
 cli.add_command(requirements)
+
+from traigent.cli.tuning_commands import tune  # noqa: E402
+
+cli.add_command(tune)
 
 from traigent.cli.doctor_command import doctor  # noqa: E402
 
