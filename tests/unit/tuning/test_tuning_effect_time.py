@@ -227,7 +227,7 @@ def test_a_new_directory_is_fsynced_into_its_parent(
         real(fd)
 
     monkeypatch.setattr(os, "fsync", spy)
-    controller_module._write_json(tmp_path / "attempts" / "m.json", {"a": 1})
+    controller_module._write_json(tmp_path, tmp_path / "attempts" / "m.json", {"a": 1})
     assert str(tmp_path / "attempts") in synced  # the rename inside it
     assert str(tmp_path) in synced  # the new "attempts" entry itself
 
@@ -344,8 +344,8 @@ def test_a_scope_that_ends_while_the_start_marker_is_written_does_not_start_the_
     c.approve_optimization(e_ref("E1"), "approver-1", at(40))
     real = controller_module._write_json
 
-    def delayed(path: Path, value: Any) -> None:
-        real(path, value)
+    def delayed(base: Path, path: Path, value: Any) -> None:
+        real(base, path, value)
         if value.get("state") == "started":  # the marker write was slow
             clock[0] = _scope_end() + timedelta(seconds=1)
 
@@ -370,8 +370,8 @@ def test_a_revoked_approver_at_the_start_marker_does_not_start_the_run(
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     real = controller_module._write_json
 
-    def revoke(path: Path, value: Any) -> None:
-        real(path, value)
+    def revoke(base: Path, path: Path, value: Any) -> None:
+        real(base, path, value)
         if value.get("state") == "started":
             c.authority = ApproverAuthority(frozenset({"someone-else"}))
 
@@ -502,8 +502,8 @@ def test_a_crash_between_the_start_marker_and_the_start_fact_is_abandonable(
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     real = controller_module._prepare_append
 
-    def crashing_prepare(path: Path) -> Any:
-        append = real(path)
+    def crashing_prepare(base: Path, path: Path) -> Any:
+        append = real(base, path)
 
         def crash(value: Any) -> None:
             if (value.get("record") or {}).get("fact") == "started":

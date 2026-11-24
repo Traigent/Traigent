@@ -249,11 +249,15 @@ def test_upstream_rules_accept(url, expected):
     assert parse_upstream(url) == expected
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_log_file_mode_is_0600(relay, log_path):
     send(relay, "GET", "/x")
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="the writer lock is POSIX-only (fcntl.flock)"
+)
 def test_second_relay_cannot_share_a_log(relay, log_path):
     with pytest.raises(Exception, match="already writing"):
         RelayLog(log_path)
@@ -314,6 +318,7 @@ def test_response_log_failure_still_delivers_then_refuses_everything(
     assert [ln["kind"] for ln in _lines(log_path)] == ["request"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_existing_loose_log_file_is_tightened_to_0600(tmp_path):
     path = tmp_path / "a" / "b" / "relay.jsonl"
     path.parent.mkdir(parents=True)

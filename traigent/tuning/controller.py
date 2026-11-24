@@ -71,6 +71,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
+from traigent._fsutil import open_verified
 from traigent.tuning.authority import LOCAL_TRUSTED, ApproverAuthority
 from traigent.tuning.errors import (
     E_APPROVER_NOT_AUTHORIZED,
@@ -264,6 +265,65 @@ def parse_occurrence_ref(ref: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------------
+# store path containment
+# ---------------------------------------------------------------------------------
+_E_STORE_PATH = "the tuning store path is not acceptable"
+
+
+def _store_dir(store_dir: Path | str) -> Path:
+    """Resolve an operator-chosen store directory (the base every store file lives in).
+
+    The directory is chosen explicitly by the operator or the calling code (never by a
+    server response), so it is trusted as a location; it is still resolved to one
+    absolute path and a NUL byte is refused.  Errors never echo the path.
+    """
+    if "\0" in str(store_dir):
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH)
+    try:
+        return Path(store_dir).resolve()
+    except (OSError, RuntimeError, ValueError):
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
+
+
+def _store_file(path: Path | str, base: Path) -> Path:
+    """Return ``path`` resolved, only if it is a real file entry inside the store ``base``.
+
+    ``base`` is the resolved store directory (see ``_store_dir``).  Refuses a NUL byte,
+    a symlink at the file itself, and any path whose resolved location is not inside
+    ``base`` (so a ``..`` component or a planted link cannot redirect a store,
+    journal or lock file elsewhere).  This is a pre-check only: every open goes
+    through ``_open_regular``, which refuses a symlink atomically.
+    """
+    if "\0" in str(path):
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH)
+    candidate = Path(path)
+    try:
+        resolved = candidate.resolve()
+        inside = not candidate.is_symlink() and resolved.is_relative_to(base.resolve())
+    except (OSError, RuntimeError, ValueError):
+        inside = False
+    if not inside:
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH)
+    return resolved
+
+
+def _open_regular(path: Path, flags: int, mode: int = 0o600) -> int:
+    """Open ``path`` without following a symlink and return a verified regular-file descriptor.
+
+    ``O_NOFOLLOW`` is used where available and the descriptor is always checked
+    against the path (see ``traigent._fsutil``), so a swap after an earlier check is
+    refused on every platform.  A missing file raises ``FileNotFoundError`` for the
+    caller's default handling; any other failure is the closed store-path error (no path).
+    """
+    try:
+        return open_verified(path, flags, mode)
+    except FileNotFoundError:
+        raise
+    except OSError:
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
+
+
+# ---------------------------------------------------------------------------------
 # atomic file helpers
 # ---------------------------------------------------------------------------------
 def _fsync_dir(directory: Path) -> None:
@@ -289,10 +349,26 @@ def _mkdir_durable(directory: Path) -> None:
         _fsync_dir(created.parent)
 
 
-def _write_json(path: Path, value: Any) -> None:
-    """Write JSON atomically: temp file in the same directory, fsync, rename."""
-    _mkdir_durable(path.parent)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+def _write_json(base: Path, path: Path, value: Any) -> None:
+    """Write JSON atomically: exclusive no-follow temp file beside the target, fsync, rename.
+
+    Filesystem failures are the closed store-path error (no path in the message).
+    """
+    path = _store_file(path, base)
+    tmp: Path | None = None
+    try:
+        _mkdir_durable(path.parent)
+        tmp = path.parent / f".{path.name}.{os.urandom(8).hex()}.tmp"
+        fd = open_verified(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # O_EXCL refused: the entry is not ours, so it must never be unlinked here.
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
+    except OSError:
+        # Verification can fail after the temp file was created; remove it too.
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(value, fh, sort_keys=True, indent=2)
@@ -300,17 +376,28 @@ def _write_json(path: Path, value: Any) -> None:
             os.fsync(fh.fileno())
         os.replace(tmp, path)
         _fsync_dir(path.parent)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
 
 
-def _read_json(path: Path, default: Any = None) -> Any:
+def _read_json(base: Path, path: Path, default: Any = None) -> Any:
+    path = _store_file(path, base)
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        fd = _open_regular(path, os.O_RDONLY)
     except FileNotFoundError:
         return default
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
+    return json.loads(text)
 
 
 def _frame(value: Any) -> str:
@@ -373,18 +460,18 @@ def _refuse_unsupported_rule(rule: Mapping[str, Any]) -> None:
         )
 
 
-def _refuse_legacy_format(path: Path, present: list[bytes]) -> None:
+def _refuse_legacy_format(present: list[bytes]) -> None:
     """Raise ``E_STORE_FORMAT`` when every non-blank line is pre-checksum JSON."""
     if present and all(_is_legacy_line(p) for p in present):
         raise TuningError(
             E_STORE_FORMAT,
-            f"the tuning store at {path.parent} was written in an older format "
+            "the tuning store was written in an older format "
             "without checksums and cannot be read; re-initialize the store "
             "(remove the directory and start again). Its files were not modified.",
         )
 
 
-def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
+def _scan_lines(base: Path, path: Path) -> tuple[list[Any], int, bool]:
     """``(values, valid_byte_length, torn)`` of a framed JSONL file.
 
     Only a final line WITHOUT its trailing newline can be a torn append (a crash
@@ -393,12 +480,18 @@ def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
     bad line anywhere else.  A file in the pre-checksum format (plain JSON lines)
     raises ``E_STORE_FORMAT`` untouched.
     """
+    path = _store_file(path, base)
     try:
-        raw = path.read_bytes()
+        fd = _open_regular(path, os.O_RDONLY)
     except FileNotFoundError:
         return [], 0, False
+    try:
+        with os.fdopen(fd, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
     pieces = raw.split(b"\n")
-    _refuse_legacy_format(path, [p for p in pieces if p])
+    _refuse_legacy_format([p for p in pieces if p])
     values: list[Any] = []
     valid = 0
     for index, piece in enumerate(pieces):
@@ -420,42 +513,48 @@ def _scan_lines(path: Path) -> tuple[list[Any], int, bool]:
     return values, valid, False
 
 
-def _repair_tail(path: Path) -> None:
+def _repair_tail(base: Path, path: Path) -> None:
     """Truncate a torn final line (logged) so the next append starts clean."""
-    _, valid, torn = _scan_lines(path)
-    if torn:
-        logger.warning("truncating a torn final record of %s", path.name)
-        with open(path, "r+b") as fh:
+    path = _store_file(path, base)
+    _, valid, torn = _scan_lines(base, path)
+    try:
+        fd = _open_regular(path, os.O_RDWR)
+    except FileNotFoundError:
+        return
+    with os.fdopen(fd, "r+b") as fh:
+        if torn:
+            logger.warning("truncating a torn final record of %s", path.name)
             fh.truncate(valid)
-            fh.flush()
-            os.fsync(fh.fileno())
-    elif path.exists():
-        with open(path, "rb") as fh:
+        else:
             data = fh.read()
-        if data and not data.endswith(b"\n"):
-            with open(path, "ab") as out:
-                out.write(b"\n")
-                out.flush()
-                os.fsync(out.fileno())
+            if not data or data.endswith(b"\n"):
+                return
+            fh.seek(0, os.SEEK_END)
+            fh.write(b"\n")
+        fh.flush()
+        os.fsync(fh.fileno())
 
 
-def _append_line(path: Path, value: Any) -> None:
-    _prepare_append(path)(value)
+def _append_line(base: Path, path: Path, value: Any) -> None:
+    _prepare_append(base, path)(value)
 
 
-def _prepare_append(path: Path) -> Callable[[Any], None]:
+def _prepare_append(base: Path, path: Path) -> Callable[[Any], None]:
     """Repair the tail of ``path`` NOW and return the append that only writes.
 
     The journal scan (checksum of every record) happens here, under the store lock
     and before the final gate; the returned callable frames one record and appends it
-    without reading the journal again.
+    without reading the journal again.  The append opens the journal without following
+    a symlink, so a link planted after the check is refused, not written through.
     """
+    path = _store_file(path, base)
     _mkdir_durable(path.parent)
-    _repair_tail(path)
+    _repair_tail(base, path)
     created = not path.exists()
 
     def append(value: Any) -> None:
-        with open(path, "a", encoding="utf-8") as fh:
+        fd = _open_regular(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
             fh.write(_frame(value) + "\n")
             fh.flush()
             os.fsync(fh.fileno())
@@ -465,8 +564,8 @@ def _prepare_append(path: Path) -> Callable[[Any], None]:
     return append
 
 
-def _read_lines(path: Path) -> list[dict[str, Any]]:
-    values, _, torn = _scan_lines(path)
+def _read_lines(base: Path, path: Path) -> list[dict[str, Any]]:
+    values, _, torn = _scan_lines(base, path)
     if torn:
         logger.warning("ignoring a torn final record of %s", path.name)
     return cast(list[dict[str, Any]], values)
@@ -474,7 +573,7 @@ def _read_lines(path: Path) -> list[dict[str, Any]]:
 
 def read_head(store_dir: Path | str) -> dict[str, Any] | None:
     """The head ``{fingerprint, config, generation}`` of a store, or None."""
-    head = _read_json(Path(store_dir) / _HEAD_FILE)
+    head = _read_json(_store_dir(store_dir), _store_dir(store_dir) / _HEAD_FILE)
     return head if isinstance(head, dict) else None
 
 
@@ -627,7 +726,7 @@ class Controller:
             if agent is None:
                 raise TuningError(E_INVALID_RECORD, "store_dir or an agent is required")
             store_dir = default_store_dir(agent, environment)
-        self.dir = Path(store_dir)
+        self.dir = _store_dir(store_dir)
         self.optimize_fn = optimize_fn
         if authority is None and authorized_approvers is not None:
             authority = ApproverAuthority(frozenset(authorized_approvers))
@@ -655,7 +754,10 @@ class Controller:
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
-        _mkdir_durable(self.dir)
+        try:
+            _mkdir_durable(self.dir)
+        except OSError:
+            raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
         try:
             import fcntl  # POSIX only: imported when tuning is used, never at CLI start
         except ImportError:
@@ -663,7 +765,10 @@ class Controller:
                 E_LOCK_UNSUPPORTED_PLATFORM,
                 "the tuning store lock needs a POSIX platform (fcntl is unavailable)",
             ) from None
-        with open(self._p(".lock"), "a+") as fh:
+        lock_fd = _open_regular(
+            _store_file(self._p(".lock"), self.dir), os.O_RDWR | os.O_CREAT
+        )
+        with os.fdopen(lock_fd, "r+") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
             try:
                 yield
@@ -679,7 +784,7 @@ class Controller:
     ) -> None:
         digest = "sha256:" + _digest(self._module)
         with self._locked():
-            meta = _read_json(self._p(_META_FILE))
+            meta = _read_json(self.dir, self._p(_META_FILE))
             if meta is None:
                 # Init is a recoverable transaction: ``meta.json`` is written LAST,
                 # so a crash earlier leaves the store uninitialized and the next
@@ -690,7 +795,7 @@ class Controller:
                 config = dict(initial_config or {})
                 fingerprint = config_fingerprint(config)
                 head = {"fingerprint": fingerprint, "config": config, "generation": 0}
-                _write_json(self._p(_HEAD_FILE), head)
+                _write_json(self.dir, self._p(_HEAD_FILE), head)
                 meta = {
                     "agent": agent,
                     "environment": environment,
@@ -698,7 +803,7 @@ class Controller:
                     "contract_digest": digest,
                     "initial_head": {"fingerprint": fingerprint, "generation": 0},
                 }
-                _write_json(self._p(_META_FILE), meta)
+                _write_json(self.dir, self._p(_META_FILE), meta)
             elif meta["contract_digest"] != digest or meta["agent"] != agent:
                 raise TuningError(E_STORE_MISMATCH, "store belongs to another policy")
             elif meta.get("environment") != environment:
@@ -708,13 +813,13 @@ class Controller:
                 )
             else:
                 for name in (_HISTORY_FILE, _CONTROLLER_LOG_FILE):
-                    _repair_tail(self._p(name))
+                    _repair_tail(self.dir, self._p(name))
             self.meta: dict[str, Any] = meta
             self.origin = _parse_instant(meta["origin"])
 
     # -- history --------------------------------------------------------------------
     def _lines(self) -> list[dict[str, Any]]:
-        return _read_lines(self._p(_HISTORY_FILE))
+        return _read_lines(self.dir, self._p(_HISTORY_FILE))
 
     def _history(
         self,
@@ -775,7 +880,7 @@ class Controller:
             raise TuningError(
                 E_INVALID_RECORD, f"{category} rejected by the TVL relation"
             ) from exc
-        _append_line(self._p(_HISTORY_FILE), line)
+        _append_line(self.dir, self._p(_HISTORY_FILE), line)
 
     def _last_persisted_instant(self) -> int:
         """The last instant the history journal holds (0 when it is empty)."""
@@ -962,7 +1067,7 @@ class Controller:
                 E_APPROVER_NOT_AUTHORIZED, "that approver was not authenticated"
             )
         with self._locked():
-            approvals = _read_json(self._p(_APPROVALS_FILE), {})
+            approvals = _read_json(self.dir, self._p(_APPROVALS_FILE), {})
             approvals.setdefault(
                 ref,
                 {
@@ -971,7 +1076,7 @@ class Controller:
                     "authentication": authority.mode,
                 },
             )
-            _write_json(self._p(_APPROVALS_FILE), approvals)
+            _write_json(self.dir, self._p(_APPROVALS_FILE), approvals)
 
     def record_standing_grant(self, *_args: Any, **_kwargs: Any) -> None:
         """Standing grants are not supported in this release."""
@@ -982,11 +1087,11 @@ class Controller:
 
     def controller_facts(self) -> list[dict[str, Any]]:
         """Closed facts the controller itself recorded (refusals); TVL never sees them."""
-        return _read_lines(self._p(_CONTROLLER_LOG_FILE))
+        return _read_lines(self.dir, self._p(_CONTROLLER_LOG_FILE))
 
     def _record_controller_fact(self, fact: dict[str, Any]) -> None:
         if fact not in self.controller_facts():
-            _append_line(self._p(_CONTROLLER_LOG_FILE), fact)
+            _append_line(self.dir, self._p(_CONTROLLER_LOG_FILE), fact)
 
     # -- the step -------------------------------------------------------------------
     def step(
@@ -1113,7 +1218,7 @@ class Controller:
     def _authorized_now(self, occ: Mapping[str, Any], ref: str) -> bool:
         """A recorded approval for THIS occurrence by an approver the authority allows
         now (every approval mode other than ``human`` is refused at construction)."""
-        approval = _read_json(self._p(_APPROVALS_FILE), {}).get(ref)
+        approval = _read_json(self.dir, self._p(_APPROVALS_FILE), {}).get(ref)
         return approval is not None and self._on_list_now(
             approval.get("approver"), _approve_context(ref)
         )
@@ -1202,7 +1307,7 @@ class Controller:
         moment = clock()  # fresh before each decision that can spend
         instant = self._instant(moment)  # whole seconds
         marker_path = self._marker_path(attempt, ref)
-        marker = _read_json(marker_path)
+        marker = _read_json(self.dir, marker_path)
         if marker is None:
             settled = self._settle_unstarted(
                 report,
@@ -1250,6 +1355,7 @@ class Controller:
             # abandonment records it as cancelled.
             record = self._finished_record(attempt, "cancelled", [])
             _write_json(
+                self.dir,
                 marker_path,
                 {
                     "attempt": attempt,
@@ -1331,7 +1437,7 @@ class Controller:
                 f"{attempt} was interrupted; it is not started twice",
             )
         record = self._finished_record(attempt, "cancelled", [])
-        _write_json(marker_path, {**marker, "finished_record": record})
+        _write_json(self.dir, marker_path, {**marker, "finished_record": record})
         return True
 
     def _spend(
@@ -1354,7 +1460,7 @@ class Controller:
             raise TuningError(E_NO_OPTIMIZER, f"{attempt} needs an optimize_fn")
         # -- preparation: every read and write the spend needs, under the store
         # lock and BEFORE the final gate ------------------------------------
-        approval = _read_json(self._p(_APPROVALS_FILE), {}).get(ref)
+        approval = _read_json(self.dir, self._p(_APPROVALS_FILE), {}).get(ref)
         if approval is None:
             self._refuse_spend(report, attempt, "approval_missing")
             return False
@@ -1374,7 +1480,7 @@ class Controller:
         last_persisted = self._last_persisted_instant()
         # The one journal scan the final gate would otherwise need: repair the tail
         # now, under the lock and before authentication; the gate only appends.
-        append_start = _prepare_append(self._p(_HISTORY_FILE))
+        append_start = _prepare_append(self.dir, self._p(_HISTORY_FILE))
         # Only the adapter this SDK built may be handed the final check.  Decided
         # before the marker: nothing after the marker may fail before the optimizer runs.
         optimize_fn = self.optimize_fn
@@ -1383,6 +1489,7 @@ class Controller:
         # Journal first (the marker), then the start fact at the effect instant:
         # a crash between the two leaves a marker that abandon_interrupted finds.
         _write_json(
+            self.dir,
             marker_path,
             {"attempt": attempt, "occurrence": ref, "state": "started"},
         )
@@ -1503,6 +1610,7 @@ class Controller:
         # Persist the outcome BEFORE recording it: a crash in between must
         # never re-run a finished optimization.
         _write_json(
+            self.dir,
             marker_path,
             {
                 "attempt": attempt,
@@ -1531,6 +1639,7 @@ class Controller:
         """
         self._refuse_spend(report, attempt, reason)
         _write_json(
+            self.dir,
             marker_path,
             {
                 "attempt": attempt,
@@ -1879,7 +1988,7 @@ class Controller:
     def _attempt_marker(self, deploy: Mapping[str, Any]) -> dict[str, Any]:
         """The marker of THE deploy's own attempt (by attempt id, never a scan)."""
         ref = occurrence_ref(deploy["occurrence"])
-        marker = _read_json(self._marker_path(str(deploy["attempt"]), ref))
+        marker = _read_json(self.dir, self._marker_path(str(deploy["attempt"]), ref))
         if not isinstance(marker, dict):
             raise TuningError(E_NO_DEPLOY_AWAITING, "candidate evidence not found")
         return marker
@@ -1896,7 +2005,7 @@ class Controller:
             return []
         return [
             m
-            for m in (_read_json(p) for p in sorted(folder.glob("*.json")))
+            for m in (_read_json(self.dir, p) for p in sorted(folder.glob("*.json")))
             if isinstance(m, dict)
         ]
 
@@ -1918,7 +2027,7 @@ class Controller:
 
     def _approval_text(self, ref: str) -> str:
         """Who approved the run, as a person reads it."""
-        approval = _read_json(self._p(_APPROVALS_FILE), {}).get(ref) or {}
+        approval = _read_json(self.dir, self._p(_APPROVALS_FILE), {}).get(ref) or {}
         return f"approved by {approval.get('approver', 'an approver')}"
 
     def _attempt_entry(
@@ -1932,7 +2041,7 @@ class Controller:
         if opened["finished"]:
             state = "deploy_awaiting"
         elif self._approval_recorded(opened["attempt"]) or ref in approvals:
-            marker = _read_json(self._marker_path(opened["attempt"], ref))
+            marker = _read_json(self.dir, self._marker_path(opened["attempt"], ref))
             state = (
                 "interrupted"
                 if marker and "finished_record" not in marker
@@ -2009,7 +2118,7 @@ class Controller:
         self.state.require_validated()
         facts = self._derive()["facts"]
         closed = {f["attempt"] for f in facts if f["fact"] == "attempt_closed"}
-        approvals = _read_json(self._p(_APPROVALS_FILE), {})
+        approvals = _read_json(self.dir, self._p(_APPROVALS_FILE), {})
         domains = {f["attempt"]: f for f in facts if f["fact"] == "search_domain"}
         attempts = []
         for opened in self._open_attempts(facts):
@@ -2270,7 +2379,7 @@ class HeadLoader:
     """Loads the head configuration from a store at call time (cached by generation)."""
 
     def __init__(self, store_dir: Path | str, environment: str | None = None) -> None:
-        self.dir = Path(store_dir)
+        self.dir = _store_dir(store_dir)
         self.environment = environment
         self._stamp: tuple[int, int] | None = None
         self._head: dict[str, Any] | None = None
@@ -2280,10 +2389,12 @@ class HeadLoader:
             st = (self.dir / _HEAD_FILE).stat()
         except FileNotFoundError:
             return None
+        except OSError:  # e.g. the store path is a regular file
+            raise TuningError(E_INVALID_RECORD, _E_STORE_PATH) from None
         stamp = (st.st_mtime_ns, st.st_size)
         if stamp != self._stamp:
             if self.environment is not None:
-                meta = _read_json(self.dir / _META_FILE) or {}
+                meta = _read_json(self.dir, self.dir / _META_FILE) or {}
                 if meta.get("environment") != self.environment:
                     raise TuningError(
                         E_STORE_ENVIRONMENT_MISMATCH,

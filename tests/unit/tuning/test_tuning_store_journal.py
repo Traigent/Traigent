@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -153,13 +155,13 @@ def _journal(path: Path, *values: object) -> None:
 @tvl_free
 class TestJournalScan:
     def test_a_missing_file_is_empty(self, tmp_path: Path) -> None:
-        assert c._scan_lines(tmp_path / "none.jsonl") == ([], 0, False)
-        assert c._read_lines(tmp_path / "none.jsonl") == []
+        assert c._scan_lines(tmp_path, tmp_path / "none.jsonl") == ([], 0, False)
+        assert c._read_lines(tmp_path, tmp_path / "none.jsonl") == []
 
     def test_every_record_is_read_back_in_order(self, tmp_path: Path) -> None:
         path = tmp_path / "h.jsonl"
         _journal(path, {"n": 1}, {"n": 2})
-        values, valid, torn = c._scan_lines(path)
+        values, valid, torn = c._scan_lines(tmp_path, path)
         assert values == [{"n": 1}, {"n": 2}]
         assert valid == path.stat().st_size
         assert torn is False
@@ -167,7 +169,7 @@ class TestJournalScan:
     def test_a_blank_line_is_skipped_and_counted_as_valid(self, tmp_path: Path) -> None:
         path = tmp_path / "h.jsonl"
         path.write_text(c._frame({"n": 1}) + "\n\n" + c._frame({"n": 2}) + "\n")
-        values, valid, torn = c._scan_lines(path)
+        values, valid, torn = c._scan_lines(tmp_path, path)
         assert values == [{"n": 1}, {"n": 2}]
         assert (valid, torn) == (path.stat().st_size, False)
 
@@ -175,7 +177,7 @@ class TestJournalScan:
         path = tmp_path / "h.jsonl"
         good = c._frame({"n": 1}) + "\n"
         path.write_text(good + c._frame({"n": 2})[:-5], encoding="utf-8")
-        values, valid, torn = c._scan_lines(path)
+        values, valid, torn = c._scan_lines(tmp_path, path)
         assert values == [{"n": 1}]
         assert valid == len(good)
         assert torn is True
@@ -185,7 +187,7 @@ class TestJournalScan:
         bad = c._frame({"n": 2}).replace('"n": 2', '"n": 9')
         path.write_text(c._frame({"n": 1}) + "\n" + bad + "\n", encoding="utf-8")
         with pytest.raises(TuningError) as err:
-            c._scan_lines(path)
+            c._scan_lines(tmp_path, path)
         assert _code(err) == c.E_STORE_CORRUPT
 
     def test_a_plain_json_store_is_refused_in_the_old_format(
@@ -195,7 +197,7 @@ class TestJournalScan:
         path.write_text('{"a": 1}\n{"a": 2}\n', encoding="utf-8")
         before = path.read_bytes()
         with pytest.raises(TuningError) as err:
-            c._scan_lines(path)
+            c._scan_lines(tmp_path, path)
         assert _code(err) == c.E_STORE_FORMAT
         assert path.read_bytes() == before  # refused untouched
 
@@ -205,7 +207,7 @@ class TestJournalScan:
         path = tmp_path / "h.jsonl"
         path.write_text(c._frame({"n": 1}) + "\n" + "deadbeef", encoding="utf-8")
         with caplog.at_level(logging.WARNING, logger=c.logger.name):
-            assert c._read_lines(path) == [{"n": 1}]
+            assert c._read_lines(tmp_path, path) == [{"n": 1}]
         assert "torn final record" in caplog.text
 
 
@@ -213,24 +215,24 @@ class TestJournalScan:
 class TestJournalAppend:
     def test_append_creates_the_file_and_its_directory(self, tmp_path: Path) -> None:
         path = tmp_path / "deep" / "dir" / "h.jsonl"
-        c._append_line(path, {"n": 1})
-        assert c._read_lines(path) == [{"n": 1}]
+        c._append_line(tmp_path, path, {"n": 1})
+        assert c._read_lines(tmp_path, path) == [{"n": 1}]
 
     def test_appends_accumulate_in_order(self, tmp_path: Path) -> None:
         path = tmp_path / "h.jsonl"
         for n in range(3):
-            c._append_line(path, {"n": n})
-        assert [r["n"] for r in c._read_lines(path)] == [0, 1, 2]
+            c._append_line(tmp_path, path, {"n": n})
+        assert [r["n"] for r in c._read_lines(tmp_path, path)] == [0, 1, 2]
 
     def test_a_prepared_append_repairs_first_and_then_only_writes(
         self, tmp_path: Path
     ) -> None:
         path = tmp_path / "h.jsonl"
         path.write_text(c._frame({"n": 1}) + "\n" + "torn-tail", encoding="utf-8")
-        append = c._prepare_append(path)
+        append = c._prepare_append(tmp_path, path)
         assert path.read_text(encoding="utf-8") == c._frame({"n": 1}) + "\n"
         append({"n": 2})
-        assert [r["n"] for r in c._read_lines(path)] == [1, 2]
+        assert [r["n"] for r in c._read_lines(tmp_path, path)] == [1, 2]
 
     def test_repair_truncates_a_torn_tail_and_logs_it(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -239,7 +241,7 @@ class TestJournalAppend:
         good = c._frame({"n": 1}) + "\n"
         path.write_text(good + "abc", encoding="utf-8")
         with caplog.at_level(logging.WARNING, logger=c.logger.name):
-            c._repair_tail(path)
+            c._repair_tail(tmp_path, path)
         assert path.read_text(encoding="utf-8") == good
         assert "truncating a torn final record" in caplog.text
 
@@ -248,19 +250,19 @@ class TestJournalAppend:
     ) -> None:
         path = tmp_path / "h.jsonl"
         path.write_text(c._frame({"n": 1}), encoding="utf-8")  # complete, no newline
-        c._repair_tail(path)
+        c._repair_tail(tmp_path, path)
         assert path.read_text(encoding="utf-8") == c._frame({"n": 1}) + "\n"
-        assert c._read_lines(path) == [{"n": 1}]
+        assert c._read_lines(tmp_path, path) == [{"n": 1}]
 
     def test_repair_leaves_a_clean_journal_and_a_missing_file_alone(
         self, tmp_path: Path
     ) -> None:
         path = tmp_path / "h.jsonl"
-        c._repair_tail(path)  # nothing to repair, nothing created
+        c._repair_tail(tmp_path, path)  # nothing to repair, nothing created
         assert not path.exists()
         _journal(path, {"n": 1})
         before = path.read_bytes()
-        c._repair_tail(path)
+        c._repair_tail(tmp_path, path)
         assert path.read_bytes() == before
 
 
@@ -270,23 +272,23 @@ class TestJsonFiles:
         self, tmp_path: Path
     ) -> None:
         path = tmp_path / "sub" / "meta.json"
-        c._write_json(path, {"b": 2, "a": 1})
-        assert c._read_json(path) == {"a": 1, "b": 2}
+        c._write_json(tmp_path, path, {"b": 2, "a": 1})
+        assert c._read_json(tmp_path, path) == {"a": 1, "b": 2}
         assert [p.name for p in path.parent.iterdir()] == ["meta.json"]
 
     def test_a_failed_write_leaves_the_old_file_and_no_temp_file(
         self, tmp_path: Path
     ) -> None:
         path = tmp_path / "meta.json"
-        c._write_json(path, {"v": 1})
+        c._write_json(tmp_path, path, {"v": 1})
         with pytest.raises(TypeError):
-            c._write_json(path, {"v": object()})
-        assert c._read_json(path) == {"v": 1}
+            c._write_json(tmp_path, path, {"v": object()})
+        assert c._read_json(tmp_path, path) == {"v": 1}
         assert [p.name for p in tmp_path.iterdir()] == ["meta.json"]
 
     def test_a_missing_file_reads_as_the_default(self, tmp_path: Path) -> None:
-        assert c._read_json(tmp_path / "absent.json") is None
-        assert c._read_json(tmp_path / "absent.json", {"d": 1}) == {"d": 1}
+        assert c._read_json(tmp_path, tmp_path / "absent.json") is None
+        assert c._read_json(tmp_path, tmp_path / "absent.json", {"d": 1}) == {"d": 1}
 
     def test_read_head_returns_only_a_mapping(self, tmp_path: Path) -> None:
         assert c.read_head(tmp_path) is None
@@ -423,3 +425,169 @@ class TestSmallRecords:
         for name in ("__missing_dunder__", "no_such_field"):
             with pytest.raises(AttributeError):
                 getattr(run, name)
+
+
+@tvl_free
+class TestStorePathContainment:
+    def test_a_valid_store_file_round_trips(self, tmp_path: Path) -> None:
+        c._write_json(tmp_path, tmp_path / "head.json", {"a": 1})
+        assert c._read_json(tmp_path, tmp_path / "head.json") == {"a": 1}
+        c._append_line(tmp_path, tmp_path / "history.jsonl", {"n": 1})
+        assert c._read_lines(tmp_path, tmp_path / "history.jsonl") == [{"n": 1}]
+
+    def test_a_dotdot_escaping_the_store_base_is_refused(self, tmp_path: Path) -> None:
+        store = tmp_path / "store"
+        store.mkdir()
+        (tmp_path / "outside").mkdir()
+        with pytest.raises(TuningError) as err:
+            c._store_file(store / ".." / "outside" / "head.json", store)
+        assert _code(err) == c.E_INVALID_RECORD
+        with pytest.raises(TuningError):
+            c._write_json(store, store / ".." / "outside" / "head.json", {})
+        assert not (tmp_path / "outside" / "head.json").exists()
+
+    def test_a_dotdot_that_stays_inside_the_base_is_normalised(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "sub").mkdir()
+        assert (
+            c._store_file(tmp_path / "sub" / ".." / "head.json", tmp_path)
+            == (tmp_path / "head.json").resolve()
+        )
+
+    def test_a_link_planted_after_the_check_is_not_followed(
+        self, tmp_path: Path
+    ) -> None:
+        """The open itself refuses a symlink (O_NOFOLLOW), not only the earlier check."""
+        outside = tmp_path / "outside.jsonl"
+        outside.write_text("untouched\n")
+        store = tmp_path / "store"
+        store.mkdir()
+        path = store / "history.jsonl"
+        append = c._prepare_append(store, path)  # checked, tail repaired, file absent
+        path.symlink_to(outside)  # replaced between the check and the open
+        with pytest.raises(TuningError) as err:
+            append({"n": 1})
+        assert _code(err) == c.E_INVALID_RECORD
+        assert outside.read_text() == "untouched\n"
+        with pytest.raises(TuningError):
+            c._open_regular(path, os.O_RDONLY)
+
+    def test_a_non_regular_file_is_refused_on_the_descriptor(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "head.json").mkdir()
+        with pytest.raises(TuningError):
+            c._open_regular(tmp_path / "head.json", os.O_RDONLY)
+
+    def test_an_unreadable_file_error_does_not_echo_the_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        real_open = os.open
+
+        def deny(path: Any, *args: Any, **kwargs: Any) -> int:
+            if str(path).endswith("head.json"):
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_open(path, *args, **kwargs)
+
+        (tmp_path / "head.json").write_text("{}")
+        monkeypatch.setattr(os, "open", deny)
+        with pytest.raises(TuningError) as err:
+            c._read_json(tmp_path, tmp_path / "head.json")
+        assert _code(err) == c.E_INVALID_RECORD
+        assert "head.json" not in str(err.value)
+        assert str(tmp_path) not in str(err.value)
+
+    def test_the_legacy_format_error_does_not_echo_the_store_path(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "history.jsonl").write_text('{"a": 1}\n')
+        with pytest.raises(TuningError) as err:
+            c._scan_lines(tmp_path, tmp_path / "history.jsonl")
+        assert str(tmp_path) not in str(err.value)
+
+    def test_a_symlinked_store_file_is_refused(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.json").write_text("{}")
+        store = tmp_path / "store"
+        store.mkdir()
+        (store / "head.json").symlink_to(outside / "secret.json")
+        for op in (
+            lambda: c._read_json(store, store / "head.json"),
+            lambda: c._write_json(store, store / "head.json", {}),
+            lambda: c._scan_lines(store, store / "head.json"),
+            lambda: c._append_line(store, store / "head.json", {}),
+        ):
+            with pytest.raises(TuningError) as err:
+                op()
+            assert _code(err) == c.E_INVALID_RECORD
+            assert "secret" not in str(err.value)
+
+    def test_a_nul_byte_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(TuningError) as err:
+            c._store_file(str(tmp_path / "head\0.json"), tmp_path)
+        assert _code(err) == c.E_INVALID_RECORD
+        with pytest.raises(TuningError):
+            c.read_head(str(tmp_path) + "\0")
+
+
+def test_a_failing_mkdir_is_a_closed_error_without_the_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = tmp_path / "canary_store_dir"
+    base.mkdir()
+
+    def boom(self, *a, **k):
+        raise PermissionError(13, "denied", str(self))
+
+    monkeypatch.setattr(Path, "mkdir", boom)
+    with pytest.raises(TuningError) as err:
+        c._write_json(base, base / "sub" / "head.json", {"a": 1})
+    assert _code(err) == c.E_INVALID_RECORD
+    assert "canary_store_dir" not in str(err.value)
+    assert err.value.__cause__ is None
+
+
+@tvl_free
+def test_a_verification_failure_after_the_temp_create_leaves_no_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The temp file is created, then the path check fails: the temp must be removed."""
+    real_lstat = os.lstat
+
+    def lstat(p, *args, **kwargs):  # the verification's lstat of the temp path fails
+        if str(p).endswith(".tmp"):
+            raise OSError("simulated")
+        return real_lstat(p, *args, **kwargs)
+
+    monkeypatch.setattr(c.os, "lstat", lstat)
+    target = tmp_path / "head.json"
+    with pytest.raises(TuningError) as err:
+        c._write_json(tmp_path, target, {"a": 1})
+    assert err.value.code == c.E_INVALID_RECORD
+    assert str(tmp_path) not in str(err.value)
+    assert not target.exists()
+    assert [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
+
+
+@tvl_free
+def test_a_regular_file_as_the_store_dir_is_a_closed_error_without_the_path(
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    blocker = tmp_path / "canary_store_file"
+    blocker.write_text("x")
+    with pytest.raises(TuningError) as err:
+        c.HeadLoader(blocker).head()
+    assert _code(err) == c.E_INVALID_RECORD
+    assert "canary_store_file" not in str(err.value)
+    assert err.value.__cause__ is None
+
+    with pytest.raises(TuningError) as err:
+        with c.Controller._locked(SimpleNamespace(dir=blocker)):  # type: ignore[arg-type]
+            pass
+    assert _code(err) == c.E_INVALID_RECORD
+    assert "canary_store_file" not in str(err.value)
+    assert err.value.__cause__ is None
