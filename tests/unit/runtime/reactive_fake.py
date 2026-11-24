@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin
 
 from jsonschema import Draft7Validator
 from referencing import Registry, Resource
@@ -39,6 +39,8 @@ SCHEMAS = (
 )
 SCHEMA_ROOT = SCHEMAS / "schemas"
 BASE = "https://schemas.traigent.ai/"
+#: The project the fake serves; the vendored contract pins project_id to ``project_<hex>``.
+FIXTURE_PROJECT = "project_" + "a" * 32
 ENDPOINT_FILES = (
     "optimization/tvl_reactive_endpoints.json",
     "execution/best_config_deploy_endpoints.json",
@@ -231,12 +233,18 @@ class StrictBackend:
     LEASE = timedelta(minutes=2)
 
     def __init__(
-        self, agent_ref: str, clock: Clock | None = None, *, agent_id: str | None = None
+        self,
+        agent_ref: str,
+        clock: Clock | None = None,
+        *,
+        agent_id: str | None = None,
+        project_id: str = FIXTURE_PROJECT,
     ) -> None:
         # ``agent_ref`` is the release-family digest (head routes); ``agent_id`` addresses
-        # the production-reactive routes.
+        # the production-reactive routes, inside ``project_id``.
         self.agent_ref = agent_ref
         self.agent_id = agent_id or agent_ref
+        self.project_id = project_id
         self.principal = "ingest-key-1"  # the calling ingest key (P-ingest)
         self.principal_kind = "ingest"  # "human" for a portal session
         self.notifications: list[dict[str, Any]] = []
@@ -375,11 +383,18 @@ class StrictBackend:
         values = dict(
             zip(route.param_names, route.regex.match(path).groups(), strict=True)
         )  # type: ignore[union-attr]
+        reactive = "/production-reactive/" in path
+        if reactive:
+            # The wire segments are percent-encoded; validate and compare the decoded value.
+            values = {name: unquote(value) for name, value in values.items()}
+            if values.get("project_id") != self.project_id:
+                self.violations.append(f"{route.operation}: project is not this one")
+                return self._answer(entry, route, 404, refusal("reference_not_found"))
         problems = self._check_request(route, values, query, wire)
         if problems:
             self.violations.extend(f"{route.operation}: {p}" for p in problems)
             return self._answer(entry, route, 400, refusal("invalid_request"))
-        expected = self.agent_id if "/production-reactive/" in path else self.agent_ref
+        expected = self.agent_id if reactive else self.agent_ref
         if values.get("agent_ref") != expected:
             return self._answer(entry, route, 404, refusal("reference_not_found"))
         fault = (

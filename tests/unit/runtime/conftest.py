@@ -11,9 +11,11 @@ from typing import Any
 
 import pytest
 
+from .reactive_fake import FIXTURE_PROJECT
+
 PROJECT = "proj-1"
 #: The vendored contract pins project_id to the ``project_<hex>`` shape.
-REACTIVE_PROJECT = "project_" + "a" * 32
+REACTIVE_PROJECT = FIXTURE_PROJECT
 AGENT = "agent-1"
 PREFIX = f"/api/v1beta/projects/{PROJECT}"
 FIXTURES = Path(__file__).parent / "fixtures"

@@ -19,6 +19,7 @@ from traigent.runtime.hosted import (
     ReactiveClient,
     ReactiveError,
     ReactiveNotFoundError,
+    TokenMap,
     build_candidate,
     deploy_key,
     parse_refusal,
@@ -603,13 +604,87 @@ def test_an_invalid_agent_id_raises_before_any_request(agent_id: str) -> None:
     assert calls == []
 
 
-def test_a_missing_agent_id_raises_before_any_request() -> None:
+def test_a_missing_agent_id_raises_before_any_request(monkeypatch: Any) -> None:
+    monkeypatch.delenv("TRAIGENT_REACTIVE_AGENT_ID", raising=False)
     calls: list[str] = []
     client = _recording_client(calls, agent_id=None)
     with pytest.raises(RuntimeRequirementError) as err:
         client.list_attempts()
+    assert err.value.path == "TRAIGENT_REACTIVE_AGENT_ID"
+    assert "TRAIGENT_REACTIVE_AGENT_ID" in str(err.value)
+    assert calls == []
+
+
+def test_the_agent_id_falls_back_to_the_reactive_env_var_only(monkeypatch: Any) -> None:
+    monkeypatch.setenv("TRAIGENT_REACTIVE_AGENT_ID", "agent-from-env")
+    monkeypatch.setenv("TRAIGENT_AGENT_ID", "observability-only")
+    calls: list[str] = []
+    client = _recording_client(calls, agent_id=None)
+    assert client.agent_id == "agent-from-env"
+    with pytest.raises(ReactiveNotFoundError):  # the recorder answers 404
+        client.list_attempts()
+    assert "/agents/agent-from-env/" in calls[0]
+    explicit = _recording_client(calls, agent_id="explicit")
+    assert explicit.agent_id == "explicit"
+
+
+@pytest.mark.parametrize("agent_id", [".", ".."])
+def test_a_dot_segment_agent_id_is_refused_before_any_request(agent_id: str) -> None:
+    calls: list[str] = []
+    with pytest.raises(RuntimeRequirementError) as err:
+        _recording_client(calls, agent_id=agent_id)
     assert err.value.path == "agent_id"
     assert calls == []
+
+
+@pytest.mark.parametrize("project_id", [".", ".."])
+def test_a_dot_segment_project_id_is_refused_before_any_request(
+    project_id: str,
+) -> None:
+    calls: list[str] = []
+    client = _recording_client(calls, project_id=project_id)
+    with pytest.raises(RuntimeRequirementError) as err:
+        client.list_attempts()
+    assert err.value.path == "project_id"
+    assert calls == []
+
+
+def test_an_agent_id_with_a_space_round_trips_through_the_strict_fake() -> None:
+    from .reactive_fake import FIXTURE_PROJECT, StrictBackend
+
+    backend = StrictBackend(make_ref("agent", 1), agent_id="agent one")
+    client = ReactiveClient(
+        make_ref("agent", 1),
+        TokenMap(Path("/nonexistent-token-state")),
+        project_id=FIXTURE_PROJECT,
+        agent_id="agent one",
+        transport=backend.transport,
+    )
+    assert client.list_attempts()["items"] == []
+    assert backend.violations == []
+    assert backend.log[-1]["path"].endswith(
+        "/agents/agent%20one/production-reactive/attempts"
+    )
+
+
+def test_the_strict_fake_refuses_a_project_that_is_not_its_own() -> None:
+    from .reactive_fake import StrictBackend
+
+    backend = StrictBackend(
+        make_ref("agent", 1), agent_id=AGENT, project_id="project_" + "b" * 32
+    )
+    client = ReactiveClient(
+        make_ref("agent", 1),
+        TokenMap(Path("/nonexistent-token-state")),
+        project_id=REACTIVE_PROJECT,
+        agent_id=AGENT,
+        transport=backend.transport,
+    )
+    with pytest.raises(ReactiveNotFoundError):
+        client.list_attempts()
+    assert backend.violations == [
+        "production_reactive.list_attempts: project is not this one"
+    ]
 
 
 def test_a_missing_project_id_raises_before_any_request(monkeypatch: Any) -> None:
@@ -663,3 +738,13 @@ def test_reference_not_found_404_maps_to_the_typed_not_found_error() -> None:
     assert isinstance(err.value, ReactiveError)
     assert err.value.code == "reference_not_found"
     assert err.value.status == 404 and not err.value.ambiguous
+
+
+def test_controller_for_carries_the_agent_id_and_keeps_the_digest(
+    tmp_path: Path,
+) -> None:
+    from traigent.runtime.deploy import controller_for
+
+    controller = controller_for(DIGEST, tmp_path, agent_id=AGENT)
+    assert controller.client.agent_ref == DIGEST
+    assert controller.client.agent_id == AGENT

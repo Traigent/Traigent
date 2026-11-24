@@ -33,6 +33,7 @@ from typing import Any
 from urllib.parse import quote
 
 from traigent.config.project import read_optional_project_env
+from traigent.config.tenant import read_optional_env
 from traigent.runtime import manifest
 from traigent.runtime.client import RuntimeClient
 from traigent.runtime.model import (
@@ -125,8 +126,12 @@ PHASES = ("collect", "freeze", "authority", "seal")
 HOSTED_TOKEN_RE = re.compile(r"t[A-Za-z0-9_-]{16}")
 _DIGEST = r"[0-9a-f]{64}"
 _AGENT_REF = r"agentref_[0-9a-f]{32}"
-# Reactive routes address the agent by its id (1-128 characters, one path segment).
-_AGENT_ID = r"[^/]{1,128}"
+# Reactive routes address the agent by its id (1-128 characters, one path segment; "." and
+# ".." are refused because the transport normalizes them away).
+_AGENT_ID = r"(?!\.\.?$)[^/]{1,128}"
+#: Env fallback for the reactive agent id.  Deliberately not ``TRAIGENT_AGENT_ID``, which
+#: is the observability execution-context variable.
+REACTIVE_AGENT_ID_ENV = "TRAIGENT_REACTIVE_AGENT_ID"
 _ATTEMPT_REF = r"attemptref_[0-9a-f]{32}"
 _GRANT_REF = r"grantref_[0-9a-f]{32}"
 _RESERVATION_REF = r"reservationref_[0-9a-f]{32}"
@@ -752,7 +757,18 @@ def build_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class ReactiveClient:
-    """The reactive and deploy routes of one agent, request bodies closed, responses strict."""
+    """The reactive and deploy routes of one agent, request bodies closed, responses strict.
+
+    Two agent identifiers, one per route family:
+
+    * ``agent_ref`` is the ``agentref_<32 hex>`` digest.  Only the release-family head
+      routes (``best-configs/agent-heads``) use it.
+    * ``agent_id`` is the id the agents API returns (1-128 characters, no ``/``).  The
+      production-reactive routes use it; it falls back to ``TRAIGENT_REACTIVE_AGENT_ID``.
+      A reactive call without one raises before any request.
+
+    ``project_id`` falls back to ``TRAIGENT_PROJECT_ID``; the reactive routes need it.
+    """
 
     def __init__(
         self,
@@ -765,7 +781,12 @@ class ReactiveClient:
         api_key: str | None = None,
         transport: Transport | None = None,
     ) -> None:
+        # agent_ref: the ``agentref_`` digest, used only by the release-family head routes.
+        # agent_id: the id the agents API returns, used by the production-reactive routes.
         self.agent_ref = _need(_AGENT_REF, agent_ref, "agent_ref")
+        # An explicit value (even "") is validated as given; only None reads the env var.
+        if agent_id is None:
+            agent_id = read_optional_env(REACTIVE_AGENT_ID_ENV)
         self.agent_id = (
             None if agent_id is None else _need(_AGENT_ID, agent_id, "agent_id")
         )
@@ -793,10 +814,11 @@ class ReactiveClient:
 
     # -- plumbing ---------------------------------------------------------------------------
     def _path(self, tail: str) -> str:
-        # Reactive routes address the agent by id; a missing id fails before any request.
+        # Reactive routes address the agent by id; a missing or unusable id or project
+        # fails here, before any request is built or sent.
         if self.agent_id is None:
-            raise RuntimeRequirementError("invalid_request", "agent_id")
-        if not self.project_id:
+            raise RuntimeRequirementError("invalid_request", REACTIVE_AGENT_ID_ENV)
+        if not self.project_id or self.project_id in (".", ".."):
             raise RuntimeRequirementError("invalid_request", "project_id")
         project = quote(self.project_id, safe="")
         agent = quote(self.agent_id, safe="")
