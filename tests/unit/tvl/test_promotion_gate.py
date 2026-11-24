@@ -283,10 +283,13 @@ class TestPromotionGate:
 
         decision = gate.evaluate(incumbent_metrics, candidate_metrics)
 
-        assert decision.decision == "reject"
+        # X is identical (zero-variance paired differences): non-inferiority cannot be
+        # tested, so promotion is withheld as untestable (no_decision), never promoted.
+        assert decision.decision == "no_decision"
+        assert decision.untestable_objectives == ["x"]
         assert decision.dominance_satisfied is False
         verdicts = {r.name: r.verdict for r in decision.objective_results}
-        assert verdicts["x"] == "inferior"
+        assert verdicts["x"] == "untestable"
         assert verdicts["y"] == "superior"
         x_result = next(r for r in decision.objective_results if r.name == "x")
         assert x_result.p_value_noninf >= gate.policy.alpha

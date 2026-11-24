@@ -16,6 +16,9 @@ from traigent.core.optimized_function import OptimizedFunction
 
 from .conftest import Reactive
 
+# The mocked transport is only reached when the default-offline env is cleared.
+pytestmark = pytest.mark.usefixtures("connected_policy_env")
+
 
 def answer(text: str, **kwargs: Any) -> str:
     return f"{text}:{kwargs.get('temperature')}"
