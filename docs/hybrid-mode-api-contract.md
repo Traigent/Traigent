@@ -504,10 +504,10 @@ The Python SDK applies these rules:
   the trial, including rows from other (unflagged) batches whose response-level
   total was used to price them. A service-level floor given without item costs
   is not carried.
-- Per-row sharing of a response total covers only the rows matched to a
-  requested example. Priced rows are netted out first; if they exhaust the
-  total, the unpriced rows get zero, and if they materially exceed it the
-  figures conflict and the unpriced rows stay unmeasured.
+- A row with no item cost of its own takes an equal share of the response
+  total: the total divided by the number of requested rows, whether or not
+  other rows are priced. Priced rows are not netted out first, so the shares
+  and the item costs together can add up to more than the response total.
 
 You can add any custom operational metrics:
 ```json
