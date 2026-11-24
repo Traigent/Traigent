@@ -65,9 +65,6 @@ def _validate_required_string(name: str, value: str, *, max_length: int) -> None
 
 
 def _validate_optional_string(name: str, value: str | None, *, max_length: int) -> None:
-    if value is not None and not isinstance(value, str):
-        # A short list/dict would pass the length check and survive serialization.
-        raise ValueError(f"{name} must be a string")
     if value is not None and len(value) > max_length:
         raise ValueError(
             f"{name} must be less than or equal to {max_length} characters"

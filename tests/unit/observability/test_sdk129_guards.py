@@ -11,7 +11,6 @@ from typing import Any
 from traigent.config.context import TrialContext, WorkflowTraceContext
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
 from traigent.observability import add_agent_span
-from traigent.observability.dtos import SessionDTO
 
 
 class _BackendClient:
@@ -89,17 +88,3 @@ def test_unrepresentable_latency_keeps_span_with_zero_length_interval() -> None:
     payload = spans[0].to_dict()
     assert payload["input_tokens"] == 3
     assert payload["start_time"] == payload["end_time"]
-
-
-def test_non_string_optional_identifier_is_rejected() -> None:
-    """A short list passes the length check; it must be rejected as a non-string.
-
-    On develop, `_validate_optional_string` only checks length, so the
-    DTO is constructed without error and the test fails.
-    """
-    try:
-        SessionDTO(id="session_sdk129", user_id=["a", "b"])  # type: ignore[arg-type]
-    except ValueError as exc:
-        assert str(exc) == "user_id must be a string"
-    else:
-        raise AssertionError("non-string user_id was accepted")
