@@ -494,25 +494,18 @@ def source_order_for_mode(
             best_config_source_type=type(mode).__name__,
         ) from None
 
-    if normalized is BestConfigSourceMode.OFF:
-        return ()
-    if normalized is BestConfigSourceMode.REPO:
-        return (BestConfigSource.REPO,)
-    if normalized is BestConfigSourceMode.CLOUD:
-        return (BestConfigSource.CLOUD_CACHE, BestConfigSource.CLOUD_FETCH)
-    if normalized is BestConfigSourceMode.AGENT_HEAD:
-        return (BestConfigSource.AGENT_HEAD,)
-    if normalized is BestConfigSourceMode.REPO_THEN_CLOUD:
-        return (
-            BestConfigSource.REPO,
-            BestConfigSource.CLOUD_CACHE,
-            BestConfigSource.CLOUD_FETCH,
-        )
-    return (
-        BestConfigSource.CLOUD_CACHE,
-        BestConfigSource.CLOUD_FETCH,
-        BestConfigSource.REPO,
-    )
+    repo = BestConfigSource.REPO
+    cache = BestConfigSource.CLOUD_CACHE
+    fetch = BestConfigSource.CLOUD_FETCH
+    orders: dict[BestConfigSourceMode, tuple[BestConfigSource, ...]] = {
+        BestConfigSourceMode.OFF: (),
+        BestConfigSourceMode.REPO: (repo,),
+        BestConfigSourceMode.CLOUD: (cache, fetch),
+        BestConfigSourceMode.AGENT_HEAD: (BestConfigSource.AGENT_HEAD,),
+        BestConfigSourceMode.REPO_THEN_CLOUD: (repo, cache, fetch),
+        BestConfigSourceMode.CLOUD_THEN_REPO: (cache, fetch, repo),
+    }
+    return orders[normalized]
 
 
 @diag.boundary(
