@@ -6,9 +6,8 @@ To refresh: copy the files from the new TraigentSchema ref with `git show <ref>:
 update the pins, and say so in the PR.
 
 Source: Traigent/TraigentSchema develop, root `traigent_schema/schemas/`.
-commit sha1: 01e7171ef99074a3b21cc5c1795a597994c0f6cc
-interim pin: Schema PR fix/reactive-agent-ref-is-agent-id @01e7171ef (unmerged); re-vendor from the merged SHA before push.
-The other files below are still the cdbcd68be copies; only the two reactive endpoint files were re-vendored from 01e7171ef.
+commit sha1: 2d2f4145203a67abf8d3c1a476c576bbae216bab
+All files re-vendored from merged develop 2d2f414.
 
 ## Files
 
@@ -22,10 +21,10 @@ optimization/best_config_schema.json sha256: 9ea432e7559f3d2c28e343d6b9dcc44517d
 optimization/best_config_v2_schema.json sha256: 4c1dc43868823f18aa597bc2c67bd24e25c8431073930eb61edfa735370c01ec
 optimization/hybrid_api_options_schema.json sha256: 56f5b08b2ac68a424ed4f180fc4805fe676b2309c6d49a5072ff0b6a97f44b47
 optimization/optimization_strategy_schema.json sha256: dca307773a0ca77358c37220f92140617078a8e3718a41419d3447c7b26ff642
-optimization/tvl_reactive_authority_schema.json sha256: 8f7ec4cf458e1f1940cbf92621187557a6f572c6ffbaddd035849ac70339ff4f
+optimization/tvl_reactive_authority_schema.json sha256: 6819aa0ead33110328b7bbceb531637eec876920f1b6fcbd3c297d64ff347a83
 optimization/tvl_reactive_common_schema.json sha256: 0acb1599b989f096dbd5bcf7e826cebae8677169e0d235c3d2c794ae93e52617
 optimization/tvl_reactive_endpoints.json sha256: f9a34b4b015ef2dcb3cd606ed2f62fd13f27439e1e4e1bd56934bf8b7d6083b4
-optimization/tvl_reactive_facts_schema.json sha256: d8ee10511c51462ba53015b78907a5f1ba6d02f0bb9898c915a48aecf56ca136
+optimization/tvl_reactive_facts_schema.json sha256: 055aff572a49f44053d19ec6b88bbfcd54dbebcea02951b369bd0c0d3452fda7
 optimization/tvl_reactive_import_schema.json sha256: e399010abeef016c04524d5b7611edb9100cff30944f6a921df06fbaa72a6ad9
 optimization/tvl_reactive_notification_schema.json sha256: f642ad95ab0657bae384ce21617dc33175fdc6778ae1f88d6f6e76044bed7fd9
 optimization/tvl_reactive_policy_schema.json sha256: 143c677751683f74a39313a7133b6afcb5e0b86f2fedc430ff720b17230f1a76
