@@ -376,17 +376,26 @@ async def respond(
     enforced (see the module docstring).
     """
     if agent_ref is not None or reactive is not None:
+        # Validate first (pure), so errors surface before the client is built.
+        _validate_hosted_response(fn, requirement)
+        ref = agent_ref or (reactive.agent_ref if reactive else "")
+        state = state_dir or manifest.default_state_dir()
+        # The respond() agent id is the id the agents API returns (reactive routes).
+        # A given ``reactive`` client is used as is; its ids are not overridden.
+        hosted_client = reactive or ReactiveClient(
+            ref,
+            TokenMap(state),
+            project_id=project_id,
+            agent_id=agent_id,
+        )
         return await respond_hosted(
             fn,
             requirement,
-            agent_ref=agent_ref or (reactive.agent_ref if reactive else ""),
-            # The respond() agent id is the id the agents API returns (reactive routes).
-            agent_id=agent_id,
-            project_id=project_id,
+            agent_ref=ref,
             attempt_ref=attempt_ref,
-            client=reactive,
+            client=hosted_client,
             max_fix_cost_usd=max_fix_cost_usd,
-            state_dir=state_dir,
+            state_dir=state,
             clock=clock,
         )
     if confirm is None:
@@ -831,8 +840,6 @@ async def respond_hosted(
     requirement: RuntimeRequirement,
     *,
     agent_ref: str,
-    agent_id: str | None = None,
-    project_id: str | None = None,
     attempt_ref: str | None = None,
     client: ReactiveClient | None = None,
     max_fix_cost_usd: float | None = None,
@@ -851,13 +858,12 @@ async def respond_hosted(
     reservation -> report the result with the reservation generation.  A second start
     is never requested: a start that cannot be confirmed holds, and the Backend lapses
     the attempt for a person to cancel.  A lost lease cancels the run.  Nothing here
-    sends a prompt, an output or any text: only closed facts.
+    sends a prompt, an output or any text: only closed facts.  A caller that needs
+    explicit ids passes ``client=ReactiveClient(..., project_id=, agent_id=)``.
     """
     rule_id = _validate_hosted_response(fn, requirement)
     state = state_dir or manifest.default_state_dir()
-    api = client or ReactiveClient(
-        agent_ref, TokenMap(state), project_id=project_id, agent_id=agent_id
-    )
+    api = client or ReactiveClient(agent_ref, TokenMap(state))
     # The token map is read first: unavailable means nothing is asked or reserved.
     attempt = _select_attempt(api, api.tokens, requirement, rule_id, attempt_ref)
     grant = api.get_grant(attempt["grant_ref"])
