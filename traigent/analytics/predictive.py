@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import bisect
 import statistics
 from collections import Counter
 from collections.abc import Sequence
@@ -94,8 +95,10 @@ class CostForecaster:
                 f"Pruned {items_to_remove} old usage history items to stay within memory limit"
             )
 
-        self.usage_history.append(metric)
-        self.usage_history.sort(key=lambda x: x.timestamp)
+        # History is kept sorted, so insert at the right spot (O(log n) search)
+        # instead of re-sorting the whole list on every add. ``insort`` places an
+        # equal timestamp after existing ones, matching the previous stable sort.
+        bisect.insort(self.usage_history, metric, key=lambda x: x.timestamp)
         logger.debug(f"Added usage data for {metric.timestamp}")
 
     def forecast_costs(

@@ -22,6 +22,7 @@ class UnverifiedFileError(OSError):
 
 _BINARY = getattr(os, "O_BINARY", 0)  # Windows: never translate line endings
 _READ_ATTEMPTS = 3
+_PATH_REPLACED_MSG = "path no longer names the opened file"
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
 
 
@@ -50,16 +51,12 @@ def open_verified(path: str | os.PathLike[str], flags: int, mode: int = 0o600) -
                 raise  # first attempt: genuine missing-file semantics
             # A replacement was already observed, so the file existed: a later
             # absence is a verification failure, not a "missing store".
-            raise UnverifiedFileError("path no longer names the opened file") from None
+            raise UnverifiedFileError(_PATH_REPLACED_MSG) from None
         except _ReplacedError:
             replaced = True
             if attempt == attempts - 1:
-                raise UnverifiedFileError(
-                    "path no longer names the opened file"
-                ) from None
-    raise UnverifiedFileError(
-        "path no longer names the opened file"
-    )  # pragma: no cover
+                raise UnverifiedFileError(_PATH_REPLACED_MSG) from None
+    raise UnverifiedFileError(_PATH_REPLACED_MSG)  # pragma: no cover
 
 
 class _ReplacedError(UnverifiedFileError):
@@ -83,13 +80,13 @@ def _open_once(p: Path, flags: int, mode: int) -> int:
         try:
             named = os.lstat(p)
         except OSError:
-            raise UnverifiedFileError("path no longer names the opened file") from None
+            raise UnverifiedFileError(_PATH_REPLACED_MSG) from None
         if stat.S_ISLNK(named.st_mode):
-            raise UnverifiedFileError("path no longer names the opened file")
+            raise UnverifiedFileError(_PATH_REPLACED_MSG)
         if not os.path.samestat(opened, named):
             if stat.S_ISREG(named.st_mode):
                 raise _ReplacedError("path now names another file")
-            raise UnverifiedFileError("path no longer names the opened file")
+            raise UnverifiedFileError(_PATH_REPLACED_MSG)
     except BaseException:
         os.close(fd)
         raise

@@ -232,7 +232,7 @@
         },
         "fingerprint": {
           "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
-          "description": "Candidate fingerprint (digest of the candidate configuration); required for deploy-eligible candidates."
+          "description": "Candidate fingerprint (digest of the candidate configuration); required for deploy-eligible candidates. Normative: the candidate fingerprint is the lowercase-hex sha256 of the TVL canonical JSON of the candidate configuration object (the tvl-spec canonical_json_digest convention: json.dumps(config, sort_keys=True, indent=2, ensure_ascii=True) + LF; non-finite numbers refused). It is distinct from the best-config storage `config_hash` (sha256 of the compact-JSON storage serialization); the two are never compared directly. The backend binds the fingerprint to the exact pinned configuration version."
         },
         "gate_result_digest": {
           "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",

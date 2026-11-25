@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin
 
 from jsonschema import Draft7Validator
 from referencing import Registry, Resource
@@ -39,6 +39,8 @@ SCHEMAS = (
 )
 SCHEMA_ROOT = SCHEMAS / "schemas"
 BASE = "https://schemas.traigent.ai/"
+#: The project the fake serves; the vendored contract pins project_id to ``project_<hex>``.
+FIXTURE_PROJECT = "project_" + "a" * 32
 ENDPOINT_FILES = (
     "optimization/tvl_reactive_endpoints.json",
     "execution/best_config_deploy_endpoints.json",
@@ -89,31 +91,31 @@ class Route:
 #: is a violation if called, so the SDK cannot rely on it.
 SERVED = frozenset(
     {
-        "stageTvlReactiveEvaluation",
-        "completeTvlReactiveEvaluationProducer",
-        "createTvlReactiveGrant",
-        "reserveTvlReactiveAttempt",
-        "startTvlReactiveAttempt",
-        "reportTvlReactiveAttemptResult",
-        "renewTvlReactiveAttemptLease",
-        "cancelTvlReactiveAttempt",
+        "production_reactive.stage_evaluation",
+        "production_reactive.complete_evaluation",
+        "production_reactive.create_grant",
+        "production_reactive.reserve_attempt",
+        "production_reactive.start_attempt",
+        "production_reactive.report_attempt_result",
+        "production_reactive.heartbeat_attempt",
+        "production_reactive.cancel_attempt",
         "publishTvlDeployResult",
         "finalizeTvlDeployPublishResult",
         "getAgentHeadPinnedConfig",
         # read-only GETs, closed shapes
-        "listTvlReactiveAttempts",
-        "getTvlReactiveAttempt",
-        "getTvlReactiveGrant",
-        "listTvlReactiveNotifications",
-        "getTvlReactiveNotification",
-        "getTvlReactiveApprovalContext",
+        "production_reactive.list_attempts",
+        "production_reactive.get_attempt",
+        "production_reactive.get_grant",
+        "production_reactive.list_notifications",
+        "production_reactive.get_notification",
+        "production_reactive.get_approval_context",
     }
 )
 HOLDER_OPS = frozenset(
     {
-        "startTvlReactiveAttempt",
-        "renewTvlReactiveAttemptLease",
-        "reportTvlReactiveAttemptResult",
+        "production_reactive.start_attempt",
+        "production_reactive.heartbeat_attempt",
+        "production_reactive.report_attempt_result",
     }
 )
 
@@ -132,11 +134,11 @@ def _load_routes() -> list[Route]:
     for name in ENDPOINT_FILES:
         doc = json.loads((SCHEMA_ROOT / name).read_text())
         for path, methods in doc["paths"].items():
-            names = re.findall(r"\{([a-z_]+)\}", path)
-            pattern = re.sub(r"\{[a-z_]+\}", r"([^/]+)", path)
             for method, op in methods.items():
                 if op["operationId"] not in SERVED:
                     continue
+                names = re.findall(r"\{([a-z_]+)\}", path)
+                pattern = re.sub(r"\{[a-z_]+\}", r"([^/]+)", path)
                 routes.append(
                     Route(
                         method.upper(),
@@ -230,8 +232,19 @@ class StrictBackend:
     RESERVATION_TTL = timedelta(minutes=5)
     LEASE = timedelta(minutes=2)
 
-    def __init__(self, agent_ref: str, clock: Clock | None = None) -> None:
+    def __init__(
+        self,
+        agent_ref: str,
+        clock: Clock | None = None,
+        *,
+        agent_id: str | None = None,
+        project_id: str = FIXTURE_PROJECT,
+    ) -> None:
+        # ``agent_ref`` is the release-family digest (head routes); ``agent_id`` addresses
+        # the production-reactive routes, inside ``project_id``.
         self.agent_ref = agent_ref
+        self.agent_id = agent_id or agent_ref
+        self.project_id = project_id
         self.principal = "ingest-key-1"  # the calling ingest key (P-ingest)
         self.principal_kind = "ingest"  # "human" for a portal session
         self.notifications: list[dict[str, Any]] = []
@@ -370,11 +383,26 @@ class StrictBackend:
         values = dict(
             zip(route.param_names, route.regex.match(path).groups(), strict=True)
         )  # type: ignore[union-attr]
+        reactive = "/production-reactive/" in path
+        if reactive:
+            # The wire segments are percent-encoded; validate and compare the decoded value.
+            try:
+                values = {
+                    name: unquote(value, errors="strict")
+                    for name, value in values.items()
+                }
+            except UnicodeDecodeError:
+                self.violations.append(f"{route.operation}: malformed percent-encoding")
+                return self._answer(entry, route, 400, refusal("invalid_request"))
+            if values.get("project_id") != self.project_id:
+                self.violations.append(f"{route.operation}: project is not this one")
+                return self._answer(entry, route, 404, refusal("reference_not_found"))
         problems = self._check_request(route, values, query, wire)
         if problems:
             self.violations.extend(f"{route.operation}: {p}" for p in problems)
             return self._answer(entry, route, 400, refusal("invalid_request"))
-        if values.get("agent_ref") != self.agent_ref:
+        expected = self.agent_id if reactive else self.agent_ref
+        if values.get("agent_ref") != expected:
             return self._answer(entry, route, 404, refusal("reference_not_found"))
         fault = (
             self.faults[route.operation].pop(0)
@@ -398,11 +426,11 @@ class StrictBackend:
             if res is not None and res["holder"] != self.principal:
                 return self._answer(entry, route, 404, refusal("reference_not_found"))
         if (
-            route.operation == "cancelTvlReactiveAttempt"
+            route.operation == "production_reactive.cancel_attempt"
             and self.principal_kind != "human"
         ):
             return self._answer(entry, route, 403, refusal("forbidden"))
-        handler = getattr(self, f"_op_{route.operation}")
+        handler = getattr(self, "_op_" + route.operation.replace(".", "_"))
         status, payload = handler(values, query, wire)
         entry["committed"] = status < 300
         if fault == "drop_after_commit":
@@ -532,7 +560,7 @@ class StrictBackend:
         return None
 
     # -- operations -----------------------------------------------------------------------
-    def _op_listTvlReactiveAttempts(
+    def _op_production_reactive_list_attempts(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         items = [
@@ -547,13 +575,17 @@ class StrictBackend:
         nxt = after + limit if after + limit < len(items) else None
         return 200, {"schema_version": 1, "items": page, "next_after": nxt}
 
-    def _op_getTvlReactiveAttempt(self, v: dict, q: dict, body: Any) -> tuple[int, Any]:
+    def _op_production_reactive_get_attempt(
+        self, v: dict, q: dict, body: Any
+    ) -> tuple[int, Any]:
         attempt = self._attempt(v["attempt_ref"])
         if attempt is None:
             return 404, refusal("reference_not_found")
         return 200, self._public(attempt)
 
-    def _op_getTvlReactiveGrant(self, v: dict, q: dict, body: Any) -> tuple[int, Any]:
+    def _op_production_reactive_get_grant(
+        self, v: dict, q: dict, body: Any
+    ) -> tuple[int, Any]:
         grant = self.grants.get(v["grant_ref"])
         if grant is None:
             return 404, refusal("reference_not_found")
@@ -562,7 +594,7 @@ class StrictBackend:
             out["state"] = "expired"
         return 200, out
 
-    def _op_reserveTvlReactiveAttempt(
+    def _op_production_reactive_reserve_attempt(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         attempt = self._attempt(v["attempt_ref"])
@@ -623,7 +655,7 @@ class StrictBackend:
             "replayed": replayed,
         }
 
-    def _op_startTvlReactiveAttempt(
+    def _op_production_reactive_start_attempt(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         attempt = self._attempt(v["attempt_ref"])
@@ -664,7 +696,7 @@ class StrictBackend:
             "replayed": replayed,
         }
 
-    def _op_renewTvlReactiveAttemptLease(
+    def _op_production_reactive_heartbeat_attempt(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         attempt = self._attempt(v["attempt_ref"])
@@ -691,7 +723,7 @@ class StrictBackend:
             "replayed": False,
         }
 
-    def _op_reportTvlReactiveAttemptResult(
+    def _op_production_reactive_report_attempt_result(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         attempt = self._attempt(v["attempt_ref"])
@@ -758,7 +790,7 @@ class StrictBackend:
             "replayed": replayed,
         }
 
-    def _op_stageTvlReactiveEvaluation(
+    def _op_production_reactive_stage_evaluation(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         self.staged.append(body)
@@ -780,7 +812,7 @@ class StrictBackend:
             "replayed": False,
         }
 
-    def _op_completeTvlReactiveEvaluationProducer(
+    def _op_production_reactive_complete_evaluation(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         return 200, {
@@ -822,7 +854,7 @@ class StrictBackend:
         self.notifications.append(doc)
         return ref
 
-    def _op_listTvlReactiveNotifications(
+    def _op_production_reactive_list_notifications(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         items = [
@@ -836,7 +868,7 @@ class StrictBackend:
         nxt = after + limit if after + limit < len(items) else None
         return 200, {"schema_version": 1, "items": page, "next_after": nxt}
 
-    def _op_getTvlReactiveNotification(
+    def _op_production_reactive_get_notification(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         for n in self.notifications:
@@ -844,17 +876,17 @@ class StrictBackend:
                 return 200, copy.deepcopy(n)
         return 404, refusal("reference_not_found")
 
-    def _op_cancelTvlReactiveAttempt(
+    def _op_production_reactive_cancel_attempt(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         return 403, refusal("forbidden")  # an SDK key is never a P-human
 
-    def _op_createTvlReactiveGrant(
+    def _op_production_reactive_create_grant(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         return 403, refusal("forbidden")
 
-    def _op_getTvlReactiveApprovalContext(
+    def _op_production_reactive_get_approval_context(
         self, v: dict, q: dict, body: Any
     ) -> tuple[int, Any]:
         if self.principal_kind != "human":
