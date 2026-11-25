@@ -6,20 +6,35 @@
     "description": "Closed wire contracts of the TVL 1.4 reactive layer (TRAIG-101, S1): evaluation-batch staging, producer watermarks, human approval grants, reservations, start authorization, effect outcome facts, cancel, attempt and notification read models. Reviewed closed-contract expansion (GNFR-PRIV-002(f)); see docs/tvl-reactive-contracts.md."
   },
   "paths": {
-    "/api/v1/production-reactive/agents/{agent_ref}/evaluations/{instant}/stage": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/evaluations/{instant}/stage": {
       "post": {
         "summary": "Stage facts for one evaluation instant",
-        "description": "TraigentBackend (planned) production reactive routes. Principals: P-ingest (SDK API key scoped to the agent) for customer-monitor and optimization-reporter facts; native-monitor facts are P-system only (403 fact_source_not_permitted). Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "stageTvlReactiveEvaluation",
+        "description": "TraigentBackend production reactive routes. Principals: P-ingest (SDK API key scoped to the agent) for customer-monitor and optimization-reporter facts; native-monitor facts are P-system only (403 fact_source_not_permitted). The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Unknown body fields are refused. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.stage_evaluation",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -160,20 +175,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/evaluations/{instant}/complete": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/evaluations/{instant}/complete": {
       "post": {
         "summary": "Record a producer watermark or slot completion",
-        "description": "Customer monitors post `completed_through_end`; optimization reporters complete or defer their slot. Native completion is evaluator-owned and cannot be posted. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "completeTvlReactiveEvaluationProducer",
+        "description": "Customer monitors post `completed_through_end`; optimization reporters complete or defer their slot. Native completion is evaluator-owned and cannot be posted. The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Unknown body fields are refused. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.complete_evaluation",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -314,20 +344,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/grants": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/grants": {
       "post": {
         "summary": "Record a human approval decision for one effect of an attempt",
-        "description": "P-human only (portal/API session of a user with agent write access); an SDK API key is 403 forbidden. The server clock sets expiry. Not accepted before the attempt exists (Freeze). Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "createTvlReactiveGrant",
+        "description": "P-human only (portal/API session of a user with agent write access); an SDK API key is 403 forbidden. The server clock sets expiry. Not accepted before the attempt exists (Freeze). The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Unknown body fields are refused. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.create_grant",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           }
         ],
@@ -456,20 +501,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/grants/{grant_ref}": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/grants/{grant_ref}": {
       "get": {
         "summary": "Read one recorded grant",
-        "description": "Read model of an approval grant. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "getTvlReactiveGrant",
+        "description": "Read model of an approval grant. The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.get_grant",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -567,20 +627,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/attempts": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/attempts": {
       "get": {
         "summary": "List attempts of an agent",
-        "description": "Newest first; `after` is the ordinal returned as `next_after`. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "listTvlReactiveAttempts",
+        "description": "Newest first; `after` is the ordinal returned as `next_after`. The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. This list operation reads the `limit` and `after` query parameters; a malformed, repeated or undeclared query parameter is refused as invalid_request. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.list_attempts",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -702,20 +777,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/attempts/{attempt_ref}": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/attempts/{attempt_ref}": {
       "get": {
         "summary": "Read one attempt",
-        "description": "Read model of an attempt. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "getTvlReactiveAttempt",
+        "description": "Read model of an attempt. The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.get_attempt",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -813,20 +903,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/attempts/{attempt_ref}/reservations": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/attempts/{attempt_ref}/reservations": {
       "post": {
         "summary": "Reserve an attempt's next effect against a valid grant",
-        "description": "P-ingest. Atomic compare-and-set against a valid grant and a free attempt; returns the server-issued generation. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "reserveTvlReactiveAttempt",
+        "description": "P-ingest. Atomic compare-and-set against a valid grant and a free attempt; returns the server-issued generation. The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Unknown body fields are refused. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.reserve_attempt",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -964,20 +1069,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/attempts/{attempt_ref}/start": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/attempts/{attempt_ref}/start": {
       "post": {
         "summary": "Authorize the start of a reserved effect",
-        "description": "P-ingest, reservation holder. The external run launches only after the 201. No second start on an occurrence. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "startTvlReactiveAttempt",
+        "description": "P-ingest, reservation holder. The external run launches only after the 201. No second start on an occurrence. The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Unknown body fields are refused. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.start_attempt",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -1115,20 +1235,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/attempts/{attempt_ref}/results": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/attempts/{attempt_ref}/results": {
       "post": {
         "summary": "Report an effect outcome fact",
-        "description": "P-ingest, reservation-holder generation. Outcome facts: finished, deploy_result, authority. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "reportTvlReactiveAttemptResult",
+        "description": "P-ingest, reservation-holder generation. Outcome facts: finished, deploy_result, authority. The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Unknown body fields are refused. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.report_attempt_result",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -1266,20 +1401,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/attempts/{attempt_ref}/heartbeat": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/attempts/{attempt_ref}/heartbeat": {
       "post": {
         "summary": "Renew the lease of a reserved or started effect",
-        "description": "P-ingest, reservation holder. Bound to the existing reservation and generation. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "renewTvlReactiveAttemptLease",
+        "description": "P-ingest, reservation holder. Bound to the existing reservation and generation. The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Unknown body fields are refused. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.heartbeat_attempt",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -1417,20 +1567,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/attempts/{attempt_ref}/approval-context": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/attempts/{attempt_ref}/approval-context": {
       "get": {
         "summary": "Read what an approver needs to build a grant",
-        "description": "P-human only (an SDK API key is 403 forbidden). Returns candidate fingerprint, gate-result digest, optimization-start generation and current head generation (both shown) and the attempt state. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "getTvlReactiveApprovalContext",
+        "description": "P-human only (an SDK API key is 403 forbidden). Returns candidate fingerprint, gate-result digest, optimization-start generation and current head generation (both shown) and the attempt state. The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.get_approval_context",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -1528,20 +1693,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/attempts/{attempt_ref}/cancel": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/attempts/{attempt_ref}/cancel": {
       "post": {
         "summary": "Human cancel of a lapsed started effect",
-        "description": "P-human only, after confirming the process is gone. OPTIMIZATION attempts only: appends finished{cancelled} on the same occurrence; any other state is 409 attempt_not_open (a lapsed deployment recovers through finalize and deploy_result). Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "cancelTvlReactiveAttempt",
+        "description": "P-human only, after confirming the process is gone. OPTIMIZATION attempts only: appends finished{cancelled} on the same occurrence; any other state is 409 attempt_not_open (a lapsed deployment recovers through finalize and deploy_result). The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Unknown body fields are refused. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.cancel_attempt",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -1679,20 +1859,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/notifications": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/notifications": {
       "get": {
         "summary": "List recorded notifications with their guard decisions",
-        "description": "Read model; a notification is a recorded row, never described as sent. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "listTvlReactiveNotifications",
+        "description": "Read model; a notification is a recorded row, never described as sent. The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. This list operation reads the `limit`, `after` and `decision` query parameters; a malformed, repeated or undeclared query parameter is refused as invalid_request. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.list_notifications",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
@@ -1827,20 +2022,35 @@
         }
       }
     },
-    "/api/v1/production-reactive/agents/{agent_ref}/notifications/{notification_ref}": {
+    "/api/v1/projects/{project_id}/agents/{agent_ref}/production-reactive/notifications/{notification_ref}": {
       "get": {
         "summary": "Read one recorded notification",
-        "description": "Read model. Tenant and project come from the authenticated request context only (X-Tenant-Id, query strings and unknown body fields are never consulted or are refused). Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} before authentication and body processing, indistinguishable from a missing or inaccessible reference. Every error body is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal except 429.",
-        "operationId": "getTvlReactiveNotification",
+        "description": "Read model. The tenant is resolved from the authenticated context (for a JWT session the backend's tenant resolution may consult X-Tenant-Id under its tenant rules); the path {project_id} is authorised against that tenant and the caller's project role, and bound into the request context by the project guard after authentication. Dark behind PRODUCTION_REQUIREMENTS_ENABLED: while off the route answers the closed 404 {\"success\":false,\"error\":\"reference_not_found\",\"error_code\":\"reference_not_found\",\"message\":\"Reference not found.\"} once the request reaches the feature gate, before authentication and before the route parses the body, indistinguishable from a missing or inaccessible reference (the global request-size guard runs earlier, so an oversized body can still get 413). Every error body, 429 included, is the closed envelope tvl_reactive_common_schema.json#/definitions/Refusal; a 429 also carries a Retry-After header.",
+        "operationId": "production_reactive.get_notification",
         "x-asserted-against-backend": false,
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "description": "Project id of the request; authorized against the authenticated tenant and project context.",
+            "schema": {
+              "type": "string",
+              "pattern": "^project_(default_[0-9a-f]{16}|personal_[0-9a-f]{32}|[0-9a-f]{32})(?![\\s\\S])",
+              "maxLength": 64,
+              "x-content-class": "opaque_ref"
+            }
+          },
           {
             "name": "agent_ref",
             "in": "path",
             "required": true,
-            "description": "Agent ref.",
+            "description": "The agent's id, as returned by the agents API.",
             "schema": {
-              "$ref": "../labels/label_common_schema.json#/definitions/AgentRef"
+              "x-content-class": "opaque_ref",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           {
