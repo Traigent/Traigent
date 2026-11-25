@@ -228,6 +228,20 @@ def _pass_rate_interval(passes: int, scored: int) -> tuple[float | None, float |
     return round(low, 3), round(high, 3)
 
 
+def _ordered_example_ids(
+    per_attempt: Sequence[Mapping[str, str] | None],
+) -> list[str]:
+    """Example ids across attempts, in first-seen order, without repeats."""
+    ids: list[str] = []
+    seen: set[str] = set()
+    for outcomes in per_attempt:
+        for example_id in outcomes or ():
+            if example_id not in seen:
+                seen.add(example_id)
+                ids.append(example_id)
+    return ids
+
+
 def summarize_example_outcomes(
     per_attempt: Sequence[Mapping[str, str] | None],
 ) -> dict[str, dict[str, Any]]:
@@ -241,15 +255,8 @@ def summarize_example_outcomes(
     """
     if len(per_attempt) < MIN_ATTEMPTS:
         return {}
-    ids: list[str] = []
-    seen: set[str] = set()
-    for outcomes in per_attempt:
-        for example_id in outcomes or ():
-            if example_id not in seen:
-                seen.add(example_id)
-                ids.append(example_id)
     summary: dict[str, dict[str, Any]] = {}
-    for example_id in ids:
+    for example_id in _ordered_example_ids(per_attempt):
         marks = [
             UNKNOWN if outcomes is None else outcomes.get(example_id, UNKNOWN)
             for outcomes in per_attempt

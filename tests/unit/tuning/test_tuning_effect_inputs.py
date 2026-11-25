@@ -82,8 +82,8 @@ def test_an_authenticator_that_revokes_before_the_spend_stops_the_optimizer(
     c.approve_optimization(e_ref("E1"), "approver-1", at(10))
     real_write = controller_module._write_json
 
-    def write(path: Path, value: Any) -> None:
-        real_write(path, value)
+    def write(base: Path, path: Path, value: Any) -> None:
+        real_write(base, path, value)
         if value.get("state") == "started":
             revoked[0] = True  # revoked after the approval, before the effect
 

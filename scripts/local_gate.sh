@@ -337,7 +337,7 @@ tvl_venv_prepare() {
           --extra integrations --extra bayesian --extra security -o "$req" >/dev/null \
      && uv pip install -q --python .venv-tvl/bin/python -r "$req" \
      && uv pip install -q --python .venv-tvl/bin/python -r scripts/ci/schema-pin.txt \
-          opentelemetry-exporter-otlp-proto-http==1.45.1 \
+          opentelemetry-exporter-otlp-proto-http==1.45.2 \
      && uv pip install -q --python .venv-tvl/bin/python -r scripts/ci/tvl-pin.txt; then
     rm -f "$req"; printf '%s' "$key" >"$stamp"; return 0
   fi

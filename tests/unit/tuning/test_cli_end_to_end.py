@@ -136,7 +136,7 @@ def test_cli_runs_optimizer_behind_observe_without_evidence_never_deploys(
         report = _json(_run(["step", *ctl]))  # E_NO_OPTIMIZER before the fix
         assert report["finished"]
         assert _json(_run(["status", *ctl]))["pending_deploys"] == []
-        facts = _read_lines(tmp_path / "store" / "controller.jsonl")
+        facts = _read_lines(tmp_path / "store", tmp_path / "store" / "controller.jsonl")
         assert any(
             f.get("code") == "E_NO_PROMOTION_EVIDENCE"
             and f["reason"] == "holdout_missing"

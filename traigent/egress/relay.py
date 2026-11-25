@@ -132,30 +132,27 @@ class _BadBody(Exception):
     pass
 
 
+def _read_chunk_size(rfile: io.BufferedIOBase) -> int:
+    line = rfile.readline(1024)
+    try:
+        size = int(line.split(b";", 1)[0].strip(), 16)
+    except ValueError:
+        raise _BadBody from None
+    if size < 0:
+        raise _BadBody
+    return size
+
+
 def _read_chunked(rfile: io.BufferedIOBase, sink: Any, digest: Any) -> int:
     total = 0
     while True:
-        line = rfile.readline(1024)
-        try:
-            size = int(line.split(b";", 1)[0].strip(), 16)
-        except ValueError:
-            raise _BadBody from None
-        if size < 0:
-            raise _BadBody
+        size = _read_chunk_size(rfile)
         if size == 0:
             # trailers, then the blank line
             while rfile.readline(8192) not in (b"\r\n", b"\n", b""):
                 pass
             return total
-        remaining = size
-        while remaining:
-            data = rfile.read(min(_CHUNK, remaining))
-            if not data:
-                raise _BadBody
-            sink.write(data)
-            digest.update(data)
-            remaining -= len(data)
-            total += len(data)
+        total += _read_fixed(rfile, size, sink, digest)
         if rfile.readline(8) not in (b"\r\n", b"\n"):
             raise _BadBody
 
@@ -268,6 +265,44 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             body.seek(0)
             self._forward(seq, body, size)
 
+    def _send_upstream_head(self, upstream: Any, status: int) -> None:
+        """Send the status line and the non-hop-by-hop upstream headers."""
+        self.send_response_only(status, upstream.reason)
+        named = {
+            token.strip().lower()
+            for value in upstream.msg.get_all("Connection", [])
+            for token in value.split(",")
+        }
+        skip = _HOP_BY_HOP | named
+        for key, value in upstream.getheaders():
+            if key.lower() not in skip:
+                self.send_header(key, value)
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+    def _open_upstream(
+        self,
+        conn: http.client.HTTPConnection,
+        headers: list[tuple[str, str]],
+        body: IO[bytes],
+        size: int,
+    ) -> http.client.HTTPResponse:
+        """Connect, send the request and return the upstream response."""
+        if not self.server.may_connect(self):
+            raise _Stopped
+        conn.connect()
+        # Registered before any header or body byte is sent, so stop() can
+        # cut it even while a large upload is blocked. Kept apart from
+        # conn.sock: http.client drops that once a close-delimited
+        # response starts.
+        if not self.server.attach_upstream(self, conn.sock):
+            raise _Stopped
+        conn.putrequest(self.command, self.path, skip_accept_encoding=True)
+        for key, value in headers:
+            conn.putheader(key, value)
+        conn.endheaders(body if size > 0 else None)
+        return conn.getresponse()
+
     def _forward(self, seq: int, body: IO[bytes], size: int) -> None:
         has_body = size > 0 or self.command in ("POST", "PUT", "PATCH")
         headers = self._forward_headers(size if has_body else None)
@@ -277,20 +312,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         conn = self.server.connect()
         try:
             try:
-                if not self.server.may_connect(self):
-                    raise _Stopped
-                conn.connect()
-                # Registered before any header or body byte is sent, so stop() can
-                # cut it even while a large upload is blocked. Kept apart from
-                # conn.sock: http.client drops that once a close-delimited
-                # response starts.
-                if not self.server.attach_upstream(self, conn.sock):
-                    raise _Stopped
-                conn.putrequest(self.command, self.path, skip_accept_encoding=True)
-                for key, value in headers:
-                    conn.putheader(key, value)
-                conn.endheaders(body if size > 0 else None)
-                upstream = conn.getresponse()
+                upstream = self._open_upstream(conn, headers, body, size)
             except _Stopped:
                 self.cut = True
                 self._reply(502, MSG_UPSTREAM_FAILED)
@@ -306,23 +328,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self._reply(502, MSG_UPGRADE_UNSUPPORTED)
                 return
             try:
-                self.send_response_only(status, upstream.reason)
-                named = {
-                    token.strip().lower()
-                    for value in upstream.msg.get_all("Connection", [])
-                    for token in value.split(",")
-                }
-                for key, value in upstream.getheaders():
-                    if key.lower() in _HOP_BY_HOP | named:
-                        continue
-                    self.send_header(key, value)
-                self.send_header("Connection", "close")
-                self.end_headers()
-                if (
-                    self.command != "HEAD"
-                    and status >= 200
-                    and status not in (204, 304)
-                ):
+                self._send_upstream_head(upstream, status)
+                if _response_has_body(self.command, status):
                     while True:
                         data = upstream.read1(_CHUNK)
                         if not data:
@@ -336,14 +343,35 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             conn.close()
             if self.cut:
                 outcome = "relay_stopped"
-            try:
-                self.server.log.log_response(seq, status, count, outcome)
-            except RelayLogError:
-                if self.cut:
-                    return
-                # The request line is durable and the response is delivered; the log
-                # is now incomplete, so the next request is refused (RelayLog.failed).
+            self._log_response(seq, status, count, outcome)
+
+    def _log_response(
+        self, seq: int, status: int, count: int, outcome: str | None
+    ) -> None:
+        try:
+            self.server.log.log_response(seq, status, count, outcome)
+        except RelayLogError:
+            # The request line is durable and the response is delivered; the log
+            # is now incomplete, so the next request is refused (RelayLog.failed).
+            # A cut exchange stays silent.
+            if not self.cut:
                 self.server.report_log_incomplete()
+
+
+def _response_has_body(command: str, status: int) -> bool:
+    return command != "HEAD" and status >= 200 and status not in (204, 304)
+
+
+def _upstream_tls_context() -> ssl.SSLContext:
+    """TLS context for the upstream hop: system CAs, certificate and hostname checks on.
+
+    There is deliberately no insecure mode: verification cannot be turned off.
+    """
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.verify_mode = ssl.CERT_REQUIRED
+    context.check_hostname = True
+    return context
 
 
 class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -425,7 +453,7 @@ class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
                 host,
                 port,
                 timeout=_UPSTREAM_TIMEOUT_S,
-                context=ssl.create_default_context(),
+                context=_upstream_tls_context(),
             )
         else:
             conn = http.client.HTTPConnection(host, port, timeout=_UPSTREAM_TIMEOUT_S)

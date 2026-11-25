@@ -252,23 +252,9 @@ def _bad(path: Path, line_no: int, problem: str) -> RegressionSetError:
     )
 
 
-def _validate_row(path: Path, line_no: int, row: Any) -> dict[str, Any]:
-    if not isinstance(row, dict):
-        raise _bad(path, line_no, "row is not a JSON object")
-    if "input" not in row or "output" not in row:
-        raise _bad(path, line_no, "row lacks the 'input' or 'output' field")
-    metadata = row.get("metadata")
-    if not isinstance(metadata, dict):
-        raise _bad(path, line_no, "'metadata' is missing or not an object")
-    if not isinstance(metadata.get("example_id"), str):
-        raise _bad(path, line_no, "'metadata.example_id' is missing or not a string")
-    if not isinstance(metadata.get("content_digest"), str):
-        raise _bad(
-            path, line_no, "'metadata.content_digest' is missing or not a string"
-        )
-    regression = metadata.get("regression")
-    if not isinstance(regression, dict):
-        raise _bad(path, line_no, "'metadata.regression' is missing or not an object")
+def _validated_schema_version(
+    path: Path, line_no: int, regression: dict[str, Any]
+) -> int:
     version = regression.get("schema_version")
     if version is None:
         raise _bad(
@@ -288,6 +274,27 @@ def _validate_row(path: Path, line_no: int, row: Any) -> dict[str, Any]:
             f"schema_version {version} is newer than this SDK reads "
             f"({MAX_READ_SCHEMA_VERSION}); upgrade traigent",
         )
+    return version
+
+
+def _validate_row(path: Path, line_no: int, row: Any) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        raise _bad(path, line_no, "row is not a JSON object")
+    if "input" not in row or "output" not in row:
+        raise _bad(path, line_no, "row lacks the 'input' or 'output' field")
+    metadata = row.get("metadata")
+    if not isinstance(metadata, dict):
+        raise _bad(path, line_no, "'metadata' is missing or not an object")
+    if not isinstance(metadata.get("example_id"), str):
+        raise _bad(path, line_no, "'metadata.example_id' is missing or not a string")
+    if not isinstance(metadata.get("content_digest"), str):
+        raise _bad(
+            path, line_no, "'metadata.content_digest' is missing or not a string"
+        )
+    regression = metadata.get("regression")
+    if not isinstance(regression, dict):
+        raise _bad(path, line_no, "'metadata.regression' is missing or not an object")
+    version = _validated_schema_version(path, line_no, regression)
     if not isinstance(regression.get("label"), str):
         raise _bad(path, line_no, "'metadata.regression.label' is not a string")
     if not isinstance(regression.get("provenance"), list):

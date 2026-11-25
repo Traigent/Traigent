@@ -1087,6 +1087,15 @@ class OptimizationLogger:
         from traigent.utils.outcome_matrix import build_outcome_matrix
 
         matrix = build_outcome_matrix(optimization_result)
+        if not self.log_example_content:
+            # Honor the content opt-out like the trial serializer does: the
+            # model's answers are customer content, so none reach the file. The
+            # in-memory ``OptimizationResult.eval_audit`` builds its own matrix
+            # and still sees them, so the consensus detector keeps working there;
+            # only an audit run later over this persisted file loses it.
+            for example in matrix.get("examples") or []:
+                for cell in (example.get("cells") or {}).values():
+                    cell["predicted"] = None
         if not matrix.get("examples"):
             logger.debug(
                 "No per-example results for %s; skipping outcome matrix", self.run_id

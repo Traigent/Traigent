@@ -95,7 +95,8 @@ Cell fields record only what the run actually produced — no fabricated values:
   placeholder, not a measurement.
 * ``predicted`` is the model's actual answer for the cell (``actual_output``
   verbatim). It is recorded **only on non-correct cells** (``success is not
-  True`` — the wrong and indeterminate cells) and is ``null`` otherwise. That is
+  True``, or a finite ``score``/``accuracy`` below the audit's success threshold
+  — the wrong and indeterminate cells) and is ``null`` otherwise. That is
   exactly the subset the #1880 cross-family consensus detector (D7) reads to tell
   whether models from different families agreed on the *same* wrong answer;
   clearly-correct cells never anchor consensus, so their (potentially large)
@@ -249,13 +250,18 @@ def _extract_cell(ex: Any) -> dict[str, Any]:
     # The model's actual answer for this cell, recorded verbatim (no coercion) so
     # the #1880 cross-family consensus detector (D7) can compare answers across
     # configs/families straight from the persisted matrix. Stored ONLY when the
-    # cell is not clearly correct (``success is not True`` — the wrong and
-    # indeterminate cells), which is exactly the subset D7 reads: a clearly-correct
-    # cell never anchors consensus, so keeping its full model output would only
-    # bloat the persisted matrix (examples x configs x output length) with data no
-    # detector reads. ``None`` for clearly-correct cells and when the run captured
-    # no output (e.g. a failed example).
-    predicted = _get(ex, "actual_output") if success is not True else None
+    # cell is not clearly correct: ``success is not True`` (the wrong and
+    # indeterminate cells) OR the scoring signal says wrong (``score`` /
+    # ``accuracy`` below ``eval_audit.DEFAULT_SUCCESS_THRESHOLD``). The second
+    # clause matters because ``ExampleResult.success`` only means "executed
+    # without error", so a wrong-but-executed answer has ``success=True``.
+    # That is exactly the subset D7 reads: a clearly-correct cell never anchors
+    # consensus, so keeping its full model output would only bloat the persisted
+    # matrix (examples x configs x output length) with data no detector reads.
+    # ``None`` for clearly-correct cells and when the run captured no output
+    # (e.g. a failed example).
+    keep_predicted = success is not True or _is_wrong_by_score(score, accuracy)
+    predicted = _get(ex, "actual_output") if keep_predicted else None
 
     cell: dict[str, Any] = {
         "score": score,
@@ -270,6 +276,19 @@ def _extract_cell(ex: Any) -> dict[str, Any]:
         "error": error,
     }
     return cell
+
+
+def _is_wrong_by_score(score: Any, accuracy: Any) -> bool:
+    """Whether the audit would count this cell's scoring signal as wrong.
+
+    Delegates to ``eval_audit.cell_is_correct`` (same threshold, same
+    score-then-accuracy order, same NaN/inf handling) on a signal-only cell, so
+    the two can never disagree.
+    """
+    from traigent.utils.eval_audit import DEFAULT_SUCCESS_THRESHOLD, cell_is_correct
+
+    cell = {"score": score, "accuracy": accuracy}
+    return cell_is_correct(cell, DEFAULT_SUCCESS_THRESHOLD) is False
 
 
 def _config_hash(config: Any) -> str:
@@ -660,6 +679,30 @@ def select_failing_example_ids(
     return failing
 
 
+def _row_failure_basis(
+    cells_by_id: Mapping[Any, Any],
+    selected_ids: Iterable[Any],
+    threshold: float,
+) -> tuple[str, str] | None:
+    """``(failed_by, metric_field)`` when every selected cell failed, else None."""
+    reasons: set[str] = set()
+    fields: set[str] = set()
+    for trial_id in selected_ids:
+        cell = cells_by_id.get(trial_id)
+        if not isinstance(cell, Mapping) or (_classify_cell(cell, threshold) != _FAIL):
+            return None
+        if cell.get("error") is not None or cell.get("success") is False:
+            reasons.add("error")
+            fields.add("error")
+        else:
+            reasons.add("score")
+            fields.add("score" if cell.get("score") is not None else "accuracy")
+    return (
+        reasons.pop() if len(reasons) == 1 else "mixed",
+        fields.pop() if len(fields) == 1 else "mixed",
+    )
+
+
 def select_failure_basis(
     matrix: Mapping[str, Any],
     example_ids: Iterable[str],
@@ -704,23 +747,7 @@ def select_failure_basis(
         example_id, cells_by_id = _row_id_and_cells(position, row)
         if example_id not in wanted or example_id in basis:
             continue
-        reasons: set[str] = set()
-        fields: set[str] = set()
-        for trial_id in selected_ids:
-            cell = cells_by_id.get(trial_id)
-            if not isinstance(cell, Mapping) or (
-                _classify_cell(cell, threshold) != _FAIL
-            ):
-                break
-            if cell.get("error") is not None or cell.get("success") is False:
-                reasons.add("error")
-                fields.add("error")
-            else:
-                reasons.add("score")
-                fields.add("score" if cell.get("score") is not None else "accuracy")
-        else:
-            basis[example_id] = (
-                reasons.pop() if len(reasons) == 1 else "mixed",
-                fields.pop() if len(fields) == 1 else "mixed",
-            )
+        row_basis = _row_failure_basis(cells_by_id, selected_ids, threshold)
+        if row_basis is not None:
+            basis[example_id] = row_basis
     return basis
