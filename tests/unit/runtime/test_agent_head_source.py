@@ -16,6 +16,8 @@ from traigent.core.optimized_function import OptimizedFunction
 
 from .conftest import Reactive
 
+pytestmark = pytest.mark.usefixtures("connected_policy_env")
+
 
 def answer(text: str, **kwargs: Any) -> str:
     return f"{text}:{kwargs.get('temperature')}"

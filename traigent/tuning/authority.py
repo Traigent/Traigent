@@ -180,7 +180,12 @@ def authority_from_config(
     approvers = config.get("approvers")
     authority: ApproverAuthority | None = None
     if approvers is not None:
-        if not isinstance(approvers, Iterable) or isinstance(approvers, (str, bytes)):
+        if (
+            not isinstance(approvers, Iterable)
+            or isinstance(
+                approvers, (str, bytes, Mapping)
+            )  # a mapping's values would be dropped
+        ):
             raise TuningError(E_AUTHORITY_CONFIG, "approvers must be a list")
         mode = str(config.get("mode", LOCAL_TRUSTED))
         if mode == PLATFORM:
