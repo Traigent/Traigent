@@ -575,8 +575,10 @@ interpreter exit.
 
 **A**: Yes, for local optimization metadata. The default portal-backed path can
 send tuned config-space values, configuration IDs/schema, and numeric metrics;
-use privacy-mode redaction when backend coordination is needed without tuned
-string values, or `offline=True` for zero Traigent backend egress.
+session creation sends the configuration space itself, including tuned string
+choices, so privacy-mode redaction of per-trial configuration values does not
+keep those strings off the backend. Use `offline=True` for zero Traigent backend
+egress.
 
 ### Q: How do I verify telemetry is disabled?
 
