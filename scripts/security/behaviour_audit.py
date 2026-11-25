@@ -81,7 +81,7 @@ NETWORK_PINS: dict[str, str] = {
 #: Well-formed but worthless key (traigent/cloud/api_key_manager.py
 #: validate_format: ``tg_`` + 61 word characters). It only ever reaches the
 #: loopback stub or a blocked lookup.
-DUMMY_API_KEY = "tg_" + "behaviour_audit_dummy_key".ljust(61, "0")
+DUMMY_API_KEY = "tg_" + "behaviour_audit_dummy_key".ljust(61, "0")  # pragma: allowlist secret
 
 #: Env vars that could make a workload reach a real service; cleared in the child.
 _SCRUBBED_ENV_PREFIXES = (
@@ -630,6 +630,10 @@ def child_env(
             "TRAIGENT_MOCK_LLM": "true",
             "OPENAI_API_KEY": "mock-key-for-behaviour-audit",  # pragma: allowlist secret
             "PYTHONUNBUFFERED": "1",
+            # CI=true (the workflow) makes the SDK refuse to optimise without
+            # an explicit approval; without it the workload aborts before any
+            # network code and the observed egress set is empty.
+            "TRAIGENT_RUN_APPROVED": "1",
         }
     )
     if backend_url is not None:
