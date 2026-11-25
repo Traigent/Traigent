@@ -81,7 +81,9 @@ NETWORK_PINS: dict[str, str] = {
 #: Well-formed but worthless key (traigent/cloud/api_key_manager.py
 #: validate_format: ``tg_`` + 61 word characters). It only ever reaches the
 #: loopback stub or a blocked lookup.
-DUMMY_API_KEY = "tg_" + "behaviour_audit_dummy_key".ljust(61, "0")  # pragma: allowlist secret
+DUMMY_API_KEY = "tg_" + "behaviour_audit_dummy_key".ljust(  # pragma: allowlist secret
+    61, "0"
+)
 
 #: Env vars that could make a workload reach a real service; cleared in the child.
 _SCRUBBED_ENV_PREFIXES = (
