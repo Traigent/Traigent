@@ -251,6 +251,9 @@ To approve, use one of these methods:
 def check_ci_approval(traigent_config: TraigentConfig) -> None:
     """Check if approval is required and granted for CI runs.
 
+    This SDK-side gate applies to ``local`` execution mode only; in any other
+    mode it returns immediately and approval is not checked here.
+
     Args:
         traigent_config: Traigent configuration
 
