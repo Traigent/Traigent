@@ -32,13 +32,13 @@ def stepped_int_values(low: int, high: int, step: int) -> tuple[int, ...]:
     """Build the integer grid, preserving the inclusive high endpoint."""
 
     if step <= 0 or low > high:
-        return ()
-    values = tuple(range(low, high + 1, step))
+        return tuple[int, ...]()
+    values = list(range(low, high + 1, step))
     if not values:
-        return (low,)
-    if values[-1] != high:
-        return (*values, high)
-    return values
+        values.append(low)
+    elif values[-1] != high:
+        values.append(high)
+    return tuple(values)
 
 
 def stepped_int_contains(low: int, high: int, step: int, value: int) -> bool:

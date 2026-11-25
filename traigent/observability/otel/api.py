@@ -282,6 +282,20 @@ def _init_api_key(api_key: str | None) -> str:
     return key
 
 
+@dataclass(frozen=True)
+class _ExportSettings:
+    """Batching, timeout and flush settings handed to the exporter and processor."""
+
+    max_batch_bytes: int
+    export_timeout_s: float
+    max_queue_spans: int
+    schedule_delay_s: float
+    max_batch_spans: int
+    exit_flush: bool
+    exit_flush_timeout_s: float
+    on_drop: Callable[[str, int], None] | None
+
+
 def _build_exporting_processor(
     provider: Any,
     snap_key: str | None,
@@ -291,15 +305,7 @@ def _build_exporting_processor(
     transport: Transport | None,
     mode: Any,
     allowed_span_names: Sequence[str] | None,
-    *,
-    max_batch_bytes: int,
-    export_timeout_s: float,
-    max_queue_spans: int,
-    schedule_delay_s: float,
-    max_batch_spans: int,
-    exit_flush: bool,
-    exit_flush_timeout_s: float,
-    on_drop: Callable[[str, int], None] | None,
+    settings: _ExportSettings,
 ) -> tuple[TraigentSpanProcessor, TraigentOTLPExporter]:
     """Build the exporter and span processor the gate validated and attach them."""
     # send exactly what the gate validated: never re-read key/destination
@@ -317,18 +323,18 @@ def _build_exporting_processor(
         transport or UrllibTransport(f"{url}/v1/traces", headers),
         content_mode=mode,
         allowed_span_names=allowed_span_names,
-        max_batch_bytes=max_batch_bytes,
-        export_timeout=export_timeout_s,
+        max_batch_bytes=settings.max_batch_bytes,
+        export_timeout=settings.export_timeout_s,
     )
     processor = TraigentSpanProcessor(
         exporter,
-        max_queue_spans=max_queue_spans,
-        schedule_delay_s=schedule_delay_s,
-        max_batch_spans=max_batch_spans,
-        max_batch_bytes=max_batch_bytes,
-        exit_flush=exit_flush,
-        exit_flush_timeout_s=exit_flush_timeout_s,
-        on_drop=on_drop,
+        max_queue_spans=settings.max_queue_spans,
+        schedule_delay_s=settings.schedule_delay_s,
+        max_batch_spans=settings.max_batch_spans,
+        max_batch_bytes=settings.max_batch_bytes,
+        exit_flush=settings.exit_flush,
+        exit_flush_timeout_s=settings.exit_flush_timeout_s,
+        on_drop=settings.on_drop,
     )
     # bind the exporter and processor to this credential so a closed
     # ``403 optimization_only`` seen for it (by any SDK client) stops them
@@ -432,14 +438,16 @@ def init(
                 transport,
                 mode,
                 allowed_span_names,
-                max_batch_bytes=max_batch_bytes,
-                export_timeout_s=export_timeout_s,
-                max_queue_spans=max_queue_spans,
-                schedule_delay_s=schedule_delay_s,
-                max_batch_spans=max_batch_spans,
-                exit_flush=exit_flush,
-                exit_flush_timeout_s=exit_flush_timeout_s,
-                on_drop=on_drop,
+                _ExportSettings(
+                    max_batch_bytes=max_batch_bytes,
+                    export_timeout_s=export_timeout_s,
+                    max_queue_spans=max_queue_spans,
+                    schedule_delay_s=schedule_delay_s,
+                    max_batch_spans=max_batch_spans,
+                    exit_flush=exit_flush,
+                    exit_flush_timeout_s=exit_flush_timeout_s,
+                    on_drop=on_drop,
+                ),
             )
         if set_global:
             trace.set_tracer_provider(provider)

@@ -99,6 +99,12 @@ def _preceded_by_preflight(
 
 
 def census(src: str, rel: str = "<src>") -> list[str]:
+    # Every tracked name resolves from an import of (or an attribute on) one of
+    # these modules, so source that never mentions one cannot yield a problem.
+    # Skipping it keeps the scan over all of traigent/ well inside the per-test
+    # timeout under coverage tracing, with the same findings.
+    if not any(module in src for module in MODULES):
+        return []
     tree = ast.parse(src)
     alias = _aliases(tree)
     parents = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}

@@ -364,3 +364,28 @@ def test_a_holdout_equal_to_the_optimization_eval_set_is_refused(
     # a different eval set is fine
     digests, _ = eval_set_identity([{"input": {"x": 999}, "output": 1}])
     assert _build(tmp_path, eval_set_digests=digests).legacy_decision == "Promote"
+
+
+def test_a_holdout_row_tagged_synthetic_is_refused(tmp_path: Path) -> None:
+    from traigent.tuning.evidence import read_holdout
+
+    # The tag ExampleSynthesizer writes lands at ``metadata.synthetic``.
+    path = tmp_path / "synth.jsonl"
+    rows = [{"input": {"x": i}, "output": "a"} for i in range(60)]
+    rows[7]["metadata"] = {"synthetic": True, "seed_ids": ["s"], "action": "g"}
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    with pytest.raises(EvidenceUnavailable) as err:
+        read_holdout(path)
+    assert err.value.reason == "holdout_synthetic_rows"
+
+
+def test_untagged_holdout_rows_are_accepted(tmp_path: Path) -> None:
+    from traigent.tuning.evidence import read_holdout
+
+    path = tmp_path / "plain.jsonl"
+    rows = [
+        {"input": {"x": i}, "output": "a", "metadata": {"synthetic": False, "k": 1}}
+        for i in range(3)
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    assert len(read_holdout(path)[1]) == 3

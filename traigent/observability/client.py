@@ -1990,14 +1990,14 @@ class _SyncBatchTransport:
             return event
         if self._health_dispatch_closed:
             self._dropped_health_events += 1
-            return event
-        self._next_health_event_sequence += 1
-        if len(self._health_event_queue) >= 256:
-            self._health_event_queue.popleft()
-            self._dropped_health_events += 1
-        self._health_event_queue.append(
-            (self._next_health_event_sequence, event_type, payload)
-        )
+        else:
+            self._next_health_event_sequence += 1
+            if len(self._health_event_queue) >= 256:
+                self._health_event_queue.popleft()
+                self._dropped_health_events += 1
+            self._health_event_queue.append(
+                (self._next_health_event_sequence, event_type, payload)
+            )
         return event
 
     def _emit_health_events(

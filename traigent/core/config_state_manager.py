@@ -990,7 +990,8 @@ class ConfigStateManager:
     def _resolve_agent_head_best_config(self) -> BestConfigSnapshot:
         """The exact version the agent head pins (``agent_head`` source; no fallback).
 
-        The agent comes from ``TRAIGENT_AGENT_REF``.  The read returns the head's
+        The agent digest comes from ``TRAIGENT_AGENT_REF`` (head route); the reactive
+        agent id, if any, from ``TRAIGENT_REACTIVE_AGENT_ID``.  The read returns the head's
         pinned version and generation together; the spec is validated for schema and
         environment but not bound to this function's id (the head is the agent's).
         """

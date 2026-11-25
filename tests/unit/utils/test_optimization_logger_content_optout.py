@@ -149,3 +149,63 @@ def test_log_dir_gitignore_written(tmp_path):
         .strip()
         .endswith("*")
     )
+
+
+# --- outcome-matrix artifact honors the opt-out ---------------------------
+
+WRONG_ANSWER = "SENSITIVE_WRONG_ANSWER_XYZ"
+
+
+def _wrong_result():
+    from traigent.api.types import ExampleResult, OptimizationResult, OptimizationStatus
+
+    def trial(tid: str, model: str) -> TrialResult:
+        ex = ExampleResult(
+            example_id="ex1",
+            input_data={},
+            expected_output="GOLD",
+            actual_output=WRONG_ANSWER,
+            metrics={"score": 0.0, "accuracy": 0.0},
+            execution_time=0.1,
+            success=True,
+            error_message=None,
+        ).to_dict()
+        return TrialResult(
+            trial_id=tid,
+            config={"model": model},
+            metrics={"accuracy": 0.0},
+            status=TrialStatus("completed"),
+            duration=1.0,
+            timestamp=datetime(2026, 6, 2, tzinfo=UTC),
+            metadata={"example_results": [ex]},
+        )
+
+    return OptimizationResult(
+        trials=[trial("t0", "gpt-4o"), trial("t1", "claude-3-opus")],
+        best_config={"model": "gpt-4o"},
+        best_score=0.0,
+        optimization_id="opt-optout",
+        duration=1.0,
+        convergence_info={},
+        status=OptimizationStatus.COMPLETED,
+        objectives=["accuracy"],
+        algorithm="GridSearchOptimizer",
+        timestamp=datetime(2026, 6, 2, tzinfo=UTC),
+    )
+
+
+def test_outcome_matrix_file_has_no_predicted_when_disabled(tmp_path):
+    log = _logger(tmp_path / "off", log_example_content=False)
+    result = _wrong_result()
+    log.log_outcome_matrix(result)
+    assert WRONG_ANSWER not in _all_disk_text(tmp_path / "off")
+    # in-memory consensus detection is unaffected by the file opt-out
+    audit = result.eval_audit
+    assert audit is not None
+    assert any("cross-family-consensus-on-wrong" in f.detectors for f in audit.flagged)
+
+
+def test_outcome_matrix_file_keeps_predicted_when_enabled(tmp_path):
+    log = _logger(tmp_path / "on", log_example_content=True)
+    log.log_outcome_matrix(_wrong_result())
+    assert WRONG_ANSWER in _all_disk_text(tmp_path / "on")

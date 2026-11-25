@@ -97,9 +97,9 @@ def _rate(value: Any, field: str) -> Decimal:
 
 def _str_list(value: Any, field: str) -> tuple[str, ...]:
     if value is None:
-        return ()
-    if isinstance(value, str):
-        return (value,)
+        value = []
+    elif isinstance(value, str):
+        value = [value]
     if not isinstance(value, Sequence) or not all(isinstance(v, str) for v in value):
         raise TuningError(E_INVALID_TUNING, f"{field}: expected a list of strings")
     return tuple(value)

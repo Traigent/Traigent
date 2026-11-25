@@ -394,7 +394,9 @@ def test_deploy_refuses_a_grant_bound_to_a_candidate_that_was_not_promoted(
         )
     assert getattr(err.value, "code", "") == "deploy_binding_mismatch"
     assert [
-        r for r in b.requests_of("reserveTvlReactiveAttempt") if deploy_ref in r["path"]
+        r
+        for r in b.requests_of("production_reactive.reserve_attempt")
+        if deploy_ref in r["path"]
     ] == []
     assert b.head.generation == 3
 
