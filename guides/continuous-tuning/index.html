@@ -4216,6 +4216,8 @@ requirement's <code>label_in</code>, <code>u</code> = unresolved). TVL computes 
   violation".</li>
 <li>Every holdout row needs an expected <code>output</code>; a row without one refuses the holdout
   (<code>holdout_missing_expected_output</code>).</li>
+<li>A holdout row tagged <code>metadata.synthetic: true</code> (the tag <code>ExampleSynthesizer</code> writes) refuses
+  the holdout (<code>holdout_synthetic_rows</code>): generated rows are not customer-labelled.</li>
 <li>A holdout whose bytes or content equal the optimized function's <code>eval_dataset</code> is refused
   (<code>holdout_is_optimization_eval_set</code>).</li>
 <li>The gate result names the incumbent it measured (fingerprint and generation), and carries the
