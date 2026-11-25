@@ -5659,7 +5659,7 @@ wheels = [
 
 [[package]]
 name = "traigent"
-version = "0.34.2"
+version = "0.34.3.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
