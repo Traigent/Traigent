@@ -12,6 +12,7 @@ import itertools
 import sys
 from typing import Any
 
+import numpy as np
 import pytest
 
 from traigent.utils import discrete_domains as dd
@@ -406,6 +407,12 @@ def test_documented_examples(definition, cardinality, values):
     assert stepped_int_values(0, 10, 4) == (0, 4, 8, 10)
     assert stepped_float_cardinality(0, 1, 0.5) == 3
     assert stepped_float_values(0, 1, 0.5) == (0.0, 0.5, 1.0)
+
+
+def test_stepped_int_values_empty_wrapped_range_keeps_fallback():
+    # high + 1 wraps to the int64 minimum, so range(...) is empty; develop
+    # returns the fallback alone and must not append the high endpoint.
+    assert stepped_int_values(0, np.int64(2**63 - 1), 1) == (0,)
 
 
 @pytest.mark.parametrize(
