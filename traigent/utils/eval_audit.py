@@ -304,8 +304,7 @@ def model_family(model: Any) -> str:
     name = model.strip().lower()
     # Prefer the model half of an explicit "provider/model" identifier, but also
     # let a recognized provider prefix decide (e.g. "openai/…", "anthropic/…").
-    provider = name.split("/", 1)[0] if "/" in name else ""
-    tail = name.split("/", 1)[1] if "/" in name else name
+    provider, tail = _split_provider(name)
     # Bedrock-style ids add a region and/or vendor segment after the provider
     # ("bedrock/us.anthropic.claude-…", "eu.meta.llama3-…"): strip those too.
     bare = _strip_region_vendor(tail.rsplit("/", 1)[-1])
@@ -318,6 +317,12 @@ def model_family(model: Any) -> str:
             if bare.startswith(prefix):
                 return family
     return UNKNOWN_FAMILY
+
+
+def _split_provider(name: str) -> tuple[str, str]:
+    """Split ``provider/model`` into ``(provider, tail)``; no slash -> ``("", name)``."""
+    provider, sep, tail = name.partition("/")
+    return (provider, tail) if sep else ("", name)
 
 
 def _strip_region_vendor(name: str) -> str:
@@ -445,6 +450,39 @@ def _item_defect_features(outcomes: list[bool]) -> dict[str, float]:
     }
 
 
+def _score_example(
+    example: dict[str, Any],
+    trial_family: dict[str, str],
+    d7_active: bool,
+    *,
+    success_threshold: float,
+    intercept: float,
+    coeffs: dict[str, float],
+) -> tuple[str, float, dict[str, float]] | None:
+    """Score one matrix example, or ``None`` when it ran in ``<2`` determinable cells."""
+    example_id = str(example.get("example_id"))
+    cells = example.get("cells") or {}
+    outcomes = [
+        correct
+        for cell in cells.values()
+        if (correct := cell_is_correct(cell, success_threshold)) is not None
+    ]
+    if len(outcomes) < 2:
+        return None  # features undefined on a single column -> excluded
+    features = _item_defect_features(outcomes)
+    features["consensus_wrong"] = 0.0
+    if d7_active:
+        _, _, wrong_families, wrong_values = _example_outcomes(
+            cells, trial_family, success_threshold
+        )
+        if _consensus_on_wrong_flag(example_id, wrong_families, wrong_values):
+            features["consensus_wrong"] = 1.0
+    z = intercept + sum(
+        coeffs.get(name, 0.0) * features[name] for name in _DEFECT_SCORE_FEATURES
+    )
+    return example_id, _logistic(z), features
+
+
 def _compute_defect_scores(
     matrix: dict[str, Any] | None,
     *,
@@ -505,27 +543,16 @@ def _compute_defect_scores(
 
     raw: list[tuple[str, float, dict[str, float]]] = []  # (id, score, features)
     for example in examples:
-        example_id = str(example.get("example_id"))
-        cells = example.get("cells") or {}
-        outcomes = [
-            correct
-            for cell in cells.values()
-            if (correct := cell_is_correct(cell, success_threshold)) is not None
-        ]
-        if len(outcomes) < 2:
-            continue  # features undefined on a single column -> excluded
-        features = _item_defect_features(outcomes)
-        features["consensus_wrong"] = 0.0
-        if d7_active:
-            _, _, wrong_families, wrong_values = _example_outcomes(
-                cells, trial_family, success_threshold
-            )
-            if _consensus_on_wrong_flag(example_id, wrong_families, wrong_values):
-                features["consensus_wrong"] = 1.0
-        z = intercept + sum(
-            coeffs.get(name, 0.0) * features[name] for name in _DEFECT_SCORE_FEATURES
+        scored_example = _score_example(
+            example,
+            trial_family,
+            d7_active,
+            success_threshold=success_threshold,
+            intercept=intercept,
+            coeffs=coeffs,
         )
-        raw.append((example_id, _logistic(z), features))
+        if scored_example is not None:
+            raw.append(scored_example)
 
     if not raw:
         return []

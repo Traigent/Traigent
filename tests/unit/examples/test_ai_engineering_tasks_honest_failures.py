@@ -16,11 +16,20 @@ MAINS = sorted(EXAMPLES_DIR.glob("p*/main.py"))
 _PROBE = """
 import importlib.util, os, sys
 from pathlib import Path
-script = Path(sys.argv[1])
-sys.path.insert(0, str(script.parent))
-spec = importlib.util.spec_from_file_location("example_main", script)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+for index, arg in enumerate(sys.argv[1:]):
+    script = Path(arg)
+    sys.path.insert(0, str(script.parent))
+    # Each example ships sibling modules (``dataset``, ``evaluator``, ...); drop
+    # any a previous example imported, as a fresh interpreter would have none,
+    # so one example never imports another's.
+    for name, mod in list(sys.modules.items()):
+        origin = getattr(mod, "__file__", None)
+        if origin and Path(origin).parent.parent == script.parent.parent and Path(origin).parent != script.parent:
+            del sys.modules[name]
+    spec = importlib.util.spec_from_file_location(f"example_main_{index}", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.path.remove(str(script.parent))
 from traigent.evaluators.base import _get_dataset_root
 root = _get_dataset_root()
 datasets = sorted(Path(root).glob("*.jsonl"))
@@ -135,7 +144,15 @@ runpy.run_path(sys.argv[2], run_name="__main__")
     assert "Optimization completed" not in out
 
 
-def _import_with_root(main: Path, root: Path) -> subprocess.CompletedProcess[str]:
+def _import_with_root(
+    main: Path, root: Path, *more: Path
+) -> subprocess.CompletedProcess[str]:
+    """Import ``main`` (then each of ``more``) in ONE interpreter under ``root``.
+
+    One process per call keeps the test inside the per-test timeout when the
+    subprocess is itself coverage-instrumented: interpreter start plus the
+    ``traigent`` import dominates the cost, so scenarios share a process.
+    """
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     env.update(
         {
@@ -146,7 +163,7 @@ def _import_with_root(main: Path, root: Path) -> subprocess.CompletedProcess[str
         }
     )
     return subprocess.run(
-        [sys.executable, "-c", _PROBE, str(main)],
+        [sys.executable, "-c", _PROBE, str(main), *map(str, more)],
         cwd=root,
         env=env,
         capture_output=True,
@@ -159,15 +176,23 @@ def _import_with_root(main: Path, root: Path) -> subprocess.CompletedProcess[str
 def test_two_examples_under_one_root_keep_separate_files(tmp_path: Path) -> None:
     first = EXAMPLES_DIR / "p0_few_shot_selection" / "main.py"
     second = EXAMPLES_DIR / "p1_token_budget" / "main.py"
-    assert _import_with_root(first, tmp_path).returncode == 0
-    assert _import_with_root(second, tmp_path).returncode == 0
+    proc = _import_with_root(first, tmp_path, second)
+    assert proc.returncode == 0, proc.stderr[-2000:]
     names = sorted(p.name for p in tmp_path.glob("*.jsonl"))
     assert names == [
         "_demo_p0_few_shot_selection_eval_dataset.jsonl",
         "_demo_p1_token_budget_eval_dataset.jsonl",
     ]
-    # A rerun regenerates the example's own file without complaint.
-    assert _import_with_root(first, tmp_path).returncode == 0
+
+
+def test_rerun_regenerates_the_examples_own_file(tmp_path: Path) -> None:
+    first = EXAMPLES_DIR / "p0_few_shot_selection" / "main.py"
+    # The second import finds the file the first one wrote and regenerates it
+    # without complaint.
+    proc = _import_with_root(first, tmp_path, first)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    names = sorted(p.name for p in tmp_path.glob("*.jsonl"))
+    assert names == ["_demo_p0_few_shot_selection_eval_dataset.jsonl"]
 
 
 def test_foreign_existing_file_is_not_overwritten(tmp_path: Path) -> None:
