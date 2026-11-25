@@ -376,12 +376,15 @@ async def respond(
     enforced (see the module docstring).
     """
     if agent_ref is not None or reactive is not None:
+        # Validate first (pure), so errors surface before the client is built.
+        _validate_hosted_response(fn, requirement)
         ref = agent_ref or (reactive.agent_ref if reactive else "")
+        state = state_dir or manifest.default_state_dir()
         # The respond() agent id is the id the agents API returns (reactive routes).
         # A given ``reactive`` client is used as is; its ids are not overridden.
         hosted_client = reactive or ReactiveClient(
             ref,
-            TokenMap(state_dir or manifest.default_state_dir()),
+            TokenMap(state),
             project_id=project_id,
             agent_id=agent_id,
         )
@@ -392,7 +395,7 @@ async def respond(
             attempt_ref=attempt_ref,
             client=hosted_client,
             max_fix_cost_usd=max_fix_cost_usd,
-            state_dir=state_dir,
+            state_dir=state,
             clock=clock,
         )
     if confirm is None:
