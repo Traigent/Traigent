@@ -89,7 +89,7 @@
         },
         "candidate_fingerprint": {
           "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
-          "description": "Deploy only: fingerprint of the promotable candidate."
+          "description": "Deploy only: fingerprint of the promotable candidate. Normative: the candidate fingerprint is the lowercase-hex sha256 of the TVL canonical JSON of the candidate configuration object (the tvl-spec canonical_json_digest convention: json.dumps(config, sort_keys=True, indent=2, ensure_ascii=True) + LF; non-finite numbers refused). It is distinct from the best-config storage `config_hash` (sha256 of the compact-JSON storage serialization); the two are never compared directly. The backend binds the fingerprint to the exact pinned configuration version."
         },
         "gate_result_digest": {
           "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
@@ -250,7 +250,8 @@
           ],
           "properties": {
             "candidate_fingerprint": {
-              "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest"
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+              "description": "Candidate fingerprint of the deploy key. Normative: the candidate fingerprint is the lowercase-hex sha256 of the TVL canonical JSON of the candidate configuration object (the tvl-spec canonical_json_digest convention: json.dumps(config, sort_keys=True, indent=2, ensure_ascii=True) + LF; non-finite numbers refused). It is distinct from the best-config storage `config_hash` (sha256 of the compact-JSON storage serialization); the two are never compared directly. The backend binds the fingerprint to the exact pinned configuration version."
             },
             "gate_result_digest": {
               "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest"
@@ -432,7 +433,8 @@
           ],
           "properties": {
             "candidate_fingerprint": {
-              "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest"
+              "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest",
+              "description": "Candidate fingerprint of the deploy key. Normative: the candidate fingerprint is the lowercase-hex sha256 of the TVL canonical JSON of the candidate configuration object (the tvl-spec canonical_json_digest convention: json.dumps(config, sort_keys=True, indent=2, ensure_ascii=True) + LF; non-finite numbers refused). It is distinct from the best-config storage `config_hash` (sha256 of the compact-JSON storage serialization); the two are never compared directly. The backend binds the fingerprint to the exact pinned configuration version."
             },
             "gate_result_digest": {
               "$ref": "./tvl_reactive_common_schema.json#/definitions/Digest"
@@ -689,7 +691,7 @@
           "description": "The deploy publish-result key. Required when write is succeeded or failed: the Backend accepts write=succeeded only if the durable publish-result record is succeeded, and write=failed with retries_exhausted=true only if head-lock finalization returned cancelled (a tombstone). A lost publish response therefore cannot become deploy_failed."
         }
       },
-      "description": "Effect outcome facts reported by the reservation holder: optimization finished, deploy result, or authority reachability.",
+      "description": "Effect outcome facts reported by the reservation holder: optimization finished, deploy result, or authority reachability. Deploy-result semantics: a client deploy_result CONFIRMS the publish/finalize fact the server has already recorded (the durable publish-result record is the authority); it does not create that fact. The report is deduplicated (a repeated report replays the original receipt and appends no second fact or outcome) and a report that contradicts the server-recorded fact (for example write=succeeded without a succeeded publish record, or a failure without a finalized cancellation tombstone) is refused.",
       "oneOf": [
         {
           "properties": {

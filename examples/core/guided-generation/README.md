@@ -75,9 +75,14 @@ my_agent.optimize_with_guidance(provider, rewrite_llm=my_llm, prompt_param="prom
 
 ## Privacy & IP boundary
 
-- **Your content stays local** — generation runs on your LLM; only the opaque
-  plan request (plan kind + budget + scope) and your existing numeric metrics
-  cross the wire.
+- **Guidance plan request is content-free** — it carries only the plan kind,
+  budget and scope. `privacy_mode` is currently unused for guidance: the request
+  is identical for either value, so it is not a privacy control here.
+- **Your LLM may be hosted** — the generation prompt (and seeds) go to the
+  `rewrite_llm` you supply, which is your provider's service if it is hosted.
+- **Connected tracking can send content** — in connected mode, expanded prompt
+  choices can be sent at session creation and selected prompts in trial
+  results, per your backend tracking settings.
 - **Our signals stay server-side** — the plan is a lossy, opaque projection of
   the tuning signals; it carries no signal names, values, formulas, or per-seed
   counts.

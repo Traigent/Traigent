@@ -3645,23 +3645,8 @@ def _agent_decision_lifecycle_ok(decision: dict[str, Any]) -> bool:
     )
 
 
-def _validated_agent_decision_response(
-    payload: dict[str, Any], *, endpoint: str = "latest"
-) -> dict[str, Any]:
-    """Check an agent-decision response against the whole endpoint contract.
-
-    ``endpoint`` is ``"ensure"`` (the decision is null or OPEN), ``"answer"`` (the decision
-    is always present and ANSWERED) or ``"latest"`` (any status, or null). Nothing is
-    rewritten. Any body outside the contract raises :class:`AnalyticsClientError` with a
-    fixed message (the offending value is never echoed).
-    """
-    if not isinstance(payload, dict) or set(payload) != {"decision"}:
-        raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
-    decision = payload["decision"]
-    if decision is None:
-        if endpoint == "answer":
-            raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
-        return payload
+def _check_agent_decision(decision: Any, endpoint: str) -> None:
+    """Raise AnalyticsClientError unless ``decision`` satisfies the endpoint contract."""
     if not isinstance(decision, dict) or set(decision) != _AGENT_DECISION_KEYS:
         raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
     try:
@@ -3704,6 +3689,26 @@ def _validated_agent_decision_response(
 
     if not ok:
         raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
+
+
+def _validated_agent_decision_response(
+    payload: dict[str, Any], *, endpoint: str = "latest"
+) -> dict[str, Any]:
+    """Check an agent-decision response against the whole endpoint contract.
+
+    ``endpoint`` is ``"ensure"`` (the decision is null or OPEN), ``"answer"`` (the decision
+    is always present and ANSWERED) or ``"latest"`` (any status, or null). Nothing is
+    rewritten. Any body outside the contract raises :class:`AnalyticsClientError` with a
+    fixed message (the offending value is never echoed).
+    """
+    if not isinstance(payload, dict) or set(payload) != {"decision"}:
+        raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
+    decision = payload["decision"]
+    if decision is None:
+        if endpoint == "answer":
+            raise AnalyticsClientError(_MALFORMED_AGENT_DECISION_RESPONSE)
+    else:
+        _check_agent_decision(decision, endpoint)
     return payload
 
 
