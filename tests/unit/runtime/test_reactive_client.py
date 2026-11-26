@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 from pathlib import Path
@@ -1121,6 +1122,33 @@ def test_four_argument_transport_works_when_a_project_is_configured() -> None:
     )
     assert client.get_pinned_config().generation == 1  # no header, no TypeError
     assert len(seen) == 1
+
+
+def test_functools_wrapped_four_argument_transport_gets_the_project_header() -> None:
+    from traigent.runtime.hosted import TokenMap
+
+    def inner(method: str, path: str, params: Any, body: Any) -> Any:
+        return 200, {"schema_version": 1, "generation": 1, "version": 1, "spec": {}}, {}
+
+    seen_headers: list[Any] = []
+
+    @functools.wraps(inner)
+    def wrapper(
+        method: str, url: str, body: Any, token: Any, headers: Any = None
+    ) -> Any:
+        seen_headers.append(headers)
+        return inner(method, url, body, token)
+
+    client = ReactiveClient(
+        DIGEST,
+        TokenMap(Path("/nonexistent-token-state")),
+        project_id=REACTIVE_PROJECT,
+        transport=wrapper,
+    )
+    assert client.get_pinned_config().generation == 1
+    assert len(seen_headers) == 1
+    assert seen_headers[0] is not None
+    assert seen_headers[0].get("X-Project-Id") == REACTIVE_PROJECT
 
 
 def test_keyword_headers_transport_gets_the_header_by_keyword() -> None:

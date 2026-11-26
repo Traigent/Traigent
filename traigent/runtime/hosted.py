@@ -1465,7 +1465,9 @@ class ReactiveClient:
 def _headers_mode(transport: Callable[..., Any]) -> str | None:
     """How ``transport`` takes request headers: ``"positional"``, ``"keyword"`` or ``None``."""
     try:
-        parameters = list(inspect.signature(transport).parameters.values())
+        parameters = list(
+            inspect.signature(transport, follow_wrapped=False).parameters.values()
+        )
     except (TypeError, ValueError):
         return None
     positional = 0
