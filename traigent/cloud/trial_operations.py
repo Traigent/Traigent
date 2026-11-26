@@ -40,6 +40,7 @@ from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
+from traigent.utils.send_policy import _TelemetryAuthSuppressed
 from traigent.utils.thread_timeout import run_in_thread_with_timeout
 from traigent.utils.trial_costs import is_cost_unmeasured, lift_cost_floor_to_body
 from traigent.utils.wire_text import (
@@ -1448,6 +1449,8 @@ class TrialOperations:
                     await asyncio.sleep(delay)
                 raise AssertionError("unreachable: last attempt always returns")
 
+        except _TelemetryAuthSuppressed:
+            return None
         except Exception as exc:
             if is_backend_offline():
                 logger.debug(

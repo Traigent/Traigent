@@ -58,6 +58,7 @@ from traigent.observability.dtos import (
     TraceListResponse,
     TraceObservationsResponse,
     TraceRecord,
+    _SuppressedFlushResult,
     utc_now,
 )
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
@@ -1865,7 +1866,9 @@ class _SyncBatchTransport:
         if result.success:
             if result.result is _BATCH_SUPPRESSED:
                 with self._lock:
-                    self._items_suppressed += len(batch_items) + len(self._buffer)
+                    self._items_suppressed += len(
+                        {item_id for item_id, _ in batch_items} | self._buffer.keys()
+                    )
                     for item_id, _ in batch_items:
                         digest = self._inflight_digests.pop(item_id, None)
                         if digest is not None:
@@ -3219,7 +3222,7 @@ class ObservabilityClient:
                 *warnings,
                 "Observability trace batches were suppressed by telemetry policy",
             ]
-        return FlushResult(
+        flushed = FlushResult(
             success=result.success,
             items_sent=result.items_sent,
             items_pending=result.items_pending,
@@ -3228,8 +3231,10 @@ class ObservabilityClient:
             failed_batches=result.failed_batches,
             errors=result.errors,
             warnings=warnings,
-            items_suppressed=suppressed,
         )
+        if suppressed:
+            return _SuppressedFlushResult(**vars(flushed), items_suppressed=suppressed)
+        return flushed
 
     def _flush_transport_until(self, deadline: float | None) -> FlushResult:
         """Return the current transport truth without waiting past ``deadline``."""
@@ -3759,14 +3764,14 @@ class ObservabilityClient:
     def _post_batch_sync(
         self, traces: list[dict[str, Any]]
     ) -> dict[str, Any] | _SuppressedBatch | None:
+        if oo_egress.is_active(self._optimization_only_policy()):
+            # optimization_only: the server refuses trace ingest; nothing is sent.
+            return None
         if self.config.offline_mode or self._credential_egress_disabled:
             self._log_offline_mode_once()
             return None
         if not may_send_telemetry():
             return _BATCH_SUPPRESSED
-        if oo_egress.is_active(self._optimization_only_policy()):
-            # optimization_only: the server refuses trace ingest; nothing is sent.
-            return None
         # ONE snapshot of destination + headers: validated and sent as-is, never
         # re-read from config after the (possibly slow) gate.
         ingest_url = self.config.ingest_url
@@ -3777,7 +3782,7 @@ class ObservabilityClient:
             headers=snapshot_headers,
         ):
             # fresh process, key unvalidated/restricted/unreachable: send nothing
-            return None
+            return None if may_send_telemetry() else _BATCH_SUPPRESSED
 
         payload = json.dumps({"traces": traces}).encode("utf-8")
         http_request = request.Request(
@@ -4129,7 +4134,7 @@ class ObservabilityClient:
     def _with_suppressed_delivery_warning(self, result: FlushResult) -> FlushResult:
         warning = (
             "Observability trace delivery was suppressed for the remaining batches"
-            if result.items_sent
+            if result.items_sent and not may_send_telemetry()
             else self._suppressed_delivery_warning()
         )
         return replace(result, warnings=[*result.warnings, warning])

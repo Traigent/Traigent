@@ -20,6 +20,7 @@ import weakref
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from functools import partial
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
@@ -111,11 +112,17 @@ from traigent.labels.transport_gate import (
 )
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
 from traigent.utils import optimization_only_egress as oo_egress
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
 from traigent.utils.numeric_validation import positive_int_env
 from traigent.utils.optimization_only_egress import parse_flag
 from traigent.utils.retry import RetryConfig, RetryHandler
+from traigent.utils.send_policy import (
+    _telemetry_key_validation,
+    _telemetry_key_validation_context,
+    _TelemetryAuthSuppressed,
+)
 from traigent.utils.thread_timeout import run_in_thread_with_timeout
 
 BACKEND_CLIENT = "backend client"
@@ -1754,7 +1761,7 @@ class BackendIntegratedClient:
             # Other exceptions (e.g. Edge Analytics mode without a key) continue.
             try:
                 await self.auth_manager.auth.get_headers()
-            except AuthenticationError:
+            except (AuthenticationError, _TelemetryAuthSuppressed):
                 raise
             except Exception as e:
                 # In Edge Analytics mode or when no API key is available, continue without auth
@@ -1814,7 +1821,7 @@ class BackendIntegratedClient:
         # credential change, so each request sends its current credentials.
         try:
             await self.auth_manager.auth.get_headers()
-        except AuthenticationError:
+        except (AuthenticationError, _TelemetryAuthSuppressed):
             # Do NOT fall back to raw-key headers. Re-raise so callers
             # see the auth failure instead of getting a session that
             # silently emits a rejected key.
@@ -2364,12 +2371,13 @@ class BackendIntegratedClient:
                 in_running_loop = False
 
             if in_running_loop:
-                headers = run_in_thread_with_timeout(
-                    _run_in_new_loop, min(self.timeout, 30.0)
-                )
+                run: Callable[[], dict[str, str]] = _run_in_new_loop
+                if _telemetry_key_validation.get():
+                    run = partial(_telemetry_key_validation_context().run, run)
+                headers = run_in_thread_with_timeout(run, min(self.timeout, 30.0))
             else:
                 headers = asyncio.run(_get_headers_async())
-        except AuthenticationError:
+        except (AuthenticationError, _TelemetryAuthSuppressed):
             # Re-raise: a backend-rejected key must NEVER be downgraded to a
             # silent unauthenticated POST. Callers (e.g.
             # ``upload_example_features``) catch this and abort before any
@@ -2594,14 +2602,22 @@ class BackendIntegratedClient:
 
         def _get_head() -> Any:
             try:
+                if is_backend_offline():
+                    return None
                 preflight_requests("GET", url, params=params)
-                response = requests.get(  # nosec B113 - timeout is provided
-                    url,
-                    params=params,
-                    headers=headers,
-                    timeout=min(self.timeout, 30.0),
-                    allow_redirects=False,
+                response = (
+                    requests.get(  # nosec B113 - timeout is provided
+                        url,
+                        params=params,
+                        headers=headers,
+                        timeout=min(self.timeout, 30.0),
+                        allow_redirects=False,
+                    )
+                    if not is_backend_offline()
+                    else None
                 )
+                if response is None:
+                    return None
             except (
                 requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
@@ -2617,6 +2633,8 @@ class BackendIntegratedClient:
         response = _run_sync_backend_request_with_retry(
             AGENT_HEAD_FETCH, _get_head, self.max_retries
         )
+        if response is None:
+            raise CloudEgressBlockedError("fetch agent head")
         _refuse_redirect_response(response, AGENT_HEAD_FETCH)
         if response.status_code >= 400:
             raise CloudServiceError(
@@ -3388,9 +3406,9 @@ class BackendIntegratedClient:
         """Upload per-run example features for backend-side analytics."""
         from traigent.utils.send_policy import may_send_telemetry
 
+        self._raise_if_backend_egress_disabled("upload example features")
         if not may_send_telemetry():
             return False
-        self._raise_if_backend_egress_disabled("upload example features")
         # Per-example features describe the dataset: not available in this mode.
         oo_egress.refuse_if_active(
             "example_feature_upload", explicit=oo_egress.policy_of(self)
@@ -3418,8 +3436,11 @@ class BackendIntegratedClient:
         # ``CloudServiceError`` from an unexpected failure), do NOT issue an
         # unauthenticated POST. Short-circuit and return False -- the
         # request must never go out without auth.
+        validation = _telemetry_key_validation.set(True)
         try:
             headers = self._get_sync_auth_headers(target="backend")
+        except _TelemetryAuthSuppressed:
+            return False
         except AuthenticationError as exc:
             logger.debug(
                 "Skipping example feature upload for run %s: auth rejected (%s)",
@@ -3434,6 +3455,8 @@ class BackendIntegratedClient:
                 exc,
             )
             return False
+        finally:
+            _telemetry_key_validation.reset(validation)
         if not may_send_telemetry():
             return False
         url = self._build_feature_upload_url(experiment_run_id)
@@ -3498,16 +3521,22 @@ class BackendIntegratedClient:
                 return None
             try:
                 body_json = freeze_json_body(payload)
-                preflight_requests("POST", url, json=body_json)
                 if not may_send_telemetry():
                     return None
-                response = requests.post(  # nosec B113 - timeout is provided
-                    url,
-                    json=body_json,
-                    headers=headers,
-                    timeout=min(self.timeout, 30.0),
-                    allow_redirects=False,
+                preflight_requests("POST", url, json=body_json)
+                response = (
+                    requests.post(  # nosec B113 - timeout is provided
+                        url,
+                        json=body_json,
+                        headers=headers,
+                        timeout=min(self.timeout, 30.0),
+                        allow_redirects=False,
+                    )
+                    if may_send_telemetry()
+                    else None
                 )
+                if response is None:
+                    return None
                 observe_requests_response(response)
             except (
                 requests.exceptions.ConnectionError,

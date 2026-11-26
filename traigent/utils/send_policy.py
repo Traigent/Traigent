@@ -1,7 +1,7 @@
 """Live policy for SDK-owned telemetry delivery."""
 
 import os
-from contextvars import ContextVar
+from contextvars import Context, ContextVar
 
 from traigent.utils.env_config import is_backend_offline, is_truthy
 
@@ -10,6 +10,24 @@ from traigent.utils.env_config import is_backend_offline, is_truthy
 _usage_analytics_submission: ContextVar[bool] = ContextVar(
     "usage_analytics_submission", default=False
 )
+_telemetry_key_validation: ContextVar[bool] = ContextVar(
+    "telemetry_key_validation", default=False
+)
+
+
+class _TelemetryAuthSuppressed(Exception):
+    """Telemetry policy withheld validation, so no auth headers were issued."""
+
+
+def _is_telemetry_key_validation() -> bool:
+    return _telemetry_key_validation.get() or _usage_analytics_submission.get()
+
+
+def _telemetry_key_validation_context() -> Context:
+    """Carry just the telemetry marker to a validation worker."""
+    context = Context()
+    context.run(_telemetry_key_validation.set, True)
+    return context
 
 
 def may_send_telemetry() -> bool:

@@ -875,16 +875,24 @@ class WorkflowTracesClient:
         if not may_send_telemetry():
             return TraceIngestionResponse(success=False, error="offline")
 
-        if oo_egress.is_active(
+        restricted = oo_egress.is_active(
             oo_egress.policy_from_headers(self.backend_url, self._get_headers())
-        ):
+        )
+        if not may_send_telemetry():
+            return TraceIngestionResponse(success=False, error="offline")
+        if restricted:
             return TraceIngestionResponse(success=False, error="optimization_only")
         # ONE snapshot of destination + credential, validated and sent as-is.
         snap_url = self.backend_url
         snap_headers = self._get_headers()
-        if not oo_egress.ensure_trace_egress_allowed(
+        if not may_send_telemetry():
+            return TraceIngestionResponse(success=False, error="offline")
+        allowed = oo_egress.ensure_trace_egress_allowed(
             snap_headers.get("X-API-Key"), snap_url, headers=snap_headers
-        ):
+        )
+        if not may_send_telemetry():
+            return TraceIngestionResponse(success=False, error="offline")
+        if not allowed:
             return TraceIngestionResponse(success=False, error="optimization_only")
 
         if not REQUESTS_AVAILABLE:
@@ -915,18 +923,24 @@ class WorkflowTracesClient:
             # Under the self-hosted opt-in the credential-bearing origin never
             # follows a redirect; a 3xx is reported as a refusal below.
             request_payload = freeze_json_body(request_payload)
+            if not may_send_telemetry():
+                return TraceIngestionResponse(success=False, error="offline")
             preflight_requests(
                 "POST", ingest_url, json=request_payload, headers=snap_headers
             )
-            if not may_send_telemetry():
-                return TraceIngestionResponse(success=False, error="offline")
-            response = requests.post(
-                ingest_url,
-                json=request_payload,
-                headers=snap_headers,
-                timeout=self.timeout,
-                allow_redirects=False,
+            response = (
+                requests.post(
+                    ingest_url,
+                    json=request_payload,
+                    headers=snap_headers,
+                    timeout=self.timeout,
+                    allow_redirects=False,
+                )
+                if may_send_telemetry()
+                else None
             )
+            if response is None:
+                return TraceIngestionResponse(success=False, error="offline")
             observe_requests_response(response)
             if 300 <= response.status_code < 400:
                 return TraceIngestionResponse(
@@ -975,9 +989,12 @@ class WorkflowTracesClient:
         if not may_send_telemetry():
             return TraceIngestionResponse(success=False, error="offline")
 
-        if oo_egress.is_active(
+        restricted = oo_egress.is_active(
             oo_egress.policy_from_headers(self.backend_url, self._get_headers())
-        ):
+        )
+        if not may_send_telemetry():
+            return TraceIngestionResponse(success=False, error="offline")
+        if restricted:
             return TraceIngestionResponse(success=False, error="optimization_only")
         # the gate may wait on a bounded key validation: keep it off the event loop
         snap_url = self.backend_url

@@ -540,13 +540,20 @@ class FlushResult:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
-    items_suppressed: int = 0
+    @property
+    def items_suppressed(self) -> int:
+        """Queued snapshots discarded under the current delivery policy."""
+        return 0
 
     def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        if not self.items_suppressed:
-            del result["items_suppressed"]
-        return result
+        return asdict(self)
+
+
+@dataclass
+class _SuppressedFlushResult(FlushResult):
+    """A flush that discarded snapshots; only then is the count a field."""
+
+    items_suppressed: int = 0
 
 
 @dataclass

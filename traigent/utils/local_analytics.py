@@ -25,7 +25,11 @@ from traigent.config.backend_config import (
 )
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager
-from traigent.utils.send_policy import _usage_analytics_submission, may_send_telemetry
+from traigent.utils.send_policy import (
+    _TelemetryAuthSuppressed,
+    _usage_analytics_submission,
+    may_send_telemetry,
+)
 
 # Import constant with fallback for base-only installs (cloud module not available)
 try:
@@ -402,6 +406,8 @@ class LocalAnalytics:
                     backend_client_module, backend_client
                 )
 
+        except _TelemetryAuthSuppressed:
+            return {"success": False, "reason": "Analytics disabled"}
         except TimeoutError:
             return {"success": False, "reason": "Request timeout"}
         except ImportError:

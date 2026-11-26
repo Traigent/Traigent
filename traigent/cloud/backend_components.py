@@ -31,6 +31,7 @@ from traigent.cloud.billing import UsageTracker
 from traigent.cloud.client import CloudServiceError
 from traigent.config.project import apply_project_header
 from traigent.utils.logging import get_logger
+from traigent.utils.send_policy import _TelemetryAuthSuppressed
 
 logger = get_logger(__name__)
 
@@ -165,7 +166,7 @@ class BackendAuthManager:
         # exception.
         try:
             auth_headers = await self.auth.get_headers(target=target)
-        except AuthenticationError:
+        except (AuthenticationError, _TelemetryAuthSuppressed):
             raise
         except Exception as exc:
             logger.warning("Could not augment backend auth headers: %s", exc)

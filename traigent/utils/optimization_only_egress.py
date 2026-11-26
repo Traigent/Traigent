@@ -2487,17 +2487,26 @@ def _run_validator(
     try:
         import asyncio
 
-        from traigent.cloud.auth import AuthManager, UnifiedAuthConfig
+        from traigent.cloud.auth import (
+            AuthManager,
+            UnifiedAuthConfig,
+            _WithheldKeyValidation,
+        )
+        from traigent.utils.send_policy import _telemetry_key_validation_context
 
         manager = AuthManager(config=UnifiedAuthConfig(backend_base_url=base))
         loop = asyncio.new_event_loop()
         _DaemonExecutor.install(loop)
         try:
-            box["error"] = loop.run_until_complete(
-                manager._validate_api_key_with_backend(api_key)
+            reason = _telemetry_key_validation_context().run(
+                loop.run_until_complete, manager._validate_api_key_with_backend(api_key)
             )
         finally:
             loop.close()
+        if isinstance(reason, _WithheldKeyValidation):
+            box["withheld"] = True
+            return
+        box["error"] = reason
         box["restricted"] = bool(getattr(manager, "_server_optimization_only", False))
         # Unrestricted only on an explicit boolean false; absent/malformed is a refusal.
         box["unrestricted"] = (
@@ -2506,10 +2515,10 @@ def _run_validator(
     except BaseException as exc:  # noqa: BLE001  # NOSONAR(S5754) - fail closed
         box["exception"] = type(exc).__name__
     finally:
-        entry.done.set()
         with _trace_gate_lock:
             if _trace_validators.get(key) is entry:
                 del _trace_validators[key]
+            entry.done.set()
 
 
 def _credential_headers(
@@ -2572,7 +2581,7 @@ def _start_trace_validator(
 
 
 def _await_trace_validation(entry: _TraceValidator) -> str:
-    """Wait (bounded) for the validator and classify: "ok", "restricted" or "failed"."""
+    """Wait (bounded) for the validator and classify its outcome."""
     remaining = TRACE_PREFLIGHT_DEADLINE_S - (_trace_clock() - entry.started)
     finished = entry.done.is_set() or (remaining > 0 and entry.done.wait(remaining))
     if not finished:
@@ -2582,6 +2591,8 @@ def _await_trace_validation(entry: _TraceValidator) -> str:
             TRACE_PREFLIGHT_DEADLINE_S,
         )
         return "failed"
+    if entry.box.get("withheld"):
+        return "withheld"
     if "exception" in entry.box or entry.box.get("error") is not None:
         logger.warning(
             "Traigent trace export disabled: API key could not be validated "
@@ -2706,6 +2717,8 @@ def ensure_trace_egress_allowed(
         return False
 
     status = _await_trace_validation(entry)
+    if status == "withheld":
+        return False
     latched = _credential_latched(origins, key_text)
     allowed = status == "ok" and not latched
     definitive = allowed or status == "restricted" or latched
