@@ -612,3 +612,63 @@ def test_respond_does_not_fall_back_to_the_environment_for_a_blank_project(
             )
         )
     assert seen["project_id"] == "  "
+
+
+def test_respond_validates_before_building_the_hosted_client(
+    reactive: Reactive,
+) -> None:
+    from .conftest import AGENT, REACTIVE_PROJECT
+
+    with pytest.raises(RuntimeRequirementError) as exc:
+        run(
+            respond(
+                object(),
+                reactive.requirement,
+                project_id=REACTIVE_PROJECT,
+                agent_id=AGENT,
+                agent_ref="bad",
+                state_dir=reactive.state,
+            )
+        )
+    assert exc.value.code == "function_not_optimizable"
+
+
+def test_respond_uses_one_state_dir_for_tokens_and_leases(
+    reactive: Reactive, monkeypatch: Any
+) -> None:
+    from traigent.runtime import manifest
+    from traigent.runtime import respond as respond_module
+
+    from .conftest import AGENT, REACTIVE_PROJECT
+
+    calls: list[Any] = []
+
+    def default_dir() -> Any:
+        calls.append(1)
+        return reactive.state
+
+    seen: dict[str, Any] = {}
+
+    def fake_client(agent_ref: str, tokens: Any, **kwargs: Any) -> Any:
+        seen["tokens_dir"] = tokens._state
+        return SimpleNamespace(agent_ref=agent_ref)
+
+    async def fake_hosted(*args: Any, **kwargs: Any) -> Any:
+        seen["state_dir"] = kwargs["state_dir"]
+        seen["client"] = kwargs["client"]
+        return None
+
+    monkeypatch.setattr(manifest, "default_state_dir", default_dir)
+    monkeypatch.setattr(respond_module, "respond_hosted", fake_hosted)
+    monkeypatch.setattr(respond_module, "ReactiveClient", fake_client)
+    run(
+        respond(
+            Fn(reactive),
+            reactive.requirement,
+            project_id=REACTIVE_PROJECT,
+            agent_id=AGENT,
+            agent_ref=reactive.agent_ref,
+        )
+    )
+    assert len(calls) == 1
+    assert seen["state_dir"] == seen["tokens_dir"] == reactive.state

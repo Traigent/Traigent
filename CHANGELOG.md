@@ -6,9 +6,47 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `@traigent.optimize(crew=..., role=...)` declares which crew and role an agent plays. Both are required together, are validated locally (crew: 1-128 characters of `A-Z a-z 0-9 _ -`; role: 1-128 characters) and cannot be combined with `agents=`. They are sent only as session metadata `crew_declaration` on session create, never in spans, logs, telemetry or local result files. `func.crew_binding` exposes the backend's closed answer (`status` plus ids); an older backend or an offline run reads `unknown`. A conflict with portal membership logs one fixed warning.
+
+## [0.34.2] - 2026-11-24
+
 ### Breaking
 
 - **Production-reactive routes are project-scoped and addressed by agent id.** `ReactiveClient` now calls `/api/v1/projects/{project_id}/agents/{agent_id}/production-reactive/<tail>` (previously `/api/v1/production-reactive/agents/{agent_ref}/...`), with the project and agent id each URL-encoded as one path segment. `agent_id` is the id the agents API returns (1-128 characters, no `/`, not `.` or `..`, not an `agentref_` digest); it is passed as `agent_id=` or read from `TRAIGENT_REACTIVE_AGENT_ID`, never from `TRAIGENT_AGENT_ID` (the observability variable). `agent_ref` stays the `agentref_<32 hex>` digest and is still used by the release-family head and publish routes. The project is `project_id` or `TRAIGENT_PROJECT_ID`, and it must match the contract's `project_<hex>` shape. A reactive call without a valid agent id or project id fails before any request. `respond()` and `controller_for()` take the agent id and forward the explicit project. Reactive writes require an API key or a user token; service tokens are refused (403).
+
+### Added
+
+- **Typed not-found for reactive routes.** A closed `404 reference_not_found` from a production-reactive route raises `ReactiveNotFoundError`, a subclass of `ReactiveError` (so existing handlers still catch it).
+
+### Fixed
+
+- Eval audit: the consensus detector now runs on the normal scoring path, including wrong-by-score cells, Bedrock model-family ids and consensus ranking, and the holdout refuses synthetic rows.
+- The outcome-matrix artifact honors the `TRAIGENT_LOG_EXAMPLE_CONTENT` opt-out.
+- Session network error handlers log the exception with its traceback.
+- The regression CLI lets non-`SystemExit` `BaseException`s propagate, while ordinary exceptions at module import stay a closed exit-2 result.
+
+### Security
+
+- Store, label-state and egress-log files are contained to their base directory: they are opened without following symlinks, must be plain files, and path errors are closed (they do not echo the path).
+- The egress relay verifies TLS certificates by default and no longer returns from a `finally` block.
+- `opentelemetry` is raised to 1.45.2 (GHSA-mf5v-w3w3-f6cg), and the install floors for the opentelemetry packages are now `>=1.45.2`.
+
+## [0.34.1] - 2026-11-23
+
+0.34.0 was tagged but never published to PyPI: its publish job failed unit tests under the newest pyotp, litellm and openai. 0.34.1 is the first 0.34 release on PyPI and contains everything listed under 0.34.0.
+
+### Fixed
+
+- The mock-mode transport guard error now also subclasses httpx `RequestError`, so httpx-based retry and except paths catch it.
+- Examples, docs and presets move off OpenAI models with announced shutdown dates to `gpt-5.4-mini` (small tier) and `gpt-5.2` (large tier); the `model` range preset is now `["gpt-5.4-mini", "gpt-5.2"]`.
+- Test fixtures updated for pyotp 2.12 (longer TOTP secret) and the litellm 1.110 price table.
+
+## [0.34.0] - 2026-11-21
+
+### Breaking
+
 - **Agent decision calls moved to the project-level agent paths.** `BackendAnalyticsClient.agent_decision_ensure`, `agent_decision_latest` and `agent_decision_answer` (and the analytics MCP tools of the same names) now call `/api/v1/projects/{project_id}/agents/{agent_ref}/decisions/ensure`, `.../latest` and `.../{decision_id}/answer` (previously `/api/v1beta/agent-decisions/{agent_id}/...` and `/api/v1beta/agent-decisions/{decision_id}/answer`). The project is `project_id` or `TRAIGENT_PROJECT_ID` and is required (it is in the path, never an `X-Project-Id` header); without one the call fails closed before any request. `agent_decision_answer` and the `agent_decision_answer` MCP tool now take the agent id as their first argument because the route carries it. The SDK has no caller of the agent-lifecycle routes or of the removed public `agents/admin/stats` route; the lifecycle field rename (`agent_ref` to `lifecycle_agent_ref`) needs no SDK change.
 - **Agent head read moved to the project-level path.** `fetch_agent_head_generation_sync` and `fetch_agent_head_generation_by_ref_sync` (signatures unchanged) now call `GET /api/v1/projects/{project_id}/agents/{agent_ref}/best-config-head` (previously `/api/v1/best-configs/agent-heads/{id}` and `/by-ref/{agent_ref}`; the by-ref route was never served). The project is the client's `project_id` (or `TRAIGENT_PROJECT_ID`); without one the read fails closed. The by-ref method validates the echoed `agent_id` instead of the retired `agent_ref` and `exists` members.
 - **Runtime agent satellites moved to the project-level agent paths.** `RuntimeClient.list_breaches` now calls `GET /api/v1/projects/{project_id}/agents/{agent_ref}/production-breaches` and `get_next_step` calls `GET /api/v1/projects/{project_id}/agents/{agent_ref}/next-step` (previously `/api/v1beta/.../agents/{id}/production-breaches` and `/api/v1beta/.../agent-readiness/{id}/next-step`). `production-requirements` calls stay on `/api/v1beta`. The optimization-only egress allowlist admits the new reads and still refuses the retired `agent-readiness` routes.
@@ -17,9 +55,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- `@traigent.optimize(crew=..., role=...)` declares which crew and role an agent plays. Both are required together, are validated locally (crew: 1-128 characters of `A-Z a-z 0-9 _ -`; role: 1-128 characters) and cannot be combined with `agents=`. They are sent only as session metadata `crew_declaration` on session create, never in spans, logs, telemetry or local result files. `func.crew_binding` exposes the backend's closed answer (`status` plus ids); an older backend or an offline run reads `unknown`. A conflict with portal membership logs one fixed warning.
-- **Typed not-found for reactive routes.** A closed `404 reference_not_found` from a production-reactive route raises `ReactiveNotFoundError`, a subclass of `ReactiveError` (so existing handlers still catch it).
 - **Continuous Tuning (Python SDK).** New `traigent.tuning` package (`Tuning`, `FailureRate`, `RandomAudit`, `ModelReleased`, `OnBreach`, `Every`, `ProposeFix`) that compiles to a TVL 1.7 module (`to_tvl`) and validates it with the TVL reference linter (`validate`, diagnostics unchanged); `traigent.observe(agent=..., tune=Tuning(...))` attaches the compiled policy as `fn.tuning`; new `traigent tune compile|check|simulate` commands, and a local controller that runs the spend step only (a person approves a run; releasing a candidate is planned, not built: a platform-signed release does not exist yet, `follow="head"` serves the function's in-code default configuration until a platform-signed release exists (a `head.json` configuration is never applied; traces carry `head_state`, not a generation), and the local release entry points refuse with `E_UNSUPPORTED_IN_RELEASE`). The pilot trigger is a schedule: monitor-breach, episode and external triggers are refused at construction. Tuning runs are pinned to local (offline) execution so no configuration values reach the backend (a connected configuration is refused with `E_CONNECTED_TUNING_REFUSED`), and `fcntl` is imported only when the store lock is used, so the CLI starts on Windows. Without a `tvl` release that supports 1.7, decoration still succeeds but the policy is unvalidated and executing paths refuse with `E_TVL_VALIDATOR_UNAVAILABLE` (no schema-only fallback). Guide: `docs/guides/continuous-tuning.md`.
+
+- **`traigent egress relay` and `TRAIGENT_EGRESS_RELAY` (#3313, #3315, #3322).** A local relay logs what the SDK sends to the backend. A production-configured SDK can use it through `TRAIGENT_EGRESS_RELAY`; the opt-in refuses under an env proxy, the log keeps allowlisted route words, and the plan URL no longer doubles `/api/v1`.
+- **Regression sets (#3309, #3311).** A committed regression set with `traigent regression add`, plus `traigent regression confirm` and `check`.
+- **Per-example repeat outcomes with a 95% interval (#3308).**
+- **`X-Project-Id` is sent on backend writes when a project is configured (#3298).**
 
 ### Fixed
 
@@ -27,6 +68,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The deprecated `TRAIGENT_OBSERVABILITY_PRIVACY_MODE` variable (the JS SDK's name) is now honoured by the Python SDK (`true` restricts to `metadata`, `false` has no opinion); if it disagrees with `TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT`, content capture is off and a deprecation warning names the variables (#3269).
 - **Trace egress to Traigent now needs an explicit `optimization_only: false` from key validation, and the async workflow client no longer follows redirects.** A `/keys/validate` answer with the flag absent or non-boolean is refused (retried after 60 s) instead of cached as unrestricted. The OTel init reads the offline state once, and the exporter re-checks the key gate before every POST. `WorkflowTracesClient.ingest_traces_async` sends with `allow_redirects=False` and treats a 3xx as a failed send.
 - **The bundled `traigent-tracing` add-on is gated at send time (0.1.2); the SDK now requires it.** The add-on built its own OTLP exporter, so a credential latched `optimization_only` after a tracer was handed out could still be sent. It now builds the SDK's gated exporter (frozen headers, per-request check) and fails closed if that is unavailable; add-ons older than 0.1.2 are ignored in favour of the built-in tracing. Public `traigent.observability.otel.init` also never sends a key that was absent when the egress gate ran.
+- **Sync writes send the explicit project (#3321).** `SyncManager` now puts the project on session writes, which fixes the HTTP 422 against backend #6114.
+- The dataset converter and the MCP plan tool now follow the configured backend URL (#3318, #3316).
+- **Continuous Tuning: the agent code version reaches the backend only as a digest.** A git commit id, a sha256, `src:<sha256>` or `tag:<sha256>` is sent as is; any other valid version (1-128 characters of `[A-Za-z0-9_.:+-]`, for example `v1.2.3`) is sent as `tag:` plus the sha256 of the value, and the readable value stays local (`code_version_label()`, the `tune` CLI). Invalid values are refused with `E_INVALID_CODE_VERSION` without echoing the value (#3325).
+
+### Known issues
+
+- `traigent egress relay` without a command prints `export NO_PROXY=...` and `export no_proxy=...` lines with the value unquoted. Pasting them into a shell where the value contains shell metacharacters can fail to set the variable; the relay then is not bypassed and requests fail closed rather than leaking. Fix planned for 0.34.1.
+- When the optimization-only next-trial request fails before it is sent (for example an invalid `TRAIGENT_PROJECT_ID`), the sync client's error result can include the configured project id text. Fix planned for 0.34.1.
 
 ## [0.33.0] - 2026-11-06
 
